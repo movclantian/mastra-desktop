@@ -1,0 +1,14 @@
+# pnpm 11 配置
+dangerouslyAllowAllBuilds: true
+# 关闭供应链最小发布年龄保护（默认 1440s=1天）：刚发布的包立即可用
+minimumReleaseAge: 0
+shamefullyHoist: true
+# 统一 shiki 到 v4：streamdown 类型解析走根目录 v4，@streamdown/code 依赖声明是 ^3.19，
+# 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
+overrides:
+  shiki: ^4.4.3
+# 忽略 typescript-paths 的 peer 警告：它声明只支持 TS ^4||^5||^6，但 TS 7 API 向后兼容，运行时正常
+peerDependencyRules:
+  ignoreMissing: []
+  allowedVersions:
+    typescript-paths>typescript: "7"

@@ -1,0 +1,76 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!out",
+      "!node_modules",
+      "!.mastra",
+      "!src/mastra/public",
+      "!build",
+      "!dist",
+      "!resources",
+      "!docs",
+      "!**/*.config.*",
+      "!pnpm-lock.yaml"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "src/renderer/src/components/ui/**",
+        "src/renderer/src/components/ai-elements/**"
+      ],
+      "linter": {
+        "rules": {
+          "a11y": "off",
+          "correctness": {
+            "useExhaustiveDependencies": "off",
+            "noUnusedFunctionParameters": "off",
+            "useJsxKeyInIterable": "off"
+          },
+          "suspicious": {
+            "noArrayIndexKey": "off",
+            "noExplicitAny": "off",
+            "noDocumentCookie": "off",
+            "noDoubleEquals": "off"
+          },
+          "security": {
+            "noDangerouslySetInnerHtml": "off"
+          },
+          "complexity": {
+            "noUselessFragments": "off"
+          }
+        }
+      }
+    }
+  ]
+}

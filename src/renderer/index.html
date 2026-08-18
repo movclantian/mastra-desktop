@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Electron</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <!--
+      不含 'unsafe-eval':消除 Electron "Insecure Content-Security-Policy" 警告。
+      代价:@streamdown/mermaid 图表(依赖 eval)无法渲染,普通 markdown/代码块不受影响。
+      connect-src: http://localhost:4111 = Mastra server; ws://localhost:5173 = Vite HMR (dev only)
+      外网请求(models.dev 等)一律经 Mastra 服务端代理,渲染进程不直连。
+      script-src 'unsafe-inline': Vite dev 的 React Refresh preamble 是内联脚本,dev 必需。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; connect-src 'self' http://localhost:4111 ws://localhost:5173; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:"
+    />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
