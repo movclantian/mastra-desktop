@@ -54,7 +54,7 @@ export const Context = ({ usedTokens, maxTokens, usage, modelId, ...props }: Con
 const ContextIcon = () => {
   const { usedTokens, maxTokens } = useContextValue();
   const circumference = 2 * Math.PI * ICON_RADIUS;
-  const usedPercent = usedTokens / maxTokens;
+  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
   const dashOffset = circumference * (1 - usedPercent);
 
   return (
@@ -96,7 +96,7 @@ export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
-  const usedPercent = usedTokens / maxTokens;
+  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
   const renderedPercent = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
     style: "percent",
@@ -128,7 +128,7 @@ export const ContextContentHeader = ({
   ...props
 }: ContextContentHeaderProps) => {
   const { usedTokens, maxTokens } = useContextValue();
-  const usedPercent = usedTokens / maxTokens;
+  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
   const displayPct = new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 1,
     style: "percent",
@@ -199,7 +199,7 @@ export const ContextContentFooter = ({
     >
       {children ?? (
         <>
-          <span className="text-muted-foreground">Total cost</span>
+          <span className="text-muted-foreground">总费用</span>
           <span>{totalCost}</span>
         </>
       )}
@@ -245,7 +245,7 @@ export const ContextInputUsage = ({ className, children, ...props }: ContextInpu
 
   return (
     <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">Input</span>
+      <span className="text-muted-foreground">输入</span>
       <TokensWithCost costText={inputCostText} tokens={inputTokens} />
     </div>
   );
@@ -278,7 +278,7 @@ export const ContextOutputUsage = ({ className, children, ...props }: ContextOut
 
   return (
     <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">Output</span>
+      <span className="text-muted-foreground">输出</span>
       <TokensWithCost costText={outputCostText} tokens={outputTokens} />
     </div>
   );
@@ -315,7 +315,7 @@ export const ContextReasoningUsage = ({
 
   return (
     <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">Reasoning</span>
+      <span className="text-muted-foreground">思考</span>
       <TokensWithCost costText={reasoningCostText} tokens={reasoningTokens} />
     </div>
   );
@@ -348,7 +348,7 @@ export const ContextCacheUsage = ({ className, children, ...props }: ContextCach
 
   return (
     <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">Cache</span>
+      <span className="text-muted-foreground">缓存</span>
       <TokensWithCost costText={cacheCostText} tokens={cacheTokens} />
     </div>
   );

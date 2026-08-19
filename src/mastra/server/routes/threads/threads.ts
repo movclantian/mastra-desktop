@@ -1,0 +1,207 @@
+import { registerApiRoute } from "@mastra/core/server";
+import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
+import { applyModeToRules, resolveMode } from "../../../agents/modes";
+import {
+  parsePermissionRules,
+  resolveToolPolicy,
+  toolCategoryOf,
+} from "../../../agents/permissions";
+import { appStorage } from "../../../storage";
+import { getOwnedThread, getWorkMemory } from "./shared";
+import type { ThreadMetadata } from "./types";
+
+/**
+ * 线程 CRUD 路由。
+ * 线程操作参考 docs/en/docs/memory/message-history.mdx
+ * (listThreads / createThread / updateThread / deleteThread)。
+ *
+ * 多用户隔离:所有线程操作以 resourceId(用户 ID)为过滤条件;
+ * 工作区绑定通过 thread.metadata.workspacePath 实现(首条消息时锁定)。
+ */
+
+// GET /work/threads?resourceId=xxx — 列出用户全部线程
+export const listThreadsRoute = registerApiRoute("/work/threads", {
+  method: "GET",
+  handler: async (c) => {
+    const resourceId = c.req.query("resourceId");
+    if (!resourceId) {
+      return c.json({ error: "resourceId is required" }, 400);
+    }
+    const memory = await getWorkMemory();
+    const result = await memory.listThreads({
+      filter: { resourceId },
+      perPage: false,
+    });
+    // Studio 直连/连接测试/工作记忆等路径产生的线程 metadata 可能为 null,
+    // 统一归一化成对象 —— 侧边栏直接读 t.metadata.archivedAt 会炸掉整个 UI
+    return c.json({
+      threads: result.threads.map((thread) => ({ ...thread, metadata: thread.metadata ?? {} })),
+    });
+  },
+});
+
+// POST /work/threads — 创建线程 { resourceId, threadId?, title?, metadata? }
+export const createThreadRoute = registerApiRoute("/work/threads", {
+  method: "POST",
+  handler: async (c) => {
+    const body = (await c.req.json()) as {
+      resourceId: string;
+      threadId?: string;
+      title?: string;
+      metadata?: ThreadMetadata;
+    };
+    if (!body.resourceId) {
+      return c.json({ error: "resourceId is required" }, 400);
+    }
+    const memory = await getWorkMemory();
+    if (body.metadata?.draft) {
+      // 新会话线程唯一:draft 线程必须"没有任何历史消息"才可复用。
+      // (旧实现仅看 draft 标记,发过消息但未改名的线程会被误判为新线程。)
+      const { threads } = await memory.listThreads({
+        filter: { resourceId: body.resourceId },
+        perPage: false,
+      });
+      const candidates = threads.filter(
+        (thread) => thread.metadata?.draft === true && !thread.metadata?.archivedAt,
+      );
+      for (const candidate of candidates) {
+        const { messages } = await memory.recall({
+          threadId: candidate.id,
+          resourceId: body.resourceId,
+          perPage: false,
+        });
+        if ((messages ?? []).length === 0) {
+          return c.json({ thread: candidate });
+        }
+        // 有消息的 draft 是残留标记(如自动生成标题失败/未触发改名),清除后继续
+        await memory.updateThread({
+          id: candidate.id,
+          title: candidate.title,
+          metadata: { ...candidate.metadata, draft: false },
+        });
+      }
+    }
+    const thread = await memory.createThread({
+      threadId: body.threadId,
+      resourceId: body.resourceId,
+      title: body.title ?? "New Chat",
+      metadata: body.metadata ?? {},
+    });
+    return c.json({ thread }, 201);
+  },
+});
+
+// PATCH /work/threads/:threadId — 更新 { title?, metadata? }
+export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
+  method: "PATCH",
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const body = (await c.req.json()) as {
+      resourceId: string;
+      title?: string;
+      metadata?: ThreadMetadata;
+    };
+    if (!body.resourceId) {
+      return c.json({ error: "resourceId is required" }, 400);
+    }
+    const memory = await getWorkMemory();
+    const existing = await memory.getThreadById({ threadId });
+    if (!existing || existing.resourceId !== body.resourceId) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+    const thread = await memory.updateThread({
+      id: threadId,
+      title: body.title ?? existing.title,
+      metadata: { ...existing.metadata, ...body.metadata },
+    });
+    return c.json({ thread });
+  },
+});
+
+// DELETE /work/threads/:threadId — 删除线程
+export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
+  method: "DELETE",
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const resourceId = c.req.query("resourceId");
+    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    const memory = await getWorkMemory();
+    if (!(await getOwnedThread(memory, threadId, resourceId))) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+    await memory.deleteThread(threadId);
+    // settled.mdx(@mastra/memory 1.27 起随 latest 发布):等待 deleteThread 触发的
+    // 后台向量清理与仍在进行的观察记忆写入落盘,响应返回即代表线程已彻底清理。
+    await memory.settled();
+    return c.json({ ok: true });
+  },
+});
+
+// GET /work/threads/:threadId/tasks?resourceId= — 读取 TaskSignalProvider 的持久化 TODO。
+// task_* 工具的完整状态保存在 threadState(type: "task")，不能从已压缩的消息文本推导。
+export const threadTasksRoute = registerApiRoute("/work/threads/:threadId/tasks", {
+  method: "GET",
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const resourceId = c.req.query("resourceId");
+    if (!resourceId) {
+      return c.json({ error: "resourceId is required" }, 400);
+    }
+
+    const memory = await getWorkMemory();
+    const thread = await memory.getThreadById({ threadId });
+    if (!thread || thread.resourceId !== resourceId) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+
+    const threadState = await appStorage.getStore("threadState");
+    const tasks = await threadState?.getState<TaskItem[]>({
+      threadId,
+      type: TASK_STATE_TYPE,
+    });
+    return c.json({ tasks: Array.isArray(tasks) ? tasks : [] });
+  },
+});
+
+// GET /work/threads/:threadId/suspended-runs?resourceId= — 刷新后恢复等待中的工具交互。
+// Agent.listSuspendedRuns() 从持久化快照读取,不依赖原请求仍存在于当前进程。
+// 每个交互附带服务端算出的权限类别与生效策略:审批面板的「始终允许此类」需要类别,
+// 而类别映射只应有一份真相(src/mastra/agents/permissions.ts),不在渲染层复制。
+export const threadSuspendedRunsRoute = registerApiRoute("/work/threads/:threadId/suspended-runs", {
+  method: "GET",
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const resourceId = c.req.query("resourceId");
+    if (!resourceId) {
+      return c.json({ error: "resourceId is required" }, 400);
+    }
+
+    const memory = await getWorkMemory();
+    const thread = await memory.getThreadById({ threadId });
+    if (!thread || thread.resourceId !== resourceId) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
+
+    const metadata = thread.metadata as ThreadMetadata | undefined;
+    const mode = resolveMode(metadata?.modeId);
+    const rules = applyModeToRules(parsePermissionRules(metadata?.permissionRules), mode);
+
+    const agent = (await import("../../../index")).mastra.getAgentById("mastra-work-agent");
+    const { runs } = await agent.listSuspendedRuns({ threadId, resourceId });
+    return c.json({
+      interactions: runs.flatMap((run) =>
+        run.toolCalls.map((toolCall) => ({
+          runId: run.runId,
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+          args: toolCall.args,
+          requiresApproval: toolCall.requiresApproval,
+          suspendPayload: toolCall.suspendPayload,
+          // 工具名理论上总有值;缺失时按未识别工具归类(other,默认 ask)
+          category: toolCategoryOf(toolCall.toolName ?? ""),
+          policy: resolveToolPolicy(rules, toolCall.toolName ?? ""),
+        })),
+      ),
+    });
+  },
+});

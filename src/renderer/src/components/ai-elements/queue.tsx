@@ -1,10 +1,9 @@
 "use client";
 
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import { type ComponentProps, forwardRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 export interface QueueMessagePart {
@@ -29,15 +28,20 @@ export interface QueueTodo {
 
 export type QueueItemProps = ComponentProps<"li">;
 
-export const QueueItem = ({ className, ...props }: QueueItemProps) => (
-  <li
-    className={cn(
-      "group flex flex-col gap-1 rounded-md px-3 py-1 text-sm transition-colors hover:bg-muted",
-      className,
-    )}
-    {...props}
-  />
+export const QueueItem = forwardRef<HTMLLIElement, QueueItemProps>(
+  ({ className, ...props }, ref) => (
+    <li
+      className={cn(
+        "group flex flex-col gap-1 rounded-md px-3 text-sm transition-colors hover:bg-muted",
+        className,
+      )}
+      ref={ref}
+      {...props}
+    />
+  ),
 );
+
+QueueItem.displayName = "QueueItem";
 
 export type QueueItemIndicatorProps = ComponentProps<"span"> & {
   completed?: boolean;
@@ -71,7 +75,7 @@ export const QueueItemContent = ({
 }: QueueItemContentProps) => (
   <span
     className={cn(
-      "line-clamp-1 grow break-words",
+      "grow break-words",
       completed ? "text-muted-foreground/50 line-through" : "text-muted-foreground",
       className,
     )}
@@ -149,14 +153,12 @@ export const QueueItemFile = ({ children, className, ...props }: QueueItemFilePr
   </span>
 );
 
-export type QueueListProps = ComponentProps<typeof ScrollArea>;
+export type QueueListProps = ComponentProps<"div">;
 
 export const QueueList = ({ children, className, ...props }: QueueListProps) => (
-  <ScrollArea className={cn("mt-2 -mb-1", className)} {...props}>
-    <div className="max-h-40 pr-4">
-      <ul>{children}</ul>
-    </div>
-  </ScrollArea>
+  <div className={cn("mt-2 -mb-1", className)} {...props}>
+    <ul>{children}</ul>
+  </div>
 );
 
 // QueueSection - collapsible section container

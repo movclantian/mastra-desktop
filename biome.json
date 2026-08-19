@@ -3,6 +3,7 @@
   "files": {
     "includes": [
       "**",
+      "!.vscode",
       "!out",
       "!node_modules",
       "!.mastra",

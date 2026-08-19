@@ -124,6 +124,14 @@ export const MessageBranch = ({
   const [currentBranch, setCurrentBranch] = useState(defaultBranch);
   const [branches, setBranches] = useState<ReactElement[]>([]);
 
+  // The branch index is persisted by the parent message list. Keep the local
+  // selector in sync when that persisted selection changes (for example after
+  // a message edit, a history reload, or switching back to an older branch).
+  useEffect(() => {
+    if (branches.length === 0) return;
+    setCurrentBranch(Math.min(Math.max(defaultBranch, 0), branches.length - 1));
+  }, [defaultBranch, branches.length]);
+
   const handleBranchChange = useCallback(
     (newBranch: number) => {
       setCurrentBranch(newBranch);
@@ -275,7 +283,8 @@ const streamdownPlugins = { cjk, code, math, mermaid };
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+      // space-y-0 覆盖 Streamdown 内部默认的 space-y-4(cn 合并时后写的生效)
+      className={cn("size-full space-y-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
       plugins={streamdownPlugins}
       {...props}
     />

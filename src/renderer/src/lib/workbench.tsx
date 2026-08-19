@@ -1,3 +1,4 @@
+import type { FileUIPart } from "ai";
 import { nanoid } from "nanoid";
 import {
   createContext,
@@ -6,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -15,12 +17,21 @@ import {
   type ProviderConfig,
   type ReasoningEffort,
 } from "./providers";
+import {
+  DEFAULT_MODE_ID,
+  DEFAULT_PERMISSION_RULES,
+  type PermissionRules,
+  parseModeId,
+  parsePermissionRules,
+  type WorkModeId,
+} from "./session-policy";
 
 /**
  * 多用户体系工作台状态:
  * - user(resourceId):一切数据的隔离边界 —— 线程、供应商配置、工作区均按用户隔离
- * - workspace:任务集合分组,线程可通过 metadata.workspaceId 归组,"无工作区"线程单独一组
- * - thread:与 Agent 的会话线程(Mastra Memory thread)
+ * - thread:与 Agent 的会话线程(Mastra Memory thread),每条线程绑定一个工作区目录
+ *   (Harness session 概念):显式绑定(用户选定目录,sidebar 展示文件树并按目录分组)
+ *   或隐式绑定(<threadsRoot>/<threadId>/,仅 Agent 工作目录)
  */
 
 export interface WorkUser {
@@ -29,15 +40,59 @@ export interface WorkUser {
   email: string;
 }
 
-export interface Workspace {
-  id: string;
-  name: string;
-}
-
 export interface ThreadMetadata {
-  workspaceId?: string;
+  /** 线程绑定的工作区目录(绝对路径,首条消息时由服务端锁定) */
+  workspacePath?: string;
+  /** true = 用户显式选定的目录(可浏览文件树);false/缺省 = 隐式默认目录 */
+  workspaceExplicit?: boolean;
+  /** 会话模式(plan/build/review);缺省视为默认模式 */
+  modeId?: string;
+  /** 工具审批规则(官方 PermissionRules 形状);缺省视为默认规则。读取时仍过 parsePermissionRules */
+  permissionRules?: PermissionRules;
+  /** 本线程最近使用的模型形态(chat 路由每次请求写入,切线程时据此恢复选择) */
+  modelSelection?: {
+    providerId: string;
+    modelId: string;
+    modelName: string;
+    reasoningEffort: string;
+  };
   pinned?: boolean;
   archivedAt?: string | null;
+  draft?: boolean;
+  /** 手动压缩上下文完成时间(真压缩:折叠消息已删除并替换为摘要消息) */
+  compactedAt?: string | null;
+  /** 最近一次压缩详情(服务端 summarize 路由写入,Marker 点击回看) */
+  compaction?: {
+    summary: string;
+    extracted?: Record<string, unknown>;
+    extractionFailures?: Array<{ slug: string; error: string }>;
+    inputTokens?: number;
+    outputTokens?: number;
+    estimatedContextTokens?: number;
+    deletedMessages?: number;
+    compactedAt: string;
+  };
+  contextUsage?: Record<string, unknown>;
+}
+
+/** GET /work/workspace/recent:近期显式绑定的工作区目录 */
+export interface RecentWorkspace {
+  path: string;
+  lastUsedAt: string;
+}
+
+/** GET /work/threads/:id/tree:文件树单层条目 */
+export interface TreeEntry {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+}
+
+/** 取路径最后一段作为目录显示名(POSIX/Windows 通用) */
+export function dirName(path: string): string {
+  const trimmed = path.replaceAll("\\", "/").replace(/\/+$/, "");
+  const name = trimmed.slice(trimmed.lastIndexOf("/") + 1);
+  return name || trimmed || path;
 }
 
 export interface WorkThread {
@@ -55,10 +110,114 @@ export interface ModelSelection {
   reasoningEffort: ReasoningEffort | "off";
 }
 
-const USER_KEY = "mastra-work:user";
-const WORKSPACES_KEY = "mastra-work:workspaces";
-const PROVIDERS_KEY = "mastra-work:providers";
-const MODEL_SELECTION_KEY = "mastra-work:model-selection";
+/** Memory.recall 跨线程检索结果(GET /work/memory/search) */
+export interface MessageSearchHit {
+  threadId: string;
+  threadTitle: string;
+  messageId: string;
+  role: string;
+  text: string;
+  createdAt: string;
+  semantic: boolean;
+}
+
+/** 搜索结果跳转请求:切换线程并滚动到具体气泡 */
+export interface PendingJump {
+  threadId: string;
+  messageId: string;
+}
+
+// ---- 联网检索(常量与服务端 src/mastra/agents/tools.ts 一一对应) ----
+
+export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
+export type SearchEngine = (typeof SEARCH_ENGINES)[number];
+
+export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
+export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
+
+/** promptInput 搜索菜单的选择,null = 关闭联网检索 */
+export interface SearchSelection {
+  engine: SearchEngine;
+  depth: SearchDepth;
+}
+
+/** GET/POST /work/tools 的载荷(API Key 存服务端 app_config 表) */
+export interface ToolsConfig {
+  tavily: { apiKey: string };
+  firecrawl: { apiKey: string; apiUrl: string };
+  anysearch: { apiKey: string };
+}
+
+export const SEARCH_ENGINE_META: Record<
+  SearchEngine,
+  { label: string; description: string /** 是否必须配置 API Key 才能调用 */; requiresKey: boolean }
+> = {
+  provider: {
+    label: "模型原生检索",
+    description: "用模型自带的检索能力,零配置;仅 OpenAI / Anthropic / Google / xAI 模型可用",
+    requiresKey: false,
+  },
+  tavily: {
+    label: "Tavily",
+    description: "为 LLM 优化的检索 API,答案摘要与引用质量最稳",
+    requiresKey: true,
+  },
+  firecrawl: {
+    label: "Firecrawl",
+    description: "检索 + 整页抓取,适合需要读全文的场景",
+    requiresKey: true,
+  },
+  anysearch: {
+    label: "AnySearch",
+    description: "未填 Key 时按匿名额度调用",
+    requiresKey: false,
+  },
+};
+
+export const SEARCH_DEPTH_META: Record<SearchDepth, { label: string; description: string }> = {
+  fast: { label: "快速", description: "3 条结果,仅读摘要" },
+  balanced: { label: "均衡", description: "6 条结果,标准检索深度" },
+  deep: { label: "深度", description: "10 条结果,并抓取重点页面全文" },
+};
+
+/**
+ * provider 原生检索(webSearchTool)支持的模型家族。与服务端
+ * src/mastra/agents/tools.ts 的 PROVIDER_SEARCH_FAMILIES 保持一致。
+ * 自定义网关一律不支持:对端未必实现 provider 原生检索工具。
+ */
+const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "gemini", "xai"];
+
+export function isProviderSearchSupported(provider: ProviderConfig | undefined): boolean {
+  if (!provider || provider.baseUrl || !provider.registryId) return false;
+  return PROVIDER_SEARCH_FAMILIES.includes(provider.registryId);
+}
+
+/**
+ * 该引擎当前是否可直接调用。
+ * - provider:看当前选定模型的家族(不需要 Key)
+ * - AnySearch:支持匿名,恒可用
+ * - Tavily / Firecrawl:看 Key
+ */
+export function isSearchEngineReady(
+  engine: SearchEngine,
+  config: ToolsConfig | null,
+  activeProvider?: ProviderConfig,
+): boolean {
+  if (engine === "provider") return isProviderSearchSupported(activeProvider);
+  if (!SEARCH_ENGINE_META[engine].requiresKey) return true;
+  if (!config) return false;
+  return Boolean(engine === "tavily" ? config.tavily.apiKey : config.firecrawl.apiKey);
+}
+
+const SEARCH_SELECTION_KEY = "mastra-work:search-selection";
+const ACTIVE_THREAD_KEY = "mastra-work:active-thread";
+/**
+ * 模式与审批规则的**新线程默认值**。真相在 thread.metadata(服务端),
+ * 这两个 key 只承担「下一条新线程用什么」——与服务端线程 metadata
+ * 「Session 持有当前模式、thread settings 持久化」的分工一致。
+ */
+const MODE_KEY = "mastra-work:mode";
+const PERMISSION_RULES_KEY = "mastra-work:permission-rules";
 
 function readJson<T>(key: string, fallback: T): T {
   const raw = localStorage.getItem(key);
@@ -76,91 +235,227 @@ const DEFAULT_USER: WorkUser = {
   email: "local@mastra-work.app",
 };
 
-const DEFAULT_WORKSPACES: Workspace[] = [{ id: "ws-default", name: "默认工作区" }];
-
 interface WorkbenchValue {
-  // 用户
+  // 用户(单机应用,恒为本地常量)
   user: WorkUser;
-  updateUser: (user: WorkUser) => void;
-  // 工作区
-  workspaces: Workspace[];
-  activeWorkspaceId: string | null; // null = 不选择工作区
-  setActiveWorkspaceId: (id: string | null) => void;
-  addWorkspace: (name: string) => void;
-  renameWorkspace: (id: string, name: string) => void;
-  deleteWorkspace: (id: string) => void;
-  // 线程
+  // 线程(每线程绑定工作区目录,见 ThreadMetadata.workspacePath)
   threads: WorkThread[];
   threadsLoading: boolean;
   refreshThreads: () => Promise<void>;
-  createThread: (workspaceId: string | null, title?: string) => Promise<WorkThread | null>;
+  createThread: (title?: string) => Promise<WorkThread | null>;
   renameThread: (threadId: string, title: string) => Promise<void>;
   deleteThread: (threadId: string) => Promise<void>;
   pinThread: (threadId: string, pinned: boolean) => Promise<void>;
   archiveThread: (threadId: string, archived: boolean) => Promise<void>;
-  moveThread: (threadId: string, workspaceId: string | null) => Promise<void>;
+  cloneThread: (
+    threadId: string,
+    selection?: number | { messageLimit?: number; messageIds?: string[] },
+  ) => Promise<WorkThread | null>;
+  searchMessages: (query: string) => Promise<MessageSearchHit[]>;
+  // 近期显式绑定的工作区目录(promptInput 选择器数据源)
+  recentWorkspaces: RecentWorkspace[];
+  refreshRecentWorkspaces: () => Promise<void>;
+  // 线程工作区文件树(仅显式绑定线程;单层按需拉取)
+  fetchTreeEntries: (threadId: string, path?: string) => Promise<TreeEntry[]>;
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
+  // 搜索结果跳转(chat-panel 消费后清除)
+  pendingJump: PendingJump | null;
+  setPendingJump: (jump: PendingJump | null) => void;
   // 供应商(BYOK)
   providers: ProviderConfig[];
   setProviders: (providers: ProviderConfig[]) => void;
   // models.dev 目录
   catalog: CatalogProvider[];
+  /** 模型目录加载状态:用于区分尚未读取、读取成功但没有匹配、读取失败 */
+  catalogStatus: "loading" | "ready" | "error";
   // 模型选择
   modelSelection: ModelSelection | null;
   setModelSelection: (selection: ModelSelection | null) => void;
+  // 会话模式(plan/build/review;真相在 thread.metadata.modeId)
+  modeId: WorkModeId;
+  setModeId: (modeId: WorkModeId) => Promise<void>;
+  // 工具审批规则(官方 PermissionRules;真相在 thread.metadata.permissionRules)
+  permissionRules: PermissionRules;
+  setPermissionRules: (rules: PermissionRules) => Promise<void>;
+  /** 重新采纳当前线程的会话设置(服务端单方面改过模式时用,如计划获批后的模式跃迁) */
+  refreshThreadSettings: () => Promise<void>;
+  // 联网检索(promptInput 搜索菜单;null = 关闭)
+  searchSelection: SearchSelection | null;
+  setSearchSelection: (selection: SearchSelection | null) => void;
+  /** 三个引擎的 API Key 配置(设置面板「工具」标签写入),null = 尚未取到 */
+  toolsConfig: ToolsConfig | null;
+  refreshToolsConfig: () => Promise<void>;
   // 设置弹窗
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** Agent 是否有任务进行中(流式生成/等待响应);chat panel 同步,设置页消费 */
+  agentBusy: boolean;
+  setAgentBusy: (busy: boolean) => void;
+  libraryOpen: boolean;
+  setLibraryOpen: (open: boolean) => void;
+  skillOpen: boolean;
+  setSkillOpen: (open: boolean) => void;
+  pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
+  queueLibraryFiles: (files: Array<FileUIPart & { byteSize?: number }>) => void;
+  clearPendingLibraryFiles: () => void;
 }
 
 const WorkbenchContext = createContext<WorkbenchValue | null>(null);
 
 export function WorkbenchProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<WorkUser>(() => readJson(USER_KEY, DEFAULT_USER));
-  const [workspaces, setWorkspaces] = useState<Workspace[]>(() =>
-    readJson(WORKSPACES_KEY, DEFAULT_WORKSPACES),
+  const user = DEFAULT_USER;
+  // 供应商与选定模型存服务端(app_config key="providers"):Studio 的模型选择器与
+  // Agent 的默认模型都要读到它,而 Studio 跑在 Mastra 进程里、读不到 localStorage。
+  const [providers, setProvidersState] = useState<ProviderConfig[]>([]);
+  const [modelSelection, setModelSelectionState] = useState<ModelSelection | null>(null);
+  /** 服务端配置是否已到位 —— 到位前不回写,避免用空配置覆盖数据库 */
+  const [providersLoaded, setProvidersLoaded] = useState(false);
+  const [searchSelection, setSearchSelectionState] = useState<SearchSelection | null>(() =>
+    readJson<SearchSelection | null>(SEARCH_SELECTION_KEY, null),
   );
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
-  const [providers, setProvidersState] = useState<ProviderConfig[]>(() =>
-    readJson<ProviderConfig[]>(PROVIDERS_KEY, []),
+  // 模式与审批规则:会话级状态(与官方 Session 同位),切线程时被线程自己的记录覆盖
+  const [modeId, setModeIdState] = useState<WorkModeId>(() =>
+    parseModeId(readJson<string>(MODE_KEY, DEFAULT_MODE_ID)),
   );
-  const [modelSelection, setModelSelectionState] = useState<ModelSelection | null>(() =>
-    readJson<ModelSelection | null>(MODEL_SELECTION_KEY, null),
+  const [permissionRules, setPermissionRulesState] = useState<PermissionRules>(() =>
+    parsePermissionRules(readJson<unknown>(PERMISSION_RULES_KEY, DEFAULT_PERMISSION_RULES)),
   );
+  /** 已采纳过线程设置的线程 id:每条线程只在切入时采纳一次,后续刷新不覆盖用户改动 */
+  const adoptedThreadRef = useRef<string | null>(null);
+  const [toolsConfig, setToolsConfig] = useState<ToolsConfig | null>(null);
   const [threads, setThreads] = useState<WorkThread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(true);
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(() =>
+    readJson<string | null>(ACTIVE_THREAD_KEY, null),
+  );
+  const activeThreadResolvedRef = useRef(false);
+  const createThreadRequestRef = useRef<Promise<WorkThread | null> | null>(null);
+  const [pendingJump, setPendingJump] = useState<PendingJump | null>(null);
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState<"loading" | "ready" | "error">("loading");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [skillOpen, setSkillOpen] = useState(false);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>([]);
+  const [pendingLibraryFiles, setPendingLibraryFiles] = useState<
+    Array<FileUIPart & { byteSize?: number }>
+  >([]);
 
   useEffect(() => {
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
-  }, [user]);
+    localStorage.setItem(SEARCH_SELECTION_KEY, JSON.stringify(searchSelection));
+  }, [searchSelection]);
   useEffect(() => {
-    localStorage.setItem(WORKSPACES_KEY, JSON.stringify(workspaces));
-  }, [workspaces]);
+    localStorage.setItem(MODE_KEY, JSON.stringify(modeId));
+  }, [modeId]);
   useEffect(() => {
-    localStorage.setItem(PROVIDERS_KEY, JSON.stringify(providers));
-  }, [providers]);
+    localStorage.setItem(PERMISSION_RULES_KEY, JSON.stringify(permissionRules));
+  }, [permissionRules]);
   useEffect(() => {
-    localStorage.setItem(MODEL_SELECTION_KEY, JSON.stringify(modelSelection));
-  }, [modelSelection]);
+    if (activeThreadId) {
+      localStorage.setItem(ACTIVE_THREAD_KEY, activeThreadId);
+    } else {
+      localStorage.removeItem(ACTIVE_THREAD_KEY);
+    }
+  }, [activeThreadId]);
 
-  // models.dev 目录:优先命中 1 小时缓存,未命中静默拉取
+  // models.dev 目录:服务端缓存 1 小时 + 会话内存缓存,未命中静默拉取
   useEffect(() => {
     loadModelCatalog()
-      .then(setCatalog)
-      .catch(() => setCatalog([]));
+      .then((nextCatalog) => {
+        setCatalog(nextCatalog);
+        setCatalogStatus("ready");
+      })
+      .catch(() => {
+        setCatalog([]);
+        setCatalogStatus("error");
+      });
   }, []);
+
+  // 供应商配置:挂载时从服务端读取(app_config key="providers")
+  useEffect(() => {
+    fetch(`${MASTRA_SERVER_URL}/work/providers/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (
+          config: { providers?: ProviderConfig[]; modelSelection?: ModelSelection | null } | null,
+        ) => {
+          if (!config) return;
+          setProvidersState(config.providers ?? []);
+          setModelSelectionState(config.modelSelection ?? null);
+        },
+      )
+      .catch(() => undefined)
+      .finally(() => setProvidersLoaded(true));
+  }, []);
+
+  // 自动保存供应商清单:任何修改 800ms 无后续变化后写回服务端。
+  // 读取完成前不回写,否则初始空状态会覆盖数据库里已有的供应商与 Key。
+  // 注意只写 providers 字段 —— modelSelection 由下面的 setModelSelection 单独写,
+  // 否则「切线程采纳该线程的模型」会顺带改掉全局默认模型(见 saveProvidersConfig)。
+  useEffect(() => {
+    if (!providersLoaded) return;
+    const timer = window.setTimeout(() => {
+      void fetch(`${MASTRA_SERVER_URL}/work/providers/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providers }),
+      }).catch(() => undefined);
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [providers, providersLoaded]);
 
   const setProviders = useCallback((next: ProviderConfig[]) => {
     setProvidersState(next);
   }, []);
 
+  /**
+   * 用户显式选定模型:立即写全局默认(新线程与 Studio 直接聊天都用它),
+   * 本线程的快照由 chat 路由在下一次请求时写入 thread.metadata.modelSelection。
+   */
   const setModelSelection = useCallback((selection: ModelSelection | null) => {
     setModelSelectionState(selection);
+    void fetch(`${MASTRA_SERVER_URL}/work/providers/config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ modelSelection: selection }),
+    }).catch(() => undefined);
   }, []);
+
+  const setSearchSelection = useCallback((selection: SearchSelection | null) => {
+    setSearchSelectionState(selection);
+  }, []);
+
+  const selectThread = useCallback((id: string | null) => {
+    setLibraryOpen(false);
+    setSkillOpen(false);
+    setActiveThreadId(id);
+  }, []);
+
+  const queueLibraryFiles = useCallback((files: Array<FileUIPart & { byteSize?: number }>) => {
+    setPendingLibraryFiles((current) => {
+      const keys = new Set(current.map((file) => file.url));
+      return [...current, ...files.filter((file) => !keys.has(file.url))];
+    });
+  }, []);
+
+  const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
+
+  // 三个检索引擎的 Key 配置存服务端(app_config),菜单据此判断引擎是否可用
+  const refreshToolsConfig = useCallback(async () => {
+    try {
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/tools`);
+      if (!response.ok) throw new Error(String(response.status));
+      setToolsConfig((await response.json()) as ToolsConfig);
+    } catch {
+      setToolsConfig(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshToolsConfig();
+  }, [refreshToolsConfig]);
 
   // ---- 线程 API(全部以 resourceId = user.id 隔离) ----
 
@@ -168,61 +463,107 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setThreadsLoading(true);
     try {
       const response = await fetch(
-        `${MASTRA_SERVER_URL}/api/work/threads?resourceId=${encodeURIComponent(user.id)}`,
+        `${MASTRA_SERVER_URL}/work/threads?resourceId=${encodeURIComponent(user.id)}`,
       );
       if (!response.ok) throw new Error(String(response.status));
       const { threads: list } = (await response.json()) as { threads: WorkThread[] };
       setThreads(list);
+      const shouldResolveActiveThread = !activeThreadResolvedRef.current;
+      activeThreadResolvedRef.current = true;
+      setActiveThreadId((current) => {
+        if (current && list.some((thread) => thread.id === current)) {
+          return current;
+        }
+        if (!shouldResolveActiveThread) {
+          return current;
+        }
+        return (
+          [...list].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0]?.id ??
+          null
+        );
+      });
     } catch {
       setThreads([]);
     } finally {
       setThreadsLoading(false);
     }
-  }, [user.id]);
+  }, []);
 
   useEffect(() => {
     void refreshThreads();
   }, [refreshThreads]);
 
   const createThread = useCallback(
-    async (workspaceId: string | null, title = "New Chat") => {
-      try {
-        const response = await fetch(`${MASTRA_SERVER_URL}/api/work/threads`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            resourceId: user.id,
-            threadId: nanoid(),
-            title,
-            metadata: { workspaceId: workspaceId ?? undefined },
-          }),
-        });
-        if (!response.ok) return null;
-        const { thread } = (await response.json()) as { thread: WorkThread };
-        await refreshThreads();
-        setActiveThreadId(thread.id);
-        return thread;
-      } catch {
-        return null;
+    (title = "New Chat") => {
+      if (createThreadRequestRef.current) {
+        return createThreadRequestRef.current;
       }
+
+      const request = (async () => {
+        try {
+          // 新会话线程唯一由服务端判定:draft 且"无任何历史消息"才复用,
+          // 前端不做本地判断(无法得知线程是否有消息)。
+          const response = await fetch(`${MASTRA_SERVER_URL}/work/threads`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              resourceId: user.id,
+              threadId: nanoid(),
+              title,
+              metadata: {
+                draft: title === "New Chat",
+                // 新线程继承当前会话的模式与审批规则(官方:Session 默认 → thread settings)
+                modeId,
+                permissionRules,
+              },
+            }),
+          });
+          if (!response.ok) return null;
+          const { thread } = (await response.json()) as { thread: WorkThread };
+          await refreshThreads();
+          selectThread(thread.id);
+          return thread;
+        } catch {
+          return null;
+        }
+      })();
+
+      createThreadRequestRef.current = request;
+      void request.then(
+        () => {
+          if (createThreadRequestRef.current === request) {
+            createThreadRequestRef.current = null;
+          }
+        },
+        () => {
+          if (createThreadRequestRef.current === request) {
+            createThreadRequestRef.current = null;
+          }
+        },
+      );
+      return request;
     },
-    [user.id, refreshThreads],
+    [refreshThreads, selectThread, modeId, permissionRules],
   );
 
   const patchThread = useCallback(
     async (threadId: string, body: { title?: string; metadata?: ThreadMetadata }) => {
-      await fetch(`${MASTRA_SERVER_URL}/api/work/threads/${threadId}`, {
+      await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ resourceId: user.id, ...body }),
       });
       await refreshThreads();
     },
-    [user.id, refreshThreads],
+    [refreshThreads],
   );
 
   const renameThread = useCallback(
-    (threadId: string, title: string) => patchThread(threadId, { title }),
+    (threadId: string, title: string) =>
+      patchThread(threadId, {
+        title,
+        ...(title !== "New Chat" ? { metadata: { draft: false } } : {}),
+      }),
     [patchThread],
   );
   const pinThread = useCallback(
@@ -236,43 +577,157 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       }),
     [patchThread],
   );
-  const moveThread = useCallback(
-    (threadId: string, workspaceId: string | null) =>
-      patchThread(threadId, { metadata: { workspaceId: workspaceId ?? undefined } }),
-    [patchThread],
-  );
 
   const deleteThread = useCallback(
     async (threadId: string) => {
-      await fetch(`${MASTRA_SERVER_URL}/api/work/threads/${threadId}`, { method: "DELETE" });
-      if (activeThreadId === threadId) setActiveThreadId(null);
+      await fetch(
+        `${MASTRA_SERVER_URL}/work/threads/${threadId}?resourceId=${encodeURIComponent(user.id)}`,
+        { method: "DELETE" },
+      );
+      if (activeThreadId === threadId) selectThread(null);
       await refreshThreads();
     },
-    [activeThreadId, refreshThreads],
+    [activeThreadId, refreshThreads, selectThread],
   );
 
-  // ---- 工作区 ----
+  /**
+   * 切换会话模式。会话状态立即生效(供 UI 与新线程默认值),同时落到当前线程元数据 ——
+   * chat 路由每次请求都从 thread.metadata 读模式,所以持久化必须先于下一条消息;
+   * 返回 Promise 让调用方能在需要时等它落库。
+   */
+  const setModeId = useCallback(
+    async (next: WorkModeId) => {
+      setModeIdState(next);
+      if (activeThreadId) await patchThread(activeThreadId, { metadata: { modeId: next } });
+    },
+    [activeThreadId, patchThread],
+  );
 
-  const addWorkspace = useCallback((name: string) => {
-    setWorkspaces((prev) => [...prev, { id: `ws-${nanoid(6)}`, name }]);
+  /** 覆盖工具审批规则(审批模式菜单与审批面板的「始终允许此类」共用) */
+  const setPermissionRules = useCallback(
+    async (rules: PermissionRules) => {
+      setPermissionRulesState(rules);
+      if (activeThreadId) {
+        await patchThread(activeThreadId, { metadata: { permissionRules: rules } });
+      }
+    },
+    [activeThreadId, patchThread],
+  );
+
+  /**
+   * 强制重新采纳当前线程的会话设置。
+   *
+   * 用于服务端**单方面**改了线程设置的场合 —— 目前是 submit_plan 获批后
+   * chat 路由按 transitionsTo 切模式。此时不能靠上面的「每线程只采纳一次」守卫,
+   * 否则选择器会一直停在旧模式;清掉守卫再刷新线程即可让采纳重跑一次。
+   */
+  const refreshThreadSettings = useCallback(async () => {
+    adoptedThreadRef.current = null;
+    await refreshThreads();
+  }, [refreshThreads]);
+
+  /**
+   * 切入线程时采纳该线程自己的模式 / 审批规则 / 模型形态(官方:thread settings
+   * 覆盖 Session 当前选择)。每条线程只采纳一次 —— 否则用户改完设置后的任何一次
+   * refreshThreads 都会把状态回滚成尚未落库的旧值。
+   * 线程没有记录的字段保持当前会话选择不变。
+   */
+  useEffect(() => {
+    if (!activeThreadId) {
+      adoptedThreadRef.current = null;
+      return;
+    }
+    if (adoptedThreadRef.current === activeThreadId || !providersLoaded) return;
+    const thread = threads.find((item) => item.id === activeThreadId);
+    if (!thread) return;
+    adoptedThreadRef.current = activeThreadId;
+    const metadata = thread.metadata;
+    if (metadata.modeId !== undefined) setModeIdState(parseModeId(metadata.modeId));
+    if (metadata.permissionRules !== undefined) {
+      setPermissionRulesState(parsePermissionRules(metadata.permissionRules));
+    }
+    const snapshot = metadata.modelSelection;
+    // 供应商可能已被删掉:形态还在但模型不可用时保持当前选择,避免选择器变空
+    if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
+      setModelSelectionState({
+        providerId: snapshot.providerId,
+        modelId: snapshot.modelId,
+        modelName: snapshot.modelName,
+        reasoningEffort: snapshot.reasoningEffort as ReasoningEffort | "off",
+      });
+    }
+  }, [activeThreadId, threads, providers, providersLoaded]);
+
+  // 官方 Memory.cloneThread(POST /work/threads/:id/clone)
+  // messageLimit:仅克隆最近 N 条(options.messageLimit),用于「从此消息克隆」
+  const cloneThread = useCallback(
+    async (
+      threadId: string,
+      selection?: number | { messageLimit?: number; messageIds?: string[] },
+    ) => {
+      const options = typeof selection === "number" ? { messageLimit: selection } : selection;
+      try {
+        const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/clone`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            resourceId: user.id,
+            ...(options?.messageLimit !== undefined ? { messageLimit: options.messageLimit } : {}),
+            ...(options?.messageIds ? { messageIds: options.messageIds } : {}),
+          }),
+        });
+        if (!response.ok) return null;
+        const { thread } = (await response.json()) as { thread: WorkThread };
+        await refreshThreads();
+        selectThread(thread.id);
+        return thread;
+      } catch {
+        return null;
+      }
+    },
+    [refreshThreads, selectThread],
+  );
+
+  // 官方 Memory.recall 跨线程检索(GET /work/memory/search)
+  const searchMessages = useCallback(async (query: string) => {
+    const response = await fetch(
+      `${MASTRA_SERVER_URL}/work/memory/search?q=${encodeURIComponent(query)}&resourceId=${encodeURIComponent(user.id)}`,
+    );
+    if (!response.ok) throw new Error(String(response.status));
+    const { hits } = (await response.json()) as { hits: MessageSearchHit[] };
+    return hits;
   }, []);
-  const renameWorkspace = useCallback((id: string, name: string) => {
-    setWorkspaces((prev) => prev.map((w) => (w.id === id ? { ...w, name } : w)));
+
+  // ---- 工作区目录(每线程绑定,见 ThreadMetadata.workspacePath) ----
+
+  // 近期显式绑定目录:promptInput 选择器下拉的数据源
+  const refreshRecentWorkspaces = useCallback(async () => {
+    try {
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/workspace/recent`);
+      if (!response.ok) return;
+      const { recent } = (await response.json()) as { recent: RecentWorkspace[] };
+      setRecentWorkspaces(recent);
+    } catch {
+      // 静默失败:选择器仍可手动选目录
+    }
   }, []);
-  const deleteWorkspace = useCallback((id: string) => {
-    setWorkspaces((prev) => prev.filter((w) => w.id !== id));
+
+  useEffect(() => {
+    void refreshRecentWorkspaces();
+  }, [refreshRecentWorkspaces]);
+
+  // 线程工作区文件树(单层按需拉取;仅显式绑定线程有权限)
+  const fetchTreeEntries = useCallback(async (threadId: string, path?: string) => {
+    const query = `?resourceId=${encodeURIComponent(user.id)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
+    const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/tree${query}`);
+    if (!response.ok) return [];
+    const { entries } = (await response.json()) as { entries: TreeEntry[] };
+    return entries;
   }, []);
 
   const value = useMemo<WorkbenchValue>(
     () => ({
       user,
-      updateUser: setUser,
-      workspaces,
-      activeWorkspaceId,
-      setActiveWorkspaceId,
-      addWorkspace,
-      renameWorkspace,
-      deleteWorkspace,
       threads,
       threadsLoading,
       refreshThreads,
@@ -281,24 +736,43 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       deleteThread,
       pinThread,
       archiveThread,
-      moveThread,
+      cloneThread,
+      searchMessages,
+      recentWorkspaces,
+      refreshRecentWorkspaces,
+      fetchTreeEntries,
       activeThreadId,
-      setActiveThreadId,
+      setActiveThreadId: selectThread,
+      pendingJump,
+      setPendingJump,
       providers,
       setProviders,
       catalog,
+      catalogStatus,
       modelSelection,
       setModelSelection,
+      modeId,
+      setModeId,
+      permissionRules,
+      setPermissionRules,
+      refreshThreadSettings,
+      searchSelection,
+      setSearchSelection,
+      toolsConfig,
+      refreshToolsConfig,
       settingsOpen,
       setSettingsOpen,
+      agentBusy,
+      setAgentBusy,
+      libraryOpen,
+      setLibraryOpen,
+      skillOpen,
+      setSkillOpen,
+      pendingLibraryFiles,
+      queueLibraryFiles,
+      clearPendingLibraryFiles,
     }),
     [
-      user,
-      workspaces,
-      activeWorkspaceId,
-      addWorkspace,
-      renameWorkspace,
-      deleteWorkspace,
       threads,
       threadsLoading,
       refreshThreads,
@@ -307,14 +781,36 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       deleteThread,
       pinThread,
       archiveThread,
-      moveThread,
+      cloneThread,
+      searchMessages,
+      recentWorkspaces,
+      refreshRecentWorkspaces,
+      fetchTreeEntries,
       activeThreadId,
+      selectThread,
+      pendingJump,
       providers,
       setProviders,
       catalog,
+      catalogStatus,
       modelSelection,
       setModelSelection,
+      modeId,
+      setModeId,
+      permissionRules,
+      setPermissionRules,
+      refreshThreadSettings,
+      searchSelection,
+      setSearchSelection,
+      toolsConfig,
+      refreshToolsConfig,
       settingsOpen,
+      agentBusy,
+      libraryOpen,
+      skillOpen,
+      pendingLibraryFiles,
+      queueLibraryFiles,
+      clearPendingLibraryFiles,
     ],
   );
 

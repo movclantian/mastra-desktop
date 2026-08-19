@@ -4,6 +4,8 @@ import { contextBridge, ipcRenderer } from "electron";
 // Custom APIs for renderer
 const api = {
   openDirectory: (directory: string) => ipcRenderer.invoke("open-directory", directory),
+  pickDirectory: () => ipcRenderer.invoke("pick-directory"),
+  migrateStorage: (directory: string) => ipcRenderer.invoke("migrate-storage", directory),
   resetAppData: () => ipcRenderer.invoke("reset-app-data"),
 };
 

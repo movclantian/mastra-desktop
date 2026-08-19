@@ -63,25 +63,6 @@ import { cn } from "@/lib/utils";
 // Helpers
 // ============================================================================
 
-const convertBlobUrlToDataUrl = async (url: string): Promise<string | null> => {
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    // FileReader uses callback-based API, wrapping in Promise is necessary
-    // oxlint-disable-next-line eslint-plugin-promise(avoid-new)
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      // oxlint-disable-next-line eslint-plugin-unicorn(prefer-add-event-listener)
-      reader.onloadend = () => resolve(reader.result as string);
-      // oxlint-disable-next-line eslint-plugin-unicorn(prefer-add-event-listener)
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(blob);
-    });
-  } catch {
-    return null;
-  }
-};
-
 const captureScreenshot = async (): Promise<File | null> => {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
     return null;
@@ -160,9 +141,24 @@ const captureScreenshot = async (): Promise<File | null> => {
 // Provider Context & Types
 // ============================================================================
 
+type PromptAttachment = FileUIPart & {
+  id: string;
+  byteSize?: number;
+  fingerprint?: string;
+  file?: File;
+};
+
+function attachmentKey(file: PromptAttachment | FileUIPart): string {
+  if ("fingerprint" in file && typeof file.fingerprint === "string" && file.fingerprint) {
+    return `file:${file.fingerprint}`;
+  }
+  return `url:${file.url}`;
+}
+
 export interface AttachmentsContext {
-  files: (FileUIPart & { id: string })[];
+  files: PromptAttachment[];
   add: (files: File[] | FileList) => void;
+  restore: (files: FileUIPart[]) => void;
   remove: (id: string) => void;
   clear: () => void;
   openFileDialog: () => void;
@@ -212,7 +208,48 @@ const useOptionalProviderAttachments = () => useContext(ProviderAttachmentsConte
 
 export type PromptInputProviderProps = PropsWithChildren<{
   initialInput?: string;
+  persistenceKey?: string;
 }>;
+
+interface PersistedPromptAttachment {
+  filename?: string;
+  mediaType?: string;
+  byteSize?: number;
+  fingerprint?: string;
+  file?: File;
+  url?: string;
+}
+
+interface PersistedPromptDraft {
+  text: string;
+  attachments: PersistedPromptAttachment[];
+}
+
+const PROMPT_DRAFT_DB = "mastra-work-prompt-drafts";
+const PROMPT_DRAFT_STORE = "drafts";
+
+function withPromptDraftStore<T>(
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(PROMPT_DRAFT_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(PROMPT_DRAFT_STORE)) {
+        request.result.createObjectStore(PROMPT_DRAFT_STORE);
+      }
+    };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(PROMPT_DRAFT_STORE, mode);
+      const operation = run(transaction.objectStore(PROMPT_DRAFT_STORE));
+      operation.onerror = () => reject(operation.error);
+      operation.onsuccess = () => resolve(operation.result);
+      transaction.oncomplete = () => database.close();
+    };
+  });
+}
 
 /**
  * Optional global provider that lifts PromptInput state outside of PromptInput.
@@ -220,6 +257,7 @@ export type PromptInputProviderProps = PropsWithChildren<{
  */
 export const PromptInputProvider = ({
   initialInput: initialTextInput = "",
+  persistenceKey,
   children,
 }: PromptInputProviderProps) => {
   // ----- textInput state
@@ -227,10 +265,95 @@ export const PromptInputProvider = ({
   const clearInput = useCallback(() => setTextInput(""), []);
 
   // ----- attachments state (global when wrapped)
-  const [attachmentFiles, setAttachmentFiles] = useState<(FileUIPart & { id: string })[]>([]);
+  const [attachmentFiles, setAttachmentFiles] = useState<PromptAttachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // oxlint-disable-next-line eslint(no-empty-function)
   const openRef = useRef<() => void>(() => {});
+  const loadedPersistenceKeyRef = useRef<string | undefined>(undefined);
+  const previousPersistenceKeyRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    const previousKey = previousPersistenceKeyRef.current;
+    previousPersistenceKeyRef.current = persistenceKey;
+    if (previousKey?.endsWith(":new") && previousKey !== persistenceKey) {
+      void withPromptDraftStore("readwrite", (store) => store.delete(previousKey)).catch(
+        () => undefined,
+      );
+    }
+    loadedPersistenceKeyRef.current = undefined;
+    setTextInput(initialTextInput);
+    setAttachmentFiles((current) => {
+      for (const file of current) if (file.url.startsWith("blob:")) URL.revokeObjectURL(file.url);
+      return [];
+    });
+    if (!persistenceKey || typeof indexedDB === "undefined") {
+      loadedPersistenceKeyRef.current = persistenceKey;
+      return;
+    }
+    void withPromptDraftStore<PersistedPromptDraft | undefined>("readonly", (store) =>
+      store.get(persistenceKey),
+    )
+      .then((draft) => {
+        if (cancelled || !draft) return;
+        setTextInput(draft.text || "");
+        setAttachmentFiles(
+          draft.attachments.flatMap((file) => {
+            const url = file.file ? URL.createObjectURL(file.file) : file.url;
+            return url
+              ? [
+                  {
+                    ...file,
+                    id: nanoid(),
+                    type: "file" as const,
+                    url,
+                    // FileUIPart 要求 mediaType 必填;旧草稿缺省时按二进制流兜底
+                    mediaType: file.mediaType ?? "application/octet-stream",
+                  },
+                ]
+              : [];
+          }),
+        );
+      })
+      .finally(() => {
+        if (!cancelled) loadedPersistenceKeyRef.current = persistenceKey;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialTextInput, persistenceKey]);
+
+  useEffect(() => {
+    if (
+      !persistenceKey ||
+      typeof indexedDB === "undefined" ||
+      loadedPersistenceKeyRef.current !== persistenceKey
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      const draft: PersistedPromptDraft = {
+        text: textInput,
+        attachments: attachmentFiles.map((file) => ({
+          filename: file.filename,
+          mediaType: file.mediaType,
+          byteSize: file.byteSize,
+          fingerprint: file.fingerprint,
+          file: file.file,
+          ...(!file.url.startsWith("blob:") ? { url: file.url } : {}),
+        })),
+      };
+      const empty = !draft.text && draft.attachments.length === 0;
+      void withPromptDraftStore<undefined>("readwrite", (store) =>
+        // delete/put 的 IDBRequest 泛型不同且 this 类型不变,联合推断不出单一 T;
+        // 结果仅用于判断成败,统一按 undefined 断言
+        empty
+          ? store.delete(persistenceKey)
+          : (store.put(draft, persistenceKey) as unknown as IDBRequest<undefined>),
+      ).catch(() => undefined);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [attachmentFiles, persistenceKey, textInput]);
 
   const add = useCallback((files: File[] | FileList) => {
     const incoming = [...files];
@@ -238,22 +361,47 @@ export const PromptInputProvider = ({
       return;
     }
 
-    setAttachmentFiles((prev) => [
-      ...prev,
-      ...incoming.map((file) => ({
-        filename: file.name,
-        id: nanoid(),
-        mediaType: file.type,
-        type: "file" as const,
-        url: URL.createObjectURL(file),
-      })),
-    ]);
+    setAttachmentFiles((prev) => {
+      const keys = new Set(prev.map(attachmentKey));
+      const next: PromptAttachment[] = [];
+      for (const file of incoming) {
+        const fingerprint = `${file.name}:${file.size}:${file.lastModified}`;
+        const key = `file:${fingerprint}`;
+        if (keys.has(key)) continue;
+        keys.add(key);
+        next.push({
+          filename: file.name,
+          byteSize: file.size,
+          fingerprint,
+          file,
+          id: nanoid(),
+          mediaType: file.type,
+          type: "file" as const,
+          url: URL.createObjectURL(file),
+        });
+      }
+      return [...prev, ...next];
+    });
+  }, []);
+
+  const restore = useCallback((files: FileUIPart[]) => {
+    if (files.length === 0) return;
+    setAttachmentFiles((prev) => {
+      const keys = new Set(prev.map(attachmentKey));
+      const next = files.flatMap((file) => {
+        const key = attachmentKey(file);
+        if (keys.has(key)) return [];
+        keys.add(key);
+        return [{ ...file, id: nanoid() }];
+      });
+      return [...prev, ...next];
+    });
   }, []);
 
   const remove = useCallback((id: string) => {
     setAttachmentFiles((prev) => {
       const found = prev.find((f) => f.id === id);
-      if (found?.url) {
+      if (found?.url.startsWith("blob:")) {
         URL.revokeObjectURL(found.url);
       }
       return prev.filter((f) => f.id !== id);
@@ -263,7 +411,7 @@ export const PromptInputProvider = ({
   const clear = useCallback(() => {
     setAttachmentFiles((prev) => {
       for (const f of prev) {
-        if (f.url) {
+        if (f.url.startsWith("blob:")) {
           URL.revokeObjectURL(f.url);
         }
       }
@@ -282,7 +430,7 @@ export const PromptInputProvider = ({
   useEffect(
     () => () => {
       for (const f of attachmentsRef.current) {
-        if (f.url) {
+        if (f.url.startsWith("blob:")) {
           URL.revokeObjectURL(f.url);
         }
       }
@@ -302,8 +450,9 @@ export const PromptInputProvider = ({
       files: attachmentFiles,
       openFileDialog,
       remove,
+      restore,
     }),
-    [attachmentFiles, add, remove, clear, openFileDialog],
+    [attachmentFiles, add, remove, restore, clear, openFileDialog],
   );
 
   const __registerFileInput = useCallback(
@@ -449,7 +598,14 @@ export const PromptInputActionAddScreenshot = ({
 
 export interface PromptInputMessage {
   text: string;
-  files: FileUIPart[];
+  files: Array<FileUIPart & { byteSize?: number; file?: File }>;
+}
+
+export interface PromptInputFileDescriptor {
+  name: string;
+  size: number;
+  type: string;
+  lastModified: number;
 }
 
 export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit" | "onError"> & {
@@ -464,7 +620,13 @@ export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit" 
   maxFiles?: number;
   // bytes
   maxFileSize?: number;
-  onError?: (err: { code: "max_files" | "max_file_size" | "accept"; message: string }) => void;
+  maxTotalFileSize?: number;
+  maxTotalFileTokens?: number;
+  estimateFileTokens?: (file: PromptInputFileDescriptor) => number;
+  onError?: (err: {
+    code: "max_files" | "max_file_size" | "max_total_file_size" | "accept" | "duplicate";
+    message: string;
+  }) => void;
   onSubmit: (
     message: PromptInputMessage,
     event: FormEvent<HTMLFormElement>,
@@ -479,6 +641,9 @@ export const PromptInput = ({
   syncHiddenInput,
   maxFiles,
   maxFileSize,
+  maxTotalFileSize,
+  maxTotalFileTokens,
+  estimateFileTokens,
   onError,
   onSubmit,
   children,
@@ -493,7 +658,7 @@ export const PromptInput = ({
   const formRef = useRef<HTMLFormElement | null>(null);
 
   // ----- Local attachments (only used when no provider)
-  const [items, setItems] = useState<(FileUIPart & { id: string })[]>([]);
+  const [items, setItems] = useState<PromptAttachment[]>([]);
   const files = usingProvider ? controller.attachments.files : items;
 
   // ----- Local referenced sources (always local to PromptInput)
@@ -529,6 +694,9 @@ export const PromptInput = ({
           const prefix = pattern.slice(0, -1);
           return f.type.startsWith(prefix);
         }
+        if (pattern.startsWith(".")) {
+          return f.name.toLowerCase().endsWith(pattern.toLowerCase());
+        }
         return f.type === pattern;
       });
     },
@@ -542,7 +710,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "No files match the accepted types.",
+          message: "当前模型或应用不支持这些文件类型",
         });
         return;
       }
@@ -551,25 +719,71 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "All files exceed the maximum size.",
+          message: "所选文件均超过单文件大小限制",
         });
         return;
       }
 
       setItems((prev) => {
+        const fingerprints = new Set(
+          prev.map((file) => file.fingerprint).filter((value): value is string => Boolean(value)),
+        );
+        let totalBytes = prev.reduce((sum, file) => sum + (file.byteSize ?? 0), 0);
+        let totalTokens = prev.reduce(
+          (sum, file) =>
+            sum +
+            (estimateFileTokens?.({
+              name: file.filename ?? "未命名附件",
+              size: file.byteSize ?? 0,
+              type: file.mediaType ?? "",
+              lastModified: file.file?.lastModified ?? 0,
+            }) ?? 0),
+          0,
+        );
+        const unique = sized.filter((file) => {
+          const fingerprint = `${file.name}:${file.size}:${file.lastModified}`;
+          if (fingerprints.has(fingerprint)) return false;
+          fingerprints.add(fingerprint);
+          return true;
+        });
+        if (unique.length < sized.length) {
+          onError?.({ code: "duplicate", message: "已忽略重复附件" });
+        }
+        const withinTotal = unique.filter((file) => {
+          if (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize)
+            return false;
+          const fileTokens =
+            estimateFileTokens?.({
+              name: file.name,
+              size: file.size,
+              type: file.type,
+              lastModified: file.lastModified,
+            }) ?? 0;
+          if (maxTotalFileTokens !== undefined && totalTokens + fileTokens > maxTotalFileTokens)
+            return false;
+          totalBytes += file.size;
+          totalTokens += fileTokens;
+          return true;
+        });
+        if (withinTotal.length < unique.length) {
+          onError?.({ code: "max_total_file_size", message: "附件总大小超过上传限制或上下文预算" });
+        }
         const capacity =
           typeof maxFiles === "number" ? Math.max(0, maxFiles - prev.length) : undefined;
-        const capped = typeof capacity === "number" ? sized.slice(0, capacity) : sized;
-        if (typeof capacity === "number" && sized.length > capacity) {
+        const capped = typeof capacity === "number" ? withinTotal.slice(0, capacity) : withinTotal;
+        if (typeof capacity === "number" && withinTotal.length > capacity) {
           onError?.({
             code: "max_files",
-            message: "Too many files. Some were not added.",
+            message: "附件数量超过限制，部分文件未添加",
           });
         }
-        const next: (FileUIPart & { id: string })[] = [];
+        const next: PromptAttachment[] = [];
         for (const file of capped) {
           next.push({
             filename: file.name,
+            byteSize: file.size,
+            fingerprint: `${file.name}:${file.size}:${file.lastModified}`,
+            file,
             id: nanoid(),
             mediaType: file.type,
             type: "file",
@@ -579,7 +793,15 @@ export const PromptInput = ({
         return [...prev, ...next];
       });
     },
-    [matchesAccept, maxFiles, maxFileSize, onError],
+    [
+      estimateFileTokens,
+      matchesAccept,
+      maxFiles,
+      maxFileSize,
+      maxTotalFileSize,
+      maxTotalFileTokens,
+      onError,
+    ],
   );
 
   const removeLocal = useCallback(
@@ -594,6 +816,11 @@ export const PromptInput = ({
     [],
   );
 
+  const restoreLocal = useCallback((incoming: FileUIPart[]) => {
+    if (incoming.length === 0) return;
+    setItems((prev) => [...prev, ...incoming.map((file) => ({ ...file, id: nanoid() }))]);
+  }, []);
+
   // Wrapper that validates files before calling provider's add
   const addWithProviderValidation = useCallback(
     (fileList: File[] | FileList) => {
@@ -602,7 +829,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "No files match the accepted types.",
+          message: "当前模型或应用不支持这些文件类型",
         });
         return;
       }
@@ -611,19 +838,71 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "All files exceed the maximum size.",
+          message: "所选文件均超过单文件大小限制",
         });
         return;
+      }
+
+      const existingFingerprints = new Set(
+        files.map((file) =>
+          "fingerprint" in file && typeof file.fingerprint === "string"
+            ? file.fingerprint
+            : `${file.filename ?? ""}:${"byteSize" in file ? String(file.byteSize) : ""}`,
+        ),
+      );
+      const unique = sized.filter(
+        (file) => !existingFingerprints.has(`${file.name}:${file.size}:${file.lastModified}`),
+      );
+      if (unique.length < sized.length) {
+        onError?.({ code: "duplicate", message: "已忽略重复附件" });
+      }
+      let totalBytes = files.reduce(
+        (sum, file) =>
+          sum + ("byteSize" in file && typeof file.byteSize === "number" ? file.byteSize : 0),
+        0,
+      );
+      let totalTokens = files.reduce(
+        (sum, file) =>
+          sum +
+          (estimateFileTokens?.({
+            name: file.filename ?? "未命名附件",
+            size: "byteSize" in file && typeof file.byteSize === "number" ? file.byteSize : 0,
+            type: file.mediaType ?? "",
+            lastModified: "file" in file && file.file instanceof File ? file.file.lastModified : 0,
+          }) ?? 0),
+        0,
+      );
+      const withinTotal = unique.filter((file) => {
+        if (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize)
+          return false;
+        const fileTokens =
+          estimateFileTokens?.({
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified,
+          }) ?? 0;
+        if (maxTotalFileTokens !== undefined && totalTokens + fileTokens > maxTotalFileTokens)
+          return false;
+        totalBytes += file.size;
+        totalTokens += fileTokens;
+        return true;
+      });
+      if (withinTotal.length < unique.length) {
+        onError?.({
+          code: "max_total_file_size",
+          message: "附件总大小超过当前模型的可用上下文预算",
+        });
       }
 
       const currentCount = files.length;
       const capacity =
         typeof maxFiles === "number" ? Math.max(0, maxFiles - currentCount) : undefined;
-      const capped = typeof capacity === "number" ? sized.slice(0, capacity) : sized;
-      if (typeof capacity === "number" && sized.length > capacity) {
+      const capped = typeof capacity === "number" ? withinTotal.slice(0, capacity) : withinTotal;
+      if (typeof capacity === "number" && withinTotal.length > capacity) {
         onError?.({
           code: "max_files",
-          message: "Too many files. Some were not added.",
+          message: "附件数量超过限制，部分文件未添加",
         });
       }
 
@@ -631,7 +910,17 @@ export const PromptInput = ({
         controller?.attachments.add(capped);
       }
     },
-    [matchesAccept, maxFileSize, maxFiles, onError, files.length, controller],
+    [
+      controller,
+      estimateFileTokens,
+      files,
+      matchesAccept,
+      maxFileSize,
+      maxFiles,
+      maxTotalFileSize,
+      maxTotalFileTokens,
+      onError,
+    ],
   );
 
   const clearAttachments = useCallback(
@@ -652,6 +941,7 @@ export const PromptInput = ({
   const clearReferencedSources = useCallback(() => setReferencedSources([]), []);
 
   const add = usingProvider ? addWithProviderValidation : addLocal;
+  const restore = usingProvider ? controller.attachments.restore : restoreLocal;
   const remove = usingProvider ? controller.attachments.remove : removeLocal;
   const openFileDialog = usingProvider
     ? controller.attachments.openFileDialog
@@ -768,8 +1058,9 @@ export const PromptInput = ({
       files: files.map((item) => ({ ...item, id: item.id })),
       openFileDialog,
       remove,
+      restore,
     }),
-    [files, add, remove, clearAttachments, openFileDialog],
+    [files, add, remove, restore, clearAttachments, openFileDialog],
   );
 
   const refsCtx = useMemo<ReferencedSourcesContext>(
@@ -806,20 +1097,7 @@ export const PromptInput = ({
       }
 
       try {
-        // Convert blob URLs to data URLs asynchronously
-        const convertedFiles: FileUIPart[] = await Promise.all(
-          files.map(async ({ id: _id, ...item }) => {
-            if (item.url?.startsWith("blob:")) {
-              const dataUrl = await convertBlobUrlToDataUrl(item.url);
-              // If conversion failed, keep the original blob URL
-              return {
-                ...item,
-                url: dataUrl ?? item.url,
-              };
-            }
-            return item;
-          }),
-        );
+        const convertedFiles = files.map(({ id: _id, fingerprint: _fingerprint, ...item }) => item);
 
         const result = onSubmit({ files: convertedFiles, text }, event);
 

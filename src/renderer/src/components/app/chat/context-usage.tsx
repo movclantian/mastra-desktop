@@ -1,0 +1,181 @@
+import type { LanguageModelUsage } from "ai";
+import { InfoIcon, SparklesIcon } from "lucide-react";
+import {
+  Context,
+  ContextCacheUsage,
+  ContextContent,
+  ContextContentBody,
+  ContextContentFooter,
+  ContextContentHeader,
+  ContextInputUsage,
+  ContextOutputUsage,
+  ContextReasoningUsage,
+  ContextTrigger,
+} from "@/components/ai-elements/context";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatModelContextWindow, getModelContextWindow } from "@/lib/providers";
+import { useWorkbench } from "@/lib/workbench";
+import type { CompressResult } from "./types";
+
+// ---------------------------------------------------------------------------
+// 上下文用量(docs/aielements/context.tsx):展示当前会话 token 消耗,
+// 位于模型选择器左侧;usage 取自最后一条助手消息的 metadata。
+// ---------------------------------------------------------------------------
+
+export function ContextUnavailable({
+  catalogStatus,
+}: {
+  catalogStatus: "loading" | "ready" | "error";
+}) {
+  const message =
+    catalogStatus === "loading"
+      ? "正在读取模型目录,暂时无法确认上下文窗口"
+      : catalogStatus === "error"
+        ? "模型目录读取失败,暂时无法确认上下文窗口"
+        : "模型目录已加载,但没有匹配当前模型的上下文窗口";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="上下文窗口未知"
+            className="text-muted-foreground"
+          />
+        }
+      >
+        <InfoIcon />
+      </TooltipTrigger>
+      <TooltipContent>{message}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function ChatContextUsage({
+  usage,
+  estimatedUsedTokens,
+  compacting,
+  onCompress,
+  compressResult,
+  onCompressResultClose,
+}: {
+  usage: LanguageModelUsage | undefined;
+  estimatedUsedTokens?: number;
+  compacting: boolean;
+  onCompress: () => void;
+  compressResult: CompressResult | null;
+  onCompressResultClose: () => void;
+}) {
+  const { providers, catalog, catalogStatus, modelSelection, activeThreadId } = useWorkbench();
+  const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
+  if (!selectedProvider || !modelSelection) {
+    return null;
+  }
+
+  const usedTokens =
+    usage?.inputTokens && usage.inputTokens > 0
+      ? usage.inputTokens
+      : Math.max(
+          estimatedUsedTokens ?? 0,
+          usage?.totalTokens ?? (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
+        );
+  const maxTokens = getModelContextWindow(selectedProvider, modelSelection.modelId, catalog);
+  if (!maxTokens) {
+    return <ContextUnavailable catalogStatus={catalogStatus} />;
+  }
+  return (
+    <>
+      <Context
+        usedTokens={usedTokens}
+        maxTokens={maxTokens}
+        usage={usage}
+        modelId={
+          selectedProvider.registryId
+            ? `${selectedProvider.registryId}:${modelSelection.modelId}`
+            : undefined
+        }
+      >
+        <ContextTrigger />
+        <ContextContent>
+          <ContextContentHeader />
+          <ContextContentBody>
+            <ContextInputUsage />
+            <ContextOutputUsage />
+            <ContextReasoningUsage />
+            <ContextCacheUsage />
+            {/* 手动压缩上下文(summarizeConversation.mdx / summarizeThread.mdx)。
+                进行中/完成状态由消息流尾部 Marker 展示(marker-status / marker-shimmer)。 */}
+            {activeThreadId ? (
+              <Button
+                className="mt-2 w-full"
+                disabled={compacting}
+                onClick={onCompress}
+                size="sm"
+                variant="outline"
+              >
+                {compacting ? <Spinner className="size-4" /> : <SparklesIcon />}
+                {compacting ? "正在压缩..." : "压缩上下文"}
+              </Button>
+            ) : null}
+          </ContextContentBody>
+          <ContextContentFooter />
+        </ContextContent>
+      </Context>
+
+      {/* 压缩结果弹窗 */}
+      <Dialog
+        onOpenChange={(open) => !open && onCompressResultClose()}
+        open={compressResult !== null}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>上下文已压缩</DialogTitle>
+            <DialogDescription>
+              早期消息已折叠为摘要并注入线程头部;此后模型只接收「摘要 + 近期消息」,
+              真正降低上下文窗口占用。
+            </DialogDescription>
+          </DialogHeader>
+
+          {compressResult?.summary ? (
+            <ScrollArea className="max-h-72 rounded-md border p-3">
+              <p className="text-sm whitespace-pre-wrap">{compressResult.summary}</p>
+            </ScrollArea>
+          ) : null}
+
+          {compressResult?.extracted && Object.keys(compressResult.extracted).length > 0 ? (
+            <ScrollArea className="max-h-40 rounded-md border p-3">
+              <p className="mb-1 text-xs font-medium text-muted-foreground">本次压缩抽取结果</p>
+              <pre className="text-xs whitespace-pre-wrap">
+                {JSON.stringify(compressResult.extracted, null, 2)}
+              </pre>
+            </ScrollArea>
+          ) : null}
+
+          {/* marker-demo 图标 + shimmer 变体:压缩前后上下文对比 */}
+          <Marker role="status">
+            <MarkerIcon>
+              <SparklesIcon />
+            </MarkerIcon>
+            <MarkerContent className="shimmer">
+              折叠 {compressResult?.deletedMessages ?? 0} 条消息 · 上下文约{" "}
+              {formatModelContextWindow(compressResult?.inputTokens ?? 0)} →{" "}
+              {formatModelContextWindow(compressResult?.estimatedContextTokens ?? 0)} tokens
+            </MarkerContent>
+          </Marker>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
