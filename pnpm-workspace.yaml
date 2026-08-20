@@ -1,5 +1,10 @@
 # pnpm 11 配置
 dangerouslyAllowAllBuilds: true
+# onnxruntime-node(@mastra/fastembed 的原生依赖)有构建脚本:部署时 deployer 复制本
+# workspace 配置只认白名单键(不含 dangerouslyAllowAllBuilds),必须显式 allowBuilds
+# 才能让 .mastra/output 里的 pnpm install 放行其构建(否则 ERR_PNPM_IGNORED_BUILDS)
+allowBuilds:
+  onnxruntime-node: true
 # 关闭供应链最小发布年龄保护（默认 1440s=1天）：刚发布的包立即可用
 minimumReleaseAge: 0
 shamefullyHoist: true
@@ -7,6 +12,12 @@ shamefullyHoist: true
 # 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
 overrides:
   shiki: ^4.4.3
+  # app-builder-lib@26.15.3 发布时 package.json 漏改了依赖范围(仍是 ^3.0.0),
+  # 但代码已按 @electron/get v5 写(用 v5 才有的 ElectronDownloadCacheMode);
+  # pnpm 严格按 ^3 解析到 3.0.0(无该枚举)导致打包时
+  # "Cannot read properties of undefined (reading 'ReadWrite')"。
+  # 与上游 main 分支对齐,强制到 5.1.0(electron@43 本身就要 ^5)。
+  'app-builder-lib>@electron/get': 5.1.0
 # 忽略 typescript-paths 的 peer 警告：它声明只支持 TS ^4||^5||^6，但 TS 7 API 向后兼容，运行时正常
 peerDependencyRules:
   ignoreMissing: []

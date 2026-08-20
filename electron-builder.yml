@@ -3,6 +3,9 @@ productName: mastra-desktop
 directories:
   buildResources: build
 files:
+  # 注意:自定义 files 会替换 electron-builder 的默认全量包含,
+  # 必须显式带上应用自身的构建产物 out/(main/preload/renderer)
+  - 'out/**'
   - '.mastra/output/**'
   - '!**/.vscode/*'
   - '!src/*'

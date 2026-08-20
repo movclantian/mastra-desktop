@@ -239,12 +239,19 @@ export const threadMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
       return c.json({ error: "Thread not found" }, 404);
     }
     const { messages } = await memory.recall({ threadId, resourceId, perPage: false });
+    // TaskSignalProvider stores task snapshots as role="signal" rows in the
+    // same memory table. They are consumed by /tasks, not chat history, and
+    // are not valid AI SDK messages. Keep them out of both conversion and the
+    // filename index so they cannot become standalone bubbles or shift parts.
+    const chatMessages = (messages ?? []).filter(
+      (message) => message.role === "user" || message.role === "assistant",
+    );
     // 消息格式和 reasoning/tool/approval 状态全部由 Mastra 官方 v7 converter
     // 负责。这里不保留任何旧数据修复或兼容路径。
     const ui_messages = appendLibrarySourceParts(
       restoreFileFilenames(
-        toAISdkMessages(messages ?? [], { version: "v7" }),
-        (messages ?? []) as Array<{ id?: string; role: string; content?: unknown }>,
+        toAISdkMessages(chatMessages, { version: "v7" }),
+        chatMessages as Array<{ id?: string; role: string; content?: unknown }>,
       ),
     );
     const branches = readMessageBranches((thread.metadata ?? {}) as ThreadMetadata);

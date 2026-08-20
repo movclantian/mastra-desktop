@@ -159,7 +159,12 @@ async function recalledMessages(memory: Memory, threadId: string, resourceId?: s
     ...(resourceId ? { resourceId } : {}),
     perPage: false,
   });
-  return toAISdkMessages(messages ?? [], { version: "v7" }) as UIMessage[];
+  // Signal rows are task snapshots, not chat messages. They are intentionally
+  // excluded from branch indexing so step progress never shifts a branch tail.
+  const chatMessages = (messages ?? []).filter(
+    (message) => message.role === "user" || message.role === "assistant",
+  );
+  return toAISdkMessages(chatMessages, { version: "v7" }) as UIMessage[];
 }
 
 /**

@@ -58,6 +58,72 @@ import { ChatWorkspaceSelector } from "./workspace-selector";
 // 会话面板
 // ---------------------------------------------------------------------------
 
+interface DisplayMessage {
+  message: WorkUIMessage;
+  sourceIds: string[];
+  sourceEndIndex: number;
+}
+
+/**
+ * Mastra seals each response-boundary (reasoning/tool loop) as a separate
+ * assistant memory row. That boundary is important to the model, but it is
+ * not a conversation turn for the user. Keep all parts in order while making
+ * consecutive assistant rows one visual message. Branch rows stay separate so
+ * their selectors and pair metadata remain addressable by id.
+ */
+function buildDisplayMessages(
+  messages: WorkUIMessage[],
+  branchesByMessageId: Map<string, MessageBranchRecord>,
+): DisplayMessage[] {
+  const display: DisplayMessage[] = [];
+
+  for (const [index, message] of messages.entries()) {
+    const hasBranch = branchesByMessageId.has(message.id);
+    const previous = display.at(-1);
+    const previousMessage = previous?.message;
+    const previousHasBranch = previous
+      ? previous.sourceIds.some((id) => branchesByMessageId.has(id))
+      : false;
+    const compacted = Boolean(
+      (message.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
+    );
+    const previousCompacted = Boolean(
+      (previousMessage?.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
+    );
+
+    if (
+      message.role === "assistant" &&
+      previousMessage?.role === "assistant" &&
+      previous !== undefined &&
+      !hasBranch &&
+      !previousHasBranch &&
+      !compacted &&
+      !previousCompacted
+    ) {
+      previous.message = {
+        ...previousMessage,
+        id: message.id,
+        parts: [...previousMessage.parts, ...message.parts],
+        metadata: {
+          ...previousMessage.metadata,
+          ...message.metadata,
+        },
+      };
+      previous.sourceIds.push(message.id);
+      previous.sourceEndIndex = index;
+      continue;
+    }
+
+    display.push({
+      message,
+      sourceIds: [message.id],
+      sourceEndIndex: index,
+    });
+  }
+
+  return display;
+}
+
 export function ChatPanel() {
   const {
     user,
@@ -707,6 +773,10 @@ export function ChatPanel() {
       ),
     [messages, persistedInteractions, resolvedInteractionKeys],
   );
+  const displayMessages = React.useMemo(
+    () => buildDisplayMessages(messages, messageBranchByMessageId),
+    [messageBranchByMessageId, messages],
+  );
 
   const handleResumeInteraction = React.useCallback(
     async (interaction: AgentInteraction, resumeData: unknown) => {
@@ -1174,12 +1244,12 @@ export function ChatPanel() {
                   aria-busy={isBusy}
                   className="mx-auto w-full max-w-3xl px-4 py-6"
                 >
-                  {messages.map((message, index) => (
+                  {displayMessages.map(({ message, sourceIds, sourceEndIndex }) => (
                     <MessageItem
-                      key={`${message.id}:${messageBranchByMessageId.get(message.id)?.currentVersionId ?? "current"}`}
+                      key={`${sourceIds.join(":")}:${messageBranchByMessageId.get(message.id)?.currentVersionId ?? "current"}`}
                       message={message}
-                      messageIndex={index}
-                      isStreaming={streamingMessageId === message.id}
+                      messageIndex={sourceEndIndex}
+                      isStreaming={sourceIds.includes(streamingMessageId ?? "")}
                       branch={messageBranchByMessageId.get(message.id)}
                       parentUserVersionId={parentUserVersionIdByMessageId.get(message.id)}
                       onBranchChange={handleBranchChange}

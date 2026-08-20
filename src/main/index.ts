@@ -414,6 +414,17 @@ function defaultMastraDataDir(): string {
   }
 }
 
+/** DuckDB observability 数据目录,与会话数据库分离且不属于 Mastra public 输出。 */
+function defaultMastraObservabilityDir(): string {
+  try {
+    return is.dev
+      ? join(getProjectRoot(), ".mastra", "observability")
+      : join(process.resourcesPath, ".mastra", "observability");
+  } catch {
+    return "";
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 900,
@@ -491,7 +502,7 @@ function bootstrap(): void {
     });
 
     // 存储位置迁移:数据库文件句柄活跃时只有杀掉进程才能释放 ——
-    // 优雅停(含 memory 落盘 + 强杀兜底)→ 搬迁数据库文件(mastra.db*/mastra.duckdb*)
+    // 优雅停(含 memory 落盘 + 强杀兜底)→ 搬迁 LibSQL 数据库文件(mastra.db*)
     // → 写 storage-location.json → 重新拉起并等健康检查。任一步失败则保留旧配置、
     // 按旧位置重启服务并向上抛错。storage-location.json 的落点与服务端
     // storage/index.ts 的 STORAGE_CONFIG_FILE 保持一致(dev 项目根 / 打包 resources)。
@@ -517,7 +528,7 @@ function bootstrap(): void {
           const entries = await readdir(oldDir).catch(() => [] as string[]);
           await mkdir(targetDir, { recursive: true });
           for (const name of entries) {
-            if (!/^mastra\.(db|duckdb)/.test(name)) continue;
+            if (!/^mastra\.db/.test(name)) continue;
             await copyFile(join(oldDir, name), join(targetDir, name));
             await rm(join(oldDir, name), { force: true }).catch(() => undefined);
           }
@@ -554,7 +565,11 @@ function bootstrap(): void {
         /* 服务未就绪时退回默认目录推算 */
       }
       await stopMastra();
-      const dirsToClean = [app.getPath("userData"), dataDir || defaultMastraDataDir()];
+      const dirsToClean = [
+        app.getPath("userData"),
+        dataDir || defaultMastraDataDir(),
+        defaultMastraObservabilityDir(),
+      ];
       for (const dir of dirsToClean) {
         if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }

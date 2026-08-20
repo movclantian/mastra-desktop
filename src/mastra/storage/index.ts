@@ -32,6 +32,10 @@ export const PROJECT_ROOT = findProjectRoot();
  * 相对路径会抛 SQLITE_CANTOPEN(错误码 14)。
  */
 const STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
+// DuckDB keeps a write-ahead log open while Mastra is running. Keep it outside
+// src/mastra/public so the Mastra bundler does not treat the live database as a
+// static asset and try to copy the locked WAL during a build.
+const OBSERVABILITY_STORAGE_DIRECTORY = join(PROJECT_ROOT, ".mastra", "observability");
 
 /** 规整为 libsql 可用的绝对 file: URL(正斜杠) */
 function toFileUrl(filePath: string): string {
@@ -73,6 +77,7 @@ function ensureDirectory(): void {
   if (directory) {
     mkdirSync(directory, { recursive: true });
   }
+  mkdirSync(OBSERVABILITY_STORAGE_DIRECTORY, { recursive: true });
 }
 ensureDirectory();
 
@@ -86,7 +91,7 @@ export const appStorage = new MastraCompositeStore({
   domains: {
     // @mastra/duckdb 官方示例:作为组合存储的 observability 后端
     observability: new DuckDBStore({
-      path: join(getStorageDirectory(), "mastra.duckdb").replace(/\\/g, "/"),
+      path: join(OBSERVABILITY_STORAGE_DIRECTORY, "mastra.duckdb").replace(/\\/g, "/"),
     }).observability,
   },
 });
