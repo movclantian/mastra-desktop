@@ -1,7 +1,33 @@
+import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
+
+/** Restore session user signals to ordinary chat turns before conversion. */
+export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): MastraDBMessage[] {
+  return messages.flatMap<MastraDBMessage>((message) => {
+    if (message.role === "user" || message.role === "assistant") return [message];
+    if (message.role !== "signal" || message.type !== "user") return [];
+
+    const signalMetadata = message.content.metadata?.signal;
+    const metadata =
+      signalMetadata && typeof signalMetadata === "object"
+        ? (signalMetadata as { metadata?: unknown }).metadata
+        : undefined;
+    return [
+      {
+        ...message,
+        role: "user",
+        type: "v2",
+        content: {
+          ...message.content,
+          ...(metadata && typeof metadata === "object" ? { metadata } : {}),
+        },
+      } as MastraDBMessage,
+    ];
+  });
+}
 
 /**
  * 线程路由共享依赖:获取 Agent 的 Memory 实例。

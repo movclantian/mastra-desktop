@@ -13,7 +13,10 @@ export type SandboxRootProps = ComponentProps<typeof Collapsible>;
 
 export const Sandbox = ({ className, ...props }: SandboxRootProps) => (
   <Collapsible
-    className={cn("not-prose group mb-4 w-full overflow-hidden rounded-md border", className)}
+    className={cn(
+      "not-prose group mb-4 min-w-0 w-full max-w-full overflow-hidden rounded-md border",
+      className,
+    )}
     defaultOpen
     {...props}
   />
@@ -27,15 +30,15 @@ export interface SandboxHeaderProps {
 
 export const SandboxHeader = ({ className, title, state, ...props }: SandboxHeaderProps) => (
   <CollapsibleTrigger
-    className={cn("flex w-full items-center justify-between gap-4 p-3", className)}
+    className={cn("flex min-w-0 w-full items-center justify-between gap-4 p-3", className)}
     {...props}
   >
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 items-center gap-2">
       <Code className="size-4 text-muted-foreground" />
-      <span className="font-medium text-sm">{title}</span>
-      {getStatusBadge(state)}
+      <span className="min-w-0 truncate font-medium text-sm">{title}</span>
+      <span className="shrink-0">{getStatusBadge(state)}</span>
     </div>
-    <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+    <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
   </CollapsibleTrigger>
 );
 
@@ -44,7 +47,7 @@ export type SandboxContentProps = ComponentProps<typeof CollapsibleContent>;
 export const SandboxContent = ({ className, ...props }: SandboxContentProps) => (
   <CollapsibleContent
     className={cn(
-      "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+      "min-w-0 w-full data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
       className,
     )}
     {...props}
@@ -54,14 +57,17 @@ export const SandboxContent = ({ className, ...props }: SandboxContentProps) => 
 export type SandboxTabsProps = ComponentProps<typeof Tabs>;
 
 export const SandboxTabs = ({ className, ...props }: SandboxTabsProps) => (
-  <Tabs className={cn("w-full gap-0", className)} {...props} />
+  <Tabs className={cn("min-w-0 w-full flex-col gap-0", className)} {...props} />
 );
 
 export type SandboxTabsBarProps = ComponentProps<"div">;
 
 export const SandboxTabsBar = ({ className, ...props }: SandboxTabsBarProps) => (
   <div
-    className={cn("flex w-full items-center border-border border-t border-b", className)}
+    className={cn(
+      "flex min-w-0 w-full items-center border-border border-t border-b",
+      className,
+    )}
     {...props}
   />
 );
@@ -70,7 +76,7 @@ export type SandboxTabsListProps = ComponentProps<typeof TabsList>;
 
 export const SandboxTabsList = ({ className, ...props }: SandboxTabsListProps) => (
   <TabsList
-    className={cn("h-auto rounded-none border-0 bg-transparent p-0", className)}
+    className={cn("h-auto shrink-0 rounded-none border-0 bg-transparent p-0", className)}
     {...props}
   />
 );
@@ -90,5 +96,8 @@ export const SandboxTabsTrigger = ({ className, ...props }: SandboxTabsTriggerPr
 export type SandboxTabContentProps = ComponentProps<typeof TabsContent>;
 
 export const SandboxTabContent = ({ className, ...props }: SandboxTabContentProps) => (
-  <TabsContent className={cn("mt-0 text-sm", className)} {...props} />
+  <TabsContent
+    className={cn("mt-0 min-w-0 w-full overflow-hidden text-sm", className)}
+    {...props}
+  />
 );

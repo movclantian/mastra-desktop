@@ -362,6 +362,10 @@ export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/
       metadata: { ...result.thread.metadata, modeId: mode.id },
     });
     result.session.setMode(mode.id);
+    result.session.notifyPolicyChange(
+      `The user switched the session mode to "${mode.id}". Its instructions and tool restrictions take effect immediately — re-plan if your current approach relied on the previous mode.`,
+      { change: "mode", modeId: mode.id },
+    );
     return c.json({ modeId: mode.id, mode, thread });
   },
 });

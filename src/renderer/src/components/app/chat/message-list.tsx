@@ -44,6 +44,18 @@ import {
 } from "@/components/ai-elements/sandbox";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
+import {
+  StackTrace,
+  StackTraceActions,
+  StackTraceContent,
+  StackTraceCopyButton,
+  StackTraceError,
+  StackTraceErrorMessage,
+  StackTraceErrorType,
+  StackTraceExpandButton,
+  StackTraceFrames,
+  StackTraceHeader,
+} from "@/components/ai-elements/stack-trace";
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
 import {
   Attachment,
@@ -311,15 +323,15 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
         ) : null}
       </TaskItem>
       {hasDetails ? (
-        <CollapsibleContent>
-          <div className="mt-1 space-y-2 pl-3">
+        <CollapsibleContent className="min-w-0">
+          <div className="mt-1 min-w-0 max-w-full space-y-2 pl-3">
             {sandboxTool ? (
-              <Sandbox className="mb-0" defaultOpen>
+              <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
                 <SandboxHeader
                   state={part.state}
                   title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
                 />
-                <SandboxContent>
+                <SandboxContent className="min-w-0">
                   <SandboxTabs defaultValue="code">
                     <SandboxTabsBar>
                       <SandboxTabsList>
@@ -329,7 +341,7 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
                     </SandboxTabsBar>
                     <SandboxTabContent value="code">
                       <CodeBlock
-                        className="rounded-none border-0"
+                        className="min-w-0 max-w-full rounded-none border-0"
                         code={
                           commandSandbox
                             ? typeof input.command === "string"
@@ -346,13 +358,35 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
                       </CodeBlock>
                     </SandboxTabContent>
                     <SandboxTabContent value="output">
-                      <CodeBlock
-                        className="rounded-none border-0"
-                        code={sandboxOutput}
-                        language="log"
-                      >
-                        <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
-                      </CodeBlock>
+                      {failed ? (
+                        <StackTrace
+                          className="rounded-none border-0"
+                          defaultOpen
+                          trace={sandboxOutput || errorText || "执行失败"}
+                        >
+                          <StackTraceHeader>
+                            <StackTraceError>
+                              <StackTraceErrorType />
+                              <StackTraceErrorMessage />
+                            </StackTraceError>
+                            <StackTraceActions>
+                              <StackTraceCopyButton />
+                              <StackTraceExpandButton />
+                            </StackTraceActions>
+                          </StackTraceHeader>
+                          <StackTraceContent>
+                            <StackTraceFrames />
+                          </StackTraceContent>
+                        </StackTrace>
+                      ) : (
+                        <CodeBlock
+                          className="min-w-0 max-w-full rounded-none border-0"
+                          code={sandboxOutput || "正在等待输出…"}
+                          language="log"
+                        >
+                          <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                        </CodeBlock>
+                      )}
                     </SandboxTabContent>
                   </SandboxTabs>
                 </SandboxContent>

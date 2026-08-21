@@ -7,7 +7,17 @@ import { mermaid } from "@streamdown/mermaid";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  Children,
+  createContext,
+  isValidElement,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { Streamdown } from "streamdown";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/components/ui/button-group";
@@ -21,7 +31,7 @@ export type MessageProps = HTMLAttributes<HTMLDivElement> & {
 export const Message = ({ className, from, ...props }: MessageProps) => (
   <div
     className={cn(
-      "group flex w-full max-w-[95%] flex-col gap-2",
+      "group flex min-w-0 w-full max-w-[95%] flex-col gap-2",
       from === "user" ? "is-user ml-auto justify-end" : "is-assistant",
       className,
     )}
@@ -174,13 +184,17 @@ export type MessageBranchContentProps = HTMLAttributes<HTMLDivElement>;
 export const MessageBranchContent = ({ children, ...props }: MessageBranchContentProps) => {
   const { currentBranch, setBranches, branches } = useMessageBranch();
   const childrenArray = useMemo(
-    () => (Array.isArray(children) ? children : [children]),
+    () => Children.toArray(children).filter(isValidElement) as ReactElement[],
     [children],
   );
 
-  // Use useEffect to update branches when they change
+  // Keep branch state synchronized by identity as well as length. A response
+  // can be replaced in-place while the number of versions stays unchanged.
   useEffect(() => {
-    if (branches.length !== childrenArray.length) {
+    const sameBranches =
+      branches.length === childrenArray.length &&
+      branches.every((branch, index) => branch.key === childrenArray[index]?.key);
+    if (!sameBranches) {
       setBranches(childrenArray);
     }
   }, [childrenArray, branches, setBranches]);

@@ -98,7 +98,10 @@ function AppShell() {
       <AppSidebar />
       <ResizablePanelGroup className="h-svh min-h-0 min-w-0 flex-1" orientation="horizontal">
         {/* h-svh:主内容和右侧工作区都锁定整窗高度；header 只属于聊天 surface。 */}
-        <ResizablePanel defaultSize={workspacePanelOpen ? "58%" : "100%"} minSize="34%">
+        <ResizablePanel
+          defaultSize={workspacePanelOpen && !skillOpen && !libraryOpen ? "58%" : "100%"}
+          minSize="34%"
+        >
           <SidebarInset className="h-svh overflow-hidden rounded-none shadow-none">
             <header className="relative z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
           <div className="min-w-0 flex-1">
@@ -181,7 +184,7 @@ function AppShell() {
             </main>
           </SidebarInset>
         </ResizablePanel>
-        {workspacePanelOpen ? (
+        {workspacePanelOpen && !skillOpen && !libraryOpen ? (
           <>
             <ResizableHandle />
             <ResizablePanel defaultSize="42%" minSize="30%" maxSize="66%">

@@ -1,7 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XtermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { LoaderCircleIcon, PlusIcon, SquareIcon, TerminalIcon, XIcon } from "lucide-react";
+import { LoaderCircleIcon, PlusIcon, RefreshCwIcon, SquareIcon, TerminalIcon, XIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -61,6 +61,7 @@ function commandForFile(path: string): string | undefined {
 
 export default function TerminalPanel() {
   const { activeThreadId, setTerminalPanelOpen, terminalRequest, threads } = useWorkbench();
+  const terminalApi = typeof window === "undefined" ? undefined : window.api?.terminal;
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const workspacePath = activeThread?.metadata.workspacePath;
   const [tabs, setTabs] = React.useState<TerminalTab[]>(() => [createTerminalTab(1)]);
@@ -86,11 +87,11 @@ export default function TerminalPanel() {
   const disposeRuntime = React.useCallback((tabId: number) => {
     const runtime = runtimeRefs.current.get(tabId);
     if (!runtime) return;
-    if (runtime.sessionId) window.api.terminal.close(runtime.sessionId);
+    if (runtime.sessionId) terminalApi?.close(runtime.sessionId);
     runtime.terminal.dispose();
     runtimeRefs.current.delete(tabId);
     hostRefs.current.delete(tabId);
-  }, []);
+  }, [terminalApi]);
 
   React.useEffect(() => {
     for (const tabId of runtimeRefs.current.keys()) disposeRuntime(tabId);
@@ -101,7 +102,8 @@ export default function TerminalPanel() {
   }, [activeThreadId, disposeRuntime]);
 
   React.useEffect(() => {
-    const unsubscribe = window.api.terminal.subscribe((event) => {
+    if (!terminalApi) return;
+    const unsubscribe = terminalApi.subscribe((event) => {
       const entry = [...runtimeRefs.current.entries()].find(([, runtime]) => runtime.sessionId === event.sessionId);
       if (!entry) return;
       const [tabId, runtime] = entry;
@@ -116,7 +118,7 @@ export default function TerminalPanel() {
       }
     });
     return unsubscribe;
-  }, [updateTab]);
+  }, [terminalApi, updateTab]);
 
   React.useEffect(() => {
     const theme = readTerminalTheme();
@@ -124,6 +126,7 @@ export default function TerminalPanel() {
   }, [themeVersion]);
 
   React.useEffect(() => {
+    if (!terminalApi) return;
     for (const tab of tabs) {
       if (runtimeRefs.current.has(tab.id)) continue;
       const host = hostRefs.current.get(tab.id);
@@ -134,39 +137,39 @@ export default function TerminalPanel() {
       terminal.open(host);
       const runtime: TerminalRuntime = { fit, terminal, threadId: activeThreadId };
       runtimeRefs.current.set(tab.id, runtime);
-      terminal.onData((data) => { if (runtime.sessionId) window.api.terminal.write({ data, sessionId: runtime.sessionId }); });
-      terminal.onResize(({ cols, rows }) => { if (runtime.sessionId) window.api.terminal.resize({ cols, rows, sessionId: runtime.sessionId }); });
+      terminal.onData((data) => { if (runtime.sessionId) terminalApi.write({ data, sessionId: runtime.sessionId }); });
+      terminal.onResize(({ cols, rows }) => { if (runtime.sessionId) terminalApi.resize({ cols, rows, sessionId: runtime.sessionId }); });
       try { fit.fit(); } catch { /* Hidden panel gets fitted when it becomes visible. */ }
-      void window.api.terminal.create({ cwd: workspacePath, cols: Math.max(2, terminal.cols), rows: Math.max(2, terminal.rows) }).then(({ sessionId }) => {
+      void terminalApi.create({ cwd: workspacePath, cols: Math.max(2, terminal.cols), rows: Math.max(2, terminal.rows) }).then(({ sessionId }) => {
         runtime.sessionId = sessionId;
         updateTab(tab.id, (current) => ({ ...current, sessionId, status: "ready" }));
         if (tab.id === activeTabId) {
           fit.fit();
-          window.api.terminal.resize({ cols: terminal.cols, rows: terminal.rows, sessionId });
+          terminalApi.resize({ cols: terminal.cols, rows: terminal.rows, sessionId });
         }
         const pending = pendingRunRef.current;
         if (pending && tab.id === activeTabId) {
           pendingRunRef.current = undefined;
           const command = pending.command ?? (pending.filePath ? commandForFile(pending.filePath) : undefined);
-          if (command) window.api.terminal.write({ data: `${command}\r`, sessionId });
+          if (command) terminalApi.write({ data: `${command}\r`, sessionId });
         }
       }).catch((error) => {
         updateTab(tab.id, (current) => ({ ...current, status: "error" }));
         toast.error(error instanceof Error ? error.message : "终端启动失败");
       });
     }
-  }, [activeTabId, activeThreadId, tabs, updateTab, workspacePath]);
+  }, [activeTabId, activeThreadId, tabs, terminalApi, updateTab, workspacePath]);
 
   React.useEffect(() => {
     const runtime = activeTab ? runtimeRefs.current.get(activeTab.id) : undefined;
     if (!runtime) return;
-    const resize = () => { try { runtime.fit.fit(); if (runtime.sessionId) window.api.terminal.resize({ cols: runtime.terminal.cols, rows: runtime.terminal.rows, sessionId: runtime.sessionId }); } catch { /* Ignore transient zero-size layouts. */ } };
+    const resize = () => { try { runtime.fit.fit(); if (runtime.sessionId) terminalApi?.resize({ cols: runtime.terminal.cols, rows: runtime.terminal.rows, sessionId: runtime.sessionId }); } catch { /* Ignore transient zero-size layouts. */ } };
     resize();
     const observer = new ResizeObserver(resize);
     const host = hostRefs.current.get(activeTab.id);
     if (host) observer.observe(host);
     return () => observer.disconnect();
-  }, [activeTab]);
+  }, [activeTab, terminalApi]);
 
   React.useEffect(() => {
     if (!terminalRequest || terminalRequest.id === consumedRequestRef.current) return;
@@ -177,8 +180,8 @@ export default function TerminalPanel() {
     const command = terminalRequest.command ?? (terminalRequest.filePath ? commandForFile(terminalRequest.filePath) : undefined);
     pendingRunRef.current = undefined;
     if (!command) { toast.error("当前文件类型没有可用的运行命令"); return; }
-    window.api.terminal.write({ data: `${command}\r`, sessionId: runtime.sessionId });
-  }, [activeTab, terminalRequest]);
+    terminalApi?.write({ data: `${command}\r`, sessionId: runtime.sessionId });
+  }, [activeTab, terminalApi, terminalRequest]);
 
   React.useEffect(() => () => { for (const tabId of runtimeRefs.current.keys()) disposeRuntime(tabId); }, [disposeRuntime]);
 
@@ -194,6 +197,19 @@ export default function TerminalPanel() {
     });
   };
 
+  if (!terminalApi) {
+    return (
+      <section className="flex size-full min-h-0 flex-col items-center justify-center gap-3 border-t bg-background px-6 text-center text-muted-foreground">
+        <TerminalIcon className="size-5" />
+        <p className="text-sm">终端桥接尚未加载，请重新加载窗口。</p>
+        <Button onClick={() => window.location.reload()} size="sm" variant="outline">
+          <RefreshCwIcon />
+          重新加载
+        </Button>
+      </section>
+    );
+  }
+
   return (
     <section className="flex size-full min-h-0 flex-col overflow-hidden border-t bg-background text-foreground">
       <header className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
@@ -201,7 +217,7 @@ export default function TerminalPanel() {
           {tabs.map((tab) => <div className={cn("group flex h-7 shrink-0 items-center rounded-md text-xs", tab.id === activeTabId ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70")} key={tab.id}><button className="max-w-36 truncate px-2" onClick={() => setActiveTabId(tab.id)} type="button">{tab.title}</button><button aria-label={`关闭${tab.title}`} className="mr-1 rounded p-0.5 opacity-60 hover:bg-background hover:opacity-100" onClick={() => closeTab(tab.id)} title={`关闭${tab.title}`} type="button"><XIcon className="size-3" /></button></div>)}
           <Button aria-label="新建终端" className="size-7 shrink-0" onClick={addTab} size="icon" title="新建终端" variant="ghost"><PlusIcon /></Button>
         </div>
-        <div className="flex shrink-0 items-center gap-2 text-muted-foreground"><span className="hidden max-w-56 truncate text-xs sm:block" title={workspacePath}>{workspacePath ?? "系统终端"}</span>{activeTab?.status === "connecting" ? <LoaderCircleIcon className="size-3 animate-spin" /> : null}{activeTab?.status === "ready" ? <span className="text-xs">已连接</span> : null}{activeTab?.sessionId ? <Button aria-label="中断当前进程" className="size-7" onClick={() => window.api.terminal.write({ data: "\u0003", sessionId: activeTab.sessionId! })} size="icon" title="中断当前进程" variant="ghost"><SquareIcon /></Button> : null}<Button aria-label="关闭终端面板" className="size-7" onClick={() => setTerminalPanelOpen(false)} size="icon" title="关闭终端面板" variant="ghost"><XIcon /></Button></div>
+        <div className="flex shrink-0 items-center gap-2 text-muted-foreground"><span className="hidden max-w-56 truncate text-xs sm:block" title={workspacePath}>{workspacePath ?? "系统终端"}</span>{activeTab?.status === "connecting" ? <LoaderCircleIcon className="size-3 animate-spin" /> : null}{activeTab?.status === "ready" ? <span className="text-xs">已连接</span> : null}{activeTab?.sessionId ? <Button aria-label="中断当前进程" className="size-7" onClick={() => terminalApi.write({ data: "\u0003", sessionId: activeTab.sessionId! })} size="icon" title="中断当前进程" variant="ghost"><SquareIcon /></Button> : null}<Button aria-label="关闭终端面板" className="size-7" onClick={() => setTerminalPanelOpen(false)} size="icon" title="关闭终端面板" variant="ghost"><XIcon /></Button></div>
       </header>
       <div className="min-h-0 flex-1 overflow-hidden bg-background px-3 py-2">{tabs.map((tab) => <div className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")} key={tab.id} ref={(node) => { if (node) hostRefs.current.set(tab.id, node); else hostRefs.current.delete(tab.id); }} />)}</div>
       <div className="flex h-6 shrink-0 items-center gap-1 border-border border-t px-3 text-[11px] text-muted-foreground"><TerminalIcon className="size-3" /><span>真实系统终端</span></div>

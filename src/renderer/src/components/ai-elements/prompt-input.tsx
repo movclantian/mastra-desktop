@@ -262,7 +262,6 @@ export const PromptInputProvider = ({
 }: PromptInputProviderProps) => {
   // ----- textInput state
   const [textInput, setTextInput] = useState(initialTextInput);
-  const clearInput = useCallback(() => setTextInput(""), []);
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<PromptAttachment[]>([]);
@@ -271,9 +270,25 @@ export const PromptInputProvider = ({
   const openRef = useRef<() => void>(() => {});
   const loadedPersistenceKeyRef = useRef<string | undefined>(undefined);
   const previousPersistenceKeyRef = useRef<string | undefined>(undefined);
+  const draftRevisionRef = useRef(0);
+
+  const clearPersistedDraft = useCallback(() => {
+    draftRevisionRef.current += 1;
+    loadedPersistenceKeyRef.current = persistenceKey;
+    if (!persistenceKey || typeof indexedDB === "undefined") return;
+    void withPromptDraftStore("readwrite", (store) => store.delete(persistenceKey)).catch(
+      () => undefined,
+    );
+  }, [persistenceKey]);
+
+  const clearInput = useCallback(() => {
+    clearPersistedDraft();
+    setTextInput("");
+  }, [clearPersistedDraft]);
 
   useEffect(() => {
     let cancelled = false;
+    const loadRevision = ++draftRevisionRef.current;
     const previousKey = previousPersistenceKeyRef.current;
     previousPersistenceKeyRef.current = persistenceKey;
     if (previousKey?.endsWith(":new") && previousKey !== persistenceKey) {
@@ -295,7 +310,7 @@ export const PromptInputProvider = ({
       store.get(persistenceKey),
     )
       .then((draft) => {
-        if (cancelled || !draft) return;
+        if (cancelled || loadRevision !== draftRevisionRef.current || !draft) return;
         setTextInput(draft.text || "");
         setAttachmentFiles(
           draft.attachments.flatMap((file) => {
@@ -316,7 +331,9 @@ export const PromptInputProvider = ({
         );
       })
       .finally(() => {
-        if (!cancelled) loadedPersistenceKeyRef.current = persistenceKey;
+        if (!cancelled && loadRevision === draftRevisionRef.current) {
+          loadedPersistenceKeyRef.current = persistenceKey;
+        }
       });
     return () => {
       cancelled = true;
@@ -331,7 +348,9 @@ export const PromptInputProvider = ({
     ) {
       return;
     }
+    const writeRevision = draftRevisionRef.current;
     const timer = window.setTimeout(() => {
+      if (writeRevision !== draftRevisionRef.current) return;
       const draft: PersistedPromptDraft = {
         text: textInput,
         attachments: attachmentFiles.map((file) => ({
@@ -409,6 +428,7 @@ export const PromptInputProvider = ({
   }, []);
 
   const clear = useCallback(() => {
+    clearPersistedDraft();
     setAttachmentFiles((prev) => {
       for (const f of prev) {
         if (f.url.startsWith("blob:")) {
@@ -417,7 +437,7 @@ export const PromptInputProvider = ({
       }
       return [];
     });
-  }, []);
+  }, [clearPersistedDraft]);
 
   // Keep a ref to attachments for cleanup on unmount (avoids stale closure)
   const attachmentsRef = useRef(attachmentFiles);

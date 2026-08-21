@@ -2,7 +2,7 @@ import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import { registerApiRoute } from "@mastra/core/server";
 import type { UIMessage } from "ai";
 import { readMessageBranches, snapshot } from "./branches";
-import { getOwnedThread, getWorkMemory } from "./shared";
+import { getOwnedThread, getWorkMemory, normalizeChatHistoryMessages } from "./shared";
 import type {
   MessageBranchRecord,
   MessageBranchVersion,
@@ -164,6 +164,20 @@ function projectBranchMessages(
       rows[index] = [message];
       return;
     }
+    // User turns are timeline anchors. They must never disappear merely
+    // because an assistant branch has a different physical row after reload.
+    // Edits reuse the user message id in the normal path; the role fallback
+    // also handles older branch metadata whose converted ids no longer match
+    // the recalled row exactly.
+    if (message.role === "user" && selected.role === "user") {
+      if (!selectedRowSeen.has(branch.rootId)) {
+        selectedRowSeen.add(branch.rootId);
+        rows[index] = [selected.message as typeof message];
+      } else {
+        rows[index] = [message];
+      }
+      return;
+    }
     if (selected.message.id === message.id) {
       selectedRowSeen.add(branch.rootId);
       rows[index] = [selected.message as typeof message];
@@ -239,14 +253,9 @@ export const threadMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
       return c.json({ error: "Thread not found" }, 404);
     }
     const { messages } = await memory.recall({ threadId, resourceId, perPage: false });
-    // TaskSignalProvider stores task snapshots as role="signal" rows in the
-    // same memory table. They are consumed by the display-state route, not
-    // chat history, and are not valid AI SDK messages. Keep them out of both
-    // conversion and the filename index so they cannot become standalone
-    // bubbles or shift parts.
-    const chatMessages = (messages ?? []).filter(
-      (message) => message.role === "user" || message.role === "assistant",
-    );
+    // Task signals stay out of chat history; session user signals are restored
+    // to normal user turns by the shared history normalizer.
+    const chatMessages = normalizeChatHistoryMessages(messages ?? []);
     // 消息格式和 reasoning/tool/approval 状态全部由 Mastra 官方 v7 converter
     // 负责。这里不保留任何旧数据修复或兼容路径。
     const ui_messages = appendLibrarySourceParts(

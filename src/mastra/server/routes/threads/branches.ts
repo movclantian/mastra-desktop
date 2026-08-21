@@ -7,6 +7,7 @@ import type {
   PersistedUIMessage,
   ThreadMetadata,
 } from "./types";
+import { normalizeChatHistoryMessages } from "./shared";
 
 type BranchOperation =
   | {
@@ -159,11 +160,9 @@ async function recalledMessages(memory: Memory, threadId: string, resourceId?: s
     ...(resourceId ? { resourceId } : {}),
     perPage: false,
   });
-  // Signal rows are task snapshots, not chat messages. They are intentionally
-  // excluded from branch indexing so step progress never shifts a branch tail.
-  const chatMessages = (messages ?? []).filter(
-    (message) => message.role === "user" || message.role === "assistant",
-  );
+  // Task signals stay out of branch indexing; session user signals are real
+  // user turns and are normalized back into the chat history.
+  const chatMessages = normalizeChatHistoryMessages(messages ?? []);
   return toAISdkMessages(chatMessages, { version: "v7" }) as UIMessage[];
 }
 

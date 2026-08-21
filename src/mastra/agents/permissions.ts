@@ -125,6 +125,10 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   task_update: "read",
   task_complete: "read",
   task_check: "read",
+  // 通知收件箱:读写的同样是线程级记录(mastra_notifications),与 task_* 同级。
+  // 注册名与工具内建 id 都登记 —— 审批门按哪个匹配都不会漏进兜底的 "other"。
+  notification_inbox: "read",
+  "notification-inbox": "read",
 };
 
 /**

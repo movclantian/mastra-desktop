@@ -69,6 +69,18 @@ interface DisplayMessage {
   sourceEndIndex: number;
 }
 
+const STREAM_RECONNECT_LIMIT = 2;
+
+function isTransientStreamError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /fetch|network|econnreset|econnrefused|und_err|socket|timeout|连接|网络/i.test(message);
+}
+
+function streamErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.trim() || "流式响应意外中断";
+}
+
 /**
  * Mastra seals each response-boundary (reasoning/tool loop) as a separate
  * assistant memory row. That boundary is important to the model, but it is
@@ -324,11 +336,14 @@ export function ChatPanel() {
    */
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
   const generatedMessageIdsRef = React.useRef(new Map<string, string>());
+  const reconnectAttemptsRef = React.useRef(new Map<string, number>());
+  const reconnectTimersRef = React.useRef(new Map<string, number>());
   const getThreadChat = React.useCallback(
     (threadId: string) => {
       const existing = chatsRef.current.get(threadId);
       if (existing) return existing;
-      const chat = new Chat<WorkUIMessage>({
+      let chat!: Chat<WorkUIMessage>;
+      chat = new Chat<WorkUIMessage>({
         id: threadId,
         generateId: () => {
           const id = nanoid();
@@ -351,6 +366,7 @@ export function ChatPanel() {
             // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
             // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
             // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
+            reconnectAttemptsRef.current.delete(threadId);
             const payload: Record<string, unknown> = {
               ...buildRequestBodyRef.current(threadId),
               responseMessageId: generatedMessageIdsRef.current.get(threadId),
@@ -363,12 +379,65 @@ export function ChatPanel() {
             return { body: payload };
           },
         }),
-        onError: () => toast.error("与 Mastra 服务通信失败,请确认服务已启动"),
+        onFinish: ({ isError }) => {
+          if (!isError) {
+            reconnectAttemptsRef.current.delete(threadId);
+            const timer = reconnectTimersRef.current.get(threadId);
+            if (timer !== undefined) {
+              window.clearTimeout(timer);
+              reconnectTimersRef.current.delete(threadId);
+            }
+          }
+        },
+        onError: (error) => {
+          const detail = streamErrorMessage(error);
+          if (!isTransientStreamError(error)) {
+            toast.error(`本轮生成失败：${detail}`);
+            return;
+          }
+
+          const attempt = (reconnectAttemptsRef.current.get(threadId) ?? 0) + 1;
+          reconnectAttemptsRef.current.set(threadId, attempt);
+          if (attempt > STREAM_RECONNECT_LIMIT) {
+            toast.error(`流式响应中断：${detail}`);
+            return;
+          }
+
+          const delay = attempt * 800;
+          const timer = window.setTimeout(() => {
+            reconnectTimersRef.current.delete(threadId);
+            void chat
+              .resumeStream()
+              .then(async () => {
+                if (chat.status !== "ready") return;
+                const response = await fetch(
+                  `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?resourceId=${encodeURIComponent(user.id)}`,
+                );
+                const payload = (await response.json().catch(() => ({}))) as {
+                  displayState?: { activeRunId?: string | null };
+                };
+                if (!payload.displayState?.activeRunId) {
+                  reconnectAttemptsRef.current.delete(threadId);
+                  toast.error(`流式响应中断：${detail}`);
+                }
+              })
+              .catch(() => undefined);
+          }, delay);
+          reconnectTimersRef.current.set(threadId, timer);
+        },
       });
       chatsRef.current.set(threadId, chat);
       return chat;
     },
     [user.id],
+  );
+
+  React.useEffect(
+    () => () => {
+      for (const timer of reconnectTimersRef.current.values()) window.clearTimeout(timer);
+      reconnectTimersRef.current.clear();
+    },
+    [],
   );
 
   // 没有激活线程时也必须调用 useChat(Hook 规则),用一个从不发送的空实例占位。
@@ -387,6 +456,14 @@ export function ChatPanel() {
   // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器
   const workspaceLocked = Boolean(activeThread?.metadata.workspacePath) || messages.length > 0;
   workspaceLockedRef.current = workspaceLocked;
+
+  // 首条消息会在服务端请求开始时锁定工作区,但线程列表仍是旧快照。
+  // 在本地消息出现后补一次刷新,让右侧文件树及时拿到 workspaceExplicit。
+  // 没有 workspacePath 时才触发,避免流式消息期间重复请求线程列表。
+  React.useEffect(() => {
+    if (!activeThreadId || messages.length === 0 || activeThread?.metadata.workspacePath) return;
+    void refreshThreads();
+  }, [activeThread?.metadata.workspacePath, activeThreadId, messages.length, refreshThreads]);
 
   // 从服务端拉取历史消息并重建消息流(线程切换 / 压缩后刷新共用)。
   //
@@ -675,34 +752,6 @@ export function ChatPanel() {
     setQueuedRequests((current) => current.filter((request) => !request.followUpId));
     await stop();
   }, [stop, user.id]);
-
-  const handleSteer = React.useCallback(
-    async (text: string, clearPrompt: () => void) => {
-      const threadId = activeThreadIdRef.current;
-      if (!threadId) return;
-      if (
-        getThreadChat(threadId).status !== "submitted" &&
-        getThreadChat(threadId).status !== "streaming"
-      ) {
-        return;
-      }
-      clearPrompt();
-      setQueueCanDispatch(false);
-      setQueuedRequests([]);
-      try {
-        // Stop the client reader before issuing the new request. The server-side
-        // session route performs the authoritative abort-and-wake sequence.
-        await getThreadChat(threadId).stop();
-        await getThreadChat(threadId).sendMessage(
-          { text },
-          { body: { sessionAction: "steer", sessionScope: "workbench" } },
-        );
-      } catch {
-        toast.error("无法立即转向当前任务,请稍后重试");
-      }
-    },
-    [getThreadChat],
-  );
 
   // 手动压缩上下文(真压缩):服务端重写线程 —— 折叠删除旧消息并把摘要注入线程头部,
   // 此后模型只接收「摘要 + 近期消息」。完成后刷新线程列表与消息流,并弹窗展示压缩详情。
@@ -1067,6 +1116,9 @@ export function ChatPanel() {
             },
           },
     );
+    // prepareThreadSession 已将首条消息携带的显式目录写入线程元数据;
+    // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
+    await refreshThreads();
     selectedSkillNamesRef.current = [];
     // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
     if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
@@ -1084,22 +1136,25 @@ export function ChatPanel() {
     });
   }, []);
 
-  // 「立即发送」:越过排队顺序,把指定请求直接发出(失败放回队首)
-  const sendQueuedRequestNow = React.useCallback(
+  // 「立即转向」:打断当前回合,把指定排队请求直接发出(失败放回队首)。
+  //
+  // 服务端 session.steer() 会 abort 当前 run 并 clearFollowUps(),因此已被
+  // queueMessage 接受的 native follow-up 在服务端全部作废 —— 前端必须同步
+  // 清掉它们(带 followUpId 的项),否则界面上会留下永远不会被执行的幽灵项。
+  // 纯本地排队项不受影响,继续按顺序等下一回合。
+  const steerQueuedRequestNow = React.useCallback(
     (request: QueuedRequest) => {
       const targetThreadId = activeThreadIdRef.current;
       if (!targetThreadId || sendingQueuedRequest.current) return;
-      if (request.followUpId) {
-        setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
-        return;
-      }
       if (request.files.length > 0) {
         toast.error("带附件的排队请求会在当前回合结束后发送");
         return;
       }
       sendingQueuedRequest.current = true;
       setQueueCanDispatch(false);
-      setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
+      setQueuedRequests((current) =>
+        current.filter((item) => item.id !== request.id && !item.followUpId),
+      );
       void (async () => {
         await getThreadChat(targetThreadId).stop();
         await getThreadChat(targetThreadId).sendMessage(
@@ -1115,7 +1170,7 @@ export function ChatPanel() {
       })()
         .catch(() => {
           setQueuedRequests((current) => [request, ...current]);
-          toast.error("排队请求发送失败,请检查服务连接后重试");
+          toast.error("无法立即转向当前任务,请稍后重试");
         })
         .finally(() => {
           sendingQueuedRequest.current = false;
@@ -1216,7 +1271,7 @@ export function ChatPanel() {
             <UserRequestQueuePanel
               onRemove={removeQueuedRequest}
               onReorder={reorderQueuedRequests}
-              onSendNow={sendQueuedRequestNow}
+              onSteerNow={steerQueuedRequestNow}
               requests={queuedRequests}
             />
             <AgentQueuePanel
@@ -1254,7 +1309,6 @@ export function ChatPanel() {
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}
-              onSteer={handleSteer}
               compacting={compacting}
               onCompress={runCompress}
               compressResult={compressResult}
@@ -1309,7 +1363,7 @@ export function ChatPanel() {
                 >
                   {displayMessages.map(({ message, sourceIds, sourceEndIndex }) => (
                     <MessageItem
-                      key={`${sourceIds.join(":")}:${messageBranchByMessageId.get(message.id)?.currentVersionId ?? "current"}`}
+                      key={sourceIds.join(":")}
                       message={message}
                       messageIndex={sourceEndIndex}
                       isStreaming={sourceIds.includes(streamingMessageId ?? "")}

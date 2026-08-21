@@ -28,11 +28,19 @@ function browserState(threadId: string) {
 }
 
 async function ensureBrowserTab(threadId: string): Promise<void> {
+  // AgentBrowser 的 thread scope 由 current thread 决定;先显式创建该线程
+  // 的 Playwright 会话,再读取状态。仅调用 goto() 会把启动失败伪装成“无标签”。
+  workBrowser.setCurrentThread(threadId);
+  await workBrowser.ensureReady();
   const state = await workBrowser.getBrowserState(threadId);
   if (!state || state.tabs.length === 0) {
     const result = await workBrowser.goto({ url: "about:blank" }, threadId);
     if (!("success" in result) || result.success !== true) {
-      throw new Error("Browser tab could not be created");
+      throw new Error(
+        "message" in result && typeof result.message === "string"
+          ? result.message
+          : "Browser tab could not be created",
+      );
     }
   }
 }
@@ -54,14 +62,25 @@ export const browserScreencastRoute = registerApiRoute(
     handler: async (c) => {
       const threadId = await ownedBrowserThread(c);
       if (!threadId) return c.json({ error: "Thread not found" }, 404);
-      await ensureBrowserTab(threadId);
-      const screencast = await workBrowser.startScreencast({
-        format: "jpeg",
-        quality: 78,
-        maxWidth: 1280,
-        maxHeight: 720,
-        threadId,
-      });
+      let screencast: Awaited<ReturnType<typeof workBrowser.startScreencast>>;
+      try {
+        await ensureBrowserTab(threadId);
+        screencast = await workBrowser.startScreencast({
+          format: "jpeg",
+          quality: 78,
+          maxWidth: 1280,
+          maxHeight: 720,
+          threadId,
+        });
+      } catch (error) {
+        return c.json(
+          {
+            error: "browser_unavailable",
+            message: error instanceof Error ? error.message : String(error),
+          },
+          503,
+        );
+      }
 
       const encoder = new TextEncoder();
       let disposed = false;
@@ -109,10 +128,20 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     const input = body.url?.trim();
     if (!input) return c.json({ error: "url is required" }, 400);
     const url = /^[a-z][a-z\d+.-]*:/i.test(input) ? input : `https://${input}`;
-    await ensureBrowserTab(threadId);
-    const result = await workBrowser.goto({ url }, threadId);
-    if (!("success" in result) || result.success !== true) return c.json(result, 400);
-    return c.json({ ...result, state: await browserState(threadId) });
+    try {
+      await ensureBrowserTab(threadId);
+      const result = await workBrowser.goto({ url }, threadId);
+      if (!("success" in result) || result.success !== true) return c.json(result, 400);
+      return c.json({ ...result, state: await browserState(threadId) });
+    } catch (error) {
+      return c.json(
+        {
+          error: "browser_unavailable",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        503,
+      );
+    }
   },
 });
 
@@ -126,36 +155,46 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
       index?: number;
       url?: string;
     };
-    let result: unknown;
-    switch (body.action) {
-      case "back":
-        result = await workBrowser.back(threadId);
-        break;
-      case "forward":
-        result = await workBrowser.evaluate({ script: "history.forward()" }, threadId);
-        break;
-      case "reload":
-        result = await workBrowser.evaluate({ script: "location.reload()" }, threadId);
-        break;
-      case "new-tab":
-        await ensureBrowserTab(threadId);
-        result = await workBrowser.tabs({ action: "new", url: body.url }, threadId);
-        break;
-      case "switch-tab":
-      case "close-tab":
-        if (!Number.isInteger(body.index)) return c.json({ error: "index is required" }, 400);
-        result = await workBrowser.tabs(
-          { action: body.action === "switch-tab" ? "switch" : "close", index: body.index },
-          threadId,
-        );
-        break;
-      default:
-        return c.json({ error: "Unsupported browser action" }, 400);
+    try {
+      let result: unknown;
+      switch (body.action) {
+        case "back":
+          result = await workBrowser.back(threadId);
+          break;
+        case "forward":
+          result = await workBrowser.evaluate({ script: "history.forward()" }, threadId);
+          break;
+        case "reload":
+          result = await workBrowser.evaluate({ script: "location.reload()" }, threadId);
+          break;
+        case "new-tab":
+          await ensureBrowserTab(threadId);
+          result = await workBrowser.tabs({ action: "new", url: body.url }, threadId);
+          break;
+        case "switch-tab":
+        case "close-tab":
+          if (!Number.isInteger(body.index)) return c.json({ error: "index is required" }, 400);
+          result = await workBrowser.tabs(
+            { action: body.action === "switch-tab" ? "switch" : "close", index: body.index },
+            threadId,
+          );
+          break;
+        default:
+          return c.json({ error: "Unsupported browser action" }, 400);
+      }
+      if (result && typeof result === "object" && "success" in result && result.success !== true) {
+        return c.json(result, 400);
+      }
+      return c.json({ result, state: await browserState(threadId) });
+    } catch (error) {
+      return c.json(
+        {
+          error: "browser_unavailable",
+          message: error instanceof Error ? error.message : String(error),
+        },
+        503,
+      );
     }
-    if (result && typeof result === "object" && "success" in result && result.success !== true) {
-      return c.json(result, 400);
-    }
-    return c.json({ result, state: await browserState(threadId) });
   },
 });
 

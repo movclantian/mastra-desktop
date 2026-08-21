@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../../agents";
 import { workSessionHost } from "../../session";
@@ -65,6 +66,21 @@ export const createThreadRoute = registerApiRoute("/work/threads", {
           perPage: false,
         });
         if ((messages ?? []).length === 0) {
+          // 草稿线程只是输入占位,不会继承目录归属。旧版本可能在发送前
+          // 提前写过 workspacePath,这里在复用空草稿时清掉它。
+          if (candidate.metadata?.workspacePath || candidate.metadata?.workspaceExplicit) {
+            const metadata = Object.fromEntries(
+              Object.entries(candidate.metadata ?? {}).filter(
+                ([key]) => key !== "workspacePath" && key !== "workspaceExplicit",
+              ),
+            );
+            const cleaned = await memory.updateThread({
+              id: candidate.id,
+              title: candidate.title,
+              metadata,
+            });
+            return c.json({ thread: cleaned });
+          }
           return c.json({ thread: candidate });
         }
         // 有消息的 draft 是残留标记(如自动生成标题失败/未触发改名),清除后继续
@@ -102,6 +118,21 @@ export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
     const existing = await memory.getThreadById({ threadId });
     if (!existing || existing.resourceId !== body.resourceId) {
       return c.json({ error: "Thread not found" }, 404);
+    }
+    if (body.metadata?.workspaceExplicit === true) {
+      const workspacePath = body.metadata.workspacePath;
+      let validDirectory = false;
+      try {
+        validDirectory =
+          typeof workspacePath === "string" &&
+          existsSync(workspacePath) &&
+          statSync(workspacePath).isDirectory();
+      } catch {
+        validDirectory = false;
+      }
+      if (!validDirectory) {
+        return c.json({ error: "workspacePath must be an existing directory" }, 400);
+      }
     }
     const thread = await memory.updateThread({
       id: threadId,

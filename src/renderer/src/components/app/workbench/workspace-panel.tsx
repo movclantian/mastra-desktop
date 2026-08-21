@@ -90,6 +90,8 @@ function CodeEditor({
         extensions: [
           basicSetup,
           editorExtension(path),
+          EditorState.tabSize.of(2),
+          EditorView.lineWrapping,
           keymap.of([
             {
               key: "Mod-s",
@@ -247,8 +249,8 @@ function FilesWorkspace() {
     [activeThreadId, childrenByPath, dirty, entries, user.id],
   );
 
-  const saveFile = React.useCallback(async () => {
-    if (!activeThreadId || !file || !dirty || saving) return;
+  const saveFile = React.useCallback(async (): Promise<boolean> => {
+    if (!activeThreadId || !file || !dirty || saving) return false;
     setSaving(true);
     try {
       const response = await fetch(
@@ -263,22 +265,50 @@ function FilesWorkspace() {
       if (!response.ok) throw new Error(payload.error || "保存失败");
       setFile((current) => (current ? { ...current, content: draft } : current));
       toast.success(`已保存 ${file.name}`);
+      return true;
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "保存失败");
+      return false;
     } finally {
       setSaving(false);
     }
   }, [activeThreadId, dirty, draft, file, saving, user.id]);
 
+  const runFile = React.useCallback(async () => {
+    if (!file || saving || !activeThreadId) return;
+    if (dirty && !(await saveFile())) return;
+    requestTerminalCommand({ filePath: file.path });
+  }, [activeThreadId, dirty, file, requestTerminalCommand, saveFile, saving]);
+
   if (activeThread?.metadata.workspaceExplicit !== true) {
+    if (!activeThread) {
+      return (
+        <Empty className="h-full">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderTreeIcon />
+            </EmptyMedia>
+            <EmptyTitle>尚未选择会话</EmptyTitle>
+            <EmptyDescription>选择或创建一个会话后,这里会显示它的工作区。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      );
+    }
+    const hasImplicitWorkspace = Boolean(activeThread?.metadata.workspacePath);
     return (
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <FolderTreeIcon />
           </EmptyMedia>
-          <EmptyTitle>未绑定可浏览工作区</EmptyTitle>
-          <EmptyDescription>当前会话没有显式工作区。</EmptyDescription>
+          <EmptyTitle>
+            {hasImplicitWorkspace ? "当前为 Agent 默认工作区" : "未绑定可浏览工作区"}
+          </EmptyTitle>
+          <EmptyDescription>
+            {hasImplicitWorkspace
+              ? "当前会话可使用默认工作目录执行任务,但未选择本地目录,因此不展示文件树。"
+              : "发送首条消息前,在输入框上方选择一个本地目录即可浏览和编辑文件。"}
+          </EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -301,10 +331,10 @@ function FilesWorkspace() {
             {file && RUNNABLE_FILE.test(file.path) ? (
               <Button
                 aria-label="运行当前文件"
-                disabled={dirty || saving}
-                onClick={() => requestTerminalCommand({ filePath: file.path })}
+                disabled={saving}
+                onClick={() => void runFile()}
                 size="icon-sm"
-                title={dirty ? "保存后运行" : "运行当前文件"}
+                title={dirty ? "保存并运行当前文件" : "运行当前文件"}
                 variant="ghost"
               >
                 <PlayIcon />
@@ -449,7 +479,13 @@ function BrowserWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: "about:blank" }),
       });
-      if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error || "浏览器启动失败");
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+        };
+        throw new Error(payload.message || payload.error || "浏览器启动失败");
+      }
       const payload = (await response.json()) as { state?: BrowserState };
       if (payload.state) setState(payload.state);
       setFrameState("connecting");
@@ -458,7 +494,7 @@ function BrowserWorkspace() {
       setFrameState("error");
       toast.error(error instanceof Error ? error.message : "浏览器启动失败");
     });
-  }, [activeThreadId, browserUrl, stateUrl]);
+  }, [activeThreadId, browserUrl, screencastAttempt, stateUrl]);
 
   React.useEffect(() => {
     if (!stateUrl || !state.active) return;
@@ -525,8 +561,12 @@ function BrowserWorkspace() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: name, index, ...(url ? { url } : {}) }),
         });
-        const payload = (await response.json()) as { error?: string; state?: BrowserState };
-        if (!response.ok) throw new Error(payload.error || "浏览器操作失败");
+        const payload = (await response.json()) as {
+          error?: string;
+          message?: string;
+          state?: BrowserState;
+        };
+        if (!response.ok) throw new Error(payload.message || payload.error || "浏览器操作失败");
         if (payload.state) setState(payload.state);
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "浏览器操作失败");
@@ -589,7 +629,6 @@ function BrowserWorkspace() {
   const injectWheel = React.useCallback(
     (event: React.WheelEvent<HTMLImageElement>) => {
       if (!stateUrl || !frame) return;
-      event.preventDefault();
       const bounds = event.currentTarget.getBoundingClientRect();
       const x = ((event.clientX - bounds.left) / bounds.width) * frame.viewport.width;
       const y = ((event.clientY - bounds.top) / bounds.height) * frame.viewport.height;

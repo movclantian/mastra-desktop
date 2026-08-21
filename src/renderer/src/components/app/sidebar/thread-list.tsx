@@ -2,7 +2,6 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ChevronRightIcon,
-  FolderIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -12,6 +11,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
+import { FileTypeIcon, FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -180,7 +180,12 @@ function TreeEntryNode({
   if (entry.type === "dir") {
     const children = entriesByDir.get(entry.path);
     return (
-      <FileTreeFolder name={entry.name} path={entry.path}>
+      <FileTreeFolder
+        icon={<FolderTypeIcon name={entry.name} />}
+        name={entry.name}
+        openIcon={<FolderTypeIcon name={entry.name} open />}
+        path={entry.path}
+      >
         {children === undefined ? (
           <p className="px-2 py-1 text-xs text-muted-foreground">加载…</p>
         ) : (
@@ -191,7 +196,7 @@ function TreeEntryNode({
       </FileTreeFolder>
     );
   }
-  return <FileTreeFile name={entry.name} path={entry.path} />;
+  return <FileTreeFile icon={<FileTypeIcon name={entry.name} />} name={entry.name} path={entry.path} />;
 }
 
 function ThreadWorkspaceTree({ threadId }: { threadId: string }) {
@@ -259,13 +264,14 @@ export function WorkspaceGroup({
   onRename: (thread: WorkThread) => void;
 }) {
   const sorted = sortThreads(threads);
+  const [open, setOpen] = React.useState(false);
   // 文件树按线程查目录(路由从 thread.metadata.workspacePath 解析),组内任一线程均可
   const treeThreadId = sorted[0]?.id;
   return (
-    <Collapsible defaultOpen className="group/collapsible">
+    <Collapsible className="group/collapsible" onOpenChange={setOpen} open={open}>
       <SidebarMenuItem>
         <CollapsibleTrigger render={<SidebarMenuButton tooltip={path} />}>
-          <FolderIcon />
+          <FolderTypeIcon name={dirName(path)} open={open} />
           <span className="truncate">{dirName(path)}</span>
           {sorted.length > 0 ? (
             <span className="ml-1 text-xs text-muted-foreground tabular-nums">{sorted.length}</span>

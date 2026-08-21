@@ -198,13 +198,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const activeThreads = threads.filter((t) => !t.metadata?.archivedAt);
   const archivedThreads = sortThreads(threads.filter((t) => Boolean(t.metadata?.archivedAt)));
 
-  // 显式绑定目录的线程按目录归组;其余(未绑定/隐式绑定/草稿)平铺为直接线程
+  // 显式绑定且已开始工作的线程按目录归组;草稿线程始终平铺,即使旧状态
+  // 曾经提前写入过 workspacePath,也不能让空会话占据目录归属。
   const directThreads: WorkThread[] = [];
   const groupsByPath = new Map<string, WorkThread[]>();
   for (const thread of activeThreads) {
     const path =
       thread.metadata?.workspaceExplicit === true ? thread.metadata.workspacePath : undefined;
-    if (!path) {
+    if (!path || thread.metadata?.draft === true) {
       directThreads.push(thread);
       continue;
     }

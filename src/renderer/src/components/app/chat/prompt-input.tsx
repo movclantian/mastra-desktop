@@ -21,7 +21,6 @@ import {
   ListTodoIcon,
   PaperclipIcon,
   PencilIcon,
-  SendIcon,
   SparklesIcon,
   Trash2Icon,
   WaypointsIcon,
@@ -535,7 +534,7 @@ export function UserRequestQueuePanel({
                   key={request.id}
                   onEdit={handleEdit}
                   onRemove={onRemove}
-                  onSendNow={onSendNow}
+                  onSteerNow={onSteerNow}
                   request={request}
                 />
               ))}
@@ -554,7 +553,6 @@ export function ChatPromptInput({
   onSubmit,
   status,
   onStop,
-  onSteer,
   compacting,
   onCompress,
   compressResult,
@@ -581,7 +579,6 @@ export function ChatPromptInput({
    * 「点按钮停止」两个动作互不干扰。
    */
   onStop: () => void | Promise<void>;
-  onSteer: (text: string, clearPrompt: () => void) => Promise<void>;
   compacting: boolean;
   onCompress: () => void;
   compressResult: CompressResult | null;
@@ -733,26 +730,6 @@ export function ChatPromptInput({
             />
             <ChatModeSelector />
             <ChatModelSelector />
-            <SteerButton
-              disabled={status !== "submitted" && status !== "streaming"}
-              onSteer={() => {
-                const text = controller.textInput.value.trim();
-                if (!text) {
-                  toast.error("请输入要立即转向的内容");
-                  return;
-                }
-                if (controller.attachments.files.length > 0) {
-                  toast.error("立即转向不支持附件,请先发送或移除附件");
-                  return;
-                }
-                void onSteer(text, () => {
-                  controller.textInput.clear();
-                  controller.attachments.clear();
-                  setSelectedSkills([]);
-                  setSelectedFileReferences([]);
-                });
-              }}
-            />
             <PromptInputSubmit onStop={() => void onStop()} status={status} />
           </div>
         </PromptInputFooter>

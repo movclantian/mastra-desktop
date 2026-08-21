@@ -84,8 +84,13 @@ export function isTerminalAgentChunk(chunk: AgentStreamChunk): boolean {
   return chunk.type === "finish" && finishReason !== "tool-calls";
 }
 
-interface QueuedFollowUp {
-  id: string;
+/**
+ * 通知收件箱记录的形状,从框架方法签名派生而不是手写 —— beta 期字段变化时
+ * 由 tsc 报错而非静默漂移。
+ */
+export type WorkNotificationInput = Parameters<Agent["sendNotificationSignal"]>[0];
+
+interface QueuedFollowUp {  id: string;
   message: AgentMessageInput;
   streamOptions: AgentExecutionOptions;
   subscription: AgentThreadSubscription;
@@ -409,8 +414,47 @@ export class WorkSession {
     return this.sendMessage(message, streamOptions);
   }
 
-  abort(): boolean {
-    const subscription = [...this.subscriptions].find(
+  /**
+   * 会话策略变更(模式切换 / 工具类别或单个工具授权 / 审批规则改写)。
+   *
+   * instructions 只在请求开始时求值一次,所以中途改掉的 mode 与 grants 对
+   * **当前正在跑的 run** 是不可见的 —— agent 会继续按旧约束推理。这条 reactive
+   * 信号把变更直接送进运行中的 agent loop(docs/en/docs/harness/signals.mdx)。
+   *
+   * ifIdle 取 "discard" 而不是 "persist":线程空闲时下一次请求的 instructions
+   * 本来就会带上新策略,persist 只会往历史里堆一条永远重复的提醒。
+   */
+  notifyPolicyChange(summary: string, attributes: Record<string, string> = {}): void {
+    const result = this.agent.sendSignal(
+      {
+        type: "reactive",
+        contents: summary,
+        attributes: { type: "policy-change", ...attributes },
+      },
+      {
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+        ifActive: { behavior: "deliver" },
+        ifIdle: { behavior: "discard" },
+      },
+    );
+    // 策略变更是尽力而为的旁路通知:投递失败不该让改模式的 HTTP 请求失败
+    void result.accepted.catch(() => undefined);
+  }
+
+  /**
+   * 外部事件 → 通知收件箱。ingress 阶段落库成 notification 记录,再由 agent 的
+   * 投递策略决定是立刻发信号还是攒进 <notification-summary>(默认策略按优先级:
+   * urgent 立即、low 两种情况都批量)。记录的全文由 notification_inbox 工具读取。
+   */
+  sendNotification(notification: WorkNotificationInput) {
+    return this.agent.sendNotificationSignal(notification, {
+      resourceId: this.resourceId,
+      threadId: this.currentThreadId,
+    });
+  }
+
+  abort(): boolean {    const subscription = [...this.subscriptions].find(
       ([, threadId]) => threadId === this.currentThreadId,
     )?.[0];
     const aborted = subscription?.abort() ?? false;
