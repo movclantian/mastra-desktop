@@ -17,21 +17,18 @@ import {
   type UIMessage,
 } from "ai";
 import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
+import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
+import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
+import { isTerminalAgentChunk, workSessionHost } from "../../harness";
+import { OM_MODELS_CONTEXT_KEY } from "../../memory";
 import {
   defaultModelFamily,
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveRequestModel,
   usesOpenAIResponses,
-} from "../../agents/llm";
-import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
-import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
-import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
-import {
-  MODEL_FAMILY_CONTEXT_KEY,
-  parseWebSearchSelection,
-  WEB_SEARCH_CONTEXT_KEY,
-} from "../../agents/tools";
+} from "../../models";
 import {
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
@@ -41,8 +38,12 @@ import {
   LIBRARY_SEARCH_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
   searchLibrary,
-} from "../../library";
-import { OM_MODELS_CONTEXT_KEY } from "../../memory";
+} from "../../rag";
+import {
+  MODEL_FAMILY_CONTEXT_KEY,
+  parseWebSearchSelection,
+  WEB_SEARCH_CONTEXT_KEY,
+} from "../../tools";
 import {
   addRecentWorkspace,
   ensureDirectory,
@@ -50,7 +51,6 @@ import {
   isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
 } from "../../workspace";
-import { isTerminalAgentChunk, workSessionHost } from "../session";
 import { getWorkMemory } from "./threads";
 import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
 import type { ThreadMetadata } from "./threads/types";

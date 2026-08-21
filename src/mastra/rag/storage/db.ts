@@ -1,17 +1,17 @@
 import { type Client, createClient } from "@libsql/client";
 import { nanoid } from "nanoid";
-import { getStorageUrl } from "../storage";
+import { getStorageUrl } from "../../storage";
 import type {
   LibraryAsset,
   LibraryIndexRunStatus,
   LibraryIndexRunSummary,
   LibraryIndexStage,
   LibraryUploadSession,
-} from "./types";
+} from "../types";
 
 /**
- * 资料库数据层:LibSQL 客户端工厂、建表(schema 只在此处定义)与行映射。
- * 所有表结构变更直接改下面的 batch 语句,不做增量迁移。
+ * RAG 数据库存储层 (docs/en/reference/rag/database-config.mdx):
+ * LibSQL 客户端工厂、建表与运行状态记录。
  */
 
 export function now(): string {

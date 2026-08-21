@@ -93,10 +93,12 @@ export const browserScreencastRoute = registerApiRoute(
             );
           };
           send("state", { active: true });
-          screencast.on("frame", (frame) => send("frame", frame));
-          screencast.on("url", (url) => send("url", { url }));
-          screencast.on("error", (error) => send("error", { error: error.message }));
-          screencast.on("stop", (reason) => {
+          screencast.on("frame", (frame: unknown) => send("frame", frame));
+          screencast.on("url", (url: unknown) => send("url", { url }));
+          screencast.on("error", (error: { message?: string }) =>
+            send("error", { error: error.message }),
+          );
+          screencast.on("stop", (reason: unknown) => {
             if (disposed) return;
             send("stop", { reason });
             disposed = true;

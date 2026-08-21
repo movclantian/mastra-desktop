@@ -6,7 +6,7 @@ import {
   resolveConfiguredEmbeddingModelForUse,
   resolveDefaultModelId,
   WORKBENCH_GATEWAY_ID,
-} from "../agents/llm";
+} from "../models";
 import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storage";
 
 /**

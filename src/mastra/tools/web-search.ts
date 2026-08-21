@@ -6,37 +6,18 @@ import { z } from "zod";
 import { getAppConfig, setAppConfig } from "../storage";
 
 /**
- * 联网检索工具模块:Tavily / Firecrawl / AnySearch 三个引擎。
- * - Tavily 直接使用官方 @mastra/tavily 工厂(tavily.mdx)
- * - Firecrawl 按 firecrawl.mdx 官方示例用 createTool 包装 SDK,
- *   search/scrape 的 SDK 参数(sources/categories/tbs/域名过滤等)原样暴露给模型
- * - AnySearch 官方直连,不经 MCP 客户端(服务端固定集成无需动态发现工具,
- *   也免去 MCPClient 的会话管理与握手失败恢复):search 走官方 REST
- *   POST /v1/search(标准 JSON);get_sub_domains / batch_search / extract
- *   无专门 REST 端点,按官方 Skill CLI 同款协议对 /mcp 发无状态
- *   JSON-RPC 2.0 tools/call 单次 POST,取 content[0].text(官方 Markdown)。
- *
- * API Key 存数据库 app_config 表(key = "tools"),设置面板「工具」标签写入,
- * 工具在每次请求时按需实例化(改 Key 无需重启服务)。
- * 引擎与强度由客户端每次请求携带(promptInput 的搜索多级菜单),
- * 经 RequestContext 传入 Agent 的动态 tools/instructions。
+ * 联网检索工具模块 (docs/en/integrations/tools/):
+ * Tavily / Firecrawl / AnySearch / Provider 原生检索。
  */
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];
 
-/**
- * provider 引擎(webSearchTool)支持的模型家族。
- * Mastra 在运行时按当前模型解析成 openai.web_search / anthropic.web_search_20250305 /
- * google.google_search / xai.web_search;推断不出这四家时**整个 run 抛 MastraError**
- * (docs/en/docs/agents/tools.mdx),不是降级 —— 所以必须提前拦住。
- */
+/** provider 引擎支持的模型家族 */
 export const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "xai"] as const;
 
-/** RequestContext 中承载当前模型家族的键(chat 路由写入,供上面的判定使用) */
 export const MODEL_FAMILY_CONTEXT_KEY = "modelFamily";
 
-/** 该家族能否使用 provider 原生检索 */
 export function supportsProviderSearch(family: unknown): boolean {
   if (typeof family !== "string") return false;
   const normalized = family === "gemini" ? "google" : family;
@@ -46,24 +27,16 @@ export function supportsProviderSearch(family: unknown): boolean {
 export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
 export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
 
-/** 客户端选择的「引擎 + 搜索强度」 */
 export interface WebSearchSelection {
   engine: SearchEngine;
   depth: SearchDepth;
 }
 
-/** RequestContext 中承载搜索选择的键 */
 export const WEB_SEARCH_CONTEXT_KEY = "webSearch";
-
-// ---------------------------------------------------------------------------
-// 配置读写(app_config 表,key = "tools")
-// ---------------------------------------------------------------------------
 
 export interface ToolsUserConfig {
   tavily: { apiKey: string };
-  /** apiUrl 仅自托管 Firecrawl 需要,留空走官方云端 */
   firecrawl: { apiKey: string; apiUrl: string };
-  /** AnySearch 允许匿名调用(限流更低),apiKey 可留空 */
   anysearch: { apiKey: string };
 }
 
@@ -94,14 +67,9 @@ export async function saveToolsConfig(config: ToolsUserConfig): Promise<void> {
   await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(config, null, 2));
 }
 
-// ---------------------------------------------------------------------------
-// 搜索强度:结果条数 + Tavily 检索深度 + 是否放行整页抓取工具
-// ---------------------------------------------------------------------------
-
 interface DepthPreset {
   maxResults: number;
   tavilySearchDepth: "fast" | "basic" | "advanced";
-  /** deep 档才注入 extract/scrape 类整页抓取工具 */
   allowDeepFetch: boolean;
 }
 
@@ -111,7 +79,6 @@ const DEPTH_PRESETS: Record<SearchDepth, DepthPreset> = {
   deep: { maxResults: 10, tavilySearchDepth: "advanced", allowDeepFetch: true },
 };
 
-/** 检索结果统一形态(Firecrawl / AnySearch 输出);content 为 AnySearch 独有的正文摘录 */
 const searchHitSchema = z.object({
   title: z.string(),
   url: z.string(),
@@ -119,20 +86,14 @@ const searchHitSchema = z.object({
   content: z.string().optional(),
 });
 
-/** 单条工具输出的原文上限:避免整页内容挤爆上下文 */
 const MAX_RAW_LENGTH = 12_000;
 
 function clamp(text: string): string {
   return text.length > MAX_RAW_LENGTH ? `${text.slice(0, MAX_RAW_LENGTH)}\n…[已截断]` : text;
 }
 
-// ---------------------------------------------------------------------------
-// AnySearch:官方直连(REST + 无状态 JSON-RPC,文档 anysearch.com/docs)
-// ---------------------------------------------------------------------------
-
 const ANYSEARCH_API_BASE = "https://api.anysearch.com";
 
-/** 垂直域全集(官方 CLI 同款清单),get_sub_domains 用 */
 const ANYSEARCH_DOMAINS = [
   "general",
   "resource",
@@ -153,10 +114,8 @@ const ANYSEARCH_DOMAINS = [
   "gaming",
 ] as const;
 
-/** 每条 search 结果携带的正文摘录上限(官方 REST 返回全量 content,需自控 token) */
 const MAX_RESULT_CONTENT = 2_000;
 
-/** 统一错误出口:把官方错误码翻译成模型可行动的提示 */
 function anysearchError(status: number, message: string): Error {
   if (status === 401) {
     return new Error(
@@ -172,7 +131,6 @@ function anysearchError(status: number, message: string): Error {
   return new Error(`AnySearch 请求失败(HTTP ${status}):${message}`);
 }
 
-/** 请求出口:Bearer 可选(匿名按 IP 限额)+ 客户端标识 + 超时;非 2xx 统一抛错 */
 async function anysearchFetch(
   path: string,
   apiKey: string,
@@ -202,7 +160,6 @@ async function anysearchFetch(
   return json;
 }
 
-/** REST POST /v1/search 的响应形态(code !== 0 时 message 为错误说明) */
 interface AnySearchRestResponse {
   code?: number;
   message?: string;
@@ -211,7 +168,6 @@ interface AnySearchRestResponse {
   };
 }
 
-/** 无状态 JSON-RPC 2.0 tools/call(官方 Skill CLI 同款协议)→ content[0].text */
 async function anysearchToolCall(
   apiKey: string,
   tool: string,
@@ -235,11 +191,10 @@ async function anysearchToolCall(
 }
 
 function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
-  // search:官方 REST,全部请求参数(query/max_results/tag/zone/language/params)暴露给模型
   const search = createTool({
     id: "anysearch-search",
     description:
-      "AnySearch 统一检索:按查询意图自动路由数据源(通用网页 + 金融/学术/代码/法律等垂直域)并融合排序。垂直话题(股票/论文/CVE/航班等)先调 anysearch_get_sub_domains 拿 tag 与必填 params,再带 tag+params 检索;通用查询只传 query 即可。",
+      "AnySearch 统一检索:按查询意图自动路由数据源(通用网页 + 金融/学术/代码/法律等垂直域)并融合排序。垂直话题先调 anysearch_get_sub_domains 拿 tag 与必填 params,再带 tag+params 检索;通用查询只传 query 即可。",
     inputSchema: z.object({
       query: z.string().min(1).describe("检索关键词或自然语言问题"),
       max_results: z
@@ -300,7 +255,6 @@ function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
     },
   });
 
-  // get_sub_domains:官方返回 Markdown 表格(sub_domain | description | params),直接透传
   const getSubDomains = createTool({
     id: "anysearch-get-sub-domains",
     description:
@@ -330,11 +284,10 @@ function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
 
   return {
     ...base,
-    // batch_search:1-5 条独立查询并行;官方协议要求 domain+sub_domain 成对,由 tag 前缀派生
     anysearch_batch_search: createTool({
       id: "anysearch-batch-search",
       description:
-        "AnySearch 并行批量检索:一次执行最多 5 条相互独立的查询,单条失败不影响其余。适合多意图问题或横向对比(多只股票/多个 CVE/多家公司)。",
+        "AnySearch 并行批量检索:一次执行最多 5 条相互独立的查询,单条失败不影响其余。适合多意图问题或横向对比。",
       inputSchema: z.object({
         queries: z
           .array(
@@ -381,10 +334,9 @@ function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
         };
       },
     }),
-    // extract:官方已输出清洗后的 Markdown,直接透传
     anysearch_extract: createTool({
       id: "anysearch-extract",
-      description: "AnySearch 整页抓取:抓取单个 URL 的完整内容并转为 Markdown(官方已清洗排版)。",
+      description: "AnySearch 整页抓取:抓取单个 URL 的完整内容并转为 Markdown。",
       inputSchema: z.object({ url: z.url().describe("待抓取的页面地址") }),
       outputSchema: z.object({ markdown: z.string() }),
       execute: async ({ url }) => ({
@@ -393,10 +345,6 @@ function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
     }),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Firecrawl(firecrawl.mdx 官方示例)
-// ---------------------------------------------------------------------------
 
 function createFirecrawlTools(
   config: ToolsUserConfig["firecrawl"],
@@ -407,7 +355,6 @@ function createFirecrawlTools(
     ...(config.apiUrl ? { apiUrl: config.apiUrl } : {}),
   });
 
-  // search:SDK SearchRequest 的可调参数全部暴露给模型,强度档只提供 limit 默认值
   const search = createTool({
     id: "firecrawl-search",
     description:
@@ -503,11 +450,6 @@ function createFirecrawlTools(
   };
 }
 
-// ---------------------------------------------------------------------------
-// 对外:解析选择 → 工具集 / 指令 / 结构化报告 schema
-// ---------------------------------------------------------------------------
-
-/** 客户端请求体或 RequestContext 中的原始值 → 合法选择(非法返回 null) */
 export function parseWebSearchSelection(value: unknown): WebSearchSelection | null {
   if (typeof value !== "object" || value === null) return null;
   const { engine, depth } = value as { engine?: unknown; depth?: unknown };
@@ -518,17 +460,6 @@ export function parseWebSearchSelection(value: unknown): WebSearchSelection | nu
   };
 }
 
-/**
- * 按选择实例化对应引擎的工具集。
- *
- * web_fetch(官方 webFetchTool)在任意引擎、任意强度下都注入 —— 它是「读取指定
- * URL」的能力,与「检索」是不同动作,且无需任何 Key。安全边界由官方实现兜住:
- * 仅 http/https、阻断 localhost 与私有/保留 IP(含 DNS 解析后的地址)、
- * 10 万字符截断、最多 5 次重定向、15s 超时、失败返回 isError 而不抛。
- *
- * Key / 模型家族不满足时返回空对象(不注入任何检索工具),
- * 由 instructions 告知模型去设置面板配置。
- */
 export async function resolveWebSearchTools(
   selection: WebSearchSelection | null,
   modelFamily?: unknown,
@@ -536,8 +467,6 @@ export async function resolveWebSearchTools(
   if (!selection) return {};
   const preset = DEPTH_PRESETS[selection.depth];
 
-  // provider 原生检索:用模型自己那把 Key,无需第三方配置。
-  // 家族不在四家之内时不注入 —— 注入了会让整个 run 抛 MastraError。
   if (selection.engine === "provider") {
     if (!supportsProviderSearch(modelFamily)) return {};
     return { web_search: webSearchTool, web_fetch: webFetchTool };
@@ -560,17 +489,12 @@ export async function resolveWebSearchTools(
     return { web_fetch: webFetchTool, ...createFirecrawlTools(config.firecrawl, preset) };
   }
 
-  // AnySearch 匿名可用,无 Key 也放行(限流更低);官方直连,工具按请求创建,改 Key 即时生效
   return {
     web_fetch: webFetchTool,
     ...createAnySearchTools(config.anysearch.apiKey, preset),
   };
 }
 
-/**
- * 是否已具备该引擎的调用条件(设置面板与 promptInput 菜单据此提示)。
- * provider 引擎不看 Key,看当前模型家族。
- */
 export function isEngineConfigured(
   engine: SearchEngine,
   config: ToolsUserConfig,
@@ -579,7 +503,7 @@ export function isEngineConfigured(
   if (engine === "provider") return supportsProviderSearch(modelFamily);
   if (engine === "tavily") return Boolean(config.tavily.apiKey);
   if (engine === "firecrawl") return Boolean(config.firecrawl.apiKey);
-  return true; // AnySearch 支持匿名
+  return true;
 }
 
 const ENGINE_LABELS: Record<SearchEngine, string> = {
@@ -589,14 +513,12 @@ const ENGINE_LABELS: Record<SearchEngine, string> = {
   anysearch: "AnySearch",
 };
 
-/** 开启联网检索时追加给 Agent 的动态指令 */
 export function webSearchInstructions(
   selection: WebSearchSelection,
   toolsAvailable: boolean,
 ): string {
   const preset = DEPTH_PRESETS[selection.depth];
   if (!toolsAvailable) {
-    // provider 引擎的失败原因是模型家族,不是 Key —— 提示必须区分开
     if (selection.engine === "provider") {
       return `Web search was requested using the model's own native search, but the active model is not from OpenAI, Anthropic, Google or xAI, so no search tool is available. Tell the user to either switch to a model from one of those providers or pick a different search engine in the search menu, then answer from your own knowledge and mark it as possibly outdated.`;
     }
@@ -610,7 +532,6 @@ export function webSearchInstructions(
         : selection.engine === "firecrawl"
           ? `Call firecrawl-search with limit=${preset.maxResults} by default; narrow results with sources (news), categories (github/research/pdf/developer), tbs time filters or domain filters when the query calls for it.`
           : "Prefer anysearch-search with a vertical domain for specialized queries; call anysearch_get_sub_domains first when unsure which domains exist.";
-  // provider 引擎没有专属抽取工具,web_fetch 就是它读全文的手段
   const deepHint =
     selection.engine === "provider"
       ? "Use web_fetch to read the 1-3 most promising pages in full before concluding."

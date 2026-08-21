@@ -1,12 +1,13 @@
 import { basename, extname } from "node:path";
 
 /**
- * 文件名规范、媒体类型推断与文本抽取(docx/xlsx/pdf 按需动态导入官方解析库)。
+ * 文件名规范、媒体类型推断与文本抽取 (docs/en/reference/rag/extract-params.mdx):
+ * docx/xlsx/pdf 按需动态导入官方解析库。
  */
 
 export function normalizeFilename(filename: string): string {
   const name = basename(filename)
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: 清洗文件名中的非法字符与控制字符是本函数的目的
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: 清洗文件名中的非法字符与控制字符
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
     .trim();
   return name || "未命名附件";

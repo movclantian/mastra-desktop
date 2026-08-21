@@ -69,7 +69,12 @@ function dimension(value: unknown, minimum: number, maximum: number): number {
 
 function cwd(value: unknown): string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "string" || value.length === 0 || value.length > 4_096 || value.trim() !== value) {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 4_096 ||
+    value.trim() !== value
+  ) {
     throw new TypeError("invalid terminal working directory");
   }
   return value;
@@ -114,15 +119,33 @@ export function parseTerminalSessionId(value: unknown): string {
 export function parseTerminalEvent(value: unknown): TerminalEvent {
   const input = record(value);
   const id = sessionId(input.sessionId);
-  if (input.type === "data" && typeof input.data === "string" && input.data.length <= TERMINAL_MAX_INPUT_LENGTH) {
+  if (
+    input.type === "data" &&
+    typeof input.data === "string" &&
+    input.data.length <= TERMINAL_MAX_INPUT_LENGTH
+  ) {
     return { type: "data", sessionId: id, data: input.data };
   }
   if (input.type === "exit") {
-    const exitCode = typeof input.exitCode === "number" && Number.isInteger(input.exitCode) ? input.exitCode : undefined;
-    const signal = typeof input.signal === "number" && Number.isInteger(input.signal) ? input.signal : undefined;
-    return { type: "exit", sessionId: id, ...(exitCode === undefined ? {} : { exitCode }), ...(signal === undefined ? {} : { signal }) };
+    const exitCode =
+      typeof input.exitCode === "number" && Number.isInteger(input.exitCode)
+        ? input.exitCode
+        : undefined;
+    const signal =
+      typeof input.signal === "number" && Number.isInteger(input.signal) ? input.signal : undefined;
+    return {
+      type: "exit",
+      sessionId: id,
+      ...(exitCode === undefined ? {} : { exitCode }),
+      ...(signal === undefined ? {} : { signal }),
+    };
   }
-  if (input.type === "error" && typeof input.message === "string" && input.message.length > 0 && input.message.length <= 2_048) {
+  if (
+    input.type === "error" &&
+    typeof input.message === "string" &&
+    input.message.length > 0 &&
+    input.message.length <= 2_048
+  ) {
     return { type: "error", sessionId: id, message: input.message };
   }
   throw new TypeError("invalid terminal event");

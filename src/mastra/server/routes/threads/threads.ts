@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../../agents";
-import { workSessionHost } from "../../session";
+import { workSessionHost } from "../../../harness";
 import { getOwnedThread, getWorkMemory } from "./shared";
 import type { ThreadMetadata } from "./types";
 

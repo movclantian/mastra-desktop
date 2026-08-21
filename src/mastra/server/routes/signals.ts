@@ -1,5 +1,5 @@
 import { registerApiRoute } from "@mastra/core/server";
-import { workWebhookSignals } from "../../agents";
+import { workWebhookSignals } from "../../harness";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {

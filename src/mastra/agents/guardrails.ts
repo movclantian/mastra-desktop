@@ -26,9 +26,9 @@ import {
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
+import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
 import { getAppConfig, setAppConfig } from "../storage";
 import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
-import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "./llm";
 
 /**
  * 护栏与处理器管线:把 @mastra/core/processors 的全部内置处理器

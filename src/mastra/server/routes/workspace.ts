@@ -56,8 +56,7 @@ async function ownedWorkspace(c: ContextWithMastra) {
   const memory = await getWorkMemory();
   const thread = await getOwnedThread(memory, threadId, resourceId);
   const metadata = thread?.metadata as ThreadMetadata | undefined;
-  if (!metadata?.workspacePath || metadata.workspaceExplicit !== true)
-    return null;
+  if (!metadata?.workspacePath || metadata.workspaceExplicit !== true) return null;
   try {
     return { root: await realpath(resolve(metadata.workspacePath)), threadId };
   } catch {

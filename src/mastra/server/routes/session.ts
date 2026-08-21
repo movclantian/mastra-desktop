@@ -4,14 +4,8 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import type { MastraModelOutput } from "@mastra/core/stream";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { createUIMessageStreamResponse } from "ai";
+import { z } from "zod";
 import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
-import {
-  REQUEST_MODEL_CONTEXT_KEY,
-  requestModelFamily,
-  resolveConfiguredModel,
-  resolveRequestModel,
-  usesOpenAIResponses,
-} from "../../agents/llm";
 import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import {
   applySessionGrants,
@@ -22,27 +16,52 @@ import {
   type ToolCategory,
   toolCategoryOf,
 } from "../../agents/permissions";
+import { mergeWorkbenchState, workbenchStateSchema } from "../../agents/processors";
 import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
+import {
+  isTerminalAgentChunk,
+  SESSION_SCOPE_DEFAULT,
+  type WorkNotificationInput,
+  type WorkSession,
+  workSessionHost,
+} from "../../harness";
+import { OM_MODELS_CONTEXT_KEY } from "../../memory";
+import {
+  REQUEST_MODEL_CONTEXT_KEY,
+  requestModelFamily,
+  resolveConfiguredModel,
+  resolveRequestModel,
+  usesOpenAIResponses,
+} from "../../models";
+import { appStorage } from "../../storage";
 import {
   MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
   WEB_SEARCH_CONTEXT_KEY,
-} from "../../agents/tools";
-import { OM_MODELS_CONTEXT_KEY } from "../../memory";
-import { appStorage } from "../../storage";
+} from "../../tools";
 import { WORKSPACE_PATH_CONTEXT_KEY } from "../../workspace";
-import {
-  isTerminalAgentChunk,
-  SESSION_SCOPE_DEFAULT,
-  type WorkSession,
-  workSessionHost,
-} from "../session";
 import { getOwnedThread, getWorkMemory, type OwnedThread } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
 
 function scopeOf(value: string | undefined): string {
   return value?.trim() || SESSION_SCOPE_DEFAULT;
 }
+
+/**
+ * 通知记录的入参校验。字段对齐 Agent.sendNotificationSignal():source/kind/summary
+ * 必填,priority 缺省时由框架按 medium 处理,dedupeKey 用于合并同源重复事件。
+ */
+const notificationInputSchema = z.object({
+  source: z.string().min(1),
+  kind: z.string().min(1),
+  summary: z.string().min(1),
+  priority: z.enum(["low", "medium", "high", "urgent"]).optional(),
+  payload: z.unknown().optional(),
+  dedupeKey: z.string().min(1).optional(),
+  coalesceKey: z.string().min(1).optional(),
+  attributes: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
 
 interface SessionRouteResult {
   session: WorkSession;
@@ -243,7 +262,7 @@ export const sessionStreamRoute = registerApiRoute(
       const stream = subscriptionStream(
         subscription,
         () => result.session.releaseSubscription(subscription),
-        followUp?.runId,
+        followUp?.runId ?? undefined,
       );
       return createUIMessageStreamResponse({ stream });
     },
@@ -454,6 +473,10 @@ export const updateSessionPermissionsRoute = registerApiRoute(
         title: result.thread.title,
         metadata: { ...result.thread.metadata, permissionRules: rules },
       });
+      result.session.notifyPolicyChange(
+        "The user rewrote this session's tool approval rules. Some tools may have become available and others withheld — check what a tool returns rather than assuming the previous policy still holds.",
+        { change: "permission-rules" },
+      );
       return c.json({ rules, grants: result.session.getGrants(), thread });
     },
   },
@@ -529,6 +552,10 @@ export const sessionGrantRoute = registerApiRoute(
         return c.json({ error: "unsupported grant category" }, 400);
       }
       result.session.grantCategory(body.category as ToolCategory);
+      result.session.notifyPolicyChange(
+        `The user granted the "${body.category}" tool category for the rest of this session. Those tools no longer need per-call approval — proceed without asking again.`,
+        { change: "grant-category", category: String(body.category) },
+      );
       return c.json({ grants: result.session.getGrants() });
     },
   },
@@ -562,6 +589,10 @@ export const sessionToolGrantRoute = registerApiRoute(
         return c.json({ error: "toolName is required" }, 400);
       }
       result.session.grantTool(body.toolName.trim());
+      result.session.notifyPolicyChange(
+        `The user granted the "${body.toolName.trim()}" tool for the rest of this session. It no longer needs per-call approval.`,
+        { change: "grant-tool", toolName: body.toolName.trim() },
+      );
       return c.json({ grants: result.session.getGrants() });
     },
   },
@@ -582,6 +613,72 @@ export const sessionToolGrantRevokeRoute = registerApiRoute(
   },
 );
 
+/**
+ * 工作台状态上报(state lane 的生产者入口)。
+ *
+ * 渲染进程各面板把自己那一份 PUT 上来 —— 编辑器打开了什么、终端跑完了什么、
+ * 哪些面板可见。服务端只维护内存镜像,真正把它变成模型可见的 <state> 是
+ * agents/processors.ts 里三条 lane 的 computeStateSignal():只在模型要推理时
+ * 注入,所以频繁上报不会唤醒空闲的 agent、也不会污染历史。
+ */
+export const updateSessionWorkbenchStateRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workbench-state",
+  {
+    method: "PUT",
+    handler: async (c) => {
+      const result = await sessionFor(c);
+      if ("error" in result) return result.error;
+      const parsed = workbenchStateSchema.safeParse(await c.req.json());
+      if (!parsed.success) {
+        return c.json({ error: "Invalid workbench state", issues: parsed.error.issues }, 400);
+      }
+      return c.json({ state: mergeWorkbenchState(result.threadId, parsed.data) });
+    },
+  },
+);
+
+/**
+ * 外部事件 → 通知收件箱。前端用它投递自己那侧才知道的事件(终端里跑完的长
+ * 命令等);服务端侧的后台任务走 src/mastra/index.ts 注册的索引完成回调。
+ * 投递时机与是否攒成 summary 由 agent 的默认投递策略决定,这里只负责落库。
+ */
+export const sessionNotificationRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/notification",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const result = await sessionFor(c);
+      if ("error" in result) return result.error;
+      const parsed = notificationInputSchema.safeParse(await c.req.json());
+      if (!parsed.success) {
+        return c.json({ error: "Invalid notification", issues: parsed.error.issues }, 400);
+      }
+      try {
+        const sent = (await result.session.sendNotification(
+          parsed.data as WorkNotificationInput,
+        )) as
+          | Array<{
+              record?: { id?: string };
+              decision?: unknown;
+            }>
+          | {
+              record?: { id?: string };
+              decision?: unknown;
+            };
+        const first = Array.isArray(sent)
+          ? sent[0]
+          : (sent as { record?: { id?: string }; decision?: unknown });
+        return c.json({ ok: true, id: first?.record?.id, decision: first?.decision });
+      } catch (error) {
+        return c.json(
+          { error: error instanceof Error ? error.message : "Failed to record the notification" },
+          500,
+        );
+      }
+    },
+  },
+);
+
 export const sessionRoutes = [
   sessionStreamRoute,
   sessionMessageRoute,
@@ -590,6 +687,8 @@ export const sessionRoutes = [
   sessionAbortRoute,
   sessionStateRoute,
   updateSessionStateRoute,
+  updateSessionWorkbenchStateRoute,
+  sessionNotificationRoute,
   sessionModeRoute,
   sessionModelRoute,
   sessionPermissionsRoute,

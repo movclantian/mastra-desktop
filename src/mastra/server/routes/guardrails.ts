@@ -44,7 +44,7 @@ export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status",
     const [{ getGuardrailsConfig }, { resolveDefaultModelId }, { isWorkspaceEnabled }] =
       await Promise.all([
         import("../../agents/guardrails"),
-        import("../../agents/llm"),
+        import("../../models"),
         import("../../workspace"),
       ]);
     const config = await getGuardrailsConfig();

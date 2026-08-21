@@ -2,6 +2,11 @@ import type { ToolsInput } from "@mastra/core/agent";
 import { type MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
 import { getAppConfig, setAppConfig } from "../storage";
 
+/**
+ * MCP (Model Context Protocol) 连接模块 (docs/en/docs/connections/mcp.mdx, reference/tools/mcp-client.mdx):
+ * 支持 HTTP (SSE) 和 Stdio (子进程) 双传输协议, 动态解析并注入 Agent 工具集。
+ */
+
 export type McpTransport = "http" | "stdio";
 
 export interface McpServerConfig {
@@ -121,16 +126,12 @@ export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {
 
 function toDefinition(server: McpServerConfig): MastraMCPServerDefinition {
   if (server.transport === "http") {
-    // allowedHosts 未出现在当前 @mastra/mcp 的 HttpServerDefinition 类型里,
-    // 运行时按透传字段保留(与 stdio 分支同样的断言写法)
     const headers = server.headers ?? {};
     if (!server.url) throw new Error(`MCP 服务 ${server.id} 缺少 URL`);
     return {
       url: new URL(server.url),
       allowedHosts: server.allowedHosts,
       requestInit: { headers },
-      // The MCP SDK requires a separate fetch hook for custom headers when
-      // it falls back from Streamable HTTP to legacy SSE.
       eventSourceInit: {
         fetch(input: Request | URL | string, init?: RequestInit) {
           const merged = new Headers(init?.headers);

@@ -215,10 +215,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
     try {
       data = (await response.json()) as typeof data;
     } catch (error) {
-      return c.json(
-        { error: `解析 ${base}/models 的响应失败：${(error as Error).message}` },
-        502,
-      );
+      return c.json({ error: `解析 ${base}/models 的响应失败：${(error as Error).message}` }, 502);
     }
     // OpenAI 兼容 / Anthropic: { data: [{ id }] };Gemini: { models: [{ name: "models/xxx" }] }
     if (!Array.isArray(data.data) && !Array.isArray(data.models)) {
@@ -257,16 +254,16 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
 export const providersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "GET",
   handler: async (c) => {
-    const { getProvidersConfig } = await import("../../agents/llm");
+    const { getProvidersConfig } = await import("../../models");
     return c.json(await getProvidersConfig());
   },
 });
 
-// POST /work/providers/config — 写入供应商与/或当前选定模型(按字段合并,见 llm/saveProvidersConfig)
+// POST /work/providers/config — 写入供应商与/或当前选定模型
 export const saveProvidersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "POST",
   handler: async (c) => {
-    const { saveProvidersConfig } = await import("../../agents/llm");
+    const { saveProvidersConfig } = await import("../../models");
     const config = (await c.req.json()) as Parameters<typeof saveProvidersConfig>[0];
     await saveProvidersConfig(config);
     return c.json({ ok: true });

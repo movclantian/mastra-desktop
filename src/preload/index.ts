@@ -1,17 +1,17 @@
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
 import {
-  TERMINAL_CLOSE_CHANNEL,
-  TERMINAL_CREATE_CHANNEL,
-  TERMINAL_EVENT_CHANNEL,
-  TERMINAL_RESIZE_CHANNEL,
-  TERMINAL_WRITE_CHANNEL,
   parseTerminalCreateRequest,
   parseTerminalCreateResult,
   parseTerminalEvent,
   parseTerminalResizeRequest,
   parseTerminalSessionId,
   parseTerminalWriteRequest,
+  TERMINAL_CLOSE_CHANNEL,
+  TERMINAL_CREATE_CHANNEL,
+  TERMINAL_EVENT_CHANNEL,
+  TERMINAL_RESIZE_CHANNEL,
+  TERMINAL_WRITE_CHANNEL,
   type TerminalCreateRequest,
   type TerminalEvent,
   type TerminalResizeRequest,

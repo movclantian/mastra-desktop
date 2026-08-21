@@ -104,83 +104,83 @@ function AppShell() {
         >
           <SidebarInset className="h-svh overflow-hidden rounded-none shadow-none">
             <header className="relative z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{title}</p>
-          </div>
-          {!skillOpen && !libraryOpen ? (
-            <>
-              <Button
-                aria-label="切换终端面板"
-                aria-pressed={terminalPanelOpen}
-                onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
-                size="icon-sm"
-                title="切换终端面板"
-                variant={terminalPanelOpen ? "secondary" : "ghost"}
-              >
-                <PanelBottomIcon />
-              </Button>
-              <Button
-                aria-label="切换工作区面板"
-                aria-pressed={workspacePanelOpen}
-                onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
-                size="icon-sm"
-                title="切换工作区面板"
-                variant={workspacePanelOpen ? "secondary" : "ghost"}
-              >
-                <PanelRightIcon />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setLibraryOpen(false);
-                  void createThread();
-                }}
-              >
-                <PlusIcon />
-                新建会话
-              </Button>
-            </>
-          ) : null}
-          {libraryOpen ? (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="资料库设置"
-              title="资料库设置"
-              onClick={() => setLibrarySettingsOpen(true)}
-            >
-              <Settings2Icon />
-            </Button>
-          ) : null}
-            </header>
-            <main className="relative z-0 min-h-0 flex-1">
-          {skillOpen ? (
-            <SkillHub />
-          ) : libraryOpen ? (
-            <React.Suspense fallback={<PanelFallback />}>
-              <KnowledgeLibrary
-                settingsOpen={librarySettingsOpen}
-                onSettingsOpenChange={setLibrarySettingsOpen}
-              />
-            </React.Suspense>
-          ) : (
-            <ResizablePanelGroup orientation="vertical">
-              <ResizablePanel defaultSize={terminalPanelOpen ? "72%" : "100%"} minSize="35%">
-                <ChatPanel />
-              </ResizablePanel>
-              {terminalPanelOpen ? (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium">{title}</p>
+              </div>
+              {!skillOpen && !libraryOpen ? (
                 <>
-                  <ResizableHandle />
-                  <ResizablePanel defaultSize="28%" minSize="18%" maxSize="65%">
-                    <React.Suspense fallback={<PanelFallback />}>
-                      <TerminalPanel />
-                    </React.Suspense>
-                  </ResizablePanel>
+                  <Button
+                    aria-label="切换终端面板"
+                    aria-pressed={terminalPanelOpen}
+                    onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
+                    size="icon-sm"
+                    title="切换终端面板"
+                    variant={terminalPanelOpen ? "secondary" : "ghost"}
+                  >
+                    <PanelBottomIcon />
+                  </Button>
+                  <Button
+                    aria-label="切换工作区面板"
+                    aria-pressed={workspacePanelOpen}
+                    onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
+                    size="icon-sm"
+                    title="切换工作区面板"
+                    variant={workspacePanelOpen ? "secondary" : "ghost"}
+                  >
+                    <PanelRightIcon />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setLibraryOpen(false);
+                      void createThread();
+                    }}
+                  >
+                    <PlusIcon />
+                    新建会话
+                  </Button>
                 </>
               ) : null}
-            </ResizablePanelGroup>
-          )}
+              {libraryOpen ? (
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="资料库设置"
+                  title="资料库设置"
+                  onClick={() => setLibrarySettingsOpen(true)}
+                >
+                  <Settings2Icon />
+                </Button>
+              ) : null}
+            </header>
+            <main className="relative z-0 min-h-0 flex-1">
+              {skillOpen ? (
+                <SkillHub />
+              ) : libraryOpen ? (
+                <React.Suspense fallback={<PanelFallback />}>
+                  <KnowledgeLibrary
+                    settingsOpen={librarySettingsOpen}
+                    onSettingsOpenChange={setLibrarySettingsOpen}
+                  />
+                </React.Suspense>
+              ) : (
+                <ResizablePanelGroup orientation="vertical">
+                  <ResizablePanel defaultSize={terminalPanelOpen ? "72%" : "100%"} minSize="35%">
+                    <ChatPanel />
+                  </ResizablePanel>
+                  {terminalPanelOpen ? (
+                    <>
+                      <ResizableHandle />
+                      <ResizablePanel defaultSize="28%" minSize="18%" maxSize="65%">
+                        <React.Suspense fallback={<PanelFallback />}>
+                          <TerminalPanel />
+                        </React.Suspense>
+                      </ResizablePanel>
+                    </>
+                  ) : null}
+                </ResizablePanelGroup>
+              )}
             </main>
           </SidebarInset>
         </ResizablePanel>

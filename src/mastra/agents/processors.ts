@@ -8,15 +8,12 @@ import {
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
-} from "../library";
+} from "../rag";
 import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 /**
- * 资料库附件输入处理器(docs/en/docs/agents/input-processors.mdx):
- * 在请求到达模型之前,把消息里指向资料库的稳定 URL(/work/library/assets/:id/content)
- * 解析为真实内容 —— 已抽取文本按剩余 token 预算注入为文本,图片/音频在模型支持
- * 原生媒体时注入为 file 部分,其余降级为占位说明。预算与模型能力由 chat 路由
- * 写入 RequestContext,未携带 resourceId 时处理器直接放行。
+ * 资料库附件输入处理器 (docs/en/docs/agents/processors.mdx):
+ * 在请求到达模型之前,把消息里指向资料库的稳定 URL 解析为真实内容。
  */
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
@@ -95,8 +92,6 @@ export const libraryAttachmentProcessor: InputProcessor = {
           text: `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
         });
       }
-      // content 数组按联合推断成全部 part 类型的并集,直接赋回 LanguageModelV2Message
-      // 会因角色 content 窄类型不兼容报 TS2322;各 part 均来自原消息或合法替换,断言即可。
       resolvedPrompt[messageIndex] = { ...message, content } as (typeof resolvedPrompt)[number];
     }
     return changed ? { prompt: resolvedPrompt } : undefined;
@@ -104,19 +99,7 @@ export const libraryAttachmentProcessor: InputProcessor = {
 };
 
 // ---------------------------------------------------------------------------
-// 工作台 state lane(docs/en/docs/harness/signals.mdx 的 State signals)
-//
-// 三条 lane 各由一个 processor 的 computeStateSignal() 拥有,数据源是本模块的
-// 内存镜像 —— 渲染进程各面板把自己那一份 PUT 到
-// /work/sessions/:scope/threads/:threadId/workbench-state,路由按 lane 浅合并。
-//
-// 为什么是 processor 而不是外部直接 sendStateSignal():
-// 1) 用户切个文件不该唤醒空闲的 agent —— processor 只在模型真要推理时被调用
-// 2) contextWindow.hasSnapshot / lastSnapshot / activeStateSignals 是 processor
-//    独有的入参,旧 snapshot 被裁出上下文后能自动补发完整快照,外部推送做不到
-// 3) 与 Mastra 内置的 browser lane(BrowserContextProcessor)完全同构
-//
-// 镜像放在 agents/ 而非 server/ 是为了保持 server/ → agents/ 的单向依赖。
+// 工作台 state lane (docs/en/docs/harness/signals.mdx 的 State signals)
 // ---------------------------------------------------------------------------
 
 const terminalStatusSchema = z.enum(["connecting", "ready", "exited", "error"]);
@@ -131,7 +114,7 @@ export const workbenchStateSchema = z.object({
       selectedPath: z.string().optional(),
     })
     .optional(),
-  /** 终端面板:会话数与最近一条命令的结果(命令本身跑在 Electron 主进程) */
+  /** 终端面板:会话数与最近一条命令的结果 */
   terminal: z
     .object({
       open: z.boolean(),
@@ -159,7 +142,6 @@ type StateLaneValue<K extends StateLaneId> = NonNullable<WorkbenchState[K]>;
 
 const workbenchStateByThread = new Map<string, WorkbenchState>();
 
-/** 按 lane 浅合并:body 里没出现的 lane 保持原值,出现的整条替换。 */
 export function mergeWorkbenchState(threadId: string, patch: WorkbenchState): WorkbenchState {
   const next = { ...(workbenchStateByThread.get(threadId) ?? {}), ...patch };
   workbenchStateByThread.set(threadId, next);
@@ -174,10 +156,6 @@ export function clearWorkbenchState(threadId: string): void {
   workbenchStateByThread.delete(threadId);
 }
 
-/**
- * 上一轮本 lane 的结构化取值。运行时把 computeStateSignal 返回的 value 放在
- * signal.metadata.value 上(与内置 browser lane 的读法一致)。
- */
 function stateSignalValue<K extends StateLaneId>(
   signal: ProcessorActiveStateSignal | undefined,
 ): StateLaneValue<K> | undefined {
@@ -211,7 +189,6 @@ function changedFields<T extends Record<string, unknown>>(
   return changed;
 }
 
-/** 字段排序后拼装,保证同一状态永远得到同一个 key(Mastra 靠它跳过重复投递)。 */
 function stableCacheKey(laneId: string, value: Record<string, unknown>): string {
   const fields = Object.keys(value)
     .sort()
@@ -231,10 +208,8 @@ function createStateLaneProcessor<K extends StateLaneId>(options: {
       const value = readWorkbenchState(args.threadId)?.[options.stateId] as
         | StateLaneValue<K>
         | undefined;
-      // 面板从未上报过 → 这条 lane 不产生任何信号(而不是发一条"未知")
       if (!value) return;
 
-      // 旧快照已被上下文窗口裁掉:重发完整快照而非增量,否则模型只看到"变了什么"
       const shouldRefreshSnapshot = Boolean(args.lastSnapshot && !args.contextWindow.hasSnapshot);
       const previous =
         mostRecentStateValue<K>(args.activeStateSignals) ?? stateSignalValue<K>(args.lastSnapshot);
@@ -323,7 +298,9 @@ export const terminalStateProcessor = createStateLaneProcessor({
   delta: (changed, value) => {
     const parts: string[] = [];
     if ("open" in changed) {
-      parts.push(value.open ? "The user opened the terminal panel." : "The user closed the terminal panel.");
+      parts.push(
+        value.open ? "The user opened the terminal panel." : "The user closed the terminal panel.",
+      );
     }
     if ("sessionCount" in changed) parts.push(`Terminal sessions: ${value.sessionCount}.`);
     if ("activeTitle" in changed || "activeStatus" in changed) {
@@ -356,20 +333,25 @@ function describeOpenPanels(value: StateLaneValue<"workbench">): string {
 export const workbenchStateProcessor = createStateLaneProcessor({
   stateId: "workbench",
   snapshot: describeOpenPanels,
-  // 字段少且互相关联,增量也给完整的面板画面比逐字段罗列更好读
   delta: (_changed, value) => describeOpenPanels(value),
 });
 
+/**
+ * 三条工作台 state lane。Agent 的 inputProcessors 与 Studio 的处理器登记
+ * (src/mastra/index.ts)都消费这一个数组,新增 lane 只需改这里。
+ * browser lane 不在其中 —— Mastra 检测到 Agent 的 browser 配置后自动注入。
+ */
+export const workbenchStateProcessors = [
+  editorStateProcessor,
+  terminalStateProcessor,
+  workbenchStateProcessor,
+];
+
 // ---------------------------------------------------------------------------
-// AGENTS.md 自动加载(signals.mdx「Send processor context」的官方形态)
-//
-// 工作区根的 AGENTS.md 在首个模型步注入;agent 自己在工具调用里碰到别处的
-// AGENTS.md 时也注入那一份。reactive 信号默认 tagName 为 system-reminder,
-// 模型看到 <system-reminder type="dynamic-agents-md" path="...">。
+// AGENTS.md 自动加载 (docs/en/docs/harness/signals.mdx)
 // ---------------------------------------------------------------------------
 
 const AGENTS_FILE = "AGENTS.md";
-/** 单份规则文件的注入上限:超出部分截断,避免一个巨大的 AGENTS.md 吃掉上下文 */
 const MAX_AGENTS_MD_CHARACTERS = 24_000;
 
 async function readAgentsMd(path: string): Promise<string | undefined> {
@@ -385,10 +367,6 @@ async function readAgentsMd(path: string): Promise<string | undefined> {
   }
 }
 
-/**
- * 这份规则是否已经进过本线程的历史。reactive 信号是持久化的,所以历史文本里
- * 能同时搜到标记与路径就说明发过 —— 不必再读一次文件、也不重复占上下文。
- */
 function hasSentAgentsMd(messages: unknown[], path: string): boolean {
   const needle = JSON.stringify(path).slice(1, -1);
   for (const message of messages) {
@@ -398,7 +376,6 @@ function hasSentAgentsMd(messages: unknown[], path: string): boolean {
   return false;
 }
 
-/** 只看刚完成的那一步的工具入参,避免每步都全量扫历史。 */
 function agentsMdPathsFromStep(step: unknown): string[] {
   const calls = (step as { toolCalls?: Array<{ input?: unknown }> } | undefined)?.toolCalls ?? [];
   const paths: string[] = [];
@@ -442,4 +419,3 @@ export const agentsMdProcessor: InputProcessor = {
     return messageList;
   },
 };
-

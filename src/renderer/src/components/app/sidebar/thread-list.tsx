@@ -196,7 +196,9 @@ function TreeEntryNode({
       </FileTreeFolder>
     );
   }
-  return <FileTreeFile icon={<FileTypeIcon name={entry.name} />} name={entry.name} path={entry.path} />;
+  return (
+    <FileTreeFile icon={<FileTypeIcon name={entry.name} />} name={entry.name} path={entry.path} />
+  );
 }
 
 function ThreadWorkspaceTree({ threadId }: { threadId: string }) {

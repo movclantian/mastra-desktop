@@ -43,7 +43,6 @@ import {
   SandboxTabsTrigger,
 } from "@/components/ai-elements/sandbox";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
 import {
   StackTrace,
   StackTraceActions,
@@ -56,6 +55,7 @@ import {
   StackTraceFrames,
   StackTraceHeader,
 } from "@/components/ai-elements/stack-trace";
+import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
 import {
   Attachment,

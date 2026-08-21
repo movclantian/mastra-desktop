@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -30,7 +30,7 @@ import {
   saveLibrarySettings,
   saveLibraryUploadChunk,
   uploadAsset,
-} from "../../library";
+} from "../../rag";
 
 interface ParsedUpload {
   filename: string;
@@ -182,7 +182,11 @@ export const libraryAssetsRoute = registerApiRoute("/work/library/assets", {
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
     if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
-    const assets = await listAssets(resourceId, c.req.query("folderId"), c.req.query("threadId"));
+    let assets = await listAssets(resourceId, c.req.query("threadId"));
+    const folderId = c.req.query("folderId");
+    if (folderId) {
+      assets = assets.filter((asset) => asset.folderIds.includes(folderId));
+    }
     return c.json({ assets });
   },
 });
@@ -199,7 +203,18 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       const threadId = requireResourceId(parsed.fields.threadId) ?? undefined;
       const assets = [];
       for (const file of parsed.files) {
-        assets.push(await uploadAsset({ resourceId, folderId, threadId, ...file }));
+        const bytes = await readFile(file.tempPath);
+        assets.push(
+          await uploadAsset({
+            resourceId,
+            folderId,
+            threadId,
+            filename: file.filename,
+            bytes,
+            mediaType: file.mediaType,
+          }),
+        );
+        await rm(file.tempPath, { force: true }).catch(() => undefined);
       }
       return c.json({ assets });
     } catch (error) {
@@ -224,7 +239,6 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
         byteSize?: number;
         folderId?: string;
         threadId?: string;
-        resumeId?: string;
       };
       const resourceId = requireResourceId(body.resourceId);
       if (!resourceId || !body.filename?.trim() || typeof body.byteSize !== "number") {
@@ -237,7 +251,6 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
         byteSize: body.byteSize,
         folderId: requireResourceId(body.folderId) ?? undefined,
         threadId: requireResourceId(body.threadId) ?? undefined,
-        resumeId: requireResourceId(body.resumeId) ?? undefined,
       });
       return c.json({ session }, 201);
     } catch (error) {
@@ -269,12 +282,15 @@ export const libraryUploadChunkRoute = registerApiRoute(
           return c.json({ error: "resourceId and valid chunkIndex are required" }, 400);
         }
         chunk = await parseUploadChunk(c.req.raw);
+        const bytes = await readFile(chunk.tempPath);
         const session = await saveLibraryUploadChunk({
           resourceId,
           sessionId: c.req.param("uploadId"),
           chunkIndex,
-          ...chunk,
+          bytes,
+          expectedSha256: chunk.sha256,
         });
+        await rm(chunk.tempPath, { force: true }).catch(() => undefined);
         return c.json({ session });
       } catch (error) {
         if (chunk) await rm(chunk.tempPath, { force: true }).catch(() => undefined);
@@ -416,7 +432,14 @@ export const createLibraryFolderRoute = registerApiRoute("/work/library/folders"
     if (!resourceId || !body.name?.trim())
       return c.json({ error: "resourceId and name are required" }, 400);
     return c.json(
-      { folder: await createFolder(resourceId, body.name, body.parentId, body.threadId) },
+      {
+        folder: await createFolder({
+          resourceId,
+          name: body.name,
+          parentId: body.parentId,
+          threadId: body.threadId,
+        }),
+      },
       201,
     );
   },

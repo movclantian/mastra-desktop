@@ -1,0 +1,520 @@
+import { randomUUID } from "node:crypto";
+import type {
+  Agent,
+  AgentExecutionOptions,
+  AgentMessageInput,
+  AgentThreadSubscription,
+} from "@mastra/core/agent";
+import { RequestContext } from "@mastra/core/request-context";
+import { z } from "zod";
+import { mastraWorkAgent } from "../agents";
+import { SESSION_GRANTS_CONTEXT_KEY, type ToolCategory } from "../agents/permissions";
+import type { WorkNotificationInput } from "./signals";
+
+/** Live state mirrors the Session state boundary in agent-controller.mdx. */
+export const workSessionStateSchema = z.object({
+  activeProject: z.string().optional(),
+  yolo: z.boolean().optional(),
+  count: z.number().int().optional(),
+});
+
+export type WorkSessionState = z.infer<typeof workSessionStateSchema>;
+export interface WorkSessionGrants {
+  categories: ToolCategory[];
+  tools: string[];
+}
+
+export const SESSION_SCOPE_DEFAULT = "workbench";
+
+export interface WorkDisplayState {
+  status: "idle" | "running" | "suspended";
+  threadId: string;
+  activeRunId: string | null;
+  modeId: string;
+  followUpCount: number;
+  grants: WorkSessionGrants;
+  state: WorkSessionState;
+  tasks: unknown[];
+  suspendedRuns: unknown[];
+  updatedAt: string;
+}
+
+type AgentStreamChunk = {
+  type?: string;
+  runId?: string;
+};
+
+export function isTerminalAgentChunk(chunk: unknown): boolean {
+  if (typeof chunk !== "object" || chunk === null) return false;
+  const chunkType = (chunk as AgentStreamChunk).type;
+  return (
+    chunkType === "finish" ||
+    chunkType === "suspended" ||
+    chunkType === "agent-step-suspended" ||
+    chunkType === "error" ||
+    chunkType === "agent-step-error"
+  );
+}
+
+interface QueuedFollowUp {
+  id: string;
+  message: AgentMessageInput;
+  streamOptions: AgentExecutionOptions;
+  subscription: AgentThreadSubscription;
+  resolveRunId: (runId: string | null) => void;
+}
+
+/**
+ * Harness 会话运行时 (docs/en/docs/harness/sessions.mdx):
+ * 负责单个工作会话的生命周期、排队、打断、事件分发与策略通知。
+ */
+export class WorkSession {
+  readonly id: string;
+  readonly resourceId: string;
+  readonly scope: string;
+  private currentThreadId: string;
+  private modeId = "build";
+  private grants: WorkSessionGrants = { categories: [], tools: [] };
+  private state: WorkSessionState = {};
+  private executionDefaults: AgentExecutionOptions = {};
+  private readonly agent: Agent;
+  private readonly subscriptions = new Map<AgentThreadSubscription, string>();
+  private readonly followUps: QueuedFollowUp[] = [];
+  private readonly followUpTargets = new Map<string, QueuedFollowUp>();
+  private followUpMonitor: Promise<AgentThreadSubscription> | undefined;
+  private followUpMonitorConsumer: Promise<void> | undefined;
+  private followUpCount = 0;
+  private latestUserText = "";
+
+  constructor(options: {
+    id: string;
+    resourceId: string;
+    scope?: string;
+    threadId: string;
+    agent?: Agent;
+  }) {
+    this.id = options.id;
+    this.resourceId = options.resourceId;
+    this.scope = options.scope ?? SESSION_SCOPE_DEFAULT;
+    this.currentThreadId = options.threadId;
+    this.agent = options.agent ?? (mastraWorkAgent as unknown as Agent);
+  }
+
+  get threadId(): string {
+    return this.currentThreadId;
+  }
+
+  setThreadId(threadId: string): void {
+    if (this.currentThreadId === threadId) return;
+    this.abort();
+    this.currentThreadId = threadId;
+  }
+
+  getModeId(): string {
+    return this.modeId;
+  }
+
+  setModeId(modeId: string): void {
+    this.modeId = modeId;
+  }
+
+  setMode(modeId: string): void {
+    this.modeId = modeId;
+  }
+
+  applyRequestContext(_context: RequestContext): void {}
+
+  setExecutionDefaults(defaults: AgentExecutionOptions): void {
+    this.executionDefaults = defaults;
+  }
+
+  getGrants(): WorkSessionGrants {
+    return {
+      categories: [...this.grants.categories],
+      tools: [...this.grants.tools],
+    };
+  }
+
+  setGrants(grants: Partial<WorkSessionGrants>): WorkSessionGrants {
+    const nextCategories = grants.categories
+      ? [...new Set(grants.categories)]
+      : this.grants.categories;
+    const nextTools = grants.tools ? [...new Set(grants.tools)] : this.grants.tools;
+    this.grants = { categories: nextCategories, tools: nextTools };
+    return this.getGrants();
+  }
+
+  grantTool(toolId: string): WorkSessionGrants {
+    if (!this.grants.tools.includes(toolId)) {
+      this.grants = {
+        ...this.grants,
+        tools: [...this.grants.tools, toolId],
+      };
+    }
+    return this.getGrants();
+  }
+
+  revokeTool(toolId: string): WorkSessionGrants {
+    this.grants = {
+      ...this.grants,
+      tools: this.grants.tools.filter((id) => id !== toolId),
+    };
+    return this.getGrants();
+  }
+
+  grantCategory(category: ToolCategory): WorkSessionGrants {
+    if (!this.grants.categories.includes(category)) {
+      this.grants = {
+        ...this.grants,
+        categories: [...this.grants.categories, category],
+      };
+    }
+    return this.getGrants();
+  }
+
+  revokeCategory(category: ToolCategory): WorkSessionGrants {
+    this.grants = {
+      ...this.grants,
+      categories: this.grants.categories.filter((c) => c !== category),
+    };
+    return this.getGrants();
+  }
+
+  clearGrants(): WorkSessionGrants {
+    this.grants = { categories: [], tools: [] };
+    return this.getGrants();
+  }
+
+  getState(): WorkSessionState {
+    return { ...this.state };
+  }
+
+  setState(update: Partial<WorkSessionState>): WorkSessionState {
+    this.state = { ...this.state, ...update };
+    return this.getState();
+  }
+
+  getLatestUserText(): string {
+    return this.latestUserText;
+  }
+
+  setLatestUserText(text: string): void {
+    this.latestUserText = text;
+  }
+
+  async subscribe(threadId: string): Promise<AgentThreadSubscription> {
+    const sub = await this.agent.subscribeToThread({
+      resourceId: this.resourceId,
+      threadId,
+    });
+    this.subscriptions.set(sub, threadId);
+    return sub;
+  }
+
+  releaseSubscription(subscription: AgentThreadSubscription): void {
+    this.subscriptions.delete(subscription);
+    subscription.unsubscribe();
+  }
+
+  async subscribeFollowUp(
+    followUpId: string,
+  ): Promise<{ subscription: AgentThreadSubscription; runId?: string | null } | undefined> {
+    const target = this.followUpTargets.get(followUpId);
+    if (!target) return undefined;
+    return { subscription: target.subscription };
+  }
+
+  sendMessage(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+    const requestContext = streamOptions.requestContext ?? new RequestContext();
+    requestContext.set(SESSION_GRANTS_CONTEXT_KEY, this.getGrants());
+    const options: AgentExecutionOptions = {
+      ...this.executionDefaults,
+      ...streamOptions,
+      memory: {
+        resource: this.resourceId,
+        thread: this.currentThreadId,
+      },
+      requestContext,
+    };
+    return this.agent.queueMessage(message, {
+      resourceId: this.resourceId,
+      threadId: this.currentThreadId,
+      ifIdle: { behavior: "wake", streamOptions: options },
+    });
+  }
+
+  async queueFollowUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+    const monitor = await this.ensureFollowUpMonitor();
+    if (!monitor) {
+      return { action: "blocked" as const, followUpId: null };
+    }
+
+    let resolveRunId: (runId: string | null) => void = () => {};
+    new Promise<string | null>((resolve) => {
+      resolveRunId = resolve;
+    });
+
+    const target: QueuedFollowUp = {
+      id: randomUUID(),
+      message,
+      streamOptions,
+      subscription: monitor.subscription,
+      resolveRunId,
+    };
+
+    const activeRunId = this.agent.getActiveThreadRunId({
+      resourceId: this.resourceId,
+      threadId: this.currentThreadId,
+    });
+
+    if (activeRunId) {
+      this.followUps.push(target);
+      this.followUpTargets.set(target.id, target);
+      this.followUpCount = this.followUps.length;
+      this.consumeFollowUpMonitor(monitor);
+      return { action: "queued" as const, followUpId: target.id };
+    }
+
+    const started = await this.startFollowUp(target);
+    if (started) {
+      this.consumeFollowUpMonitor(monitor);
+      return { action: "started" as const, followUpId: target.id };
+    }
+    this.stopFollowUpMonitor(monitor);
+    return { action: "blocked" as const, followUpId: target.id };
+  }
+
+  followUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+    return this.queueFollowUp(message, streamOptions);
+  }
+
+  private async startFollowUp(target: QueuedFollowUp): Promise<boolean> {
+    try {
+      const result = this.agent.queueMessage(target.message, {
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+        ifIdle: { behavior: "wake", streamOptions: target.streamOptions },
+      });
+      const accepted = await result.accepted;
+      if ("runId" in accepted && accepted.action !== "blocked") {
+        target.resolveRunId(accepted.runId);
+        return true;
+      }
+      target.resolveRunId(null);
+    } catch {
+      target.resolveRunId(null);
+    }
+    if (this.followUpTargets.has(target.id)) {
+      target.subscription.unsubscribe();
+      this.followUpTargets.delete(target.id);
+    }
+    return false;
+  }
+
+  private async ensureFollowUpMonitor(): Promise<
+    | {
+        pending: Promise<AgentThreadSubscription>;
+        subscription: AgentThreadSubscription;
+      }
+    | undefined
+  > {
+    if (!this.followUpMonitor) {
+      this.followUpMonitor = this.agent.subscribeToThread({
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+      });
+    }
+    const pending = this.followUpMonitor;
+    const subscription = await pending;
+    if (this.followUpMonitor !== pending) {
+      subscription.unsubscribe();
+      return undefined;
+    }
+    return { pending, subscription };
+  }
+
+  private consumeFollowUpMonitor(monitor: {
+    pending: Promise<AgentThreadSubscription>;
+    subscription: AgentThreadSubscription;
+  }): void {
+    if (this.followUpMonitorConsumer) return;
+    let consumer!: Promise<void>;
+    consumer = (async () => {
+      try {
+        for await (const chunk of monitor.subscription.stream) {
+          if (!isTerminalAgentChunk(chunk)) continue;
+          const next = this.followUps.shift();
+          this.followUpCount = this.followUps.length;
+          if (next) {
+            if (!(await this.startFollowUp(next))) break;
+            continue;
+          }
+          break;
+        }
+      } finally {
+        if (this.followUpMonitor === monitor.pending) this.followUpMonitor = undefined;
+        if (this.followUpMonitorConsumer === consumer) this.followUpMonitorConsumer = undefined;
+        monitor.subscription.unsubscribe();
+      }
+    })();
+    this.followUpMonitorConsumer = consumer;
+    void consumer.catch(() => undefined);
+  }
+
+  private stopFollowUpMonitor(monitor: {
+    pending: Promise<AgentThreadSubscription>;
+    subscription: AgentThreadSubscription;
+  }): void {
+    if (this.followUpMonitor === monitor.pending) this.followUpMonitor = undefined;
+    monitor.subscription.unsubscribe();
+  }
+
+  async steer(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+    const activeRunId = this.agent.getActiveThreadRunId({
+      resourceId: this.resourceId,
+      threadId: this.currentThreadId,
+    });
+    const release = activeRunId
+      ? await this.agent.subscribeToThread({
+          resourceId: this.resourceId,
+          threadId: this.currentThreadId,
+        })
+      : undefined;
+    this.abort();
+    if (activeRunId && release) {
+      try {
+        for await (const chunk of release.stream) {
+          if ((chunk as AgentStreamChunk).runId !== activeRunId) continue;
+          if (isTerminalAgentChunk(chunk)) break;
+        }
+      } finally {
+        release.unsubscribe();
+      }
+    }
+    return this.sendMessage(message, streamOptions);
+  }
+
+  notifyPolicyChange(summary: string, attributes: Record<string, string> = {}): void {
+    const result = this.agent.sendSignal(
+      {
+        type: "reactive",
+        contents: summary,
+        attributes: { type: "policy-change", ...attributes },
+      },
+      {
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+        ifActive: { behavior: "deliver" },
+        ifIdle: { behavior: "discard" },
+      },
+    );
+    void result.accepted.catch(() => undefined);
+  }
+
+  sendNotification(notification: WorkNotificationInput) {
+    if (Array.isArray(notification)) {
+      return this.agent.sendNotificationSignal(notification, {
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+      });
+    }
+    return this.agent.sendNotificationSignal(notification, {
+      resourceId: this.resourceId,
+      threadId: this.currentThreadId,
+    });
+  }
+
+  abort(): boolean {
+    const subscription = [...this.subscriptions].find(
+      ([, threadId]) => threadId === this.currentThreadId,
+    )?.[0];
+    const aborted = subscription?.abort() ?? false;
+    this.clearFollowUps();
+    return (
+      this.agent.abortThreadStream({
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+      }) || aborted
+    );
+  }
+
+  private clearFollowUps(): void {
+    const monitor = this.followUpMonitor;
+    this.followUpMonitor = undefined;
+    this.followUpMonitorConsumer = undefined;
+    void monitor?.then((subscription) => subscription.unsubscribe()).catch(() => undefined);
+    for (const followUp of this.followUpTargets.values()) {
+      followUp.resolveRunId(null);
+      followUp.subscription.unsubscribe();
+    }
+    this.followUps.length = 0;
+    this.followUpTargets.clear();
+    this.followUpCount = 0;
+  }
+
+  getDisplayState(): WorkDisplayState {
+    const activeRunId =
+      this.agent.getActiveThreadRunId({
+        resourceId: this.resourceId,
+        threadId: this.currentThreadId,
+      }) ?? null;
+    return {
+      status: activeRunId ? "running" : "idle",
+      threadId: this.currentThreadId,
+      activeRunId,
+      modeId: this.modeId,
+      followUpCount: this.followUpCount,
+      grants: this.getGrants(),
+      state: this.getState(),
+      tasks: [],
+      suspendedRuns: [],
+      updatedAt: new Date().toISOString(),
+    };
+  }
+}
+
+export class WorkSessionHost {
+  private readonly sessions = new Map<string, WorkSession>();
+
+  resolve(options: { resourceId: string; scope?: string; threadId: string; sessionId?: string }): {
+    session: WorkSession;
+    isNew: boolean;
+  } {
+    const key =
+      options.sessionId || `${options.resourceId}:${options.scope ?? SESSION_SCOPE_DEFAULT}`;
+    const existing = this.sessions.get(key);
+    if (existing) {
+      existing.setThreadId(options.threadId);
+      return { session: existing, isNew: false };
+    }
+    const session = new WorkSession({
+      id: key,
+      resourceId: options.resourceId,
+      scope: options.scope,
+      threadId: options.threadId,
+    });
+    this.sessions.set(key, session);
+    return { session, isNew: true };
+  }
+
+  getOrCreate(options: { resourceId: string; scope?: string; threadId: string }): WorkSession {
+    return this.resolve(options).session;
+  }
+
+  get(sessionId: string): WorkSession | undefined {
+    return this.sessions.get(sessionId);
+  }
+
+  delete(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session) return false;
+    session.abort();
+    return this.sessions.delete(sessionId);
+  }
+
+  dispose(sessionId: string): boolean {
+    return this.delete(sessionId);
+  }
+}
+
+export const workSessionHost = new WorkSessionHost();

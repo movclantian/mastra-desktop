@@ -5,7 +5,7 @@ import {
   saveMcpConfig,
   summarizeMcpServer,
   testMcpServer,
-} from "../../agents/mcp";
+} from "../../tools";
 
 export const mcpConfigRoute = registerApiRoute("/work/mcp", {
   method: "GET",

@@ -1,5 +1,5 @@
 import { registerApiRoute } from "@mastra/core/server";
-import type { ToolsUserConfig } from "../../agents/tools";
+import type { ToolsUserConfig } from "../../tools";
 
 /**
  * 工具路由:读写三个联网检索引擎(Tavily / Firecrawl / AnySearch)的 API Key。
@@ -11,7 +11,7 @@ import type { ToolsUserConfig } from "../../agents/tools";
 export const toolsConfigRoute = registerApiRoute("/work/tools", {
   method: "GET",
   handler: async (c) => {
-    const { getToolsConfig } = await import("../../agents/tools");
+    const { getToolsConfig } = await import("../../tools");
     return c.json(await getToolsConfig());
   },
 });
@@ -21,7 +21,7 @@ export const saveToolsConfigRoute = registerApiRoute("/work/tools", {
   method: "POST",
   handler: async (c) => {
     const config = (await c.req.json()) as ToolsUserConfig;
-    const { saveToolsConfig } = await import("../../agents/tools");
+    const { saveToolsConfig } = await import("../../tools");
     await saveToolsConfig(config);
     return c.json({ ok: true });
   },

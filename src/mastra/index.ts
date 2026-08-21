@@ -9,11 +9,20 @@ import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mast
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
 import { getConfiguredProcessorRegistry } from "./agents/guardrails";
-import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./agents/llm";
-import { libraryAttachmentProcessor } from "./agents/processors";
-import { recoverInterruptedLibraryIndexes } from "./library";
-import { ensureLibrarySchema } from "./library/db";
-import { getLibrarySettings } from "./library/settings";
+import {
+  agentsMdProcessor,
+  editorStateProcessor,
+  libraryAttachmentProcessor,
+  terminalStateProcessor,
+  workbenchStateProcessor,
+} from "./agents/processors";
+import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
+import {
+  ensureLibrarySchema,
+  getLibrarySettings,
+  onLibraryIndexSettled,
+  recoverInterruptedLibraryIndexes,
+} from "./rag";
 import { workChatRoute, workRoutes } from "./server/routes";
 import { requestShutdown } from "./server/routes/shutdown";
 import { appStorage } from "./storage";
@@ -34,8 +43,6 @@ const httpsProxy = (process.env.https_proxy ?? process.env.HTTPS_PROXY ?? "").tr
 const proxyBypass = (process.env.no_proxy ?? process.env.NO_PROXY ?? "").trim();
 if (httpProxy || httpsProxy) {
   try {
-    // 显式传入值而非仅让 Agent 在构造时自行读取环境变量:mastra dev 有一层
-    // CLI → 服务进程的 spawn 链,这样日志和实际 Dispatcher 使用的配置完全一致。
     setGlobalDispatcher(
       new EnvHttpProxyAgent({
         ...(httpProxy ? { httpProxy } : {}),
@@ -65,44 +72,20 @@ const processorRegistry = {
 export const mastra = new Mastra({
   agents: { mastraWorkAgent },
   processors: processorRegistry,
-  /**
-   * Editor 可见的项目工具(docs/en/docs/studio/editor.mdx「Project tools」)。
-   * 只登记无需 API Key 的静态工具 —— 联网检索工具按请求用当前 Key 实例化
-   * (src/mastra/agents/tools.ts 的 resolveWebSearchTools),没有可登记的静态实例,
-   * 它们继续只经 Agent 的动态 tools 注入。execute_typescript 同理:
-   * 它由 createCodeMode 绑定了沙箱实例,只归 Agent 动态注入。
-   */
   tools: {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
   },
-  /**
-   * 自定义模型网关:把设置面板存进 app_config 的供应商与 Key 暴露给 model router,
-   * 于是 Studio 的模型选择器能直接列出并使用它们,不再要求 env 变量
-   * (docs/en/models/gateways/custom-gateways.mdx)。
-   */
   gateways: { [WORKBENCH_GATEWAY_ID]: new WorkbenchGateway() },
-  /**
-   * Editor(docs/en/docs/studio/editor.mdx):默认 source 'db',复用下面的
-   * LibSQL 存储,Studio 中出现 instructions/tools 的草稿与发布流程 + 版本化。
-   * local filesystem 与 sandbox provider 为内置,无需显式传入。
-   */
   editor: new MastraEditor(),
-  // Register the configured workspace with Mastra itself as well as the
-  // request-scoped Agent workspace. Studio's /workspaces page reads this
-  // registry; the Agent still resolves per-thread directories at runtime.
   workspace: getThreadWorkspace(getThreadsRoot()),
   server: {
-    // Studio 与桌面工作台共用同一份 LibSQL 数据库。Studio 内置路由不会可靠地
-    // 带上桌面自定义的 resourceId query/header,所以不能依赖客户端标记来判断
-    // 请求来源;这个单机工作台的所有 Mastra 内置路由都固定到同一个本地资源。
-    // 这样 Studio、Editor 触发的 Agent 运行以及桌面线程列表使用同一条线程数据。
     middleware: async (c, next) => {
       c.get("requestContext").set(MASTRA_RESOURCE_ID_KEY, WORKBENCH_RESOURCE_ID);
       await next();
     },
     cors: {
-      origin: "*", // Restrict this to your app's origin in production
+      origin: "*",
       allowMethods: ["*"],
       allowHeaders: ["*"],
     },
@@ -152,10 +135,12 @@ void (async () => {
   }
 })();
 
-// Dynamic processor factories cannot be inferred by Studio during Agent
-// construction. Register their resolved configurations explicitly so the
-// processor detail page shows the actual MastraWork input/output pipeline.
+// 注册动态处理器配置供 Studio 调试查看
 mastra.addProcessorConfiguration(libraryAttachmentProcessor, mastraWorkAgent.id, "input");
+mastra.addProcessorConfiguration(editorStateProcessor as Processor, mastraWorkAgent.id, "input");
+mastra.addProcessorConfiguration(terminalStateProcessor as Processor, mastraWorkAgent.id, "input");
+mastra.addProcessorConfiguration(workbenchStateProcessor as Processor, mastraWorkAgent.id, "input");
+mastra.addProcessorConfiguration(agentsMdProcessor as Processor, mastraWorkAgent.id, "input");
 for (const processor of configuredProcessorRegistry.input) {
   if (!("id" in processor) || typeof processor.id !== "string") continue;
   if (
@@ -182,20 +167,55 @@ for (const processor of configuredProcessorRegistry.output) {
   mastra.addProcessorConfiguration(processor as Processor, mastraWorkAgent.id, "output");
 }
 
-// 进程重启后恢复上次中断的索引任务，重新执行完整的文本抽取、分块、Embedding 与向量写入。
+// 进程重启后恢复上次中断的索引任务
 void (async () => {
   await ensureLibrarySchema();
   await recoverInterruptedLibraryIndexes(await getLibrarySettings());
 })().catch(() => undefined);
 
 // ---------------------------------------------------------------------------
-// 优雅退出兜底通路:落盘例程与 HTTP 主通路 /work/shutdown 统一在
-// server/routes/shutdown.ts,这里只挂进程级触发器。
-// - IPC message:打包态 Electron 主进程 spawn 的就是本 ESM 入口,消息直达
-// - SIGTERM / SIGINT:POSIX 信号;Windows 无对应机制,依赖 HTTP 主通路
-// 消息名与 src/main/index.ts 的 MASTRA_SHUTDOWN_MESSAGE 必须一致。
+// 资料库索引终态 → 通知收件箱(docs/en/docs/harness/signals.mdx)。
+//
+// 依赖反转的落点:rag/ 不能 import agents/(agent 的检索工具反过来依赖它),
+// 所以由本入口把索引事件转成 agent 的通知记录。索引是后台任务,完成时线程
+// 可能正在对话、也可能早已空闲 —— 投递时机交给 agent 的默认策略:成功用 low
+// (两种情况都攒进 <notification-summary>,不打断用户),失败用 medium(线程
+// 空闲时立即送达)。记录全文由 notification_inbox 工具读取。
 // ---------------------------------------------------------------------------
+onLibraryIndexSettled((event) => {
+  const summary =
+    event.outcome === "succeeded"
+      ? `Library indexing finished for "${event.filename}"${
+          event.chunkCount ? ` (${event.chunkCount} chunks)` : ""
+        }. It is now retrievable by the library search tools.`
+      : event.outcome === "unsupported"
+        ? `Library indexing skipped "${event.filename}": no usable text could be extracted, so it is not retrievable.`
+        : `Library indexing failed for "${event.filename}"${event.error ? `: ${event.error}` : "."}`;
+  for (const threadId of event.threadIds) {
+    void mastraWorkAgent
+      .sendNotificationSignal(
+        {
+          source: "library",
+          kind: `index-${event.outcome}`,
+          priority: event.outcome === "succeeded" ? "low" : "medium",
+          summary,
+          payload: {
+            assetId: event.assetId,
+            filename: event.filename,
+            outcome: event.outcome,
+            ...(event.chunkCount === undefined ? {} : { chunkCount: event.chunkCount }),
+            ...(event.error === undefined ? {} : { error: event.error }),
+          },
+          // 同一份资产反复重建索引时合并成一条待读记录
+          dedupeKey: `library:index:${event.assetId}`,
+        },
+        { resourceId: event.resourceId, threadId },
+      )
+      .catch(() => undefined);
+  }
+});
 
+// 优雅退出兜底通路
 const SHUTDOWN_MESSAGE = "mastra-work:shutdown";
 
 process.on("message", (message: unknown) => {

@@ -12,7 +12,7 @@ import {
   normalizeMarketplace,
   parseSkillMarkdown,
   saveSkillMarketplaces,
-} from "../../skills/marketplaces";
+} from "../../skills";
 import { getManagedSkillsDirectory } from "../../workspace";
 
 const MAX_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;

@@ -1,6 +1,6 @@
 import { registerApiRoute } from "@mastra/core/server";
-import { resolveRequestModel } from "../../../agents/llm";
 import { getConfiguredMemoryExtractors } from "../../../memory";
+import { resolveRequestModel } from "../../../models";
 import { getOwnedThread, getWorkMemory } from "./shared";
 
 /**

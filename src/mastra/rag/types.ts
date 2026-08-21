@@ -1,6 +1,6 @@
 /**
- * 资料库共享类型与常量:被库内全部模块及 chat 路由 / Agent 处理器引用,
- * 不依赖任何其他模块,是依赖图的最底层。
+ * RAG 知识库共享类型与常量 (docs/en/reference/rag/):
+ * 被 RAG 内全部模块及 chat 路由 / Agent 处理器引用。
  */
 
 export const LIBRARY_INDEX_NAMES = {
@@ -12,6 +12,21 @@ export type LibraryEmbeddingModel = keyof typeof LIBRARY_INDEX_NAMES | `${string
 export type LibraryIndexStage = "extract" | "chunk" | "embedding" | "vector" | "persist";
 export type LibraryIndexRunStatus = "running" | "succeeded" | "unsupported" | "failed";
 
+export const VALID_CHUNK_STRATEGIES = [
+  "recursive",
+  "character",
+  "token",
+  "markdown",
+  "html",
+  "json",
+  "latex",
+  "sentence",
+  "semantic-markdown",
+] as const;
+
+export const LIBRARY_VECTOR_SEARCH_TOOL_ID = "library_vector_search";
+export const LIBRARY_GRAPH_SEARCH_TOOL_ID = "library_graph_search";
+
 // RequestContext 键(chat 路由写入,库内工具 / Agent 处理器读取)
 export const LIBRARY_RESOURCE_CONTEXT_KEY = "libraryResourceId";
 export const LIBRARY_THREAD_CONTEXT_KEY = "libraryThreadId";
@@ -20,12 +35,15 @@ export const LIBRARY_ORIGIN_CONTEXT_KEY = "libraryOrigin";
 export const LIBRARY_RERANK_MODEL_CONTEXT_KEY = "libraryRerankModel";
 export const LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY = "libraryAttachmentTokenBudget";
 export const LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY = "libraryAttachmentCapabilities";
+export const LIBRARY_ATTACHMENTS_CONTEXT_KEY = "libraryAttachments";
 
 // 上传限制(路由层校验用)
 export const MAX_LIBRARY_FILE_BYTES = 50 * 1024 * 1024;
 export const MAX_LIBRARY_FILES_PER_REQUEST = 10;
 export const MAX_LIBRARY_TOTAL_BYTES_PER_REQUEST = 100 * 1024 * 1024;
 export const LIBRARY_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024;
+export const MAX_LIBRARY_UPLOAD_CHUNK_BYTES = 20 * 1024 * 1024;
+export const MIN_LIBRARY_UPLOAD_CHUNK_BYTES = 100 * 1024;
 
 export interface LibrarySettings {
   chunkSize: number;
@@ -57,6 +75,8 @@ export interface LibrarySettings {
   extractQuestions: boolean;
   extractKeywords: boolean;
 }
+
+export type LibrarySettingsUpdate = Partial<LibrarySettings>;
 
 export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   chunkSize: 1200,
@@ -118,6 +138,15 @@ export interface LibraryFolder {
   name: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LibraryUploadChunk {
+  sessionId: string;
+  chunkIndex: number;
+  byteSize: number;
+  sha256: string;
+  storagePath: string;
+  createdAt: string;
 }
 
 export interface LibraryUploadSession {

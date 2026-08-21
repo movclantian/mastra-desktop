@@ -1,13 +1,13 @@
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { Memory } from "@mastra/memory";
 import type { UIMessage } from "ai";
+import { normalizeChatHistoryMessages } from "./shared";
 import type {
   MessageBranchRecord,
   MessageBranchVersion,
   PersistedUIMessage,
   ThreadMetadata,
 } from "./types";
-import { normalizeChatHistoryMessages } from "./shared";
 
 type BranchOperation =
   | {

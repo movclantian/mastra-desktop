@@ -334,6 +334,97 @@ interface WorkbenchValue {
   openBrowserUrl: (url: string) => void;
 }
 
+// ---------------------------------------------------------------------------
+// 工作台状态上报(state lane 的生产者)
+//
+// 面板状态只活在渲染进程,模型看不到。这里把它 PUT 给 Mastra 服务端的内存镜像,
+// 由 src/mastra/agents/processors 的三条 state lane 在模型真要推理时注入为
+// <state type="editor|terminal|workbench">。所以上报本身不会唤醒空闲的 agent,
+// 也不写进对话历史。
+//
+// debounce 是必须的:编辑器每敲一个字都会翻转 dirty,而 lane 侧还会按 cacheKey
+// 二次去重 —— 高频上报纯属浪费。按 lane 分桶,不同面板的上报互不取消。
+// ---------------------------------------------------------------------------
+
+export interface WorkbenchStatePatch {
+  editor?: {
+    workspacePath?: string;
+    openPath?: string;
+    dirty?: boolean;
+    selectedPath?: string;
+  };
+  terminal?: {
+    open: boolean;
+    sessionCount: number;
+    activeTitle?: string;
+    activeStatus?: "connecting" | "ready" | "exited" | "error";
+    lastCommand?: string;
+    lastExitCode?: number;
+  };
+  workbench?: {
+    workspacePanelOpen: boolean;
+    workspacePanelTab?: string;
+    terminalPanelOpen: boolean;
+    libraryOpen: boolean;
+  };
+}
+
+const WORKBENCH_STATE_REPORT_DELAY = 400;
+const pendingStateReports = new Map<string, ReturnType<typeof setTimeout>>();
+
+export function reportWorkbenchState(
+  threadId: string | null,
+  resourceId: string,
+  patch: WorkbenchStatePatch,
+): void {
+  if (!threadId) return;
+  const key = `${threadId}:${Object.keys(patch).join(",")}`;
+  const pending = pendingStateReports.get(key);
+  if (pending) clearTimeout(pending);
+  pendingStateReports.set(
+    key,
+    setTimeout(() => {
+      pendingStateReports.delete(key);
+      void fetch(
+        `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/workbench-state?resourceId=${encodeURIComponent(resourceId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(patch),
+        },
+      ).catch(() => undefined);
+    }, WORKBENCH_STATE_REPORT_DELAY),
+  );
+}
+
+/**
+ * 前端侧才知道的事件 → 通知收件箱(终端里跑完的长命令等)。
+ * 落库后由 agent 的投递策略决定是立即送达还是攒进 <notification-summary>,
+ * 全文由 notification_inbox 工具读取。不 debounce —— 每个事件都该留一条记录。
+ */
+export function reportWorkbenchNotification(
+  threadId: string | null,
+  resourceId: string,
+  notification: {
+    source: string;
+    kind: string;
+    summary: string;
+    priority?: "low" | "medium" | "high" | "urgent";
+    payload?: unknown;
+    dedupeKey?: string;
+  },
+): void {
+  if (!threadId) return;
+  void fetch(
+    `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/notification?resourceId=${encodeURIComponent(resourceId)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(notification),
+    },
+  ).catch(() => undefined);
+}
+
 const WorkbenchContext = createContext<WorkbenchValue | null>(null);
 
 export function WorkbenchProvider({ children }: { children: ReactNode }) {
@@ -386,6 +477,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem(SEARCH_SELECTION_KEY, JSON.stringify(searchSelection));
   }, [searchSelection]);
+  // 面板可见性 → workbench state lane:让模型知道用户此刻的注意力在哪
+  useEffect(() => {
+    reportWorkbenchState(activeThreadId, user.id, {
+      workbench: { workspacePanelOpen, workspacePanelTab, terminalPanelOpen, libraryOpen },
+    });
+  }, [activeThreadId, libraryOpen, terminalPanelOpen, workspacePanelOpen, workspacePanelTab]);
   useEffect(() => {
     localStorage.setItem(MODE_KEY, JSON.stringify(modeId));
   }, [modeId]);
@@ -518,26 +615,29 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setTerminalRequest({ ...request, id: ++terminalRequestIdRef.current });
   }, []);
 
-  const openBrowserUrl = useCallback((url: string) => {
-    const normalized = url.trim();
-    if (!normalized) return;
-    try {
-      const parsed = new URL(normalized);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
-    } catch {
-      return;
-    }
-    setLibraryOpen(false);
-    setSkillOpen(false);
-    setWorkspacePanelTab("browser");
-    setWorkspacePanelOpen(true);
-    setBrowserRequest({
-      id: ++browserRequestIdRef.current,
-      newTab: true,
-      threadId: activeThreadId,
-      url: normalized,
-    });
-  }, [activeThreadId]);
+  const openBrowserUrl = useCallback(
+    (url: string) => {
+      const normalized = url.trim();
+      if (!normalized) return;
+      try {
+        const parsed = new URL(normalized);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+      } catch {
+        return;
+      }
+      setLibraryOpen(false);
+      setSkillOpen(false);
+      setWorkspacePanelTab("browser");
+      setWorkspacePanelOpen(true);
+      setBrowserRequest({
+        id: ++browserRequestIdRef.current,
+        newTab: true,
+        threadId: activeThreadId,
+        url: normalized,
+      });
+    },
+    [activeThreadId],
+  );
 
   // 三个检索引擎的 Key 配置存服务端(app_config),菜单据此判断引擎是否可用
   const refreshToolsConfig = useCallback(async () => {

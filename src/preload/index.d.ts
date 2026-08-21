@@ -13,7 +13,11 @@ declare global {
       migrateStorage: (directory: string) => Promise<boolean>;
       resetAppData: () => Promise<boolean>;
       terminal: {
-        create: (request: { cwd?: string; cols: number; rows: number }) => Promise<{ sessionId: string }>;
+        create: (request: {
+          cwd?: string;
+          cols: number;
+          rows: number;
+        }) => Promise<{ sessionId: string }>;
         write: (request: { sessionId: string; data: string }) => void;
         resize: (request: { sessionId: string; cols: number; rows: number }) => void;
         close: (sessionId: string) => void;

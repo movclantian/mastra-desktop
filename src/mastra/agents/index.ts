@@ -1,33 +1,41 @@
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { AgentBrowser } from "@mastra/agent-browser";
 import { Agent, type DelegationConfig, type ToolsInput } from "@mastra/core/agent";
-import { createNotificationInboxTool } from "@mastra/core/notifications";
-import { TaskSignalProvider, WebhookSignalProvider } from "@mastra/core/signals";
-import { askUserTool, createCodeMode, submitPlanTool } from "@mastra/core/tools";
-import { LocalSandbox } from "@mastra/core/workspace";
+import { askUserTool, submitPlanTool } from "@mastra/core/tools";
+import { notificationInboxTool, workWebhookSignals } from "../harness";
+import { getMemory } from "../memory";
+import {
+  type GatewayLanguageModel,
+  REQUEST_MODEL_CONTEXT_KEY,
+  resolveDefaultModelId,
+} from "../models";
 import {
   LIBRARY_SEARCH_CONTEXT_KEY,
   libraryDocumentChunkerTool,
   libraryGraphSearchTool,
   libraryVectorSearchTool,
-} from "../library";
-import { getMemory } from "../memory";
-import { appStorage, getStorageDirectory, PROJECT_ROOT } from "../storage";
+} from "../rag";
+import {
+  CODE_MODE_EXTERNAL_TOOL_NAMES,
+  codeMode,
+  getConfiguredMcpTools,
+  MODEL_FAMILY_CONTEXT_KEY,
+  parseWebSearchSelection,
+  resolveWebSearchTools,
+  WEB_SEARCH_CONTEXT_KEY,
+  webSearchInstructions,
+} from "../tools";
 import {
   getManagedSkillsDirectory,
   getThreadWorkspace,
   isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
 } from "../workspace";
+import { workBrowser } from "./browser";
 import {
   buildGuardrailErrorProcessors,
   buildGuardrailInputProcessors,
   buildGuardrailOutputProcessors,
   getGuardrailsRuntimeConfig,
 } from "./guardrails";
-import { type GatewayLanguageModel, REQUEST_MODEL_CONTEXT_KEY, resolveDefaultModelId } from "./llm";
-import { getConfiguredMcpTools } from "./mcp";
 import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode, type WorkMode } from "./modes";
 import {
   applySessionGrants,
@@ -48,44 +56,59 @@ import {
   workbenchStateProcessor,
 } from "./processors";
 import { workSubagents } from "./subagents";
-import {
-  MODEL_FAMILY_CONTEXT_KEY,
-  parseWebSearchSelection,
-  resolveWebSearchTools,
-  WEB_SEARCH_CONTEXT_KEY,
-  webSearchInstructions,
-} from "./tools";
 
-function bundledChromiumExecutablePath(): string | undefined {
-  const browserRoot = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (!browserRoot) return undefined;
-  try {
-    const browserDir = readdirSync(browserRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^chromium-\d+$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort()
-      .at(-1);
-    if (!browserDir) return undefined;
-    const relativePath =
-      process.platform === "win32"
-        ? join(browserDir, "chrome-win64", "chrome.exe")
-        : process.platform === "darwin"
-          ? join(browserDir, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")
-          : join(browserDir, "chrome-linux", "chrome");
-    const executable = join(browserRoot, relativePath);
-    return existsSync(executable) ? executable : undefined;
-  } catch {
-    return undefined;
-  }
-}
+export { workBrowser } from "./browser";
+export {
+  buildGuardrailErrorProcessors,
+  buildGuardrailInputProcessors,
+  buildGuardrailOutputProcessors,
+  type GuardrailsUserConfig,
+  getGuardrailsConfig,
+  getGuardrailsRuntimeConfig,
+  saveGuardrailsConfig,
+} from "./guardrails";
+export {
+  applyModeToRules,
+  MODE_ID_CONTEXT_KEY,
+  resolveMode,
+  WORK_MODES,
+  type WorkMode,
+  type WorkModeId,
+} from "./modes";
+export {
+  applySessionGrants,
+  isFullyAllowed,
+  isToolApprovalRequired,
+  isToolDenied,
+  PERMISSION_RULES_CONTEXT_KEY,
+  type PermissionRules,
+  parsePermissionRules,
+  resolveToolPolicy,
+  SESSION_GRANTS_CONTEXT_KEY,
+  TOOL_CATEGORIES,
+  type ToolCategory,
+  toolCategoryOf,
+} from "./permissions";
+export {
+  agentsMdProcessor,
+  editorStateProcessor,
+  libraryAttachmentProcessor,
+  mergeWorkbenchState,
+  terminalStateProcessor,
+  type WorkbenchState,
+  workbenchStateProcessor,
+  workbenchStateSchema,
+} from "./processors";
+export {
+  explorerAgent,
+  reviewerAgent,
+  SUBAGENT_MODELS_CONTEXT_KEY,
+  type SubagentModelsContext,
+  workSubagents,
+} from "./subagents";
 
 /**
  * 本请求生效的模式与审批规则。
- *
- * 两个值都由 chat 路由从 thread.metadata 读出后写进 RequestContext;
- * 不经我们路由的调用(主要是 Studio 里直接聊天)读不到它们,于是落到
- * 默认模式 + 默认规则 —— 默认规则里写/执行类仍需批准,所以 Studio 侧不会
- * 因为少了一层路由就变成无门执行。
  */
 function resolveSessionPolicy(
   rawModeId: unknown,
@@ -99,7 +122,7 @@ function resolveSessionPolicy(
   };
 }
 
-/** 丢掉被策略拒绝的工具:我们自己注入的工具,deny 就等于模型完全看不见 */
+/** 丢掉被策略拒绝的工具:用户或模式 deny 的工具,模型完全看不见 */
 function withoutDeniedTools(tools: ToolsInput, rules: PermissionRules): ToolsInput {
   const allowed: ToolsInput = {};
   for (const [name, tool] of Object.entries(tools)) {
@@ -108,57 +131,6 @@ function withoutDeniedTools(tools: ToolsInput, rules: PermissionRules): ToolsInp
   return allowed;
 }
 
-/**
- * Code Mode 是普通 Agent 工具,不是 Plan/Build/Review 的工作阶段。
- *
- * 只把真正适合批量编排的只读能力放进沙箱 allow-list。createCodeMode 会把
- * 这些工具生成为 external_* 声明,模型写出的 TypeScript 只负责并行调用、
- * 过滤和聚合,实际工具仍由宿主执行。写入、命令执行和联网工具不放进来,
- * 避免脚本成为权限绕过通道。
- */
-const CODE_MODE_EXTERNAL_TOOLS = {
-  library_vector_search: libraryVectorSearchTool,
-  library_graph_search: libraryGraphSearchTool,
-  library_document_chunker: libraryDocumentChunkerTool,
-} as const;
-
-const CODE_MODE_EXTERNAL_TOOL_NAMES = Object.keys(CODE_MODE_EXTERNAL_TOOLS);
-
-const codeMode = createCodeMode({
-  tools: CODE_MODE_EXTERNAL_TOOLS,
-  // Windows 没有受支持的原生隔离后端;不继承宿主环境变量,只运行模型生成的编排代码。
-  sandbox: new LocalSandbox({
-    env: {},
-    timeout: 30_000,
-    workingDirectory: getStorageDirectory() || PROJECT_ROOT,
-  }),
-  timeout: 30_000,
-});
-
-/**
- * 每条会话线程独占 Chromium 上下文。浏览器工具由 Agent.browser 官方接入点
- * 自动注册；screencast 供桌面工作台右侧浏览器面板复用同一个真实页面。
- */
-export const workBrowser = new AgentBrowser({
-  headless: true,
-  executablePath: bundledChromiumExecutablePath(),
-  scope: "thread",
-  viewport: { width: 1280, height: 720 },
-  timeout: 30_000,
-  screencast: {
-    format: "jpeg",
-    quality: 78,
-    maxWidth: 1280,
-    maxHeight: 720,
-    everyNthFrame: 1,
-  },
-});
-
-/**
- * Code Mode 的 external_* 调用由 Mastra 直接 dispatch 到工具 execute,
- * 不会再次经过 Agent 的 requireToolApproval 钩子。因此只有在每个被编排工具
- * 都明确允许时才暴露 execute_typescript;否则模型仍可逐个调用并经过正常审批。
- */
 function isCodeModeAvailable(rules: PermissionRules): boolean {
   if (isToolDenied(rules, "execute_typescript")) return false;
   return CODE_MODE_EXTERNAL_TOOL_NAMES.every(
@@ -166,23 +138,6 @@ function isCodeModeAvailable(rules: PermissionRules): boolean {
   );
 }
 
-// 参考 docs/en/docs/agents/overview.mdx — Agent 构造
-// model 为动态函数:读设置面板「模型供应商」当前选定的模型(存 app_config)。
-// 我们自己的 chat 路由仍按请求覆盖模型(AgentExecutionOptions.model);
-// 这个默认值负责不经过我们输入框的调用 —— 主要是 Studio 里直接聊天。
-// API Key 由 WorkbenchGateway.resolveAuth 从数据库解析(src/mastra/agents/llm),
-// 因此这里只给路由 id,既不注入 process.env 也不下发到请求体。
-// workspace 为动态函数(workspace-class.mdx):按 RequestContext 里的
-// 线程工作区路径解析每线程实例 —— 显式绑定(用户选定目录)或隐式默认
-// (<threadsRoot>/<threadId>/),实例按路径缓存。设置面板「工作区」
-// 标签页控制总开关与各能力(沙箱/BM25/LSP/skills)。
-// instructions/tools 为动态函数:按 RequestContext 里的联网检索选择
-// (promptInput 搜索菜单的引擎 + 强度)决定是否注入检索工具与检索纪律
-// (docs/en/docs/server/request-context.mdx);同时按当前会话模式叠加模式指令、
-// 按审批规则丢掉被拒绝的工具(见 ./modes 与 ./permissions)。
-// defaultOptions 为动态函数:承载工具审批门。放在 Agent 上而不是 chat 路由里,
-// 是因为它对**所有**入口生效 —— 包括 Studio 里直接聊天(agent.stream 会把
-// defaultOptions 与每次调用的选项 deepMerge,调用侧优先)。
 const BASE_INSTRUCTIONS = `You are MastraWork, a helpful personal AI work assistant.
 
 You support multi-user, workspace-scoped conversations:
@@ -226,44 +181,10 @@ const WORK_DELEGATION: DelegationConfig = {
 };
 
 export const SKILL_NAMES_CONTEXT_KEY = "mastra-work:selected-skills";
-/**
- * 当前请求显式指定的模型(chat 路由解析后存入:router 形态 {id, apiKey}
- * 或自定义网关 LanguageModel 实例)。Agent 的默认 model 回调优先返回它 ——
- * listMemoryTools 等内部步骤用 getModel(默认回调)取模型,不带请求模型
- * 会在「只测试某模型」等场景误报"尚未配置模型供应商"。
- */
-/** Generic webhook provider used by the workbench signal routes. */
-export const workWebhookSignals = new WebhookSignalProvider({
-  id: "mastra-work-webhooks",
-  name: "MastraWork Webhooks",
-  extractResourceId: (payload) => {
-    if (typeof payload !== "object" || payload === null) return undefined;
-    const raw = payload as { resource?: unknown; externalResourceId?: unknown };
-    const value = raw.resource ?? raw.externalResourceId;
-    return typeof value === "string" ? value : undefined;
-  },
-  buildNotification: (payload, subscription) => ({
-    source: "mastra-work-webhooks",
-    kind: "webhook",
-    priority: "medium",
-    summary: `Webhook update for ${subscription.externalResourceId}`,
-    payload,
-    dedupeKey: `mastra-work-webhooks:${subscription.externalResourceId}:${JSON.stringify(payload)}`,
-  }),
-});
 
 /**
- * notification inbox 工具。WebhookSignalProvider 与后台任务通知都往 notifications
- * 存储域写记录(LibSQLStore 的 NotificationsLibSQL),没有这个工具,agent 收到
- * <notification-summary pending="N"> 后就无从读取背后的全文 —— inbox 只写不读。
- * 模块级 promise 只解析一次:tools() 每次调用复用同一个工具实例;存储域缺失时
- * 解析为 undefined,工具不注入(而不是注入一个必然报错的工具)。
+ * 主工作 Agent (docs/en/docs/agents/overview.mdx, reference/agents/agent.mdx)
  */
-const notificationInboxToolPromise = appStorage
-  .getStore("notifications")
-  .then((storage) => (storage ? createNotificationInboxTool({ storage }) : undefined))
-  .catch(() => undefined);
-
 export const mastraWorkAgent = new Agent({
   id: "mastra-work-agent",
   name: "MastraWork",
@@ -274,9 +195,6 @@ export const mastraWorkAgent = new Agent({
       requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
     );
     const selection = parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY));
-    // createCodeMode 的声明必须和 tool 一起注入,否则模型不知道 external_* 函数契约;
-    // 反之工具被策略拒绝时也不能注入声明,否则模型会去调一个它没有的工具。
-    // Code Mode 只受当前权限策略约束,不代表任何工作流模式。
     const instructions = [
       BASE_INSTRUCTIONS,
       ...(isCodeModeAvailable(rules) ? [codeMode.instructions] : []),
@@ -287,7 +205,6 @@ export const mastraWorkAgent = new Agent({
         selection,
         requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
       );
-      // web_fetch 是无 Key 的通用能力,判定「检索是否真可用」要把它排除
       const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
       instructions.push(webSearchInstructions(selection, searchAvailable));
     }
@@ -316,9 +233,6 @@ export const mastraWorkAgent = new Agent({
     return instructions;
   },
   model: async ({ requestContext }) => {
-    // 优先用当前请求显式指定的模型(见 REQUEST_MODEL_CONTEXT_KEY 注释):
-    // router 形态 {id, apiKey} 或自定义网关 LanguageModel 实例,均可直接作为
-    // ModelConfig 返回;RequestContext.get 返回 unknown,这里按约定断言。
     const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
       | { id: `${string}/${string}`; apiKey: string }
       | GatewayLanguageModel
@@ -332,18 +246,8 @@ export const mastraWorkAgent = new Agent({
     }
     return modelId;
   },
-  // 函数形式引用:记忆配置保存后 getMemory() 返回重建实例,无需重启实时生效
   memory: ({ requestContext }) => getMemory({ requestContext }),
   skills: [getManagedSkillsDirectory()],
-  /**
-   * 输入管线 = 资料库附件解析 + 工作台 state lane + AGENTS.md 自动加载 +
-   * 设置面板「护栏」配置出的内置处理器(docs/en/docs/agents/guardrails.mdx)。
-   * 函数形式让配置保存后实时生效,并让 SkillSearchProcessor 能按本线程工作区
-   * 实例化(见 ./guardrails)。附件处理器排在最前:它把资料库 URL 换成真实内容,
-   * 后面的护栏才检得到正文。
-   * 三条 state lane 与 AGENTS.md 均为静态处理器,不随配置变化;browser lane 由
-   * Mastra 在检测到 browser 配置时自动注入,无需在此登记。
-   */
   inputProcessors: async ({ requestContext }) => [
     libraryAttachmentProcessor,
     editorStateProcessor,
@@ -354,9 +258,7 @@ export const mastraWorkAgent = new Agent({
   ],
   outputProcessors: async () => buildGuardrailOutputProcessors(),
   errorProcessors: async () => buildGuardrailErrorProcessors(),
-  // TaskSignalProvider 同时注册 task_* 工具和 TaskStateProcessor,
-  // 使 TODO 列表按 thread 持久化,刷新后仍可恢复。
-  signals: [new TaskSignalProvider(), workWebhookSignals],
+  signals: [workWebhookSignals],
   agents: workSubagents,
   browser: workBrowser,
   workspace: async ({ requestContext }) => {
@@ -371,7 +273,6 @@ export const mastraWorkAgent = new Agent({
       requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
       requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
     );
-    const notificationInbox = await notificationInboxToolPromise;
     const tools: ToolsInput = {
       ...mode.additionalTools,
       ask_user: askUserTool,
@@ -380,9 +281,7 @@ export const mastraWorkAgent = new Agent({
       library_vector_search: libraryVectorSearchTool,
       library_graph_search: libraryGraphSearchTool,
       library_document_chunker: libraryDocumentChunkerTool,
-      // 通知收件箱:读 <notification-summary> 背后的完整记录并流转其状态
-      ...(notificationInbox ? { notification_inbox: notificationInbox } : {}),
-      // 关闭联网检索时不注入任何检索工具 —— 模型无从联网,而非依赖提示词约束
+      ...(notificationInboxTool ? { notification_inbox: notificationInboxTool } : {}),
       ...(await resolveWebSearchTools(
         parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
         requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
@@ -396,19 +295,6 @@ export const mastraWorkAgent = new Agent({
       : tools;
     return withoutDeniedTools(visibleTools, rules);
   },
-  /**
-   * 工具审批门(官方 requireToolApproval 的函数形态 + deny 的执行点)。
-   *
-   * - "ask" → requireToolApproval 返回 true,流里发出 tool-call-approval,
-   *   前端渲染审批面板,resume 时带 { approved, reason }
-   * - "deny" → 工作区工具走 beforeToolCall 直接拒绝并把原因回给模型;
-   *   我们自己注入的工具已在上面的 tools 里被摘掉,不会走到这里
-   * - 全部 allow(官方 yolo 等价)→ 审批相关键不下传,恢复工具并发
-   *   (requireToolApproval 一旦存在就强制串行,见 loop/types.d.ts)
-   *
-   * maxProcessorRetries 也在这里下传:它在 Agent 构造参数上只接受静态数字,
-   * 放到每次调用的 defaultOptions 里,「护栏」页改了重试上限才无需重启生效。
-   */
   defaultOptions: async ({ requestContext }) => {
     const { rules } = resolveSessionPolicy(
       requestContext?.get(MODE_ID_CONTEXT_KEY),
@@ -417,10 +303,6 @@ export const mastraWorkAgent = new Agent({
     );
     const retries = getGuardrailsRuntimeConfig().maxProcessorRetries;
     const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
-    // Tool loops issue another model request after every tool result. Keep the
-    // official AI SDK retry behavior enabled with a slightly larger budget for
-    // transient proxy resets/timeouts; tool execution itself is not repeated by
-    // this setting.
     const modelRetries = { maxRetries: 4 };
     if (isFullyAllowed(rules)) {
       return { ...processorRetries, ...modelRetries, delegation: WORK_DELEGATION };

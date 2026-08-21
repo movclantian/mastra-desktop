@@ -46,7 +46,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { type TreeEntry, useWorkbench } from "@/lib/workbench";
+import { reportWorkbenchState, type TreeEntry, useWorkbench } from "@/lib/workbench";
 
 function editorExtension(path: string) {
   const lower = path.toLowerCase();
@@ -200,6 +200,20 @@ function FilesWorkspace() {
     if (!activeThreadId || activeThread?.metadata.workspaceExplicit !== true) return;
     void fetchTreeEntries(activeThreadId).then(setEntries);
   }, [activeThread?.metadata.workspaceExplicit, activeThreadId, fetchTreeEntries]);
+
+  // 编辑器状态 → editor state lane:模型据此知道用户正在看哪个文件、有没有
+  // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)
+  React.useEffect(() => {
+    reportWorkbenchState(activeThreadId, user.id, {
+      editor: {
+        ...(activeThread?.metadata.workspacePath
+          ? { workspacePath: activeThread.metadata.workspacePath }
+          : {}),
+        ...(file?.path ? { openPath: file.path, dirty } : {}),
+        ...(selectedPath ? { selectedPath } : {}),
+      },
+    });
+  }, [activeThread?.metadata.workspacePath, activeThreadId, dirty, file?.path, selectedPath, user.id]);
 
   const loadDirectory = React.useCallback(
     (path: string) => {
@@ -432,7 +446,9 @@ function BrowserWorkspace() {
     viewport: { width: number; height: number };
   }>();
   const [busy, setBusy] = React.useState(false);
-  const [frameState, setFrameState] = React.useState<"idle" | "connecting" | "connected" | "error">("idle");
+  const [frameState, setFrameState] = React.useState<"idle" | "connecting" | "connected" | "error">(
+    "idle",
+  );
   const [screencastAttempt, setScreencastAttempt] = React.useState(0);
   const pointerMoveAtRef = React.useRef(0);
   const browserInitRef = React.useRef<string | null>(null);
@@ -467,11 +483,14 @@ function BrowserWorkspace() {
   }, [refreshState, stateUrl]);
 
   React.useEffect(() => {
+    void screencastAttempt;
     if (!activeThreadId || !stateUrl || browserInitRef.current === activeThreadId) return;
     browserInitRef.current = activeThreadId;
     void (async () => {
       const existingResponse = await fetch(stateUrl);
-      const existing = existingResponse.ok ? ((await existingResponse.json()) as BrowserState) : EMPTY_BROWSER_STATE;
+      const existing = existingResponse.ok
+        ? ((await existingResponse.json()) as BrowserState)
+        : EMPTY_BROWSER_STATE;
       setState(existing);
       if (existing.active && existing.tabs.length > 0) return;
       const response = await fetch(browserUrl("/navigate"), {
@@ -497,6 +516,7 @@ function BrowserWorkspace() {
   }, [activeThreadId, browserUrl, screencastAttempt, stateUrl]);
 
   React.useEffect(() => {
+    void screencastAttempt;
     if (!stateUrl || !state.active) return;
     setFrameState("connecting");
     const source = new EventSource(browserUrl("/screencast"));
@@ -713,6 +733,7 @@ function BrowserWorkspace() {
                   ? "bg-background text-foreground"
                   : "border-transparent text-muted-foreground hover:bg-muted/50",
               )}
+              // biome-ignore lint/suspicious/noArrayIndexKey: tab index is stable in browser bar
               key={`${index}:${tab.url}:${tab.title ?? ""}`}
               onClick={() => void action("switch-tab", index)}
               onKeyDown={(event) => {
@@ -825,7 +846,9 @@ function BrowserWorkspace() {
         ) : state.active && frameState === "error" ? (
           <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
             <span>实时画面连接失败</span>
-            <Button onClick={retryFrame} size="sm" variant="outline">重试连接</Button>
+            <Button onClick={retryFrame} size="sm" variant="outline">
+              重试连接
+            </Button>
           </div>
         ) : state.active ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

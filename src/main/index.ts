@@ -9,15 +9,15 @@ import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
 import {
+  parseTerminalCreateRequest,
+  parseTerminalResizeRequest,
+  parseTerminalSessionId,
+  parseTerminalWriteRequest,
   TERMINAL_CLOSE_CHANNEL,
   TERMINAL_CREATE_CHANNEL,
   TERMINAL_EVENT_CHANNEL,
   TERMINAL_RESIZE_CHANNEL,
   TERMINAL_WRITE_CHANNEL,
-  parseTerminalCreateRequest,
-  parseTerminalResizeRequest,
-  parseTerminalSessionId,
-  parseTerminalWriteRequest,
 } from "../shared/terminal-contract";
 import { TerminalSessionRuntime } from "./terminal";
 
@@ -541,7 +541,9 @@ function createWindow(): void {
     runtimeRoot: is.dev ? getProjectRoot() : app.getAppPath(),
     defaultCwd: is.dev ? getProjectRoot() : app.getPath("home"),
     send: (event) => {
-      if (!mainWindow?.isDestroyed()) mainWindow.webContents.send(TERMINAL_EVENT_CHANNEL, event);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(TERMINAL_EVENT_CHANNEL, event);
+      }
     },
   });
 

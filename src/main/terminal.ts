@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import type {
   TerminalCreateRequest,
@@ -22,13 +22,17 @@ interface PtyProcess {
 }
 
 interface TerminalPtyModule {
-  spawn(file: string, args: readonly string[], options: {
-    name: string;
-    cols: number;
-    rows: number;
-    cwd: string;
-    env: Record<string, string>;
-  }): PtyProcess;
+  spawn(
+    file: string,
+    args: readonly string[],
+    options: {
+      name: string;
+      cols: number;
+      rows: number;
+      cwd: string;
+      env: Record<string, string>;
+    },
+  ): PtyProcess;
 }
 
 interface OwnedTerminal {
@@ -44,7 +48,9 @@ function loadPty(runtimeRoot: string): TerminalPtyModule {
 
 function terminalEnvironment(source: NodeJS.ProcessEnv): Record<string, string> {
   const environment = Object.fromEntries(
-    Object.entries(source).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    Object.entries(source).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
   );
   environment.TERM = "xterm-256color";
   environment.COLORTERM = "truecolor";
@@ -67,7 +73,11 @@ export class TerminalSessionRuntime {
   readonly #defaultCwd: string;
   readonly #send: (event: TerminalEvent) => void;
 
-  constructor(options: { runtimeRoot: string; defaultCwd: string; send: (event: TerminalEvent) => void }) {
+  constructor(options: {
+    runtimeRoot: string;
+    defaultCwd: string;
+    send: (event: TerminalEvent) => void;
+  }) {
     this.#pty = loadPty(options.runtimeRoot);
     const shell = defaultShell();
     this.#shell = shell.shell;
@@ -88,13 +98,22 @@ export class TerminalSessionRuntime {
         env: terminalEnvironment(process.env),
       });
     } catch (error) {
-      this.#send({ type: "error", sessionId, message: error instanceof Error ? error.message : String(error) });
+      this.#send({
+        type: "error",
+        sessionId,
+        message: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
     const data = ptyProcess.onData((value) => this.#send({ type: "data", sessionId, data: value }));
     const exit = ptyProcess.onExit((result) => {
       this.#release(sessionId);
-      this.#send({ type: "exit", sessionId, exitCode: result.exitCode, ...(result.signal ? { signal: result.signal } : {}) });
+      this.#send({
+        type: "exit",
+        sessionId,
+        exitCode: result.exitCode,
+        ...(result.signal ? { signal: result.signal } : {}),
+      });
     });
     this.#sessions.set(sessionId, { process: ptyProcess, data, exit });
     return { sessionId };

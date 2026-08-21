@@ -64,10 +64,7 @@ export type SandboxTabsBarProps = ComponentProps<"div">;
 
 export const SandboxTabsBar = ({ className, ...props }: SandboxTabsBarProps) => (
   <div
-    className={cn(
-      "flex min-w-0 w-full items-center border-border border-t border-b",
-      className,
-    )}
+    className={cn("flex min-w-0 w-full items-center border-border border-t border-b", className)}
     {...props}
   />
 );
