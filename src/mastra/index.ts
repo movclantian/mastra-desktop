@@ -6,7 +6,7 @@ import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { MastraEditor } from "@mastra/editor";
 import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
-import { ProxyAgent, setGlobalDispatcher } from "undici";
+import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
 import { getConfiguredProcessorRegistry } from "./agents/guardrails";
 import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./agents/llm";
@@ -20,25 +20,33 @@ import { appStorage } from "./storage";
 import { getThreadsRoot, getThreadWorkspace } from "./workspace";
 
 // ---------------------------------------------------------------------------
-// 出站请求走系统代理(Node 原生 fetch 不读代理)。
-// 例如 api.b.ai 国内直连被墙/超时,而本机经代理直通;
-// 这里给全局 fetch 挂 ProxyAgent,让模型列表拉取、聊天请求、models.dev
-// 目录等所有出站 fetch 走代理。代理地址只从环境变量读取 —— 系统代理的
-// 解析由 Electron 主进程用 Chromium 官方 API 完成并注入(见 src/main/index.ts
-// 的 resolveSystemProxyUrl),本文件不做任何平台级读取。未配置则保持直连。
+// 出站请求走代理(Node 原生 fetch 不读代理设置)。
+// 受限网络下 models.dev 目录、网关 /models、聊天请求直连会全部超时;这里给全局
+// fetch 挂 undici 官方的 EnvHttpProxyAgent —— 它按 HTTP_PROXY / HTTPS_PROXY /
+// NO_PROXY 分流,回环地址不进代理(旧的 ProxyAgent 完全不认 NO_PROXY,会把本机
+// 4111 的自调用也塞给代理)。
+// 代理地址只从环境变量读取:系统代理的解析由 Electron 主进程用 Chromium 官方 API
+// 完成后注入(见 src/main/index.ts 的 resolveOutboundProxyUrl),本文件
+// 不做任何平台级读取。未配置则保持直连。
 // ---------------------------------------------------------------------------
-const proxyUrl =
-  process.env.HTTPS_PROXY ??
-  process.env.https_proxy ??
-  process.env.HTTP_PROXY ??
-  process.env.http_proxy;
-if (proxyUrl) {
+const httpProxy = (process.env.http_proxy ?? process.env.HTTP_PROXY ?? "").trim();
+const httpsProxy = (process.env.https_proxy ?? process.env.HTTPS_PROXY ?? "").trim();
+const proxyBypass = (process.env.no_proxy ?? process.env.NO_PROXY ?? "").trim();
+if (httpProxy || httpsProxy) {
   try {
-    setGlobalDispatcher(new ProxyAgent(proxyUrl));
-    console.log(`[mastra] 出站请求走系统代理: ${proxyUrl}`);
+    // 显式传入值而非仅让 Agent 在构造时自行读取环境变量:mastra dev 有一层
+    // CLI → 服务进程的 spawn 链,这样日志和实际 Dispatcher 使用的配置完全一致。
+    setGlobalDispatcher(
+      new EnvHttpProxyAgent({
+        ...(httpProxy ? { httpProxy } : {}),
+        ...(httpsProxy ? { httpsProxy } : {}),
+        noProxy: proxyBypass,
+      }),
+    );
+    console.log(`[mastra] 出站请求走代理（绕过 ${proxyBypass || "无"}）`);
   } catch (error) {
     console.warn(
-      `[mastra] 检测到代理 ${proxyUrl} 但启用失败，继续直连: ${
+      `[mastra] 检测到出站代理但启用失败，继续直连: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

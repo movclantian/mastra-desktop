@@ -8,6 +8,18 @@ import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
+import {
+  TERMINAL_CLOSE_CHANNEL,
+  TERMINAL_CREATE_CHANNEL,
+  TERMINAL_EVENT_CHANNEL,
+  TERMINAL_RESIZE_CHANNEL,
+  TERMINAL_WRITE_CHANNEL,
+  parseTerminalCreateRequest,
+  parseTerminalResizeRequest,
+  parseTerminalSessionId,
+  parseTerminalWriteRequest,
+} from "../shared/terminal-contract";
+import { TerminalSessionRuntime } from "./terminal";
 
 const MASTRA_SERVER_URL = "http://localhost:4111";
 const MASTRA_PORT = 4111;
@@ -38,34 +50,51 @@ const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * 把系统代理解析结果注入服务进程环境。
- * 用 Chromium 官方的 session.resolveProxy 解析系统代理(Windows/macOS/Linux
- * 统一走系统配置),避免在服务进程里手工读注册表/scutil;服务端只认环境变量。
- * 已有显式代理环境变量时不覆盖;解析失败或代理关闭(DIRECT)时返回 undefined。
+ * 解析服务进程的出站代理地址(供 spawn 时以环境变量注入)。
+ * 显式代理环境变量优先;否则用 Chromium 官方的 session.resolveProxy 解析系统代理
+ * (Windows/macOS/Linux 统一走系统配置,PAC 脚本也由 Chromium 求值),
+ * 避免在服务进程里手工读注册表/scutil —— 服务端只认环境变量。
+ *
+ * 返回 undefined = 直连:未配置代理、代理已关闭(DIRECT)、不受支持的 SOCKS4
+ * 代理,或系统代理规则解析失败。
  */
-async function resolveSystemProxyUrl(): Promise<string | undefined> {
-  const explicit =
+async function resolveOutboundProxyUrl(): Promise<string | undefined> {
+  const explicit = (
     process.env.HTTPS_PROXY ??
     process.env.https_proxy ??
     process.env.HTTP_PROXY ??
-    process.env.http_proxy;
-  if (explicit) return undefined;
+    process.env.http_proxy ??
+    ""
+  ).trim();
+  if (explicit) return withProxyScheme(explicit, "http");
+  return resolveSystemProxyUrl();
+}
+
+async function resolveSystemProxyUrl(): Promise<string | undefined> {
   try {
-    // resolveProxy 按 URL 匹配代理规则(PAC 可对不同域名走不同代理),因此必须给
-    // 一个目标 URL 作探测;这里用中立占位域名,与任何具体供应商/业务域名无关。
-    const rules = await session.defaultSession.resolveProxy("https://example.com");
-    // 形如 "PROXY 127.0.0.1:7890;DIRECT" 或 "DIRECT"
-    const proxy = rules
-      .split(";")
-      .map((rule) => rule.trim())
-      .find((rule) => rule.startsWith("PROXY "));
-    if (!proxy) return undefined;
-    const host = proxy.slice("PROXY ".length).trim();
-    if (!host) return undefined;
-    return /^https?:\/\//i.test(host) ? host : `http://${host}`;
-  } catch {
-    return undefined;
+    await app.whenReady();
+    // resolveProxy 按 URL 匹配代理规则(PAC 可对不同域名走不同代理),因此必须给一个
+    // 目标 URL 作探测;用服务端必然要访问的模型目录域名,匹配到的规则最贴近实际。
+    const rules = await session.defaultSession.resolveProxy("https://models.dev/api.json");
+    // 形如 "PROXY 127.0.0.1:7890;DIRECT"、"HTTPS gw.corp:443" 或 "DIRECT"
+    for (const rule of rules.split(";")) {
+      const [rawScheme, host] = rule.trim().split(/\s+/, 2);
+      if (!host) continue;
+      const scheme = rawScheme.toUpperCase();
+      if (scheme === "PROXY") return withProxyScheme(host, "http");
+      if (scheme === "HTTPS") return withProxyScheme(host, "https");
+      if (scheme === "SOCKS" || scheme === "SOCKS5") return withProxyScheme(host, "socks5");
+    }
+  } catch (error) {
+    console.warn(
+      `[proxy] 系统代理解析失败：${error instanceof Error ? error.message : String(error)}`,
+    );
   }
+  return undefined;
+}
+
+function withProxyScheme(value: string, fallbackScheme: "http" | "https" | "socks5"): string {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? value : `${fallbackScheme}://${value}`;
 }
 
 let mastraProcess: ChildProcess | null = null;
@@ -372,13 +401,33 @@ function ensureMastraRunning(): Promise<void> {
         MASTRA_SHUTDOWN_TOKEN,
       };
 
-      // 服务进程是纯 Node,原生 fetch 不读系统代理;把 Chromium 解析出的系统
-      // 代理以环境变量注入,经 spawn 链(dev: CLI → 服务孙进程)传给服务端。
-      const systemProxy = await resolveSystemProxyUrl();
-      if (systemProxy) {
-        env.HTTPS_PROXY = systemProxy;
-        env.HTTP_PROXY = systemProxy;
-        env.NO_PROXY = "localhost,127.0.0.1,::1";
+      // 服务进程是纯 Node,原生 fetch 不读系统代理;把解析出的代理以环境变量注入,
+      // 经 spawn 链(dev: CLI → 服务孙进程)交给服务端的 EnvHttpProxyAgent。
+      const outboundProxy = await resolveOutboundProxyUrl();
+      if (outboundProxy) {
+        const configuredBypass = (process.env.NO_PROXY ?? process.env.no_proxy ?? "").trim();
+        const bypass = Array.from(
+          new Set([
+            ...configuredBypass.split(/[,\s]+/).filter(Boolean),
+            "localhost",
+            "127.0.0.1",
+            "::1",
+          ]),
+        ).join(",");
+        // 大小写两套都写:各库读取习惯不一(undici 先读小写再读大写)
+        env.HTTPS_PROXY = outboundProxy;
+        env.HTTP_PROXY = outboundProxy;
+        env.https_proxy = outboundProxy;
+        env.http_proxy = outboundProxy;
+        env.NO_PROXY = bypass;
+        env.no_proxy = bypass;
+        console.log(`[proxy] Mastra 服务出站代理已启用（绕过 ${bypass}）`);
+      } else {
+        // 直连:清掉从外层继承来的失效代理变量,否则服务端会照着它把出站全挂死
+        for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) {
+          delete env[key];
+        }
+        console.log("[proxy] 未检测到可用代理，Mastra 服务直连出站");
       }
 
       if (is.dev) {
@@ -488,7 +537,55 @@ function createWindow(): void {
     },
   });
 
+  const terminal = new TerminalSessionRuntime({
+    runtimeRoot: is.dev ? getProjectRoot() : app.getAppPath(),
+    defaultCwd: is.dev ? getProjectRoot() : app.getPath("home"),
+    send: (event) => {
+      if (!mainWindow?.isDestroyed()) mainWindow.webContents.send(TERMINAL_EVENT_CHANNEL, event);
+    },
+  });
+
+  const ownsTerminalRequest = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
+    event.sender === mainWindow?.webContents;
+  const handleTerminalCreate = async (event: Electron.IpcMainInvokeEvent, request: unknown) => {
+    if (!ownsTerminalRequest(event)) throw new Error("unauthorized terminal request");
+    return terminal.create(parseTerminalCreateRequest(request));
+  };
+  const handleTerminalWrite = (event: Electron.IpcMainEvent, request: unknown) => {
+    if (!ownsTerminalRequest(event)) return;
+    try {
+      terminal.write(parseTerminalWriteRequest(request));
+    } catch {
+      // High-frequency input is ignored when it does not match the IPC contract.
+    }
+  };
+  const handleTerminalResize = (event: Electron.IpcMainEvent, request: unknown) => {
+    if (!ownsTerminalRequest(event)) return;
+    try {
+      terminal.resize(parseTerminalResizeRequest(request));
+    } catch {
+      // Invalid dimensions are ignored at the trusted boundary.
+    }
+  };
+  const handleTerminalClose = (event: Electron.IpcMainEvent, sessionId: unknown) => {
+    if (!ownsTerminalRequest(event)) return;
+    try {
+      terminal.close(parseTerminalSessionId(sessionId));
+    } catch {
+      // Invalid session ids are ignored at the trusted boundary.
+    }
+  };
+  ipcMain.handle(TERMINAL_CREATE_CHANNEL, handleTerminalCreate);
+  ipcMain.on(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
+  ipcMain.on(TERMINAL_RESIZE_CHANNEL, handleTerminalResize);
+  ipcMain.on(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
+
   mainWindow.on("closed", () => {
+    ipcMain.removeHandler(TERMINAL_CREATE_CHANNEL);
+    ipcMain.removeListener(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
+    ipcMain.removeListener(TERMINAL_RESIZE_CHANNEL, handleTerminalResize);
+    ipcMain.removeListener(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
+    terminal.dispose();
     mainWindow = null;
   });
 
@@ -534,6 +631,19 @@ function bootstrap(): void {
 
     // 打开存储目录(Electron 官方 shell.openPath)
     ipcMain.handle("open-directory", (_event, directory: string) => shell.openPath(directory));
+
+    ipcMain.handle("open-external", async (_event, value: string) => {
+      let url: URL;
+      try {
+        url = new URL(value);
+      } catch {
+        return;
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        return;
+      }
+      await shell.openExternal(url.toString());
+    });
 
     // 系统目录选择器(Electron 官方 dialog.showOpenDialog)。
     // 所有路径类设置(存储位置/工作区根目录/额外目录/Skills 目录)统一走此处,不手输路径。

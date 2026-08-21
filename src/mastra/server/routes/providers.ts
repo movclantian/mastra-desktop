@@ -1,16 +1,15 @@
+import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { registerApiRoute } from "@mastra/core/server";
 
 /**
  * 模型供应商路由(BYOK)。
- * - /work/providers/registry:供应商注册表,实时来源 models.dev/api.json
- *   (docs/en/models/index.mdx:Mastra 每小时自动刷新同一数据源,
- *   @mastra/core 的 provider-registry.json 即其构建期快照)
- * - /work/providers/catalog:models.dev 能力目录服务端代理(渲染进程 CSP 禁止直连外网)
+ * - /work/providers/registry:Mastra 随包携带的官方供应商注册表,不出网
+ * - /work/providers/catalog:models.dev 能力目录服务端代理,用于可选的能力徽章
  * - /work/providers/models:自定义网关模型列表拉取(参考 docs/en/models/gateways/custom-gateways.mdx)
  */
 
 // ---------------------------------------------------------------------------
-// 内置供应商注册表(实时来自 models.dev)
+// 内置供应商注册表(随 @mastra/core 打包)
 // ---------------------------------------------------------------------------
 
 export interface RegistryProvider {
@@ -22,89 +21,100 @@ export interface RegistryProvider {
   docUrl: string;
 }
 
-/** 从 models.dev api.json 原始数据构建注册表(provider.env 即 API Key 环境变量) */
-function fromCatalog(raw: Record<string, unknown>): RegistryProvider[] {
-  return Object.entries(raw).map(([id, p]) => {
-    const provider = p as {
-      name?: string;
-      env?: string | string[];
-      doc?: string;
-      models?: Record<string, Record<string, unknown>>;
-    };
+/**
+ * 这是 Mastra 发布包携带的 provider/model 快照。设置页直接用它,首次启动和离线状态
+ * 都可添加内置供应商；在线 catalog 仅补充能力徽章,不再决定供应商是否可用。
+ */
+const builtinProviderRegistry: RegistryProvider[] = Object.entries(PROVIDER_REGISTRY)
+  .map(([id, provider]) => {
+    const models = provider.models ?? [];
     return {
       id,
-      name: provider.name ?? id,
-      models: Object.keys(provider.models ?? {}),
-      embeddingModels: Object.entries(provider.models ?? {})
-        .filter(([modelId, model]) => {
-          const modalities = model.modalities as { output?: unknown } | undefined;
-          const output = Array.isArray(modalities?.output)
-            ? modalities.output.map(String)
-            : typeof modalities?.output === "string"
-              ? [modalities.output]
-              : [];
-          return (
-            model.embedding === true ||
-            model.type === "embedding" ||
-            output.some((item) => item.toLowerCase().includes("embedding")) ||
-            /embed/i.test(modelId)
-          );
-        })
-        .map(([modelId]) => modelId),
-      apiKeyEnvVar: Array.isArray(provider.env) ? provider.env.join(" / ") : (provider.env ?? ""),
-      docUrl: provider.doc ?? "",
+      name: provider.name,
+      models,
+      // 官方 registry 不单列 embedding 模型；名称匹配足以提供正确的默认分类,
+      // 在线 catalog 可用时会在能力徽章中补充更细粒度的信息。
+      embeddingModels: models.filter((modelId) => /embed/i.test(modelId)),
+      apiKeyEnvVar: Array.isArray(provider.apiKeyEnvVar)
+        ? provider.apiKeyEnvVar.join(" / ")
+        : provider.apiKeyEnvVar,
+      docUrl: provider.docUrl ?? "",
     };
-  });
-}
+  })
+  .sort((a, b) => a.name.localeCompare(b.name));
 
 // GET /work/providers/registry — 内置供应商列表(按名称排序)
 export const providerRegistryRoute = registerApiRoute("/work/providers/registry", {
   method: "GET",
-  handler: async (c) => {
-    try {
-      const providers = fromCatalog(await fetchModelsDevCatalog()).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      );
-      return c.json({ providers });
-    } catch (error) {
-      return c.json({ error: `models.dev 不可达: ${(error as Error).message}` }, 502);
-    }
-  },
-});
-
-// GET /work/providers/registry/:id — 单个内置供应商(含模型清单)
-export const providerRegistryItemRoute = registerApiRoute("/work/providers/registry/:id", {
-  method: "GET",
-  handler: async (c) => {
-    const id = c.req.param("id");
-    const provider = fromCatalog(await fetchModelsDevCatalog()).find((p) => p.id === id);
-    if (!provider) {
-      return c.json({ error: "Provider not found" }, 404);
-    }
-    return c.json({ provider });
-  },
+  handler: (c) => c.json({ providers: builtinProviderRegistry }),
 });
 
 // ---------------------------------------------------------------------------
-// models.dev 能力目录代理(内存缓存 1 小时,对齐 docs/en/models/index.mdx
-// 的每小时自动刷新策略)
+// models.dev 能力目录代理
+//
+// 这份目录只服务能力徽章与上下文窗口展示,不决定内置供应商是否可用。
+// 服务端做一小时内存缓存并合并并发请求；上游不可用时仅禁用能力徽章。
 // ---------------------------------------------------------------------------
 
 const MODELS_DEV_API = "https://models.dev/api.json";
-let catalogCache: { fetchedAt: number; body: unknown } | null = null;
 const CATALOG_TTL_MS = 60 * 60 * 1000;
+const CATALOG_TIMEOUT_MS = 30_000;
 
-async function fetchModelsDevCatalog(): Promise<Record<string, unknown>> {
+type Catalog = Record<string, unknown>;
+
+let catalogCache: { fetchedAt: number; body: Catalog } | null = null;
+let catalogInflight: Promise<Catalog> | null = null;
+
+async function fetchModelsDevCatalog(): Promise<Catalog> {
   if (catalogCache && Date.now() - catalogCache.fetchedAt < CATALOG_TTL_MS) {
-    return catalogCache.body as Record<string, unknown>;
+    return catalogCache.body;
   }
-  const response = await fetch(MODELS_DEV_API);
-  if (!response.ok) {
-    throw new Error(`Upstream ${response.status}`);
+  catalogInflight ??= refreshModelsDevCatalog().finally(() => {
+    catalogInflight = null;
+  });
+  return catalogInflight;
+}
+
+async function refreshModelsDevCatalog(): Promise<Catalog> {
+  try {
+    const response = await fetch(MODELS_DEV_API, {
+      signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`models.dev 返回 HTTP ${response.status}`);
+    }
+    const body = (await response.json()) as Catalog;
+    if (Object.keys(body).length === 0) {
+      throw new Error("models.dev 返回了空目录");
+    }
+    catalogCache = { fetchedAt: Date.now(), body };
+    return body;
+  } catch (error) {
+    throw new Error(describeFetchError(error));
   }
-  const body = (await response.json()) as Record<string, unknown>;
-  catalogCache = { fetchedAt: Date.now(), body };
-  return body;
+}
+
+/**
+ * Node fetch 的网络错误一律只说 "fetch failed",真实原因埋在 error.cause 里:
+ * ECONNREFUSED = 代理端口没人监听(代理客户端没开)、ENOTFOUND = DNS 被污染或域名写错、
+ * ETIMEDOUT / UND_ERR_CONNECT_TIMEOUT = 被墙或代理没生效。
+ * 设置面板必须看到这一层,才能区分"代理问题"和"Base URL 写错了"。
+ */
+function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  if (error.name === "TimeoutError" || error.name === "AbortError") {
+    return "请求超时（通常是被墙，或代理未生效）";
+  }
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return error.message;
+  const code = (cause as Error & { code?: string }).code;
+  if (code === "ECONNRESET") {
+    return `${error.message}（ECONNRESET: ${cause.message}；若已启用代理，请检查代理客户端和分流规则）`;
+  }
+  if (code === "UND_ERR_CONNECT_TIMEOUT") {
+    return `${error.message}（连接超时：${cause.message}；请检查代理是否已启用，或确认该网关可直连）`;
+  }
+  return `${error.message}（${code ? `${code}: ` : ""}${cause.message}）`;
 }
 
 export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
@@ -113,7 +123,7 @@ export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
     try {
       return c.json(await fetchModelsDevCatalog());
     } catch (error) {
-      return c.json({ error: (error as Error).message }, 502);
+      return c.json({ error: `模型能力目录不可用：${(error as Error).message}` }, 502);
     }
   },
 });
@@ -123,81 +133,114 @@ export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
 // body: { protocol: 'openai' | 'anthropic' | 'gemini', url, apiKey, useResponses? }
 // ---------------------------------------------------------------------------
 
+/** 网关 /models 本身很快,但经代理时握手会慢,给到 30s */
+const GATEWAY_TIMEOUT_MS = 30_000;
+
 export const listProviderModelsRoute = registerApiRoute("/work/providers/models", {
   method: "POST",
   handler: async (c) => {
-    const { protocol, url, apiKey } = (await c.req.json()) as {
-      protocol: string;
-      url: string;
-      apiKey: string;
-    };
+    let payload: { protocol?: string; url?: string; apiKey?: string };
     try {
-      // 与前端 normalizeGatewayUrl 同款的服务端兜底:openai/anthropic 的模型
-      // 列表端点在版本段之下(…/v1/models)。裸域名不补 /v1 会打到网关的
-      // 网页(返回 HTML),JSON 解析报错完全对不上号;已带路径的端点不动。
-      let base = url.trim().replace(/\/+$/, "");
-      if (!base) return c.json({ error: "Base URL 不能为空" }, 400);
-      if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-      base = base.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
-      if (protocol === "openai" || protocol === "anthropic") {
-        try {
-          const parsed = new URL(base);
-          if (parsed.pathname === "/" || parsed.pathname === "") {
-            base = `${parsed.origin}/v1`;
-          }
-        } catch {
-          return c.json({ error: `Base URL 不是合法地址：${url}` }, 400);
+      payload = (await c.req.json()) as typeof payload;
+    } catch {
+      return c.json({ error: "请求体必须是 JSON" }, 400);
+    }
+    const { protocol, apiKey = "" } = payload;
+
+    // 与前端 normalizeGatewayUrl 同款的服务端兜底:openai/anthropic 的模型列表端点在
+    // 版本段之下(…/v1/models)。裸域名不补 /v1 会打到网关的网页(返回 HTML),JSON
+    // 解析报错完全对不上号;已带路径的端点不动。
+    let base = (payload.url ?? "").trim().replace(/\/+$/, "");
+    if (!base) return c.json({ error: "Base URL 不能为空" }, 400);
+    if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
+    base = base.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
+    if (protocol === "openai" || protocol === "anthropic") {
+      try {
+        const parsed = new URL(base);
+        if (parsed.pathname === "/" || parsed.pathname === "") {
+          base = `${parsed.origin}/v1`;
         }
+      } catch {
+        return c.json({ error: `Base URL 不是合法地址：${payload.url}` }, 400);
       }
-      let endpoint = `${base}/models`;
-      const headers: Record<string, string> = {};
-      if (protocol === "anthropic") {
-        headers["x-api-key"] = apiKey;
-        headers["anthropic-version"] = "2023-06-01";
-      } else if (protocol === "gemini") {
-        endpoint = `${base}/models?key=${encodeURIComponent(apiKey)}`;
-      } else {
-        headers.Authorization = `Bearer ${apiKey}`;
-      }
-      const response = await fetch(endpoint, {
+    }
+
+    let endpoint = `${base}/models`;
+    const headers: Record<string, string> = {};
+    if (protocol === "anthropic") {
+      headers["x-api-key"] = apiKey;
+      headers["anthropic-version"] = "2023-06-01";
+    } else if (protocol === "gemini") {
+      // Gemini 把 Key 放在 query 上,所以后面所有报错只回显 base,不回显 endpoint
+      endpoint = `${base}/models?key=${encodeURIComponent(apiKey)}`;
+    } else {
+      headers.Authorization = `Bearer ${apiKey}`;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
         headers,
         // 上游不可达时快速失败,别让设置面板干等
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        return c.json({ error: `Upstream ${response.status}` }, 502);
-      }
-      // 打到网关网页/代理错误页时 content-type 不是 JSON,提前给出可行动的报错,
-      // 而不是在 json() 里抛 "Unexpected token '<'"
-      const contentType = response.headers.get("content-type") ?? "";
-      if (!contentType.includes("json")) {
-        return c.json(
-          {
-            error: `上游返回了 ${contentType || "非 JSON"} 内容，通常是 Base URL 指向了网页或缺少版本段（OpenAI 兼容网关一般需要 …/v1）`,
-          },
-          502,
-        );
-      }
-      const data = (await response.json()) as {
-        data?: { id: string; display_name?: string }[];
-        models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
-      };
-      // OpenAI 兼容 / Anthropic: { data: [{ id }] }; Gemini: { models: [{ name: "models/xxx" }] }
-      const models = data.data
-        ? data.data.map((m) => ({ id: m.id, name: m.display_name ?? m.id }))
-        : (data.models ?? []).map((m) => ({
-            id: m.name.replace(/^models\//, ""),
-            name: m.displayName ?? m.name.replace(/^models\//, ""),
-          }));
-      return c.json({
-        models: models.map((model) => ({
-          ...model,
-          ...(/embed/i.test(model.id) ? { embedding: true } : {}),
-        })),
+        signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
       });
     } catch (error) {
-      return c.json({ error: (error as Error).message }, 500);
+      return c.json({ error: `连接 ${base}/models 失败：${describeFetchError(error)}` }, 502);
     }
+
+    if (!response.ok) {
+      // 401/404 这类错误的原因全在响应体里(Key 无效、路径不对),必须带回前端
+      const detail = (await response.text().catch(() => "")).trim().slice(0, 300);
+      return c.json(
+        { error: `${base}/models 返回 HTTP ${response.status}${detail ? `：${detail}` : ""}` },
+        502,
+      );
+    }
+    // 打到网关网页/代理错误页时 content-type 不是 JSON,提前给出可行动的报错,
+    // 而不是在 json() 里抛 "Unexpected token '<'"
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("json")) {
+      return c.json(
+        {
+          error: `上游返回了 ${contentType || "非 JSON"} 内容，通常是 Base URL 指向了网页或缺少版本段（OpenAI 兼容网关一般需要 …/v1）`,
+        },
+        502,
+      );
+    }
+
+    let data: {
+      data?: { id: string; display_name?: string }[];
+      models?: { name: string; displayName?: string }[];
+    };
+    try {
+      data = (await response.json()) as typeof data;
+    } catch (error) {
+      return c.json(
+        { error: `解析 ${base}/models 的响应失败：${(error as Error).message}` },
+        502,
+      );
+    }
+    // OpenAI 兼容 / Anthropic: { data: [{ id }] };Gemini: { models: [{ name: "models/xxx" }] }
+    if (!Array.isArray(data.data) && !Array.isArray(data.models)) {
+      return c.json(
+        {
+          error: `${base}/models 的响应里没有模型列表（既无 data[] 也无 models[]），请确认 Base URL 填的是网关根地址而不是具体端点`,
+        },
+        502,
+      );
+    }
+    const models = Array.isArray(data.data)
+      ? data.data.map((m) => ({ id: m.id, name: m.display_name ?? m.id }))
+      : (data.models ?? []).map((m) => ({
+          id: m.name.replace(/^models\//, ""),
+          name: m.displayName ?? m.name.replace(/^models\//, ""),
+        }));
+    return c.json({
+      models: models.map((model) => ({
+        ...model,
+        ...(/embed/i.test(model.id) ? { embedding: true } : {}),
+      })),
+    });
   },
 });
 

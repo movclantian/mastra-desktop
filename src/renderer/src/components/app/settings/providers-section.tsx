@@ -47,11 +47,11 @@ import {
   getModelContextWindow,
   getModelDisplayName,
   invalidateProviderModelsCache,
-  loadRegistry,
   normalizeGatewayUrl,
   type ProviderConfig,
   type RegistryProvider,
   testProviderModel,
+  useRegistry,
 } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
 import { CapabilityBadges } from "./shared";
@@ -61,17 +61,6 @@ import { CapabilityBadges } from "./shared";
 // ---------------------------------------------------------------------------
 
 export const CUSTOM_GATEWAY_VALUE = "__custom_gateway__";
-
-/** registry 加载 hook(静态文件走本地服务,会话内 promise memo 去重) */
-export function useRegistry(): RegistryProvider[] {
-  const [registry, setRegistry] = React.useState<RegistryProvider[]>([]);
-  React.useEffect(() => {
-    loadRegistry()
-      .then(setRegistry)
-      .catch(() => setRegistry([]));
-  }, []);
-  return registry;
-}
 
 /** 添加/编辑供应商:统一弹窗表单(editProvider 存在时为编辑模式) */
 export function AddProviderDialog({
@@ -85,7 +74,7 @@ export function AddProviderDialog({
   onOpenChange: (open: boolean) => void;
   editProvider?: ProviderConfig | null;
 }) {
-  const { providers, setProviders } = useWorkbench();
+  const { openBrowserUrl, providers, setProviders } = useWorkbench();
   // selection:内置供应商 registry id,或 CUSTOM_GATEWAY_VALUE
   const [selection, setSelection] = React.useState<string>(registry[0]?.id ?? CUSTOM_GATEWAY_VALUE);
   const [name, setName] = React.useState("");
@@ -298,7 +287,7 @@ export function AddProviderDialog({
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={() => window.open(registryProvider.docUrl, "_blank", "noopener,noreferrer")}
+              onClick={() => openBrowserUrl(registryProvider.docUrl)}
             >
               <ExternalLinkIcon />
               供应商官网 / 获取 API Key
@@ -378,7 +367,7 @@ export function ProviderItem({
 
   /**
    * 手动刷新(提升到本组件:models 状态的唯一数据源)。fetchProviderModels
-   * 会重建 localStorage 缓存;这里同步更新自身状态,收起再展开看到的才是新列表,
+   * 会重建会话内缓存;这里同步更新自身状态,收起再展开看到的才是新列表,
    * 并补回网关列表里没有的自定义模型 ID。
    */
   const refreshModels = async () => {
@@ -669,7 +658,7 @@ export function ProvidersSection() {
     <div className="flex min-w-0 flex-col gap-2 p-4 pt-0">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted-foreground">
-          预选 Mastra 内置供应商(176 家)填入你的 Key,或接入自定义网关。
+          预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。
         </p>
         <Button size="sm" onClick={() => setAddOpen(true)}>
           <PlusIcon />

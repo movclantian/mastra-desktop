@@ -118,28 +118,6 @@ function PromptInputActions() {
   );
 }
 
-function SteerButton({ disabled, onSteer }: { disabled: boolean; onSteer: () => void }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <PromptInputButton
-            aria-label="立即转向"
-            disabled={disabled}
-            onClick={onSteer}
-            size="icon-sm"
-            type="button"
-            variant="outline"
-          />
-        }
-      >
-        <WaypointsIcon />
-      </TooltipTrigger>
-      <TooltipContent>立即转向当前任务</TooltipContent>
-    </Tooltip>
-  );
-}
-
 function PromptInputAttachments() {
   const attachments = usePromptInputAttachments();
   if (attachments.files.length === 0) return null;
@@ -417,12 +395,12 @@ function SortableRequestItem({
   request,
   onEdit,
   onRemove,
-  onSendNow,
+  onSteerNow,
 }: {
   request: QueuedRequest;
   onEdit: (request: QueuedRequest) => void;
   onRemove: (id: string) => void;
-  onSendNow?: (request: QueuedRequest) => void;
+  onSteerNow?: (request: QueuedRequest) => void;
 }) {
   const {
     attributes,
@@ -464,6 +442,20 @@ function SortableRequestItem({
           ) : null}
         </div>
         <QueueItemActions className="shrink-0">
+          {/* 立即转向排在编辑左侧:它是这条请求的主动作(打断当前回合、越过
+              队列顺序直接发出),编辑/移除是它的辅助动作。native follow-up
+              (已被服务端 queueMessage 接受)不能改文本也不能单独撤回,但可以
+              被转向——steer 会 abort 当前 run 并作废服务端整个 follow-up 队列 */}
+          {onSteerNow ? (
+            <QueueItemAction
+              aria-label="立即转向到这条请求"
+              className="opacity-100"
+              onClick={() => onSteerNow(request)}
+              title="立即转向:打断当前回合,直接发送这条请求"
+            >
+              <WaypointsIcon />
+            </QueueItemAction>
+          ) : null}
           {!request.followUpId ? (
             <QueueItemAction
               aria-label="编辑排队请求"
@@ -482,16 +474,6 @@ function SortableRequestItem({
               <Trash2Icon />
             </QueueItemAction>
           ) : null}
-          {onSendNow && !request.followUpId ? (
-            <QueueItemAction
-              aria-label="立即发送排队请求"
-              className="opacity-100"
-              onClick={() => onSendNow(request)}
-              title="立即发送"
-            >
-              <SendIcon />
-            </QueueItemAction>
-          ) : null}
         </QueueItemActions>
       </div>
     </QueueItem>
@@ -502,12 +484,12 @@ export function UserRequestQueuePanel({
   requests,
   onRemove,
   onReorder,
-  onSendNow,
+  onSteerNow,
 }: {
   requests: QueuedRequest[];
   onRemove: (id: string) => void;
   onReorder: (activeId: string, overId: string) => void;
-  onSendNow?: (request: QueuedRequest) => void;
+  onSteerNow?: (request: QueuedRequest) => void;
 }) {
   const controller = usePromptInputController();
   const sensors = useSensors(

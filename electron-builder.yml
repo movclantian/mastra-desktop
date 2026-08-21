@@ -21,6 +21,7 @@ files:
 asarUnpack:
   - resources/**
   - '.mastra/output/**'
+  - 'node_modules/node-pty/**'
 win:
   executableName: mastra-desktop
 nsis:
@@ -52,7 +53,7 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
-npmRebuild: false
+npmRebuild: true
 publish:
   provider: generic
   # TODO: 替换为你的真实更新服务器地址（需自行托管静态文件）

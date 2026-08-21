@@ -395,14 +395,17 @@ const EMPTY_BROWSER_STATE: BrowserState = {
 };
 
 function BrowserWorkspace() {
-  const { activeThreadId, user } = useWorkbench();
+  const { activeThreadId, browserRequest, user } = useWorkbench();
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
   const [frame, setFrame] = React.useState<{
     data: string;
     viewport: { width: number; height: number };
   }>();
   const [busy, setBusy] = React.useState(false);
+  const [frameState, setFrameState] = React.useState<"idle" | "connecting" | "connected" | "error">("idle");
+  const [screencastAttempt, setScreencastAttempt] = React.useState(0);
   const pointerMoveAtRef = React.useRef(0);
+  const browserInitRef = React.useRef<string | null>(null);
   const browserPath = activeThreadId
     ? `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/browser`
     : "";
@@ -426,6 +429,7 @@ function BrowserWorkspace() {
 
   React.useEffect(() => {
     setFrame(undefined);
+    setFrameState("idle");
     void refreshState();
     if (!stateUrl) return;
     const timer = window.setInterval(() => void refreshState(), 1_500);
@@ -433,18 +437,56 @@ function BrowserWorkspace() {
   }, [refreshState, stateUrl]);
 
   React.useEffect(() => {
+    if (!activeThreadId || !stateUrl || browserInitRef.current === activeThreadId) return;
+    browserInitRef.current = activeThreadId;
+    void (async () => {
+      const existingResponse = await fetch(stateUrl);
+      const existing = existingResponse.ok ? ((await existingResponse.json()) as BrowserState) : EMPTY_BROWSER_STATE;
+      setState(existing);
+      if (existing.active && existing.tabs.length > 0) return;
+      const response = await fetch(browserUrl("/navigate"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: "about:blank" }),
+      });
+      if (!response.ok) throw new Error(((await response.json()) as { error?: string }).error || "浏览器启动失败");
+      const payload = (await response.json()) as { state?: BrowserState };
+      if (payload.state) setState(payload.state);
+      setFrameState("connecting");
+    })().catch((error) => {
+      browserInitRef.current = null;
+      setFrameState("error");
+      toast.error(error instanceof Error ? error.message : "浏览器启动失败");
+    });
+  }, [activeThreadId, browserUrl, stateUrl]);
+
+  React.useEffect(() => {
     if (!stateUrl || !state.active) return;
+    setFrameState("connecting");
     const source = new EventSource(browserUrl("/screencast"));
     source.addEventListener("frame", (event) => {
       setFrame(JSON.parse((event as MessageEvent<string>).data) as typeof frame);
+      setFrameState("connected");
     });
     source.addEventListener("url", (event) => {
       const { url } = JSON.parse((event as MessageEvent<string>).data) as { url: string };
       setState((current) => ({ ...current, currentUrl: url }));
     });
     source.addEventListener("stop", () => source.close());
+    source.addEventListener("error", () => {
+      setFrameState("error");
+      source.close();
+    });
     return () => source.close();
-  }, [browserUrl, state.active, stateUrl]);
+  }, [browserUrl, screencastAttempt, state.active, stateUrl]);
+
+  const retryFrame = React.useCallback(() => {
+    browserInitRef.current = null;
+    setFrame(undefined);
+    setFrameState("connecting");
+    setScreencastAttempt((attempt) => attempt + 1);
+    void refreshState();
+  }, [refreshState]);
 
   const navigate = React.useCallback(
     async (url: string) => {
@@ -474,14 +516,14 @@ function BrowserWorkspace() {
   );
 
   const action = React.useCallback(
-    async (name: string, index?: number) => {
+    async (name: string, index?: number, url?: string) => {
       if (!stateUrl) return;
       setBusy(true);
       try {
         const response = await fetch(browserUrl("/action"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: name, index }),
+          body: JSON.stringify({ action: name, index, ...(url ? { url } : {}) }),
         });
         const payload = (await response.json()) as { error?: string; state?: BrowserState };
         if (!response.ok) throw new Error(payload.error || "浏览器操作失败");
@@ -494,6 +536,22 @@ function BrowserWorkspace() {
     },
     [browserUrl, stateUrl],
   );
+
+  const consumedBrowserRequestRef = React.useRef(0);
+  React.useEffect(() => {
+    if (!browserRequest || browserRequest.id === consumedBrowserRequestRef.current) return;
+    if (browserRequest.threadId !== activeThreadId) {
+      consumedBrowserRequestRef.current = browserRequest.id;
+      return;
+    }
+    if (!activeThreadId) return;
+    consumedBrowserRequestRef.current = browserRequest.id;
+    if (state.active && browserRequest.newTab) {
+      void action("new-tab", undefined, browserRequest.url);
+    } else {
+      void navigate(browserRequest.url);
+    }
+  }, [action, activeThreadId, browserRequest, navigate, state.active]);
 
   const injectMouse = React.useCallback(
     (event: React.PointerEvent<HTMLImageElement>, type: "mousePressed" | "mouseReleased") => {
@@ -616,7 +674,7 @@ function BrowserWorkspace() {
                   ? "bg-background text-foreground"
                   : "border-transparent text-muted-foreground hover:bg-muted/50",
               )}
-              key={`${tab.url}:${tab.title ?? ""}`}
+              key={`${index}:${tab.url}:${tab.title ?? ""}`}
               onClick={() => void action("switch-tab", index)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
@@ -681,7 +739,9 @@ function BrowserWorkspace() {
         <WebPreviewUrl />
         <WebPreviewNavigationButton
           disabled={!state.currentUrl}
-          onClick={() => state.currentUrl && window.open(state.currentUrl, "_blank")}
+          onClick={() => {
+            if (state.currentUrl) void window.api.openExternal(state.currentUrl);
+          }}
           tooltip="在系统浏览器中打开"
         >
           <ExternalLinkIcon />
@@ -691,8 +751,10 @@ function BrowserWorkspace() {
           onClick={() => {
             if (!stateUrl) return;
             void fetch(stateUrl, { method: "DELETE" }).then(() => {
+              browserInitRef.current = null;
               setState(EMPTY_BROWSER_STATE);
               setFrame(undefined);
+              setFrameState("idle");
             });
           }}
           tooltip="关闭浏览器"
@@ -701,7 +763,7 @@ function BrowserWorkspace() {
         </WebPreviewNavigationButton>
       </WebPreviewNavigation>
       <div
-        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-zinc-950"
+        className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30"
         onKeyDown={injectKey}
         role="application"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The preview is the keyboard target for browser input injection.
@@ -721,13 +783,18 @@ function BrowserWorkspace() {
             onWheel={injectWheel}
             src={`data:image/jpeg;base64,${frame.data}`}
           />
+        ) : state.active && frameState === "error" ? (
+          <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
+            <span>实时画面连接失败</span>
+            <Button onClick={retryFrame} size="sm" variant="outline">重试连接</Button>
+          </div>
         ) : state.active ? (
-          <div className="flex items-center gap-2 text-sm text-zinc-400">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <LoaderCircleIcon className="size-4 animate-spin" />
-            正在连接实时画面
+            {frameState === "connecting" ? "正在连接实时画面" : "等待浏览器画面"}
           </div>
         ) : (
-          <Empty className="text-zinc-400">
+          <Empty className="text-muted-foreground">
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <BotIcon />

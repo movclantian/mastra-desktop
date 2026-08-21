@@ -1,8 +1,10 @@
+import * as React from "react";
+import { toast } from "sonner";
+
 /**
  * BYOK 模型供应商管理。
- * - 内置供应商列表来自 Mastra 的 provider-registry.json(176 家,
- *   docs/en/models/providers/*.mdx 的数据源,.vscode/2.txt 即其读取脚本)
- * - 模型能力目录来自 models.dev(docs/en/models/index.mdx:每小时自动刷新)
+ * - 内置供应商列表来自 Mastra 随包携带的官方 registry,不依赖外网
+ * - 模型能力目录来自 models.dev,仅用于推理/视觉/上下文窗口等可选展示
  * - 自定义网关参考 docs/en/models/gateways/custom-gateways.mdx
  *   (OpenAI Compatible / Anthropic / Gemini 三种协议)
  */
@@ -10,9 +12,8 @@
 export const MASTRA_SERVER_URL = import.meta.env.VITE_MASTRA_SERVER_URL ?? "http://localhost:4111";
 
 // ---------------------------------------------------------------------------
-// Mastra 内置供应商注册表(服务端 /work/providers/registry)
-// 数据源是随应用打包的静态文件(provider-registry.json),本地服务读取即返回,
-// 无缓存必要 —— 仅做会话内 promise memo 去重,失败可重试。
+// Mastra 内置供应商注册表(服务端 /work/providers/registry)。服务端直接读取
+// @mastra/core 内置快照,这里仅做会话内 promise memo 去重。
 // ---------------------------------------------------------------------------
 
 export interface RegistryProvider {
@@ -24,13 +25,27 @@ export interface RegistryProvider {
   docUrl: string;
 }
 
+/**
+ * 服务端的错误响应统一带 { error },里面是可行动的原因(代理没生效、DNS 被污染、
+ * Key 无效…)。只显示 HTTP 状态码等于把这些信息全丢掉,所以统一从响应体里取。
+ */
+async function readErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: string };
+    if (body.error) return body.error;
+  } catch {
+    // 非 JSON 响应(代理错误页等),退回状态码
+  }
+  return `${fallback}（HTTP ${response.status}）`;
+}
+
 let registryPromise: Promise<RegistryProvider[]> | null = null;
 
 export function loadRegistry(): Promise<RegistryProvider[]> {
   registryPromise ??= fetch(`${MASTRA_SERVER_URL}/work/providers/registry`)
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error(`拉取内置供应商列表失败 (${response.status})`);
+        throw new Error(await readErrorMessage(response, "拉取内置供应商列表失败"));
       }
       const { providers } = (await response.json()) as { providers: RegistryProvider[] };
       return providers;
@@ -40,6 +55,30 @@ export function loadRegistry(): Promise<RegistryProvider[]> {
       throw error;
     });
   return registryPromise;
+}
+
+/**
+ * 内置供应商下拉的 UI 状态。放在非组件模块可保持 providers-section.tsx 的 Fast
+ * Refresh 边界只导出组件,避免 Vite 将 hook 与组件混合导出判定为不兼容。
+ */
+export function useRegistry(): RegistryProvider[] {
+  const [registry, setRegistry] = React.useState<RegistryProvider[]>([]);
+  React.useEffect(() => {
+    let active = true;
+    loadRegistry()
+      .then((nextRegistry) => {
+        if (active) setRegistry(nextRegistry);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setRegistry([]);
+        toast.error(`内置供应商列表加载失败：${(error as Error).message}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  return registry;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +126,7 @@ export function normalizeGatewayUrl(input: string, protocol?: GatewayProtocol): 
 }
 
 // ---------------------------------------------------------------------------
-// 用户供应商配置(localStorage 持久化,按用户隔离)
+// 用户供应商配置(由 Workbench 同步到服务端 app_config,按用户隔离)
 // ---------------------------------------------------------------------------
 
 export interface EnabledModel {
@@ -129,10 +168,9 @@ export interface ProviderConfig {
 }
 
 // ---------------------------------------------------------------------------
-// models.dev 模型能力目录
-// 缓存分层:跨会话由服务端代理缓存 1 小时(对齐 Mastra 每小时自动刷新,
-// 也是唯一权威副本);会话内用内存缓存,避免重复解析大 JSON。
-// 之前在 localStorage 再存一份(同步 parse 数百 KB 阻塞主线程),已移除。
+// models.dev 模型能力目录(可选元数据)
+// 跨会话由服务端代理缓存 1 小时;会话内再缓存解析结果,避免重复解析大 JSON。
+// 目录不可用时只是不显示能力徽章,不影响供应商和模型本身的使用。
 // ---------------------------------------------------------------------------
 
 export interface CatalogModel {
@@ -165,7 +203,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
     // 通过 Mastra 服务端代理拉取(渲染进程 CSP 禁止直连外网,且服务端已缓存 1 小时)
     const response = await fetch(`${MASTRA_SERVER_URL}/work/providers/catalog`);
     if (!response.ok) {
-      throw new Error(`拉取模型目录失败 (${response.status})`);
+      throw new Error(await readErrorMessage(response, "拉取模型目录失败"));
     }
     // models.dev api.json 模型字段:reasoning / tool_call /
     // modalities.input 含 image|audio / limit.context
@@ -259,7 +297,7 @@ export async function fetchProviderModels(
       }),
     });
     if (!response.ok) {
-      throw new Error(`拉取模型列表失败 (${response.status})`);
+      throw new Error(await readErrorMessage(response, "拉取模型列表失败"));
     }
     ({ models } = (await response.json()) as { models: EnabledModel[] });
   }
@@ -278,25 +316,6 @@ export function getCachedProviderModels(providerId: string): EnabledModel[] | nu
 /** 失效某供应商的模型列表缓存:编辑(baseUrl/apiKey/协议变了)或删除供应商时调用 */
 export function invalidateProviderModelsCache(providerId: string): void {
   providerModelsCache.delete(providerId);
-}
-
-// ---------------------------------------------------------------------------
-// 退役 localStorage 键的一次性清理:下列数据曾缓存在 localStorage,现已改为
-// 服务端缓存 / 会话内存 / 常量。模块加载时清掉旧键,避免永久残留垃圾数据。
-// ---------------------------------------------------------------------------
-try {
-  for (const key of Object.keys(localStorage)) {
-    if (
-      key === "mastra-work:user" ||
-      key === "mastra-work:provider-registry" ||
-      key.startsWith("mastra-work:models-dev-catalog") ||
-      key.startsWith("mastra-work:provider-models:")
-    ) {
-      localStorage.removeItem(key);
-    }
-  }
-} catch {
-  // localStorage 不可用(极端环境)则跳过清理
 }
 
 // ---------------------------------------------------------------------------

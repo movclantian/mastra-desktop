@@ -1,8 +1,8 @@
 import { type Dirent, readdirSync } from "node:fs";
 import { readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { basename, extname, join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { getThreadWorkspace, getWorkspaceConfig, type WorkspaceUserConfig } from "../../workspace";
+import { getWorkspaceConfig, type WorkspaceUserConfig } from "../../workspace";
 import { getWorkMemory } from "./threads";
 import { getOwnedThread, isTrustedLocalRequest } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
@@ -48,7 +48,7 @@ type TreeEntry = { hidden: boolean; name: string; path: string; type: "file" | "
 
 const MAX_EDITABLE_FILE_BYTES = 2 * 1024 * 1024;
 
-async function ownedWorkspace(c: ContextWithMastra, explicitOnly = true) {
+async function ownedWorkspace(c: ContextWithMastra) {
   if (!isTrustedLocalRequest(c)) return null;
   const threadId = c.req.param("threadId");
   const resourceId = c.req.query("resourceId");
@@ -56,7 +56,7 @@ async function ownedWorkspace(c: ContextWithMastra, explicitOnly = true) {
   const memory = await getWorkMemory();
   const thread = await getOwnedThread(memory, threadId, resourceId);
   const metadata = thread?.metadata as ThreadMetadata | undefined;
-  if (!metadata?.workspacePath || (explicitOnly && metadata.workspaceExplicit !== true))
+  if (!metadata?.workspacePath || metadata.workspaceExplicit !== true)
     return null;
   try {
     return { root: await realpath(resolve(metadata.workspacePath)), threadId };
@@ -172,108 +172,5 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
     } catch {
       return c.json({ error: "File could not be saved" }, 400);
     }
-  },
-});
-
-// POST /work/threads/:threadId/command — 在线程 LocalSandbox 中流式执行用户命令
-export const threadCommandRoute = registerApiRoute("/work/threads/:threadId/command", {
-  method: "POST",
-  handler: async (c) => {
-    const workspace = await ownedWorkspace(c, false);
-    if (!workspace) return c.json({ error: "Thread has no browsable workspace" }, 404);
-    const body = (await c.req.json()) as { command?: string; filePath?: string };
-    const command = body.command?.trim();
-    const targetFile = body.filePath
-      ? await containedExistingPath(workspace.root, body.filePath)
-      : null;
-    if (!command && !targetFile) return c.json({ error: "command or filePath is required" }, 400);
-    if (body.filePath && !targetFile) return c.json({ error: "Path escapes workspace" }, 400);
-    const sandbox = getThreadWorkspace(workspace.root).sandbox;
-    if (!sandbox?.executeCommand) return c.json({ error: "Workspace sandbox is disabled" }, 409);
-    const executeCommand = sandbox.executeCommand.bind(sandbox);
-
-    const encoder = new TextEncoder();
-    const abortController = new AbortController();
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        const send = (value: unknown) =>
-          controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
-        const powershell = join(
-          process.env.SystemRoot || "C:\\Windows",
-          "System32",
-          "WindowsPowerShell",
-          "v1.0",
-          "powershell.exe",
-        );
-        let executable: string;
-        let args: string[];
-        let displayCommand: string;
-        let executionEnv: NodeJS.ProcessEnv | undefined;
-        if (targetFile && body.filePath) {
-          const extension = extname(targetFile).toLowerCase();
-          displayCommand = `run ${body.filePath}`;
-          if ([".js", ".mjs", ".cjs"].includes(extension)) {
-            executable = process.execPath;
-            args = [targetFile];
-            executionEnv = { ELECTRON_RUN_AS_NODE: "1" };
-          } else if ([".ts", ".mts", ".cts"].includes(extension)) {
-            executable = process.execPath;
-            args = ["--experimental-strip-types", targetFile];
-            executionEnv = { ELECTRON_RUN_AS_NODE: "1" };
-          } else if (extension === ".py") {
-            executable = process.platform === "win32" ? "python.exe" : "python3";
-            args = [targetFile];
-          } else if (extension === ".ps1" && process.platform === "win32") {
-            executable = powershell;
-            args = ["-NoLogo", "-NoProfile", "-File", targetFile];
-          } else if (extension === ".sh" && process.platform !== "win32") {
-            executable = "/bin/sh";
-            args = [targetFile];
-          } else {
-            send({
-              type: "error",
-              error: `Unsupported runnable file: ${extension || "no extension"}`,
-            });
-            controller.close();
-            return;
-          }
-        } else {
-          displayCommand = command ?? "";
-          executable = process.platform === "win32" ? powershell : "/bin/sh";
-          args =
-            process.platform === "win32"
-              ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", displayCommand]
-              : ["-lc", displayCommand];
-        }
-        send({ type: "start", command: displayCommand });
-        void executeCommand(executable, args, {
-          abortSignal: abortController.signal,
-          env: executionEnv,
-          maxRetainedBytes: 1024 * 1024,
-          onStdout: (data) => send({ type: "stdout", data }),
-          onStderr: (data) => send({ type: "stderr", data }),
-        })
-          .then((result) => {
-            send({
-              type: "exit",
-              exitCode: result.exitCode,
-              executionTimeMs: result.executionTimeMs,
-              timedOut: result.timedOut,
-              killed: result.killed,
-            });
-            controller.close();
-          })
-          .catch((error) => {
-            send({ type: "error", error: error instanceof Error ? error.message : String(error) });
-            controller.close();
-          });
-      },
-      cancel() {
-        abortController.abort();
-      },
-    });
-    return new Response(stream, {
-      headers: { "Cache-Control": "no-cache", "Content-Type": "application/x-ndjson" },
-    });
   },
 });

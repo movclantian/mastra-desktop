@@ -312,7 +312,7 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
       </TaskItem>
       {hasDetails ? (
         <CollapsibleContent>
-          <div className="mt-1 space-y-2 pl-6">
+          <div className="mt-1 space-y-2 pl-3">
             {sandboxTool ? (
               <Sandbox className="mb-0" defaultOpen>
                 <SandboxHeader

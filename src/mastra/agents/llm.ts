@@ -44,7 +44,7 @@ export interface EnabledModel {
 export interface UserProviderConfig {
   id: string;
   name: string;
-  /** 内置供应商 id(models.dev registry);为空 = 自定义网关 */
+  /** 内置供应商 id(Mastra registry);为空 = 自定义网关 */
   registryId?: string;
   /** 自定义网关:协议与 Base URL */
   protocol?: GatewayProtocol;
@@ -272,7 +272,7 @@ export async function resolveConfiguredModel(
 }
 
 /**
- * 当前请求模型的家族名(models.dev registry id)。
+ * 当前请求模型的家族名(Mastra registry id)。
  * 仅内置供应商返回;自定义网关返回 undefined —— 它虽然用官方 provider 包构造
  * (provider id 仍是 openai/anthropic/google),但对端未必支持 provider 原生检索,
  * 贸然注入 webSearchTool 会让上游报错,故一律视为不支持。

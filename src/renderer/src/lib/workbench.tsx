@@ -140,6 +140,14 @@ export interface TerminalRequest {
   filePath?: string;
 }
 
+/** 全局链接路由写入的导航请求，由右侧线程浏览器消费。 */
+export interface BrowserRequest {
+  id: number;
+  threadId: string | null;
+  url: string;
+  newTab?: boolean;
+}
+
 // ---- 联网检索(常量与服务端 src/mastra/agents/tools.ts 一一对应) ----
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
@@ -321,6 +329,9 @@ interface WorkbenchValue {
   setTerminalPanelOpen: (open: boolean) => void;
   terminalRequest: TerminalRequest | null;
   requestTerminalCommand: (request: Omit<TerminalRequest, "id">) => void;
+  /** 打开当前线程的右侧浏览器并导航。普通网页链接均经此入口。 */
+  browserRequest: BrowserRequest | null;
+  openBrowserUrl: (url: string) => void;
 }
 
 const WorkbenchContext = createContext<WorkbenchValue | null>(null);
@@ -365,6 +376,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [terminalRequest, setTerminalRequest] = useState<TerminalRequest | null>(null);
   const terminalRequestIdRef = useRef(0);
+  const [browserRequest, setBrowserRequest] = useState<BrowserRequest | null>(null);
+  const browserRequestIdRef = useRef(0);
   const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>([]);
   const [pendingLibraryFiles, setPendingLibraryFiles] = useState<
     Array<FileUIPart & { byteSize?: number }>
@@ -482,6 +495,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const selectThread = useCallback((id: string | null) => {
     setLibraryOpen(false);
     setSkillOpen(false);
+    setSettingsOpen(false);
     setActiveThreadId(id);
   }, []);
 
@@ -503,6 +517,27 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setTerminalPanelOpen(true);
     setTerminalRequest({ ...request, id: ++terminalRequestIdRef.current });
   }, []);
+
+  const openBrowserUrl = useCallback((url: string) => {
+    const normalized = url.trim();
+    if (!normalized) return;
+    try {
+      const parsed = new URL(normalized);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+    } catch {
+      return;
+    }
+    setLibraryOpen(false);
+    setSkillOpen(false);
+    setWorkspacePanelTab("browser");
+    setWorkspacePanelOpen(true);
+    setBrowserRequest({
+      id: ++browserRequestIdRef.current,
+      newTab: true,
+      threadId: activeThreadId,
+      url: normalized,
+    });
+  }, [activeThreadId]);
 
   // 三个检索引擎的 Key 配置存服务端(app_config),菜单据此判断引擎是否可用
   const refreshToolsConfig = useCallback(async () => {
@@ -869,6 +904,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setTerminalPanelOpen,
       terminalRequest,
       requestTerminalCommand,
+      browserRequest,
+      openBrowserUrl,
     }),
     [
       threads,
@@ -915,6 +952,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       terminalPanelOpen,
       terminalRequest,
       requestTerminalCommand,
+      browserRequest,
+      openBrowserUrl,
     ],
   );
 

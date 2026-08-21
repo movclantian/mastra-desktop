@@ -27,6 +27,16 @@ function browserState(threadId: string) {
   }));
 }
 
+async function ensureBrowserTab(threadId: string): Promise<void> {
+  const state = await workBrowser.getBrowserState(threadId);
+  if (!state || state.tabs.length === 0) {
+    const result = await workBrowser.goto({ url: "about:blank" }, threadId);
+    if (!("success" in result) || result.success !== true) {
+      throw new Error("Browser tab could not be created");
+    }
+  }
+}
+
 export const browserStateRoute = registerApiRoute("/work/threads/:threadId/browser", {
   method: "GET",
   handler: async (c) => {
@@ -44,16 +54,14 @@ export const browserScreencastRoute = registerApiRoute(
     handler: async (c) => {
       const threadId = await ownedBrowserThread(c);
       if (!threadId) return c.json({ error: "Thread not found" }, 404);
-      if (!workBrowser.hasThreadSession(threadId)) return new Response(null, { status: 204 });
-
-      const screencast = await workBrowser.startScreencastIfBrowserActive({
+      await ensureBrowserTab(threadId);
+      const screencast = await workBrowser.startScreencast({
         format: "jpeg",
         quality: 78,
         maxWidth: 1280,
         maxHeight: 720,
         threadId,
       });
-      if (!screencast) return new Response(null, { status: 204 });
 
       const encoder = new TextEncoder();
       let disposed = false;
@@ -101,6 +109,7 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     const input = body.url?.trim();
     if (!input) return c.json({ error: "url is required" }, 400);
     const url = /^[a-z][a-z\d+.-]*:/i.test(input) ? input : `https://${input}`;
+    await ensureBrowserTab(threadId);
     const result = await workBrowser.goto({ url }, threadId);
     if (!("success" in result) || result.success !== true) return c.json(result, 400);
     return c.json({ ...result, state: await browserState(threadId) });
@@ -129,6 +138,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
         result = await workBrowser.evaluate({ script: "location.reload()" }, threadId);
         break;
       case "new-tab":
+        await ensureBrowserTab(threadId);
         result = await workBrowser.tabs({ action: "new", url: body.url }, threadId);
         break;
       case "switch-tab":
@@ -141,6 +151,9 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
         break;
       default:
         return c.json({ error: "Unsupported browser action" }, 400);
+    }
+    if (result && typeof result === "object" && "success" in result && result.success !== true) {
+      return c.json(result, 400);
     }
     return c.json({ result, state: await browserState(threadId) });
   },
