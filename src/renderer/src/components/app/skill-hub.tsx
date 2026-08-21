@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 
@@ -110,7 +111,7 @@ export function SkillHub() {
   const loadInstalled = React.useCallback(async () => {
     const response = await fetch(`${MASTRA_SERVER_URL}/work/skills`);
     const payload = (await response.json()) as { skills?: SkillMetadata[]; error?: string };
-    if (!response.ok) throw new Error(payload.error || "读取已安装技能失败");
+    if (!response.ok) throw apiError(payload, "读取已安装技能失败");
     setSkills(payload.skills ?? []);
   }, []);
 
@@ -121,11 +122,11 @@ export function SkillHub() {
         `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}`,
       );
       const payload = (await response.json()) as { skills?: SkillMetadata[]; error?: string };
-      if (!response.ok) throw new Error(payload.error || "技能市场暂时不可用");
+      if (!response.ok) throw apiError(payload, "技能市场暂时不可用");
       setRegistrySkills(payload.skills ?? []);
     } catch (error) {
       setRegistrySkills([]);
-      toast.error(error instanceof Error ? error.message : "技能市场暂时不可用");
+      toastError(error, "技能市场暂时不可用");
     } finally {
       setRegistryLoading(false);
     }
@@ -134,7 +135,7 @@ export function SkillHub() {
   const loadMcp = React.useCallback(async () => {
     const response = await fetch(`${MASTRA_SERVER_URL}/work/mcp`);
     const payload = (await response.json()) as { servers?: McpSummary[]; error?: string };
-    if (!response.ok) throw new Error(payload.error || "读取 MCP 失败");
+    if (!response.ok) throw apiError(payload, "读取 MCP 失败");
     setMcpServers(payload.servers ?? []);
   }, []);
 
@@ -144,7 +145,7 @@ export function SkillHub() {
       marketplaces?: SkillMarketplace[];
       error?: string;
     };
-    if (!response.ok) throw new Error(payload.error || "读取技能市场失败");
+    if (!response.ok) throw apiError(payload, "读取技能市场失败");
     setMarketplaces(payload.marketplaces ?? []);
   }, []);
 
@@ -153,7 +154,7 @@ export function SkillHub() {
     try {
       await Promise.all([loadInstalled(), loadMcp(), loadMarketplaces()]);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "读取技能套件失败");
+      toastError(error, "读取技能套件失败");
     } finally {
       setLoading(false);
     }
@@ -231,14 +232,14 @@ export function SkillHub() {
         body: form,
       });
       const payload = (await response.json()) as { skill?: SkillMetadata; error?: string };
-      if (!response.ok || !payload.skill) throw new Error(payload.error || "添加技能失败");
+      if (!response.ok || !payload.skill) throw apiError(payload, "添加技能失败");
       await loadInstalled();
       setSection("personal");
       setSelectedSkill(payload.skill);
       setAddSkillOpen(false);
       toast.success(`技能「${payload.skill.name}」已添加`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "添加技能失败");
+      toastError(error, "添加技能失败");
     } finally {
       setUploading(false);
       if (inputRef.current) inputRef.current.value = "";
@@ -254,14 +255,14 @@ export function SkillHub() {
         body: JSON.stringify({ source }),
       });
       const payload = (await response.json()) as { skill?: SkillMetadata; error?: string };
-      if (!response.ok || !payload.skill) throw new Error(payload.error || "导入技能失败");
+      if (!response.ok || !payload.skill) throw apiError(payload, "导入技能失败");
       await loadInstalled();
       setSection("personal");
       setSelectedSkill(payload.skill);
       setAddSkillOpen(false);
       toast.success(`技能「${payload.skill.name}」已导入`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "导入技能失败");
+      toastError(error, "导入技能失败");
     } finally {
       setUploading(false);
     }
@@ -285,13 +286,13 @@ export function SkillHub() {
             { method: "POST" },
           );
       const payload = (await response.json()) as { skill?: SkillMetadata; error?: string };
-      if (!response.ok || !payload.skill) throw new Error(payload.error || "安装技能失败");
+      if (!response.ok || !payload.skill) throw apiError(payload, "安装技能失败");
       await loadInstalled();
       setSelectedSkill(payload.skill);
       setSection("personal");
       toast.success(`技能「${payload.skill.name}」已安装`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "安装技能失败");
+      toastError(error, "安装技能失败");
     } finally {
       setInstalling(null);
     }
@@ -907,12 +908,12 @@ function MarketplacesDialog({
         body: JSON.stringify({ id: editing?.id, name, url, branch, enabled: true }),
       });
       const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "保存技能市场失败");
+      if (!response.ok) throw apiError(payload, "保存技能市场失败");
       toast.success(editing ? "技能市场已更新" : "技能市场已添加");
       reset();
       onSaved();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存技能市场失败");
+      toastError(error, "保存技能市场失败");
     } finally {
       setSaving(false);
     }

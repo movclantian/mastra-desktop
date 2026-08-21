@@ -1,18 +1,18 @@
+/**
+ * MastraWork 优雅退出(服务进程侧的唯一实现),POST /work/shutdown。
+ *
+ * 观察记忆的 observe/reflect 循环与 deleteThread/deleteMessages 的向量清理
+ * 都在 Agent 运行返回后于后台继续写库(docs/en/docs/memory/observational-memory.mdx),
+ * 退出前必须 await memory.settled() 等落盘完成,否则强杀会截断这些写入。
+ * memory.settled() 为 @mastra/memory 的官方落盘屏障。触发通路:
+ * 1. HTTP POST /work/shutdown(主通路):dev 态服务进程是 mastra CLI 的孙进程,
+ *    Electron 主进程挂在 CLI 上的 IPC/信号根本到不了这里,HTTP 是唯一能穿透
+ *    包装链的方式,dev / 打包态、所有平台统一走这条路(主进程的 stopMastra)。
+ * 2. IPC message + SIGTERM/SIGINT 兜底:注册在 src/mastra/index.ts。
+ */
 import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../agents";
 import { getMemory } from "../../memory";
-
-// ---------------------------------------------------------------------------
-// MastraWork 优雅退出(服务进程侧的唯一实现)
-//
-// 观察记忆的 observe/reflect 循环与 deleteThread/deleteMessages 的向量清理
-// 都在 Agent 运行返回后于后台继续写库,退出前必须 await memory.settled()
-// 等落盘完成,否则强杀会截断这些写入。触发通路:
-// 1. HTTP POST /work/shutdown(主通路):dev 态服务进程是 mastra CLI 的孙进程,
-//    Electron 主进程挂在 CLI 上的 IPC/信号根本到不了这里,HTTP 是唯一能穿透
-//    包装链的方式,dev / 打包态、所有平台统一走这条路(主进程的 stopMastra)。
-// 2. IPC message + SIGTERM/SIGINT 兜底:注册在 src/mastra/index.ts。
-// ---------------------------------------------------------------------------
 
 /** 落盘上限:超时即退出,不能让退出流程挂住(主进程那边还有强杀兜底) */
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
@@ -49,6 +49,7 @@ export const shutdownRoute = registerApiRoute("/work/shutdown", {
   handler: async (c) => {
     const token = process.env.MASTRA_SHUTDOWN_TOKEN;
     if (!token || c.req.header("x-shutdown-token") !== token) {
+      // 令牌不匹配的伪装 404:刻意保持最简形状,不给探测方任何额外信息
       return c.json({ error: "not found" }, 404);
     }
     // 先等 memory.settled() 落盘,响应写出后再延迟退出

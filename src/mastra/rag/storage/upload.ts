@@ -1,3 +1,6 @@
+/**
+ * 分片断点续传:会话创建、分块上传、合并入库与过期清理。
+ */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";

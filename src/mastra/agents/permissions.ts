@@ -88,7 +88,7 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   skill: "read",
   skill_search: "read",
   skill_read: "read",
-  // 联网检索(src/mastra/agents/tools.ts 注入的全部名字)
+  // 联网检索(src/mastra/tools/web-search.ts 注入的全部名字)
   web_search: "read",
   web_fetch: "read",
   tavily_search: "read",
@@ -226,7 +226,7 @@ export function resolveToolPolicy(rules: PermissionRules, toolName: string): Per
 }
 
 /** 交互型工具不参与审批(见 INTERACTIVE_TOOLS) */
-export function isInteractiveTool(toolName: string): boolean {
+function isInteractiveTool(toolName: string): boolean {
   return INTERACTIVE_TOOLS.has(toolName);
 }
 

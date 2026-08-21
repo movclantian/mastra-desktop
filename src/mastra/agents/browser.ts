@@ -1,3 +1,8 @@
+/**
+ * 浏览器运行时(docs/en/docs/browser.mdx、docs/en/reference/browser/):
+ * AgentBrowser 有头模式;优先探测系统 / 打包附带的 Chromium,
+ * 可执行路径交由 @mastra/agent-browser 的探测与回退链处理。
+ */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AgentBrowser } from "@mastra/agent-browser";

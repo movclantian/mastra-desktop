@@ -1,6 +1,6 @@
-import { Chat, useChat } from "@ai-sdk/react";
+import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
-import { DefaultChatTransport, type FileUIPart, type LanguageModelUsage } from "ai";
+import type { FileUIPart, LanguageModelUsage } from "ai";
 import { MessageCircleDashedIcon, WaypointsIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
@@ -24,6 +24,7 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { Spinner } from "@/components/ui/spinner";
+import { toastError } from "@/lib/errors";
 import {
   buildReasoningRequest,
   buildRequestModel,
@@ -34,6 +35,8 @@ import {
 import type { ToolCategory } from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
 import { AgentInteractionPanel, AgentQueuePanel } from "./agent-panels";
+import { persistAttachments as uploadAttachments } from "./attachments";
+import { buildDisplayMessages } from "./display";
 import { MessageItem } from "./message-list";
 import { ChatPromptInput, UserRequestQueuePanel } from "./prompt-input";
 import {
@@ -57,89 +60,12 @@ import {
   type WorkDisplayState,
   type WorkUIMessage,
 } from "./types";
+import { usePlaceholderChat, useThreadChats } from "./use-thread-chats";
 import { ChatWorkspaceSelector } from "./workspace-selector";
 
 // ---------------------------------------------------------------------------
 // 会话面板
 // ---------------------------------------------------------------------------
-
-interface DisplayMessage {
-  message: WorkUIMessage;
-  sourceIds: string[];
-  sourceEndIndex: number;
-}
-
-const STREAM_RECONNECT_LIMIT = 2;
-
-function isTransientStreamError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return /fetch|network|econnreset|econnrefused|und_err|socket|timeout|连接|网络/i.test(message);
-}
-
-function streamErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.trim() || "流式响应意外中断";
-}
-
-/**
- * Mastra seals each response-boundary (reasoning/tool loop) as a separate
- * assistant memory row. That boundary is important to the model, but it is
- * not a conversation turn for the user. Keep all parts in order while making
- * consecutive assistant rows one visual message. Branch rows stay separate so
- * their selectors and pair metadata remain addressable by id.
- */
-function buildDisplayMessages(
-  messages: WorkUIMessage[],
-  branchesByMessageId: Map<string, MessageBranchRecord>,
-): DisplayMessage[] {
-  const display: DisplayMessage[] = [];
-
-  for (const [index, message] of messages.entries()) {
-    const hasBranch = branchesByMessageId.has(message.id);
-    const previous = display.at(-1);
-    const previousMessage = previous?.message;
-    const previousHasBranch = previous
-      ? previous.sourceIds.some((id) => branchesByMessageId.has(id))
-      : false;
-    const compacted = Boolean(
-      (message.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
-    );
-    const previousCompacted = Boolean(
-      (previousMessage?.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
-    );
-
-    if (
-      message.role === "assistant" &&
-      previousMessage?.role === "assistant" &&
-      previous !== undefined &&
-      !hasBranch &&
-      !previousHasBranch &&
-      !compacted &&
-      !previousCompacted
-    ) {
-      previous.message = {
-        ...previousMessage,
-        id: message.id,
-        parts: [...previousMessage.parts, ...message.parts],
-        metadata: {
-          ...previousMessage.metadata,
-          ...message.metadata,
-        },
-      };
-      previous.sourceIds.push(message.id);
-      previous.sourceEndIndex = index;
-      continue;
-    }
-
-    display.push({
-      message,
-      sourceIds: [message.id],
-      sourceEndIndex: index,
-    });
-  }
-
-  return display;
-}
 
 export function ChatPanel() {
   const {
@@ -204,46 +130,7 @@ export function ChatPanel() {
   const selectedSkillNamesRef = React.useRef<string[]>([]);
 
   const persistAttachments = React.useCallback(
-    async (files: FileUIPart[], threadId: string): Promise<LibraryFilePart[]> => {
-      const isPersisted = (file: FileUIPart) =>
-        /\/work\/library\/assets\/[^/]+\/content/.test(file.url);
-      const pending = files.filter((file) => !isPersisted(file));
-      if (pending.length === 0) return files as LibraryFilePart[];
-      const form = new FormData();
-      form.set("resourceId", user.id);
-      form.set("threadId", threadId);
-      for (const file of pending) {
-        const source =
-          "file" in file && file.file instanceof File
-            ? file.file
-            : await fetch(file.url).then((response) => response.blob());
-        form.append("files", source, file.filename ?? "未命名附件");
-      }
-      const response = await fetch(`${MASTRA_SERVER_URL}/work/library/assets`, {
-        method: "POST",
-        body: form,
-      });
-      const payload = (await response.json()) as {
-        assets?: Array<{ id: string; filename: string; mediaType: string; byteSize: number }>;
-        error?: string;
-      };
-      if (!response.ok || !payload.assets) {
-        throw new Error(payload.error || "附件保存失败");
-      }
-      let uploadedIndex = 0;
-      return files.map((file) => {
-        if (isPersisted(file)) return file;
-        const asset = payload.assets?.[uploadedIndex++];
-        if (!asset) throw new Error("附件上传结果不完整");
-        return {
-          type: "file",
-          byteSize: asset.byteSize,
-          filename: asset.filename,
-          mediaType: asset.mediaType,
-          url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
-        };
-      });
-    },
+    (files: FileUIPart[], threadId: string) => uploadAttachments(files, user.id, threadId),
     [user.id],
   );
 
@@ -322,130 +209,10 @@ export function ChatPanel() {
     skillNames: selectedSkillNamesRef.current,
   });
 
-  /**
-   * 每线程一个 Chat 实例。
-   *
-   * 只用一个 useChat 服务全部线程会串台:A 还在流式时切到 B,A 的 delta 会继续写进
-   * 同一个 Chat,于是 A 的回复出现在 B 的列表里,连带 `[messages.length, status]`
-   * 那个 effect 也会拿 A 的结束事件去拉 B 的挂起交互。
-   *
-   * 传 `id` 能让 useChat 在 id 变化时换新实例(@ai-sdk/react 的 shouldRecreateChat),
-   * 串台就没了 —— 但 AI SDK **没有** id → Chat 的全局注册表(v5 起 ChatStore 已移除),
-   * 旧实例会被丢弃,切回来看不到仍在进行的输出。所以注册表由我们自己持有:
-   * 切走的线程留在自己的实例里继续流,切回来直接接上实时输出。
-   */
-  const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
-  const generatedMessageIdsRef = React.useRef(new Map<string, string>());
-  const reconnectAttemptsRef = React.useRef(new Map<string, number>());
-  const reconnectTimersRef = React.useRef(new Map<string, number>());
-  const getThreadChat = React.useCallback(
-    (threadId: string) => {
-      const existing = chatsRef.current.get(threadId);
-      if (existing) return existing;
-      let chat!: Chat<WorkUIMessage>;
-      chat = new Chat<WorkUIMessage>({
-        id: threadId,
-        generateId: () => {
-          const id = nanoid();
-          generatedMessageIdsRef.current.set(threadId, id);
-          return id;
-        },
-        transport: new DefaultChatTransport<WorkUIMessage>({
-          api: `${MASTRA_SERVER_URL}/chat/mastra-work-agent`,
-          prepareReconnectToStreamRequest: ({ body }) => {
-            const followUpId = typeof body?.followUpId === "string" ? body.followUpId : undefined;
-            return {
-              api: `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/stream?resourceId=${encodeURIComponent(user.id)}${
-                followUpId ? `&followUpId=${encodeURIComponent(followUpId)}` : ""
-              }`,
-            };
-          },
-          prepareSendMessagesRequest: ({ messages, body, trigger, messageId, id }) => {
-            // 自定义 prepareSendMessagesRequest 会**整体替换**默认 body,所以
-            // trigger / messageId 必须显式带上 —— 否则 regenerate() 到了服务端
-            // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
-            // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
-            // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
-            reconnectAttemptsRef.current.delete(threadId);
-            const payload: Record<string, unknown> = {
-              ...buildRequestBodyRef.current(threadId),
-              responseMessageId: generatedMessageIdsRef.current.get(threadId),
-              ...body,
-              id,
-              trigger,
-              messageId,
-              messages,
-            };
-            return { body: payload };
-          },
-        }),
-        onFinish: ({ isError }) => {
-          if (!isError) {
-            reconnectAttemptsRef.current.delete(threadId);
-            const timer = reconnectTimersRef.current.get(threadId);
-            if (timer !== undefined) {
-              window.clearTimeout(timer);
-              reconnectTimersRef.current.delete(threadId);
-            }
-          }
-        },
-        onError: (error) => {
-          const detail = streamErrorMessage(error);
-          if (!isTransientStreamError(error)) {
-            toast.error(`本轮生成失败：${detail}`);
-            return;
-          }
-
-          const attempt = (reconnectAttemptsRef.current.get(threadId) ?? 0) + 1;
-          reconnectAttemptsRef.current.set(threadId, attempt);
-          if (attempt > STREAM_RECONNECT_LIMIT) {
-            toast.error(`流式响应中断：${detail}`);
-            return;
-          }
-
-          const delay = attempt * 800;
-          const timer = window.setTimeout(() => {
-            reconnectTimersRef.current.delete(threadId);
-            void chat
-              .resumeStream()
-              .then(async () => {
-                if (chat.status !== "ready") return;
-                const response = await fetch(
-                  `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?resourceId=${encodeURIComponent(user.id)}`,
-                );
-                const payload = (await response.json().catch(() => ({}))) as {
-                  displayState?: { activeRunId?: string | null };
-                };
-                if (!payload.displayState?.activeRunId) {
-                  reconnectAttemptsRef.current.delete(threadId);
-                  toast.error(`流式响应中断：${detail}`);
-                }
-              })
-              .catch(() => undefined);
-          }, delay);
-          reconnectTimersRef.current.set(threadId, timer);
-        },
-      });
-      chatsRef.current.set(threadId, chat);
-      return chat;
-    },
-    [user.id],
+  const { getThreadChat, retainActive } = useThreadChats(user.id, (threadId) =>
+    buildRequestBodyRef.current(threadId),
   );
-
-  React.useEffect(
-    () => () => {
-      for (const timer of reconnectTimersRef.current.values()) window.clearTimeout(timer);
-      reconnectTimersRef.current.clear();
-    },
-    [],
-  );
-
-  // 没有激活线程时也必须调用 useChat(Hook 规则),用一个从不发送的空实例占位。
-  // 显式给它一个 transport:Chat 构造时不校验,但留着 undefined 一旦被误用就是运行时崩。
-  const placeholderChat = React.useMemo(
-    () => new Chat<WorkUIMessage>({ id: "no-thread", transport: new DefaultChatTransport() }),
-    [],
-  );
+  const placeholderChat = usePlaceholderChat();
   const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
 
   const { messages, setMessages, status, stop } = useChat({
@@ -565,14 +332,8 @@ export function ChatPanel() {
     setQueueCanDispatch(false);
     setPersistedInteractions([]);
     setResolvedInteractionKeys(new Set());
-    // 回收:只保留当前线程与仍在流式的线程,否则每访问一条线程就永久多留一份消息数组
-    for (const [threadId, chat] of chatsRef.current) {
-      const busy = chat.status === "submitted" || chat.status === "streaming";
-      if (threadId !== activeThreadId && !busy) {
-        chatsRef.current.delete(threadId);
-      }
-    }
-  }, [activeChat, activeThreadId, reloadMessages]);
+    retainActive(activeThreadId);
+  }, [activeChat, activeThreadId, reloadMessages, retainActive]);
 
   const interactionReloadVersion = React.useRef(0);
   // 任务和暂停交互都是服务端持久化状态;只在切线和一轮响应结束后读取,
@@ -638,7 +399,7 @@ export function ChatPanel() {
         setActiveThreadId(data.thread.id);
         await getThreadChat(data.thread.id).sendMessage({ text });
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "无法创建修正分支");
+        toastError(error, "无法创建修正分支");
       }
     },
     [activeThreadId, getThreadChat, refreshThreads, setActiveThreadId, user.id],
@@ -1061,7 +822,7 @@ export function ChatPanel() {
           },
         ]);
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "附件保存失败");
+        toastError(error, "附件保存失败");
         return;
       }
       clearPrompt();
@@ -1090,7 +851,7 @@ export function ChatPanel() {
     try {
       persistedFiles = await persistAttachments(files, targetThreadId);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "附件保存失败");
+      toastError(error, "附件保存失败");
       return;
     }
     clearPrompt();
@@ -1262,7 +1023,7 @@ export function ChatPanel() {
     >
       {/* 排队请求与任务共用一张 Queue 卡片(各自渲染内部 section,空态自渲染
           为 null):两个队列本是一体 —— 用户排的"接下来做什么"和 Agent 正在
-          做的任务,单卡片双 section 消除原先两张卡叠放的割裂感。
+          做的任务。
           外层 max-w-3xl 容器与下方输入框同宽基准,w-[96%] 才是"略窄于输入框"
           (工作区卡片同规格,见 workspace-selector.tsx)。 */}
       {hasQueueCard ? (

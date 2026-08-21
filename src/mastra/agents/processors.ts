@@ -1,3 +1,10 @@
+/**
+ * 自定义输入处理器(docs/en/docs/agents/processors.mdx):
+ * - libraryAttachmentProcessor:资料库附件 URL → 真实内容注入
+ * - editor / terminal / workbench 三条 state lane(computeStateSignal,
+ *   docs/en/docs/harness/signals.mdx「State signals」)
+ * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
+ */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { InputProcessor, ProcessorActiveStateSignal } from "@mastra/core/processors";
@@ -136,7 +143,7 @@ export const workbenchStateSchema = z.object({
     .optional(),
 });
 
-export type WorkbenchState = z.infer<typeof workbenchStateSchema>;
+type WorkbenchState = z.infer<typeof workbenchStateSchema>;
 type StateLaneId = keyof WorkbenchState;
 type StateLaneValue<K extends StateLaneId> = NonNullable<WorkbenchState[K]>;
 
@@ -148,12 +155,8 @@ export function mergeWorkbenchState(threadId: string, patch: WorkbenchState): Wo
   return next;
 }
 
-export function readWorkbenchState(threadId: string): WorkbenchState | undefined {
+function readWorkbenchState(threadId: string): WorkbenchState | undefined {
   return workbenchStateByThread.get(threadId);
-}
-
-export function clearWorkbenchState(threadId: string): void {
-  workbenchStateByThread.delete(threadId);
 }
 
 function stateSignalValue<K extends StateLaneId>(
@@ -335,17 +338,6 @@ export const workbenchStateProcessor = createStateLaneProcessor({
   snapshot: describeOpenPanels,
   delta: (_changed, value) => describeOpenPanels(value),
 });
-
-/**
- * 三条工作台 state lane。Agent 的 inputProcessors 与 Studio 的处理器登记
- * (src/mastra/index.ts)都消费这一个数组,新增 lane 只需改这里。
- * browser lane 不在其中 —— Mastra 检测到 Agent 的 browser 配置后自动注入。
- */
-export const workbenchStateProcessors = [
-  editorStateProcessor,
-  terminalStateProcessor,
-  workbenchStateProcessor,
-];
 
 // ---------------------------------------------------------------------------
 // AGENTS.md 自动加载 (docs/en/docs/harness/signals.mdx)

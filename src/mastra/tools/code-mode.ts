@@ -1,3 +1,8 @@
+/**
+ * Code Mode 工具(docs/en/docs/agents/code-mode.mdx、
+ * docs/en/reference/tools/create-code-mode.mdx):
+ * 只把适合批量编排的只读能力(资料库检索三件套)放进沙箱 allow-list。
+ */
 import { createCodeMode } from "@mastra/core/tools";
 import { LocalSandbox } from "@mastra/core/workspace";
 import {
@@ -11,7 +16,7 @@ import { getStorageDirectory, PROJECT_ROOT } from "../storage";
  * Code Mode 工具 (docs/en/docs/agents/code-mode.mdx, reference/tools/create-code-mode.mdx):
  * 只把适合批量编排的只读能力放进沙箱 allow-list。
  */
-export const CODE_MODE_EXTERNAL_TOOLS = {
+const CODE_MODE_EXTERNAL_TOOLS = {
   library_vector_search: libraryVectorSearchTool,
   library_graph_search: libraryGraphSearchTool,
   library_document_chunker: libraryDocumentChunkerTool,

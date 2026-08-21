@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 
 export interface McpFormServer {
@@ -114,7 +115,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
       if (!response.ok || !result.ok) throw new Error(result.error || "MCP 连接失败");
       toast.success(`连接成功，发现 ${result.toolCount ?? 0} 个工具`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "MCP 连接失败");
+      toastError(error, "MCP 连接失败");
     } finally {
       setTesting(false);
     }
@@ -134,7 +135,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
       onOpenChange(false);
       onSaved();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存 MCP 失败");
+      toastError(error, "保存 MCP 失败");
     } finally {
       setSaving(false);
     }

@@ -1,8 +1,12 @@
+/**
+ * 技能市场(docs/en/docs/skills.mdx):GitHub 仓库形式的技能来源,
+ * 配置存 app_config(key = "skill-marketplaces"),安装 = 检出 SKILL.md 目录。
+ */
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from "../storage";
 
-export interface SkillMarketplace {
+interface SkillMarketplace {
   id: string;
   name: string;
   url: string;

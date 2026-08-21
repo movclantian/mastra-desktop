@@ -1,11 +1,11 @@
-import { registerApiRoute } from "@mastra/core/server";
-import { getOwnedThread, getWorkMemory } from "./shared";
-
 /**
  * 线程克隆路由。
  * 官方 API:Memory.cloneThread()(docs/en/reference/memory/cloneThread.mdx)
  * 分支谱系:clone-utilities.mdx(isClone / getSourceThread / listClones / getCloneHistory)
  */
+import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../../errors";
+import { getOwnedThread, getWorkMemory } from "./shared";
 
 // POST /work/threads/:threadId/clone — 克隆线程(全量或最近 N 条)
 // body.messageLimit:仅克隆最近 N 条消息(options.messageLimit),用于「从此消息克隆」。
@@ -19,16 +19,18 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
       messageLimit?: number;
       messageIds?: string[];
     };
-    if (!body.resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!body.resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, body.resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     if (body.messageIds && (!Array.isArray(body.messageIds) || body.messageIds.length === 0)) {
-      return c.json({ error: "messageIds must be a non-empty array" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "messageIds must be a non-empty array" });
     }
     if (body.messageIds && typeof body.messageLimit === "number") {
-      return c.json({ error: "messageIds and messageLimit are mutually exclusive" }, 400);
+      throw workError("VALIDATION_FAILED", {
+        text: "messageIds and messageLimit are mutually exclusive",
+      });
     }
     if (body.messageIds) {
       const { messages } = await memory.recall({
@@ -38,7 +40,7 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
       });
       const ownedMessageIds = new Set((messages ?? []).map((message) => message.id));
       if (body.messageIds.some((messageId) => !ownedMessageIds.has(messageId))) {
-        return c.json({ error: "Message not found in source thread" }, 404);
+        throw workError("MESSAGE_NOT_FOUND");
       }
     }
     const { thread } = await memory.cloneThread({
@@ -71,11 +73,11 @@ export const cloneCompactedEditRoute = registerApiRoute("/work/threads/:threadId
       text?: string;
     };
     if (!body.resourceId || !body.messageId || !body.text?.trim()) {
-      return c.json({ error: "resourceId, messageId and text are required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "resourceId, messageId and text are required" });
     }
     const memory = await getWorkMemory();
     const sourceThread = await getOwnedThread(memory, threadId, body.resourceId);
-    if (!sourceThread) return c.json({ error: "Thread not found" }, 404);
+    if (!sourceThread) throw workError("THREAD_NOT_FOUND");
     await memory.settled();
     const source = await memory.recall({
       threadId,
@@ -95,7 +97,7 @@ export const cloneCompactedEditRoute = registerApiRoute("/work/threads/:threadId
       );
     });
     if (!compacted) {
-      return c.json({ error: "Message is not part of the latest compacted history" }, 409);
+      throw workError("MESSAGE_NOT_LATEST_COMPACTED");
     }
     const history = ((compacted.content as { metadata?: { compactedHistory?: unknown } }).metadata
       ?.compactedHistory ?? []) as Array<{
@@ -110,9 +112,9 @@ export const cloneCompactedEditRoute = registerApiRoute("/work/threads/:threadId
       ? history.filter((entry) => entry.compactionId === targetEntry.compactionId)
       : history;
     const entryIndex = windowHistory.findIndex((entry) => entry.id === body.messageId);
-    if (entryIndex < 0) return c.json({ error: "Compacted message not found" }, 404);
+    if (entryIndex < 0) throw workError("MESSAGE_NOT_FOUND");
     if (windowHistory[entryIndex]?.role !== "user") {
-      return c.json({ error: "Only compacted user messages can be edited" }, 400);
+      throw workError("MESSAGE_EDIT_COMPACTED_ONLY");
     }
 
     const { thread: clone } = await memory.cloneThread({
@@ -189,7 +191,7 @@ export const threadClonesRoute = registerApiRoute("/work/threads/:threadId/clone
     const thread = await memory.getThreadById({ threadId });
     const resourceId = c.req.query("resourceId");
     if (!resourceId || !thread || thread.resourceId !== resourceId) {
-      return c.json({ error: "thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const [source, clones, history] = await Promise.all([
       memory.getSourceThread(threadId),

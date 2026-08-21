@@ -29,7 +29,7 @@ import {
 // 联网检索选择器:与模型选择器同构的多级菜单
 // 结构:引擎行(点击直接启用)→ 二级菜单(引擎说明 + 搜索强度 RadioGroup)
 // 选择结果存 workbench.searchSelection,随每次请求以 body.webSearch 上传;
-// 服务端按引擎与强度注入对应检索工具(src/mastra/agents/tools.ts),
+// 服务端按引擎与强度注入对应检索工具(src/mastra/tools/web-search.ts),
 // 关闭时 Agent 完全没有检索工具可用。
 // ---------------------------------------------------------------------------
 

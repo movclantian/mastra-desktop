@@ -1,3 +1,12 @@
+/**
+ * Mastra 实例入口:注册 Agent / 网关 / 存储 / 观测 / 编辑器与 /work/* 路由,
+ * 并完成进程级初始化(出站代理、处理器登记、索引恢复、优雅退出)。
+ * 官方文档:docs/en/docs/mastra-platform/configuration.mdx(配置项)、
+ * docs/en/docs/observability/overview.mdx + integrations/exporters/mastra-storage.mdx、
+ * docs/en/docs/studio/editor.mdx(编辑器工作区)。
+ */
+
+import { getErrorFromUnknown } from "@mastra/core/error";
 import { Mastra } from "@mastra/core/mastra";
 import type { Processor } from "@mastra/core/processors";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
@@ -16,6 +25,7 @@ import {
   terminalStateProcessor,
   workbenchStateProcessor,
 } from "./agents/processors";
+import { WorkApiError } from "./errors";
 import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
 import {
   ensureLibrarySchema,
@@ -31,9 +41,8 @@ import { getThreadsRoot, getThreadWorkspace } from "./workspace";
 // ---------------------------------------------------------------------------
 // 出站请求走代理(Node 原生 fetch 不读代理设置)。
 // 受限网络下 models.dev 目录、网关 /models、聊天请求直连会全部超时;这里给全局
-// fetch 挂 undici 官方的 EnvHttpProxyAgent —— 它按 HTTP_PROXY / HTTPS_PROXY /
-// NO_PROXY 分流,回环地址不进代理(旧的 ProxyAgent 完全不认 NO_PROXY,会把本机
-// 4111 的自调用也塞给代理)。
+// fetch 挂 undici 官方的 EnvHttpProxyAgent(docs: https://undici.nodejs.org),它按
+// HTTP_PROXY / HTTPS_PROXY / NO_PROXY 分流,回环地址不进代理。
 // 代理地址只从环境变量读取:系统代理的解析由 Electron 主进程用 Chromium 官方 API
 // 完成后注入(见 src/main/index.ts 的 resolveOutboundProxyUrl),本文件
 // 不做任何平台级读取。未配置则保持直连。
@@ -69,6 +78,11 @@ const processorRegistry = {
   ...configuredProcessorRegistry.processors,
 };
 
+const logger = new PinoLogger({
+  name: "Mastra",
+  level: "info",
+});
+
 export const mastra = new Mastra({
   agents: { mastraWorkAgent },
   processors: processorRegistry,
@@ -84,6 +98,37 @@ export const mastra = new Mastra({
       c.get("requestContext").set(MASTRA_RESOURCE_ID_KEY, WORKBENCH_RESOURCE_ID);
       await next();
     },
+    // 全局错误出站(docs/en/reference/configuration.mdx「server.onError」):
+    // 路由只 throw workError(...),状态码与响应形状在这里统一决定。
+    // error 字段保持旧契约,code/domain/category 供渲染层翻译成用户语言。
+    onError: (err, c) => {
+      if (err instanceof WorkApiError) {
+        return c.json(
+          {
+            error: err.message,
+            code: err.id,
+            domain: err.domain,
+            category: err.category,
+            ...(err.details ? { details: err.details } : {}),
+          },
+          err.status,
+        );
+      }
+      const wrapped = getErrorFromUnknown(err);
+      logger.error(`[work-api] ${c.req.method} ${c.req.path} 未处理错误`, {
+        message: wrapped.message,
+        stack: wrapped.stack,
+      });
+      return c.json(
+        {
+          error: wrapped.message,
+          code: "INTERNAL_ERROR",
+          domain: "MASTRA_SERVER",
+          category: "SYSTEM",
+        },
+        500,
+      );
+    },
     cors: {
       origin: "*",
       allowMethods: ["*"],
@@ -92,10 +137,7 @@ export const mastra = new Mastra({
     apiRoutes: [workChatRoute, ...workRoutes],
   },
   storage: appStorage,
-  logger: new PinoLogger({
-    name: "Mastra",
-    level: "info",
-  }),
+  logger,
   observability: new Observability({
     configs: {
       default: {
@@ -107,8 +149,9 @@ export const mastra = new Mastra({
   }),
 });
 
-// Studio 的 /workspaces 页面读取 editor workspace domain，而不是 Mastra 的运行时注册表。
-// 将同一个线程工作区快照持久化一次，确保桌面 Agent 与 Studio 看到的是同一工作区。
+// Studio 的 /workspaces 页面读取 editor workspace domain 而非运行时注册表
+// (docs/en/docs/studio/editor.mdx)。把线程工作区快照持久化一次,
+// 确保桌面 Agent 与 Studio 看到的是同一工作区。
 void (async () => {
   try {
     const editor = mastra.getEditor();
@@ -135,35 +178,17 @@ void (async () => {
   }
 })();
 
-// 注册动态处理器配置供 Studio 调试查看
+// 注册动态处理器配置供 Studio 调试查看(registry 只收集处理器实例,
+// buildInput/buildOutput 不会返回 workflow,直接按方向登记即可)
 mastra.addProcessorConfiguration(libraryAttachmentProcessor, mastraWorkAgent.id, "input");
 mastra.addProcessorConfiguration(editorStateProcessor as Processor, mastraWorkAgent.id, "input");
 mastra.addProcessorConfiguration(terminalStateProcessor as Processor, mastraWorkAgent.id, "input");
 mastra.addProcessorConfiguration(workbenchStateProcessor as Processor, mastraWorkAgent.id, "input");
 mastra.addProcessorConfiguration(agentsMdProcessor as Processor, mastraWorkAgent.id, "input");
 for (const processor of configuredProcessorRegistry.input) {
-  if (!("id" in processor) || typeof processor.id !== "string") continue;
-  if (
-    !(
-      "processInput" in processor ||
-      "processInputStep" in processor ||
-      "processLLMRequest" in processor
-    )
-  )
-    continue;
   mastra.addProcessorConfiguration(processor as Processor, mastraWorkAgent.id, "input");
 }
 for (const processor of configuredProcessorRegistry.output) {
-  if (!("id" in processor) || typeof processor.id !== "string") continue;
-  if (
-    !(
-      "processOutputStream" in processor ||
-      "processOutputResult" in processor ||
-      "processOutputStep" in processor ||
-      "processToolResult" in processor
-    )
-  )
-    continue;
   mastra.addProcessorConfiguration(processor as Processor, mastraWorkAgent.id, "output");
 }
 

@@ -1,4 +1,9 @@
+/**
+ * MCP 配置路由(/work/mcp):读写服务器清单 + 连通性测试。
+ * 配置主体见 src/mastra/connections/mcp.ts(docs/en/docs/connections/mcp.mdx)。
+ */
 import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../errors";
 import {
   getMcpConfig,
   type McpServerConfig,
@@ -21,14 +26,17 @@ export const saveMcpConfigRoute = registerApiRoute("/work/mcp", {
     try {
       const payload = (await c.req.json()) as { server?: unknown };
       const server = payload.server as McpServerConfig | undefined;
-      if (!server) return c.json({ error: "缺少 MCP 服务配置" }, 400);
+      if (!server) throw workError("MCP_CONFIG_MISSING");
       const config = await getMcpConfig();
       const next = config.servers.filter((item) => item.id !== server.id);
       next.push(server);
       await saveMcpConfig({ servers: next });
       return c.json({ server: summarizeMcpServer(server) }, 201);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "保存 MCP 配置失败" }, 400);
+      throw workError("MCP_CONFIG_INVALID", {
+        text: error instanceof Error ? error.message : "保存 MCP 配置失败",
+        cause: error,
+      });
     }
   },
 });
@@ -38,8 +46,7 @@ export const deleteMcpConfigRoute = registerApiRoute("/work/mcp/:id", {
   handler: async (c) => {
     const id = c.req.param("id");
     const config = await getMcpConfig();
-    if (!config.servers.some((server) => server.id === id))
-      return c.json({ error: "MCP 服务不存在" }, 404);
+    if (!config.servers.some((server) => server.id === id)) throw workError("MCP_SERVER_NOT_FOUND");
     await saveMcpConfig({ servers: config.servers.filter((server) => server.id !== id) });
     return c.json({ ok: true });
   },
@@ -50,7 +57,7 @@ export const testMcpConfigRoute = registerApiRoute("/work/mcp/test", {
   handler: async (c) => {
     try {
       const payload = (await c.req.json()) as { server?: McpServerConfig };
-      if (!payload.server) return c.json({ error: "缺少 MCP 服务配置" }, 400);
+      if (!payload.server) throw workError("MCP_CONFIG_MISSING");
       return c.json(await testMcpServer(payload.server));
     } catch (error) {
       return c.json(

@@ -1,20 +1,13 @@
+/**
+ * 会话模式(plan → build → review),叠加在 Agent 请求上下文上实现。
+ * 模式指令按官方 buildAgentMessageStreamOptions 的拼接语义
+ * (`[agentInstructions, modeInstructions].join("\n")`)追加在 Agent
+ * instructions 之后;工具收回不用单独机制 —— 模式经 deniedCategories 把
+ * 权限类别压成 deny,与 permissions.ts 的用户规则走同一套执行点
+ * (自注入工具不注入、工作区工具经 beforeToolCall 拒绝)。
+ */
 import type { ToolsInput } from "@mastra/core/agent";
 import { type PermissionRules, type ToolCategory, withCategoryPolicy } from "./permissions";
-
-/**
- * 会话模式(plan → build → review):在 Agent 请求上下文上实现。
- *
- * 字段形状与工作台线程模式 API 保持稳定。
- * 模式定义包含 id / name / metadata.default / instructions /
- * additionalTools / availableTools / transitionsTo。模式指令是**叠加**在 Agent
- * 自身 instructions 之后的(官方 buildAgentMessageStreamOptions 里就是
- * `[agentInstructions, modeInstructions].join("\n")`),我们的动态 instructions 同理。
- *
- * 工具可用性由工作台 Agent 的动态 tools 配置负责。
- * 入口;我们改用 deniedCategories —— 模式把若干权限类别压成 deny,再由
- * permissions.ts 的同一套执行点落地(自己注入的工具不注入、工作区工具经
- * beforeToolCall 拒绝)。「模式收回工具」和「权限 deny」因此是同一个机制,不是两套。
- */
 
 export type WorkModeId = "plan" | "build" | "review";
 
@@ -36,7 +29,7 @@ export interface WorkMode {
   transitionsTo?: WorkModeId;
 }
 
-export const WORK_MODES: WorkMode[] = [
+const WORK_MODES: WorkMode[] = [
   {
     id: "plan",
     name: "计划",

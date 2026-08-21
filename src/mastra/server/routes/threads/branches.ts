@@ -1,3 +1,7 @@
+/**
+ * 消息分支:编辑重发前的快照、版本列表读取与回滚,记录落在消息 metadata。
+ * 消息模型见 docs/en/docs/memory/message-history.mdx。
+ */
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { Memory } from "@mastra/memory";
 import type { UIMessage } from "ai";

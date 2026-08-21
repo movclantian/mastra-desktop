@@ -1,8 +1,3 @@
-import { registerApiRoute } from "@mastra/core/server";
-import { getConfiguredMemoryExtractors } from "../../../memory";
-import { resolveRequestModel } from "../../../models";
-import { getOwnedThread, getWorkMemory } from "./shared";
-
 /**
  * 会话压缩路由(Claude Code / Codex 式真压缩)。
  * @mastra/memory 的 summarizeThread() 只生成摘要("Nothing is written back
@@ -15,6 +10,11 @@ import { getOwnedThread, getWorkMemory } from "./shared";
  * 实际发送 token 随即下降(metadata 不进入模型上下文);压缩详情持久化到线程
  * metadata.compaction,前端 Marker 可点击回看。
  */
+import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../../errors";
+import { getConfiguredMemoryExtractors } from "../../../memory";
+import { resolveRequestModel } from "../../../models";
+import { getOwnedThread, getWorkMemory } from "./shared";
 
 // POST /work/threads/:threadId/summarize
 export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize", {
@@ -30,11 +30,11 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
       keepMessages?: number;
     };
     if (!body.resourceId) {
-      return c.json({ error: "resourceId is required" }, 400);
+      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     }
     const model = await resolveRequestModel(body.model);
     if (!model) {
-      return c.json({ error: "model is required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "model is required" });
     }
     const memory = await getWorkMemory();
     // 观察记忆的 observe/reflect 循环在 Agent 运行返回后仍在后台写库,而本路由要
@@ -43,7 +43,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
     await memory.settled();
     const thread = await getOwnedThread(memory, threadId, body.resourceId);
     if (!thread) {
-      return c.json({ error: "thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
 
     const keep = Math.max(0, body.keepMessages ?? 4);
@@ -54,7 +54,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
     });
     const all = messages ?? [];
     if (all.length <= keep + 1) {
-      return c.json({ error: "会话太短,无需压缩" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "会话太短,无需压缩" });
     }
 
     // 1) 生成整线摘要(观察记忆管线)

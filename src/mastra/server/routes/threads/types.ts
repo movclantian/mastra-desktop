@@ -1,3 +1,7 @@
+/**
+ * 线程业务 metadata 类型:工作区绑定 / 模式 / 权限规则 / 模型快照 /
+ * 子代理与 OM 模型覆盖(draft 标记见 createThreadRoute)。
+ */
 export type ThreadMetadata = {
   pinned?: boolean;
   archivedAt?: string | null;

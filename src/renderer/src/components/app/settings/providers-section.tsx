@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { toastError } from "@/lib/errors";
 import {
   type EnabledModel,
   fetchProviderModels,
@@ -358,7 +359,7 @@ export function ProviderItem({
       try {
         setModels(await fetchProviderModels(provider, registry));
       } catch (error) {
-        toast.error((error as Error).message);
+        toastError(error);
       } finally {
         setLoadingModels(false);
       }
@@ -378,7 +379,7 @@ export function ProviderItem({
       const customModels = provider.enabledModels.filter((model) => !fetchedIds.has(model.id));
       setModels([...fetched, ...customModels]);
     } catch (error) {
-      toast.error((error as Error).message);
+      toastError(error);
     } finally {
       setRefreshing(false);
     }

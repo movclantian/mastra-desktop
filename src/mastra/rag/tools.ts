@@ -1,3 +1,9 @@
+/**
+ * 资料库工具(docs/en/docs/agents/tools.mdx + docs/en/reference/tools/):
+ * - library_vector_search:向量召回与重排
+ * - library_graph_search:GraphRAG 图谱随机游走检索
+ * - library_document_chunker:MDocument 分块(调试 / 预处理用)
+ */
 import { createTool } from "@mastra/core/tools";
 import { MDocument } from "@mastra/rag";
 import { z } from "zod";
@@ -9,13 +15,6 @@ import {
   LIBRARY_VECTOR_SEARCH_TOOL_ID,
   VALID_CHUNK_STRATEGIES,
 } from "./types";
-
-/**
- * 资料库工具 (docs/en/reference/tools/, docs/en/reference/rag/):
- * - library_vector_search: 向量召回与重排 (默认支持)
- * - library_graph_search: 显式开启 GraphRAG 游走检索
- * - library_document_chunker: 文档分块实验工具
- */
 
 export const libraryVectorSearchTool = createTool({
   id: LIBRARY_VECTOR_SEARCH_TOOL_ID,

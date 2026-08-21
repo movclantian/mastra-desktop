@@ -1,5 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
+import { apiError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import type { LibraryAsset, LibraryUploadSession } from "./types";
 
@@ -79,7 +80,7 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
           session?: LibraryUploadSession;
           error?: string;
         };
-        if (!response.ok || !payload.session) throw new Error(payload.error || "创建上传会话失败");
+        if (!response.ok || !payload.session) throw apiError(payload, "创建上传会话失败");
         const session = payload.session;
         localStorage.setItem(resumeKey, session.id);
         activeUploadSessionsRef.current.set(session.id, resumeKey);

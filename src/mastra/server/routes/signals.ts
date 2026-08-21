@@ -1,4 +1,10 @@
+/**
+ * Webhook 信号路由(/work/signals/*):线程订阅管理与外部事件接收入口。
+ * 官方文档:docs/en/docs/harness/signals.mdx「Use HTTP routes」、
+ * docs/en/reference/signals/webhook-signal-provider.mdx。
+ */
 import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../errors";
 import { workWebhookSignals } from "../../harness";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
@@ -12,10 +18,12 @@ export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/sub
       metadata?: Record<string, unknown>;
     };
     if (!body.resourceId || !body.threadId || !body.externalResourceId) {
-      return c.json({ error: "resourceId, threadId and externalResourceId are required" }, 400);
+      throw workError("VALIDATION_FAILED", {
+        text: "resourceId, threadId and externalResourceId are required",
+      });
     }
     if (!(await getOwnedThread(await getWorkMemory(), body.threadId, body.resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const subscription = workWebhookSignals.subscribeThread(
       { resourceId: body.resourceId, threadId: body.threadId },
@@ -35,10 +43,12 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
       externalResourceId?: string;
     };
     if (!body.resourceId || !body.threadId || !body.externalResourceId) {
-      return c.json({ error: "resourceId, threadId and externalResourceId are required" }, 400);
+      throw workError("VALIDATION_FAILED", {
+        text: "resourceId, threadId and externalResourceId are required",
+      });
     }
     if (!(await getOwnedThread(await getWorkMemory(), body.threadId, body.resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     return c.json({
       removed: workWebhookSignals.unsubscribeThread(

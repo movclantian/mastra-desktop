@@ -1,17 +1,6 @@
-import type { RequestContext } from "@mastra/core/request-context";
-import { fastembed } from "@mastra/fastembed";
-import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
-import { Extractor, Memory } from "@mastra/memory";
-import {
-  resolveConfiguredEmbeddingModelForUse,
-  resolveDefaultModelId,
-  WORKBENCH_GATEWAY_ID,
-} from "../models";
-import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storage";
-
 /**
  * 记忆配置:设置面板「记忆」标签页写入数据库 app_config 表(key = "memory"),
- * 保存后实时生效(与业务数据同库,不再落 JSON 文件)。
+ * 保存后实时生效(与业务数据同库)。
  * 字段对照 docs/en/reference/memory/memory-class.mdx 的 MemoryConfig 全量定义:
  * - lastMessages / readOnly                      → message-history.mdx
  * - semanticRecall{topK,messageRange,scope}      → semantic-recall.mdx
@@ -29,6 +18,17 @@ import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storag
  *   observation.extract(Extractor[])与 reflection.extract(Extractor[]) 可由设置面板配置；
  *   任意 schema/hook 仍保留为代码级扩展点,不允许普通 JSON 设置执行任意代码。
  */
+import type { RequestContext } from "@mastra/core/request-context";
+import { fastembed } from "@mastra/fastembed";
+import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
+import { Extractor, Memory } from "@mastra/memory";
+import {
+  resolveConfiguredEmbeddingModelForUse,
+  resolveDefaultModelId,
+  WORKBENCH_GATEWAY_ID,
+} from "../models";
+import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storage";
+
 const MEMORY_CONFIG_KEY = "memory";
 
 export interface MemoryUserConfig {
@@ -118,7 +118,7 @@ export interface MemoryUserConfig {
   omExtractors: OmExtractorUserConfig[];
 }
 
-export interface OmExtractorUserConfig {
+interface OmExtractorUserConfig {
   /** 面板行 id(nanoid,与官方 slug 无关) */
   id: string;
   /** 官方 Extractor name:人类可读,OM 自行 slug 化,同批内不可重名 */
@@ -135,7 +135,7 @@ export interface OmExtractorUserConfig {
   metadataKeyPath?: string;
 }
 
-export const DEFAULT_WORKING_MEMORY_TEMPLATE = `# User Profile
+const DEFAULT_WORKING_MEMORY_TEMPLATE = `# User Profile
 - **Name**:
 - **Location**:
 - **Interests**:
@@ -144,7 +144,7 @@ export const DEFAULT_WORKING_MEMORY_TEMPLATE = `# User Profile
 `;
 
 /** schema 形态的默认示例(working-memory.mdx「Schema-Based Working Memory」) */
-export const DEFAULT_WORKING_MEMORY_SCHEMA = `{
+const DEFAULT_WORKING_MEMORY_SCHEMA = `{
   "type": "object",
   "properties": {
     "name": { "type": "string" },
@@ -168,7 +168,6 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   readOnly: false,
   semanticRecall: false,
   semanticRecallTopK: 4,
-  // 官方对象形态 {before, after};沿用此前单数 2 的行为
   semanticRecallMessageRangeBefore: 2,
   semanticRecallMessageRangeAfter: 2,
   semanticRecallScope: "thread",
@@ -288,7 +287,7 @@ function normalizeExtractor(value: unknown, index: number): OmExtractorUserConfi
 }
 
 /** 配置边界的唯一归一化入口,避免 HTTP JSON 直接破坏运行时类型。 */
-export function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConfig {
+function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConfig {
   const merged = { ...DEFAULT_CONFIG, ...input };
   const extractors = Array.isArray(input.omExtractors)
     ? input.omExtractors
@@ -420,7 +419,7 @@ const memoryByOmModels = new Map<string, Memory>();
 
 export const OM_MODELS_CONTEXT_KEY = "mastra-work:om-models";
 
-export interface OmModelSelection {
+interface OmModelSelection {
   observerModelId?: string;
   reflectorModelId?: string;
 }

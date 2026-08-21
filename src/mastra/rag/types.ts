@@ -7,7 +7,7 @@ export const LIBRARY_INDEX_NAMES = {
   small: "library_vectors_fastembed_small",
   base: "library_vectors_fastembed_base",
 } as const;
-export type LibraryEmbeddingModel = keyof typeof LIBRARY_INDEX_NAMES | `${string}/${string}`;
+type LibraryEmbeddingModel = keyof typeof LIBRARY_INDEX_NAMES | `${string}/${string}`;
 
 export type LibraryIndexStage = "extract" | "chunk" | "embedding" | "vector" | "persist";
 export type LibraryIndexRunStatus = "running" | "succeeded" | "unsupported" | "failed";
@@ -138,15 +138,6 @@ export interface LibraryFolder {
   name: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface LibraryUploadChunk {
-  sessionId: string;
-  chunkIndex: number;
-  byteSize: number;
-  sha256: string;
-  storagePath: string;
-  createdAt: string;
 }
 
 export interface LibraryUploadSession {

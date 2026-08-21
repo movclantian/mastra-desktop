@@ -1,3 +1,9 @@
+/**
+ * 工作台会话控制路由(/work/sessions/:scope/threads/:threadId/*):
+ * stream / message / steer / follow-up / abort / mode / model / permissions /
+ * grants / workbench-state / notification。
+ * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
+ */
 import { toAISdkStream } from "@mastra/ai-sdk";
 import type { AgentExecutionOptions, AgentThreadSubscription } from "@mastra/core/agent";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
@@ -18,6 +24,7 @@ import {
 } from "../../agents/permissions";
 import { mergeWorkbenchState, workbenchStateSchema } from "../../agents/processors";
 import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
+import { workError } from "../../errors";
 import {
   isTerminalAgentChunk,
   SESSION_SCOPE_DEFAULT,
@@ -79,16 +86,16 @@ interface SessionMessageBody {
   webSearch?: unknown;
 }
 
-async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult | { error: Response }> {
+async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   const threadId = c.req.param("threadId");
   const resourceId = c.req.query("resourceId");
   const scope = scopeOf(c.req.param("scope"));
   if (!resourceId || !threadId)
-    return { error: c.json({ error: "resourceId and threadId are required" }, 400) };
+    throw workError("VALIDATION_FAILED", { text: "resourceId and threadId are required" });
   const memory = await getWorkMemory();
   const thread = await getOwnedThread(memory, threadId, resourceId);
   if (!thread) {
-    return { error: c.json({ error: "Thread not found" }, 404) };
+    throw workError("THREAD_NOT_FOUND");
   }
   const session = workSessionHost.getOrCreate({ resourceId, scope, threadId });
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
@@ -114,7 +121,6 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult | { 
       reflectorModelId: metadata.reflectorModelId,
     });
   }
-  session.applyRequestContext(requestContext);
   session.setExecutionDefaults({
     ...(mode.availableTools ? { activeTools: mode.availableTools } : {}),
     requestContext,
@@ -127,7 +133,7 @@ async function sessionExecutionOptions(
   c: ContextWithMastra,
   result: SessionRouteResult,
   body: SessionMessageBody,
-): Promise<AgentExecutionOptions | { error: Response }> {
+): Promise<AgentExecutionOptions> {
   const requestContext = c.get("requestContext");
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
@@ -140,14 +146,13 @@ async function sessionExecutionOptions(
   }
   if (body.model !== undefined) {
     const model = await resolveRequestModel(body.model);
-    if (!model) return { error: c.json({ error: "The selected model is not configured" }, 400) };
+    if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
     const family = requestModelFamily(body.model);
     if (family) requestContext.set(MODEL_FAMILY_CONTEXT_KEY, family);
   }
   const webSearch = parseWebSearchSelection(body.webSearch);
   if (webSearch) requestContext.set(WEB_SEARCH_CONTEXT_KEY, webSearch);
-  result.session.applyRequestContext(requestContext);
 
   const rawProviderOptions =
     typeof body.providerOptions === "object" && body.providerOptions !== null
@@ -215,16 +220,11 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   };
 }
 
-function subscriptionStream(
-  subscription: AgentThreadSubscription,
-  onClose: () => void,
-  targetRunId?: string,
-) {
+function subscriptionStream(subscription: AgentThreadSubscription, onClose: () => void) {
   const fullStream = new ReadableStream({
     async start(controller) {
       try {
         for await (const chunk of subscription.stream) {
-          if (targetRunId && (chunk as { runId?: string }).runId !== targetRunId) continue;
           controller.enqueue(chunk);
           if (isTerminalAgentChunk(chunk)) break;
         }
@@ -250,19 +250,18 @@ export const sessionStreamRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const followUpId = c.req.query("followUpId");
-      const followUp = followUpId ? await result.session.subscribeFollowUp(followUpId) : undefined;
-      if (followUpId && !followUp) return new Response(null, { status: 204 });
-      if (!followUp && !result.session.getDisplayState().activeRunId) {
+      const followUpSubscription = followUpId
+        ? await result.session.subscribeFollowUp(followUpId)
+        : undefined;
+      if (followUpId && !followUpSubscription) return new Response(null, { status: 204 });
+      if (!followUpSubscription && !result.session.getDisplayState().activeRunId) {
         return new Response(null, { status: 204 });
       }
       const subscription =
-        followUp?.subscription ?? (await result.session.subscribe(result.threadId));
-      const stream = subscriptionStream(
-        subscription,
-        () => result.session.releaseSubscription(subscription),
-        followUp?.runId ?? undefined,
+        followUpSubscription ?? (await result.session.subscribe(result.threadId));
+      const stream = subscriptionStream(subscription, () =>
+        result.session.releaseSubscription(subscription),
       );
       return createUIMessageStreamResponse({ stream });
     },
@@ -275,11 +274,9 @@ export const sessionMessageRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const body = (await c.req.json()) as SessionMessageBody;
-      if (!body.content?.trim()) return c.json({ error: "content is required" }, 400);
+      if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
       const execution = await sessionExecutionOptions(c, result, body);
-      if ("error" in execution) return execution.error;
       const accepted = result.session.sendMessage(
         { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
         execution,
@@ -293,11 +290,9 @@ export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "POST",
   handler: async (c) => {
     const result = await sessionFor(c);
-    if ("error" in result) return result.error;
     const body = (await c.req.json()) as SessionMessageBody;
-    if (!body.content?.trim()) return c.json({ error: "content is required" }, 400);
+    if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
     const execution = await sessionExecutionOptions(c, result, body);
-    if ("error" in execution) return execution.error;
     const accepted = await result.session.steer(
       { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
       execution,
@@ -312,17 +307,15 @@ export const sessionFollowUpRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const body = (await c.req.json()) as SessionMessageBody;
-      if (!body.content?.trim()) return c.json({ error: "content is required" }, 400);
+      if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
       const execution = await sessionExecutionOptions(c, result, body);
-      if ("error" in execution) return execution.error;
       const followUp = await result.session.followUp(
         { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
         execution,
       );
       if (followUp.action === "blocked") {
-        return c.json({ error: "The follow-up was cancelled before it could be queued" }, 409);
+        throw workError("SESSION_FOLLOW_UP_BLOCKED");
       }
       return c.json({ ok: true, ...followUp });
     },
@@ -333,7 +326,6 @@ export const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "POST",
   handler: async (c) => {
     const result = await sessionFor(c);
-    if ("error" in result) return result.error;
     return c.json({ aborted: result.session.abort() });
   },
 });
@@ -342,7 +334,6 @@ export const sessionStateRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "GET",
   handler: async (c) => {
     const result = await sessionFor(c);
-    if ("error" in result) return result.error;
     return c.json({ state: result.session.getState() });
   },
 });
@@ -353,7 +344,6 @@ export const updateSessionStateRoute = registerApiRoute(
     method: "PATCH",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       try {
         const state = result.session.setState(await c.req.json());
         return c.json({ state });
@@ -371,7 +361,6 @@ export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/
   method: "PATCH",
   handler: async (c) => {
     const result = await sessionFor(c);
-    if ("error" in result) return result.error;
     const body = (await c.req.json()) as { modeId?: unknown };
     const mode = resolveMode(body.modeId);
     const memory = await getWorkMemory();
@@ -393,7 +382,6 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "PATCH",
   handler: async (c) => {
     const result = await sessionFor(c);
-    if ("error" in result) return result.error;
     const body = (await c.req.json()) as {
       modeId?: unknown;
       selection?: unknown;
@@ -413,14 +401,16 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
       return c.json({ modeId: mode.id, selection: null, thread });
     }
     if (typeof body.selection !== "object" || body.selection === null) {
-      return c.json({ error: "selection is required" }, 400);
+      throw workError("MODEL_SELECTION_REQUIRED");
     }
     const raw = body.selection as Record<string, unknown>;
     if (typeof raw.providerId !== "string" || typeof raw.modelId !== "string") {
-      return c.json({ error: "selection.providerId and selection.modelId are required" }, 400);
+      throw workError("MODEL_SELECTION_REQUIRED", {
+        text: "selection.providerId and selection.modelId are required",
+      });
     }
     const model = await resolveConfiguredModel(raw.providerId, raw.modelId);
-    if (!model) return c.json({ error: "The selected model is not configured" }, 400);
+    if (!model) throw workError("MODEL_NOT_CONFIGURED");
     const selection = {
       providerId: raw.providerId,
       modelId: raw.modelId,
@@ -450,7 +440,6 @@ export const sessionPermissionsRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const rules = parsePermissionRules(
         (result.thread.metadata as ThreadMetadata | undefined)?.permissionRules,
       );
@@ -465,7 +454,6 @@ export const updateSessionPermissionsRoute = registerApiRoute(
     method: "PATCH",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const rules = parsePermissionRules(await c.req.json());
       const memory = await getWorkMemory();
       const thread = await memory.updateThread({
@@ -488,7 +476,6 @@ export const sessionDisplayStateRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       return c.json({ displayState: await persistentDisplayState(c, result) });
     },
   },
@@ -500,7 +487,6 @@ export const sessionSubagentModelsRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const metadata = (result.thread.metadata ?? {}) as {
         subagentModels?: Record<string, string>;
       };
@@ -515,13 +501,12 @@ export const updateSessionSubagentModelsRoute = registerApiRoute(
     method: "PATCH",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const body = (await c.req.json()) as { agentType?: unknown; modelId?: unknown };
       if (typeof body.agentType !== "string" || !body.agentType.trim()) {
-        return c.json({ error: "agentType is required" }, 400);
+        throw workError("VALIDATION_FAILED", { text: "agentType is required" });
       }
       if (body.modelId !== null && typeof body.modelId !== "string") {
-        return c.json({ error: "modelId must be a string or null" }, 400);
+        throw workError("VALIDATION_FAILED", { text: "modelId must be a string or null" });
       }
       const metadata = (result.thread.metadata ?? {}) as {
         subagentModels?: Record<string, string>;
@@ -546,10 +531,9 @@ export const sessionGrantRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const body = (await c.req.json()) as { category?: unknown };
       if (!TOOL_CATEGORIES.includes(body.category as ToolCategory)) {
-        return c.json({ error: "unsupported grant category" }, 400);
+        throw workError("VALIDATION_FAILED", { text: "unsupported grant category" });
       }
       result.session.grantCategory(body.category as ToolCategory);
       result.session.notifyPolicyChange(
@@ -567,10 +551,9 @@ export const sessionGrantRevokeRoute = registerApiRoute(
     method: "DELETE",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const category = c.req.param("category") as ToolCategory;
       if (!TOOL_CATEGORIES.includes(category))
-        return c.json({ error: "unsupported grant category" }, 400);
+        throw workError("VALIDATION_FAILED", { text: "unsupported grant category" });
       result.session.revokeCategory(category);
       return c.json({ grants: result.session.getGrants() });
     },
@@ -583,10 +566,9 @@ export const sessionToolGrantRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const body = (await c.req.json()) as { toolName?: unknown };
       if (typeof body.toolName !== "string" || !body.toolName.trim()) {
-        return c.json({ error: "toolName is required" }, 400);
+        throw workError("VALIDATION_FAILED", { text: "toolName is required" });
       }
       result.session.grantTool(body.toolName.trim());
       result.session.notifyPolicyChange(
@@ -604,9 +586,8 @@ export const sessionToolGrantRevokeRoute = registerApiRoute(
     method: "DELETE",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const toolName = c.req.param("toolName").trim();
-      if (!toolName) return c.json({ error: "toolName is required" }, 400);
+      if (!toolName) throw workError("VALIDATION_FAILED", { text: "toolName is required" });
       result.session.revokeTool(toolName);
       return c.json({ grants: result.session.getGrants() });
     },
@@ -627,10 +608,12 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
     method: "PUT",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const parsed = workbenchStateSchema.safeParse(await c.req.json());
       if (!parsed.success) {
-        return c.json({ error: "Invalid workbench state", issues: parsed.error.issues }, 400);
+        throw workError("VALIDATION_FAILED", {
+          text: "Invalid workbench state",
+          details: { issues: parsed.error.issues },
+        });
       }
       return c.json({ state: mergeWorkbenchState(result.threadId, parsed.data) });
     },
@@ -648,10 +631,12 @@ export const sessionNotificationRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if ("error" in result) return result.error;
       const parsed = notificationInputSchema.safeParse(await c.req.json());
       if (!parsed.success) {
-        return c.json({ error: "Invalid notification", issues: parsed.error.issues }, 400);
+        throw workError("VALIDATION_FAILED", {
+          text: "Invalid notification",
+          details: { issues: parsed.error.issues },
+        });
       }
       try {
         const sent = (await result.session.sendNotification(

@@ -1,23 +1,27 @@
+/**
+ * 工作区路由:读写用户可配置的 Workspace 参数(数据库 app_config 表,保存后实时生效),
+ * 近期绑定目录列表与线程工作区文件树。
+ * Workspace 主体(文件系统/沙箱/搜索/LSP/Skills)见 src/mastra/workspace/index.ts。
+ */
 import { type Dirent, readdirSync } from "node:fs";
 import { readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, join, relative, resolve } from "node:path";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { getWorkspaceConfig, type WorkspaceUserConfig } from "../../workspace";
+import { workError } from "../../errors";
+import {
+  getWorkspaceConfig,
+  listRecentWorkspaces,
+  saveWorkspaceConfig,
+  type WorkspaceUserConfig,
+} from "../../workspace";
 import { getWorkMemory } from "./threads";
 import { getOwnedThread, isTrustedLocalRequest } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
-
-/**
- * 工作区路由:读写用户可配置的 Workspace 参数(数据库 app_config 表,重启生效),
- * 近期绑定目录列表与线程工作区文件树。
- * Workspace 主体(文件系统/沙箱/搜索/LSP/Skills)见 src/mastra/workspace/index.ts。
- */
 
 // GET /work/workspace — 读取当前工作区配置
 export const workspaceConfigRoute = registerApiRoute("/work/workspace", {
   method: "GET",
   handler: async (c) => {
-    const { getWorkspaceConfig } = await import("../../workspace");
     return c.json(await getWorkspaceConfig());
   },
 });
@@ -26,9 +30,7 @@ export const workspaceConfigRoute = registerApiRoute("/work/workspace", {
 export const saveWorkspaceConfigRoute = registerApiRoute("/work/workspace", {
   method: "POST",
   handler: async (c) => {
-    const config = (await c.req.json()) as WorkspaceUserConfig;
-    const { saveWorkspaceConfig } = await import("../../workspace");
-    await saveWorkspaceConfig(config);
+    await saveWorkspaceConfig(await c.req.json<WorkspaceUserConfig>());
     return c.json({ ok: true });
   },
 });
@@ -37,7 +39,6 @@ export const saveWorkspaceConfigRoute = registerApiRoute("/work/workspace", {
 export const recentWorkspacesRoute = registerApiRoute("/work/workspace/recent", {
   method: "GET",
   handler: async (c) => {
-    const { listRecentWorkspaces } = await import("../../workspace");
     return c.json({ recent: await listRecentWorkspaces() });
   },
 });
@@ -87,16 +88,16 @@ export const threadTreeRoute = registerApiRoute("/work/threads/:threadId/tree", 
   handler: async (c) => {
     const workspace = await ownedWorkspace(c);
     if (!workspace) {
-      return c.json({ error: "Thread has no browsable workspace" }, 404);
+      throw workError("WORKSPACE_NOT_BROWSABLE");
     }
     const { root } = workspace;
     const target = await containedExistingPath(root, c.req.query("path"));
-    if (!target) return c.json({ error: "Path escapes workspace" }, 400);
+    if (!target) throw workError("VALIDATION_FAILED", { text: "Path escapes workspace" });
     let dirents: Dirent[];
     try {
       dirents = readdirSync(target, { withFileTypes: true });
     } catch {
-      return c.json({ error: "Directory not readable" }, 404);
+      throw workError("WORKSPACE_FILE_NOT_FOUND");
     }
     const entries: TreeEntry[] = dirents
       .map((d) => ({
@@ -118,19 +119,19 @@ export const threadFileRoute = registerApiRoute("/work/threads/:threadId/file", 
   method: "GET",
   handler: async (c) => {
     const workspace = await ownedWorkspace(c);
-    if (!workspace) return c.json({ error: "Thread has no browsable workspace" }, 404);
+    if (!workspace) throw workError("WORKSPACE_NOT_BROWSABLE");
     const relativePath = c.req.query("path");
     const target = await containedExistingPath(workspace.root, relativePath);
-    if (!target || !relativePath) return c.json({ error: "Invalid file path" }, 400);
+    if (!target || !relativePath) throw workError("WORKSPACE_PATH_INVALID");
     try {
       const fileInfo = await stat(target);
-      if (!fileInfo.isFile()) return c.json({ error: "Path is not a file" }, 400);
+      if (!fileInfo.isFile()) throw workError("WORKSPACE_FILE_NOT_EDITABLE");
       if (fileInfo.size > MAX_EDITABLE_FILE_BYTES) {
-        return c.json({ error: "File is too large to edit", size: fileInfo.size }, 413);
+        throw workError("WORKSPACE_FILE_TOO_LARGE", { details: { size: fileInfo.size } });
       }
       const content = await readFile(target);
       if (content.includes(0)) {
-        return c.json({ error: "Binary files cannot be edited", size: fileInfo.size }, 415);
+        throw workError("WORKSPACE_FILE_BINARY", { details: { size: fileInfo.size } });
       }
       return c.json({
         path: relativePath,
@@ -140,7 +141,7 @@ export const threadFileRoute = registerApiRoute("/work/threads/:threadId/file", 
         modifiedAt: fileInfo.mtime.toISOString(),
       });
     } catch {
-      return c.json({ error: "File not readable" }, 404);
+      throw workError("WORKSPACE_FILE_NOT_FOUND");
     }
   },
 });
@@ -150,26 +151,26 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
   method: "PUT",
   handler: async (c) => {
     const workspace = await ownedWorkspace(c);
-    if (!workspace) return c.json({ error: "Thread has no browsable workspace" }, 404);
+    if (!workspace) throw workError("WORKSPACE_NOT_BROWSABLE");
     if ((await getWorkspaceConfig()).readOnly) {
-      return c.json({ error: "Workspace is read-only" }, 403);
+      throw workError("WORKSPACE_READ_ONLY");
     }
     const relativePath = c.req.query("path");
     const target = await containedExistingPath(workspace.root, relativePath);
-    if (!target || !relativePath) return c.json({ error: "Invalid file path" }, 400);
+    if (!target || !relativePath) throw workError("WORKSPACE_PATH_INVALID");
     const body = (await c.req.json()) as { content?: unknown };
-    if (typeof body.content !== "string") return c.json({ error: "content is required" }, 400);
+    if (typeof body.content !== "string") throw workError("SESSION_INPUT_REQUIRED");
     if (Buffer.byteLength(body.content, "utf8") > MAX_EDITABLE_FILE_BYTES) {
-      return c.json({ error: "File is too large to save" }, 413);
+      throw workError("WORKSPACE_FILE_TOO_LARGE");
     }
     try {
       const fileInfo = await stat(target);
-      if (!fileInfo.isFile()) return c.json({ error: "Path is not a file" }, 400);
+      if (!fileInfo.isFile()) throw workError("WORKSPACE_FILE_NOT_EDITABLE");
       await writeFile(target, body.content, "utf8");
       const updated = await stat(target);
       return c.json({ ok: true, size: updated.size, modifiedAt: updated.mtime.toISOString() });
     } catch {
-      return c.json({ error: "File could not be saved" }, 400);
+      throw workError("WORKSPACE_FILE_SAVE_FAILED");
     }
   },
 });

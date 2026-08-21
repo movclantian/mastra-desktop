@@ -1,3 +1,26 @@
+/**
+ * 护栏与处理器管线(docs/en/docs/agents/guardrails.mdx + processors.mdx,
+ * 参数详见 docs/en/reference/processors/*.mdx)。
+ * 把 @mastra/core/processors 的全部内置处理器暴露成设置面板可配置项,
+ * 写入数据库 app_config 表(key = "guardrails"),保存后实时生效
+ * (置空实例缓存,下次请求按新配置重建)。
+ *
+ * 三组管线与 Agent 的三个数组一一对应:
+ * - inputProcessors:模型调用之前(规范化 / 注入检测 / 语言 / 审核 / PII /
+ *   Token 上限 / 成本上限 / 工具裁剪 / 响应缓存 / 供应商历史兼容 / 运行时搜索)
+ * - outputProcessors:模型响应之后(流式批处理 / Token 上限 / PII / 审核 /
+ *   系统提示词清洗)
+ * - errorProcessors:供应商 API 报错时(prefill 恢复 / 瞬时流错误重试)
+ *
+ * 刻意**不在**这里接入 MessageHistory / SemanticRecall / WorkingMemory ——
+ * 它们由 Memory 类自动加入管线(processors.mdx「With memory enabled」),
+ * 再手工添加会造成历史二次注入;其参数在设置面板「记忆」页配置。
+ *
+ * 顺序原则(guardrails.mdx「Speed up guardrails」):
+ * - 输入:零成本处理器在前,LLM 检测器居中,TokenLimiter 收尾保证上下文可容纳,
+ *   只作用于 processLLMRequest 的(工具裁剪 / 兼容 / 响应缓存)排在最后
+ * - 输出:BatchParts 与 TokenLimiter 先跑,再交给按块调用 LLM 的重处理器
+ */
 import { InMemoryServerCache } from "@mastra/core/cache";
 import type { Processor } from "@mastra/core/processors";
 import {
@@ -30,48 +53,25 @@ import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
 import { getAppConfig, setAppConfig } from "../storage";
 import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
-/**
- * 护栏与处理器管线:把 @mastra/core/processors 的全部内置处理器
- * (docs/en/docs/agents/guardrails.mdx + docs/en/docs/agents/processors.mdx)
- * 暴露成设置面板可配置项,写入数据库 app_config 表(key = "guardrails"),
- * 保存后实时生效(置空实例缓存,下次请求按新配置重建)。
- *
- * 三组管线与 Agent 的三个数组一一对应:
- * - inputProcessors:模型调用之前(规范化 / 注入检测 / 语言 / 审核 / PII /
- *   Token 上限 / 成本上限 / 工具裁剪 / 响应缓存 / 供应商历史兼容 / 运行时搜索)
- * - outputProcessors:模型响应之后(流式批处理 / Token 上限 / PII / 审核 /
- *   系统提示词清洗)
- * - errorProcessors:供应商 API 报错时(prefill 恢复 / 瞬时流错误重试)
- *
- * 刻意**不在**这里接入 MessageHistory / SemanticRecall / WorkingMemory ——
- * 它们由 Memory 类自动加入管线(processors.mdx「With memory enabled」),
- * 再手工添加会造成历史二次注入;其参数在设置面板「记忆」页配置。
- *
- * 关于顺序(guardrails.mdx「Speed up guardrails」+ tool-search-processor.mdx):
- * - 输入:零成本处理器在前,LLM 检测器居中,TokenLimiter 收尾保证上下文可容纳,
- *   只作用于 processLLMRequest 的(工具裁剪 / 兼容 / 响应缓存)排在最后
- * - 输出:BatchParts 与 TokenLimiter 先跑,再交给按块调用 LLM 的重处理器
- */
-
 const GUARDRAILS_CONFIG_KEY = "guardrails";
 
-export type RegexStrategy = "block" | "redact" | "warn";
-export type RegexPhase = "input" | "output" | "all";
-export type InjectionStrategy = "block" | "warn" | "filter" | "rewrite";
-export type ModerationStrategy = "block" | "warn" | "filter";
-export type PIIStrategy = "block" | "warn" | "filter" | "redact";
-export type PIIRedaction = "mask" | "hash" | "remove" | "placeholder";
-export type LanguageStrategy = "detect" | "translate" | "block" | "warn";
-export type ScrubberStrategy = "block" | "warn" | "filter" | "redact";
-export type ScrubberRedaction = "mask" | "placeholder" | "remove";
-export type TokenLimitTrimMode = "best-fit" | "contiguous";
-export type TokenLimitOutputStrategy = "truncate" | "abort";
-export type TokenLimitCountMode = "cumulative" | "part";
-export type CostScope = "run" | "resource" | "thread" | "user" | "organization" | "session";
-export type CostWindow = "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
-export type CostStrategy = "block" | "warn";
-export type CacheScopeMode = "auto" | "none" | "custom";
-export type ToolSearchStorage = "in-memory" | "context";
+type RegexStrategy = "block" | "redact" | "warn";
+type RegexPhase = "input" | "output" | "all";
+type InjectionStrategy = "block" | "warn" | "filter" | "rewrite";
+type ModerationStrategy = "block" | "warn" | "filter";
+type PIIStrategy = "block" | "warn" | "filter" | "redact";
+type PIIRedaction = "mask" | "hash" | "remove" | "placeholder";
+type LanguageStrategy = "detect" | "translate" | "block" | "warn";
+type ScrubberStrategy = "block" | "warn" | "filter" | "redact";
+type ScrubberRedaction = "mask" | "placeholder" | "remove";
+type TokenLimitTrimMode = "best-fit" | "contiguous";
+type TokenLimitOutputStrategy = "truncate" | "abort";
+type TokenLimitCountMode = "cumulative" | "part";
+type CostScope = "run" | "resource" | "thread" | "user" | "organization" | "session";
+type CostWindow = "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
+type CostStrategy = "block" | "warn";
+type CacheScopeMode = "auto" | "none" | "custom";
+type ToolSearchStorage = "in-memory" | "context";
 
 export interface GuardrailsUserConfig {
   // --- 通用 ---------------------------------------------------------------
@@ -224,7 +224,7 @@ export interface GuardrailsUserConfig {
 }
 
 /** ModerationProcessor 默认类别(与 OpenAI moderation 一致) */
-export const MODERATION_CATEGORIES = [
+const MODERATION_CATEGORIES = [
   "hate",
   "hate/threatening",
   "harassment",
@@ -239,7 +239,7 @@ export const MODERATION_CATEGORIES = [
 ];
 
 /** PIIDetector 默认检测类型 */
-export const PII_TYPES = [
+const PII_TYPES = [
   "email",
   "phone",
   "credit-card",
@@ -256,7 +256,7 @@ export const PII_TYPES = [
 ];
 
 /** PromptInjectionDetector 默认检测类型 */
-export const INJECTION_TYPES = [
+const INJECTION_TYPES = [
   "injection",
   "jailbreak",
   "tool-exfiltration",
@@ -390,8 +390,6 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   streamErrorRetryMaxRetryAfterMs: 30_000,
   streamErrorRetryUnknown: false,
 };
-
-export const DEFAULT_GUARDRAILS_CONFIG = DEFAULT_CONFIG;
 
 /** 读取护栏配置(app_config 表 key="guardrails";无记录或损坏时回落默认值) */
 export async function getGuardrailsConfig(): Promise<GuardrailsUserConfig> {

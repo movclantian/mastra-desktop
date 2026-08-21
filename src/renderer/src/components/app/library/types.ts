@@ -25,10 +25,6 @@ export interface LibraryFolder {
   name: string;
 }
 
-export interface VisibleFolder extends LibraryFolder {
-  depth: number;
-}
-
 export interface LibrarySettings {
   chunkSize: number;
   chunkOverlap: number;
@@ -115,26 +111,4 @@ export function indexStageLabel(stage: LibraryAsset["indexStage"]): string {
   if (stage === "vector") return "写入向量库";
   if (stage === "persist") return "保存索引状态";
   return "未开始";
-}
-
-export function flattenFolders(folders: LibraryFolder[]): VisibleFolder[] {
-  const children = new Map<string | null, LibraryFolder[]>();
-  for (const folder of folders) {
-    const key =
-      folder.parentId && folders.some((candidate) => candidate.id === folder.parentId)
-        ? folder.parentId
-        : null;
-    const group = children.get(key) ?? [];
-    group.push(folder);
-    children.set(key, group);
-  }
-  const flattened: VisibleFolder[] = [];
-  const visit = (parentId: string | null, depth: number) => {
-    for (const folder of children.get(parentId) ?? []) {
-      flattened.push({ ...folder, depth });
-      visit(folder.id, depth + 1);
-    }
-  };
-  visit(null, 0);
-  return flattened;
 }

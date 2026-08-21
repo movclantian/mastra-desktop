@@ -1,3 +1,8 @@
+/**
+ * 向量索引管线:抽取文本 → MDocument 分块 → embedMany 嵌入 → LibSQLVector upsert。
+ * 官方文档:docs/en/reference/rag/chunking-and-embedding.mdx、embeddings.mdx、
+ * vector-databases.mdx;索引终态经 onLibraryIndexSettled 回调对外广播。
+ */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MastraLanguageModel } from "@mastra/core/agent";
@@ -24,11 +29,6 @@ import {
   type LibrarySettings,
 } from "../types";
 import { extractText } from "./extract";
-
-/**
- * 向量索引层 (docs/en/reference/rag/chunk.mdx, embeddings.mdx, database-config.mdx):
- * FastEmbed 或供应商 embedding + LibSQLVector 索引 + MDocument 分块。
- */
 
 let vectorPromise: Promise<LibSQLVector> | undefined;
 const vectorIndexPromises = new Map<string, Promise<void>>();
@@ -66,10 +66,7 @@ function embeddingDimensions(settings: LibrarySettings): number {
   return 1536;
 }
 
-export async function ensureVectorIndex(
-  vector: LibSQLVector,
-  settings: LibrarySettings,
-): Promise<string> {
+async function ensureVectorIndex(vector: LibSQLVector, settings: LibrarySettings): Promise<string> {
   const indexName = libraryIndexName(settings);
   const pending = vectorIndexPromises.get(indexName);
   if (pending) {
@@ -191,7 +188,7 @@ function emitIndexSettled(event: LibraryIndexSettledEvent): void {
   }
 }
 
-export function queueAssetIndex(
+function queueAssetIndex(
   asset: LibraryAsset,
   extractedText: string,
   settings: LibrarySettings,

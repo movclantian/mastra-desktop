@@ -1,3 +1,11 @@
+/**
+ * 工作台聊天主路由(POST /chat/:agentId)。
+ * 官方文档:docs/en/reference/ai-sdk/chat-route.mdx(body 结构 messages + memory)、
+ * docs/en/reference/ai-sdk/handle-chat-stream.mdx(handleChatStream / toAISdkStream)。
+ * 职责:解析请求级上下文(模型 / 检索引擎 / 附件预算 / 技能),准备线程会话
+ * (工作区绑定 / 模式跃迁 / 模型快照,见 prepareThreadSession),再按运行形态
+ * 分流 —— harness session 订阅流(新回合 / steer)或官方 handleChatStream。
+ */
 import { existsSync, statSync } from "node:fs";
 import { handleChatStream, toAISdkStream } from "@mastra/ai-sdk";
 import type {
@@ -20,6 +28,7 @@ import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
 import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
+import { workError } from "../../errors";
 import { isTerminalAgentChunk, workSessionHost } from "../../harness";
 import { OM_MODELS_CONTEXT_KEY } from "../../memory";
 import {
@@ -426,7 +435,7 @@ function parseModelSnapshot(
   };
 }
 
-/** submit_plan 的批准判定(阶段一 任务 1.5 的输入,见 submit-plan-tool.mdx 的 resume 形状) */
+/** submit_plan 的批准判定(resume 形状见 docs/en/reference/tools/submit-plan-tool.mdx) */
 function isPlanApproval(resumeData: unknown): boolean {
   if (typeof resumeData !== "object" || resumeData === null) return false;
   return (resumeData as { action?: unknown }).action === "approved";
@@ -491,7 +500,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     } = body;
     const model = rawModel !== undefined ? await resolveRequestModel(rawModel) : undefined;
     if (rawModel !== undefined && !model) {
-      return c.json({ error: "所选模型未在服务端供应商配置中找到,请重新选择模型" }, 400);
+      throw workError("MODEL_NOT_CONFIGURED");
     }
     // 请求显式指定了模型 → 存入 context,Agent 默认 model 回调优先返回它:
     // listMemoryTools 等内部步骤(getModel 走默认回调)与主对话用同一模型,
@@ -570,7 +579,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             threadId: body.memory.thread,
           });
           liveSession.setMode(session.modeId);
-          liveSession.applyRequestContext(requestContext);
         }
       }
     }
@@ -623,8 +631,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         }
       }
     }
-    // version:'v7'(@mastra/ai-sdk 1.9+)让流与消息直接使用 AI SDK v7 类型,
-    // 路由边界不再需要任何类型转换(ai-sdk 1.9.0 / PR #21720)。
+    // version:'v7' 让流与消息直接使用 AI SDK v7 类型,路由边界零类型转换
+    // (docs/en/reference/ai-sdk/handle-chat-stream.mdx)。
     const handlerOptions = {
       mastra,
       agentId: c.req.param("agentId"),
@@ -713,14 +721,13 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         .map((part) => ("text" in part ? part.text : ""))
         .join(" ")
         .trim();
-      if (!content) return c.json({ error: "A text message is required" }, 400);
+      if (!content) throw workError("VALIDATION_FAILED", { text: "A text message is required" });
       const session = workSessionHost.getOrCreate({
         resourceId: body.memory.resource,
         scope: sessionScope,
         threadId: body.memory.thread,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
-      session.applyRequestContext(requestContext);
       const signal = await session.steer(
         {
           contents: content,
@@ -732,7 +739,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       );
       const accepted = await signal.accepted;
       if (accepted.action !== "wake") {
-        return c.json({ error: "The previous run has not released the thread yet" }, 409);
+        throw workError("SESSION_RUN_ACTIVE");
       }
       const stream = toAISdkStream(accepted.output, {
         from: "agent",
@@ -757,20 +764,20 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     );
     if (startsNewSessionTurn && latestMessage && sessionMemory?.thread && sessionMemory.resource) {
       const input = userMessageInput(latestMessage);
-      if (!input) return c.json({ error: "A text or file message is required" }, 400);
+      if (!input)
+        throw workError("VALIDATION_FAILED", { text: "A text or file message is required" });
       const session = workSessionHost.getOrCreate({
         resourceId: sessionMemory.resource,
         scope: sessionScope,
         threadId: sessionMemory.thread,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
-      session.applyRequestContext(requestContext);
       const subscription = await session.subscribe(sessionMemory.thread);
       const signal = session.sendMessage(input, sessionExecutionOptions);
       const accepted = await signal.accepted;
       if (!("runId" in accepted) || accepted.action === "blocked") {
         session.releaseSubscription(subscription);
-        return c.json({ error: "The session could not start this message" }, 409);
+        throw workError("SESSION_MESSAGE_REJECTED");
       }
       const fullStream = subscribedAgentStream(subscription, accepted.runId, () =>
         session.releaseSubscription(subscription),

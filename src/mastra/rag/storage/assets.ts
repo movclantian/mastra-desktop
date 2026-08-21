@@ -1,3 +1,7 @@
+/**
+ * 资产管理层:上传去重(sha256)、入库、目录/线程关联绑定与二进制读取。
+ * 表结构见 ./db.ts(docs/en/reference/rag/database-config.mdx)。
+ */
 import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";

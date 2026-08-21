@@ -1,3 +1,7 @@
+/**
+ * 资料库路由(/work/library/*):资产 CRUD、分片断点续传、目录管理与重建索引。
+ * RAG 主体见 src/mastra/rag/(docs/en/reference/rag/overview.mdx)。
+ */
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
@@ -8,6 +12,7 @@ import { pipeline } from "node:stream/promises";
 import Busboy from "@fastify/busboy";
 import { registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
+import { workError } from "../../errors";
 import {
   cancelLibraryUploadSession,
   completeLibraryUploadSession,
@@ -181,7 +186,7 @@ export const libraryAssetsRoute = registerApiRoute("/work/library/assets", {
   method: "GET",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     let assets = await listAssets(resourceId, c.req.query("threadId"));
     const folderId = c.req.query("folderId");
     if (folderId) {
@@ -223,7 +228,10 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
           parsed.files.map((file) => rm(file.tempPath, { force: true }).catch(() => undefined)),
         );
       }
-      return c.json({ error: error instanceof Error ? error.message : "上传失败" }, 413);
+      throw workError("LIBRARY_FILE_TOO_LARGE", {
+        text: error instanceof Error ? error.message : "上传失败",
+        cause: error,
+      });
     }
   },
 });
@@ -242,7 +250,9 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
       };
       const resourceId = requireResourceId(body.resourceId);
       if (!resourceId || !body.filename?.trim() || typeof body.byteSize !== "number") {
-        return c.json({ error: "resourceId, filename and byteSize are required" }, 400);
+        throw workError("VALIDATION_FAILED", {
+          text: "resourceId, filename and byteSize are required",
+        });
       }
       const session = await createLibraryUploadSession({
         resourceId,
@@ -254,7 +264,10 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
       });
       return c.json({ session }, 201);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "创建上传会话失败" }, 400);
+      throw workError("LIBRARY_UPLOAD_FAILED", {
+        text: error instanceof Error ? error.message : "创建上传会话失败",
+        cause: error,
+      });
     }
   },
 });
@@ -263,9 +276,10 @@ export const libraryUploadSessionRoute = registerApiRoute("/work/library/uploads
   method: "GET",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const session = await getLibraryUploadSession(resourceId, c.req.param("uploadId"));
-    return session ? c.json({ session }) : c.json({ error: "Upload session not found" }, 404);
+    if (!session) throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
+    return c.json({ session });
   },
 });
 
@@ -279,7 +293,9 @@ export const libraryUploadChunkRoute = registerApiRoute(
         const resourceId = requireResourceId(c.req.query("resourceId"));
         const chunkIndex = Number(c.req.param("chunkIndex"));
         if (!resourceId || !Number.isInteger(chunkIndex)) {
-          return c.json({ error: "resourceId and valid chunkIndex are required" }, 400);
+          throw workError("VALIDATION_FAILED", {
+            text: "resourceId and valid chunkIndex are required",
+          });
         }
         chunk = await parseUploadChunk(c.req.raw);
         const bytes = await readFile(chunk.tempPath);
@@ -294,7 +310,10 @@ export const libraryUploadChunkRoute = registerApiRoute(
         return c.json({ session });
       } catch (error) {
         if (chunk) await rm(chunk.tempPath, { force: true }).catch(() => undefined);
-        return c.json({ error: error instanceof Error ? error.message : "上传分片失败" }, 400);
+        throw workError("LIBRARY_UPLOAD_FAILED", {
+          text: error instanceof Error ? error.message : "上传分片失败",
+          cause: error,
+        });
       }
     },
   },
@@ -308,12 +327,15 @@ export const completeLibraryUploadRoute = registerApiRoute(
       try {
         const body = (await c.req.json()) as { resourceId?: string };
         const resourceId = requireResourceId(body.resourceId);
-        if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+        if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
         return c.json({
           asset: await completeLibraryUploadSession(resourceId, c.req.param("uploadId")),
         });
       } catch (error) {
-        return c.json({ error: error instanceof Error ? error.message : "完成上传失败" }, 400);
+        throw workError("LIBRARY_UPLOAD_FAILED", {
+          text: error instanceof Error ? error.message : "完成上传失败",
+          cause: error,
+        });
       }
     },
   },
@@ -323,9 +345,10 @@ export const cancelLibraryUploadRoute = registerApiRoute("/work/library/uploads/
   method: "DELETE",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const deleted = await cancelLibraryUploadSession(resourceId, c.req.param("uploadId"));
-    return deleted ? c.json({ ok: true }) : c.json({ error: "Upload session not found" }, 404);
+    if (!deleted) throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
+    return c.json({ ok: true });
   },
 });
 
@@ -334,9 +357,9 @@ export const libraryAssetContentRoute = registerApiRoute("/work/library/assets/:
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
     const assetId = c.req.param("assetId");
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const result = await readAssetBytes(resourceId, assetId);
-    if (!result) return c.json({ error: "Asset not found" }, 404);
+    if (!result) throw workError("LIBRARY_ASSET_NOT_FOUND");
     return c.body(Buffer.from(result.bytes) as never, 200, {
       "Content-Type": result.asset.mediaType,
       "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(result.asset.filename)}`,
@@ -349,9 +372,10 @@ export const deleteLibraryAssetRoute = registerApiRoute("/work/library/assets/:a
   method: "DELETE",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const deleted = await deleteAsset(resourceId, c.req.param("assetId"));
-    return deleted ? c.json({ ok: true }) : c.json({ error: "Asset not found" }, 404);
+    if (!deleted) throw workError("LIBRARY_ASSET_NOT_FOUND");
+    return c.json({ ok: true });
   },
 });
 
@@ -361,10 +385,11 @@ export const renameLibraryAssetRoute = registerApiRoute("/work/library/assets/:a
     const body = (await c.req.json()) as { resourceId?: string; filename?: string };
     const resourceId = requireResourceId(body.resourceId);
     if (!resourceId || !body.filename?.trim()) {
-      return c.json({ error: "resourceId and filename are required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "resourceId and filename are required" });
     }
     const asset = await renameAsset(resourceId, c.req.param("assetId"), body.filename);
-    return asset ? c.json({ asset }) : c.json({ error: "Asset not found" }, 404);
+    if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
+    return c.json({ asset });
   },
 });
 
@@ -374,16 +399,19 @@ export const reindexLibraryAssetRoute = registerApiRoute("/work/library/assets/:
     try {
       const body = (await c.req.json()) as { resourceId?: string };
       const resourceId = requireResourceId(body.resourceId);
-      if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+      if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
       const asset = (await listAssets(resourceId)).find(
         (candidate) => candidate.id === c.req.param("assetId"),
       );
-      if (!asset) return c.json({ error: "Asset not found" }, 404);
+      if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
       const settings = await getLibrarySettings();
       void reindexAsset(resourceId, c.req.param("assetId"), settings).catch(() => undefined);
       return c.json({ assetId: c.req.param("assetId"), status: "indexing" }, 202);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "重新索引失败" }, 400);
+      throw workError("LIBRARY_UPLOAD_FAILED", {
+        text: error instanceof Error ? error.message : "重新索引失败",
+        cause: error,
+      });
     }
   },
 });
@@ -394,7 +422,7 @@ export const reindexFailedLibraryAssetsRoute = registerApiRoute("/work/library/r
     try {
       const body = (await c.req.json()) as { resourceId?: string };
       const resourceId = requireResourceId(body.resourceId);
-      if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+      if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
       const settings = await getLibrarySettings();
       const assets = await listAssets(resourceId);
       const retryable = assets.filter(
@@ -405,7 +433,10 @@ export const reindexFailedLibraryAssetsRoute = registerApiRoute("/work/library/r
       }
       return c.json({ assetIds: retryable.map((asset) => asset.id), status: "indexing" }, 202);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : "批量重新索引失败" }, 400);
+      throw workError("LIBRARY_UPLOAD_FAILED", {
+        text: error instanceof Error ? error.message : "批量重新索引失败",
+        cause: error,
+      });
     }
   },
 });
@@ -414,7 +445,7 @@ export const libraryFoldersRoute = registerApiRoute("/work/library/folders", {
   method: "GET",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     return c.json({ folders: await listFolders(resourceId, c.req.query("threadId")) });
   },
 });
@@ -430,7 +461,7 @@ export const createLibraryFolderRoute = registerApiRoute("/work/library/folders"
     };
     const resourceId = requireResourceId(body.resourceId);
     if (!resourceId || !body.name?.trim())
-      return c.json({ error: "resourceId and name are required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "resourceId and name are required" });
     return c.json(
       {
         folder: await createFolder({
@@ -451,10 +482,11 @@ export const updateLibraryFolderRoute = registerApiRoute("/work/library/folders/
     const body = (await c.req.json()) as { resourceId?: string; name?: string };
     const resourceId = requireResourceId(body.resourceId);
     if (!resourceId || !body.name?.trim()) {
-      return c.json({ error: "resourceId and name are required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "resourceId and name are required" });
     }
     const folder = await renameFolder(resourceId, c.req.param("folderId"), body.name);
-    return folder ? c.json({ folder }) : c.json({ error: "Folder not found" }, 404);
+    if (!folder) throw workError("LIBRARY_FOLDER_NOT_FOUND");
+    return c.json({ folder });
   },
 });
 
@@ -462,9 +494,10 @@ export const deleteLibraryFolderRoute = registerApiRoute("/work/library/folders/
   method: "DELETE",
   handler: async (c) => {
     const resourceId = requireResourceId(c.req.query("resourceId"));
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const deleted = await deleteFolder(resourceId, c.req.param("folderId"));
-    return deleted ? c.json({ ok: true }) : c.json({ error: "Folder not found" }, 404);
+    if (!deleted) throw workError("LIBRARY_FOLDER_NOT_FOUND");
+    return c.json({ ok: true });
   },
 });
 

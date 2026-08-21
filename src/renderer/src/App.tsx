@@ -103,7 +103,7 @@ function AppShell() {
           minSize="34%"
         >
           <SidebarInset className="h-svh overflow-hidden rounded-none shadow-none">
-            <header className="relative z-10 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-4">
+            <header className="bg-muted/50 relative z-10 flex h-12 shrink-0 items-center gap-2 px-4">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{title}</p>
               </div>

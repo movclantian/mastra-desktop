@@ -1,3 +1,9 @@
+/**
+ * 自定义模型网关(docs/en/models/gateways/custom-gateways.mdx):
+ * WorkbenchGateway 让 Studio 与 model router 直接使用存在数据库里的
+ * 供应商与 Key —— fetchProviders 决定模型选择器内容,resolveAuth 在
+ * getApiKey / env 回退之前被调用,凭据由网关自己从数据库取。
+ */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
@@ -60,12 +66,6 @@ export function createGatewayModel(options: {
   }
 }
 
-/**
- * 自定义模型网关 (docs/en/models/gateways/custom-gateways.mdx):
- * 让 Studio 直接使用我们存在数据库里的供应商与 Key。
- * - fetchProviders 决定 Studio 模型选择器里出现哪些供应商与模型
- * - resolveAuth 在 getApiKey / env 回退之前被调用,凭据由网关自己从数据库取
- */
 export class WorkbenchGateway extends MastraModelGateway {
   readonly id = WORKBENCH_GATEWAY_ID;
   readonly name = "MastraWork 供应商";
@@ -141,7 +141,7 @@ export class WorkbenchGateway extends MastraModelGateway {
 }
 
 /** 内置供应商按 registryId 推断协议家族 */
-export function inferProtocol(providerId: string): GatewayProtocol {
+function inferProtocol(providerId: string): GatewayProtocol {
   if (providerId === "anthropic") return "anthropic";
   if (providerId === "google" || providerId === "gemini") return "gemini";
   return "openai";

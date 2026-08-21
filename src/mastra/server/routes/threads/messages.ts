@@ -1,6 +1,12 @@
+/**
+ * 消息历史路由:分页拉取、批量删除与跨线程搜索。
+ * 官方文档:docs/en/docs/memory/message-history.mdx;
+ * resourceId 租户隔离见 docs/en/docs/memory/multi-user-threads.mdx。
+ */
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import { registerApiRoute } from "@mastra/core/server";
 import type { UIMessage } from "ai";
+import { workError } from "../../../errors";
 import { readMessageBranches, snapshot } from "./branches";
 import { getOwnedThread, getWorkMemory, normalizeChatHistoryMessages } from "./shared";
 import type {
@@ -246,11 +252,11 @@ export const threadMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
   handler: async (c) => {
     const threadId = c.req.param("threadId");
     const resourceId = c.req.query("resourceId");
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     const thread = await getOwnedThread(memory, threadId, resourceId);
     if (!thread) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const { messages } = await memory.recall({ threadId, resourceId, perPage: false });
     // Task signals stay out of chat history; session user signals are restored
@@ -285,17 +291,19 @@ export const updateMessageBranchRoute = registerApiRoute(
       const rootId = c.req.param("rootId");
       const body = (await c.req.json()) as { resourceId?: string; currentVersionId?: string };
       if (!body.resourceId || !body.currentVersionId) {
-        return c.json({ error: "resourceId and currentVersionId are required" }, 400);
+        throw workError("VALIDATION_FAILED", {
+          text: "resourceId and currentVersionId are required",
+        });
       }
       const memory = await getWorkMemory();
       const thread = await getOwnedThread(memory, threadId, body.resourceId);
-      if (!thread) return c.json({ error: "Thread not found" }, 404);
+      if (!thread) throw workError("THREAD_NOT_FOUND");
       const metadata = (thread.metadata ?? {}) as ThreadMetadata;
       const branches = readMessageBranches(metadata);
       const branch = branches[rootId];
       const incoming = branch?.versions.find((item) => item.id === body.currentVersionId);
       if (!branch || !incoming?.message) {
-        return c.json({ error: "Message branch not found" }, 404);
+        throw workError("MESSAGE_NOT_FOUND");
       }
 
       let rows: UIMessage[] = [];
@@ -380,13 +388,13 @@ export const deleteMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
   handler: async (c) => {
     const threadId = c.req.param("threadId");
     const body = (await c.req.json()) as { resourceId?: string; messageIds?: string[] };
-    if (!body.resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!body.resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     if (!body.messageIds?.length) {
-      return c.json({ error: "messageIds is required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "messageIds is required" });
     }
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, body.resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const { messages } = await memory.recall({
       threadId,
@@ -395,7 +403,7 @@ export const deleteMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
     });
     const ownedMessageIds = new Set((messages ?? []).map((message) => message.id));
     if (body.messageIds.some((messageId) => !ownedMessageIds.has(messageId))) {
-      return c.json({ error: "Message not found in thread" }, 404);
+      throw workError("MESSAGE_NOT_FOUND");
     }
     await memory.deleteMessages(body.messageIds);
     return c.json({ ok: true, threadId, deleted: body.messageIds.length });
@@ -411,7 +419,7 @@ export const searchMessagesRoute = registerApiRoute("/work/memory/search", {
     const q = c.req.query("q")?.trim();
     const resourceId = c.req.query("resourceId");
     if (!q || !resourceId) {
-      return c.json({ error: "q and resourceId are required" }, 400);
+      throw workError("VALIDATION_FAILED", { text: "q and resourceId are required" });
     }
     const memory = await getWorkMemory();
     const { threads } = await memory.listThreads({

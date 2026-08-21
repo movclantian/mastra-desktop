@@ -83,7 +83,7 @@ export function ToolsSection() {
   const { refreshToolsConfig } = useWorkbench();
   const [draft, setDraft] = React.useState<ToolsConfig>(DEFAULT_TOOLS_CONFIG);
   const [loaded, setLoaded] = React.useState(false);
-  // 各引擎独立的明文开关:此前三张卡共用一个状态,拨一个开关三张卡同时展开
+  // 各引擎独立的明文开关
   const [showKeys, setShowKeys] = React.useState<Record<KeyedSearchEngine, boolean>>({
     tavily: false,
     firecrawl: false,

@@ -1,6 +1,3 @@
-import { registerApiRoute } from "@mastra/core/server";
-import type { GuardrailsUserConfig } from "../../agents/guardrails";
-
 /**
  * 护栏路由:读写「护栏与处理器」配置(数据库 app_config 表 key="guardrails",
  * 保存后实时生效),以及一个运行时可用性探测。
@@ -9,12 +6,19 @@ import type { GuardrailsUserConfig } from "../../agents/guardrails";
  * 参数语义参考 docs/en/docs/agents/{guardrails,processors}.mdx
  * 与 docs/en/reference/processors/*.mdx。
  */
+import { registerApiRoute } from "@mastra/core/server";
+import {
+  type GuardrailsUserConfig,
+  getGuardrailsConfig,
+  saveGuardrailsConfig,
+} from "../../agents/guardrails";
+import { resolveDefaultModelId } from "../../models";
+import { isWorkspaceEnabled } from "../../workspace";
 
 // GET /work/guardrails — 读取当前护栏配置
 export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
   method: "GET",
   handler: async (c) => {
-    const { getGuardrailsConfig } = await import("../../agents/guardrails");
     return c.json(await getGuardrailsConfig());
   },
 });
@@ -23,9 +27,7 @@ export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
 export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
   method: "POST",
   handler: async (c) => {
-    const config = (await c.req.json()) as GuardrailsUserConfig;
-    const { saveGuardrailsConfig } = await import("../../agents/guardrails");
-    await saveGuardrailsConfig(config);
+    await saveGuardrailsConfig(await c.req.json<GuardrailsUserConfig>());
     return c.json({ ok: true });
   },
 });
@@ -41,12 +43,6 @@ export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
 export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status", {
   method: "GET",
   handler: async (c) => {
-    const [{ getGuardrailsConfig }, { resolveDefaultModelId }, { isWorkspaceEnabled }] =
-      await Promise.all([
-        import("../../agents/guardrails"),
-        import("../../models"),
-        import("../../workspace"),
-      ]);
     const config = await getGuardrailsConfig();
     // 组合存储按 domain 路由:经 getStore('observability') 取观测域接口
     const observability = (await c.get("mastra").getStorage()?.getStore("observability")) as

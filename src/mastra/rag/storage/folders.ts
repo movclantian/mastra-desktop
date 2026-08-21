@@ -1,3 +1,6 @@
+/**
+ * 资料库目录树 CRUD。
+ */
 import { nanoid } from "nanoid";
 import type { LibraryFolder } from "../types";
 import { ensureLibrarySchema, now, withClient } from "./db";

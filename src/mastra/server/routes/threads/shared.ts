@@ -1,3 +1,7 @@
+/**
+ * 线程路由共享依赖:Memory 实例获取、resourceId 归属校验(getOwnedThread)、
+ * 本地请求信任边界(isTrustedLocalRequest)与信号消息归一化。
+ */
 import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";

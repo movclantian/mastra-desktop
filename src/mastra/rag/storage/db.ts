@@ -1,6 +1,10 @@
-import { type Client, createClient } from "@libsql/client";
+/**
+ * RAG 数据库存储层(docs/en/reference/rag/database-config.mdx):
+ * 共享 LibSQL 客户端、library_* 表建表与索引运行状态记录。
+ */
+import type { Client } from "@libsql/client";
 import { nanoid } from "nanoid";
-import { getStorageUrl } from "../../storage";
+import { getLibsqlClient } from "../../storage";
 import type {
   LibraryAsset,
   LibraryIndexRunStatus,
@@ -9,22 +13,12 @@ import type {
   LibraryUploadSession,
 } from "../types";
 
-/**
- * RAG 数据库存储层 (docs/en/reference/rag/database-config.mdx):
- * LibSQL 客户端工厂、建表与运行状态记录。
- */
-
 export function now(): string {
   return new Date().toISOString();
 }
 
 export async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
-  const client = createClient({ url: getStorageUrl() });
-  try {
-    return await run(client);
-  } finally {
-    client.close();
-  }
+  return run(await getLibsqlClient());
 }
 
 let schemaPromise: Promise<void> | undefined;

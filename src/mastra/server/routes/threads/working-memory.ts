@@ -1,10 +1,10 @@
-import { registerApiRoute } from "@mastra/core/server";
-import { getOwnedThread, getWorkMemory } from "./shared";
-
 /**
  * 工作记忆路由。
  * working-memory.mdx:thread.metadata.workingMemory 携带当前值(resource scope 亦然)。
  */
+import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../../errors";
+import { getOwnedThread, getWorkMemory } from "./shared";
 
 // GET /work/threads/:threadId/working-memory?resourceId= — 读取工作记忆
 export const getWorkingMemoryRoute = registerApiRoute("/work/threads/:threadId/working-memory", {
@@ -12,10 +12,10 @@ export const getWorkingMemoryRoute = registerApiRoute("/work/threads/:threadId/w
   handler: async (c) => {
     const threadId = c.req.param("threadId");
     const resourceId = c.req.query("resourceId");
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, resourceId))) {
-      return c.json({ error: "thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const workingMemory = (await memory.getWorkingMemory({ threadId, resourceId })) ?? "";
     return c.json({ workingMemory, threadId });
@@ -30,12 +30,12 @@ export const updateWorkingMemoryRoute = registerApiRoute("/work/threads/:threadI
     const threadId = c.req.param("threadId");
     const body = (await c.req.json()) as { resourceId?: string; workingMemory: string };
     if (typeof body.workingMemory !== "string") {
-      return c.json({ error: "workingMemory is required" }, 400);
+      throw workError("WORKING_MEMORY_REQUIRED");
     }
-    if (!body.resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!body.resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, body.resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     await memory.updateWorkingMemory({
       threadId,

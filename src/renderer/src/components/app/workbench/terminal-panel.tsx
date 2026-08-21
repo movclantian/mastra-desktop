@@ -12,8 +12,9 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { toastError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { useWorkbench } from "@/lib/workbench";
+import { reportWorkbenchNotification, reportWorkbenchState, useWorkbench } from "@/lib/workbench";
 
 interface TerminalTab {
   id: number;
@@ -87,8 +88,11 @@ function commandForFile(path: string): string | undefined {
   return undefined;
 }
 
+/** 超过这个时长的应用发起命令在结束时投一条通知记录进收件箱 */
+const LONG_COMMAND_MS = 10_000;
+
 export default function TerminalPanel() {
-  const { activeThreadId, setTerminalPanelOpen, terminalRequest, threads } = useWorkbench();
+  const { activeThreadId, setTerminalPanelOpen, terminalRequest, threads, user } = useWorkbench();
   const terminalApi = typeof window === "undefined" ? undefined : window.api?.terminal;
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const workspacePath = activeThread?.metadata.workspacePath;
@@ -102,7 +106,25 @@ export default function TerminalPanel() {
   const pendingRunRef = React.useRef<{ command?: string; filePath?: string } | undefined>(
     undefined,
   );
+  /**
+   * 由应用发起的命令(运行文件 / 工具请求)的跟踪记录。用户在 xterm 里手敲的
+   * 命令拿不到文本(那是裸字节流),但退出码对模型同样有用 —— 所以两种情况都
+   * 上报 lane,只有应用发起的这一类能带上命令原文与耗时。
+   */
+  const lastRunRef = React.useRef<
+    { command: string; sessionId: string; startedAt: number } | undefined
+  >(undefined);
+  const [lastExit, setLastExit] = React.useState<{ command?: string; exitCode?: number }>();
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+
+  /** 记录并下发一条应用发起的命令,让退出时能还原「跑了什么、跑了多久」 */
+  const runTrackedCommand = React.useCallback(
+    (command: string, sessionId: string) => {
+      lastRunRef.current = { command, sessionId, startedAt: Date.now() };
+      terminalApi?.write({ data: `${command}\r`, sessionId });
+    },
+    [terminalApi],
+  );
 
   React.useEffect(() => {
     const observer = new MutationObserver(() => setThemeVersion((value) => value + 1));
@@ -159,10 +181,49 @@ export default function TerminalPanel() {
           `\r\n\x1b[90m[进程已退出，代码 ${event.exitCode ?? "?"}]\x1b[0m\r\n`,
         );
         updateTab(tabId, (tab) => ({ ...tab, status: "exited" }));
+        const run =
+          lastRunRef.current?.sessionId === event.sessionId ? lastRunRef.current : undefined;
+        const exitCode = event.exitCode ?? undefined;
+        setLastExit({
+          ...(run ? { command: run.command } : {}),
+          ...(exitCode === undefined ? {} : { exitCode }),
+        });
+        if (run) {
+          lastRunRef.current = undefined;
+          // 短命令靠 state lane 传达就够了;跑够久的才值得占一条收件箱记录
+          if (Date.now() - run.startedAt >= LONG_COMMAND_MS) {
+            reportWorkbenchNotification(activeThreadId, user.id, {
+              source: "terminal",
+              kind: "command-exit",
+              priority: exitCode === 0 ? "medium" : "high",
+              summary: `Terminal command finished with exit code ${exitCode ?? "unknown"}: ${run.command}`,
+              payload: {
+                command: run.command,
+                exitCode,
+                durationMs: Date.now() - run.startedAt,
+              },
+              dedupeKey: `terminal:${event.sessionId}:${run.command}`,
+            });
+          }
+        }
       }
     });
     return unsubscribe;
-  }, [terminalApi, updateTab]);
+  }, [activeThreadId, terminalApi, updateTab, user.id]);
+
+  // 终端状态 → terminal state lane:会话数、活动会话状态、最近一条命令的结果
+  React.useEffect(() => {
+    reportWorkbenchState(activeThreadId, user.id, {
+      terminal: {
+        open: true,
+        sessionCount: tabs.filter((tab) => tab.sessionId).length,
+        ...(activeTab?.title ? { activeTitle: activeTab.title } : {}),
+        ...(activeTab?.status ? { activeStatus: activeTab.status } : {}),
+        ...(lastExit?.command ? { lastCommand: lastExit.command } : {}),
+        ...(lastExit?.exitCode === undefined ? {} : { lastExitCode: lastExit.exitCode }),
+      },
+    });
+  }, [activeTab?.status, activeTab?.title, activeThreadId, lastExit, tabs, user.id]);
 
   React.useEffect(() => {
     void themeVersion;
@@ -218,15 +279,15 @@ export default function TerminalPanel() {
             pendingRunRef.current = undefined;
             const command =
               pending.command ?? (pending.filePath ? commandForFile(pending.filePath) : undefined);
-            if (command) terminalApi.write({ data: `${command}\r`, sessionId });
+            if (command) runTrackedCommand(command, sessionId);
           }
         })
         .catch((error) => {
           updateTab(tab.id, (current) => ({ ...current, status: "error" }));
-          toast.error(error instanceof Error ? error.message : "终端启动失败");
+          toastError(error, "终端启动失败");
         });
     }
-  }, [activeTabId, activeThreadId, tabs, terminalApi, updateTab, workspacePath]);
+  }, [activeTabId, activeThreadId, runTrackedCommand, tabs, terminalApi, updateTab, workspacePath]);
 
   React.useEffect(() => {
     const runtime = activeTab ? runtimeRefs.current.get(activeTab.id) : undefined;
@@ -265,14 +326,25 @@ export default function TerminalPanel() {
       toast.error("当前文件类型没有可用的运行命令");
       return;
     }
-    terminalApi?.write({ data: `${command}\r`, sessionId: runtime.sessionId });
-  }, [activeTab, terminalApi, terminalRequest]);
+    runTrackedCommand(command, runtime.sessionId);
+  }, [activeTab, runTrackedCommand, terminalRequest]);
 
   React.useEffect(
     () => () => {
       for (const tabId of runtimeRefs.current.keys()) disposeRuntime(tabId);
     },
     [disposeRuntime],
+  );
+
+  // 面板关闭时把 lane 归零,否则模型会一直看到一份已经不存在的终端快照
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在卸载时跑一次,依赖当时的闭包值即可
+  React.useEffect(
+    () => () => {
+      reportWorkbenchState(activeThreadId, user.id, {
+        terminal: { open: false, sessionCount: 0 },
+      });
+    },
+    [],
   );
 
   const addTab = () => {

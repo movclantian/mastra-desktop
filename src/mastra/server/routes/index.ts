@@ -1,3 +1,8 @@
+/**
+ * MastraWork 工作台 API 路由汇总。
+ * 注意:Mastra 保留 /api 前缀给内置路由,自定义路由统一使用 /work/*。
+ * apiRoutes 在 src/mastra/index.ts 注册。
+ */
 import { browserRoutes } from "./browser";
 import {
   guardrailsConfigRoute,
@@ -68,11 +73,6 @@ import {
   workspaceConfigRoute,
 } from "./workspace";
 
-/**
- * MastraWork 工作台 API 路由汇总。
- * 注意:Mastra 保留 /api 前缀给内置路由,自定义路由统一使用 /work/*。
- * apiRoutes 在 src/mastra/index.ts 注册。
- */
 export const workRoutes = [
   ...browserRoutes,
   ...threadRoutes,
@@ -136,5 +136,3 @@ export const workRoutes = [
 ];
 
 export { workChatRoute } from "./chat";
-export type { RegistryProvider } from "./providers";
-export { getWorkMemory, type ThreadMetadata } from "./threads";

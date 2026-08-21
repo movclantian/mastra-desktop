@@ -1,6 +1,12 @@
+/**
+ * 浏览器自动化路由(/work/browser/*):导航 / 点击 / 输入 / 截图 / 标签页控制。
+ * 官方文档:docs/en/docs/browser.mdx、docs/en/reference/browser/;
+ * 运行时实例见 src/mastra/agents/browser.ts(AgentBrowser)。
+ */
 import type { KeyboardEventParams, MouseEventParams } from "@mastra/core/browser";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../agents";
+import { workError } from "../../errors";
 import { getOwnedThread, getWorkMemory, isTrustedLocalRequest } from "./threads/shared";
 
 async function ownedBrowserThread(c: ContextWithMastra) {
@@ -49,7 +55,7 @@ export const browserStateRoute = registerApiRoute("/work/threads/:threadId/brows
   method: "GET",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     return c.json(await browserState(threadId));
   },
 });
@@ -61,7 +67,7 @@ export const browserScreencastRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const threadId = await ownedBrowserThread(c);
-      if (!threadId) return c.json({ error: "Thread not found" }, 404);
+      if (!threadId) throw workError("THREAD_NOT_FOUND");
       let screencast: Awaited<ReturnType<typeof workBrowser.startScreencast>>;
       try {
         await ensureBrowserTab(threadId);
@@ -125,10 +131,10 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
   method: "POST",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     const body = (await c.req.json()) as { url?: string };
     const input = body.url?.trim();
-    if (!input) return c.json({ error: "url is required" }, 400);
+    if (!input) throw workError("VALIDATION_FAILED", { text: "url is required" });
     const url = /^[a-z][a-z\d+.-]*:/i.test(input) ? input : `https://${input}`;
     try {
       await ensureBrowserTab(threadId);
@@ -151,7 +157,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
   method: "POST",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     const body = (await c.req.json()) as {
       action?: "back" | "forward" | "reload" | "new-tab" | "switch-tab" | "close-tab";
       index?: number;
@@ -175,14 +181,15 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
           break;
         case "switch-tab":
         case "close-tab":
-          if (!Number.isInteger(body.index)) return c.json({ error: "index is required" }, 400);
+          if (!Number.isInteger(body.index))
+            throw workError("VALIDATION_FAILED", { text: "index is required" });
           result = await workBrowser.tabs(
             { action: body.action === "switch-tab" ? "switch" : "close", index: body.index },
             threadId,
           );
           break;
         default:
-          return c.json({ error: "Unsupported browser action" }, 400);
+          throw workError("BROWSER_ACTION_UNSUPPORTED");
       }
       if (result && typeof result === "object" && "success" in result && result.success !== true) {
         return c.json(result, 400);
@@ -204,7 +211,7 @@ export const browserMouseRoute = registerApiRoute("/work/threads/:threadId/brows
   method: "POST",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     await workBrowser.injectMouseEvent((await c.req.json()) as MouseEventParams, threadId);
     return c.json({ ok: true });
   },
@@ -214,7 +221,7 @@ export const browserKeyboardRoute = registerApiRoute("/work/threads/:threadId/br
   method: "POST",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     await workBrowser.injectKeyboardEvent((await c.req.json()) as KeyboardEventParams, threadId);
     return c.json({ ok: true });
   },
@@ -224,7 +231,7 @@ export const browserCloseRoute = registerApiRoute("/work/threads/:threadId/brows
   method: "DELETE",
   handler: async (c) => {
     const threadId = await ownedBrowserThread(c);
-    if (!threadId) return c.json({ error: "Thread not found" }, 404);
+    if (!threadId) throw workError("THREAD_NOT_FOUND");
     workBrowser.markBrowserCloseReason("user", threadId);
     await workBrowser.closeThreadSession(threadId);
     return c.json({ ok: true });

@@ -1,3 +1,10 @@
+/**
+ * 存储层:MastraCompositeStore 组合存储 + 共享 LibSQL 客户端 + 应用配置 KV。
+ * 官方文档:docs/en/docs/storage.mdx(存储后端选型)、
+ * docs/en/reference/storage/composite.mdx(按 domain 路由存储后端)。
+ * 默认域走 LibSQL(与 Studio 共享 src/mastra/public/mastra.db),
+ * observability 域走 DuckDB(OLAP 指标,docs/en/docs/observability/metrics/overview.mdx)。
+ */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
@@ -32,9 +39,8 @@ export const PROJECT_ROOT = findProjectRoot();
  * 相对路径会抛 SQLITE_CANTOPEN(错误码 14)。
  */
 const STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
-// DuckDB keeps a write-ahead log open while Mastra is running. Keep it outside
-// src/mastra/public so the Mastra bundler does not treat the live database as a
-// static asset and try to copy the locked WAL during a build.
+// DuckDB 运行期间持有写前日志(WAL);放在 src/mastra/public 之外,
+// 避免 Mastra 打包器把活跃数据库当静态资产、在构建时复制被锁的 WAL 文件。
 const OBSERVABILITY_STORAGE_DIRECTORY = join(PROJECT_ROOT, ".mastra", "observability");
 
 /** 规整为 libsql 可用的绝对 file: URL(正斜杠) */
@@ -81,7 +87,7 @@ function ensureDirectory(): void {
 }
 ensureDirectory();
 
-// 参考 docs/en/docs/storage.mdx — MastraCompositeStore 按 domain 路由存储后端
+/** 组合存储(composite.mdx):默认域 LibSQL,observability 域 DuckDB */
 export const appStorage = new MastraCompositeStore({
   id: "composite-storage",
   default: new LibSQLStore({
@@ -89,12 +95,22 @@ export const appStorage = new MastraCompositeStore({
     url: getStorageUrl(),
   }),
   domains: {
-    // @mastra/duckdb 官方示例:作为组合存储的 observability 后端
     observability: new DuckDBStore({
       path: join(OBSERVABILITY_STORAGE_DIRECTORY, "mastra.duckdb").replace(/\\/g, "/"),
     }).observability,
   },
 });
+
+/**
+ * 共享 LibSQL 客户端:与业务库同文件,进程存活期内复用连接
+ * (libsql 为长连接设计,逐调用新建/关闭是反模式)。
+ */
+let sharedClientPromise: Promise<Client> | null = null;
+
+export function getLibsqlClient(): Promise<Client> {
+  sharedClientPromise ??= Promise.resolve(createClient({ url: getStorageUrl() }));
+  return sharedClientPromise;
+}
 
 /**
  * 应用配置 kv 存储(app_config 表,与业务数据同库同引擎)。
@@ -103,38 +119,34 @@ export const appStorage = new MastraCompositeStore({
  * 该文件保留为引导配置。
  */
 const APP_CONFIG_TABLE = "app_config";
+let appConfigTableReady: Promise<void> | undefined;
 
-async function withConfigClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
-  const client = createClient({ url: getStorageUrl() });
-  try {
+function ensureAppConfigTable(): Promise<void> {
+  appConfigTableReady ??= getLibsqlClient().then(async (client) => {
     await client.execute(
       `CREATE TABLE IF NOT EXISTS ${APP_CONFIG_TABLE} (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
     );
-    return await run(client);
-  } finally {
-    client.close();
-  }
+  });
+  return appConfigTableReady;
 }
 
 /** 读取应用配置;不存在返回 null */
 export async function getAppConfig(key: string): Promise<string | null> {
-  const result = await withConfigClient((client) =>
-    client.execute({
-      sql: `SELECT value FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
-      args: [key],
-    }),
-  );
+  await ensureAppConfigTable();
+  const result = await (await getLibsqlClient()).execute({
+    sql: `SELECT value FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
+    args: [key],
+  });
   const value = result.rows[0]?.value;
   return typeof value === "string" ? value : null;
 }
 
 /** 写入应用配置(upsert) */
 export async function setAppConfig(key: string, value: string): Promise<void> {
-  await withConfigClient((client) =>
-    client.execute({
-      sql: `INSERT INTO ${APP_CONFIG_TABLE} (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      args: [key, value],
-    }),
-  );
+  await ensureAppConfigTable();
+  await (await getLibsqlClient()).execute({
+    sql: `INSERT INTO ${APP_CONFIG_TABLE} (key, value) VALUES (?, ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    args: [key, value],
+  });
 }

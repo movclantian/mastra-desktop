@@ -1,3 +1,8 @@
+/**
+ * 资料库语义检索:查询嵌入 → LibSQLVector topK*4 召回 → 可选重排 → 可选 GraphRAG。
+ * 官方文档:docs/en/reference/rag/retrieval.mdx、rerank.mdx、rerankWithScorer.mdx、
+ * graph-rag.mdx;返回带 citationId 的条目供前端 / 工具引用。
+ */
 import type { MastraLanguageModel } from "@mastra/core/agent";
 import { GraphRAG, MastraAgentRelevanceScorer, rerank, rerankWithScorer } from "@mastra/rag";
 import { embed } from "ai";
@@ -5,12 +10,6 @@ import { resolveDefaultLanguageModel } from "../../models";
 import { embeddingModelFor, getVector, libraryIndexName } from "../document/indexing";
 import { getLibrarySettings } from "../settings";
 import { ensureLibrarySchema, withClient } from "../storage/db";
-
-/**
- * 资料库语义检索 (docs/en/reference/rag/retrieval.mdx, rerank.mdx, graph-rag.mdx):
- * 按资料库设置生成查询嵌入 → LibSQLVector topK*4 召回 → 可选重排 → 可选 GraphRAG
- * 随机游走重排。返回带 citationId 的条目供前端/工具引用。
- */
 
 export async function searchLibrary(
   resourceId: string,

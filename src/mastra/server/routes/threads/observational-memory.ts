@@ -1,4 +1,9 @@
+/**
+ * 观察记忆(OM)线程级配置路由:读写线程 metadata 上的 OM 覆盖项。
+ * 官方文档:docs/en/docs/memory/observational-memory.mdx。
+ */
 import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../../errors";
 import { appStorage } from "../../../storage";
 import { getOwnedThread, getWorkMemory } from "./shared";
 import type { ThreadMetadata } from "./types";
@@ -41,10 +46,10 @@ export const observationalMemoryConfigRoute = registerApiRoute(
     handler: async (c) => {
       const threadId = c.req.param("threadId");
       const resourceId = c.req.query("resourceId");
-      if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+      if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
       const memory = await getWorkMemory();
       const thread = await getOwnedThread(memory, threadId, resourceId);
-      if (!thread) return c.json({ error: "Thread not found" }, 404);
+      if (!thread) throw workError("THREAD_NOT_FOUND");
       const store = await appStorage.getStore("memory");
       const record = await store?.getObservationalMemory(threadId, resourceId);
       const overrides = (record?.config?._overrides ?? {}) as {
@@ -81,7 +86,7 @@ export const updateObservationalMemoryConfigRoute = registerApiRoute(
     handler: async (c) => {
       const threadId = c.req.param("threadId");
       const body = (await c.req.json()) as { resourceId?: string; config?: unknown };
-      if (!body.resourceId) return c.json({ error: "resourceId is required" }, 400);
+      if (!body.resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
       const config = phaseInput(body.config);
       const observation = phaseInput(config?.observation);
       const reflection = phaseInput(config?.reflection);
@@ -103,7 +108,7 @@ export const updateObservationalMemoryConfigRoute = registerApiRoute(
 
       const memory = await getWorkMemory();
       const thread = await getOwnedThread(memory, threadId, body.resourceId);
-      if (!thread) return c.json({ error: "Thread not found" }, 404);
+      if (!thread) throw workError("THREAD_NOT_FOUND");
 
       if (Object.keys(observationNumbers).length || Object.keys(reflectionNumbers).length) {
         try {

@@ -1,3 +1,7 @@
+/**
+ * 终端会话运行时:node-pty 封装,按 IPC 契约(src/shared/terminal-contract.ts)
+ * 创建 / 写入 / 调整 / 关闭终端会话,事件经回调推回渲染进程。
+ */
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { join } from "node:path";

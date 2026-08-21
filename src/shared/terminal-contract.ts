@@ -1,14 +1,18 @@
+/**
+ * 终端 IPC 契约:渲染进程 ↔ 主进程共享的频道名、载荷类型与解析校验函数。
+ * 所有跨进程消息必须先过这里的 parse*,不可信输入在边界处拒绝。
+ */
 export const TERMINAL_CREATE_CHANNEL = "terminal:create";
 export const TERMINAL_WRITE_CHANNEL = "terminal:write";
 export const TERMINAL_RESIZE_CHANNEL = "terminal:resize";
 export const TERMINAL_CLOSE_CHANNEL = "terminal:close";
 export const TERMINAL_EVENT_CHANNEL = "terminal:event";
 
-export const TERMINAL_MIN_COLS = 2;
-export const TERMINAL_MAX_COLS = 500;
-export const TERMINAL_MIN_ROWS = 2;
-export const TERMINAL_MAX_ROWS = 300;
-export const TERMINAL_MAX_INPUT_LENGTH = 65_536;
+const TERMINAL_MIN_COLS = 2;
+const TERMINAL_MAX_COLS = 500;
+const TERMINAL_MIN_ROWS = 2;
+const TERMINAL_MAX_ROWS = 300;
+const TERMINAL_MAX_INPUT_LENGTH = 65_536;
 
 export interface TerminalCreateRequest {
   readonly cwd?: string;

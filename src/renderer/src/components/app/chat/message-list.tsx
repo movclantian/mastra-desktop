@@ -1,7 +1,6 @@
 import type { FileUIPart, UIMessage } from "ai";
 import {
   CheckIcon,
-  ChevronDownIcon,
   CopyIcon,
   FileTextIcon,
   GitForkIcon,
@@ -9,19 +8,10 @@ import {
   PencilIcon,
   RefreshCcwIcon,
   SparklesIcon,
-  WaypointsIcon,
-  WrenchIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import {
-  ChainOfThought,
-  ChainOfThoughtContent,
-  ChainOfThoughtHeader,
-  ChainOfThoughtStep,
-} from "@/components/ai-elements/chain-of-thought";
-import { CodeBlock, CodeBlockCopyButton } from "@/components/ai-elements/code-block";
 import {
   MessageBranch,
   MessageBranchContent,
@@ -31,32 +21,7 @@ import {
   MessageBranchSelector,
   MessageResponse,
 } from "@/components/ai-elements/message";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
-import {
-  Sandbox,
-  SandboxContent,
-  SandboxHeader,
-  SandboxTabContent,
-  SandboxTabs,
-  SandboxTabsBar,
-  SandboxTabsList,
-  SandboxTabsTrigger,
-} from "@/components/ai-elements/sandbox";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import {
-  StackTrace,
-  StackTraceActions,
-  StackTraceContent,
-  StackTraceCopyButton,
-  StackTraceError,
-  StackTraceErrorMessage,
-  StackTraceErrorType,
-  StackTraceExpandButton,
-  StackTraceFrames,
-  StackTraceHeader,
-} from "@/components/ai-elements/stack-trace";
-import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
-import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
 import {
   Attachment,
   AttachmentContent,
@@ -66,12 +31,9 @@ import {
   AttachmentTitle,
   AttachmentTrigger,
 } from "@/components/ui/attachment";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { Marker, MarkerContent } from "@/components/ui/marker";
 import {
   Message,
   MessageAvatar,
@@ -80,25 +42,31 @@ import {
   MessageHeader,
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
-import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { AgentInteractionHistory } from "./agent-panels";
+import { AssistantAvatar, UserAvatar } from "./avatars";
+import { AssistantTrace } from "./assistant-trace";
 import {
   buildCitationEntries,
   createCitationRehypePlugins,
   withResolvedFootnotes,
 } from "./citation-utils";
 import { CitationProvider, FootnoteCitation, MarkdownSection } from "./citations";
+import { CompactedMessageCard } from "./compacted-messages";
 import {
   asString,
-  type CompactedHistoryEntry,
   getAssistantSegments,
   getPlanDraft,
-  getTraceStepStatus,
   type MessageBranchRecord,
   type MessageFileReference,
-  type TracePart,
 } from "./types";
+
+// ---------------------------------------------------------------------------
+// 消息渲染:文本、推理与工具均按 UIMessage.parts 的原始顺序展示。
+// MessageScroller 处理流式锚定;Message/MessageResponse 保持官方消息样式。
+// 执行轨迹(assistant-trace)、压缩历史(compacted-messages)、头像(avatars)
+// 在各自的兄弟模块中。
+// ---------------------------------------------------------------------------
 
 const CITATION_MARKDOWN_COMPONENTS = {
   section: MarkdownSection,
@@ -106,399 +74,7 @@ const CITATION_MARKDOWN_COMPONENTS = {
 };
 const CITATION_REHYPE_PLUGINS = createCitationRehypePlugins();
 
-// ---------------------------------------------------------------------------
-// 随机头像:https://v2.xxapi.cn/api/head 返回 JSON 包装
-// { code, data: "https://images.xxapi.cn/..." },需先取 data 再渲染图片 URL。
-// URL 按缓存键持久化到 localStorage(跨会话稳定,重启不再请求 API);图片用
-// <img> 直接加载 —— <img> 不受 CORS 约束(该 CDN 不带 Access-Control-Allow-
-// Origin,fetch 会失败),多实例渲染同一 URL 由浏览器 HTTP 缓存去重,仅一次
-// 网络请求。助手固定一张;用户按 userId 分键,同一账号始终同一张。
-// ---------------------------------------------------------------------------
-
-function loadCachedHeadUrl(cacheKey: string): string | null {
-  try {
-    return localStorage.getItem(cacheKey);
-  } catch {
-    return null;
-  }
-}
-
-const headUrlMemory = new Map<string, string>();
-const headUrlPromises = new Map<string, Promise<string | null>>();
-
-function fetchRandomHeadUrl(cacheKey: string): Promise<string | null> {
-  let promise = headUrlPromises.get(cacheKey);
-  if (!promise) {
-    promise = (async () => {
-      // 已有持久化 URL(上次会话取到的)则直接复用,不请求随机头像 API
-      const remoteUrl =
-        loadCachedHeadUrl(cacheKey) ??
-        (await fetch("https://v2.xxapi.cn/api/head")
-          .then((r) => r.json() as Promise<{ data?: string }>)
-          .then((body) => body.data ?? null)
-          .catch(() => null));
-      if (!remoteUrl) return null;
-      try {
-        localStorage.setItem(cacheKey, remoteUrl);
-      } catch {
-        /* 存储不可用时仅内存缓存 */
-      }
-      headUrlMemory.set(cacheKey, remoteUrl); // 后续挂载的实例同步命中,不闪 fallback 图标
-      return remoteUrl;
-    })();
-    // 失败(null)不缓存 Promise:一次网络抖动/CSP 拦截不该把整个会话钉死在
-    // fallback,下次组件挂载(或换线程)重新请求
-    void promise.then((url) => {
-      if (!url) headUrlPromises.delete(cacheKey);
-    });
-    headUrlPromises.set(cacheKey, promise);
-  }
-  return promise;
-}
-
-const RandomHeadAvatar = React.memo(function RandomHeadAvatar({
-  alt,
-  cacheKey,
-  fallback,
-  fallbackClassName,
-}: {
-  alt: string;
-  cacheKey: string;
-  fallback: React.ReactNode;
-  fallbackClassName: string;
-}) {
-  const [headUrl, setHeadUrl] = React.useState<string | null>(headUrlMemory.get(cacheKey) ?? null);
-  React.useEffect(() => {
-    if (!headUrl) void fetchRandomHeadUrl(cacheKey).then(setHeadUrl);
-  }, [cacheKey, headUrl]);
-
-  return (
-    <Avatar>
-      {headUrl ? <AvatarImage alt={alt} src={headUrl} /> : null}
-      <AvatarFallback className={fallbackClassName}>{fallback}</AvatarFallback>
-    </Avatar>
-  );
-});
-
-export const AssistantAvatar = React.memo(function AssistantAvatar() {
-  return (
-    <RandomHeadAvatar
-      alt="MastraWork"
-      cacheKey="mastra-work:assistant-head-url"
-      fallback={<WaypointsIcon className="size-4" />}
-      fallbackClassName="bg-sidebar-primary text-sidebar-primary-foreground"
-    />
-  );
-});
-
-function UserAvatar({ userId }: { userId: string }) {
-  return (
-    <RandomHeadAvatar
-      alt="用户头像"
-      cacheKey={`mastra-work:user-head-url:${userId}`}
-      fallback="我"
-      fallbackClassName="bg-primary text-primary-foreground"
-    />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// 执行轨迹:推理步骤走官方 ChainOfThought 渲染;工具步骤按 docs/aielements/
-// task.tsx 的 Task 模式 —— 连续的工具 part 归为一组,整组渲染成一个 Task
-// (折叠触发器 + TaskContent 左边框时间线 + TaskItem 单行摘要)。
-// 组件仍按 part 引用 memo:AI SDK 流式更新时未变更的 part 保持引用稳定
-// (AI SDK v5 特性),已完成步骤可跳过重渲染,这是流式不卡顿的根治手段。
-// ---------------------------------------------------------------------------
-
-export const ReasoningStepItem = React.memo(function ReasoningStepItem({
-  part,
-  isStreaming,
-}: {
-  part: Extract<TracePart, { type: "reasoning" }>;
-  isStreaming: boolean;
-}) {
-  const partStreaming = isStreaming && part.state === "streaming";
-  return (
-    <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
-      <Reasoning className="mb-0" defaultOpen={partStreaming} isStreaming={partStreaming}>
-        <ReasoningTrigger />
-        {/*
-         * 流式与完成态统一走 ReasoningContent(Streamdown):Streamdown 为流式
-         * 增量解析设计,块级 memo,每 token 只重解析尾部未完成块 —— 与主回答
-         * (MessageResponse)同一条渲染路径,不存在"每 token 全量重跑"。
-         * 之前流式态用纯文本、结束后切 Markdown,会造成完成瞬间的排版闪变。
-         */}
-        <ReasoningContent>{part.text || "此模型未返回可展示的推理摘要"}</ReasoningContent>
-      </Reasoning>
-    </ChainOfThoughtStep>
-  );
-});
-
-/**
- * 工具步骤:TaskItem 单行摘要(状态图标 + 工具名 + 关键参数)。
- * 有参数或输出时整行可点,展开显示 ToolInput/ToolOutput 的 JSON 详情
- * (默认收起,需要时再看,不再无条件倾倒原始数据)。
- */
-export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart }) {
-  const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
-  const typescriptSandbox = name === "execute_typescript";
-  const commandSandbox = name === "mastra_workspace_execute_command";
-  const sandboxTool = typescriptSandbox || commandSandbox;
-  const [open, setOpen] = React.useState(sandboxTool);
-  const active = getTraceStepStatus(part) === "active";
-  const failed = part.state === "output-error";
-  const errorText = "errorText" in part ? part.errorText : undefined;
-  const hasInput = part.input !== undefined;
-  const output = "output" in part ? part.output : undefined;
-  const input = (part.input ?? {}) as Record<string, unknown>;
-  // 参数摘要:取第一个有值的短字符串(query/url/path 等关键参数通常排在最前)
-  const hint = Object.values(input).find(
-    (value): value is string => typeof value === "string" && value.trim().length > 0,
-  );
-  const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
-  const hasDetails = hasInput || output !== undefined;
-
-  const sandboxOutput = React.useMemo(() => {
-    if (!sandboxTool) return "";
-    if (failed) return errorText ?? "执行失败";
-    if (output === undefined) return active ? "正在执行..." : "";
-    if (typeof output === "string") return output;
-    if (commandSandbox) {
-      return typeof output === "string" ? output : JSON.stringify(output, null, 2);
-    }
-    const record = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
-    const lines = Array.isArray(record.logs)
-      ? record.logs.filter((line): line is string => typeof line === "string")
-      : [];
-    if (record.result !== undefined) {
-      lines.push(
-        typeof record.result === "string" ? record.result : JSON.stringify(record.result, null, 2),
-      );
-    }
-    if (record.error !== undefined) {
-      lines.push(
-        typeof record.error === "string" ? record.error : JSON.stringify(record.error, null, 2),
-      );
-    }
-    return lines.join("\n");
-  }, [active, commandSandbox, errorText, failed, output, sandboxTool]);
-
-  const summary = (
-    <>
-      {name}
-      {hintLabel ? <span className="text-muted-foreground/70"> · {hintLabel}</span> : null}
-      {failed ? (
-        <span className="block text-destructive text-xs">{errorText ?? "调用失败"}</span>
-      ) : null}
-    </>
-  );
-
-  return (
-    <Collapsible onOpenChange={setOpen} open={open}>
-      <TaskItem className="flex items-start gap-2">
-        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
-          {active ? (
-            <Spinner className="size-3.5" />
-          ) : failed ? (
-            <XIcon className="size-3.5 text-destructive" />
-          ) : (
-            <CheckIcon className="size-3.5" />
-          )}
-        </span>
-        {hasDetails ? (
-          <button
-            className="min-w-0 flex-1 break-words text-left"
-            onClick={() => setOpen(!open)}
-            type="button"
-          >
-            {summary}
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 break-words">{summary}</span>
-        )}
-        {hasDetails ? (
-          <ChevronDownIcon
-            className={`mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-          />
-        ) : null}
-      </TaskItem>
-      {hasDetails ? (
-        <CollapsibleContent className="min-w-0">
-          <div className="mt-1 min-w-0 max-w-full space-y-2 pl-3">
-            {sandboxTool ? (
-              <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
-                <SandboxHeader
-                  state={part.state}
-                  title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
-                />
-                <SandboxContent className="min-w-0">
-                  <SandboxTabs defaultValue="code">
-                    <SandboxTabsBar>
-                      <SandboxTabsList>
-                        <SandboxTabsTrigger value="code">代码</SandboxTabsTrigger>
-                        <SandboxTabsTrigger value="output">输出</SandboxTabsTrigger>
-                      </SandboxTabsList>
-                    </SandboxTabsBar>
-                    <SandboxTabContent value="code">
-                      <CodeBlock
-                        className="min-w-0 max-w-full rounded-none border-0"
-                        code={
-                          commandSandbox
-                            ? typeof input.command === "string"
-                              ? input.command
-                              : "# 正在生成命令..."
-                            : typeof input.code === "string"
-                              ? input.code
-                              : "// 正在生成代码..."
-                        }
-                        language={commandSandbox ? "bash" : "typescript"}
-                        showLineNumbers
-                      >
-                        <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
-                      </CodeBlock>
-                    </SandboxTabContent>
-                    <SandboxTabContent value="output">
-                      {failed ? (
-                        <StackTrace
-                          className="rounded-none border-0"
-                          defaultOpen
-                          trace={sandboxOutput || errorText || "执行失败"}
-                        >
-                          <StackTraceHeader>
-                            <StackTraceError>
-                              <StackTraceErrorType />
-                              <StackTraceErrorMessage />
-                            </StackTraceError>
-                            <StackTraceActions>
-                              <StackTraceCopyButton />
-                              <StackTraceExpandButton />
-                            </StackTraceActions>
-                          </StackTraceHeader>
-                          <StackTraceContent>
-                            <StackTraceFrames />
-                          </StackTraceContent>
-                        </StackTrace>
-                      ) : (
-                        <CodeBlock
-                          className="min-w-0 max-w-full rounded-none border-0"
-                          code={sandboxOutput || "正在等待输出…"}
-                          language="log"
-                        >
-                          <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
-                        </CodeBlock>
-                      )}
-                    </SandboxTabContent>
-                  </SandboxTabs>
-                </SandboxContent>
-              </Sandbox>
-            ) : (
-              <>
-                {hasInput ? <ToolInput input={part.input} /> : null}
-                {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
-              </>
-            )}
-          </div>
-        </CollapsibleContent>
-      ) : null}
-    </Collapsible>
-  );
-});
-
-/**
- * 工具组:连续的工具 part 归为一组,渲染成一个 Task(折叠头 + 时间线)。
- * 必须和推理步骤一样包在 ChainOfThoughtStep 里 —— 那层的 `div.relative` 图标列
- * (圆点 + absolute 竖线)就是左侧时间线;少了它,工具组会贴到最左与 Header 平齐,
- * 和推理步骤错开一个图标列的宽度,层级就断了。
- */
-function ToolGroup({ tools }: { tools: ToolPart[] }) {
-  const active = tools.some((tool) => getTraceStepStatus(tool) === "active");
-  return (
-    <ChainOfThoughtStep label="" status={active ? "active" : "complete"}>
-      <Task className="w-full">
-        {/* w-full:折叠头占满整行,chevron 与外层 Header 的一样右对齐 */}
-        <TaskTrigger className="w-full" title={`工具调用 · ${tools.length} 步`}>
-          <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
-            <WrenchIcon className="size-4" />
-            <p className="flex-1 text-left text-sm">工具调用 · {tools.length} 步</p>
-            <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />
-          </div>
-        </TaskTrigger>
-        <TaskContent>
-          {tools.map((tool) => (
-            <ToolStepItem key={tool.toolCallId} part={tool} />
-          ))}
-        </TaskContent>
-      </Task>
-    </ChainOfThoughtStep>
-  );
-}
-
-export function AssistantTrace({
-  parts,
-  isStreaming,
-}: {
-  parts: TracePart[];
-  isStreaming: boolean;
-}) {
-  const reasoningCount = parts.filter((part) => part.type === "reasoning").length;
-  const toolCount = parts.length - reasoningCount;
-  const active = parts.some((part) => getTraceStepStatus(part) === "active");
-  const summary = [reasoningCount ? "思考" : null, toolCount ? "工具调用" : null]
-    .filter(Boolean)
-    .join("与");
-  const [open, setOpen] = React.useState(isStreaming && active);
-  const wasStreaming = React.useRef(isStreaming);
-
-  React.useEffect(() => {
-    if (isStreaming && active && !wasStreaming.current) {
-      setOpen(true);
-    }
-    if (!isStreaming && wasStreaming.current) {
-      setOpen(false);
-    }
-    wasStreaming.current = isStreaming;
-  }, [active, isStreaming]);
-
-  // 按原始顺序铺开:推理步骤原位渲染,连续工具 part 聚成一个 Task 组
-  const items: Array<{ key: string; node: React.ReactNode }> = [];
-  let toolRun: ToolPart[] = [];
-  const flushTools = () => {
-    if (toolRun.length === 0) return;
-    const tools = toolRun;
-    toolRun = [];
-    items.push({ key: `tools-${tools[0].toolCallId}`, node: <ToolGroup tools={tools} /> });
-  };
-  parts.forEach((part, index) => {
-    if (part.type === "reasoning") {
-      flushTools();
-      items.push({
-        key: part.id ?? `reasoning-${index}`,
-        node: <ReasoningStepItem isStreaming={isStreaming} part={part} />,
-      });
-      return;
-    }
-    toolRun.push(part);
-  });
-  flushTools();
-
-  return (
-    <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
-      <ChainOfThoughtHeader>
-        {active ? "正在处理" : `${summary || "执行轨迹"} · ${parts.length} 个步骤`}
-      </ChainOfThoughtHeader>
-      {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
-          Header 的 BrainIcon 那一列,步骤正文与 Header 文字起点对齐;
-          再往内一层的层级由工具组 TaskContent 自带的 border-l 时间线承担 */}
-      <ChainOfThoughtContent>
-        {items.map((item) => (
-          <React.Fragment key={item.key}>{item.node}</React.Fragment>
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
-  );
-}
-
-export function MessageAttachments({
+function MessageAttachments({
   files,
   messageId,
   align = "start",
@@ -573,162 +149,6 @@ function getMessageFileReferences(message: UIMessage): MessageFileReference[] {
       typeof item.url === "string"
     );
   });
-}
-
-// ---------------------------------------------------------------------------
-// 消息渲染:文本、推理与工具均按 UIMessage.parts 的原始顺序展示。
-// MessageScroller 处理流式锚定;Message/MessageResponse 保持官方消息样式。
-// ---------------------------------------------------------------------------
-
-/** 展开的压缩历史使用普通消息气泡渲染,但不再参与当前会话请求。 */
-export function CompactedHistoryMessage({
-  entry,
-  onEdit,
-  userId,
-}: {
-  entry: CompactedHistoryEntry;
-  onEdit: (messageId: string, text: string) => void;
-  userId: string;
-}) {
-  const [editing, setEditing] = React.useState(false);
-  const [text, setText] = React.useState(entry.text);
-  if (entry.role === "user") {
-    return (
-      <Message align="end">
-        <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-          <UserAvatar userId={userId} />
-        </MessageAvatar>
-        <MessageContent className="items-end">
-          {editing ? (
-            <div className="flex w-[min(100%,42rem)] max-w-full self-end flex-col items-end gap-2">
-              <Textarea
-                autoFocus
-                className="min-h-20 w-full resize-y"
-                onChange={(event) => setText(event.target.value)}
-                value={text}
-              />
-              <div className="flex justify-end gap-1">
-                <Button
-                  aria-label="取消编辑"
-                  onClick={() => setEditing(false)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-                <Button
-                  aria-label="从此消息创建修正分支"
-                  disabled={!text.trim()}
-                  onClick={() => {
-                    onEdit(entry.id, text.trim());
-                    setEditing(false);
-                  }}
-                  size="icon-xs"
-                  type="button"
-                >
-                  <CheckIcon />
-                </Button>
-              </div>
-            </div>
-          ) : entry.text ? (
-            <Bubble>
-              <BubbleContent>{entry.text}</BubbleContent>
-            </Bubble>
-          ) : null}
-          {!editing ? (
-            <MessageFooter className="pointer-events-none justify-end gap-1 px-0 opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-              <Button
-                aria-label="编辑已压缩消息"
-                onClick={() => setEditing(true)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <PencilIcon />
-              </Button>
-            </MessageFooter>
-          ) : null}
-        </MessageContent>
-      </Message>
-    );
-  }
-
-  return (
-    <Message>
-      <MessageAvatar className="self-start">
-        <AssistantAvatar />
-      </MessageAvatar>
-      <MessageContent>
-        <MessageHeader className="px-0">MastraWork</MessageHeader>
-        {entry.text ? (
-          <Bubble variant="ghost">
-            <BubbleContent>
-              <MessageResponse>{entry.text}</MessageResponse>
-            </BubbleContent>
-          </Bubble>
-        ) : null}
-      </MessageContent>
-    </Message>
-  );
-}
-
-/**
- * 压缩摘要消息卡片:渲染在线程头部(时序正确),默认只显示摘要,
- * 可展开查看被折叠的原始消息 —— 历史不丢失,只是退出模型上下文。
- */
-export function CompactedMessageCard({
-  message,
-  onEdit,
-  userId,
-}: {
-  message: UIMessage;
-  onEdit: (messageId: string, text: string) => void;
-  userId: string;
-}) {
-  const history =
-    (message.metadata as { compactedHistory?: CompactedHistoryEntry[] } | undefined)
-      ?.compactedHistory ?? [];
-  const raw = message.parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
-  const summary = raw.includes("\n\n") ? raw.slice(raw.indexOf("\n\n") + 2) : raw;
-  const [open, setOpen] = React.useState(false);
-
-  return (
-    <MessageScrollerItem messageId={message.id} scrollAnchor>
-      <Collapsible onOpenChange={setOpen} open={open}>
-        <div className="flex w-full flex-col gap-2 py-1">
-          {/* 展开时历史消息位于压缩边界之前,后续消息仍由外层 messages.map 按顺序渲染。 */}
-          <CollapsibleContent className="flex flex-col gap-6">
-            {history.map((entry) => (
-              <CompactedHistoryMessage
-                entry={entry}
-                key={entry.id}
-                onEdit={onEdit}
-                userId={userId}
-              />
-            ))}
-          </CollapsibleContent>
-          <Marker role="status" variant="separator">
-            <MarkerContent>Conversation compacted</MarkerContent>
-          </Marker>
-          <div className="rounded-lg border bg-muted/40 px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-muted-foreground">
-                已折叠 {history.length} 条早期消息,摘要如下
-              </span>
-              <Button onClick={() => setOpen(!open)} size="sm" variant="ghost">
-                {open ? "收起原始消息" : `展开原始消息(${history.length})`}
-              </Button>
-            </div>
-            <p className="mt-1 text-sm whitespace-pre-wrap">{summary}</p>
-          </div>
-        </div>
-      </Collapsible>
-    </MessageScrollerItem>
-  );
 }
 
 export const MessageItem = React.memo(function MessageItem({

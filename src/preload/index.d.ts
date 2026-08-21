@@ -1,3 +1,4 @@
+/** 渲染进程可见的 window 类型(electronAPI + terminal IPC 桥)。 */
 import { ElectronAPI } from "@electron-toolkit/preload";
 
 declare global {

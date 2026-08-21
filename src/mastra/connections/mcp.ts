@@ -1,13 +1,15 @@
+/**
+ * MCP (Model Context Protocol) 连接模块。
+ * 官方文档:docs/en/docs/connections/mcp.mdx(传输 / 工具审批 / 安全)、
+ * docs/en/reference/tools/mcp-client.mdx(MCPClient API)。
+ * 支持 HTTP (SSE) 与 Stdio (子进程) 双传输,配置存 app_config 表
+ * (key = "mcp"),按配置哈希缓存 MCPClient,变更后重建并动态注入 Agent 工具集。
+ */
 import type { ToolsInput } from "@mastra/core/agent";
 import { type MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
 import { getAppConfig, setAppConfig } from "../storage";
 
-/**
- * MCP (Model Context Protocol) 连接模块 (docs/en/docs/connections/mcp.mdx, reference/tools/mcp-client.mdx):
- * 支持 HTTP (SSE) 和 Stdio (子进程) 双传输协议, 动态解析并注入 Agent 工具集。
- */
-
-export type McpTransport = "http" | "stdio";
+type McpTransport = "http" | "stdio";
 
 export interface McpServerConfig {
   id: string;
@@ -16,19 +18,21 @@ export interface McpServerConfig {
   transport: McpTransport;
   url?: string;
   headers?: Record<string, string>;
+  /** HTTP 传输的 SSRF 防护:mcp.mdx「Security」,仅允许重定向落到这些主机 */
   allowedHosts?: string[];
   command?: string;
   args?: string[];
   env?: Record<string, string>;
   inheritDefaultEnv?: boolean;
+  /** mcp.mdx「Tool approval」:外部工具默认逐次审批 */
   requireToolApproval?: boolean;
 }
 
-export interface McpConfig {
+interface McpConfig {
   servers: McpServerConfig[];
 }
 
-export interface McpServerSummary extends Omit<McpServerConfig, "headers" | "env"> {
+interface McpServerSummary extends Omit<McpServerConfig, "headers" | "env"> {
   headerKeys: string[];
   envKeys: string[];
 }

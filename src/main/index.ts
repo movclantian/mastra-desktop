@@ -1,3 +1,7 @@
+/**
+ * Electron 主进程:窗口生命周期、Mastra 服务子进程管理(启动 / 健康检查 /
+ * 优雅退出 / 残留清理)、终端 IPC 桥与存储位置迁移等系统能力 IPC。
+ */
 import type { ChildProcess } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -234,10 +238,8 @@ function getProjectRoot(): string {
 
 /**
  * 解析本地 mastra CLI 的真实 JS 入口(node_modules/mastra 的 bin)。
- * 直接用 process.execPath(ELECTRON_RUN_AS_NODE)跑它,而不是套 npx/.cmd:
- * - 去掉 npx 解析与批处理包装层,启动更快
- * - 直系子进程就是 CLI 本体,不再需要 shell:true(Windows spawn .cmd 会抛
- *   EINVAL 的 workaround 随之删除),进程树干净、可整树回收
+ * 用 process.execPath(ELECTRON_RUN_AS_NODE)直接执行,不经 npx / shell 包装:
+ * 启动更快,直系子进程即 CLI 本体(IPC 可达),进程树干净、可整树回收。
  */
 function getMastraCliEntry(projectRoot: string): string {
   const pkgPath = join(projectRoot, "node_modules", "mastra", "package.json");
@@ -363,7 +365,7 @@ function showCrashDialog(detail: string): void {
 /**
  * 拉起 Mastra 子进程并等健康检查通过。dev 态跑 mastra dev(保留 watch/热重载),
  * 打包态直接跑 mastra build 产物;两者统一用 process.execPath(Electron 以
- * ELECTRON_RUN_AS_NODE 模式当 Node 解释器),不再经过 npx / shell 包装。
+ * ELECTRON_RUN_AS_NODE 模式当 Node 解释器),不经 npx / shell 包装。
  */
 function ensureMastraRunning(): Promise<void> {
   if (mastraStartPromise) return mastraStartPromise;

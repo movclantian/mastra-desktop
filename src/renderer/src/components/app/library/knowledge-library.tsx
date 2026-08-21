@@ -60,6 +60,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { useWorkbench } from "@/lib/workbench";
@@ -132,7 +133,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
             : (assetPayload.assets[0]?.id ?? null),
         );
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "读取资料库失败");
+        toastError(error, "读取资料库失败");
       } finally {
         if (!silent) setLoading(false);
       }
@@ -410,12 +411,12 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
         },
       );
       const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "重新索引失败");
+      if (!response.ok) throw apiError(payload, "重新索引失败");
       await refresh(true);
       window.setTimeout(() => void refresh(true), 1_000);
       toast.success(`已重新开始索引「${asset.filename}」`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "重新索引失败");
+      toastError(error, "重新索引失败");
     } finally {
       setReindexingIds((current) => {
         const next = new Set(current);
@@ -435,14 +436,14 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
       });
       const payload = (await response.json()) as { assetIds?: string[]; error?: string };
       if (!response.ok) {
-        toast.error(payload.error || "批量重新索引失败");
+        toastError(payload, "批量重新索引失败");
         return;
       }
       await refresh(true);
       window.setTimeout(() => void refresh(true), 1_000);
       toast.success(`已重新开始 ${payload.assetIds?.length ?? 0} 个索引任务`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "批量重新索引失败");
+      toastError(error, "批量重新索引失败");
     } finally {
       setBatchReindexing(false);
     }

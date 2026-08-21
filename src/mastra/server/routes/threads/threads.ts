@@ -1,10 +1,3 @@
-import { existsSync, statSync } from "node:fs";
-import { registerApiRoute } from "@mastra/core/server";
-import { workBrowser } from "../../../agents";
-import { workSessionHost } from "../../../harness";
-import { getOwnedThread, getWorkMemory } from "./shared";
-import type { ThreadMetadata } from "./types";
-
 /**
  * 线程 CRUD 路由。
  * 线程操作参考 docs/en/docs/memory/message-history.mdx
@@ -13,6 +6,13 @@ import type { ThreadMetadata } from "./types";
  * 多用户隔离:所有线程操作以 resourceId(用户 ID)为过滤条件;
  * 工作区绑定通过 thread.metadata.workspacePath 实现(首条消息时锁定)。
  */
+import { existsSync, statSync } from "node:fs";
+import { registerApiRoute } from "@mastra/core/server";
+import { workBrowser } from "../../../agents";
+import { workError } from "../../../errors";
+import { workSessionHost } from "../../../harness";
+import { getOwnedThread, getWorkMemory } from "./shared";
+import type { ThreadMetadata } from "./types";
 
 // GET /work/threads?resourceId=xxx — 列出用户全部线程
 export const listThreadsRoute = registerApiRoute("/work/threads", {
@@ -20,7 +20,7 @@ export const listThreadsRoute = registerApiRoute("/work/threads", {
   handler: async (c) => {
     const resourceId = c.req.query("resourceId");
     if (!resourceId) {
-      return c.json({ error: "resourceId is required" }, 400);
+      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     }
     const memory = await getWorkMemory();
     const result = await memory.listThreads({
@@ -46,12 +46,12 @@ export const createThreadRoute = registerApiRoute("/work/threads", {
       metadata?: ThreadMetadata;
     };
     if (!body.resourceId) {
-      return c.json({ error: "resourceId is required" }, 400);
+      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     }
     const memory = await getWorkMemory();
     if (body.metadata?.draft) {
-      // 新会话线程唯一:draft 线程必须"没有任何历史消息"才可复用。
-      // (旧实现仅看 draft 标记,发过消息但未改名的线程会被误判为新线程。)
+      // 新会话线程唯一:draft 线程必须"没有任何历史消息"才可复用,
+      // 只看 draft 标记会把发过消息但未改名的线程误判为新线程。
       const { threads } = await memory.listThreads({
         filter: { resourceId: body.resourceId },
         perPage: false,
@@ -112,12 +112,12 @@ export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
       metadata?: ThreadMetadata;
     };
     if (!body.resourceId) {
-      return c.json({ error: "resourceId is required" }, 400);
+      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     }
     const memory = await getWorkMemory();
     const existing = await memory.getThreadById({ threadId });
     if (!existing || existing.resourceId !== body.resourceId) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     if (body.metadata?.workspaceExplicit === true) {
       const workspacePath = body.metadata.workspacePath;
@@ -131,7 +131,7 @@ export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
         validDirectory = false;
       }
       if (!validDirectory) {
-        return c.json({ error: "workspacePath must be an existing directory" }, 400);
+        throw workError("WORKSPACE_PATH_REQUIRED");
       }
     }
     const thread = await memory.updateThread({
@@ -149,15 +149,14 @@ export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
   handler: async (c) => {
     const threadId = c.req.param("threadId");
     const resourceId = c.req.query("resourceId");
-    if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
+    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, resourceId))) {
-      return c.json({ error: "Thread not found" }, 404);
+      throw workError("THREAD_NOT_FOUND");
     }
     const session = workSessionHost.get(resourceId);
     if (session?.threadId === threadId) {
-      session.abort();
-      workSessionHost.dispose(resourceId);
+      workSessionHost.delete(resourceId);
     }
     if (workBrowser.hasThreadSession(threadId)) {
       await workBrowser.closeThreadSession(threadId);

@@ -1,12 +1,13 @@
-import { PROVIDER_REGISTRY } from "@mastra/core/llm";
-import { registerApiRoute } from "@mastra/core/server";
-
 /**
  * 模型供应商路由(BYOK)。
  * - /work/providers/registry:Mastra 随包携带的官方供应商注册表,不出网
  * - /work/providers/catalog:models.dev 能力目录服务端代理,用于可选的能力徽章
  * - /work/providers/models:自定义网关模型列表拉取(参考 docs/en/models/gateways/custom-gateways.mdx)
  */
+import { PROVIDER_REGISTRY } from "@mastra/core/llm";
+import { registerApiRoute } from "@mastra/core/server";
+import { workError } from "../../errors";
+import { getProvidersConfig, saveProvidersConfig } from "../../models";
 
 // ---------------------------------------------------------------------------
 // 内置供应商注册表(随 @mastra/core 打包)
@@ -123,7 +124,10 @@ export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
     try {
       return c.json(await fetchModelsDevCatalog());
     } catch (error) {
-      return c.json({ error: `模型能力目录不可用：${(error as Error).message}` }, 502);
+      throw workError("PROVIDER_CATALOG_UNAVAILABLE", {
+        text: `模型能力目录不可用：${(error as Error).message}`,
+        cause: error,
+      });
     }
   },
 });
@@ -143,7 +147,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
     try {
       payload = (await c.req.json()) as typeof payload;
     } catch {
-      return c.json({ error: "请求体必须是 JSON" }, 400);
+      throw workError("VALIDATION_INVALID_JSON");
     }
     const { protocol, apiKey = "" } = payload;
 
@@ -151,7 +155,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
     // 版本段之下(…/v1/models)。裸域名不补 /v1 会打到网关的网页(返回 HTML),JSON
     // 解析报错完全对不上号;已带路径的端点不动。
     let base = (payload.url ?? "").trim().replace(/\/+$/, "");
-    if (!base) return c.json({ error: "Base URL 不能为空" }, 400);
+    if (!base) throw workError("VALIDATION_FAILED", { text: "Base URL 不能为空" });
     if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
     base = base.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
     if (protocol === "openai" || protocol === "anthropic") {
@@ -161,7 +165,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
           base = `${parsed.origin}/v1`;
         }
       } catch {
-        return c.json({ error: `Base URL 不是合法地址：${payload.url}` }, 400);
+        throw workError("VALIDATION_FAILED", { text: `Base URL 不是合法地址：${payload.url}` });
       }
     }
 
@@ -185,27 +189,26 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
         signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
       });
     } catch (error) {
-      return c.json({ error: `连接 ${base}/models 失败：${describeFetchError(error)}` }, 502);
+      throw workError("PROVIDER_MODELS_FETCH_FAILED", {
+        text: `连接 ${base}/models 失败：${describeFetchError(error)}`,
+        cause: error,
+      });
     }
 
     if (!response.ok) {
       // 401/404 这类错误的原因全在响应体里(Key 无效、路径不对),必须带回前端
       const detail = (await response.text().catch(() => "")).trim().slice(0, 300);
-      return c.json(
-        { error: `${base}/models 返回 HTTP ${response.status}${detail ? `：${detail}` : ""}` },
-        502,
-      );
+      throw workError("PROVIDER_MODELS_FETCH_FAILED", {
+        text: `${base}/models 返回 HTTP ${response.status}${detail ? `：${detail}` : ""}`,
+      });
     }
     // 打到网关网页/代理错误页时 content-type 不是 JSON,提前给出可行动的报错,
     // 而不是在 json() 里抛 "Unexpected token '<'"
     const contentType = response.headers.get("content-type") ?? "";
     if (!contentType.includes("json")) {
-      return c.json(
-        {
-          error: `上游返回了 ${contentType || "非 JSON"} 内容，通常是 Base URL 指向了网页或缺少版本段（OpenAI 兼容网关一般需要 …/v1）`,
-        },
-        502,
-      );
+      throw workError("PROVIDER_MODELS_FETCH_FAILED", {
+        text: `上游返回了 ${contentType || "非 JSON"} 内容，通常是 Base URL 指向了网页或缺少版本段（OpenAI 兼容网关一般需要 …/v1）`,
+      });
     }
 
     let data: {
@@ -215,16 +218,16 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
     try {
       data = (await response.json()) as typeof data;
     } catch (error) {
-      return c.json({ error: `解析 ${base}/models 的响应失败：${(error as Error).message}` }, 502);
+      throw workError("PROVIDER_MODELS_FETCH_FAILED", {
+        text: `解析 ${base}/models 的响应失败：${(error as Error).message}`,
+        cause: error,
+      });
     }
     // OpenAI 兼容 / Anthropic: { data: [{ id }] };Gemini: { models: [{ name: "models/xxx" }] }
     if (!Array.isArray(data.data) && !Array.isArray(data.models)) {
-      return c.json(
-        {
-          error: `${base}/models 的响应里没有模型列表（既无 data[] 也无 models[]），请确认 Base URL 填的是网关根地址而不是具体端点`,
-        },
-        502,
-      );
+      throw workError("PROVIDER_MODELS_FETCH_FAILED", {
+        text: `${base}/models 的响应里没有模型列表（既无 data[] 也无 models[]），请确认 Base URL 填的是网关根地址而不是具体端点`,
+      });
     }
     const models = Array.isArray(data.data)
       ? data.data.map((m) => ({ id: m.id, name: m.display_name ?? m.id }))
@@ -246,7 +249,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
 //
 // 配置必须在服务端:Studio 的模型选择器与 Agent 的默认模型都要读到它,
 // 而 Studio 跑在 Mastra 进程里,读不到渲染进程的 localStorage。
-// Key 由 WorkbenchGateway.resolveAuth 直接取用(见 src/mastra/agents/llm.ts),
+// Key 由 WorkbenchGateway.resolveAuth 直接取用(见 src/mastra/models/gateways.ts),
 // 不注入 process.env、也不再随请求体下发。
 // ---------------------------------------------------------------------------
 
@@ -254,7 +257,6 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
 export const providersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "GET",
   handler: async (c) => {
-    const { getProvidersConfig } = await import("../../models");
     return c.json(await getProvidersConfig());
   },
 });
@@ -263,7 +265,6 @@ export const providersConfigRoute = registerApiRoute("/work/providers/config", {
 export const saveProvidersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "POST",
   handler: async (c) => {
-    const { saveProvidersConfig } = await import("../../models");
     const config = (await c.req.json()) as Parameters<typeof saveProvidersConfig>[0];
     await saveProvidersConfig(config);
     return c.json({ ok: true });

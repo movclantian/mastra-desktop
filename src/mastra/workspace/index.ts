@@ -1,3 +1,17 @@
+/**
+ * 每线程工作区模块:Harness session 概念的目录侧实现。
+ * - 每条线程会话绑定一个工作目录(Harness session 的 workspace)
+ * - 显式绑定:用户在 promptInput 选择器中选定本地目录(发送首条消息后锁定)
+ * - 隐式绑定:未选择时默认 <threadsRoot>/<threadId>/(仅 Agent 工作目录,
+ *   sidebar 不展示文件树,线程列表正常平铺)
+ * - Workspace 实例按路径缓存(BM25 索引等初始化昂贵,不可每请求重建)
+ * 设置面板「工作区」标签页写入数据库 app_config 表(key = "workspace"),保存后实时生效。
+ * 官方文档:
+ * - docs/en/reference/workspace/workspace-class.mdx(workspace 可为函数,按 requestContext 动态解析)
+ * - docs/en/reference/workspace/local-filesystem.mdx(basePath/contained/allowedPaths/readOnly)
+ * - docs/en/reference/workspace/local-sandbox.mdx(workingDirectory/env/timeout/isolation)
+ * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
+ */
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -14,20 +28,6 @@ import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from ".
 import "vscode-jsonrpc/node";
 import "vscode-languageserver-protocol";
 
-/**
- * 每线程工作区模块:Harness session 概念的目录侧实现。
- * - 每条线程会话绑定一个工作目录(Harness session 的 workspace)
- * - 显式绑定:用户在 promptInput 选择器中选定本地目录(发送首条消息后锁定)
- * - 隐式绑定:未选择时默认 <threadsRoot>/<threadId>/(仅 Agent 工作目录,
- *   sidebar 不展示文件树,线程列表正常平铺)
- * - Workspace 实例按路径缓存(BM25 索引等初始化昂贵,不可每请求重建)
- * 设置面板「工作区」标签页写入数据库 app_config 表(key = "workspace"),保存后实时生效。
- * 参考文档:
- * - workspace-class.mdx(workspace 可为函数,按 requestContext 动态解析)
- * - local-filesystem.mdx(basePath/contained/allowedPaths/readOnly)
- * - local-sandbox.mdx(workingDirectory/env/timeout/isolation)
- * - search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
- */
 const WORKSPACE_CONFIG_KEY = "workspace";
 const RECENT_WORKSPACES_KEY = "recent-workspaces";
 const RECENT_WORKSPACES_LIMIT = 12;
@@ -83,7 +83,7 @@ export interface WorkspaceUserConfig {
   autoIndexPaths: string[];
 }
 
-export interface WorkspaceToolRule {
+interface WorkspaceToolRule {
   enabled?: boolean;
   requireApproval?: boolean;
   requireReadBeforeWrite?: boolean;
@@ -93,7 +93,7 @@ export interface WorkspaceToolRule {
   maxMediaBytes?: number;
 }
 
-export interface WorkspaceToolsUserConfig {
+interface WorkspaceToolsUserConfig {
   enabled?: boolean;
   requireApproval?: boolean;
   requireReadBeforeWrite?: boolean;
@@ -209,7 +209,7 @@ function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
   return output;
 }
 
-export function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): WorkspaceUserConfig {
+function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): WorkspaceUserConfig {
   const merged = { ...DEFAULT_CONFIG, ...input };
   const rawEnv = merged.sandboxEnv;
   return {

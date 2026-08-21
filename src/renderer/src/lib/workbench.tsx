@@ -1,3 +1,8 @@
+/**
+ * 工作台全局状态(React Context):线程 / 用户 / 模型选择 / 检索引擎 /
+ * 终端与浏览器请求队列 / 面板可见性。与服务端的契约见各路由文件
+ * (src/mastra/server/routes/)。联网检索常量与 src/mastra/tools/web-search.ts 一一对应。
+ */
 import type { FileUIPart } from "ai";
 import { nanoid } from "nanoid";
 import {
@@ -148,7 +153,7 @@ export interface BrowserRequest {
   newTab?: boolean;
 }
 
-// ---- 联网检索(常量与服务端 src/mastra/agents/tools.ts 一一对应) ----
+// ---- 联网检索(常量与服务端 src/mastra/tools/web-search.ts 一一对应) ----
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];
@@ -203,12 +208,12 @@ export const SEARCH_DEPTH_META: Record<SearchDepth, { label: string; description
 
 /**
  * provider 原生检索(webSearchTool)支持的模型家族。与服务端
- * src/mastra/agents/tools.ts 的 PROVIDER_SEARCH_FAMILIES 保持一致。
+ * src/mastra/tools/web-search.ts 的 PROVIDER_SEARCH_FAMILIES 保持一致。
  * 自定义网关一律不支持:对端未必实现 provider 原生检索工具。
  */
 const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "gemini", "xai"];
 
-export function isProviderSearchSupported(provider: ProviderConfig | undefined): boolean {
+function isProviderSearchSupported(provider: ProviderConfig | undefined): boolean {
   if (!provider || provider.baseUrl || !provider.registryId) return false;
   return PROVIDER_SEARCH_FAMILIES.includes(provider.registryId);
 }

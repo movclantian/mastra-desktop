@@ -103,7 +103,7 @@ export const APPROVAL_PRESETS = [
   },
 ];
 
-export type ApprovalPresetId = (typeof APPROVAL_PRESETS)[number]["id"] | "custom";
+type ApprovalPresetId = (typeof APPROVAL_PRESETS)[number]["id"] | "custom";
 
 function sameCategories(left: PermissionRules, right: PermissionRules): boolean {
   return TOOL_CATEGORIES.every(

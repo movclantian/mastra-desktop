@@ -1,3 +1,9 @@
+/**
+ * Harness 会话运行时(docs/en/docs/harness/agent-controller.mdx):
+ * 围绕共享 Agent 承载单个会话的生命周期、排队、打断与策略通知。
+ * 线程级收发全部走官方原语:queueMessage(ifIdle: wake)、subscribeToThread、
+ * abortThreadStream、sendSignal(ifActive: deliver / ifIdle: discard)。
+ */
 import { randomUUID } from "node:crypto";
 import type {
   Agent,
@@ -6,27 +12,24 @@ import type {
   AgentThreadSubscription,
 } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
-import { z } from "zod";
 import { mastraWorkAgent } from "../agents";
 import { SESSION_GRANTS_CONTEXT_KEY, type ToolCategory } from "../agents/permissions";
 import type { WorkNotificationInput } from "./signals";
 
 /** Live state mirrors the Session state boundary in agent-controller.mdx. */
-export const workSessionStateSchema = z.object({
-  activeProject: z.string().optional(),
-  yolo: z.boolean().optional(),
-  count: z.number().int().optional(),
-});
-
-export type WorkSessionState = z.infer<typeof workSessionStateSchema>;
-export interface WorkSessionGrants {
+interface WorkSessionState {
+  activeProject?: string;
+  yolo?: boolean;
+  count?: number;
+}
+interface WorkSessionGrants {
   categories: ToolCategory[];
   tools: string[];
 }
 
 export const SESSION_SCOPE_DEFAULT = "workbench";
 
-export interface WorkDisplayState {
+interface WorkDisplayState {
   status: "idle" | "running" | "suspended";
   threadId: string;
   activeRunId: string | null;
@@ -61,13 +64,8 @@ interface QueuedFollowUp {
   message: AgentMessageInput;
   streamOptions: AgentExecutionOptions;
   subscription: AgentThreadSubscription;
-  resolveRunId: (runId: string | null) => void;
 }
 
-/**
- * Harness 会话运行时 (docs/en/docs/harness/sessions.mdx):
- * 负责单个工作会话的生命周期、排队、打断、事件分发与策略通知。
- */
 export class WorkSession {
   readonly id: string;
   readonly resourceId: string;
@@ -84,7 +82,6 @@ export class WorkSession {
   private followUpMonitor: Promise<AgentThreadSubscription> | undefined;
   private followUpMonitorConsumer: Promise<void> | undefined;
   private followUpCount = 0;
-  private latestUserText = "";
 
   constructor(options: {
     id: string;
@@ -110,19 +107,9 @@ export class WorkSession {
     this.currentThreadId = threadId;
   }
 
-  getModeId(): string {
-    return this.modeId;
-  }
-
-  setModeId(modeId: string): void {
-    this.modeId = modeId;
-  }
-
   setMode(modeId: string): void {
     this.modeId = modeId;
   }
-
-  applyRequestContext(_context: RequestContext): void {}
 
   setExecutionDefaults(defaults: AgentExecutionOptions): void {
     this.executionDefaults = defaults;
@@ -194,14 +181,6 @@ export class WorkSession {
     return this.getState();
   }
 
-  getLatestUserText(): string {
-    return this.latestUserText;
-  }
-
-  setLatestUserText(text: string): void {
-    this.latestUserText = text;
-  }
-
   async subscribe(threadId: string): Promise<AgentThreadSubscription> {
     const sub = await this.agent.subscribeToThread({
       resourceId: this.resourceId,
@@ -216,12 +195,8 @@ export class WorkSession {
     subscription.unsubscribe();
   }
 
-  async subscribeFollowUp(
-    followUpId: string,
-  ): Promise<{ subscription: AgentThreadSubscription; runId?: string | null } | undefined> {
-    const target = this.followUpTargets.get(followUpId);
-    if (!target) return undefined;
-    return { subscription: target.subscription };
+  async subscribeFollowUp(followUpId: string): Promise<AgentThreadSubscription | undefined> {
+    return this.followUpTargets.get(followUpId)?.subscription;
   }
 
   sendMessage(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
@@ -243,23 +218,17 @@ export class WorkSession {
     });
   }
 
-  async queueFollowUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+  async followUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
     const monitor = await this.ensureFollowUpMonitor();
     if (!monitor) {
       return { action: "blocked" as const, followUpId: null };
     }
-
-    let resolveRunId: (runId: string | null) => void = () => {};
-    new Promise<string | null>((resolve) => {
-      resolveRunId = resolve;
-    });
 
     const target: QueuedFollowUp = {
       id: randomUUID(),
       message,
       streamOptions,
       subscription: monitor.subscription,
-      resolveRunId,
     };
 
     const activeRunId = this.agent.getActiveThreadRunId({
@@ -284,10 +253,6 @@ export class WorkSession {
     return { action: "blocked" as const, followUpId: target.id };
   }
 
-  followUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
-    return this.queueFollowUp(message, streamOptions);
-  }
-
   private async startFollowUp(target: QueuedFollowUp): Promise<boolean> {
     try {
       const result = this.agent.queueMessage(target.message, {
@@ -296,13 +261,9 @@ export class WorkSession {
         ifIdle: { behavior: "wake", streamOptions: target.streamOptions },
       });
       const accepted = await result.accepted;
-      if ("runId" in accepted && accepted.action !== "blocked") {
-        target.resolveRunId(accepted.runId);
-        return true;
-      }
-      target.resolveRunId(null);
+      if ("runId" in accepted && accepted.action !== "blocked") return true;
     } catch {
-      target.resolveRunId(null);
+      // 启动失败:目标会被下方清理逻辑回收
     }
     if (this.followUpTargets.has(target.id)) {
       target.subscription.unsubscribe();
@@ -444,7 +405,6 @@ export class WorkSession {
     this.followUpMonitorConsumer = undefined;
     void monitor?.then((subscription) => subscription.unsubscribe()).catch(() => undefined);
     for (const followUp of this.followUpTargets.values()) {
-      followUp.resolveRunId(null);
       followUp.subscription.unsubscribe();
     }
     this.followUps.length = 0;
@@ -473,19 +433,15 @@ export class WorkSession {
   }
 }
 
-export class WorkSessionHost {
+class WorkSessionHost {
   private readonly sessions = new Map<string, WorkSession>();
 
-  resolve(options: { resourceId: string; scope?: string; threadId: string; sessionId?: string }): {
-    session: WorkSession;
-    isNew: boolean;
-  } {
-    const key =
-      options.sessionId || `${options.resourceId}:${options.scope ?? SESSION_SCOPE_DEFAULT}`;
+  getOrCreate(options: { resourceId: string; scope?: string; threadId: string }): WorkSession {
+    const key = `${options.resourceId}:${options.scope ?? SESSION_SCOPE_DEFAULT}`;
     const existing = this.sessions.get(key);
     if (existing) {
       existing.setThreadId(options.threadId);
-      return { session: existing, isNew: false };
+      return existing;
     }
     const session = new WorkSession({
       id: key,
@@ -494,11 +450,7 @@ export class WorkSessionHost {
       threadId: options.threadId,
     });
     this.sessions.set(key, session);
-    return { session, isNew: true };
-  }
-
-  getOrCreate(options: { resourceId: string; scope?: string; threadId: string }): WorkSession {
-    return this.resolve(options).session;
+    return session;
   }
 
   get(sessionId: string): WorkSession | undefined {
@@ -510,10 +462,6 @@ export class WorkSessionHost {
     if (!session) return false;
     session.abort();
     return this.sessions.delete(sessionId);
-  }
-
-  dispose(sessionId: string): boolean {
-    return this.delete(sessionId);
   }
 }
 

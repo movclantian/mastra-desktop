@@ -13,7 +13,7 @@ export function normalizeFilename(filename: string): string {
   return name || "未命名附件";
 }
 
-export function isTextLike(filename: string, mediaType: string): boolean {
+function isTextLike(filename: string, mediaType: string): boolean {
   if (mediaType.startsWith("text/")) return true;
   return /\.(txt|md|markdown|json|csv|tsv|xml|yaml|yml|html|htm|js|jsx|ts|tsx|css|scss|less|py|go|rs|java|c|cpp|h|hpp|sql|sh|ps1|log)$/i.test(
     filename,

@@ -1,14 +1,18 @@
+/**
+ * 联网检索工具模块。
+ * 官方文档:docs/en/integrations/tools/tavily.mdx(createTavilySearchTool /
+ * createTavilyExtractTool)、firecrawl.mdx(Firecrawl SDK);provider 原生检索用
+ * @mastra/core/tools 的 webSearchTool / webFetchTool(仅 OpenAI / Anthropic /
+ * Google / xAI 家族可用)。AnySearch 为无官方集成的第三方 REST,走手写 fetch。
+ * 引擎 + 强度档(fast/balanced/deep)经 RequestContext 传入,由 Agent 的动态
+ * tools / instructions 消费(见 src/mastra/agents/index.ts)。
+ */
 import type { ToolsInput } from "@mastra/core/agent";
 import { createTool, webFetchTool, webSearchTool } from "@mastra/core/tools";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
 import { z } from "zod";
 import { getAppConfig, setAppConfig } from "../storage";
-
-/**
- * 联网检索工具模块 (docs/en/integrations/tools/):
- * Tavily / Firecrawl / AnySearch / Provider 原生检索。
- */
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];
@@ -18,7 +22,7 @@ export const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "xai"]
 
 export const MODEL_FAMILY_CONTEXT_KEY = "modelFamily";
 
-export function supportsProviderSearch(family: unknown): boolean {
+function supportsProviderSearch(family: unknown): boolean {
   if (typeof family !== "string") return false;
   const normalized = family === "gemini" ? "google" : family;
   return (PROVIDER_SEARCH_FAMILIES as readonly string[]).includes(normalized);
@@ -27,7 +31,7 @@ export function supportsProviderSearch(family: unknown): boolean {
 export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
 export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
 
-export interface WebSearchSelection {
+interface WebSearchSelection {
   engine: SearchEngine;
   depth: SearchDepth;
 }
@@ -493,17 +497,6 @@ export async function resolveWebSearchTools(
     web_fetch: webFetchTool,
     ...createAnySearchTools(config.anysearch.apiKey, preset),
   };
-}
-
-export function isEngineConfigured(
-  engine: SearchEngine,
-  config: ToolsUserConfig,
-  modelFamily?: unknown,
-): boolean {
-  if (engine === "provider") return supportsProviderSearch(modelFamily);
-  if (engine === "tavily") return Boolean(config.tavily.apiKey);
-  if (engine === "firecrawl") return Boolean(config.firecrawl.apiKey);
-  return true;
 }
 
 const ENGINE_LABELS: Record<SearchEngine, string> = {

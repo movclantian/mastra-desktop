@@ -1,15 +1,17 @@
+/**
+ * 模型供应商配置与 BYOK 解析。
+ * 官方文档:docs/en/models/index.mdx(model router 的 provider/model 路由格式)、
+ * docs/en/models/environment-variables.mdx。
+ * 配置读写走 app_config 表(key = "providers"),设置面板「模型供应商」写入;
+ * resolveRequestModel 供 chat / session 路由按请求覆盖模型 —— 路由 id 只携带
+ * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
+ */
 import { type GatewayLanguageModel, ModelRouterEmbeddingModel } from "@mastra/core/llm";
 import { getAppConfig, setAppConfig } from "../storage";
 import { createGatewayModel, WORKBENCH_GATEWAY_ID } from "./gateways";
 
-/** RequestContext key used by the shared work Agent and delegated Agents. */
+/** 请求级模型覆盖:chat 路由写入,Agent / 子 Agent 的 model 回调读取 */
 export const REQUEST_MODEL_CONTEXT_KEY = "mastra-work:request-model";
-
-/**
- * 模型供应商配置与 BYOK 解析 (docs/en/models/providers/):
- * - 配置读写: app_config 表 key = "providers", 设置面板「模型供应商」写入
- * - resolveRequestModel: chat 路由按请求覆盖模型
- */
 
 export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
@@ -37,14 +39,14 @@ export interface UserProviderConfig {
 }
 
 /** 当前选定模型: 驱动输入框, 也作为 Agent 的默认模型 */
-export interface UserModelSelection {
+interface UserModelSelection {
   providerId: string;
   modelId: string;
   modelName: string;
   reasoningEffort: string;
 }
 
-export interface ProvidersUserConfig {
+interface ProvidersUserConfig {
   providers: UserProviderConfig[];
   modelSelection: UserModelSelection | null;
 }
@@ -93,9 +95,7 @@ export async function saveProvidersConfig(config: Partial<ProvidersUserConfig>):
  * Build a provider-backed embedding model from the same BYOK registry used by
  * chat. Synchronous after provider config cache is populated.
  */
-export function getConfiguredEmbeddingModel(
-  reference: string,
-): ModelRouterEmbeddingModel | undefined {
+function getConfiguredEmbeddingModel(reference: string): ModelRouterEmbeddingModel | undefined {
   const separator = reference.indexOf("/");
   if (separator <= 0 || !providersConfigCache) return undefined;
   const providerId = reference.slice(0, separator);
@@ -156,7 +156,7 @@ export function splitRouterId(routerId: string): { providerId: string; modelId: 
   };
 }
 
-export interface RequestModel {
+interface RequestModel {
   id: string;
   apiKey: string;
   url?: string;
@@ -164,7 +164,7 @@ export interface RequestModel {
   useResponses?: boolean;
 }
 
-export function isRequestModel(value: unknown): value is RequestModel {
+function isRequestModel(value: unknown): value is RequestModel {
   if (typeof value !== "object" || value === null) return false;
   const model = value as Record<string, unknown>;
   return typeof model.id === "string" && typeof model.apiKey === "string";

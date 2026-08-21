@@ -1,3 +1,7 @@
+/**
+ * Electron preload:contextBridge 暴露终端 IPC 与 electronAPI,
+ * 消息在进入主进程前先经 terminal-contract 的解析校验。
+ */
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
 import {

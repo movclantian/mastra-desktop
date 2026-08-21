@@ -1,5 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
+import { readErrorPayload } from "./errors";
 
 /**
  * BYOK 模型供应商管理。
@@ -25,27 +26,13 @@ export interface RegistryProvider {
   docUrl: string;
 }
 
-/**
- * 服务端的错误响应统一带 { error },里面是可行动的原因(代理没生效、DNS 被污染、
- * Key 无效…)。只显示 HTTP 状态码等于把这些信息全丢掉,所以统一从响应体里取。
- */
-async function readErrorMessage(response: Response, fallback: string): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: string };
-    if (body.error) return body.error;
-  } catch {
-    // 非 JSON 响应(代理错误页等),退回状态码
-  }
-  return `${fallback}（HTTP ${response.status}）`;
-}
-
 let registryPromise: Promise<RegistryProvider[]> | null = null;
 
 export function loadRegistry(): Promise<RegistryProvider[]> {
   registryPromise ??= fetch(`${MASTRA_SERVER_URL}/work/providers/registry`)
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error(await readErrorMessage(response, "拉取内置供应商列表失败"));
+        throw new Error((await readErrorPayload(response, "拉取内置供应商列表失败")).error);
       }
       const { providers } = (await response.json()) as { providers: RegistryProvider[] };
       return providers;
@@ -173,7 +160,7 @@ export interface ProviderConfig {
 // 目录不可用时只是不显示能力徽章,不影响供应商和模型本身的使用。
 // ---------------------------------------------------------------------------
 
-export interface CatalogModel {
+interface CatalogModel {
   id: string;
   name: string;
   reasoning: boolean;
@@ -203,7 +190,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
     // 通过 Mastra 服务端代理拉取(渲染进程 CSP 禁止直连外网,且服务端已缓存 1 小时)
     const response = await fetch(`${MASTRA_SERVER_URL}/work/providers/catalog`);
     if (!response.ok) {
-      throw new Error(await readErrorMessage(response, "拉取模型目录失败"));
+      throw new Error((await readErrorPayload(response, "拉取模型目录失败")).error);
     }
     // models.dev api.json 模型字段:reasoning / tool_call /
     // modalities.input 含 image|audio / limit.context
@@ -264,7 +251,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
 // ---------------------------------------------------------------------------
 // 供应商模型列表(内置供应商来自 registry;自定义网关走服务端代理)
 // 会话内存缓存:同一会话内重复打开选模型弹窗不重复打网关;重启后重拉,
-// 天然拿到网关最新列表(原先 localStorage 无 TTL,不手动失效就永远旧列表)。
+// 天然拿到网关最新列表。
 // ---------------------------------------------------------------------------
 
 const providerModelsCache = new Map<string, EnabledModel[]>();
@@ -297,7 +284,7 @@ export async function fetchProviderModels(
       }),
     });
     if (!response.ok) {
-      throw new Error(await readErrorMessage(response, "拉取模型列表失败"));
+      throw new Error((await readErrorPayload(response, "拉取模型列表失败")).error);
     }
     ({ models } = (await response.json()) as { models: EnabledModel[] });
   }
@@ -322,7 +309,7 @@ export function invalidateProviderModelsCache(providerId: string): void {
 // 能力徽章
 // ---------------------------------------------------------------------------
 
-export interface ModelCapabilities {
+interface ModelCapabilities {
   reasoning: boolean;
   vision: boolean;
   audio: boolean;
@@ -637,12 +624,12 @@ export async function testProviderModel(
 // ---------------------------------------------------------------------------
 // BYOK → 后端请求模型对象
 // 参考 docs/en/models/index.mdx:内置 provider 用 "provider/model" + apiKey;
-// 自定义网关带 url + protocol + useResponses,由后端(src/mastra/agents/llm)用官方
+// 自定义网关带 url + protocol + useResponses,由后端(src/mastra/models/gateways.ts)用官方
 // provider 包解析为真实端点:anthropic → Messages API,gemini → 原生 API,
 // openai → Responses(useResponses)或 Chat Completions
 // ---------------------------------------------------------------------------
 
-export interface RequestModelPayload {
+interface RequestModelPayload {
   id: string;
   apiKey: string;
   url?: string;
