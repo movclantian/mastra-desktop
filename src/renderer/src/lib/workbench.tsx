@@ -49,13 +49,17 @@ export interface ThreadMetadata {
   modeId?: string;
   /** 工具审批规则(官方 PermissionRules 形状);缺省视为默认规则。读取时仍过 parsePermissionRules */
   permissionRules?: PermissionRules;
-  /** 本线程最近使用的模型形态(chat 路由每次请求写入,切线程时据此恢复选择) */
-  modelSelection?: {
-    providerId: string;
-    modelId: string;
-    modelName: string;
-    reasoningEffort: string;
-  };
+  /** 线程内每种模式各自最近使用的模型形态。 */
+  modelSelectionByMode?: Record<
+    string,
+    {
+      providerId: string;
+      modelId: string;
+      modelName: string;
+      reasoningEffort: string;
+    }
+  >;
+  subagentModels?: Record<string, string>;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;
@@ -83,6 +87,7 @@ export interface RecentWorkspace {
 
 /** GET /work/threads/:id/tree:文件树单层条目 */
 export interface TreeEntry {
+  hidden?: boolean;
   name: string;
   path: string;
   type: "file" | "dir";
@@ -125,6 +130,14 @@ export interface MessageSearchHit {
 export interface PendingJump {
   threadId: string;
   messageId: string;
+}
+
+export type WorkspacePanelTab = "files" | "browser";
+
+export interface TerminalRequest {
+  id: number;
+  command?: string;
+  filePath?: string;
 }
 
 // ---- 联网检索(常量与服务端 src/mastra/agents/tools.ts 一一对应) ----
@@ -299,6 +312,15 @@ interface WorkbenchValue {
   pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
   queueLibraryFiles: (files: Array<FileUIPart & { byteSize?: number }>) => void;
   clearPendingLibraryFiles: () => void;
+  // 线程级工作面板(Minke right/bottom tabs 对应的应用状态)
+  workspacePanelOpen: boolean;
+  workspacePanelTab: WorkspacePanelTab;
+  openWorkspacePanel: (tab?: WorkspacePanelTab) => void;
+  setWorkspacePanelOpen: (open: boolean) => void;
+  terminalPanelOpen: boolean;
+  setTerminalPanelOpen: (open: boolean) => void;
+  terminalRequest: TerminalRequest | null;
+  requestTerminalCommand: (request: Omit<TerminalRequest, "id">) => void;
 }
 
 const WorkbenchContext = createContext<WorkbenchValue | null>(null);
@@ -338,6 +360,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
+  const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
+  const [workspacePanelTab, setWorkspacePanelTab] = useState<WorkspacePanelTab>("files");
+  const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
+  const [terminalRequest, setTerminalRequest] = useState<TerminalRequest | null>(null);
+  const terminalRequestIdRef = useRef(0);
   const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>([]);
   const [pendingLibraryFiles, setPendingLibraryFiles] = useState<
     Array<FileUIPart & { byteSize?: number }>
@@ -412,16 +439,41 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   /**
    * 用户显式选定模型:立即写全局默认(新线程与 Studio 直接聊天都用它),
-   * 本线程的快照由 chat 路由在下一次请求时写入 thread.metadata.modelSelection。
+   * 并通过 Session model API 写入本线程当前 mode 的模型快照。
    */
-  const setModelSelection = useCallback((selection: ModelSelection | null) => {
-    setModelSelectionState(selection);
-    void fetch(`${MASTRA_SERVER_URL}/work/providers/config`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ modelSelection: selection }),
-    }).catch(() => undefined);
-  }, []);
+  const setModelSelection = useCallback(
+    (selection: ModelSelection | null) => {
+      setModelSelectionState(selection);
+      void fetch(`${MASTRA_SERVER_URL}/work/providers/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelSelection: selection }),
+      }).catch(() => undefined);
+      if (!activeThreadId) return;
+      const current = threads.find((thread) => thread.id === activeThreadId);
+      const modelSelectionByMode = { ...current?.metadata.modelSelectionByMode };
+      if (selection) modelSelectionByMode[modeId] = selection;
+      else delete modelSelectionByMode[modeId];
+      const nextMetadata = {
+        ...current?.metadata,
+        modelSelectionByMode,
+      };
+      setThreads((currentThreads) =>
+        currentThreads.map((thread) =>
+          thread.id === activeThreadId ? { ...thread, metadata: nextMetadata } : thread,
+        ),
+      );
+      void fetch(
+        `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${activeThreadId}/model?resourceId=${encodeURIComponent(user.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ selection, modeId }),
+        },
+      ).catch(() => undefined);
+    },
+    [activeThreadId, modeId, threads],
+  );
 
   const setSearchSelection = useCallback((selection: SearchSelection | null) => {
     setSearchSelectionState(selection);
@@ -441,6 +493,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
+
+  const openWorkspacePanel = useCallback((tab: WorkspacePanelTab = "files") => {
+    setWorkspacePanelTab(tab);
+    setWorkspacePanelOpen(true);
+  }, []);
+
+  const requestTerminalCommand = useCallback((request: Omit<TerminalRequest, "id">) => {
+    setTerminalPanelOpen(true);
+    setTerminalRequest({ ...request, id: ++terminalRequestIdRef.current });
+  }, []);
 
   // 三个检索引擎的 Key 配置存服务端(app_config),菜单据此判断引擎是否可用
   const refreshToolsConfig = useCallback(async () => {
@@ -515,6 +577,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
                 // 新线程继承当前会话的模式与审批规则(官方:Session 默认 → thread settings)
                 modeId,
                 permissionRules,
+                ...(modelSelection ? { modelSelectionByMode: { [modeId]: modelSelection } } : {}),
               },
             }),
           });
@@ -543,7 +606,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       );
       return request;
     },
-    [refreshThreads, selectThread, modeId, permissionRules],
+    [refreshThreads, selectThread, modeId, modelSelection, permissionRules],
   );
 
   const patchThread = useCallback(
@@ -598,9 +661,28 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const setModeId = useCallback(
     async (next: WorkModeId) => {
       setModeIdState(next);
-      if (activeThreadId) await patchThread(activeThreadId, { metadata: { modeId: next } });
+      if (activeThreadId) {
+        const thread = threads.find((item) => item.id === activeThreadId);
+        const snapshot = thread?.metadata.modelSelectionByMode?.[next];
+        if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
+          setModelSelectionState({
+            providerId: snapshot.providerId,
+            modelId: snapshot.modelId,
+            modelName: snapshot.modelName,
+            reasoningEffort: snapshot.reasoningEffort as ReasoningEffort | "off",
+          });
+        }
+        await fetch(
+          `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${activeThreadId}/mode?resourceId=${encodeURIComponent(user.id)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ modeId: next }),
+          },
+        );
+      }
     },
-    [activeThreadId, patchThread],
+    [activeThreadId, providers, threads],
   );
 
   /** 覆盖工具审批规则(审批模式菜单与审批面板的「始终允许此类」共用) */
@@ -608,10 +690,18 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     async (rules: PermissionRules) => {
       setPermissionRulesState(rules);
       if (activeThreadId) {
-        await patchThread(activeThreadId, { metadata: { permissionRules: rules } });
+        await fetch(
+          `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${activeThreadId}/permissions?resourceId=${encodeURIComponent(user.id)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(rules),
+          },
+        );
+        await refreshThreads();
       }
     },
-    [activeThreadId, patchThread],
+    [activeThreadId, refreshThreads],
   );
 
   /**
@@ -646,7 +736,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     if (metadata.permissionRules !== undefined) {
       setPermissionRulesState(parsePermissionRules(metadata.permissionRules));
     }
-    const snapshot = metadata.modelSelection;
+    const snapshot = metadata.modelSelectionByMode?.[parseModeId(metadata.modeId)];
     // 供应商可能已被删掉:形态还在但模型不可用时保持当前选择,避免选择器变空
     if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
       setModelSelectionState({
@@ -771,6 +861,14 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       pendingLibraryFiles,
       queueLibraryFiles,
       clearPendingLibraryFiles,
+      workspacePanelOpen,
+      workspacePanelTab,
+      openWorkspacePanel,
+      setWorkspacePanelOpen,
+      terminalPanelOpen,
+      setTerminalPanelOpen,
+      terminalRequest,
+      requestTerminalCommand,
     }),
     [
       threads,
@@ -811,6 +909,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       pendingLibraryFiles,
       queueLibraryFiles,
       clearPendingLibraryFiles,
+      workspacePanelOpen,
+      workspacePanelTab,
+      openWorkspacePanel,
+      terminalPanelOpen,
+      terminalRequest,
+      requestTerminalCommand,
     ],
   );
 

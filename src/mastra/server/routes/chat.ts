@@ -1,7 +1,14 @@
 import { existsSync, statSync } from "node:fs";
-import { handleChatStream } from "@mastra/ai-sdk";
-import type { MastraLanguageModel } from "@mastra/core/agent";
+import { handleChatStream, toAISdkStream } from "@mastra/ai-sdk";
+import type {
+  AgentExecutionOptions,
+  AgentMessageInput,
+  AgentSignalContents,
+  AgentThreadSubscription,
+  MastraLanguageModel,
+} from "@mastra/core/agent";
 import { registerApiRoute } from "@mastra/core/server";
+import type { MastraModelOutput } from "@mastra/core/stream";
 import {
   createUIMessageStreamResponse,
   type LanguageModelUsage,
@@ -9,15 +16,17 @@ import {
   type ToolSet,
   type UIMessage,
 } from "ai";
-import { REQUEST_MODEL_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
 import {
   defaultModelFamily,
+  REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveRequestModel,
   usesOpenAIResponses,
 } from "../../agents/llm";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
+import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
 import {
   MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
@@ -33,6 +42,7 @@ import {
   LIBRARY_THREAD_CONTEXT_KEY,
   searchLibrary,
 } from "../../library";
+import { OM_MODELS_CONTEXT_KEY } from "../../memory";
 import {
   addRecentWorkspace,
   ensureDirectory,
@@ -40,6 +50,7 @@ import {
   isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
 } from "../../workspace";
+import { isTerminalAgentChunk, workSessionHost } from "../session";
 import { getWorkMemory } from "./threads";
 import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
 import type { ThreadMetadata } from "./threads/types";
@@ -66,6 +77,57 @@ type WorkDataParts = {
 };
 
 type WorkUIMessage = UIMessage<WorkMessageMetadata, WorkDataParts>;
+
+function userMessageInput(message: WorkUIMessage): AgentMessageInput | undefined {
+  type AgentMessageContents = Exclude<AgentSignalContents, string>;
+  const contents = message.parts.reduce<AgentMessageContents>((result, part) => {
+    if (part.type === "text" && part.text.trim()) {
+      result.push({ type: "text", text: part.text });
+      return result;
+    }
+    if (part.type !== "file") return result;
+    try {
+      result.push({
+        type: "file",
+        data: new URL(part.url),
+        mediaType: part.mediaType,
+        ...(part.filename ? { filename: part.filename } : {}),
+      });
+    } catch {
+      return result;
+    }
+    return result;
+  }, []);
+  if (contents.length === 0) return undefined;
+  return {
+    contents,
+    ...(message.metadata ? { metadata: message.metadata as Record<string, unknown> } : {}),
+  };
+}
+
+function subscribedAgentStream(
+  subscription: AgentThreadSubscription,
+  targetRunId: string,
+  onClose: () => void,
+) {
+  return new ReadableStream({
+    async start(controller) {
+      try {
+        for await (const chunk of subscription.stream) {
+          if ((chunk as { runId?: unknown }).runId !== targetRunId) continue;
+          controller.enqueue(chunk);
+          if (isTerminalAgentChunk(chunk)) break;
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        onClose();
+      }
+    },
+    cancel: onClose,
+  });
+}
 
 const TASK_TOOL_NAMES = new Set(["task_write", "task_update", "task_complete", "task_check"]);
 const LIBRARY_SEARCH_TOOL_NAMES = new Set(["library_vector_search", "library_graph_search"]);
@@ -191,6 +253,52 @@ function streamLibrarySources<C>(
   );
 }
 
+function durableClientStream<C>(
+  stream: ReadableStream<C>,
+  options: {
+    librarySources: LibraryCitationSource[];
+    onFinish: (usage: LanguageModelUsage | undefined) => Promise<void>;
+  },
+): ReadableStream<C> {
+  const persistingStream = streamLibrarySources(
+    streamTaskUpdates(stream),
+    options.librarySources,
+  ).pipeThrough(
+    new TransformStream<C, C>({
+      async transform(value, controller) {
+        const raw = value as {
+          type?: unknown;
+          messageMetadata?: { usage?: LanguageModelUsage };
+        };
+        if (raw.type === "finish") {
+          try {
+            await options.onFinish(raw.messageMetadata?.usage);
+          } catch {
+            // The Agent message is already durable; auxiliary metadata must not
+            // convert a successful run into an AI SDK transport error.
+          }
+        }
+        controller.enqueue(value);
+      },
+    }),
+  );
+
+  // Keep consuming if the browser disconnects. An explicit session abort is
+  // the only operation that stops the underlying Agent run.
+  const [clientStream, monitorStream] = persistingStream.tee();
+  void (async () => {
+    const reader = monitorStream.getReader();
+    try {
+      while (!(await reader.read()).done) {
+        // onFinish performs the durable auxiliary writes.
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  })().catch(() => undefined);
+  return clientStream;
+}
+
 async function persistLatestUsage(
   threadId: string | undefined,
   usage: LanguageModelUsage | undefined,
@@ -225,9 +333,19 @@ async function persistLatestUsage(
 async function prepareThreadSession(options: {
   threadId: string;
   requestedWorkspacePath?: string;
-  modelSnapshot?: ThreadMetadata["modelSelection"];
+  modelSnapshot?: NonNullable<ThreadMetadata["modelSelectionByMode"]>[string];
   planApproved: boolean;
-}): Promise<{ workspacePath?: string; modeId: string; permissionRules: unknown } | undefined> {
+}): Promise<
+  | {
+      workspacePath?: string;
+      modeId: string;
+      permissionRules: unknown;
+      subagentModels?: Record<string, string>;
+      observerModelId?: string;
+      reflectorModelId?: string;
+    }
+  | undefined
+> {
   const memory = await getWorkMemory();
   const thread = await memory.getThreadById({ threadId: options.threadId });
   if (!thread) return undefined;
@@ -262,12 +380,17 @@ async function prepareThreadSession(options: {
 
   const snapshot = options.modelSnapshot;
   if (snapshot) {
-    const current = metadata.modelSelection;
+    const current = metadata.modelSelectionByMode?.[modeId];
     const unchanged =
       current?.providerId === snapshot.providerId &&
       current?.modelId === snapshot.modelId &&
       current?.reasoningEffort === snapshot.reasoningEffort;
-    if (!unchanged) patch.modelSelection = snapshot;
+    if (!unchanged) {
+      patch.modelSelectionByMode = {
+        ...metadata.modelSelectionByMode,
+        [modeId]: snapshot,
+      };
+    }
   }
 
   if (Object.keys(patch).length > 0) {
@@ -278,11 +401,20 @@ async function prepareThreadSession(options: {
     });
   }
 
-  return { workspacePath, modeId, permissionRules: metadata.permissionRules };
+  return {
+    workspacePath,
+    modeId,
+    permissionRules: metadata.permissionRules,
+    subagentModels: metadata.subagentModels,
+    observerModelId: metadata.observerModelId,
+    reflectorModelId: metadata.reflectorModelId,
+  };
 }
 
 /** 请求体里的模型形态快照(前端 transport 随 body.modelSelection 上传) */
-function parseModelSnapshot(value: unknown): ThreadMetadata["modelSelection"] | undefined {
+function parseModelSnapshot(
+  value: unknown,
+): NonNullable<ThreadMetadata["modelSelectionByMode"]>[string] | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const raw = value as Record<string, unknown>;
   if (typeof raw.providerId !== "string" || typeof raw.modelId !== "string") return undefined;
@@ -318,6 +450,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       attachmentTokenBudget?: number;
       attachmentCapabilities?: { vision?: boolean; audio?: boolean };
       skillNames?: string[];
+      sessionScope?: string;
+      sessionAction?: "steer";
       [key: string]: unknown;
     };
     const branchOperation = await prepareMessageBranchOperation({
@@ -349,7 +483,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       attachmentTokenBudget,
       attachmentCapabilities,
       skillNames,
+      sessionScope,
+      sessionAction,
       responseMessageId,
+      modelSettings: rawModelSettings,
       ...bodyRest
     } = body;
     const model = rawModel !== undefined ? await resolveRequestModel(rawModel) : undefined;
@@ -416,6 +553,24 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         requestContext.set(MODE_ID_CONTEXT_KEY, session.modeId);
         if (session.permissionRules !== undefined) {
           requestContext.set(PERMISSION_RULES_CONTEXT_KEY, session.permissionRules);
+        }
+        if (session.subagentModels) {
+          requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, session.subagentModels);
+        }
+        if (session.observerModelId || session.reflectorModelId) {
+          requestContext.set(OM_MODELS_CONTEXT_KEY, {
+            observerModelId: session.observerModelId,
+            reflectorModelId: session.reflectorModelId,
+          });
+        }
+        if (body.memory.resource) {
+          const liveSession = workSessionHost.getOrCreate({
+            resourceId: body.memory.resource,
+            scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
+            threadId: body.memory.thread,
+          });
+          liveSession.setMode(session.modeId);
+          liveSession.applyRequestContext(requestContext);
         }
       }
     }
@@ -489,6 +644,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const params = {
       ...bodyRest,
       ...(model !== undefined ? { model } : {}),
+      ...(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools !== undefined
+        ? { activeTools: resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools }
+        : {}),
       ...(reasoningSummary
         ? {
             providerOptions: {
@@ -503,97 +661,139 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       messages: body.messages,
       requestContext,
     };
+    const sessionExecutionOptions =
+      body.memory?.thread && body.memory.resource
+        ? ({
+            ...(params.activeTools ? { activeTools: params.activeTools } : {}),
+            ...(typeof rawModelSettings === "object" && rawModelSettings !== null
+              ? { modelSettings: rawModelSettings as AgentExecutionOptions["modelSettings"] }
+              : {}),
+            ...(typeof params.providerOptions === "object" && params.providerOptions !== null
+              ? {
+                  providerOptions:
+                    params.providerOptions as AgentExecutionOptions["providerOptions"],
+                }
+              : {}),
+            requestContext,
+            memory: { thread: body.memory.thread, resource: body.memory.resource },
+          } satisfies AgentExecutionOptions)
+        : undefined;
+    if (sessionExecutionOptions && body.memory?.thread && body.memory.resource) {
+      workSessionHost
+        .getOrCreate({
+          resourceId: body.memory.resource,
+          scope: sessionScope,
+          threadId: body.memory.thread,
+        })
+        .setExecutionDefaults(sessionExecutionOptions);
+    }
+    const librarySources = requestContext.get("libraryCitationSources") as
+      | LibraryCitationSource[]
+      | undefined;
+    const prepareClientStream = <C>(stream: ReadableStream<C>) =>
+      durableClientStream(stream, {
+        librarySources: librarySources ?? [],
+        onFinish: async (usage) => {
+          await persistLatestUsage(body.memory?.thread, usage);
+          await persistMessageBranchOperation({
+            memory: await getWorkMemory(),
+            threadId: body.memory?.thread,
+            resourceId: body.memory?.resource,
+            operation: branchOperation,
+            requestMessages: body.messages,
+            responseMessageId:
+              typeof responseMessageId === "string" ? responseMessageId : undefined,
+          });
+        },
+      });
+    if (sessionAction === "steer" && body.memory?.thread && body.memory.resource) {
+      const latestUser = [...body.messages].reverse().find((message) => message.role === "user");
+      const content = latestUser?.parts
+        .filter((part) => part.type === "text")
+        .map((part) => ("text" in part ? part.text : ""))
+        .join(" ")
+        .trim();
+      if (!content) return c.json({ error: "A text message is required" }, 400);
+      const session = workSessionHost.getOrCreate({
+        resourceId: body.memory.resource,
+        scope: sessionScope,
+        threadId: body.memory.thread,
+      });
+      session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
+      session.applyRequestContext(requestContext);
+      const signal = await session.steer(
+        {
+          contents: content,
+          ...(latestUser?.metadata
+            ? { metadata: latestUser.metadata as Record<string, unknown> }
+            : {}),
+        },
+        sessionExecutionOptions,
+      );
+      const accepted = await signal.accepted;
+      if (accepted.action !== "wake") {
+        return c.json({ error: "The previous run has not released the thread yet" }, 409);
+      }
+      const stream = toAISdkStream(accepted.output, {
+        from: "agent",
+        version: "v7",
+        sendReasoning: true,
+        messageMetadata: ({ part }) =>
+          part.type === "finish" ? { usage: part.totalUsage } : undefined,
+      });
+      return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
+    }
+    const latestMessage = body.messages.at(-1);
+    const sessionMemory = body.memory;
+    const startsNewSessionTurn = Boolean(
+      body.trigger === "submit-message" &&
+        typeof body.messageId !== "string" &&
+        body.runId === undefined &&
+        body.resumeData === undefined &&
+        branchOperation === undefined &&
+        latestMessage?.role === "user" &&
+        sessionMemory?.thread &&
+        sessionMemory.resource,
+    );
+    if (startsNewSessionTurn && latestMessage && sessionMemory?.thread && sessionMemory.resource) {
+      const input = userMessageInput(latestMessage);
+      if (!input) return c.json({ error: "A text or file message is required" }, 400);
+      const session = workSessionHost.getOrCreate({
+        resourceId: sessionMemory.resource,
+        scope: sessionScope,
+        threadId: sessionMemory.thread,
+      });
+      session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
+      session.applyRequestContext(requestContext);
+      const subscription = await session.subscribe(sessionMemory.thread);
+      const signal = session.sendMessage(input, sessionExecutionOptions);
+      const accepted = await signal.accepted;
+      if (!("runId" in accepted) || accepted.action === "blocked") {
+        session.releaseSubscription(subscription);
+        return c.json({ error: "The session could not start this message" }, 409);
+      }
+      const fullStream = subscribedAgentStream(subscription, accepted.runId, () =>
+        session.releaseSubscription(subscription),
+      );
+      const stream = toAISdkStream({ fullStream } as unknown as MastraModelOutput, {
+        from: "agent",
+        version: "v7",
+        sendReasoning: true,
+        messageMetadata: ({ part }) =>
+          part.type === "finish" ? { usage: part.totalUsage } : undefined,
+      });
+      return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
+    }
     // 刻意**不传** abortSignal: c.req.raw.signal —— 客户端断连(刷新窗口、切走)不等于
     // 用户要求中止生成。不传之后:断连时下面的监控分支仍会把流读完,Agent 跑到结束并
     // 由 Memory 落库,重新打开线程就能看到完整回复,长任务不会因为一次刷新白跑。
-    // 真正的「停止」走 POST /work/runs/:runId/cancel(abortRunStream),
+    // 真正的「停止」走会话 abort 端点(Agent.abortThreadStream),
     // 与 AI SDK 的 resumable-stream 指南同一分工:disconnect ≠ explicit stop。
     // 不再配置 structuredOutput(jsonPromptInjection 会把报告 schema 注入提示词,
     // 第三方网关模型会把它当正文打印在回复末尾);联网引用由检索工具输出直接
     // 驱动(buildCitationEntries 的工具输出通路)。
     const stream = await handleChatStream({ ...handlerOptions, params });
 
-    const librarySources = requestContext.get("libraryCitationSources") as
-      | LibraryCitationSource[]
-      | undefined;
-    // 两个转换函数对 chunk 类型泛型化,handleChatStream 返回的真实类型原样贯穿,
-    // 因此这里不需要断言 —— 下面读 messageMetadata.usage 也就还有类型。
-    const persistingStream = streamLibrarySources(
-      streamTaskUpdates(stream),
-      librarySources ?? [],
-    ).pipeThrough(
-      new TransformStream<
-        typeof stream extends ReadableStream<infer C> ? C : never,
-        typeof stream extends ReadableStream<infer C> ? C : never
-      >({
-        async transform(value, controller) {
-          const raw = value as {
-            type?: unknown;
-            messageMetadata?: { usage?: LanguageModelUsage };
-          };
-          if (raw.type === "finish") {
-            // Persist before forwarding finish. AI SDK still receives the
-            // native finish chunk, while a follow-up history request can never
-            // race the branch manifest commit.
-            try {
-              await persistLatestUsage(body.memory?.thread, raw.messageMetadata?.usage);
-              await persistMessageBranchOperation({
-                memory: await getWorkMemory(),
-                threadId: body.memory?.thread,
-                resourceId: body.memory?.resource,
-                operation: branchOperation,
-                requestMessages: body.messages,
-                responseMessageId:
-                  typeof responseMessageId === "string" ? responseMessageId : undefined,
-              });
-            } catch {
-              // Metadata persistence must not turn a successful Agent run
-              // into an AI SDK transport error; the message itself is already
-              // safely stored by Memory.
-            }
-          }
-          controller.enqueue(value);
-        },
-      }),
-    );
-
-    // Keep a detached reader alive when the browser closes its connection.
-    // The Agent run and Memory persistence therefore follow the explicit stop
-    // endpoint, not an incidental tab switch or network disconnect.
-    const [clientStream, monitorStream] = persistingStream.tee();
-    void (async () => {
-      const reader = monitorStream.getReader();
-      try {
-        while (!(await reader.read()).done) {
-          // The transform above performs the durable writes before finish.
-        }
-      } finally {
-        reader.releaseLock();
-      }
-    })().catch(() => undefined);
-
-    return createUIMessageStreamResponse({ stream: clientStream });
-  },
-});
-
-/**
- * POST /work/runs/:runId/cancel — 显式停止一次生成。
- *
- * 因为 chat 路由不再把 HTTP 断连当作中止信号(见上),停止必须有自己的通道。
- * `Agent.abortRunStream(runId)` 是官方入口:按 runId 取消已注册的 run;
- * 若该 runId 还没开始注册(请求刚发出、run 尚未 prepare),它会把 runId 记进
- * abortedRunIds,run 一注册就立刻中止 —— 所以「点太快」不会漏掉。
- *
- * runId 由前端每次发送时生成并随 body 上传(handleChatStream 会把它透传给
- * agent.stream),因此客户端始终知道要取消哪个 run。
- */
-export const cancelRunRoute = registerApiRoute("/work/runs/:runId/cancel", {
-  method: "POST",
-  handler: async (c) => {
-    const runId = c.req.param("runId");
-    if (!runId) return c.json({ error: "runId is required" }, 400);
-    const agent = c.get("mastra").getAgentById("mastra-work-agent");
-    // true = 命中了活跃 run;false = 已记为待中止(run 尚未注册或已结束)
-    return c.json({ aborted: agent.abortRunStream(runId) });
+    return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
   },
 });

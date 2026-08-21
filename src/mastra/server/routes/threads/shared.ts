@@ -1,3 +1,4 @@
+import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
@@ -33,4 +34,24 @@ export async function getOwnedThread(
   if (!resourceId?.trim()) return null;
   const thread = await memory.getThreadById({ threadId });
   return thread && thread.resourceId === resourceId ? thread : null;
+}
+
+/**
+ * 阻断网页对本机敏感 API 的跨站请求。打包后的 file:// 渲染器发送 null Origin，
+ * 开发态渲染器使用 localhost；无 Origin 请求保留给 Mastra 内部和本地客户端。
+ */
+export function isTrustedLocalRequest(c: ContextWithMastra): boolean {
+  const origin = c.req.header("origin");
+  if (!origin || origin === "null") return true;
+  try {
+    const hostname = new URL(origin).hostname;
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1" ||
+      hostname === "[::1]"
+    );
+  } catch {
+    return false;
+  }
 }

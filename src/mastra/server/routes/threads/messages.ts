@@ -240,9 +240,10 @@ export const threadMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
     }
     const { messages } = await memory.recall({ threadId, resourceId, perPage: false });
     // TaskSignalProvider stores task snapshots as role="signal" rows in the
-    // same memory table. They are consumed by /tasks, not chat history, and
-    // are not valid AI SDK messages. Keep them out of both conversion and the
-    // filename index so they cannot become standalone bubbles or shift parts.
+    // same memory table. They are consumed by the display-state route, not
+    // chat history, and are not valid AI SDK messages. Keep them out of both
+    // conversion and the filename index so they cannot become standalone
+    // bubbles or shift parts.
     const chatMessages = (messages ?? []).filter(
       (message) => message.role === "user" || message.role === "assistant",
     );

@@ -40,21 +40,15 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { CATEGORY_META, type ToolCategory } from "@/lib/session-policy";
-import { type AgentInteraction, type AgentTask, asRecord, asString, getPlanDraft } from "./types";
-
-export interface AgentSubagent {
-  agentType: string;
-  displayName?: string;
-  task: string;
-  status: "running" | "completed" | "error";
-  textDelta?: string;
-}
-
-export interface AgentToolState {
-  toolCallId: string;
-  name: string;
-  status: "streaming_input" | "running" | "completed" | "error";
-}
+import {
+  type AgentInteraction,
+  type AgentSubagentState,
+  type AgentTask,
+  type AgentToolState,
+  asRecord,
+  asString,
+  getPlanDraft,
+} from "./types";
 
 export function AgentQueuePanel({
   tasks,
@@ -63,7 +57,7 @@ export function AgentQueuePanel({
   queuedFollowUps = 0,
 }: {
   tasks: AgentTask[];
-  subagents?: AgentSubagent[];
+  subagents?: AgentSubagentState[];
   activeTools?: AgentToolState[];
   queuedFollowUps?: number;
 }) {

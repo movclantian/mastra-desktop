@@ -14,14 +14,10 @@ export const getWorkingMemoryRoute = registerApiRoute("/work/threads/:threadId/w
     const resourceId = c.req.query("resourceId");
     if (!resourceId) return c.json({ error: "resourceId is required" }, 400);
     const memory = await getWorkMemory();
-    const thread = await getOwnedThread(memory, threadId, resourceId);
-    if (!thread) {
+    if (!(await getOwnedThread(memory, threadId, resourceId))) {
       return c.json({ error: "thread not found" }, 404);
     }
-    const workingMemory =
-      typeof thread.metadata?.workingMemory === "string"
-        ? (thread.metadata.workingMemory as string)
-        : "";
+    const workingMemory = (await memory.getWorkingMemory({ threadId, resourceId })) ?? "";
     return c.json({ workingMemory, threadId });
   },
 });

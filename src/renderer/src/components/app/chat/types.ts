@@ -24,6 +24,20 @@ export interface MessageFileReference {
 
 export type WorkUIMessage = UIMessage<WorkMessageMetadata>;
 
+export interface AgentSubagentState {
+  agentType: string;
+  displayName?: string;
+  task: string;
+  status: "running" | "completed" | "error";
+  textDelta?: string;
+}
+
+export interface AgentToolState {
+  toolCallId: string;
+  name: string;
+  status: "streaming_input" | "running" | "completed" | "error";
+}
+
 export interface MessageBranchVersion {
   id: string;
   role: "user" | "assistant";
@@ -62,8 +76,8 @@ export interface QueuedRequest {
   files: FileUIPart[];
   skills?: string[];
   fileReferences?: MessageFileReference[];
-  /** true when the text was accepted by Agent.queueMessage */
-  signalAccepted?: boolean;
+  /** Server session queue id; its run is consumed through AI SDK resumeStream(). */
+  followUpId?: string;
 }
 
 export type LibraryFilePart = FileUIPart & { byteSize?: number };
@@ -87,13 +101,25 @@ export interface AgentInteraction {
   plan?: PlanDraft;
   completed?: boolean;
   /**
-   * 该工具的权限类别与生效策略,由服务端算好后随 /work/threads/:id/suspended-runs
+   * 该工具的权限类别与生效策略,由服务端算好后随会话 display-state
    * 下发(类别映射只在 src/mastra/agents/permissions.ts 保留一份)。
    * 流式期间出现的审批还没有这两个字段,等本轮结束读取挂起列表时合并进来 ——
    * 审批按钮在流结束前本就是禁用态,不影响操作。
    */
   category?: ToolCategory;
   policy?: PermissionPolicy;
+}
+
+export interface WorkDisplayState {
+  status: "idle" | "running" | "suspended";
+  threadId: string;
+  activeRunId: string | null;
+  modeId: string;
+  followUpCount: number;
+  grants: { categories: ToolCategory[]; tools: string[] };
+  state: Record<string, unknown>;
+  tasks: AgentTask[];
+  suspendedRuns: AgentInteraction[];
 }
 
 /** 折叠历史精简记录(服务端压缩时存入摘要消息 metadata.compactedHistory) */
@@ -140,6 +166,34 @@ export function asRecord(value: unknown): JsonRecord | undefined {
 
 export function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+export function parseSuspendedRuns(value: unknown): AgentInteraction[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((run) => {
+    const record = asRecord(run);
+    const runId = asString(record?.runId);
+    const toolCalls = record?.toolCalls;
+    if (!runId || !Array.isArray(toolCalls)) return [];
+    return toolCalls.flatMap((call) => {
+      const toolCall = asRecord(call);
+      const toolName = asString(toolCall?.toolName);
+      if (!toolName) return [];
+      return [
+        {
+          key: `${runId}:${asString(toolCall?.toolCallId) ?? toolName}`,
+          runId,
+          toolCallId: asString(toolCall?.toolCallId),
+          toolName,
+          args: toolCall?.args,
+          requiresApproval: toolCall?.requiresApproval === true,
+          suspendPayload: asRecord(toolCall?.suspendPayload),
+          category: asString(toolCall?.category) as ToolCategory | undefined,
+          policy: asString(toolCall?.policy) as PermissionPolicy | undefined,
+        },
+      ];
+    });
+  });
 }
 
 export function getToolName(part: MessagePart): string | undefined {
@@ -284,6 +338,91 @@ export function getTasksFromMessages(messages: UIMessage[]): AgentTask[] | undef
   }
 
   return latestTasks;
+}
+
+export function getActiveToolsFromMessages(messages: UIMessage[]): AgentToolState[] {
+  const tools = new Map<string, AgentToolState>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!isToolPart(part)) continue;
+      const toolName = getToolName(part);
+      if (!toolName || toolName.startsWith("agent-")) continue;
+      if (part.state === "input-streaming") {
+        tools.set(part.toolCallId, {
+          toolCallId: part.toolCallId,
+          name: toolName,
+          status: "streaming_input",
+        });
+      } else if (part.state === "input-available" || part.state === "approval-requested") {
+        tools.set(part.toolCallId, {
+          toolCallId: part.toolCallId,
+          name: toolName,
+          status: "running",
+        });
+      } else {
+        tools.delete(part.toolCallId);
+      }
+    }
+  }
+  return [...tools.values()];
+}
+
+export function getSubagentsFromMessages(messages: UIMessage[]): AgentSubagentState[] {
+  const runs = new Map<string, AgentSubagentState>();
+  for (const message of messages) {
+    let latestDelegation:
+      | {
+          agentType: string;
+          displayName: string;
+          task: string;
+        }
+      | undefined;
+    for (const part of message.parts) {
+      if (isToolPart(part)) {
+        const toolName = getToolName(part);
+        if (toolName?.startsWith("agent-")) {
+          const agentType = toolName.slice("agent-".length);
+          const input = asRecord("input" in part ? part.input : undefined);
+          latestDelegation = {
+            agentType,
+            displayName:
+              agentType === "explorer"
+                ? "Explorer"
+                : agentType === "reviewer"
+                  ? "Reviewer"
+                  : agentType,
+            task: asString(input?.prompt) ?? "委托任务",
+          };
+        }
+        continue;
+      }
+
+      const raw = part as unknown as JsonRecord;
+      if (raw.type !== "data-tool-agent") continue;
+      const data = asRecord(raw.data);
+      const runId = asString(raw.id);
+      if (!runId) continue;
+      const agentId = asString(data?.id);
+      const agentType =
+        latestDelegation?.agentType ??
+        (agentId?.startsWith("mastra-work-") ? agentId.slice("mastra-work-".length) : agentId) ??
+        "subagent";
+      const status = data?.status;
+      runs.set(runId, {
+        agentType,
+        displayName: latestDelegation?.displayName,
+        task: latestDelegation?.task ?? "委托任务",
+        status:
+          status === "finished"
+            ? "completed"
+            : status === "error" || data?.finishReason === "error"
+              ? "error"
+              : "running",
+        textDelta: asString(data?.text),
+      });
+    }
+  }
+  return [...runs.values()];
 }
 
 export function areTasksEqual(left: AgentTask[], right: AgentTask[]): boolean {

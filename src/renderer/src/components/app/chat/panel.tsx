@@ -31,7 +31,7 @@ import {
   getModelContextWindow,
   MASTRA_SERVER_URL,
 } from "@/lib/providers";
-import { type PermissionPolicy, type ToolCategory, withCategoryPolicy } from "@/lib/session-policy";
+import type { ToolCategory } from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
 import { AgentInteractionPanel, AgentQueuePanel } from "./agent-panels";
 import { MessageItem } from "./message-list";
@@ -40,16 +40,21 @@ import {
   type AgentInteraction,
   type AgentTask,
   areTasksEqual,
-  asRecord,
   type CompressResult,
+  getActiveToolsFromMessages,
   getMessageInteractions,
+  getSubagentsFromMessages,
   getTasksFromMessages,
+  getToolName,
+  isToolPart,
   type LibraryFilePart,
   type MessageBranchRecord,
   type MessageBranchVersion,
   type MessageFileReference,
   mergeInteractions,
+  parseSuspendedRuns,
   type QueuedRequest,
+  type WorkDisplayState,
   type WorkUIMessage,
 } from "./types";
 import { ChatWorkspaceSelector } from "./workspace-selector";
@@ -140,10 +145,10 @@ export function ChatPanel() {
     pendingJump,
     setPendingJump,
     catalog,
-    permissionRules,
-    setPermissionRules,
     refreshThreadSettings,
     setAgentBusy,
+    openWorkspacePanel,
+    setTerminalPanelOpen,
   } = useWorkbench();
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -165,7 +170,7 @@ export function ChatPanel() {
     () => new Set(),
   );
   const [estimatedContextTokens, setEstimatedContextTokens] = React.useState(0);
-  const taskRequestId = React.useRef(0);
+  const displayStateRequestId = React.useRef(0);
   const branchRefreshRef = React.useRef(false);
 
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
@@ -319,46 +324,52 @@ export function ChatPanel() {
    */
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
   const generatedMessageIdsRef = React.useRef(new Map<string, string>());
-  /** 各线程最近一次请求的 runId(停止按钮据此让服务端真正中止 run) */
-  const runIdsRef = React.useRef(new Map<string, string>());
-
-  const getThreadChat = React.useCallback((threadId: string) => {
-    const existing = chatsRef.current.get(threadId);
-    if (existing) return existing;
-    const chat = new Chat<WorkUIMessage>({
-      id: threadId,
-      generateId: () => {
-        const id = nanoid();
-        generatedMessageIdsRef.current.set(threadId, id);
-        return id;
-      },
-      transport: new DefaultChatTransport<WorkUIMessage>({
-        api: `${MASTRA_SERVER_URL}/chat/mastra-work-agent`,
-        prepareSendMessagesRequest: ({ messages, body, trigger, messageId, id }) => {
-          // 自定义 prepareSendMessagesRequest 会**整体替换**默认 body,所以
-          // trigger / messageId 必须显式带上 —— 否则 regenerate() 到了服务端
-          // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
-          // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
-          // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
-          const payload: Record<string, unknown> = {
-            ...buildRequestBodyRef.current(threadId),
-            runId: nanoid(),
-            responseMessageId: generatedMessageIdsRef.current.get(threadId),
-            ...body,
-            id,
-            trigger,
-            messageId,
-            messages,
-          };
-          runIdsRef.current.set(threadId, String(payload.runId));
-          return { body: payload };
+  const getThreadChat = React.useCallback(
+    (threadId: string) => {
+      const existing = chatsRef.current.get(threadId);
+      if (existing) return existing;
+      const chat = new Chat<WorkUIMessage>({
+        id: threadId,
+        generateId: () => {
+          const id = nanoid();
+          generatedMessageIdsRef.current.set(threadId, id);
+          return id;
         },
-      }),
-      onError: () => toast.error("与 Mastra 服务通信失败,请确认服务已启动"),
-    });
-    chatsRef.current.set(threadId, chat);
-    return chat;
-  }, []);
+        transport: new DefaultChatTransport<WorkUIMessage>({
+          api: `${MASTRA_SERVER_URL}/chat/mastra-work-agent`,
+          prepareReconnectToStreamRequest: ({ body }) => {
+            const followUpId = typeof body?.followUpId === "string" ? body.followUpId : undefined;
+            return {
+              api: `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/stream?resourceId=${encodeURIComponent(user.id)}${
+                followUpId ? `&followUpId=${encodeURIComponent(followUpId)}` : ""
+              }`,
+            };
+          },
+          prepareSendMessagesRequest: ({ messages, body, trigger, messageId, id }) => {
+            // 自定义 prepareSendMessagesRequest 会**整体替换**默认 body,所以
+            // trigger / messageId 必须显式带上 —— 否则 regenerate() 到了服务端
+            // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
+            // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
+            // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
+            const payload: Record<string, unknown> = {
+              ...buildRequestBodyRef.current(threadId),
+              responseMessageId: generatedMessageIdsRef.current.get(threadId),
+              ...body,
+              id,
+              trigger,
+              messageId,
+              messages,
+            };
+            return { body: payload };
+          },
+        }),
+        onError: () => toast.error("与 Mastra 服务通信失败,请确认服务已启动"),
+      });
+      chatsRef.current.set(threadId, chat);
+      return chat;
+    },
+    [user.id],
+  );
 
   // 没有激活线程时也必须调用 useChat(Hook 规则),用一个从不发送的空实例占位。
   // 显式给它一个 transport:Chat 构造时不校验,但留着 undefined 一旦被误用就是运行时崩。
@@ -368,7 +379,10 @@ export function ChatPanel() {
   );
   const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
 
-  const { messages, setMessages, status, stop } = useChat({ chat: activeChat });
+  const { messages, setMessages, status, stop } = useChat({
+    chat: activeChat,
+    resume: Boolean(activeThreadId),
+  });
 
   // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器
   const workspaceLocked = Boolean(activeThread?.metadata.workspacePath) || messages.length > 0;
@@ -405,82 +419,58 @@ export function ChatPanel() {
       });
   }, [activeThreadId, setMessages, user.id]);
 
-  const reloadTasks = React.useCallback(async () => {
-    const requestId = ++taskRequestId.current;
-    if (!activeThreadId) {
-      setTasks([]);
-      setTaskSnapshotLoaded(true);
-      return;
-    }
-    try {
+  const fetchDisplayState = React.useCallback(
+    async (threadId: string) => {
       const response = await fetch(
-        `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/tasks?resourceId=${encodeURIComponent(user.id)}`,
+        `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?resourceId=${encodeURIComponent(user.id)}`,
       );
-      const data = (await response.json()) as { tasks?: AgentTask[] };
-      if (requestId !== taskRequestId.current) return;
-      const nextTasks = response.ok && Array.isArray(data.tasks) ? data.tasks : [];
-      setTasks((current) => (areTasksEqual(current, nextTasks) ? current : nextTasks));
-      setTaskSnapshotLoaded(response.ok);
-    } catch {
-      if (requestId !== taskRequestId.current) return;
-      setTasks((current) => (current.length === 0 ? current : []));
-    }
-  }, [activeThreadId, user.id]);
-
-  /**
-   * 从持久化快照读取本线程仍在等待的工具交互(Agent.listSuspendedRuns)。
-   * 同时被两处使用:一轮响应结束后的面板恢复,以及 resume 前的过期预检。
-   * 类别与生效策略由服务端算好(见 threads.ts 的 suspended-runs 路由)。
-   */
-  const fetchSuspendedInteractions = React.useCallback(
-    async (threadId: string): Promise<AgentInteraction[]> => {
-      const response = await fetch(
-        `${MASTRA_SERVER_URL}/work/threads/${threadId}/suspended-runs?resourceId=${encodeURIComponent(user.id)}`,
-      );
-      const data = (await response.json()) as {
-        interactions?: Array<{
-          runId?: string;
-          toolCallId?: string;
-          toolName?: string;
-          args?: unknown;
-          requiresApproval?: boolean;
-          suspendPayload?: unknown;
-          category?: ToolCategory;
-          policy?: PermissionPolicy;
-        }>;
+      if (!response.ok) return undefined;
+      const payload = (await response.json()) as {
+        displayState?: Omit<WorkDisplayState, "suspendedRuns"> & { suspendedRuns?: unknown };
       };
-      if (!response.ok || !Array.isArray(data.interactions)) return [];
-      return data.interactions.flatMap((item) => {
-        if (!item.runId || !item.toolName) return [];
-        return [
-          {
-            key: `${item.runId}:${item.toolCallId ?? item.toolName}`,
-            runId: item.runId,
-            toolCallId: item.toolCallId,
-            toolName: item.toolName,
-            args: item.args,
-            requiresApproval: item.requiresApproval === true,
-            suspendPayload: asRecord(item.suspendPayload),
-            ...(item.category ? { category: item.category } : {}),
-            ...(item.policy ? { policy: item.policy } : {}),
-          },
-        ];
-      });
+      if (!payload.displayState) return undefined;
+      return {
+        ...payload.displayState,
+        tasks: Array.isArray(payload.displayState.tasks) ? payload.displayState.tasks : [],
+        suspendedRuns: parseSuspendedRuns(payload.displayState.suspendedRuns),
+      } satisfies WorkDisplayState;
     },
     [user.id],
   );
 
-  const reloadSuspendedInteractions = React.useCallback(async () => {
+  const reloadDisplayState = React.useCallback(async () => {
+    const requestId = ++displayStateRequestId.current;
     if (!activeThreadId) {
+      setTasks([]);
+      setTaskSnapshotLoaded(true);
       setPersistedInteractions([]);
       return;
     }
     try {
-      setPersistedInteractions(await fetchSuspendedInteractions(activeThreadId));
+      const displayState = await fetchDisplayState(activeThreadId);
+      if (requestId !== displayStateRequestId.current) return;
+      const nextTasks = displayState?.tasks ?? [];
+      setTasks((current) => (areTasksEqual(current, nextTasks) ? current : nextTasks));
+      setPersistedInteractions(displayState?.suspendedRuns ?? []);
+      setTaskSnapshotLoaded(Boolean(displayState));
     } catch {
+      if (requestId !== displayStateRequestId.current) return;
+      setTasks((current) => (current.length === 0 ? current : []));
       setPersistedInteractions([]);
     }
-  }, [activeThreadId, fetchSuspendedInteractions]);
+  }, [activeThreadId, fetchDisplayState]);
+
+  /**
+   * 从持久化快照读取本线程仍在等待的工具交互(Agent.listSuspendedRuns)。
+   * 同时被两处使用:一轮响应结束后的面板恢复,以及 resume 前的过期预检。
+   * 类别与生效策略由统一 display-state 快照在服务端算好。
+   */
+  const fetchSuspendedInteractions = React.useCallback(
+    async (threadId: string): Promise<AgentInteraction[]> => {
+      return (await fetchDisplayState(threadId))?.suspendedRuns ?? [];
+    },
+    [fetchDisplayState],
+  );
 
   // 切换线程:首次进入才拉历史,并回收闲置线程的 Chat 实例。
   //
@@ -493,7 +483,7 @@ export function ChatPanel() {
     }
     setTasks([]);
     setTaskSnapshotLoaded(false);
-    taskRequestId.current += 1;
+    displayStateRequestId.current += 1;
     setQueuedRequests([]);
     setQueueCanDispatch(false);
     setPersistedInteractions([]);
@@ -503,21 +493,9 @@ export function ChatPanel() {
       const busy = chat.status === "submitted" || chat.status === "streaming";
       if (threadId !== activeThreadId && !busy) {
         chatsRef.current.delete(threadId);
-        runIdsRef.current.delete(threadId);
       }
     }
   }, [activeChat, activeThreadId, reloadMessages]);
-
-  // TaskSignalProvider 在 task_* 完成时先写入 threadState,流式消息可能稍后才带回
-  // 对应 tool output。仅在本次请求活跃时短轮询持久化状态,保证 Queue 实时出现。
-  React.useEffect(() => {
-    if (status !== "submitted" && status !== "streaming") return;
-    void reloadTasks();
-    const intervalId = window.setInterval(() => {
-      void reloadTasks();
-    }, 500);
-    return () => window.clearInterval(intervalId);
-  }, [reloadTasks, status]);
 
   const interactionReloadVersion = React.useRef(0);
   // 任务和暂停交互都是服务端持久化状态;只在切线和一轮响应结束后读取,
@@ -530,12 +508,12 @@ export function ChatPanel() {
     if (status !== "ready" && status !== "error") return;
     const version = ++interactionReloadVersion.current;
     setQueueCanDispatch(false);
-    void Promise.all([reloadTasks(), reloadSuspendedInteractions()]).finally(() => {
+    void reloadDisplayState().finally(() => {
       if (interactionReloadVersion.current === version) {
         setQueueCanDispatch(true);
       }
     });
-  }, [messages.length, reloadSuspendedInteractions, reloadTasks, status]);
+  }, [messages.length, reloadDisplayState, status]);
 
   /**
    * 重试:重生成**指定**的那条助手消息,而不是永远重生成最后一条。
@@ -678,22 +656,53 @@ export function ChatPanel() {
   }, [reloadMessages, status]);
 
   /**
-   * 停止生成。服务端已不把 HTTP 断连当作中止信号,所以必须先让服务端按 runId
-   * 真正 abort 掉 run(否则只是本地不再读流,模型还在跑、还会落库),再断开本地连接。
+   * 停止生成。服务端已不把 HTTP 断连当作中止信号,所以先按当前会话线程
+   * 真正 abort 掉 run(否则只是本地不再读流),再断开 AI SDK 客户端流。
    *
    * 刻意**不**在这之后重新拉历史:chat.stop() 保留已收到的 token(官方语义),
    * 而服务端此刻可能还没把中止点之后的状态落库,立刻重读反而会把已显示的部分抹掉。
    */
   const handleStop = React.useCallback(async () => {
     const threadId = activeThreadIdRef.current;
-    const runId = threadId ? runIdsRef.current.get(threadId) : undefined;
-    if (runId) {
-      await fetch(`${MASTRA_SERVER_URL}/work/runs/${encodeURIComponent(runId)}/cancel`, {
-        method: "POST",
-      }).catch(() => undefined);
+    if (threadId) {
+      await fetch(
+        `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/abort?resourceId=${encodeURIComponent(user.id)}`,
+        {
+          method: "POST",
+        },
+      ).catch(() => undefined);
     }
+    setQueuedRequests((current) => current.filter((request) => !request.followUpId));
     await stop();
-  }, [stop]);
+  }, [stop, user.id]);
+
+  const handleSteer = React.useCallback(
+    async (text: string, clearPrompt: () => void) => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId) return;
+      if (
+        getThreadChat(threadId).status !== "submitted" &&
+        getThreadChat(threadId).status !== "streaming"
+      ) {
+        return;
+      }
+      clearPrompt();
+      setQueueCanDispatch(false);
+      setQueuedRequests([]);
+      try {
+        // Stop the client reader before issuing the new request. The server-side
+        // session route performs the authoritative abort-and-wake sequence.
+        await getThreadChat(threadId).stop();
+        await getThreadChat(threadId).sendMessage(
+          { text },
+          { body: { sessionAction: "steer", sessionScope: "workbench" } },
+        );
+      } catch {
+        toast.error("无法立即转向当前任务,请稍后重试");
+      }
+    },
+    [getThreadChat],
+  );
 
   // 手动压缩上下文(真压缩):服务端重写线程 —— 折叠删除旧消息并把摘要注入线程头部,
   // 此后模型只接收「摘要 + 近期消息」。完成后刷新线程列表与消息流,并弹窗展示压缩详情。
@@ -743,6 +752,31 @@ export function ChatPanel() {
       : undefined;
   }, [isBusy, messages]);
   const visibleTasks = streamingTasks ?? (taskSnapshotLoaded ? tasks : (liveTasks ?? tasks));
+  const activeTools = React.useMemo(
+    () => (isBusy ? getActiveToolsFromMessages(messages) : []),
+    [isBusy, messages],
+  );
+  const handledPanelToolCallsRef = React.useRef(new Set<string>());
+  React.useEffect(() => {
+    const handled = handledPanelToolCallsRef.current;
+    for (const message of messages) {
+      for (const part of message.parts) {
+        if (!isToolPart(part) || handled.has(part.toolCallId)) continue;
+        handled.add(part.toolCallId);
+        if (!isBusy) continue;
+        const toolName = getToolName(part);
+        if (!toolName) continue;
+        if (toolName.startsWith("browser_")) {
+          openWorkspacePanel("browser");
+        } else if (toolName === "mastra_workspace_execute_command") {
+          setTerminalPanelOpen(true);
+        } else if (toolName.startsWith("mastra_workspace_")) {
+          openWorkspacePanel("files");
+        }
+      }
+    }
+  }, [isBusy, messages, openWorkspacePanel, setTerminalPanelOpen]);
+  const subagents = React.useMemo(() => getSubagentsFromMessages(messages), [messages]);
   const messageBranchByMessageId = React.useMemo(() => {
     const byMessageId = new Map<string, MessageBranchRecord>();
     for (const branch of Object.values(messageBranches)) {
@@ -849,9 +883,18 @@ export function ChatPanel() {
    */
   const handleAlwaysAllowCategory = React.useCallback(
     async (category: ToolCategory) => {
-      await setPermissionRules(withCategoryPolicy(permissionRules, category, "allow"));
+      if (!activeThreadId) return;
+      const response = await fetch(
+        `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/grants?resourceId=${encodeURIComponent(user.id)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ category }),
+        },
+      );
+      if (!response.ok) throw new Error("无法授予当前会话权限");
     },
-    [permissionRules, setPermissionRules],
+    [activeThreadId, user.id],
   );
 
   const lastMessage = messages.at(-1);
@@ -925,16 +968,25 @@ export function ChatPanel() {
       if (!threadId) return;
       try {
         const persistedFiles = await persistAttachments(files, threadId);
-        let signalAccepted = false;
-        if (text && persistedFiles.length === 0) {
+        let followUpId: string | undefined;
+        const onlyNativeFollowUps = queuedRequests.every((request) => Boolean(request.followUpId));
+        if (text && persistedFiles.length === 0 && onlyNativeFollowUps) {
           const response = await fetch(
-            `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(threadId)}/queue`,
+            `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/follow-up?resourceId=${encodeURIComponent(user.id)}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                resourceId: user.id,
                 content: text,
+                ...(selectedProvider && modelSelection
+                  ? {
+                      model: buildRequestModel(selectedProvider, modelSelection.modelId),
+                      ...(modelSelection.reasoningEffort !== "off"
+                        ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
+                        : {}),
+                    }
+                  : {}),
+                ...(searchSelection ? { webSearch: searchSelection } : {}),
                 metadata: {
                   skillNames: message.skills ?? [],
                   fileReferences: message.fileReferences ?? [],
@@ -942,8 +994,11 @@ export function ChatPanel() {
               }),
             },
           );
-          if (!response.ok) throw new Error("排队消息未被 Agent 接受");
-          signalAccepted = true;
+          const payload = (await response.json()) as { followUpId?: string; error?: string };
+          if (!response.ok || !payload.followUpId) {
+            throw new Error(payload.error ?? "排队消息未被 Agent 接受");
+          }
+          followUpId = payload.followUpId;
         }
         setQueuedRequests((current) => [
           ...current,
@@ -953,7 +1008,7 @@ export function ChatPanel() {
             files: persistedFiles,
             skills: message.skills,
             fileReferences: message.fileReferences,
-            signalAccepted,
+            followUpId,
           },
         ]);
       } catch (error) {
@@ -1034,7 +1089,7 @@ export function ChatPanel() {
     (request: QueuedRequest) => {
       const targetThreadId = activeThreadIdRef.current;
       if (!targetThreadId || sendingQueuedRequest.current) return;
-      if (request.signalAccepted) {
+      if (request.followUpId) {
         setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
         return;
       }
@@ -1045,24 +1100,19 @@ export function ChatPanel() {
       sendingQueuedRequest.current = true;
       setQueueCanDispatch(false);
       setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
-      void fetch(`${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(targetThreadId)}/send`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          resourceId: user.id,
-          content: request.text,
-          metadata: {
-            skillNames: request.skills ?? [],
-            fileReferences: request.fileReferences ?? [],
+      void (async () => {
+        await getThreadChat(targetThreadId).stop();
+        await getThreadChat(targetThreadId).sendMessage(
+          {
+            text: request.text,
+            metadata: {
+              skillNames: request.skills ?? [],
+              fileReferences: request.fileReferences ?? [],
+            },
           },
-        }),
-      })
-        .then(async (response) => {
-          if (!response.ok) {
-            const payload = (await response.json().catch(() => ({}))) as { error?: string };
-            throw new Error(payload.error ?? "立即发送失败");
-          }
-        })
+          { body: { sessionAction: "steer", sessionScope: "workbench" } },
+        );
+      })()
         .catch(() => {
           setQueuedRequests((current) => [request, ...current]);
           toast.error("排队请求发送失败,请检查服务连接后重试");
@@ -1072,7 +1122,7 @@ export function ChatPanel() {
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [user.id],
+    [getThreadChat],
   );
 
   const sendingQueuedRequest = React.useRef(false);
@@ -1091,33 +1141,41 @@ export function ChatPanel() {
       return;
     }
 
-    const nextRequest = queuedRequests.find((request) => !request.signalAccepted);
+    const nextRequest = queuedRequests[0];
     if (!nextRequest) return;
     sendingQueuedRequest.current = true;
-    selectedSkillNamesRef.current = nextRequest.skills ?? [];
     setQueueCanDispatch(false);
-    setQueuedRequests((current) => current.filter((request) => request.id !== nextRequest.id));
-    void getThreadChat(activeThreadId)
-      .sendMessage(
-        nextRequest.text
-          ? {
-              text: nextRequest.text,
-              files: nextRequest.files,
-              metadata: {
-                skillNames: nextRequest.skills ?? [],
-                fileReferences: nextRequest.fileReferences ?? [],
-              },
-            }
-          : {
-              files: nextRequest.files,
-              metadata: {
-                skillNames: nextRequest.skills ?? [],
-                fileReferences: nextRequest.fileReferences ?? [],
-              },
-            },
-      )
+    const request = nextRequest.followUpId
+      ? getThreadChat(activeThreadId).resumeStream({
+          body: { followUpId: nextRequest.followUpId },
+        })
+      : (() => {
+          selectedSkillNamesRef.current = nextRequest.skills ?? [];
+          return getThreadChat(activeThreadId).sendMessage(
+            nextRequest.text
+              ? {
+                  text: nextRequest.text,
+                  files: nextRequest.files,
+                  metadata: {
+                    skillNames: nextRequest.skills ?? [],
+                    fileReferences: nextRequest.fileReferences ?? [],
+                  },
+                }
+              : {
+                  files: nextRequest.files,
+                  metadata: {
+                    skillNames: nextRequest.skills ?? [],
+                    fileReferences: nextRequest.fileReferences ?? [],
+                  },
+                },
+          );
+        })();
+    void request
+      .then(async () => {
+        if (nextRequest.followUpId) await reloadMessages();
+        setQueuedRequests((current) => current.filter((queued) => queued.id !== nextRequest.id));
+      })
       .catch(() => {
-        setQueuedRequests((current) => [nextRequest, ...current]);
         toast.error("排队请求发送失败,请检查服务连接后重试");
       })
       .finally(() => {
@@ -1132,18 +1190,17 @@ export function ChatPanel() {
     queueCanDispatch,
     queueDispatchVersion,
     queuedRequests,
+    reloadMessages,
     status,
   ]);
 
-  React.useEffect(() => {
-    if (status === "ready" || status === "error") {
-      setQueuedRequests((current) => current.filter((request) => !request.signalAccepted));
-    }
-  }, [status]);
-
   // 输入区(Queue 卡片 + 工作区卡片 + 输入框):新会话时垂直居中展示,
   // 有消息后固定底部 —— 同一份 JSX,两种布局复用。
-  const hasQueueCard = queuedRequests.length > 0 || visibleTasks.length > 0;
+  const hasQueueCard =
+    queuedRequests.length > 0 ||
+    visibleTasks.length > 0 ||
+    activeTools.length > 0 ||
+    subagents.length > 0;
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1162,7 +1219,12 @@ export function ChatPanel() {
               onSendNow={sendQueuedRequestNow}
               requests={queuedRequests}
             />
-            <AgentQueuePanel tasks={visibleTasks} />
+            <AgentQueuePanel
+              activeTools={activeTools}
+              queuedFollowUps={queuedRequests.filter((request) => request.followUpId).length}
+              subagents={subagents}
+              tasks={visibleTasks}
+            />
           </Queue>
         </div>
       ) : null}
@@ -1192,6 +1254,7 @@ export function ChatPanel() {
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}
+              onSteer={handleSteer}
               compacting={compacting}
               onCompress={runCompress}
               compressResult={compressResult}

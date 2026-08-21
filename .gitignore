@@ -9,3 +9,4 @@ out
 .mastra
 public
 .env
+resources/browsers

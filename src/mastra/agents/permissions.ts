@@ -34,6 +34,7 @@ export interface PermissionRules {
 
 /** chat 路由 → Agent defaultOptions 传递本线程生效规则的 RequestContext key */
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
+export const SESSION_GRANTS_CONTEXT_KEY = "mastra-work:session-grants";
 
 /**
  * 默认策略:只放开 read,其余沿用官方兜底 "ask"。
@@ -101,6 +102,23 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   library_vector_search: "read",
   library_graph_search: "read",
   library_document_chunker: "read",
+  // AgentBrowser:观察页面不改变外部状态；其余浏览器动作按执行类审批。
+  browser_snapshot: "read",
+  browser_screenshot: "read",
+  browser_goto: "execute",
+  browser_click: "execute",
+  browser_type: "execute",
+  browser_press: "execute",
+  browser_select: "execute",
+  browser_scroll: "execute",
+  browser_hover: "execute",
+  browser_back: "execute",
+  browser_dialog: "execute",
+  browser_wait: "execute",
+  browser_tabs: "execute",
+  browser_drag: "execute",
+  browser_evaluate: "execute",
+  browser_close: "execute",
   // TaskSignalProvider 的 TODO 工具:改的是线程状态(threadState)而非用户机器,
   // 结果只体现在输入区上方的任务队列里,因此与只读同级、不打断执行
   task_write: "read",
@@ -154,6 +172,36 @@ export function parsePermissionRules(value: unknown): PermissionRules {
     for (const [toolName, policy] of Object.entries(raw.tools as Record<string, unknown>)) {
       if (isPolicy(policy)) tools[toolName] = policy;
     }
+  }
+  return { categories, tools };
+}
+
+/** Apply ephemeral Session grants/state without mutating persisted permission rules. */
+export function applySessionGrants(rules: PermissionRules, value: unknown): PermissionRules {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return rules;
+  const raw = value as { categories?: unknown; tools?: unknown; yolo?: unknown };
+  const grantedCategories = Array.isArray(raw.categories)
+    ? raw.categories.filter(
+        (item): item is ToolCategory =>
+          typeof item === "string" && (TOOL_CATEGORIES as readonly string[]).includes(item),
+      )
+    : [];
+  const grantedTools = Array.isArray(raw.tools)
+    ? raw.tools.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+  const categories = { ...rules.categories };
+  const tools = { ...rules.tools };
+
+  // Official precedence: an explicit per-tool deny always wins, even in yolo.
+  if (raw.yolo === true) {
+    for (const category of TOOL_CATEGORIES) categories[category] = "allow";
+    for (const [toolName, policy] of Object.entries(tools)) {
+      if (policy !== "deny") tools[toolName] = "allow";
+    }
+  }
+  for (const category of grantedCategories) categories[category] = "allow";
+  for (const toolName of grantedTools) {
+    if (tools[toolName] !== "deny") tools[toolName] = "allow";
   }
   return { categories, tools };
 }

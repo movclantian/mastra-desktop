@@ -24,6 +24,7 @@ import {
   SendIcon,
   SparklesIcon,
   Trash2Icon,
+  WaypointsIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -114,6 +115,28 @@ function PromptInputActions() {
       <ChatApprovalSelector />
       <ChatSearchSelector />
     </PromptInputTools>
+  );
+}
+
+function SteerButton({ disabled, onSteer }: { disabled: boolean; onSteer: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <PromptInputButton
+            aria-label="立即转向"
+            disabled={disabled}
+            onClick={onSteer}
+            size="icon-sm"
+            type="button"
+            variant="outline"
+          />
+        }
+      >
+        <WaypointsIcon />
+      </TooltipTrigger>
+      <TooltipContent>立即转向当前任务</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -275,41 +298,47 @@ function SkillAwareTextarea({
             <CommandList className="max-h-64">
               {command === "skill" ? (
                 <CommandGroup heading="技能与指令">
-                  <CommandEmpty>没有匹配的技能</CommandEmpty>
-                  {visibleSkills.map((skill) => (
-                    <CommandItem
-                      key={skill.name}
-                      onSelect={() => selectSkill(skill)}
-                      value={skill.name}
-                    >
-                      <SparklesIcon className="size-4 shrink-0 text-primary" />
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">/{skill.name}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {skill.description}
+                  {visibleSkills.length === 0 ? (
+                    <CommandEmpty>暂无技能</CommandEmpty>
+                  ) : (
+                    visibleSkills.map((skill) => (
+                      <CommandItem
+                        key={skill.name}
+                        onSelect={() => selectSkill(skill)}
+                        value={skill.name}
+                      >
+                        <SparklesIcon className="size-4 shrink-0 text-primary" />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">/{skill.name}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {skill.description}
+                          </span>
                         </span>
-                      </span>
-                    </CommandItem>
-                  ))}
+                      </CommandItem>
+                    ))
+                  )}
                 </CommandGroup>
               ) : (
                 <CommandGroup heading="对话文件">
-                  <CommandEmpty>没有匹配的文件</CommandEmpty>
-                  {visibleFiles.map((file) => (
-                    <CommandItem
-                      key={file.id}
-                      onSelect={() => selectFile(file)}
-                      value={file.filename}
-                    >
-                      <FileIcon className="size-4 shrink-0 text-primary" />
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">@{file.filename}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
-                          {file.mediaType || "文件"}
+                  {visibleFiles.length === 0 ? (
+                    <CommandEmpty>暂无资料</CommandEmpty>
+                  ) : (
+                    visibleFiles.map((file) => (
+                      <CommandItem
+                        key={file.id}
+                        onSelect={() => selectFile(file)}
+                        value={file.filename}
+                      >
+                        <FileIcon className="size-4 shrink-0 text-primary" />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">@{file.filename}</span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {file.mediaType || "文件"}
+                          </span>
                         </span>
-                      </span>
-                    </CommandItem>
-                  ))}
+                      </CommandItem>
+                    ))
+                  )}
                 </CommandGroup>
               )}
               <CommandSeparator />
@@ -412,18 +441,20 @@ function SortableRequestItem({
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div className="flex min-w-0 items-start gap-1">
-        <Button
-          aria-label="拖动请求调整顺序"
-          className="mt-0.5 shrink-0 text-muted-foreground"
-          ref={setActivatorNodeRef}
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVerticalIcon />
-        </Button>
+        {!request.followUpId ? (
+          <Button
+            aria-label="拖动请求调整顺序"
+            className="mt-0.5 shrink-0 text-muted-foreground"
+            ref={setActivatorNodeRef}
+            size="icon-xs"
+            type="button"
+            variant="ghost"
+            {...attributes}
+            {...listeners}
+          >
+            <GripVerticalIcon />
+          </Button>
+        ) : null}
         <div className="min-w-0 flex-1">
           <QueueItemContent className="line-clamp-2 whitespace-pre-wrap">
             {request.text || "附件请求"}
@@ -433,21 +464,25 @@ function SortableRequestItem({
           ) : null}
         </div>
         <QueueItemActions className="shrink-0">
-          <QueueItemAction
-            aria-label="编辑排队请求"
-            className="opacity-100"
-            onClick={() => onEdit(request)}
-          >
-            <PencilIcon />
-          </QueueItemAction>
-          <QueueItemAction
-            aria-label="移除排队请求"
-            className="opacity-100"
-            onClick={() => onRemove(request.id)}
-          >
-            <Trash2Icon />
-          </QueueItemAction>
-          {onSendNow ? (
+          {!request.followUpId ? (
+            <QueueItemAction
+              aria-label="编辑排队请求"
+              className="opacity-100"
+              onClick={() => onEdit(request)}
+            >
+              <PencilIcon />
+            </QueueItemAction>
+          ) : null}
+          {!request.followUpId ? (
+            <QueueItemAction
+              aria-label="移除排队请求"
+              className="opacity-100"
+              onClick={() => onRemove(request.id)}
+            >
+              <Trash2Icon />
+            </QueueItemAction>
+          ) : null}
+          {onSendNow && !request.followUpId ? (
             <QueueItemAction
               aria-label="立即发送排队请求"
               className="opacity-100"
@@ -537,6 +572,7 @@ export function ChatPromptInput({
   onSubmit,
   status,
   onStop,
+  onSteer,
   compacting,
   onCompress,
   compressResult,
@@ -563,6 +599,7 @@ export function ChatPromptInput({
    * 「点按钮停止」两个动作互不干扰。
    */
   onStop: () => void | Promise<void>;
+  onSteer: (text: string, clearPrompt: () => void) => Promise<void>;
   compacting: boolean;
   onCompress: () => void;
   compressResult: CompressResult | null;
@@ -714,6 +751,26 @@ export function ChatPromptInput({
             />
             <ChatModeSelector />
             <ChatModelSelector />
+            <SteerButton
+              disabled={status !== "submitted" && status !== "streaming"}
+              onSteer={() => {
+                const text = controller.textInput.value.trim();
+                if (!text) {
+                  toast.error("请输入要立即转向的内容");
+                  return;
+                }
+                if (controller.attachments.files.length > 0) {
+                  toast.error("立即转向不支持附件,请先发送或移除附件");
+                  return;
+                }
+                void onSteer(text, () => {
+                  controller.textInput.clear();
+                  controller.attachments.clear();
+                  setSelectedSkills([]);
+                  setSelectedFileReferences([]);
+                });
+              }}
+            />
             <PromptInputSubmit onStop={() => void onStop()} status={status} />
           </div>
         </PromptInputFooter>

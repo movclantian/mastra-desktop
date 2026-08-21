@@ -6,7 +6,7 @@ import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
 
 const MASTRA_SERVER_URL = "http://localhost:4111";
@@ -36,6 +36,37 @@ const MASTRA_SHUTDOWN_MESSAGE = "mastra-work:shutdown";
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 把系统代理解析结果注入服务进程环境。
+ * 用 Chromium 官方的 session.resolveProxy 解析系统代理(Windows/macOS/Linux
+ * 统一走系统配置),避免在服务进程里手工读注册表/scutil;服务端只认环境变量。
+ * 已有显式代理环境变量时不覆盖;解析失败或代理关闭(DIRECT)时返回 undefined。
+ */
+async function resolveSystemProxyUrl(): Promise<string | undefined> {
+  const explicit =
+    process.env.HTTPS_PROXY ??
+    process.env.https_proxy ??
+    process.env.HTTP_PROXY ??
+    process.env.http_proxy;
+  if (explicit) return undefined;
+  try {
+    // resolveProxy 按 URL 匹配代理规则(PAC 可对不同域名走不同代理),因此必须给
+    // 一个目标 URL 作探测;这里用中立占位域名,与任何具体供应商/业务域名无关。
+    const rules = await session.defaultSession.resolveProxy("https://example.com");
+    // 形如 "PROXY 127.0.0.1:7890;DIRECT" 或 "DIRECT"
+    const proxy = rules
+      .split(";")
+      .map((rule) => rule.trim())
+      .find((rule) => rule.startsWith("PROXY "));
+    if (!proxy) return undefined;
+    const host = proxy.slice("PROXY ".length).trim();
+    if (!host) return undefined;
+    return /^https?:\/\//i.test(host) ? host : `http://${host}`;
+  } catch {
+    return undefined;
+  }
+}
 
 let mastraProcess: ChildProcess | null = null;
 let mastraStartPromise: Promise<void> | null = null;
@@ -202,6 +233,12 @@ function getPackagedMastraEntry(): string {
   return join(unpackedRoot, ".mastra", "output", "index.mjs");
 }
 
+function getPackagedResourceDirectory(): string {
+  const appPath = app.getAppPath();
+  const unpackedRoot = appPath.endsWith(".asar") ? `${appPath}.unpacked` : appPath;
+  return join(unpackedRoot, "resources");
+}
+
 /** 按端口找 LISTENING 进程并整树强杀;平台分支只为调对系统命令,行为一致 */
 async function killProcessesOnPort(port: number): Promise<void> {
   try {
@@ -335,18 +372,29 @@ function ensureMastraRunning(): Promise<void> {
         MASTRA_SHUTDOWN_TOKEN,
       };
 
+      // 服务进程是纯 Node,原生 fetch 不读系统代理;把 Chromium 解析出的系统
+      // 代理以环境变量注入,经 spawn 链(dev: CLI → 服务孙进程)传给服务端。
+      const systemProxy = await resolveSystemProxyUrl();
+      if (systemProxy) {
+        env.HTTPS_PROXY = systemProxy;
+        env.HTTP_PROXY = systemProxy;
+        env.NO_PROXY = "localhost,127.0.0.1,::1";
+      }
+
       if (is.dev) {
         const projectRoot = getProjectRoot();
         command = process.execPath;
         args = [getMastraCliEntry(projectRoot), "dev"];
         cwd = projectRoot;
         env.FORCE_COLOR = "1";
+        env.PLAYWRIGHT_BROWSERS_PATH = join(projectRoot, "resources", "browsers");
       } else {
         command = process.execPath;
         args = [getPackagedMastraEntry()];
         cwd = process.resourcesPath;
         // 不要让 Mastra 又去走 dev 分支找 pnpm-lock.yaml
         env.NODE_ENV = "production";
+        env.PLAYWRIGHT_BROWSERS_PATH = join(getPackagedResourceDirectory(), "browsers");
       }
 
       let proc: ChildProcess;
@@ -427,8 +475,10 @@ function defaultMastraObservabilityDir(): string {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1200,
+    height: 800,
+    minWidth: 900,
+    minHeight: 600,
     show: false,
     autoHideMenuBar: true,
     ...(process.platform === "linux" ? { icon } : {}),

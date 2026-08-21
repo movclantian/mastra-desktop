@@ -42,6 +42,13 @@ const MEMORY_TEXT_KEYS = new Set([
   "omReflectionInstruction",
 ]);
 
+const DEFAULT_THREAD_OM_DRAFT = {
+  messageTokens: 0,
+  observationTokens: 0,
+  observationModel: "",
+  reflectionModel: "",
+};
+
 export interface MemoryDraft {
   embeddingModel: string;
   lastMessages: number;
@@ -158,13 +165,12 @@ export function MemorySection() {
   const { providers, catalog, modelSelection, activeThreadId, user } = useWorkbench();
   const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
   const [loaded, setLoaded] = React.useState(false);
-  const [threadOmDraft, setThreadOmDraft] = React.useState({
-    messageTokens: 0,
-    maxTokensPerBatch: 0,
-    observationTokens: 0,
-    bufferTokens: 0.2,
-  });
+  const [threadOmDraft, setThreadOmDraft] = React.useState(DEFAULT_THREAD_OM_DRAFT);
   const [threadOmLoaded, setThreadOmLoaded] = React.useState(false);
+  const [threadSubagentModels, setThreadSubagentModels] = React.useState<Record<string, string>>(
+    {},
+  );
+  const [threadSubagentLoaded, setThreadSubagentLoaded] = React.useState(false);
 
   // messageTokens 派生:Observer/Reflector 所用(或跟随的)模型上下文窗口 × 25%,
   // 夹在 8K~250K —— 窗口越大触发阈值越高,在撑爆上下文前完成压缩。
@@ -223,9 +229,11 @@ export function MemorySection() {
   React.useEffect(() => {
     if (!activeThreadId) {
       setThreadOmLoaded(false);
+      setThreadSubagentLoaded(false);
       return;
     }
     setThreadOmLoaded(false);
+    setThreadOmDraft(DEFAULT_THREAD_OM_DRAFT);
     fetch(
       `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/observational-memory-config?resourceId=${encodeURIComponent(user.id)}`,
     )
@@ -233,15 +241,40 @@ export function MemorySection() {
       .then((payload: { config?: Record<string, unknown> } | null) => {
         const config = payload?.config;
         if (!config) return;
-        setThreadOmDraft((current) => ({
-          ...current,
-          ...Object.fromEntries(
-            Object.entries(config).filter(([, value]) => typeof value === "number"),
-          ),
-        }));
+        const observation =
+          typeof config.observation === "object" && config.observation !== null
+            ? (config.observation as Record<string, unknown>)
+            : {};
+        const reflection =
+          typeof config.reflection === "object" && config.reflection !== null
+            ? (config.reflection as Record<string, unknown>)
+            : {};
+        setThreadOmDraft({
+          ...DEFAULT_THREAD_OM_DRAFT,
+          messageTokens:
+            typeof observation.messageTokens === "number" ? observation.messageTokens : 0,
+          observationTokens:
+            typeof reflection.observationTokens === "number" ? reflection.observationTokens : 0,
+          observationModel: typeof observation.model === "string" ? observation.model : "",
+          reflectionModel: typeof reflection.model === "string" ? reflection.model : "",
+        });
       })
       .catch(() => undefined)
       .finally(() => setThreadOmLoaded(true));
+  }, [activeThreadId, user.id]);
+
+  React.useEffect(() => {
+    if (!activeThreadId) return;
+    setThreadSubagentLoaded(false);
+    fetch(
+      `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/subagent-models?resourceId=${encodeURIComponent(user.id)}`,
+    )
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload: { subagentModels?: Record<string, string> } | null) =>
+        setThreadSubagentModels(payload?.subagentModels ?? {}),
+      )
+      .catch(() => setThreadSubagentModels({}))
+      .finally(() => setThreadSubagentLoaded(true));
   }, [activeThreadId, user.id]);
 
   const saveThreadOmConfig = async () => {
@@ -251,7 +284,25 @@ export function MemorySection() {
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resourceId: user.id, config: threadOmDraft }),
+        body: JSON.stringify({
+          resourceId: user.id,
+          config: {
+            observation: {
+              messageTokens: threadOmDraft.messageTokens,
+              model:
+                threadOmDraft.observationModel === FOLLOW_CURRENT_MODEL
+                  ? null
+                  : threadOmDraft.observationModel,
+            },
+            reflection: {
+              observationTokens: threadOmDraft.observationTokens,
+              model:
+                threadOmDraft.reflectionModel === FOLLOW_CURRENT_MODEL
+                  ? null
+                  : threadOmDraft.reflectionModel,
+            },
+          },
+        }),
       },
     );
     if (response.ok) toast.success("当前线程的观察记忆覆盖已保存");
@@ -1035,20 +1086,6 @@ export function MemorySection() {
               }
             />
           </SettingRow>
-          <SettingRow title="批量观察上限(maxTokensPerBatch)" description="0 表示跟随全局配置">
-            <Input
-              className="w-32"
-              min={0}
-              type="number"
-              value={threadOmDraft.maxTokensPerBatch}
-              onChange={(event) =>
-                setThreadOmDraft({
-                  ...threadOmDraft,
-                  maxTokensPerBatch: Math.max(0, Number(event.target.value) || 0),
-                })
-              }
-            />
-          </SettingRow>
           <SettingRow title="反思触发阈值(observationTokens)" description="0 表示跟随全局配置">
             <Input
               className="w-32"
@@ -1063,24 +1100,90 @@ export function MemorySection() {
               }
             />
           </SettingRow>
-          <SettingRow title="缓冲阈值(bufferTokens)" description="0 表示跟随全局配置">
-            <Input
-              className="w-32"
-              min={0}
-              type="number"
-              step={0.05}
-              value={threadOmDraft.bufferTokens}
-              onChange={(event) =>
-                setThreadOmDraft({
-                  ...threadOmDraft,
-                  bufferTokens: Math.max(0, Number(event.target.value) || 0),
-                })
-              }
-            />
+          <SettingRow
+            title="Observer 模型(observation.model)"
+            description="跟随表示使用全局观察模型"
+          >
+            <div className="w-64">
+              <ModelSelectDropdown
+                allowFollow
+                providers={providers}
+                value={threadOmDraft.observationModel || FOLLOW_CURRENT_MODEL}
+                onChange={(value) =>
+                  setThreadOmDraft({ ...threadOmDraft, observationModel: value })
+                }
+              />
+            </div>
+          </SettingRow>
+          <SettingRow
+            title="Reflector 模型(reflection.model)"
+            description="跟随表示使用全局反思模型"
+          >
+            <div className="w-64">
+              <ModelSelectDropdown
+                allowFollow
+                providers={providers}
+                value={threadOmDraft.reflectionModel || FOLLOW_CURRENT_MODEL}
+                onChange={(value) => setThreadOmDraft({ ...threadOmDraft, reflectionModel: value })}
+              />
+            </div>
           </SettingRow>
           <Button className="w-full" onClick={() => void saveThreadOmConfig()}>
             保存当前线程覆盖
           </Button>
+        </SettingCard>
+      ) : null}
+      {activeThreadId && threadSubagentLoaded ? (
+        <SettingCard
+          title="当前线程子 Agent 模型"
+          description="只覆盖本线程委托任务的模型；跟随当前模型会使用本次主 Agent 请求的模型。"
+        >
+          {[
+            ["default", "默认子 Agent"],
+            ["explorer", "Explorer 调研"],
+            ["reviewer", "Reviewer 复查"],
+          ].map(([agentType, label]) => (
+            <SettingRow key={agentType} title={label}>
+              <div className="w-64">
+                <ModelSelectDropdown
+                  allowFollow
+                  providers={providers}
+                  value={threadSubagentModels[agentType] ?? FOLLOW_CURRENT_MODEL}
+                  onChange={(modelId) => {
+                    const previous = threadSubagentModels;
+                    setThreadSubagentModels((current) => {
+                      if (modelId === FOLLOW_CURRENT_MODEL) {
+                        const next = { ...current };
+                        delete next[agentType];
+                        return next;
+                      }
+                      return { ...current, [agentType]: modelId };
+                    });
+                    void fetch(
+                      `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/subagent-models?resourceId=${encodeURIComponent(user.id)}`,
+                      {
+                        method: "PATCH",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          agentType,
+                          modelId: modelId === FOLLOW_CURRENT_MODEL ? null : modelId,
+                        }),
+                      },
+                    )
+                      .then((response) => {
+                        if (response.ok) return;
+                        setThreadSubagentModels(previous);
+                        toast.error("子 Agent 模型保存失败");
+                      })
+                      .catch(() => {
+                        setThreadSubagentModels(previous);
+                        toast.error("子 Agent 模型保存失败");
+                      });
+                  }}
+                />
+              </div>
+            </SettingRow>
+          ))}
         </SettingCard>
       ) : null}
     </>

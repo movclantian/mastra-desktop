@@ -2,7 +2,7 @@
 
 import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,10 @@ export const WebPreview = ({
 }: WebPreviewProps) => {
   const [url, setUrl] = useState(defaultUrl);
   const [consoleOpen, setConsoleOpen] = useState(false);
+
+  useEffect(() => {
+    setUrl(defaultUrl);
+  }, [defaultUrl]);
 
   const handleUrlChange = useCallback(
     (newUrl: string) => {

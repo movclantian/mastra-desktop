@@ -14,15 +14,13 @@ import {
   createThreadRoute,
   deleteThreadRoute,
   listThreadsRoute,
-  threadSuspendedRunsRoute,
-  threadTasksRoute,
   updateThreadRoute,
 } from "./threads";
 import { getWorkingMemoryRoute, updateWorkingMemoryRoute } from "./working-memory";
 
 /**
  * 线程会话路由汇总(按子模块拆分):
- * - threads.ts         线程 CRUD + 任务/挂起运行
+ * - threads.ts         线程 CRUD
  * - messages.ts        消息历史 + 删除 + 跨线程搜索
  * - compact.ts         真压缩(summarize)
  * - clone.ts           线程克隆与谱系
@@ -38,8 +36,6 @@ export const threadRoutes = [
   deleteThreadRoute,
   threadMessagesRoute,
   updateMessageBranchRoute,
-  threadSuspendedRunsRoute,
-  threadTasksRoute,
   cloneThreadRoute,
   cloneCompactedEditRoute,
   threadClonesRoute,

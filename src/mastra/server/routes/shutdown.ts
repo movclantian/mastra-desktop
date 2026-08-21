@@ -1,4 +1,5 @@
 import { registerApiRoute } from "@mastra/core/server";
+import { workBrowser } from "../../agents";
 import { getMemory } from "../../memory";
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,7 @@ export async function requestShutdown(httpExitDelayMs = 0): Promise<void> {
   shuttingDown = true;
   try {
     await Promise.race([
-      getMemory().settled(),
+      Promise.allSettled([getMemory().settled(), workBrowser.close()]),
       new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
     ]);
   } catch {

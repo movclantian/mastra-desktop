@@ -107,11 +107,15 @@ const FileTreeFolderContext = createContext<FileTreeFolderContextType>({
 export type FileTreeFolderProps = HTMLAttributes<HTMLDivElement> & {
   path: string;
   name: string;
+  icon?: ReactNode;
+  openIcon?: ReactNode;
 };
 
 export const FileTreeFolder = ({
   path,
   name,
+  icon,
+  openIcon,
   className,
   children,
   ...props
@@ -161,11 +165,9 @@ export const FileTreeFolder = ({
               type="button"
             >
               <FileTreeIcon>
-                {isExpanded ? (
-                  <FolderOpenIcon className="size-4 text-blue-500" />
-                ) : (
-                  <FolderIcon className="size-4 text-blue-500" />
-                )}
+                {isExpanded
+                  ? (openIcon ?? <FolderOpenIcon className="size-4 text-blue-500" />)
+                  : (icon ?? <FolderIcon className="size-4 text-blue-500" />)}
               </FileTreeIcon>
               <FileTreeName>{name}</FileTreeName>
             </button>

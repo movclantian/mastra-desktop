@@ -1,4 +1,4 @@
-import { cancelRunRoute } from "./chat";
+import { browserRoutes } from "./browser";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -39,6 +39,7 @@ import {
   providersConfigRoute,
   saveProvidersConfigRoute,
 } from "./providers";
+import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
 import { signalRoutes } from "./signals";
 import {
@@ -61,7 +62,10 @@ import { threadRoutes } from "./threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import {
   recentWorkspacesRoute,
+  saveThreadFileRoute,
   saveWorkspaceConfigRoute,
+  threadCommandRoute,
+  threadFileRoute,
   threadTreeRoute,
   workspaceConfigRoute,
 } from "./workspace";
@@ -72,9 +76,10 @@ import {
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 export const workRoutes = [
+  ...browserRoutes,
   ...threadRoutes,
-  cancelRunRoute,
   ...signalRoutes,
+  ...sessionRoutes,
   shutdownRoute,
   libraryAssetsRoute,
   libraryUploadSessionsRoute,
@@ -114,6 +119,9 @@ export const workRoutes = [
   saveWorkspaceConfigRoute,
   recentWorkspacesRoute,
   threadTreeRoute,
+  threadFileRoute,
+  saveThreadFileRoute,
+  threadCommandRoute,
   toolsConfigRoute,
   saveToolsConfigRoute,
   skillsRoute,

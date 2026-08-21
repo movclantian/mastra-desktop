@@ -1,7 +1,12 @@
+import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
 import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
-import { resolveConfiguredEmbeddingModelForUse, resolveDefaultModelId } from "../agents/llm";
+import {
+  resolveConfiguredEmbeddingModelForUse,
+  resolveDefaultModelId,
+  WORKBENCH_GATEWAY_ID,
+} from "../agents/llm";
 import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storage";
 
 /**
@@ -254,6 +259,7 @@ export async function saveMemoryConfig(next: MemoryUserConfig): Promise<void> {
   await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2));
   config = normalized;
   cachedMemory = null;
+  memoryByOmModels.clear();
 }
 
 function finite(value: unknown, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
@@ -410,21 +416,48 @@ let config = await getMemoryConfig();
 
 // Memory 实例按配置缓存:saveMemoryConfig 置空后,下一次 getMemory() 按新配置重建
 let cachedMemory: Memory | null = null;
+const memoryByOmModels = new Map<string, Memory>();
+
+export const OM_MODELS_CONTEXT_KEY = "mastra-work:om-models";
+
+export interface OmModelSelection {
+  observerModelId?: string;
+  reflectorModelId?: string;
+}
 
 /**
  * 当前 Memory 实例。Agent 以函数形式引用(memory: () => getMemory()),
  * 配置保存后无需重启即对后续请求生效。
  */
-export function getMemory(): Memory {
+export function getMemory(options?: { requestContext?: RequestContext }): Memory {
+  const selection = options?.requestContext?.get(OM_MODELS_CONTEXT_KEY) as
+    | OmModelSelection
+    | undefined;
+  const observerModelId = selection?.observerModelId?.trim() || undefined;
+  const reflectorModelId = selection?.reflectorModelId?.trim() || undefined;
+  if (observerModelId || reflectorModelId) {
+    const key = JSON.stringify([observerModelId ?? null, reflectorModelId ?? null]);
+    const existing = memoryByOmModels.get(key);
+    if (existing) return existing;
+    const memory = buildMemory({ observerModelId, reflectorModelId });
+    memoryByOmModels.set(key, memory);
+    return memory;
+  }
   if (!cachedMemory) cachedMemory = buildMemory();
   return cachedMemory;
 }
 
-function buildMemory(): Memory {
+function workbenchModelId(modelId: string): `${string}/${string}` {
+  return (
+    modelId.startsWith(`${WORKBENCH_GATEWAY_ID}/`) ? modelId : `${WORKBENCH_GATEWAY_ID}/${modelId}`
+  ) as `${string}/${string}`;
+}
+
+function buildMemory(overrides: OmModelSelection = {}): Memory {
   // 官方约束:顶层 model 与 observation.model/reflection.model 互斥 ——
   // 任一子模型配置时只传子模型,否则传顶层(或全部省略 = 跟随当前模型)。
-  const omObserverModel = config.omObserverModel.trim();
-  const omReflectionModel = config.omReflectionModel.trim();
+  const omObserverModel = overrides.observerModelId?.trim() || config.omObserverModel.trim();
+  const omReflectionModel = overrides.reflectorModelId?.trim() || config.omReflectionModel.trim();
   const omTopModel = omObserverModel || omReflectionModel ? undefined : config.omModel.trim();
   // OM 的配置对象不能省略 model:Mastra 会把「未配置」静默解析为
   // google/gemini-2.5-flash,这会让用户明明选择了自定义网关却在后台观察任务里
@@ -519,7 +552,9 @@ function buildMemory(): Memory {
       ...(config.observationalMemory
         ? {
             observationalMemory: {
-              model: omTopModel || omFollowCurrentModel,
+              ...(omObserverModel || omReflectionModel
+                ? {}
+                : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
               scope: config.omScope,
               ...(config.omTemporalMarkers ? { temporalMarkers: true } : {}),
               // retrieval:布尔之外的 { vector, scope } 形态(retrieval 默认 scope = resource)
@@ -533,7 +568,7 @@ function buildMemory(): Memory {
                 : {}),
               observation: {
                 continuationHints: false,
-                ...(omObserverModel ? { model: omObserverModel } : {}),
+                ...(omObserverModel ? { model: workbenchModelId(omObserverModel) } : {}),
                 ...(config.omObserverInstruction.trim()
                   ? { instruction: config.omObserverInstruction.trim() }
                   : {}),
@@ -562,7 +597,7 @@ function buildMemory(): Memory {
               },
               reflection: {
                 continuationHints: false,
-                ...(omReflectionModel ? { model: omReflectionModel } : {}),
+                ...(omReflectionModel ? { model: workbenchModelId(omReflectionModel) } : {}),
                 ...(config.omReflectionInstruction.trim()
                   ? { instruction: config.omReflectionInstruction.trim() }
                   : {}),

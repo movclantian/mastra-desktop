@@ -19,12 +19,19 @@ export type ThreadMetadata = {
    * 本线程最近使用的模型形态快照(每次带 body.model 的请求写入)。
    * 只存形态 —— apiKey / gateway url 永不落线程元数据。
    */
-  modelSelection?: {
-    providerId: string;
-    modelId: string;
-    modelName: string;
-    reasoningEffort: string;
-  };
+  modelSelectionByMode?: Record<
+    string,
+    {
+      providerId: string;
+      modelId: string;
+      modelName: string;
+      reasoningEffort: string;
+    }
+  >;
+  subagentModels?: Record<string, string>;
+  /** Session-style per-thread observational-memory role selections. */
+  observerModelId?: string;
+  reflectorModelId?: string;
   /**
    * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
    * - 显式绑定:用户在 promptInput 选择器选定的本地目录

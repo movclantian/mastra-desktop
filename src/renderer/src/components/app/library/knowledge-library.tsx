@@ -2,10 +2,8 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   ExternalLinkIcon,
-  FileIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
-  FolderIcon,
   FolderPenIcon,
   FolderPlusIcon,
   HardDriveIcon,
@@ -22,6 +20,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { FileTypeIcon, FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -464,7 +463,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
           onClick={() => setSelectedId(asset.id)}
         >
-          <FileIcon className="size-4 shrink-0 text-muted-foreground" />
+          <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm">{asset.filename}</span>
             <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
@@ -633,7 +632,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                       setQuery("");
                     }}
                   >
-                    <FolderIcon className="size-4 shrink-0 text-primary" />
+                    <FolderTypeIcon name="资料库" open={view === "documents"} />
                     <span className="truncate">我的文档</span>
                   </button>
                   {failedAssetCount > 0 ? (
@@ -785,7 +784,10 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                                 )}
                                 onClick={() => setFolderId(entry.folder.id)}
                               >
-                                <FolderIcon className="size-4 shrink-0 text-primary" />
+                                <FolderTypeIcon
+                                  name={entry.folder.name}
+                                  open={!collapsedFolderIds.has(entry.folder.id)}
+                                />
                                 <span className="truncate">{entry.folder.name}</span>
                               </button>
                               <DropdownMenu>
@@ -900,7 +902,12 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                 {directoryOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
               </Button>
               <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                {selected?.filename ?? "文件预览"}
+                <span className="flex min-w-0 items-center gap-2">
+                  {selected ? (
+                    <FileTypeIcon mediaType={selected.mediaType} name={selected.filename} />
+                  ) : null}
+                  <span className="truncate">{selected?.filename ?? "文件预览"}</span>
+                </span>
               </p>
               {selected ? <Badge variant="outline">{statusLabel(selected.status)}</Badge> : null}
               {selected ? (
@@ -954,7 +961,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                 </React.Suspense>
               ) : (
                 <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <FileIcon className="size-8" />
+                  <FileTypeIcon className="size-8" name="" />
                   <p className="text-sm">选择一个文件进行预览</p>
                 </div>
               )}
@@ -1400,7 +1407,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                     }}
                     className="h-auto py-2"
                   >
-                    <FileIcon className="size-4 text-muted-foreground" />
+                    <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{asset.filename}</span>
                       <span className="block truncate text-xs text-muted-foreground">

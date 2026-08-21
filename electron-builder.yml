@@ -7,6 +7,7 @@ files:
   # 必须显式带上应用自身的构建产物 out/(main/preload/renderer)
   - 'out/**'
   - '.mastra/output/**'
+  - 'resources/browsers/**'
   - '!**/.vscode/*'
   - '!src/*'
   - '!.mastra/.build/**'
@@ -27,6 +28,11 @@ nsis:
   shortcutName: ${productName}
   uninstallDisplayName: ${productName}
   createDesktopShortcut: always
+  # electron-builder 的 NSIS 默认 oneClick: true —— 一键静默安装,无向导。
+  # 显式关闭后变为 assisted 向导式安装(安装路径/快捷方式/完成页都有)
+  oneClick: false
+  # 允许用户在向导里选择安装目录(仅 assisted 模式生效)
+  allowToChangeInstallationDirectory: true
 mac:
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:

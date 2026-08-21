@@ -1,3 +1,4 @@
+import type { ToolsInput } from "@mastra/core/agent";
 import { type PermissionRules, type ToolCategory, withCategoryPolicy } from "./permissions";
 
 /**
@@ -25,6 +26,10 @@ export interface WorkMode {
   metadata?: { default?: boolean };
   /** 叠加到 Agent instructions 之后的模式指令 */
   instructions: string;
+  /** Tools layered into this mode in addition to the shared Agent tools. */
+  additionalTools?: ToolsInput;
+  /** Optional allow-list applied after the shared tool set is resolved. */
+  availableTools?: string[];
   /** 该模式强制拒绝的权限类别(线程规则之上的叠加,用户无法在该模式下放开) */
   deniedCategories?: ToolCategory[];
   /** 计划获批后自动切换到的模式(官方 transitionsTo) */

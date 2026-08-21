@@ -14,6 +14,9 @@ import { getAppConfig, setAppConfig } from "../storage";
 
 export type { GatewayLanguageModel };
 
+/** RequestContext key used by the shared work Agent and delegated Agents. */
+export const REQUEST_MODEL_CONTEXT_KEY = "mastra-work:request-model";
+
 /**
  * 模型供应商配置 + BYOK 请求模型解析 + 自定义模型网关。
  *
@@ -236,8 +239,17 @@ export async function resolveRequestModel(
   value: unknown,
 ): Promise<GatewayLanguageModel | { id: `${string}/${string}`; apiKey: string } | undefined> {
   if (!isRequestModel(value)) return undefined;
-  const config = await getProvidersConfig();
   const { providerId, modelId } = splitRouterId(value.id);
+  return resolveConfiguredModel(providerId, modelId);
+}
+
+/** Resolve a persisted thread model selection without reconstructing a client request payload. */
+export async function resolveConfiguredModel(
+  providerId: string,
+  modelId: string,
+): Promise<GatewayLanguageModel | { id: `${string}/${string}`; apiKey: string } | undefined> {
+  if (!providerId.trim() || !modelId.trim()) return undefined;
+  const config = await getProvidersConfig();
   const provider =
     config.providers.find((candidate) => routerPrefix(candidate) === providerId) ??
     config.providers.find((candidate) => candidate.id === providerId);

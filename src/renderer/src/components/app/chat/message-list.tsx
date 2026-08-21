@@ -21,6 +21,7 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from "@/components/ai-elements/chain-of-thought";
+import { CodeBlock, CodeBlockCopyButton } from "@/components/ai-elements/code-block";
 import {
   MessageBranch,
   MessageBranchContent,
@@ -31,6 +32,16 @@ import {
   MessageResponse,
 } from "@/components/ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import {
+  Sandbox,
+  SandboxContent,
+  SandboxHeader,
+  SandboxTabContent,
+  SandboxTabs,
+  SandboxTabsBar,
+  SandboxTabsList,
+  SandboxTabsTrigger,
+} from "@/components/ai-elements/sandbox";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
@@ -217,8 +228,11 @@ export const ReasoningStepItem = React.memo(function ReasoningStepItem({
  * (默认收起,需要时再看,不再无条件倾倒原始数据)。
  */
 export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart }) {
-  const [open, setOpen] = React.useState(false);
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
+  const typescriptSandbox = name === "execute_typescript";
+  const commandSandbox = name === "mastra_workspace_execute_command";
+  const sandboxTool = typescriptSandbox || commandSandbox;
+  const [open, setOpen] = React.useState(sandboxTool);
   const active = getTraceStepStatus(part) === "active";
   const failed = part.state === "output-error";
   const errorText = "errorText" in part ? part.errorText : undefined;
@@ -231,6 +245,31 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
   );
   const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
   const hasDetails = hasInput || output !== undefined;
+
+  const sandboxOutput = React.useMemo(() => {
+    if (!sandboxTool) return "";
+    if (failed) return errorText ?? "执行失败";
+    if (output === undefined) return active ? "正在执行..." : "";
+    if (typeof output === "string") return output;
+    if (commandSandbox) {
+      return typeof output === "string" ? output : JSON.stringify(output, null, 2);
+    }
+    const record = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
+    const lines = Array.isArray(record.logs)
+      ? record.logs.filter((line): line is string => typeof line === "string")
+      : [];
+    if (record.result !== undefined) {
+      lines.push(
+        typeof record.result === "string" ? record.result : JSON.stringify(record.result, null, 2),
+      );
+    }
+    if (record.error !== undefined) {
+      lines.push(
+        typeof record.error === "string" ? record.error : JSON.stringify(record.error, null, 2),
+      );
+    }
+    return lines.join("\n");
+  }, [active, commandSandbox, errorText, failed, output, sandboxTool]);
 
   const summary = (
     <>
@@ -274,8 +313,56 @@ export const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: T
       {hasDetails ? (
         <CollapsibleContent>
           <div className="mt-1 space-y-2 pl-6">
-            {hasInput ? <ToolInput input={part.input} /> : null}
-            {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
+            {sandboxTool ? (
+              <Sandbox className="mb-0" defaultOpen>
+                <SandboxHeader
+                  state={part.state}
+                  title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
+                />
+                <SandboxContent>
+                  <SandboxTabs defaultValue="code">
+                    <SandboxTabsBar>
+                      <SandboxTabsList>
+                        <SandboxTabsTrigger value="code">代码</SandboxTabsTrigger>
+                        <SandboxTabsTrigger value="output">输出</SandboxTabsTrigger>
+                      </SandboxTabsList>
+                    </SandboxTabsBar>
+                    <SandboxTabContent value="code">
+                      <CodeBlock
+                        className="rounded-none border-0"
+                        code={
+                          commandSandbox
+                            ? typeof input.command === "string"
+                              ? input.command
+                              : "# 正在生成命令..."
+                            : typeof input.code === "string"
+                              ? input.code
+                              : "// 正在生成代码..."
+                        }
+                        language={commandSandbox ? "bash" : "typescript"}
+                        showLineNumbers
+                      >
+                        <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                      </CodeBlock>
+                    </SandboxTabContent>
+                    <SandboxTabContent value="output">
+                      <CodeBlock
+                        className="rounded-none border-0"
+                        code={sandboxOutput}
+                        language="log"
+                      >
+                        <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                      </CodeBlock>
+                    </SandboxTabContent>
+                  </SandboxTabs>
+                </SandboxContent>
+              </Sandbox>
+            ) : (
+              <>
+                {hasInput ? <ToolInput input={part.input} /> : null}
+                {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
+              </>
+            )}
           </div>
         </CollapsibleContent>
       ) : null}
