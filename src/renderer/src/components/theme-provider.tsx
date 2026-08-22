@@ -120,6 +120,14 @@ export function ThemeProvider({
     };
   }, [activePreset, activeCustomization]);
 
+  // 计算当前最终生效的排版与字体 Tokens
+  const resolvedTypography = useMemo(() => {
+    return {
+      ...activePreset.typography,
+      ...(activeCustomization.typography || {}),
+    };
+  }, [activePreset, activeCustomization]);
+
   // 实时将主题样式变量与属性注入 document.documentElement
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -173,7 +181,16 @@ export function ThemeProvider({
         ? `${resolvedGeometry.shadowDepth}px ${resolvedGeometry.shadowDepth}px 0px var(--border)`
         : "0 1px 2px 0 rgb(0 0 0 / 0.05)",
     );
-  }, [isDark, activePreset, resolvedColors, resolvedGeometry]);
+
+    // 4. 排版与字体变量
+    root.style.setProperty("--theme-font-sans", resolvedTypography.fontSans);
+    root.style.setProperty("--theme-font-mono", resolvedTypography.fontMono);
+    root.style.setProperty("--theme-heading-weight", resolvedTypography.headingWeight);
+    root.style.setProperty("--theme-letter-spacing", resolvedTypography.letterSpacing);
+    root.style.setProperty("--theme-text-transform", resolvedTypography.textTransform || "none");
+    root.style.fontFamily = resolvedTypography.fontSans;
+    root.style.letterSpacing = resolvedTypography.letterSpacing;
+  }, [isDark, activePreset, resolvedColors, resolvedGeometry, resolvedTypography]);
 
   const setMode = (newMode: ThemeMode) => {
     try {
@@ -209,6 +226,10 @@ export function ThemeProvider({
         geometry: {
           ...(current.geometry || {}),
           ...(partial.geometry || {}),
+        },
+        typography: {
+          ...(current.typography || {}),
+          ...(partial.typography || {}),
         },
       };
       const next = { ...prev, [activePresetId]: updated };
@@ -250,6 +271,7 @@ export function ThemeProvider({
       resetActiveCustomization,
       resolvedColors,
       resolvedGeometry,
+      resolvedTypography,
       isDark,
     }),
     [
@@ -260,6 +282,7 @@ export function ThemeProvider({
       activeCustomization,
       resolvedColors,
       resolvedGeometry,
+      resolvedTypography,
       isDark,
     ],
   );

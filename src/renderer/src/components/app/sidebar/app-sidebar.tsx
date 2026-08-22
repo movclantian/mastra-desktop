@@ -1,7 +1,5 @@
 import {
   ArchiveIcon,
-  CheckIcon,
-  ChevronRightIcon,
   ChevronsUpDown,
   LaptopIcon,
   LibraryBigIcon,
@@ -19,11 +17,6 @@ import * as React from "react";
 import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -59,9 +52,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -237,7 +227,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     setLibraryOpen,
     skillOpen,
     setSkillOpen,
-    openSettings,
   } = useWorkbench();
 
   const [renaming, setRenaming] = React.useState<WorkThread | null>(null);

@@ -85,7 +85,8 @@ export function ChatModelSelector() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<PromptInputButton aria-label="选择模型" />}>
+      {/* min-w-0:见 approval-selector 同处注释,解开 min-content 定宽标签才能截短 */}
+      <DropdownMenuTrigger render={<PromptInputButton aria-label="选择模型" className="min-w-0" />}>
         {selectedProvider && modelSelection ? (
           <>
             <ModelSelectorLogo provider={selectedProvider.registryId ?? "custom"} />

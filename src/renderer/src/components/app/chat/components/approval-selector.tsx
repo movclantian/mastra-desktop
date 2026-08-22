@@ -51,6 +51,9 @@ export function ChatApprovalSelector() {
         render={
           <PromptInputButton
             aria-label="审批模式"
+            // min-w-0:按钮默认按 min-content 定宽,而 truncate 含 whitespace-nowrap,
+            // 那个 min-content 就是标签全宽 —— 不解开就永远不会收缩,只会顶宽工具栏
+            className="min-w-0"
             size="sm"
             title={`工具审批:${approvalSummary(permissionRules)}`}
             type="button"

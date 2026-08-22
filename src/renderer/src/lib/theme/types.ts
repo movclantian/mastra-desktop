@@ -1,6 +1,14 @@
 export type ThemeMode = "light" | "dark" | "system";
 
-export type ThemeCategory = "brutalism" | "soft_brutalism" | "modern";
+export type ThemeCategory =
+  | "brutalism"
+  | "soft_brutalism"
+  | "clay_glass"
+  | "skeuomorphism"
+  | "scifi_dark"
+  | "pixel_retro"
+  | "oriental_desktop"
+  | "modern";
 
 export interface ThemeColorTokens {
   background: string;
@@ -40,6 +48,19 @@ export interface ThemeGeometryTokens {
   shadowDepth: number;
 }
 
+export interface ThemeTypographyTokens {
+  /** 核心无衬线字体栈 */
+  fontSans: string;
+  /** 等宽代码字体栈 */
+  fontMono: string;
+  /** 标题字重 (例如 "600", "700", "800") */
+  headingWeight: string;
+  /** 字符间距 (例如 "-0.03em", "0", "0.01em") */
+  letterSpacing: string;
+  /** 强调文字大小写转换 (none / uppercase) */
+  textTransform?: "none" | "uppercase";
+}
+
 export interface ThemePreset {
   id: string;
   name: string;
@@ -48,16 +69,36 @@ export interface ThemePreset {
   categoryLabel: string;
   description: string;
   registrySource: string;
-  styleKey: "default" | "boldkit" | "neobrutalism" | "retroui" | "saaskit" | string;
+  styleKey:
+    | "default"
+    | "boldkit"
+    | "neobrutalism"
+    | "retroui"
+    | "saaskit"
+    | "pouf"
+    | "glasscn"
+    | "einui"
+    | "sabraman"
+    | "thegridcn"
+    | "gymnopedies"
+    | "atroui"
+    | "usva"
+    | "8bitcn"
+    | "pixelact"
+    | "washiveil"
+    | "whiskeyjack"
+    | string;
   light: ThemeColorTokens;
   dark: ThemeColorTokens;
   geometry: ThemeGeometryTokens;
+  typography: ThemeTypographyTokens;
 }
 
 export interface ThemeCustomization {
   lightColors?: Partial<ThemeColorTokens>;
   darkColors?: Partial<ThemeColorTokens>;
   geometry?: Partial<ThemeGeometryTokens>;
+  typography?: Partial<ThemeTypographyTokens>;
 }
 
 export interface ThemeInspirationPalette {
@@ -89,5 +130,6 @@ export interface ThemeContextValue {
   resetActiveCustomization: () => void;
   resolvedColors: ThemeColorTokens;
   resolvedGeometry: ThemeGeometryTokens;
+  resolvedTypography: ThemeTypographyTokens;
   isDark: boolean;
 }

@@ -53,6 +53,8 @@ export function ChatSearchSelector() {
         render={
           <PromptInputButton
             aria-label="联网检索"
+            // 见 approval-selector 同处注释:解开 min-content 定宽,标签才能截短
+            className="min-w-0"
             size={searchSelection ? "sm" : "icon-sm"}
             title={searchSelection ? `联网检索:${activeEngine?.label}` : "开启联网检索"}
             type="button"

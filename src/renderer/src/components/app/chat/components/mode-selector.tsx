@@ -37,6 +37,8 @@ export function ChatModeSelector() {
         render={
           <PromptInputButton
             aria-label="会话模式"
+            // 见 approval-selector 同处注释:解开 min-content 定宽,标签才能截短
+            className="min-w-0"
             size="sm"
             title={`会话模式:${WORK_MODE_META[modeId].label}`}
             type="button"

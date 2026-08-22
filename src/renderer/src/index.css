@@ -105,6 +105,8 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif);
+  --font-mono: var(--theme-font-mono, "JetBrains Mono", "SF Mono", Consolas, monospace);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -156,13 +158,35 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: var(--theme-font-sans, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif);
+    letter-spacing: var(--theme-letter-spacing, normal);
     overflow: hidden;
   }
+  code,
+  pre,
+  kbd,
+  samp {
+    font-family: var(--theme-font-mono, "JetBrains Mono", "SF Mono", Consolas, monospace);
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-weight: var(--theme-heading-weight, 600);
+    letter-spacing: var(--theme-letter-spacing, -0.02em);
+  }
+}
 
   /* Chromium / Windows 全局优雅滚动条适配 */
   ::-webkit-scrollbar {
     width: 6px;
-    height: 6px;
+    height: 2px;
+  }
+
+  ::-webkit-scrollbar:horizontal {
+    height: 2px;
   }
 
   ::-webkit-scrollbar-track {
@@ -181,6 +205,14 @@
   ::-webkit-scrollbar-corner {
     background: transparent;
   }
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* 动态边框宽度与粗野主义硬阴影适配 */
@@ -208,7 +240,14 @@
   border-right-width: 0px !important;
 }
 
-/* 粗野主义阴影与按压质感 */
+/* 粗野主义硬阴影与质感适配 */
+[data-theme-style="boldkit"] .shadow-xs,
+[data-theme-style="neobrutalism"] .shadow-xs,
+[data-theme-style="retroui"] .shadow-xs,
+[data-theme-style="saaskit"] .shadow-xs {
+  box-shadow: var(--theme-shadow-hard, 2px 2px 0px var(--border));
+}
+
 [data-theme-style="boldkit"] .shadow-sm,
 [data-theme-style="neobrutalism"] .shadow-sm,
 [data-theme-style="retroui"] .shadow-sm,
@@ -219,18 +258,40 @@
 [data-theme-style="boldkit"] .shadow-md,
 [data-theme-style="neobrutalism"] .shadow-md,
 [data-theme-style="retroui"] .shadow-md,
-[data-theme-style="saaskit"] .shadow-md {
+[data-theme-style="saaskit"] .shadow-md,
+[data-theme-style="boldkit"] .shadow-lg,
+[data-theme-style="neobrutalism"] .shadow-lg,
+[data-theme-style="retroui"] .shadow-lg,
+[data-theme-style="saaskit"] .shadow-lg {
   box-shadow: var(--theme-shadow-hard, 4px 4px 0px var(--border));
 }
 
-[data-theme-style="boldkit"] button:active:not(:disabled),
-[data-theme-style="neobrutalism"] button:active:not(:disabled),
-[data-theme-style="retroui"] button:active:not(:disabled) {
-  transform: translate(1px, 1px);
+/* 粗野主义按钮实体描边、按压反馈与硬阴影 */
+[data-theme-style="boldkit"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]),
+[data-theme-style="neobrutalism"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]),
+[data-theme-style="retroui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]),
+[data-theme-style="saaskit"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-width: var(--theme-border-width, 2px);
+  border-color: var(--border);
+  box-shadow: var(--theme-shadow-hard, 2px 2px 0px var(--border));
 }
 
-/* 确保输入框与 PromptInput 在全主题与粗野模式下拥有清晰扎实的线条与实体阴影 */
-[data-slot="input-group"] {
+[data-theme-style="boldkit"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled),
+[data-theme-style="neobrutalism"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled),
+[data-theme-style="retroui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled),
+[data-theme-style="saaskit"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: translate(1.5px, 1.5px);
+  box-shadow: 0px 0px 0px var(--border);
+}
+
+/* 确保全组件(输入框、卡片、浮窗、弹窗、侧边栏)在粗野模式下拥有清晰扎实的线条与实体阴影 */
+[data-slot="input-group"],
+[data-slot="card"],
+[data-slot="dialog-content"],
+[data-slot="popover-content"],
+[data-slot="dropdown-menu-content"],
+[data-slot="select-content"],
+[data-slot="tabs-list"] {
   border-width: var(--theme-border-width, 1px);
   border-color: var(--border);
 }
@@ -238,7 +299,597 @@
 [data-theme-style="boldkit"] [data-slot="input-group"],
 [data-theme-style="neobrutalism"] [data-slot="input-group"],
 [data-theme-style="retroui"] [data-slot="input-group"],
-[data-theme-style="saaskit"] [data-slot="input-group"] {
+[data-theme-style="saaskit"] [data-slot="input-group"],
+[data-theme-style="boldkit"] [data-slot="card"],
+[data-theme-style="neobrutalism"] [data-slot="card"],
+[data-theme-style="retroui"] [data-slot="card"],
+[data-theme-style="saaskit"] [data-slot="card"] {
   box-shadow: var(--theme-shadow-hard, 3px 3px 0px var(--border));
 }
+
+[data-theme-style="boldkit"] [data-slot="dialog-content"],
+[data-theme-style="neobrutalism"] [data-slot="dialog-content"],
+[data-theme-style="retroui"] [data-slot="dialog-content"],
+[data-theme-style="saaskit"] [data-slot="dialog-content"] {
+  box-shadow: var(--theme-shadow-hard, 6px 6px 0px var(--border));
+}
+
+/* ==========================================================================
+   2. 黏土拟物 / 玻璃拟态 / 经典拟物 (Clay / Glass / Skeuomorphism)
+   ========================================================================== */
+
+/* --- @1st-pouf: 黏土拟物化 (Claymorphism) --- */
+[data-theme-style="pouf"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 9999px;
+  box-shadow: 0 6px 14px -2px rgba(139, 92, 246, 0.25), inset 0 2px 2px rgba(255, 255, 255, 0.7), inset 0 -2px 3px rgba(0, 0, 0, 0.12);
+  transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+[data-theme-style="pouf"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: scale(0.96) translateY(1px);
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.18), 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme-style="pouf"] [data-slot="card"],
+[data-theme-style="pouf"] [data-slot="dialog-content"],
+[data-theme-style="pouf"] [data-slot="popover-content"],
+[data-theme-style="pouf"] [data-slot="input-group"] {
+  border-radius: 1.25rem;
+  border-color: var(--border);
+  box-shadow: 0 10px 25px -5px rgba(139, 92, 246, 0.12), 0 8px 10px -6px rgba(139, 92, 246, 0.08), inset 0 1.5px 1.5px rgba(255, 255, 255, 0.85);
+}
+
+.dark[data-theme-style="pouf"] [data-slot="card"],
+.dark[data-theme-style="pouf"] [data-slot="dialog-content"],
+.dark[data-theme-style="pouf"] [data-slot="popover-content"],
+.dark[data-theme-style="pouf"] [data-slot="input-group"] {
+  box-shadow: 0 12px 28px -5px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+/* --- @glasscn: Apple 玻璃拟态 (Glassmorphism) --- */
+[data-theme-style="glasscn"] [data-slot="card"],
+[data-theme-style="glasscn"] [data-slot="dialog-content"],
+[data-theme-style="glasscn"] [data-slot="popover-content"],
+[data-theme-style="glasscn"] [data-slot="input-group"] {
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 8px 32px 0 rgba(2, 132, 199, 0.08), inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
+}
+
+.dark[data-theme-style="glasscn"] [data-slot="card"],
+.dark[data-theme-style="glasscn"] [data-slot="dialog-content"],
+.dark[data-theme-style="glasscn"] [data-slot="popover-content"],
+.dark[data-theme-style="glasscn"] [data-slot="input-group"] {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 36px 0 rgba(0, 0, 0, 0.4), inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
+}
+
+[data-theme-style="glasscn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 4px 14px 0 rgba(2, 132, 199, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition: all 0.15s ease;
+}
+
+[data-theme-style="glasscn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 2px 6px 0 rgba(2, 132, 199, 0.15);
+}
+
+/* --- @einui: 磨砂晶钻 (Frosted Acrylic) --- */
+[data-theme-style="einui"] [data-slot="card"],
+[data-theme-style="einui"] [data-slot="dialog-content"],
+[data-theme-style="einui"] [data-slot="popover-content"],
+[data-theme-style="einui"] [data-slot="input-group"] {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 30px -10px rgba(5, 150, 105, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.dark[data-theme-style="einui"] [data-slot="card"],
+.dark[data-theme-style="einui"] [data-slot="dialog-content"],
+.dark[data-theme-style="einui"] [data-slot="popover-content"],
+.dark[data-theme-style="einui"] [data-slot="input-group"] {
+  box-shadow: 0 14px 40px -8px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(52, 211, 153, 0.18);
+}
+
+[data-theme-style="einui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  box-shadow: 0 4px 14px -2px rgba(5, 150, 105, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: all 0.15s ease;
+}
+
+[data-theme-style="einui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* --- @sabraman: 经典拟物化 (Skeuomorphism) --- */
+[data-theme-style="sabraman"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.15));
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -1px 0 rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  transition: all 0.1s ease;
+}
+
+[data-theme-style="sabraman"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: translateY(1px);
+  background-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0.06));
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.38), 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+[data-theme-style="sabraman"] [data-slot="card"],
+[data-theme-style="sabraman"] [data-slot="dialog-content"],
+[data-theme-style="sabraman"] [data-slot="popover-content"],
+[data-theme-style="sabraman"] [data-slot="input-group"] {
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.dark[data-theme-style="sabraman"] [data-slot="card"],
+.dark[data-theme-style="sabraman"] [data-slot="dialog-content"],
+.dark[data-theme-style="sabraman"] [data-slot="popover-content"],
+.dark[data-theme-style="sabraman"] [data-slot="input-group"] {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================================================
+   2.5 科幻 / 赛博朋克 / 发光暗黑 (Sci-Fi / Cyberpunk / Dark Glow)
+   ========================================================================== */
+
+/* --- @thegridcn: 创战纪 / 科幻 HUD (Tron: Ares) --- */
+[data-theme-style="thegridcn"] [data-slot="card"],
+[data-theme-style="thegridcn"] [data-slot="dialog-content"],
+[data-theme-style="thegridcn"] [data-slot="popover-content"],
+[data-theme-style="thegridcn"] [data-slot="input-group"] {
+  border-radius: 0.25rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 16px -2px rgba(0, 240, 255, 0.35), inset 0 0 10px rgba(0, 240, 255, 0.12);
+  background-image: linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.dark[data-theme-style="thegridcn"] [data-slot="card"],
+.dark[data-theme-style="thegridcn"] [data-slot="dialog-content"],
+.dark[data-theme-style="thegridcn"] [data-slot="popover-content"],
+.dark[data-theme-style="thegridcn"] [data-slot="input-group"] {
+  background-color: rgba(7, 14, 27, 0.92);
+  border-color: #00f0ff;
+  box-shadow: 0 0 20px -3px rgba(0, 240, 255, 0.45), inset 0 0 12px rgba(0, 240, 255, 0.18);
+}
+
+[data-theme-style="thegridcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0.25rem;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 14px 0 rgba(0, 240, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  font-family: var(--theme-font-sans);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all 0.15s ease;
+}
+
+[data-theme-style="thegridcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover {
+  box-shadow: 0 0 22px 2px rgba(0, 240, 255, 0.7), inset 0 0 8px rgba(0, 240, 255, 0.4);
+}
+
+[data-theme-style="thegridcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: scale(0.97);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3), inset 0 0 14px rgba(0, 240, 255, 0.6);
+}
+
+/* --- @gymnopedies: 萨蒂暗调静谧文学 (Literary Dark Glow) --- */
+[data-theme-style="gymnopedies"] [data-slot="card"],
+[data-theme-style="gymnopedies"] [data-slot="dialog-content"],
+[data-theme-style="gymnopedies"] [data-slot="popover-content"],
+[data-theme-style="gymnopedies"] [data-slot="input-group"] {
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 24px rgba(226, 168, 85, 0.08), inset 0 1px 0 rgba(226, 168, 85, 0.18);
+}
+
+.dark[data-theme-style="gymnopedies"] [data-slot="card"],
+.dark[data-theme-style="gymnopedies"] [data-slot="dialog-content"],
+.dark[data-theme-style="gymnopedies"] [data-slot="popover-content"],
+.dark[data-theme-style="gymnopedies"] [data-slot="input-group"] {
+  background-color: #151210;
+  box-shadow: 0 0 30px rgba(226, 168, 85, 0.06), inset 0 1px 0 rgba(226, 168, 85, 0.2);
+}
+
+[data-theme-style="gymnopedies"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0.375rem;
+  box-shadow: 0 2px 8px rgba(226, 168, 85, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: all 0.15s ease;
+}
+
+/* --- @atroui: 深空霓虹 (Cyberpunk Neon Glow) --- */
+[data-theme-style="atroui"] [data-slot="card"],
+[data-theme-style="atroui"] [data-slot="dialog-content"],
+[data-theme-style="atroui"] [data-slot="popover-content"],
+[data-theme-style="atroui"] [data-slot="input-group"] {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 20px -4px rgba(192, 132, 252, 0.25), inset 0 1px 0 rgba(244, 63, 94, 0.2);
+}
+
+.dark[data-theme-style="atroui"] [data-slot="card"],
+.dark[data-theme-style="atroui"] [data-slot="dialog-content"],
+.dark[data-theme-style="atroui"] [data-slot="popover-content"],
+.dark[data-theme-style="atroui"] [data-slot="input-group"] {
+  background-color: #100a1c;
+  box-shadow: 0 0 24px -2px rgba(192, 132, 252, 0.4), inset 0 1px 0 rgba(244, 63, 94, 0.3);
+}
+
+[data-theme-style="atroui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0.5rem;
+  box-shadow: 0 0 16px 0 rgba(192, 132, 252, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: all 0.15s ease;
+}
+
+/* --- @usva: 芬兰极夜大气漫反射 (Nordic Mist Atmosphere) --- */
+[data-theme-style="usva"] [data-slot="card"],
+[data-theme-style="usva"] [data-slot="dialog-content"],
+[data-theme-style="usva"] [data-slot="popover-content"],
+[data-theme-style="usva"] [data-slot="input-group"] {
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 36px -8px rgba(45, 212, 191, 0.16), inset 0 1px 1px rgba(255, 255, 255, 0.12);
+}
+
+.dark[data-theme-style="usva"] [data-slot="card"],
+.dark[data-theme-style="usva"] [data-slot="dialog-content"],
+.dark[data-theme-style="usva"] [data-slot="popover-content"],
+.dark[data-theme-style="usva"] [data-slot="input-group"] {
+  background-color: #0c1520;
+  box-shadow: 0 14px 44px -8px rgba(45, 212, 191, 0.22), inset 0 1px 1px rgba(255, 255, 255, 0.15);
+}
+
+[data-theme-style="usva"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 16px 0 rgba(45, 212, 191, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: all 0.15s ease;
+}
+
+/* ==========================================================================
+   2.6 像素 / 8位 / 游戏化 (Retro / Pixel / Gamification)
+   ========================================================================== */
+
+/* --- @8bitcn: 经典 8-bit 像素复古 --- */
+[data-theme-style="8bitcn"] [data-slot="card"],
+[data-theme-style="8bitcn"] [data-slot="dialog-content"],
+[data-theme-style="8bitcn"] [data-slot="popover-content"],
+[data-theme-style="8bitcn"] [data-slot="input-group"] {
+  border-radius: 0px !important;
+  border: 2px solid #000000;
+  box-shadow: 3px 3px 0px #000000;
+  image-rendering: pixelated;
+}
+
+.dark[data-theme-style="8bitcn"] [data-slot="card"],
+.dark[data-theme-style="8bitcn"] [data-slot="dialog-content"],
+.dark[data-theme-style="8bitcn"] [data-slot="popover-content"],
+.dark[data-theme-style="8bitcn"] [data-slot="input-group"] {
+  border-color: #000000;
+  box-shadow: 3px 3px 0px #000000;
+}
+
+[data-theme-style="8bitcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0px !important;
+  border: 2px solid #000000;
+  box-shadow: 3px 3px 0px #000000;
+  font-family: var(--theme-font-sans);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  transition: none;
+}
+
+[data-theme-style="8bitcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px #000000;
+}
+
+/* --- @pixelact-ui: Pixelact 像素艺术 --- */
+[data-theme-style="pixelact"] [data-slot="card"],
+[data-theme-style="pixelact"] [data-slot="dialog-content"],
+[data-theme-style="pixelact"] [data-slot="popover-content"],
+[data-theme-style="pixelact"] [data-slot="input-group"] {
+  border-radius: 0px !important;
+  border: 2px solid var(--border);
+  box-shadow: 2px 2px 0px var(--border);
+  image-rendering: pixelated;
+}
+
+[data-theme-style="pixelact"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0px !important;
+  border: 2px solid var(--border);
+  box-shadow: 2px 2px 0px var(--border);
+  font-family: var(--theme-font-sans);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  transition: none;
+}
+
+[data-theme-style="pixelact"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px transparent;
+}
+
+/* ==========================================================================
+   2.7 东方美学 / 桌面枢纽 (Oriental Aesthetics & Desktop Hub)
+   ========================================================================== */
+
+/* --- @washiveil: 和纸轻纱东方美学 --- */
+[data-theme-style="washiveil"] [data-slot="card"],
+[data-theme-style="washiveil"] [data-slot="dialog-content"],
+[data-theme-style="washiveil"] [data-slot="popover-content"],
+[data-theme-style="washiveil"] [data-slot="input-group"] {
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 4px 20px -2px rgba(139, 87, 42, 0.08), inset 0 1px 1px rgba(255, 255, 255, 0.6);
+}
+
+.dark[data-theme-style="washiveil"] [data-slot="card"],
+.dark[data-theme-style="washiveil"] [data-slot="dialog-content"],
+.dark[data-theme-style="washiveil"] [data-slot="popover-content"],
+.dark[data-theme-style="washiveil"] [data-slot="input-group"] {
+  box-shadow: 0 6px 24px -2px rgba(0, 0, 0, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+[data-theme-style="washiveil"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 9999px;
+  box-shadow: 0 2px 6px rgba(139, 87, 42, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  transition: all 0.15s ease;
+}
+
+/* --- @whiskeyjack: 桌面跨端极客枢纽 --- */
+[data-theme-style="whiskeyjack"] [data-slot="card"],
+[data-theme-style="whiskeyjack"] [data-slot="dialog-content"],
+[data-theme-style="whiskeyjack"] [data-slot="popover-content"],
+[data-theme-style="whiskeyjack"] [data-slot="input-group"] {
+  border-radius: 0.375rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+.dark[data-theme-style="whiskeyjack"] [data-slot="card"],
+.dark[data-theme-style="whiskeyjack"] [data-slot="dialog-content"],
+.dark[data-theme-style="whiskeyjack"] [data-slot="popover-content"],
+.dark[data-theme-style="whiskeyjack"] [data-slot="input-group"] {
+  background-color: #0f172a;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme-style="whiskeyjack"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  border-radius: 0.375rem;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: all 0.1s ease;
+}
+
+/* ==========================================================================
+   3. 全局细粒度组件体系深度联动 (Badges, Switches, Tabs, Inputs, Dividers)
+   ========================================================================== */
+
+/* 徽章 (Badge) 体系适配 */
+[data-theme-style="boldkit"] [data-slot="badge"],
+[data-theme-style="neobrutalism"] [data-slot="badge"] {
+  border-width: 1.5px;
+  border-color: #000000;
+  box-shadow: 1.5px 1.5px 0px #000000;
+  font-weight: 700;
+}
+
+[data-theme-style="8bitcn"] [data-slot="badge"] {
+  border-radius: 0px !important;
+  border: 1.5px solid #000000;
+  box-shadow: 2px 2px 0px #000000;
+  font-family: var(--theme-font-sans);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+[data-theme-style="pixelact"] [data-slot="badge"] {
+  border-radius: 0px !important;
+  border: 1.5px solid var(--border);
+  box-shadow: 1.5px 1.5px 0px var(--border);
+  font-family: var(--theme-font-sans);
+  font-size: 11px;
+}
+
+[data-theme-style="washiveil"] [data-slot="badge"] {
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(139, 87, 42, 0.1);
+  letter-spacing: 0.05em;
+}
+
+[data-theme-style="pouf"] [data-slot="badge"] {
+  border-radius: 9999px;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.8), 0 2px 5px rgba(139, 92, 246, 0.15);
+}
+
+[data-theme-style="glasscn"] [data-slot="badge"],
+[data-theme-style="einui"] [data-slot="badge"] {
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+[data-theme-style="sabraman"] [data-slot="badge"] {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+[data-theme-style="thegridcn"] [data-slot="badge"] {
+  border-radius: 0.25rem;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+  font-family: var(--theme-font-sans);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+[data-theme-style="gymnopedies"] [data-slot="badge"] {
+  border-radius: 0.25rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 0 10px rgba(226, 168, 85, 0.15);
+}
+
+[data-theme-style="atroui"] [data-slot="badge"] {
+  border-radius: 0.375rem;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 12px rgba(192, 132, 252, 0.35);
+}
+
+[data-theme-style="usva"] [data-slot="badge"] {
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(45, 212, 191, 0.15);
+}
+
+/* 开关 (Switch) 体系适配 */
+[data-theme-style="boldkit"] [data-slot="switch"],
+[data-theme-style="neobrutalism"] [data-slot="switch"],
+[data-theme-style="8bitcn"] [data-slot="switch"],
+[data-theme-style="pixelact"] [data-slot="switch"] {
+  border-radius: 0px !important;
+  border-width: 2px;
+  border-color: var(--border);
+  box-shadow: 2px 2px 0px var(--border);
+}
+
+[data-theme-style="pouf"] [data-slot="switch"] {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme-style="thegridcn"] [data-slot="switch"] {
+  border-radius: 0.25rem;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+}
+
+[data-theme-style="sabraman"] [data-slot="switch"] {
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3), 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+
+/* 选项卡 (Tabs) 体系适配 */
+[data-theme-style="boldkit"] [data-slot="tabs-trigger"][data-state="active"],
+[data-theme-style="neobrutalism"] [data-slot="tabs-trigger"][data-state="active"],
+[data-theme-style="8bitcn"] [data-slot="tabs-trigger"][data-state="active"],
+[data-theme-style="pixelact"] [data-slot="tabs-trigger"][data-state="active"] {
+  border-radius: 0px !important;
+  border-width: 2px;
+  border-color: var(--border);
+  box-shadow: 2px 2px 0px var(--border);
+  font-weight: 700;
+}
+
+[data-theme-style="pouf"] [data-slot="tabs-trigger"][data-state="active"] {
+  border-radius: 9999px;
+  box-shadow: 0 4px 10px -2px rgba(139, 92, 246, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.8);
+}
+
+[data-theme-style="thegridcn"] [data-slot="tabs-trigger"][data-state="active"] {
+  border-radius: 0.25rem;
+  border: 1px solid var(--primary);
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
+  font-family: var(--theme-font-sans);
+  text-transform: uppercase;
+}
+
+[data-theme-style="washiveil"] [data-slot="tabs-trigger"][data-state="active"] {
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 6px rgba(139, 87, 42, 0.12);
+}
+
+[data-theme-style="glasscn"] [data-slot="tabs-list"],
+[data-theme-style="einui"] [data-slot="tabs-list"] {
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+[data-theme-style="sabraman"] [data-slot="tabs-trigger"][data-state="active"] {
+  background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.25), rgba(0, 0, 0, 0.1));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 1px 3px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+/* ==========================================================================
+   4. 官方字体排版特性与字形阴影细化 (Typography & Text Shadows)
+   ========================================================================== */
+
+[data-theme-style="washiveil"] h1,
+[data-theme-style="washiveil"] h2,
+[data-theme-style="washiveil"] h3,
+[data-theme-style="washiveil"] [data-slot="card-title"] {
+  font-family: "Noto Serif SC", "Shippori Mincho", "Songti SC", serif;
+  letter-spacing: 0.06em;
+}
+
+[data-theme-style="boldkit"] button[data-slot="button"],
+[data-theme-style="boldkit"] [data-slot="badge"] {
+  letter-spacing: -0.02em;
+}
+
+[data-theme-style="thegridcn"] h1,
+[data-theme-style="thegridcn"] h2,
+[data-theme-style="thegridcn"] h3,
+[data-theme-style="thegridcn"] [data-slot="card-title"] {
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+[data-theme-style="gymnopedies"] h1,
+[data-theme-style="gymnopedies"] h2,
+[data-theme-style="gymnopedies"] h3,
+[data-theme-style="gymnopedies"] [data-slot="card-title"] {
+  font-family: "Cormorant Garamond", "Cinzel", Georgia, serif;
+  letter-spacing: 0.02em;
+}
+
+[data-theme-style="neobrutalism"] button[data-slot="button"] {
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+[data-theme-style="retroui"] h1,
+[data-theme-style="retroui"] h2,
+[data-theme-style="retroui"] h3,
+[data-theme-style="retroui"] [data-slot="card-title"] {
+  letter-spacing: -0.025em;
+}
+
+[data-theme-style="sabraman"] h1,
+[data-theme-style="sabraman"] h2,
+[data-theme-style="sabraman"] h3,
+[data-theme-style="sabraman"] [data-slot="card-title"] {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.7);
+  letter-spacing: -0.01em;
+}
+
+.dark[data-theme-style="sabraman"] h1,
+.dark[data-theme-style="sabraman"] h2,
+.dark[data-theme-style="sabraman"] h3,
+.dark[data-theme-style="sabraman"] [data-slot="card-title"] {
+  text-shadow: 0 -1px 0 rgba(0, 0, 0, 0.75);
+}
+
+/* 兼容 Base UI Collapsible 展开时旋转图标 */
+[data-slot="collapsible"][data-open] .group-data-\[state\=open\]\/collapsible\:rotate-90,
+[data-slot="collapsible"][data-open] .group-data-\[state\=open\]\:rotate-90,
+[data-slot="collapsible"][data-panel-open] .group-data-\[state\=open\]\:rotate-90,
+[data-slot="collapsible-trigger"][data-panel-open] .group-data-\[state\=open\]\:rotate-90,
+[data-slot="collapsible-trigger"][data-open] .group-data-\[state\=open\]\:rotate-90 {
+  transform: rotate(90deg);
+}
+
+[data-slot="collapsible"][data-open] .group-data-\[state\=open\]\:rotate-180,
+[data-slot="collapsible"][data-panel-open] .group-data-\[state\=open\]\:rotate-180,
+[data-slot="collapsible-trigger"][data-panel-open] .group-data-\[state\=open\]\:rotate-180,
+[data-slot="collapsible-trigger"][data-open] .group-data-\[state\=open\]\:rotate-180 {
+  transform: rotate(180deg);
+}
+
 

@@ -392,7 +392,10 @@ export default function TerminalPanel() {
   return (
     <PanelSurface className="border-t">
       <PanelHeader className="gap-2 px-3">
-        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+        <div
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
+          data-horizontal-scroll="true"
+        >
           {tabs.map((tab) => (
             <div
               className={cn(

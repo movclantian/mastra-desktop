@@ -9,6 +9,7 @@ import {
   SearchIcon,
   SparklesIcon,
   SunMediumIcon,
+  TypeIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -18,16 +19,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { THEME_INSPIRATIONS } from "@/lib/theme/presets";
-import type { ThemeColorTokens, ThemePreset } from "@/lib/theme/types";
+import type { ThemeColorTokens } from "@/lib/theme/types";
 import { cn } from "@/lib/utils";
 
 // 预设快速色彩选项
@@ -119,6 +118,7 @@ export function ThemeSection() {
     presets,
     resolvedColors,
     resolvedGeometry,
+    resolvedTypography,
     updateActiveCustomization,
     resetActiveCustomization,
     isDark,
@@ -126,9 +126,9 @@ export function ThemeSection() {
 
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [categoryFilter, setCategoryFilter] = React.useState<"all" | "brutalism" | "modern">("all");
-  const [interactiveSwitch, setInteractiveSwitch] = React.useState(true);
-  const [interactiveInput, setInteractiveInput] = React.useState("Mastra Neubrutalism AI Agent");
+  const [categoryFilter, setCategoryFilter] = React.useState<
+    "all" | "brutalism" | "clay_glass" | "scifi_dark" | "pixel_retro" | "oriental_desktop" | "modern"
+  >("all");
 
   const filteredPresets = React.useMemo(() => {
     return presets.filter((p) => {
@@ -141,6 +141,10 @@ export function ThemeSection() {
       const matchCategory =
         categoryFilter === "all" ||
         (categoryFilter === "brutalism" && (p.category === "brutalism" || p.category === "soft_brutalism")) ||
+        (categoryFilter === "clay_glass" && (p.category === "clay_glass" || p.category === "skeuomorphism")) ||
+        (categoryFilter === "scifi_dark" && p.category === "scifi_dark") ||
+        (categoryFilter === "pixel_retro" && p.category === "pixel_retro") ||
+        (categoryFilter === "oriental_desktop" && p.category === "oriental_desktop") ||
         (categoryFilter === "modern" && p.category === "modern");
 
       return matchSearch && matchCategory;
@@ -165,6 +169,7 @@ export function ThemeSection() {
       name: activePreset.name,
       mode,
       geometry: resolvedGeometry,
+      typography: resolvedTypography,
       colors: resolvedColors,
     };
     void navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -172,7 +177,7 @@ export function ThemeSection() {
   };
 
   return (
-    <div className="flex h-[min(560px,calc(100dvh-5rem))] w-full min-h-0 min-w-0 overflow-hidden bg-background">
+    <div className="flex h-full flex-1 w-full min-h-0 min-w-0 overflow-hidden bg-background">
       {/* ========================================================================= */}
       {/* 左列: 主题选择列表侧边栏 (可收起为 Icon 状态) */}
       {/* ========================================================================= */}
@@ -216,11 +221,11 @@ export function ThemeSection() {
                     className="h-7 bg-background pl-7 text-xs"
                   />
                 </div>
-                <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-center gap-1">
                   <Button
                     size="xs"
                     variant={categoryFilter === "all" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-2"
+                    className="h-6 text-[11px] px-1.5"
                     onClick={() => setCategoryFilter("all")}
                   >
                     全部 ({presets.length})
@@ -228,15 +233,47 @@ export function ThemeSection() {
                   <Button
                     size="xs"
                     variant={categoryFilter === "brutalism" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-2"
+                    className="h-6 text-[11px] px-1.5"
                     onClick={() => setCategoryFilter("brutalism")}
                   >
-                    粗野主义
+                    粗野
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={categoryFilter === "clay_glass" ? "secondary" : "ghost"}
+                    className="h-6 text-[11px] px-1.5"
+                    onClick={() => setCategoryFilter("clay_glass")}
+                  >
+                    拟物/玻璃
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={categoryFilter === "scifi_dark" ? "secondary" : "ghost"}
+                    className="h-6 text-[11px] px-1.5"
+                    onClick={() => setCategoryFilter("scifi_dark")}
+                  >
+                    科幻/发光
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={categoryFilter === "pixel_retro" ? "secondary" : "ghost"}
+                    className="h-6 text-[11px] px-1.5"
+                    onClick={() => setCategoryFilter("pixel_retro")}
+                  >
+                    像素/游戏
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant={categoryFilter === "oriental_desktop" ? "secondary" : "ghost"}
+                    className="h-6 text-[11px] px-1.5"
+                    onClick={() => setCategoryFilter("oriental_desktop")}
+                  >
+                    东方/桌面
                   </Button>
                   <Button
                     size="xs"
                     variant={categoryFilter === "modern" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-2"
+                    className="h-6 text-[11px] px-1.5"
                     onClick={() => setCategoryFilter("modern")}
                   >
                     极简
@@ -395,8 +432,8 @@ export function ThemeSection() {
         </header>
 
         {/* 调参主滚动区 */}
-        <ScrollArea className="min-h-0 flex-1 p-4">
-          <div className="flex flex-col gap-6 max-w-3xl pb-6">
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-3 max-w-3xl pb-6">
             {/* ------------------------------------------------------------- */}
             {/* 模块 1: 几何形态与空间尺度 (圆角 / 边框厚度 / 硬阴影) */}
             {/* ------------------------------------------------------------- */}
@@ -553,7 +590,173 @@ export function ThemeSection() {
             </Card>
 
             {/* ------------------------------------------------------------- */}
-            {/* 模块 2: 调色板灵感预设 (1-Click Color Presets) */}
+            {/* 模块 2: 字体排版与文字规范 (Typography System) */}
+            {/* ------------------------------------------------------------- */}
+            <Card className="border shadow-xs">
+              <CardHeader className="pb-3 pt-4 px-4">
+                <CardTitle className="text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <TypeIcon className="size-4 text-primary" />
+                    <span>字体排版与文字规范</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    {activePreset.typography.headingWeight} Weight | {activePreset.typography.letterSpacing}
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  官方字体栈与文字层级规范，即时渲染专属字符间距、标题字重与排版韵律。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 px-4 pb-4">
+                {/* 字体栈选择 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-foreground">无衬线字体栈 (Sans-Serif Font Stack)</span>
+                    <span className="font-mono text-[11px] text-muted-foreground truncate max-w-[200px]">
+                      {resolvedTypography.fontSans.split(",")[0]}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      {
+                        label: "Space Grotesk (粗野新潮)",
+                        sans: '"Space Grotesk", "Public Sans", "Inter", -apple-system, sans-serif',
+                        mono: '"Space Mono", monospace',
+                      },
+                      {
+                        label: "Bricolage (复古粗野)",
+                        sans: '"Bricolage Grotesque", "Plus Jakarta Sans", -apple-system, sans-serif',
+                        mono: '"Space Mono", monospace',
+                      },
+                      {
+                        label: "Orbitron (科幻HUD)",
+                        sans: '"Orbitron", "Rajdhani", "Space Grotesk", sans-serif',
+                        mono: '"Space Mono", monospace',
+                      },
+                      {
+                        label: "Cormorant (文学衬线)",
+                        sans: '"Cormorant Garamond", "Cinzel", Georgia, serif',
+                        mono: '"JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "Press Start (8位像素)",
+                        sans: '"Press Start 2P", "Silkscreen", "Space Mono", monospace',
+                        mono: '"Press Start 2P", "Space Mono", monospace',
+                      },
+                      {
+                        label: "VT323 (复古终端)",
+                        sans: '"VT323", "Silkscreen", "Space Mono", monospace',
+                        mono: '"VT323", "Space Mono", monospace',
+                      },
+                      {
+                        label: "Noto Serif (和纸宋体)",
+                        sans: '"Noto Serif SC", "Songti SC", "Cormorant Garamond", serif',
+                        mono: '"JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "Shippori (日系明朝)",
+                        sans: '"Shippori Mincho", "Noto Serif SC", serif',
+                        mono: '"JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "Nunito (黏土软体)",
+                        sans: '"Nunito", "Plus Jakarta Sans", -apple-system, sans-serif',
+                        mono: '"JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "SF Pro / Apple (苹果玻璃)",
+                        sans: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Plus Jakarta Sans", "Inter", system-ui, sans-serif',
+                        mono: '"SF Mono", "JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "Plus Jakarta (现代清爽)",
+                        sans: '"Plus Jakarta Sans", "Inter", -apple-system, sans-serif',
+                        mono: '"JetBrains Mono", monospace',
+                      },
+                      {
+                        label: "Helvetica (经典拟物)",
+                        sans: '"Helvetica Neue", "Lucida Grande", "Segoe UI", Arial, sans-serif',
+                        mono: 'Consolas, "Courier New", monospace',
+                      },
+                    ].map((item) => (
+                      <Button
+                        key={item.label}
+                        size="xs"
+                        variant={resolvedTypography.fontSans === item.sans ? "default" : "outline"}
+                        className="h-7 text-[11px] px-2 truncate justify-start"
+                        onClick={() =>
+                          updateActiveCustomization({
+                            typography: {
+                              fontSans: item.sans,
+                              fontMono: item.mono,
+                            },
+                          })
+                        }
+                      >
+                        {item.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 标题字重 & 字符间距 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/20 p-2.5">
+                    <span className="text-xs font-medium text-foreground">标题字重 (Heading Weight)</span>
+                    <div className="flex items-center gap-1">
+                      {[
+                        { label: "600 半粗", val: "600" },
+                        { label: "700 经典粗体", val: "700" },
+                        { label: "800 极度黑体", val: "800" },
+                      ].map((item) => (
+                        <Button
+                          key={item.val}
+                          size="xs"
+                          variant={resolvedTypography.headingWeight === item.val ? "default" : "outline"}
+                          className="h-6 text-[11px] px-2 flex-1"
+                          onClick={() =>
+                            updateActiveCustomization({
+                              typography: { headingWeight: item.val },
+                            })
+                          }
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/20 p-2.5">
+                    <span className="text-xs font-medium text-foreground">字符间距 (Letter Spacing)</span>
+                    <div className="flex items-center gap-1">
+                      {[
+                        { label: "-0.03em 紧绷", val: "-0.03em" },
+                        { label: "-0.015em 紧凑", val: "-0.015em" },
+                        { label: "0 标准", val: "0" },
+                        { label: "+0.01em 宽松", val: "0.01em" },
+                      ].map((item) => (
+                        <Button
+                          key={item.val}
+                          size="xs"
+                          variant={resolvedTypography.letterSpacing === item.val ? "default" : "outline"}
+                          className="h-6 text-[11px] px-1.5 flex-1"
+                          onClick={() =>
+                            updateActiveCustomization({
+                              typography: { letterSpacing: item.val },
+                            })
+                          }
+                        >
+                          {item.label}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ------------------------------------------------------------- */}
+            {/* 模块 3: 调色板灵感预设 (1-Click Color Presets) */}
             {/* ------------------------------------------------------------- */}
             <Card className="border shadow-xs">
               <CardHeader className="pb-3 pt-4 px-4">
@@ -693,92 +896,6 @@ export function ThemeSection() {
                   onChange={(v) => handleColorChange("destructive", v)}
                   recommendedSwatches={["#ef4444", "#dc2626", "#e11d48", "#f43f5e", "#f87171"]}
                 />
-              </CardContent>
-            </Card>
-
-            {/* ------------------------------------------------------------- */}
-            {/* 模块 4: 实时交互预览沙盒 (Live Interactive Preview Sandbox) */}
-            {/* ------------------------------------------------------------- */}
-            <Card className="border shadow-xs">
-              <CardHeader className="pb-3 pt-4 px-4">
-                <CardTitle className="text-sm font-semibold flex items-center justify-between">
-                  <span>实时交互沙盒 (Live Preview Sandbox)</span>
-                  <Badge variant="secondary" className="text-xs">
-                    当前参数即时渲染
-                  </Badge>
-                </CardTitle>
-                <CardDescription className="text-xs">
-                  测试按钮点击触感、阴影投影与组件层叠效果。
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-4 px-4 pb-4">
-                {/* 按钮与徽章集合 */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button size="sm" variant="default">
-                    主操作按钮
-                  </Button>
-                  <Button size="sm" variant="secondary">
-                    次级按钮
-                  </Button>
-                  <Button size="sm" variant="outline">
-                    轮廓按钮
-                  </Button>
-                  <Button size="sm" variant="destructive">
-                    危险按钮
-                  </Button>
-                  <Button size="sm" variant="ghost">
-                    幽灵按钮
-                  </Button>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="default">Default Badge</Badge>
-                  <Badge variant="secondary">Secondary</Badge>
-                  <Badge variant="outline">Outline</Badge>
-                  <Badge variant="destructive">Destructive</Badge>
-                </div>
-
-                {/* 模拟输入与开关 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-xs font-medium text-foreground">输入控件测试</span>
-                    <Input
-                      value={interactiveInput}
-                      onChange={(e) => setInteractiveInput(e.target.value)}
-                      className="h-8 text-xs bg-background"
-                      placeholder="输入测试文本..."
-                    />
-                  </div>
-                  <div className="flex items-center justify-between gap-2 rounded-lg border p-2 bg-muted/20">
-                    <div className="flex flex-col">
-                      <span className="text-xs font-medium text-foreground">状态开关 (Switch)</span>
-                      <span className="text-[11px] text-muted-foreground">实时布尔状态切换</span>
-                    </div>
-                    <Switch
-                      checked={interactiveSwitch}
-                      onCheckedChange={setInteractiveSwitch}
-                    />
-                  </div>
-                </div>
-
-                {/* 模拟对话气泡卡片 */}
-                <div className="rounded-lg border bg-card p-3 shadow-xs flex flex-col gap-2">
-                  <div className="flex items-center justify-between border-b pb-2">
-                    <div className="flex items-center gap-1.5">
-                      <div className="size-2 rounded-full bg-primary" />
-                      <span className="text-xs font-bold font-mono">Agent Response</span>
-                    </div>
-                    <Badge variant="outline" className="text-[10px] h-4">
-                      Thinking Done
-                    </Badge>
-                  </div>
-                  <p className="text-xs text-foreground leading-relaxed">
-                    当前主题「<strong className="text-primary">{activePreset.name}</strong>」已装载！
-                    边框粗细为 <code className="font-mono bg-muted px-1 rounded-xs">{resolvedGeometry.borderWidth}px</code>，
-                    圆角半径为 <code className="font-mono bg-muted px-1 rounded-xs">{resolvedGeometry.radius}px</code>，
-                    实体投影为 <code className="font-mono bg-muted px-1 rounded-xs">{resolvedGeometry.shadowDepth}px</code>。
-                  </p>
-                </div>
               </CardContent>
             </Card>
           </div>

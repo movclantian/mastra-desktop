@@ -397,7 +397,7 @@ export function ProviderItem({
   };
 
   return (
-    <section className="max-w-2xl overflow-hidden rounded-xl border">
+    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs">
       {/* 头部:名称 + 操作(禁用 / 编辑 / 展开 / 删除) */}
       <div className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}>
         <div className="min-w-0 flex-1">
@@ -442,7 +442,7 @@ export function ProviderItem({
       {/* 模型列表:搜索过滤 + 无结果时可添加自定义模型 ID + 每行连接测试 */}
       <Collapsible open={expanded}>
         <CollapsibleContent>
-          <div className="bg-muted/20">
+          <div className="border-t border-border/60 bg-muted/20">
             {loadingModels ? (
               <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
                 <Spinner className="size-4" />
@@ -656,7 +656,7 @@ export function ProvidersSection() {
   const [editingProvider, setEditingProvider] = React.useState<ProviderConfig | null>(null);
 
   return (
-    <div className="flex min-w-0 flex-col gap-2 p-4 pt-1">
+    <div className="flex min-w-0 flex-col gap-4 p-4">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。
@@ -677,9 +677,9 @@ export function ProvidersSection() {
         editProvider={editingProvider}
       />
 
-      <div className="flex min-w-0 flex-col gap-2">
+      <div className="flex min-w-0 flex-col gap-3">
         {providers.length === 0 ? (
-          <p className="max-w-2xl rounded-xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+          <p className="w-full rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
             还没有供应商,点击「添加」开始。
           </p>
         ) : (

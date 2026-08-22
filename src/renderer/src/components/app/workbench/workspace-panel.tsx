@@ -15,6 +15,7 @@ import {
   FileCode2Icon,
   FolderTreeIcon,
   Globe2Icon,
+  ListTodoIcon,
   LoaderCircleIcon,
   PlayIcon,
   PlusIcon,
@@ -37,21 +38,20 @@ import {
 import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
@@ -591,6 +591,28 @@ function useBrowserSession() {
     async (name: string, index?: number, url?: string) => {
       if (!stateUrl) return;
       setBusy(true);
+
+      // 乐观更新:秒级响应用户意图,彻底消除网络往返等待时的「慢半拍」卡顿感
+      if (name === "new-tab") {
+        const newUrl = url || NEW_BROWSER_TAB_URL;
+        setState((current) => ({
+          ...current,
+          active: true,
+          currentUrl: newUrl,
+          tabs: [...current.tabs, { url: newUrl, title: "新标签页" }],
+        }));
+      } else if (name === "close-tab" && typeof index === "number") {
+        setState((current) => {
+          const nextTabs = current.tabs.filter((_, i) => i !== index);
+          const nextIndex = Math.max(0, Math.min(nextTabs.length - 1, index - 1));
+          return {
+            ...current,
+            currentUrl: nextTabs[nextIndex]?.url ?? "",
+            tabs: nextTabs,
+          };
+        });
+      }
+
       try {
         const response = await fetch(browserUrl("/action"), {
           method: "POST",
@@ -610,11 +632,12 @@ function useBrowserSession() {
         if (payload.state) setState(payload.state);
       } catch (error) {
         toastError(error, "浏览器操作失败");
+        void refreshState();
       } finally {
         setBusy(false);
       }
     },
-    [browserUrl, stateUrl],
+    [browserUrl, refreshState, stateUrl],
   );
 
   const consumedBrowserRequestRef = React.useRef(0);
@@ -909,11 +932,11 @@ export default function WorkspacePanel() {
 
   const closeBrowserAndReturnToLocalTab = () => {
     closeBrowser();
-    const fallback = panelTabs[0];
+    const fallback = panelTabs[panelTabs.length - 1];
     if (fallback) {
       activatePanelTab({ kind: fallback.kind, id: fallback.id });
     } else {
-      setWorkspacePanelOpen(false);
+      activatePanelTab({ kind: "welcome", id: "welcome" });
     }
   };
 
@@ -924,160 +947,155 @@ export default function WorkspacePanel() {
   };
 
   /**
-   * 关闭一个页面标签。
-   *
-   * Mastra 的 tabs API 拒绝关掉最后一个标签(会抛 "Cannot close the last tab"),
-   * 因为那等价于关掉整个浏览器 —— 所以这里就按它说的做:走 close 关浏览器,
-   * 并把焦点交回第一个本地标签。
+   * 关闭一个页面标签:
+   * 1. 优先平滑回退到左侧前一个标签;
+   * 2. 若关掉的是唯一一个浏览器标签,回落到最后一个本地标签或起始页。
    */
   const closeBrowserTab = (index: number) => {
     if (state.tabs.length <= 1) {
       closeBrowserAndReturnToLocalTab();
       return;
     }
+    if (activePanelTab.kind === "browser" && activePanelTab.index === index) {
+      const prevIndex = index > 0 ? index - 1 : 0;
+      activatePanelTab({ kind: "browser", index: prevIndex });
+    } else if (activePanelTab.kind === "browser" && activePanelTab.index > index) {
+      activatePanelTab({ kind: "browser", index: activePanelTab.index - 1 });
+    }
     void action("close-tab", index);
   };
 
-  const activeTabValue =
-    activePanelTab.kind === "browser"
-      ? `browser:${activePanelTab.index}`
-      : `local:${activePanelTab.id}`;
-
-  const selectPanelTab = (value: string) => {
-    if (value.startsWith("browser:")) {
-      const index = Number(value.slice("browser:".length));
-      if (Number.isInteger(index) && index >= 0 && index < state.tabs.length) {
-        openBrowserTab(index);
-      }
-      return;
-    }
-    if (value.startsWith("local:")) {
-      const id = value.slice("local:".length);
-      const tab = panelTabs.find((item) => item.id === id);
-      if (tab) activatePanelTab({ kind: tab.kind, id: tab.id });
-    }
-  };
+  const isWelcomeActive =
+    activePanelTab.kind === "welcome" || (panelTabs.length === 0 && state.tabs.length === 0);
 
   return (
     <PanelSurface>
-      <PanelHeader className="gap-1 bg-muted/40 px-2">
-        {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端,按创建顺序),
-            后半是由服务端 state.tabs 派生的浏览器页面 —— agent 用 browser_tabs
-            开的页面会自动出现在这里。标签过多时横向滚动,不挤压右侧按钮。 */}
-        <Tabs
-          className="h-full min-w-0 flex-1 gap-0"
-          onValueChange={selectPanelTab}
-          value={activeTabValue}
+      <PanelHeader className="gap-1 bg-muted/40 px-1">
+        {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端),
+            后半是由服务端 state.tabs 派生的浏览器页面。支持横向滚轮与横向滚动条。 */}
+        <div
+          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
+          data-horizontal-scroll="true"
         >
-          <ScrollArea className="h-full min-w-0 w-full">
-            <TabsList
-              className="h-12 min-w-full w-max justify-start gap-0.5 rounded-none bg-transparent p-0 group-data-horizontal/tabs:h-12"
-              variant="line"
-            >
-              {panelTabs.map((tab) => {
-                return (
-                  <div
-                    className="group relative flex h-7 shrink-0 items-center"
-                    key={tab.id}
-                    role="presentation"
-                  >
-                    <TabsTrigger
-                      className="h-7 max-w-44 min-w-0 flex-none gap-1.5 rounded-md px-2 pr-7 text-xs data-active:bg-muted data-active:font-medium"
-                      value={`local:${tab.id}`}
-                      title={tab.title}
-                    >
-                      {tab.kind === "files" ? (
-                        <FolderTreeIcon className="size-3.5 shrink-0" />
-                      ) : (
-                        <TerminalIcon className="size-3.5 shrink-0" />
-                      )}
-                      <span className="truncate">{tab.title}</span>
-                    </TabsTrigger>
-                    <button
-                      aria-label={`关闭${tab.title}`}
-                      className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        closePanelTab(tab.id);
-                      }}
-                      type="button"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  </div>
-                );
-              })}
-              {state.tabs.map((tab, index) => {
-                return (
-                  <div
-                    className="group relative flex h-7 shrink-0 items-center"
-                    // biome-ignore lint/suspicious/noArrayIndexKey: 页面标签就是 state.tabs 的下标,Mastra 的 tabs API 也只按 index 寻址
-                    key={`${index}:${tab.url}:${tab.title ?? ""}`}
-                    role="presentation"
-                  >
-                    <TabsTrigger
-                      className="h-7 max-w-44 min-w-0 flex-none gap-1.5 rounded-md px-2 pr-7 text-xs data-active:bg-muted data-active:font-medium"
-                      value={`browser:${index}`}
-                      title={tab.title || tab.url}
-                    >
-                      <Globe2Icon className="size-3.5 shrink-0" />
-                      <span className="truncate">{tab.title || tab.url || "新标签页"}</span>
-                    </TabsTrigger>
-                    <button
-                      aria-label="关闭页面"
-                      className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        closeBrowserTab(index);
-                      }}
-                      type="button"
-                    >
-                      <XIcon className="size-3" />
-                    </button>
-                  </div>
-                );
-              })}
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      aria-label="新建标签"
-                      className="size-7 shrink-0"
-                      size="icon-sm"
-                      title="新建标签"
-                      variant="ghost"
-                    />
-                  }
+          {panelTabs.map((tab) => {
+            const isSelected =
+              activePanelTab.kind !== "browser" &&
+              activePanelTab.kind !== "welcome" &&
+              activePanelTab.id === tab.id;
+            return (
+              <div
+                className="group relative flex h-7 shrink-0 items-center"
+                key={tab.id}
+                role="presentation"
+              >
+                <button
+                  className={cn(
+                    "flex h-7 max-w-44 min-w-0 flex-none items-center gap-1.5 rounded-md px-2 pr-7 text-xs transition-colors",
+                    isSelected
+                      ? "!bg-primary !font-semibold !text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                  onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
+                  title={tab.title}
+                  type="button"
                 >
-                  <PlusIcon />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      activatePanelTab({
-                        kind: "browser",
-                        index: state.tabs.length,
-                      });
-                      void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
-                    }}
-                  >
-                    <Globe2Icon />
-                    新建浏览页面
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => addPanelTab("terminal")}>
-                    <TerminalIcon />
-                    新建终端
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => addPanelTab("files")}>
-                    <FolderTreeIcon />
-                    新建文件树
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </TabsList>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        </Tabs>
+                  {tab.kind === "files" ? (
+                    <FolderTreeIcon className="size-3.5 shrink-0" />
+                  ) : (
+                    <TerminalIcon className="size-3.5 shrink-0" />
+                  )}
+                  <span className="truncate">{tab.title}</span>
+                </button>
+                <button
+                  aria-label={`关闭${tab.title}`}
+                  className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closePanelTab(tab.id);
+                  }}
+                  type="button"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+          {state.tabs.map((tab, index) => {
+            const isSelected =
+              activePanelTab.kind === "browser" && activePanelTab.index === index;
+            return (
+              <div
+                className="group relative flex h-7 shrink-0 items-center"
+                // biome-ignore lint/suspicious/noArrayIndexKey: 页面标签就是 state.tabs 的下标,Mastra 的 tabs API 也只按 index 寻址
+                key={`${index}:${tab.url}:${tab.title ?? ""}`}
+                role="presentation"
+              >
+                <button
+                  className={cn(
+                    "flex h-7 max-w-44 min-w-0 flex-none items-center gap-1.5 rounded-md px-2 pr-7 text-xs transition-colors",
+                    isSelected
+                      ? "!bg-primary !font-semibold !text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                  onClick={() => openBrowserTab(index)}
+                  title={tab.title || tab.url}
+                  type="button"
+                >
+                  <Globe2Icon className="size-3.5 shrink-0" />
+                  <span className="truncate">{tab.title || tab.url || "新标签页"}</span>
+                </button>
+                <button
+                  aria-label="关闭页面"
+                  className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeBrowserTab(index);
+                  }}
+                  type="button"
+                >
+                  <XIcon className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="新建标签"
+                  className="size-7 shrink-0"
+                  size="icon-sm"
+                  title="新建标签"
+                  variant="ghost"
+                />
+              }
+            >
+              <PlusIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                onClick={() => {
+                  activatePanelTab({
+                    kind: "browser",
+                    index: state.tabs.length,
+                  });
+                  void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                }}
+              >
+                <Globe2Icon />
+                新建浏览页面
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => addPanelTab("terminal")}>
+                <TerminalIcon />
+                新建终端
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => addPanelTab("files")}>
+                <FolderTreeIcon />
+                新建文件树
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
         <Button
           aria-label="关闭右侧面板"
           className="shrink-0"
@@ -1094,7 +1112,8 @@ export default function WorkspacePanel() {
           页面之间靠 switch-tab 切换而不是多份视图。 */}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {panelTabs.map((tab) => {
-          const selected = activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
+          const selected =
+            !isWelcomeActive && activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
           return (
             <div className={cn("size-full", selected ? "block" : "hidden")} key={tab.id}>
               {tab.kind === "files" ? (
@@ -1107,19 +1126,73 @@ export default function WorkspacePanel() {
             </div>
           );
         })}
-        <div className={cn("size-full", browserActive ? "block" : "hidden")}>
+        <div className={cn("size-full", !isWelcomeActive && browserActive ? "block" : "hidden")}>
           <BrowserView onCloseBrowser={closeBrowserAndReturnToLocalTab} session={browserSession} />
         </div>
-        {panelTabs.length === 0 && state.tabs.length === 0 ? (
-          <Empty className="h-full">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <PlusIcon />
-              </EmptyMedia>
-              <EmptyTitle>没有打开的标签</EmptyTitle>
-              <EmptyDescription>用标签栏右侧的 + 新建文件树、终端或浏览页面。</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+        {isWelcomeActive ? (
+          <div className="flex size-full flex-col items-center justify-center p-8 select-none">
+            <div className="w-full max-w-sm space-y-6">
+              <div className="text-sm font-normal text-muted-foreground">从这里开始</div>
+              <div className="space-y-1">
+                {/* 1. 任务摘要 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    addPanelTab("files");
+                  }}
+                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <ListTodoIcon className="size-4 shrink-0 text-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-medium text-foreground">任务摘要</span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        查看任务执行进展、产物汇总及关联信息
+                      </span>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 2. 浏览器 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    activatePanelTab({
+                      kind: "browser",
+                      index: state.tabs.length,
+                    });
+                    void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                  }}
+                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <Globe2Icon className="size-4 shrink-0 text-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-medium text-foreground">浏览器</span>
+                      <span className="text-xs text-muted-foreground truncate">浏览及调试网页</span>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 3. 终端 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    addPanelTab("terminal");
+                  }}
+                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <TerminalIcon className="size-4 shrink-0 text-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-medium text-foreground">终端</span>
+                      <span className="text-xs text-muted-foreground truncate">运行命令及脚本</span>
+                    </div>
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
     </PanelSurface>

@@ -53,10 +53,13 @@ export interface SkillsShSkillDetail extends SkillsShSkill {
 
 const MARKETPLACES_KEY = "skill-marketplaces";
 const DEFAULT_BRANCH = "main";
-const SKILLS_SH_CACHE_TTL = 2 * 60 * 1000;
+const SKILLS_SH_CACHE_TTL = 10 * 60 * 1000;
+const SKILLS_SH_MAX_RETRIES = 3;
+const SKILLS_SH_PAGE_CONCURRENCY = 3;
 const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
 const skillsShCache = new Map<string, { expiresAt: number; skills: SkillsShSkill[] }>();
+const skillsShInFlight = new Map<string, Promise<SkillsShSkill[]>>();
 
 function slug(value: string): string {
   return value
@@ -233,11 +236,25 @@ function normalizeSkillsShCoordinate(value: string, label: string): string {
 }
 
 async function skillsShPublicJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "MastraWork-Skill-Marketplace" },
-  });
-  if (!response.ok) throw new Error(`skills.sh 公共目录请求失败（${response.status}）`);
-  return (await response.json()) as T;
+  for (let attempt = 0; attempt <= SKILLS_SH_MAX_RETRIES; attempt += 1) {
+    const response = await fetch(url, {
+      headers: { Accept: "application/json", "User-Agent": "MastraWork-Skill-Marketplace" },
+    });
+    if (response.ok) return (await response.json()) as T;
+    if (response.status !== 429 || attempt === SKILLS_SH_MAX_RETRIES) {
+      if (response.status === 429) {
+        throw new Error("skills.sh 公共目录请求被限流，请稍后重试");
+      }
+      throw new Error(`skills.sh 公共目录请求失败（${response.status}）`);
+    }
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    const delayMs =
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(30_000, retryAfter * 1_000)
+        : Math.min(8_000, 500 * 2 ** attempt);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error("skills.sh 公共目录请求失败");
 }
 
 function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
@@ -304,9 +321,9 @@ async function listSkillsShPublicSkills(query: string): Promise<SkillsShSkill[]>
   );
   const pages = Math.max(1, Math.ceil((Number(first.total) || first.skills.length) / 200));
   const entries = [first.skills];
-  for (let start = 1; start < pages; start += 8) {
+  for (let start = 1; start < pages; start += SKILLS_SH_PAGE_CONCURRENCY) {
     const batch = await Promise.all(
-      Array.from({ length: Math.min(8, pages - start) }, (_, offset) =>
+      Array.from({ length: Math.min(SKILLS_SH_PAGE_CONCURRENCY, pages - start) }, (_, offset) =>
         skillsShPublicJson<SkillsShPublicPage>(
           `https://skills.sh/api/skills/all-time/${start + offset}`,
         ),
@@ -326,9 +343,24 @@ export async function listSkillsShSkills(query = ""): Promise<SkillsShSkill[]> {
   const cached = skillsShCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.skills;
 
-  const skills = await listSkillsShPublicSkills(normalizedQuery);
-  skillsShCache.set(cacheKey, { expiresAt: Date.now() + SKILLS_SH_CACHE_TTL, skills });
-  return skills;
+  const pending = skillsShInFlight.get(cacheKey);
+  if (pending) return pending;
+
+  const request = listSkillsShPublicSkills(normalizedQuery)
+    .then((skills) => {
+      skillsShCache.set(cacheKey, { expiresAt: Date.now() + SKILLS_SH_CACHE_TTL, skills });
+      return skills;
+    })
+    .catch((error) => {
+      if (cached) return cached.skills;
+      throw error;
+    });
+  skillsShInFlight.set(cacheKey, request);
+  try {
+    return await request;
+  } finally {
+    if (skillsShInFlight.get(cacheKey) === request) skillsShInFlight.delete(cacheKey);
+  }
 }
 
 function normalizeSkillsShFilePath(path: string): string {
@@ -487,10 +519,14 @@ export async function getSkillsShSkillDetail(
 
 export async function installSkillsShSkill(source: string, slugValue: string): Promise<string> {
   const detail = await getSkillsShSkillDetail(source, slugValue);
+  const skillName = detail.name.trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skillName)) {
+    throw new Error(`技能名称无效：${skillName}`);
+  }
   const root = join(
     getStorageDirectory() || PROJECT_ROOT,
     "skills",
-    `skills-sh-${slug(detail.source)}-${slug(detail.slug)}`,
+    skillName,
   );
   if (
     await access(root).then(

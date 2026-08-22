@@ -32,6 +32,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { dirName, type TreeEntry, useWorkbench, type WorkThread } from "@/lib/workbench";
+import { cn } from "@/lib/utils";
 
 // 侧栏「任务列表」分组:直接线程平铺 + 显式绑定目录作为可折叠文件夹
 // (docs/examples/base/sidebar-menu-collapsible.tsx 的 Collapsible +
@@ -278,7 +279,12 @@ export function WorkspaceGroup({
           {sorted.length > 0 ? (
             <span className="ml-1 text-xs text-muted-foreground tabular-nums">{sorted.length}</span>
           ) : null}
-          <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+          <ChevronRightIcon
+            className={cn(
+              "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              open && "rotate-90 text-foreground",
+            )}
+          />
         </CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarMenuSub>
@@ -315,17 +321,28 @@ export function ThreadFolder({
   onRename: (thread: WorkThread) => void;
 }) {
   const sorted = sortThreads(threads);
+  const [open, setOpen] = React.useState(defaultOpen);
   const Icon = icon;
   return (
-    <Collapsible defaultOpen={defaultOpen} className="group/collapsible">
+    <Collapsible
+      defaultOpen={defaultOpen}
+      open={open}
+      onOpenChange={setOpen}
+      className="group/collapsible"
+    >
       <SidebarMenuItem>
         <CollapsibleTrigger render={<SidebarMenuButton />}>
-          <Icon />
+          <Icon className="size-4 shrink-0" />
           <span>{name}</span>
           {sorted.length > 0 ? (
             <span className="ml-1 text-xs text-muted-foreground tabular-nums">{sorted.length}</span>
           ) : null}
-          <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+          <ChevronRightIcon
+            className={cn(
+              "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              open && "rotate-90 text-foreground",
+            )}
+          />
         </CollapsibleTrigger>
         <CollapsibleContent>
           <SidebarMenuSub>

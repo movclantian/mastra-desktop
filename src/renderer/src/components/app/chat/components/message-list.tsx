@@ -504,7 +504,7 @@ export const MessageItem = React.memo(function MessageItem({
           <MessageAttachments files={files} messageId={message.id} />
           {/* 流式起步阶段(尚无任何文本/推理/工具 part)立即显示思考占位,
               避免头像+名称出现后空白一段,再突然弹出"思考"卡片 */}
-          {isStreaming && assistantSegments.length === 0 ? <Shimmer>正在思考…</Shimmer> : null}
+          {isStreaming && assistantSegments.length === 0 ? <Shimmer>思考中…</Shimmer> : null}
           <CitationProvider entries={citationEntries}>
             {assistantSwitchableVersions.length >= 2 ? (
               <MessageBranch

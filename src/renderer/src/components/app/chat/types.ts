@@ -33,11 +33,19 @@ const REFERENCE_BADGE_COLORS = [
   "border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300",
 ];
 
-/** Stable pseudo-random color so input badges and message echoes match. */
+const referenceBadgeColorCache = new Map<string, string>();
+
+/** Assign a random color once per reference so input badges and message echoes match. */
 export function referenceBadgeClass(kind: ReferenceBadgeKind, value: string): string {
-  let hash = 0;
-  for (const character of `${kind}:${value}`) hash = (hash * 31 + character.charCodeAt(0)) | 0;
-  return REFERENCE_BADGE_COLORS[Math.abs(hash) % REFERENCE_BADGE_COLORS.length];
+  const cacheKey = `${kind}:${value}`;
+  const cachedColor = referenceBadgeColorCache.get(cacheKey);
+  if (cachedColor) return cachedColor;
+
+  const color =
+    REFERENCE_BADGE_COLORS[Math.floor(Math.random() * REFERENCE_BADGE_COLORS.length)] ??
+    REFERENCE_BADGE_COLORS[0];
+  referenceBadgeColorCache.set(cacheKey, color);
+  return color;
 }
 
 export type WorkUIMessage = UIMessage<WorkMessageMetadata>;

@@ -57,8 +57,8 @@ export function SettingCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="max-w-2xl overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
-      <header className="bg-muted/40 px-4 py-3">
+    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+      <header className="border-b border-border/60 bg-muted/40 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <p className="min-w-0 text-sm font-medium">{title}</p>
           {action ? <div className="flex shrink-0 items-center gap-2">{action}</div> : null}

@@ -81,6 +81,47 @@ function AppShell() {
     if (!libraryOpen) setLibrarySettingsOpen(false);
   }, [libraryOpen]);
 
+  // 全局滚轮横向转换:当鼠标悬浮在任意可横向滚动的区域(如标签栏、操作条、代码块)上时,
+  // 标准鼠标垂直滚轮(deltaY)自动转化为平滑横向滚动,支持极速浏览海量标签。
+  React.useEffect(() => {
+    const handleGlobalWheel = (event: WheelEvent) => {
+      // 若已有横向分量或垂直滚轮为 0,直接由系统原生处理
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.deltaY === 0) return;
+
+      let target = event.target as HTMLElement | null;
+      while (target && target !== document.body && target !== document.documentElement) {
+        const style = window.getComputedStyle(target);
+        const overflowX = style.overflowX;
+        const overflowY = style.overflowY;
+
+        const isScrollableX =
+          (overflowX === "auto" || overflowX === "scroll") &&
+          target.scrollWidth > target.clientWidth;
+        const isScrollableY =
+          (overflowY === "auto" || overflowY === "scroll") &&
+          target.scrollHeight > target.clientHeight;
+
+        // 如果容器可横向滚动且纵向不可滚动(或显式声明了 data-horizontal-scroll)
+        if (isScrollableX && (!isScrollableY || target.dataset.horizontalScroll === "true")) {
+          const isScrollingRight = event.deltaY > 0;
+          const canScroll = isScrollingRight
+            ? target.scrollLeft < target.scrollWidth - target.clientWidth - 1
+            : target.scrollLeft > 1;
+
+          if (canScroll) {
+            target.scrollLeft += event.deltaY;
+            event.preventDefault();
+            return;
+          }
+        }
+        target = target.parentElement;
+      }
+    };
+
+    window.addEventListener("wheel", handleGlobalWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleGlobalWheel);
+  }, []);
+
   // 聊天区被挤窄的来源不止一个:窗口缩放、sidebar 展开/收起、面板显隐……
   // 逐个监听事件必然漏(sidebar 折叠压根不发 window.resize),所以直接观察聊天区
   // 自身尺寸 —— 任何来源的空间变化都收敛到这一处,面板双向跟随:

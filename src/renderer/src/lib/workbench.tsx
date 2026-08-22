@@ -138,7 +138,7 @@ export interface PendingJump {
 }
 
 /** 右侧面板可承载的模块类型。browser 页面由服务端浏览器状态派生,其余是前端实例。 */
-export type PanelTabKind = "files" | "terminal" | "browser";
+export type PanelTabKind = "files" | "terminal" | "browser" | "welcome";
 
 /**
  * 前端拥有的右侧标签实例(文件树 / 终端各可多开)。
@@ -152,6 +152,7 @@ export interface LocalPanelTab {
 
 /** 当前激活的右侧标签。浏览器用 index 而非 id:Mastra 的 tabs API 只按下标寻址。 */
 export type ActivePanelTab =
+  | { kind: "welcome"; id?: string }
   | { kind: "files" | "terminal"; id: string }
   | { kind: "browser"; index: number };
 
@@ -161,6 +162,9 @@ export type ActivePanelTab =
  * context value 随之重算,全体 consumer 白重渲染一轮。
  */
 function isSamePanelTab(left: ActivePanelTab, right: ActivePanelTab): boolean {
+  if (left.kind === "welcome" || right.kind === "welcome") {
+    return left.kind === right.kind;
+  }
   if (left.kind === "browser" || right.kind === "browser") {
     return left.kind === "browser" && right.kind === "browser" && left.index === right.index;
   }
@@ -293,13 +297,6 @@ export interface TerminalSessionInfo {
   settledAt?: number;
 }
 
-/** 右侧面板的初始标签。用固定 id 而非 nanoid,让初始激活项能与它同步声明。 */
-const INITIAL_FILES_TAB: LocalPanelTab = {
-  id: "panel-tab-files-initial",
-  kind: "files",
-  title: "文件",
-};
-
 const DEFAULT_USER: WorkUser = {
   id: "user-local",
   name: "Local User",
@@ -390,6 +387,16 @@ interface WorkbenchValue {
   openWorkspacePanel: (kind?: PanelTabKind) => void;
   terminalPanelOpen: boolean;
   setTerminalPanelOpen: (open: boolean) => void;
+  /**
+   * 输入区底部工具栏在「中间那段弹性空白刚好被消费完」时的宽度 —— 也就是 PromptInput
+   * 真正的最小边界,由 ChatPromptInput 实测上报(左组宽 + 右组宽 + 左右内距)。
+   *
+   * 布局里唯一有资格决定这个数的就是内容本身,所以它不该被写成常量:控件增删、
+   * 标签改名、换语言、切到更长的模型名,值都会跟着变。AppShell 拿它去限制右侧面板
+   * 能拖多宽、以及 Electron 窗口能缩多窄。0 表示尚未测到,此时不施加约束。
+   */
+  promptMinWidth: number;
+  reportPromptMinWidth: (width: number) => void;
   /**
    * 终端会话登记。底部面板与右侧终端标签的会话都往这里登记,由 workbench 聚合成
    * 一份 terminal state lane —— 否则模型只能看到其中一个面板里的终端。传 null 撤销。
@@ -536,14 +543,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  /** 输入区实测的最小边界(见 WorkbenchValue.promptMinWidth);0 = 尚未测到 */
+  const [promptMinWidth, setPromptMinWidth] = useState(0);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
-  const [panelTabs, setPanelTabs] = useState<LocalPanelTab[]>(() => [INITIAL_FILES_TAB]);
+  const [panelTabs, setPanelTabs] = useState<LocalPanelTab[]>([]);
   const [activePanelTab, setActivePanelTab] = useState<ActivePanelTab>({
-    kind: "files",
-    id: INITIAL_FILES_TAB.id,
+    kind: "welcome",
+    id: "welcome",
   });
   /** 标签标题的序号来源:第一个文件树叫「文件」,之后是「文件 2」「终端 1」… */
-  const panelTabCountsRef = useRef({ files: 1, terminal: 0 });
+  const panelTabCountsRef = useRef({ files: 0, terminal: 0 });
   /** 两个面板的终端会话都登记在这里,聚合后上报 terminal state lane */
   const terminalSessionsRef = useRef(new Map<string, TerminalSessionInfo>());
   const [terminalSessionsVersion, setTerminalSessionsVersion] = useState(0);
@@ -693,6 +702,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
 
+  /**
+   * 输入区上报实测最小边界。向上取整并与当前值比对后才写 state ——
+   * 上报来自 ResizeObserver,亚像素抖动会一帧一个值;不去重就会连着触发
+   * 「测量 → 约束 → 布局变化 → 再测量」的回路。
+   */
+  const reportPromptMinWidth = useCallback((width: number) => {
+    const rounded = Math.ceil(width);
+    setPromptMinWidth((current) => (current === rounded ? current : rounded));
+  }, []);
+
   const reportTerminalSession = useCallback((id: string, info: TerminalSessionInfo | null) => {
     if (info) terminalSessionsRef.current.set(id, info);
     else if (!terminalSessionsRef.current.delete(id)) return;
@@ -760,15 +779,24 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setActivePanelTab((active) => {
         if (active.kind === "browser" || active.id !== id) return active;
         const neighbor = next[Math.max(0, index - 1)];
-        return neighbor ? { kind: neighbor.kind, id: neighbor.id } : { kind: "browser", index: 0 };
+        return neighbor
+          ? { kind: neighbor.kind, id: neighbor.id }
+          : { kind: "welcome", id: "welcome" };
       });
       return next;
     });
   }, []);
 
   /** 打开面板并聚焦某类模块的第一个标签。browser 聚焦当前活动页(下标由面板同步)。 */
-  const openWorkspacePanel = useCallback((kind: PanelTabKind = "files") => {
+  const openWorkspacePanel = useCallback((kind?: PanelTabKind) => {
     setWorkspacePanelOpen(true);
+    if (!kind || kind === "welcome") {
+      setActivePanelTab((active) => {
+        if (active.kind === "welcome") return active;
+        return { kind: "welcome", id: "welcome" };
+      });
+      return;
+    }
     if (kind === "browser") {
       setActivePanelTab((active) =>
         active.kind === "browser" ? active : { kind: "browser", index: 0 },
@@ -1194,6 +1222,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       openWorkspacePanel,
       terminalPanelOpen,
       setTerminalPanelOpen,
+      promptMinWidth,
+      reportPromptMinWidth,
       reportTerminalSession,
       terminalRequest,
       requestTerminalCommand,
@@ -1252,6 +1282,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       closePanelTab,
       openWorkspacePanel,
       terminalPanelOpen,
+      promptMinWidth,
+      reportPromptMinWidth,
       reportTerminalSession,
       terminalRequest,
       requestTerminalCommand,

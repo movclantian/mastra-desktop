@@ -61,7 +61,7 @@ export function SettingsDialog() {
 
   return (
     <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-      <DialogContent className="flex h-[min(620px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 flex-col overflow-hidden p-0 md:max-w-[800px] lg:max-w-[920px]">
+      <DialogContent className="flex h-[min(640px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 flex-col overflow-hidden p-0 md:max-w-[840px] lg:max-w-[960px]">
         <DialogTitle className="sr-only">设置</DialogTitle>
         <DialogDescription className="sr-only">自定义 MastraWork 设置。</DialogDescription>
         {/* 必须保持横向子项 stretch:main 才能继承受限的 Dialog 高度并形成滚动区。 */}
@@ -69,15 +69,18 @@ export function SettingsDialog() {
           className="h-full min-h-0 w-full items-stretch"
           style={
             {
-              "--sidebar-width": "fit-content",
+              "--sidebar-width": "160px",
               minHeight: 0,
               height: "100%",
             } as React.CSSProperties
           }
         >
-          <Sidebar collapsible="none" className="hidden w-fit min-w-[112px] max-w-[180px] md:flex">
+          <Sidebar collapsible="none" className="hidden w-40 shrink-0 border-r border-border bg-sidebar md:flex">
+            <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
+              <span className="text-xs font-medium text-muted-foreground">应用设置</span>
+            </div>
             <SidebarContent>
-              <SidebarGroup>
+              <SidebarGroup className="p-1">
                 <SidebarGroupContent>
                   <SidebarMenu>
                     {SECTIONS.map((s) => (
@@ -85,6 +88,7 @@ export function SettingsDialog() {
                         <SidebarMenuButton
                           isActive={section === s.id}
                           onClick={() => setSettingsSection(s.id)}
+                          className="text-xs font-normal"
                         >
                           <s.icon />
                           <span>{s.label}</span>
@@ -96,21 +100,19 @@ export function SettingsDialog() {
               </SidebarGroup>
             </SidebarContent>
           </Sidebar>
-          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="flex h-10 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 border-b">
-              <div className="flex items-center gap-2 px-4">
-                <Breadcrumb>
-                  <BreadcrumbList>
-                    <BreadcrumbItem className="hidden md:block">
-                      <BreadcrumbPage>设置</BreadcrumbPage>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator className="hidden md:block" />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>{current.label}</BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </div>
+          <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-background px-4">
+              <Breadcrumb>
+                <BreadcrumbList>
+                  <BreadcrumbItem className="hidden md:block">
+                    <BreadcrumbPage>设置</BreadcrumbPage>
+                  </BreadcrumbItem>
+                  <BreadcrumbSeparator className="hidden md:block" />
+                  <BreadcrumbItem>
+                    <BreadcrumbPage>{current.label}</BreadcrumbPage>
+                  </BreadcrumbItem>
+                </BreadcrumbList>
+              </Breadcrumb>
             </header>
 
             {section === "themes" ? (
@@ -122,7 +124,7 @@ export function SettingsDialog() {
                 <div className="flex min-w-0 flex-col">
                   {section === "providers" ? <ProvidersSection /> : null}
                   {section !== "providers" ? (
-                    <div className="flex min-w-0 flex-col gap-2 p-2 pt-1">
+                    <div className="flex min-w-0 flex-col gap-4 p-4">
                       {section === "memory" ? <MemorySection /> : null}
                       {section === "tools" ? <ToolsSection /> : null}
                       {section === "guardrails" ? <GuardrailsSection /> : null}

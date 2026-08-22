@@ -43,7 +43,6 @@ import {
   PromptInputFooter,
   PromptInputHeader,
   PromptInputSubmit,
-  PromptInputTextarea,
   PromptInputTools,
   usePromptInputAttachments,
   usePromptInputController,
@@ -96,8 +95,9 @@ function PromptInputActions() {
   const attachments = usePromptInputAttachments();
 
   return (
-    // shrink-0:这三个控件都不接受被压变形(基类带的 min-w-0 会允许收缩)
-    <PromptInputTools className="shrink-0">
+    // 基类自带 min-w-0,整组可随容器收缩;收缩只发生在各按钮的文字标签上
+    // (审批/检索的 span 都是 truncate),按钮尺寸与图标不受影响。
+    <PromptInputTools>
       {/* 附件 → 审批模式 → 联网检索,依次排在整个输入区的左侧 */}
       <Tooltip>
         <TooltipTrigger
@@ -161,6 +161,77 @@ interface FileReferenceOption extends MessageFileReference {
   byteSize: number;
 }
 
+const skillTokenAttribute = "data-skill-token";
+
+function serializeEditableNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof HTMLElement)) return "";
+  const skillToken = node.getAttribute(skillTokenAttribute);
+  if (skillToken) return skillToken;
+  if (node.tagName === "BR") return "\n";
+  const content = Array.from(node.childNodes).map(serializeEditableNode).join("");
+  return ["DIV", "P"].includes(node.tagName) && node.nextSibling ? `${content}\n` : content;
+}
+
+function serializeEditable(editor: HTMLElement): string {
+  return Array.from(editor.childNodes).map(serializeEditableNode).join("");
+}
+
+function selectedSkillNames(editor: HTMLElement): string[] {
+  return Array.from(editor.querySelectorAll<HTMLElement>(`[${skillTokenAttribute}]`))
+    .map((node) => node.getAttribute(skillTokenAttribute)?.slice(1) ?? "")
+    .filter(Boolean)
+    .filter((name, index, names) => names.indexOf(name) === index);
+}
+
+function renderEditableContent(editor: HTMLElement, value: string, skills: string[]) {
+  editor.replaceChildren();
+  const skillSet = new Set(skills);
+  const tokenPattern = /\/[a-zA-Z0-9_-]+/g;
+  let cursor = 0;
+  for (const match of value.matchAll(tokenPattern)) {
+    const token = match[0];
+    const name = token.slice(1);
+    if (!skillSet.has(name)) continue;
+    const start = match.index ?? cursor;
+    if (start > cursor) {
+      editor.append(document.createTextNode(value.slice(cursor, start)));
+    }
+    const badge = document.createElement("span");
+    badge.setAttribute(skillTokenAttribute, token);
+    badge.setAttribute("contenteditable", "false");
+    badge.className = `mx-0.5 inline-flex select-none items-center rounded-md border px-1.5 py-0.5 align-baseline text-xs font-medium leading-4 ${referenceBadgeClass("skill", name)}`;
+    badge.setAttribute("aria-label", `技能引用 ${name}`);
+    badge.textContent = name;
+    editor.append(badge);
+    cursor = start + token.length;
+  }
+  if (cursor < value.length) editor.append(document.createTextNode(value.slice(cursor)));
+}
+
+function focusEditableEnd(editor: HTMLElement) {
+  editor.focus();
+  const selection = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  range.collapse(false);
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
+function removeTrailingCommandToken(value: string, token: "/" | "@") {
+  return value.replace(new RegExp(`\\${token}[a-zA-Z0-9_.-]*$`), "");
+}
+
+function removeSkillTokens(value: string, skills: string[]) {
+  let result = value;
+  for (const skill of skills) {
+    const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`\\/${escaped}`, "g"), "");
+  }
+  return result.replace(/[ \t]{2,}/g, " ").trim();
+}
+
 function SkillAwareTextarea({
   selectedSkills,
   onChangeSkills,
@@ -175,7 +246,10 @@ function SkillAwareTextarea({
   placeholder: string;
 }) {
   const controller = usePromptInputController();
+  const attachments = usePromptInputAttachments();
   const { user } = useWorkbench();
+  const editorRef = React.useRef<HTMLDivElement>(null);
+  const [isComposing, setIsComposing] = React.useState(false);
   const [skills, setSkills] = React.useState<SkillOption[]>([]);
   const [files, setFiles] = React.useState<FileReferenceOption[]>([]);
   const [query, setQuery] = React.useState("");
@@ -213,8 +287,21 @@ function SkillAwareTextarea({
       .catch(() => undefined);
   }, [user.id]);
 
-  const handleTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = event.currentTarget.value;
+  React.useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    if (serializeEditable(editor) !== controller.textInput.value) {
+      renderEditableContent(editor, controller.textInput.value, selectedSkills);
+    }
+  }, [controller.textInput.value, selectedSkills]);
+
+  const handleTextChange = (event: React.FormEvent<HTMLDivElement>) => {
+    const value = serializeEditable(event.currentTarget);
+    const nextSkills = selectedSkillNames(event.currentTarget);
+    controller.textInput.setInput(value);
+    if (nextSkills.join("\u0000") !== selectedSkills.join("\u0000")) {
+      onChangeSkills(nextSkills);
+    }
     const skillMatch = /(?:^|\s)\/([a-zA-Z0-9_-]*)$/.exec(value);
     const fileMatch = /(?:^|\s)@([^\s@]*)$/.exec(value);
     if (skillMatch) {
@@ -243,20 +330,32 @@ function SkillAwareTextarea({
     return !needle || file.filename.toLocaleLowerCase().includes(needle);
   });
 
-  const removeCommandToken = (token: string) =>
-    controller.textInput.value.replace(new RegExp(`(?:^|\\s)${token}[^\\s]*$`), "").trimEnd();
+  const removeCommandToken = (token: "/" | "@") =>
+    removeTrailingCommandToken(controller.textInput.value, token);
 
   const selectSkill = (skill: SkillOption) => {
-    controller.textInput.setInput(removeCommandToken("/"));
-    onChangeSkills(
-      selectedSkills.includes(skill.name) ? selectedSkills : [...selectedSkills, skill.name],
-    );
+    const prefix = removeCommandToken("/");
+    const nextSkills = selectedSkills.includes(skill.name)
+      ? selectedSkills
+      : [...selectedSkills, skill.name];
+    const nextValue = `${prefix}${prefix && !/\s$/.test(prefix) ? " " : ""}/${skill.name} `;
+    controller.textInput.setInput(nextValue);
+    onChangeSkills(nextSkills);
+    if (editorRef.current) {
+      renderEditableContent(editorRef.current, nextValue, nextSkills);
+      focusEditableEnd(editorRef.current);
+    }
     setCommand(null);
     setQuery("");
   };
 
   const selectFile = (file: FileReferenceOption) => {
-    controller.textInput.setInput(removeCommandToken("@"));
+    const nextValue = removeCommandToken("@");
+    controller.textInput.setInput(nextValue);
+    if (editorRef.current) {
+      renderEditableContent(editorRef.current, nextValue, selectedSkills);
+      focusEditableEnd(editorRef.current);
+    }
     if (!selectedFileReferences.some((item) => item.url === file.url)) {
       controller.attachments.restore([
         {
@@ -272,9 +371,52 @@ function SkillAwareTextarea({
     setQuery("");
   };
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Backspace" && serializeEditable(event.currentTarget) === "") {
+      const lastAttachment = attachments.files.at(-1);
+      if (lastAttachment) {
+        event.preventDefault();
+        attachments.remove(lastAttachment.id);
+        return;
+      }
+    }
+    if (event.key !== "Enter" || isComposing || event.nativeEvent.isComposing || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    const form = event.currentTarget.closest("form") as HTMLFormElement | null;
+    const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (!submitButton?.disabled) form?.requestSubmit();
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === "file")
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
+    if (files.length === 0) return;
+    event.preventDefault();
+    attachments.add(files);
+  };
+
   return (
     <>
-      <PromptInputTextarea onChange={handleTextChange} placeholder={placeholder} />
+      <div
+        aria-label="消息输入"
+        aria-multiline="true"
+        className="field-sizing-content max-h-48 min-h-16 w-full min-w-0 flex-1 resize-none overflow-y-auto whitespace-pre-wrap break-words rounded-none bg-transparent px-3 py-2 text-sm leading-6 outline-none before:pointer-events-none before:text-muted-foreground empty:before:content-[attr(data-placeholder)]"
+        contentEditable
+        data-placeholder={placeholder}
+        data-slot="input-group-control"
+        onCompositionEnd={() => setIsComposing(false)}
+        onCompositionStart={() => setIsComposing(true)}
+        onInput={handleTextChange}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        ref={editorRef}
+        role="textbox"
+        suppressContentEditableWarning
+      />
       {command ? (
         <div className="absolute bottom-full left-2 z-30 mb-2 w-[min(24rem,calc(100%-1rem))] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg">
           <Command shouldFilter={false}>
@@ -332,38 +474,6 @@ function SkillAwareTextarea({
         </div>
       ) : null}
     </>
-  );
-}
-
-function SelectedSkillBadges({
-  skills,
-  onChange,
-}: {
-  skills: string[];
-  onChange: (skills: string[]) => void;
-}) {
-  if (skills.length === 0) return null;
-  return (
-    <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
-      {skills.map((skill) => (
-        <Badge
-          className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
-          key={skill}
-          variant="outline"
-        >
-          <SparklesIcon className="size-3" />
-          {skill}
-          <button
-            aria-label={`移除技能 ${skill}`}
-            className="rounded-sm hover:bg-primary/15"
-            onClick={() => onChange(skills.filter((item) => item !== skill))}
-            type="button"
-          >
-            <XIcon className="size-3" />
-          </button>
-        </Badge>
-      ))}
-    </div>
   );
 }
 
@@ -443,7 +553,8 @@ function SortableRequestItem({
         ) : null}
         <div className="min-w-0 flex-1">
           <QueueItemContent className="line-clamp-2 whitespace-pre-wrap">
-            {request.text || "附件请求"}
+            {request.text ||
+              (request.skills?.length ? `技能引用: ${request.skills.join(", ")}` : "附件请求")}
           </QueueItemContent>
           {request.files.length > 0 ? (
             <QueueItemDescription>{request.files.length} 个附件</QueueItemDescription>
@@ -703,7 +814,12 @@ export function ChatPromptInput({
         onError={(error) => toast.error(error.message)}
         onSubmit={(message) =>
           onSubmit(
-            { ...message, skills: selectedSkills, fileReferences: selectedFileReferences },
+            {
+              ...message,
+              text: removeSkillTokens(message.text, selectedSkills),
+              skills: selectedSkills,
+              fileReferences: selectedFileReferences,
+            },
             () => {
               controller.textInput.clear();
               controller.attachments.clear();
@@ -715,7 +831,6 @@ export function ChatPromptInput({
       >
         <PromptInputAttachments />
         <PromptInputBody>
-          <SelectedSkillBadges skills={selectedSkills} onChange={setSelectedSkills} />
           <SelectedFileReferenceBadges
             files={selectedFileReferences}
             onRemove={(file) => {
@@ -736,25 +851,33 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* 两组控件各自 shrink-0(尺寸恒定不变形),中间那段空白由右组的 ml-auto
-            吸收 —— 它就是唯一的弹性部分,宽度一变化,被伸缩的只有它。
-            空白见底之后 flex-wrap 接手:右组整体换到第二行,依旧靠右。
-            这样任何宽度下都不会溢出容器、不会被祖先的 overflow-hidden 裁掉、
-            也不需要横向滚动条,而且最小宽度由内容自然决定,没有魔数。 */}
-        <PromptInputFooter className="flex-wrap gap-3 border-t border-border/70 px-2.5 pt-2 pb-2">
+        {/* 不换行、不滚动、不溢出。收缩按优先级发生:
+            1. 中间那段空白 —— 由 ml-auto 吸收,第一顺位被压;
+            2. 模式 / 模型的文字标签 —— 两者都是 truncate,逐渐截短;
+            按钮尺寸与图标始终不动(inputGroupButtonVariants 的 [&>svg]:shrink-0),
+            发送按钮额外显式 shrink-0:它是纯图标,被压一点就没法点了。
+            最小宽度由内容自然决定,不需要任何魔数。 */}
+        <PromptInputFooter className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2">
           <PromptInputActions />
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <ChatContextUsage
-              usage={usage}
-              estimatedUsedTokens={estimatedUsedTokens}
-              compacting={compacting}
-              onCompress={onCompress}
-              compressResult={compressResult}
-              onCompressResultClose={onCompressResultClose}
-            />
+          <div className="ml-auto flex min-w-0 items-center gap-1">
+            {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
+            <div className="shrink-0">
+              <ChatContextUsage
+                usage={usage}
+                estimatedUsedTokens={estimatedUsedTokens}
+                compacting={compacting}
+                onCompress={onCompress}
+                compressResult={compressResult}
+                onCompressResultClose={onCompressResultClose}
+              />
+            </div>
             <ChatModeSelector />
             <ChatModelSelector />
-            <PromptInputSubmit onStop={() => void onStop()} status={status} />
+            <PromptInputSubmit
+              className="shrink-0"
+              onStop={() => void onStop()}
+              status={status}
+            />
           </div>
         </PromptInputFooter>
       </PromptInput>

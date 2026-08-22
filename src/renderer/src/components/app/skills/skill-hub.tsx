@@ -40,7 +40,6 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
@@ -102,20 +101,75 @@ function skillSourceLabel(skill?: SkillMetadata) {
   return skill?.marketplaceName || "个人技能";
 }
 
+const SKILLS_REGISTRY_CACHE_KEY = "mastra_skills_registry_cache";
+const SKILLS_INSTALLED_CACHE_KEY = "mastra_skills_installed_cache";
+const SKILLS_MCP_CACHE_KEY = "mastra_skills_mcp_cache";
+const SKILLS_MARKETPLACES_CACHE_KEY = "mastra_skills_marketplaces_cache";
+
+let memRegistrySkills: SkillMetadata[] = [];
+let memInstalledSkills: SkillMetadata[] = [];
+let memMcpServers: McpSummary[] = [];
+let memMarketplaces: SkillMarketplace[] = [];
+
+function loadStorageCache<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveStorageCache(key: string, data: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // 忽略 localStorage 容量限制异常
+  }
+}
+
 export function SkillHub() {
   const { setPendingPrompt, setSkillOpen } = useWorkbench();
   const [section, setSection] = React.useState<Section>("public");
   const [query, setQuery] = React.useState("");
-  const [skills, setSkills] = React.useState<SkillMetadata[]>([]);
-  const [registrySkills, setRegistrySkills] = React.useState<SkillMetadata[]>([]);
-  const [mcpServers, setMcpServers] = React.useState<McpSummary[]>([]);
-  const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>([]);
+
+  // SWR 缓存:优先从内存与本地缓存加载,实现 0ms 瞬间打开,后台静默刷新
+  const [skills, setSkills] = React.useState<SkillMetadata[]>(() => {
+    if (memInstalledSkills.length > 0) return memInstalledSkills;
+    const cached = loadStorageCache<SkillMetadata[]>(SKILLS_INSTALLED_CACHE_KEY, []);
+    memInstalledSkills = cached;
+    return cached;
+  });
+  const [registrySkills, setRegistrySkills] = React.useState<SkillMetadata[]>(() => {
+    if (memRegistrySkills.length > 0) return memRegistrySkills;
+    const cached = loadStorageCache<SkillMetadata[]>(SKILLS_REGISTRY_CACHE_KEY, []);
+    memRegistrySkills = cached;
+    return cached;
+  });
+  const [mcpServers, setMcpServers] = React.useState<McpSummary[]>(() => {
+    if (memMcpServers.length > 0) return memMcpServers;
+    const cached = loadStorageCache<McpSummary[]>(SKILLS_MCP_CACHE_KEY, []);
+    memMcpServers = cached;
+    return cached;
+  });
+  const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>(() => {
+    if (memMarketplaces.length > 0) return memMarketplaces;
+    const cached = loadStorageCache<SkillMarketplace[]>(SKILLS_MARKETPLACES_CACHE_KEY, []);
+    memMarketplaces = cached;
+    return cached;
+  });
+
   const [selectedSkill, setSelectedSkill] = React.useState<SkillMetadata | null>(null);
   const [detail, setDetail] = React.useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
-  const [registryLoading, setRegistryLoading] = React.useState(false);
+  const [loading, setLoading] = React.useState(
+    () => memInstalledSkills.length === 0 && memMarketplaces.length === 0,
+  );
+  const [registryLoading, setRegistryLoading] = React.useState(
+    () => memRegistrySkills.length === 0,
+  );
   const [installing, setInstalling] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [addSkillOpen, setAddSkillOpen] = React.useState(false);
@@ -127,11 +181,14 @@ export function SkillHub() {
     const response = await fetch(`${MASTRA_SERVER_URL}/work/skills`);
     const payload = (await response.json()) as { skills?: SkillMetadata[]; error?: string };
     if (!response.ok) throw apiError(payload, "读取已安装技能失败");
-    setSkills(payload.skills ?? []);
+    const nextSkills = payload.skills ?? [];
+    memInstalledSkills = nextSkills;
+    saveStorageCache(SKILLS_INSTALLED_CACHE_KEY, nextSkills);
+    setSkills(nextSkills);
   }, []);
 
   const loadRegistry = React.useCallback(async (search: string) => {
-    setRegistryLoading(true);
+    if (memRegistrySkills.length === 0) setRegistryLoading(true);
     try {
       const response = await fetch(
         `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}`,
@@ -142,10 +199,15 @@ export function SkillHub() {
         skillsShError?: string;
       };
       if (!response.ok) throw apiError(payload, "技能市场暂时不可用");
-      setRegistrySkills(payload.skills ?? []);
+      const nextSkills = payload.skills ?? [];
+      if (!search) {
+        memRegistrySkills = nextSkills;
+        saveStorageCache(SKILLS_REGISTRY_CACHE_KEY, nextSkills);
+      }
+      setRegistrySkills(nextSkills);
       if (payload.skillsShError) toast.error(`skills.sh 暂时不可用: ${payload.skillsShError}`);
     } catch (error) {
-      setRegistrySkills([]);
+      if (memRegistrySkills.length === 0) setRegistrySkills([]);
       toastError(error, "技能市场暂时不可用");
     } finally {
       setRegistryLoading(false);
@@ -156,7 +218,10 @@ export function SkillHub() {
     const response = await fetch(`${MASTRA_SERVER_URL}/work/mcp`);
     const payload = (await response.json()) as { servers?: McpSummary[]; error?: string };
     if (!response.ok) throw apiError(payload, "读取 MCP 失败");
-    setMcpServers(payload.servers ?? []);
+    const nextMcp = payload.servers ?? [];
+    memMcpServers = nextMcp;
+    saveStorageCache(SKILLS_MCP_CACHE_KEY, nextMcp);
+    setMcpServers(nextMcp);
   }, []);
 
   const loadMarketplaces = React.useCallback(async () => {
@@ -166,7 +231,10 @@ export function SkillHub() {
       error?: string;
     };
     if (!response.ok) throw apiError(payload, "读取技能市场失败");
-    setMarketplaces(payload.marketplaces ?? []);
+    const nextMarketplaces = payload.marketplaces ?? [];
+    memMarketplaces = nextMarketplaces;
+    saveStorageCache(SKILLS_MARKETPLACES_CACHE_KEY, nextMarketplaces);
+    setMarketplaces(nextMarketplaces);
   }, []);
 
   const refresh = React.useCallback(async () => {
@@ -827,41 +895,42 @@ function SkillDetailPage({
                   </div>
                   <div className="grid gap-2">
                     {examplePrompts.map((prompt) => (
-                      <div
-                        className="flex min-w-0 items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-sm transition-colors hover:border-foreground/30 hover:bg-accent focus-within:ring-2 focus-within:ring-ring/50"
+                      <button
+                        type="button"
+                        onClick={() => onUsePrompt(prompt)}
+                        className="group flex w-full min-w-0 items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-left text-sm transition-all hover:border-foreground/30 hover:bg-accent hover:shadow-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
                         key={prompt}
                       >
-                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-base">
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-base transition-transform group-hover:scale-105">
                           {skillIcon(detail)}
                         </span>
-                        <span className="min-w-0 flex-1 break-words text-foreground">
+                        <span className="min-w-0 flex-1 break-words text-foreground font-normal">
                           {detail.name} {prompt}
                         </span>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                aria-label={`将示例填入新会话: ${prompt}`}
-                                className="shrink-0"
-                                onClick={() => onUsePrompt(prompt)}
-                                size="icon-sm"
-                                variant="ghost"
-                              />
-                            }
-                          >
-                            <ArrowUpRightIcon />
-                          </TooltipTrigger>
-                          <TooltipContent>填入新会话</TooltipContent>
-                        </Tooltip>
-                      </div>
+                        <span className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors group-hover:bg-muted group-hover:text-foreground">
+                          <ArrowUpRightIcon className="size-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                        </span>
+                      </button>
                     ))}
                   </div>
                 </div>
               </section>
+              <section className="mt-10 w-full min-w-0">
+                <h2 className="text-xl font-semibold">技能说明</h2>
+                <div className="mt-4 min-w-0 rounded-xl border bg-muted/30 p-4">
+                  <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
+                    {detail.instructions}
+                  </MessageResponse>
+                </div>
+              </section>
               <section className="mt-10">
                 <h2 className="text-xl font-semibold">
-                  技能{" "}
-                  {detail.references.length + detail.scripts.length + detail.assets.length || ""}
+                  技能关联文件{" "}
+                  {detail.references.length + detail.scripts.length + detail.assets.length > 0 ? (
+                    <span className="text-sm font-normal text-muted-foreground">
+                      ({detail.references.length + detail.scripts.length + detail.assets.length})
+                    </span>
+                  ) : null}
                 </h2>
                 <Separator className="mt-4" />
                 <div className="divide-y">
@@ -882,14 +951,6 @@ function SkillDetailPage({
                     0 && (
                     <p className="py-5 text-sm text-muted-foreground">此技能没有额外资源文件。</p>
                   )}
-                </div>
-              </section>
-              <section className="mt-10 w-full min-w-0">
-                <h2 className="text-xl font-semibold">技能说明</h2>
-                <div className="mt-4 min-w-0 rounded-xl border bg-muted/30 p-4">
-                  <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
-                    {detail.instructions}
-                  </MessageResponse>
                 </div>
               </section>
             </>

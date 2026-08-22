@@ -45,6 +45,11 @@ interface WorkDisplayState {
 type AgentStreamChunk = {
   type?: string;
   runId?: string;
+  finishReason?: string;
+  payload?: {
+    finishReason?: string;
+    stepResult?: { reason?: string };
+  };
 };
 
 /** 默认 Agent 由 agents/index.ts 在模块加载时注册; 会话实例化总在启动之后 */
@@ -60,9 +65,19 @@ function resolveDefaultAgent(): Agent {
 
 export function isTerminalAgentChunk(chunk: unknown): boolean {
   if (typeof chunk !== "object" || chunk === null) return false;
-  const chunkType = (chunk as AgentStreamChunk).type;
+  const typedChunk = chunk as AgentStreamChunk;
+  const chunkType = typedChunk.type;
+  if (chunkType === "finish") {
+    // A tool-calls finish closes one model step, not the agent run. Mastra's
+    // thread subscription keeps reading so the tool result and next step can
+    // arrive on the same stream.
+    const finishReason =
+      typedChunk.finishReason ??
+      typedChunk.payload?.finishReason ??
+      typedChunk.payload?.stepResult?.reason;
+    return finishReason !== "tool-calls";
+  }
   return (
-    chunkType === "finish" ||
     chunkType === "suspended" ||
     chunkType === "agent-step-suspended" ||
     chunkType === "error" ||

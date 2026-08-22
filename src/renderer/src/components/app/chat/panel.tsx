@@ -827,7 +827,7 @@ export function ChatPanel() {
   ) => {
     const text = message.text.trim();
     const files = message.files ?? [];
-    if (!(text || files.length > 0)) return;
+    if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
 
     if (isBusy) {
       const threadId = activeThreadIdRef.current;
