@@ -98,7 +98,7 @@ export function SettingsDialog() {
             </SidebarContent>
           </Sidebar>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="flex h-16 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+            <header className="flex h-10 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
               <div className="flex items-center gap-2 px-4">
                 <Breadcrumb>
                   <BreadcrumbList>
@@ -117,7 +117,7 @@ export function SettingsDialog() {
               <div className="flex min-w-0 flex-col">
                 {section === "providers" ? <ProvidersSection /> : null}
                 {section !== "providers" ? (
-                  <div className="flex min-w-0 flex-col gap-2 p-4 pt-0">
+                  <div className="flex min-w-0 flex-col gap-2 p-2 pt-1">
                     {section === "memory" ? <MemorySection /> : null}
                     {section === "tools" ? <ToolsSection /> : null}
                     {section === "guardrails" ? <GuardrailsSection /> : null}

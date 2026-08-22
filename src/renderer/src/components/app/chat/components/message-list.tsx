@@ -43,16 +43,11 @@ import {
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
-import { AgentInteractionHistory } from "./agent-panels";
-import { AssistantAvatar, UserAvatar } from "./avatars";
-import { AssistantTrace } from "./assistant-trace";
 import {
   buildCitationEntries,
   createCitationRehypePlugins,
   withResolvedFootnotes,
 } from "../lib/citation-utils";
-import { CitationProvider, FootnoteCitation, MarkdownSection } from "./citations";
-import { CompactedMessageCard } from "./compacted-messages";
 import {
   asString,
   getAssistantSegments,
@@ -60,6 +55,11 @@ import {
   type MessageBranchRecord,
   type MessageFileReference,
 } from "../types";
+import { AgentInteractionHistory } from "./agent-panels";
+import { AssistantTrace } from "./assistant-trace";
+import { AssistantAvatar, UserAvatar } from "./avatars";
+import { CitationProvider, FootnoteCitation, MarkdownSection } from "./citations";
+import { CompactedMessageCard } from "./compacted-messages";
 
 // ---------------------------------------------------------------------------
 // 消息渲染:文本、推理与工具均按 UIMessage.parts 的原始顺序展示。
@@ -174,8 +174,8 @@ export const MessageItem = React.memo(function MessageItem({
    * 内联函数会让每个流式 delta 都把整条消息列表重渲染一遍。
    */
   onRetry: (messageId: string) => void;
-  onClone: (messageLimit: number) => void;
-  onCloneMessage: (messageId: string) => void;
+  onClone: (messageIndex: number) => void;
+  onCloneMessage: (messageId: string, messageIndex: number) => void;
   onEdit: (messageId: string, text: string) => void;
   onEditCompacted: (messageId: string, text: string) => void;
   userId: string;
@@ -282,9 +282,9 @@ export const MessageItem = React.memo(function MessageItem({
       <Button
         variant="ghost"
         size="icon-xs"
-        aria-label="仅克隆此消息"
-        title="仅克隆此消息"
-        onClick={() => onCloneMessage(message.id)}
+        aria-label={isUser ? "克隆此消息" : "克隆此轮对话"}
+        title={isUser ? "克隆此消息" : "克隆此轮对话(包含对应请求)"}
+        onClick={() => onCloneMessage(message.id, messageIndex)}
       >
         <MessageSquarePlusIcon />
       </Button>
@@ -293,7 +293,7 @@ export const MessageItem = React.memo(function MessageItem({
         size="icon-xs"
         aria-label="从这里克隆线程"
         title="从这里克隆线程"
-        onClick={() => onClone(messageIndex + 1)}
+        onClick={() => onClone(messageIndex)}
       >
         <GitForkIcon />
       </Button>

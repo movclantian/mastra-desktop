@@ -51,7 +51,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useWorkbench, type WorkThread } from "@/lib/workbench";
@@ -60,8 +59,8 @@ import {
   sortThreads,
   ThreadFolder,
   ThreadListSkeleton,
-  WorkspaceGroup,
   ThreadSearchDialog,
+  WorkspaceGroup,
 } from "./components";
 
 // 结构参考:
@@ -70,20 +69,21 @@ import {
 //   可折叠文件夹 + 工作区文件树懒加载)
 
 function SidebarHeaderBrand() {
+  const { toggleSidebar } = useSidebar();
+
   return (
     <SidebarMenu>
-      <SidebarMenuItem className="flex items-center gap-1">
+      <SidebarMenuItem>
         <SidebarMenuButton
-          className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden"
-          tooltip="MastraWork"
+          className="data-[slot=sidebar-menu-button]:p-1.5!"
+          tooltip="收起侧边栏"
+          onClick={toggleSidebar}
         >
           <div className="flex aspect-square size-6 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
             <WaypointsIcon className="size-3.5" />
           </div>
-          <span className="truncate font-medium">MastraWork</span>
+          <span className="truncate font-semibold">MastraWork</span>
         </SidebarMenuButton>
-        {/* 展开/收起按钮融合进头部:收起时 brand 隐藏,按钮居中占据整行 */}
-        <SidebarTrigger className="group-data-[collapsible=icon]:mx-auto" />
       </SidebarMenuItem>
     </SidebarMenu>
   );
@@ -238,9 +238,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   };
 
   return (
-    <Sidebar collapsible="icon" side="left" variant="sidebar" {...props}>
-      {/* 头部使用轻微底色层级,与主内容顶栏保持同一高度。 */}
-      <SidebarHeader className="bg-sidebar-accent/30">
+    <Sidebar collapsible="offcanvas" side="left" variant="inset" {...props}>
+      <SidebarHeader>
         <SidebarHeaderBrand />
       </SidebarHeader>
       <SidebarContent>

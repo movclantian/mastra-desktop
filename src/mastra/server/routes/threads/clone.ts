@@ -7,8 +7,7 @@ import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../../../errors";
 import { getOwnedThread, getWorkMemory } from "./shared";
 
-// POST /work/threads/:threadId/clone — 克隆线程(全量或最近 N 条)
-// body.messageLimit:仅克隆最近 N 条消息(options.messageLimit),用于「从此消息克隆」。
+// POST /work/threads/:threadId/clone — 克隆线程(全量或精确消息集合)
 export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone", {
   method: "POST",
   handler: async (c) => {
@@ -16,7 +15,6 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
     const body = (await c.req.json().catch(() => ({}))) as {
       resourceId?: string;
       title?: string;
-      messageLimit?: number;
       messageIds?: string[];
     };
     if (!body.resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
@@ -26,11 +24,6 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
     }
     if (body.messageIds && (!Array.isArray(body.messageIds) || body.messageIds.length === 0)) {
       throw workError("VALIDATION_FAILED", { text: "messageIds must be a non-empty array" });
-    }
-    if (body.messageIds && typeof body.messageLimit === "number") {
-      throw workError("VALIDATION_FAILED", {
-        text: "messageIds and messageLimit are mutually exclusive",
-      });
     }
     if (body.messageIds) {
       const { messages } = await memory.recall({
@@ -47,11 +40,7 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
       sourceThreadId: threadId,
       resourceId: body.resourceId,
       ...(body.title ? { title: body.title } : {}),
-      ...(body.messageIds
-        ? { options: { messageFilter: { messageIds: body.messageIds } } }
-        : typeof body.messageLimit === "number"
-          ? { options: { messageLimit: body.messageLimit } }
-          : {}),
+      ...(body.messageIds ? { options: { messageFilter: { messageIds: body.messageIds } } } : {}),
     });
     return c.json({ thread }, 201);
   },

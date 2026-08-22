@@ -166,8 +166,15 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
         )
       ).flat();
       const skills = [
-        ...builtinSkills.filter((skill): skill is NonNullable<typeof skill> => Boolean(skill)),
-        ...externalSkills,
+        ...builtinSkills
+          .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill))
+          .map((skill) => ({
+            ...skill,
+            origin: "builtin" as const,
+            marketplaceName: "Mastra 内置",
+            sourcePath: basename(skill.path),
+          })),
+        ...externalSkills.map((skill) => ({ ...skill, origin: "marketplace" as const })),
       ];
       return c.json({
         skills: skills.filter(
@@ -198,7 +205,14 @@ export const builtinSkillRoute = registerApiRoute("/work/skills/registry/:name",
       }
       const skill = await readLocalSkill(source).catch(() => null);
       if (!skill) throw workError("SKILL_NOT_FOUND");
-      return c.json({ skill });
+      return c.json({
+        skill: {
+          ...skill,
+          origin: "builtin",
+          marketplaceName: "Mastra 内置",
+          sourcePath: name,
+        },
+      });
     } catch (error) {
       return c.json(
         { error: error instanceof Error ? error.message : "读取内置技能详情失败" },
@@ -311,7 +325,7 @@ export const installBuiltinSkillRoute = registerApiRoute("/work/skills/registry/
       return c.json({ skill }, 201);
     } catch (error) {
       await rm(targetRoot, { recursive: true, force: true }).catch(() => undefined);
-      throw workError("SKILL_ALREADY_INSTALLED", {
+      throw workError("SKILL_INSTALL_FAILED", {
         text: error instanceof Error ? error.message : "安装技能失败",
         cause: error,
       });

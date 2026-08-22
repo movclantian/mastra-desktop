@@ -33,15 +33,15 @@ export const PROJECT_ROOT = findProjectRoot();
 /**
  * 存储位置配置:
  * `MASTRA_STORAGE_URL` 环境变量优先,其次读取 storage-location.json,
- * 默认落到 <项目根>/src/mastra/public/mastra.db(与 Studio 共享同一份数据)。
+ * 默认落到 <项目根>/data/mastra.db(置于 .mastra 构建目录与 public 外部,避免构建器复制与清理锁定)。
  *
  * 注意:libsql 本地文件在 Windows 下必须使用绝对路径 + 正斜杠的 `file:` URL,
  * 相对路径会抛 SQLITE_CANTOPEN(错误码 14)。
  */
 const STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
-// DuckDB 运行期间持有写前日志(WAL);放在 src/mastra/public 之外,
-// 避免 Mastra 打包器把活跃数据库当静态资产、在构建时复制被锁的 WAL 文件。
-const OBSERVABILITY_STORAGE_DIRECTORY = join(PROJECT_ROOT, ".mastra", "observability");
+// DuckDB 运行期间持有写前日志(WAL);放在 data/ 目录下,
+// 避免 Mastra 打包器把活跃数据库当静态资产或构建缓存清空。
+const OBSERVABILITY_STORAGE_DIRECTORY = join(PROJECT_ROOT, "data", "observability");
 
 /** 规整为 libsql 可用的绝对 file: URL(正斜杠) */
 function toFileUrl(filePath: string): string {
@@ -62,7 +62,7 @@ export function getStorageUrl(): string {
     }
   }
   if (!url) {
-    url = "file:./src/mastra/public/mastra.db";
+    url = "file:./data/mastra.db";
   }
   if (url.startsWith("file:")) {
     return toFileUrl(url.slice("file:".length));

@@ -2,7 +2,6 @@ import {
   ArrowLeftIcon,
   CheckIcon,
   ChevronRightIcon,
-  EllipsisIcon,
   FolderOpenIcon,
   LoaderCircleIcon,
   PencilIcon,
@@ -41,13 +40,13 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
-import { cn } from "@/lib/utils";
 
 interface SkillMetadata {
   name: string;
   path: string;
   description: string;
   metadata?: Record<string, unknown>;
+  origin?: "builtin" | "marketplace" | "installed";
   marketplaceId?: string;
   marketplaceName?: string;
   sourcePath?: string;
@@ -89,6 +88,11 @@ function skillCategory(skill: SkillMetadata) {
   return typeof category === "string" && category.trim() ? category : "开发者工具";
 }
 
+function skillSourceLabel(skill?: SkillMetadata) {
+  if (skill?.origin === "builtin") return "Mastra 内置";
+  return skill?.marketplaceName || "个人技能";
+}
+
 export function SkillHub() {
   const [section, setSection] = React.useState<Section>("public");
   const [query, setQuery] = React.useState("");
@@ -98,8 +102,9 @@ export function SkillHub() {
   const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>([]);
   const [selectedSkill, setSelectedSkill] = React.useState<SkillMetadata | null>(null);
   const [detail, setDetail] = React.useState<SkillDetail | null>(null);
-  const [selectedMcp, setSelectedMcp] = React.useState<McpSummary | null>(null);
-  const [, setLoading] = React.useState(true);
+  const [detailLoading, setDetailLoading] = React.useState(false);
+  const [detailError, setDetailError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
   const [registryLoading, setRegistryLoading] = React.useState(false);
   const [installing, setInstalling] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -160,6 +165,10 @@ export function SkillHub() {
     }
   }, [loadInstalled, loadMarketplaces, loadMcp]);
 
+  const refreshAll = React.useCallback(async () => {
+    await Promise.all([refresh(), loadRegistry(query)]);
+  }, [loadRegistry, query, refresh]);
+
   React.useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -173,25 +182,44 @@ export function SkillHub() {
   React.useEffect(() => {
     if (!selectedSkill) {
       setDetail(null);
+      setDetailLoading(false);
+      setDetailError(null);
       return;
     }
+    let cancelled = false;
+    setDetail(null);
+    setDetailError(null);
+    setDetailLoading(true);
     const detailRequest =
-      selectedSkill.marketplaceId && selectedSkill.sourcePath
+      selectedSkill.origin === "marketplace" &&
+      selectedSkill.marketplaceId &&
+      selectedSkill.sourcePath
         ? fetch(
             `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(selectedSkill.marketplaceId)}/skill?path=${encodeURIComponent(selectedSkill.sourcePath)}`,
           )
-        : fetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(selectedSkill.name)}`).then(
-            async (response) => {
-              if (response.ok) return response;
-              return fetch(
-                `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(selectedSkill.path.split(/[\\/]/).at(-1) || selectedSkill.name)}`,
-              );
-            },
-          );
+        : selectedSkill.origin === "builtin"
+          ? fetch(
+              `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(selectedSkill.sourcePath || selectedSkill.name)}`,
+            )
+          : fetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(selectedSkill.name)}`);
     void detailRequest
-      .then((response) => response.json() as Promise<{ skill?: SkillDetail }>)
-      .then((payload) => setDetail(payload.skill ?? null))
-      .catch(() => setDetail(null));
+      .then(async (response) => {
+        const payload = (await response.json()) as { skill?: SkillDetail; error?: string };
+        if (!response.ok || !payload.skill) {
+          throw new Error(payload.error || "读取技能详情失败");
+        }
+        if (!cancelled) setDetail(payload.skill);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setDetailError(error instanceof Error ? error.message : "读取技能详情失败");
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [selectedSkill]);
 
   const visibleRegistry = React.useMemo(() => {
@@ -209,12 +237,14 @@ export function SkillHub() {
     );
   }, [query, skills]);
   const groupedRegistry = React.useMemo(() => {
-    const groups = new Map<string, SkillMetadata[]>();
+    const groups = new Map<string, { category: string; skills: SkillMetadata[] }>();
     for (const skill of visibleRegistry) {
       const category = skillCategory(skill);
-      groups.set(category, [...(groups.get(category) ?? []), skill]);
+      const key = `${skillSourceLabel(skill)}:${category}`;
+      const current = groups.get(key);
+      groups.set(key, { category, skills: [...(current?.skills ?? []), skill] });
     }
-    return [...groups.entries()];
+    return [...groups.values()];
   }, [visibleRegistry]);
 
   const uploadSkill = async (file: File | undefined) => {
@@ -271,8 +301,8 @@ export function SkillHub() {
   const installBuiltin = async (skill: SkillMetadata) => {
     setInstalling(skill.name);
     try {
-      const sourceName = skill.path.split(/[\\/]/).at(-1) || skill.name;
-      const response = skill.marketplaceId
+      const sourceName = skill.sourcePath || skill.path.split(/[\\/]/).at(-1) || skill.name;
+      const response = skill.origin === "marketplace" && skill.marketplaceId
         ? await fetch(
             `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
             {
@@ -314,8 +344,8 @@ export function SkillHub() {
     toast.success("技能已删除");
   };
 
-  const removeMcp = async (server = selectedMcp) => {
-    if (!server || !window.confirm(`确定移除 MCP「${server.name}」吗？`)) return;
+  const removeMcp = async (server: McpSummary) => {
+    if (!window.confirm(`确定移除 MCP「${server.name}」吗？`)) return;
     const response = await fetch(`${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(server.id)}`, {
       method: "DELETE",
     });
@@ -323,7 +353,6 @@ export function SkillHub() {
       toast.error("移除 MCP 失败");
       return;
     }
-    setSelectedMcp(null);
     await loadMcp();
     toast.success("MCP 已移除");
   };
@@ -332,6 +361,8 @@ export function SkillHub() {
     return (
       <SkillDetailPage
         detail={detail}
+        detailError={detailError}
+        detailLoading={detailLoading}
         installed={skills.some((skill) => skill.name === selectedSkill.name)}
         onBack={() => {
           setSelectedSkill(null);
@@ -347,7 +378,7 @@ export function SkillHub() {
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
       <ScrollArea className="min-h-0 flex-1">
-        <main className="mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12">
+        <main className="mx-auto w-full max-w-6xl px-5 py-8">
           <header className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-3xl font-semibold tracking-tight">插件市场</h1>
@@ -358,7 +389,7 @@ export function SkillHub() {
             <div className="flex shrink-0 items-center gap-2">
               <Button
                 aria-label="刷新"
-                onClick={() => void refresh()}
+                onClick={() => void refreshAll()}
                 size="icon"
                 variant="outline"
               >
@@ -394,7 +425,7 @@ export function SkillHub() {
               </DropdownMenu>
             </div>
           </header>
-          <div className="relative mt-8">
+          <div className="relative mt-4">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="h-12 rounded-xl pl-12 text-base"
@@ -403,12 +434,10 @@ export function SkillHub() {
               value={query}
             />
           </div>
-          <section className="mt-5">
+          <section className="mt-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-semibold">已安装</h2>
-              <Button aria-label="筛选已安装" size="icon" variant="outline">
-                <Settings2Icon />
-              </Button>
+              {skills.length > 0 ? <Badge variant="secondary">{skills.length} 个</Badge> : null}
             </div>
             <Separator className="mt-4" />
             <ScrollArea className="mt-4 w-full whitespace-nowrap">
@@ -442,7 +471,7 @@ export function SkillHub() {
               value={section === "mcp" ? "public" : section}
             >
               <TabsList variant="line">
-                <TabsTrigger value="public">公开</TabsTrigger>
+                <TabsTrigger value="public">市场</TabsTrigger>
                 <TabsTrigger value="personal">个人</TabsTrigger>
               </TabsList>
             </Tabs>
@@ -459,24 +488,28 @@ export function SkillHub() {
             <McpSection
               mcpServers={mcpServers}
               onDelete={(server) => void removeMcp(server)}
-              onSelect={setSelectedMcp}
-              selected={selectedMcp}
             />
           ) : section === "personal" ? (
             <InstalledSection skills={visibleInstalled} onSelect={setSelectedSkill} />
           ) : (
             <div className="mt-8">
-              {registryLoading && registrySkills.length === 0 ? (
+              <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <StoreIcon className="size-3.5" />
+                <span>技能来源</span>
+                <Badge variant="outline">Mastra 内置</Badge>
+                <span>来自 @mastra/editor 本地技能包；已添加的 GitHub 市场也会显示在这里。</span>
+              </div>
+              {loading || (registryLoading && registrySkills.length === 0) ? (
                 <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
                   <LoaderCircleIcon className="animate-spin" />
-                  正在读取技能市场…
+                  正在读取 Mastra 技能市场…
                 </div>
               ) : groupedRegistry.length === 0 ? (
                 <EmptyState label="技能市场暂时没有匹配结果" icon={<StoreIcon />} />
               ) : (
-                groupedRegistry.map(([category, categorySkills]) => (
+                groupedRegistry.map(({ category, skills: categorySkills }) => (
                   <SkillCategory
-                    key={category}
+                    key={`${skillSourceLabel(categorySkills[0])}:${category}`}
                     category={category}
                     installing={installing}
                     installed={skills}
@@ -525,21 +558,26 @@ function SkillCategory({
   onSelect: (skill: SkillMetadata) => void;
 }) {
   return (
-    <section className="mt-5">
+    <section className="mt-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">{category}</h2>
-        <Button aria-label={`更多 ${category}`} size="icon-sm" variant="ghost">
-          <EllipsisIcon />
-        </Button>
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="text-xl font-semibold">{category}</h2>
+          <Badge variant="outline">{skillSourceLabel(skills[0])}</Badge>
+        </div>
+        <span className="text-xs text-muted-foreground">{skills.length} 个技能</span>
       </div>
       <Separator className="mt-4" />
       <div className="mt-2 grid gap-x-12 md:grid-cols-2">
         {skills.map((skill, index) => {
           const isInstalled = installed.some((item) => item.name === skill.name);
           return (
-            <div className="flex min-w-0 items-center gap-3 rounded-lg py-3 transition-colors hover:bg-muted/40" key={skill.name}>
+            <div
+              className="flex min-w-0 items-center gap-3 rounded-lg py-3 transition-colors hover:bg-muted/40"
+              key={skill.name}
+            >
               <button
-                className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                aria-label={`查看技能 ${skill.name}`}
+                className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
                 onClick={() => onSelect(skill)}
                 type="button"
               >
@@ -561,7 +599,10 @@ function SkillCategory({
               ) : (
                 <Button
                   disabled={installing === skill.name}
-                  onClick={() => onInstall(skill)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onInstall(skill);
+                  }}
                   size="sm"
                   variant="outline"
                 >
@@ -573,9 +614,6 @@ function SkillCategory({
                   安装
                 </Button>
               )}
-              <Button aria-label="更多操作" size="icon-sm" variant="ghost">
-                <EllipsisIcon />
-              </Button>
             </div>
           );
         })}
@@ -626,13 +664,9 @@ function InstalledSection({
 
 function McpSection({
   mcpServers,
-  selected,
-  onSelect,
   onDelete,
 }: {
   mcpServers: McpSummary[];
-  selected: McpSummary | null;
-  onSelect: (server: McpSummary) => void;
   onDelete: (server: McpSummary) => void;
 }) {
   return (
@@ -648,17 +682,10 @@ function McpSection({
       <div className="grid gap-3 py-4 md:grid-cols-2">
         {mcpServers.map((server) => (
           <div
-            className={cn(
-              "flex items-center gap-3 rounded-xl border p-4",
-              selected?.id === server.id && "border-primary",
-            )}
+            className="flex items-center gap-3 rounded-xl border p-4"
             key={server.id}
           >
-            <button
-              className="flex min-w-0 flex-1 items-center gap-3 text-left"
-              onClick={() => onSelect(server)}
-              type="button"
-            >
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-primary">
                 <PlugZapIcon />
               </span>
@@ -670,7 +697,7 @@ function McpSection({
                     : `${server.command} ${server.args?.join(" ")}`}
                 </span>
               </span>
-            </button>
+            </div>
             <Badge variant={server.enabled ? "secondary" : "outline"}>
               {server.enabled ? "启用" : "停用"}
             </Badge>
@@ -694,6 +721,8 @@ function McpSection({
 
 function SkillDetailPage({
   detail,
+  detailError,
+  detailLoading,
   installed,
   installing,
   onBack,
@@ -701,6 +730,8 @@ function SkillDetailPage({
   onRemove,
 }: {
   detail: SkillDetail | null;
+  detailError: string | null;
+  detailLoading: boolean;
   installed: boolean;
   installing: boolean;
   onBack: () => void;
@@ -727,12 +758,12 @@ function SkillDetailPage({
                     <p className="mt-2 max-w-2xl text-base text-muted-foreground">
                       {detail.description || "未提供描述"}
                     </p>
+                    <Badge className="mt-3" variant="outline">
+                      {skillSourceLabel(detail)}
+                    </Badge>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button size="icon" variant="outline">
-                    <EllipsisIcon />
-                  </Button>
                   {installed ? (
                     <Button onClick={onRemove} variant="outline">
                       <Trash2Icon />
@@ -746,23 +777,23 @@ function SkillDetailPage({
                   )}
                 </div>
               </header>
-              <section className="mt-10 rounded-3xl bg-gradient-to-br from-sky-950 via-blue-900 to-indigo-950 p-5 sm:p-8">
-                <div className="mx-auto grid max-w-3xl gap-4">
+              <section className="mt-10 border-y bg-muted/20 py-5 sm:py-6">
+                <div className="mx-auto grid max-w-3xl gap-3 px-1">
+                  <p className="text-xs font-medium text-muted-foreground">使用示例</p>
                   {[
                     "把我的笔记整理成一份排版好的文档",
                     "把这份 PDF 里的表格提取成电子表格",
                     "用这份 CSV 做一份带图表的工作簿",
                   ].map((prompt) => (
                     <div
-                      className="flex items-center gap-3 rounded-full bg-background/90 px-4 py-3 text-sm text-foreground"
+                      className="flex min-w-0 items-center gap-3 border-b py-2.5 text-sm last:border-b-0"
                       key={prompt}
                     >
-                      <span>{skillIcon(detail)}</span>
-                      <span className="min-w-0 flex-1 truncate">
-                        {detail.name} {prompt}
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background text-base">
+                        {skillIcon(detail)}
                       </span>
-                      <span className="flex size-8 items-center justify-center rounded-full bg-muted">
-                        →
+                      <span className="min-w-0 flex-1 break-words text-foreground">
+                        {detail.name} {prompt}
                       </span>
                     </div>
                   ))}
@@ -801,10 +832,15 @@ function SkillDetailPage({
                 </pre>
               </section>
             </>
-          ) : (
+          ) : detailLoading ? (
             <div className="flex items-center gap-2 py-16 text-sm text-muted-foreground">
               <LoaderCircleIcon className="animate-spin" />
               正在读取技能详情…
+            </div>
+          ) : (
+            <div className="grid gap-3 py-16 text-sm">
+              <p className="text-destructive">{detailError || "读取技能详情失败"}</p>
+              <p className="text-muted-foreground">请返回市场后重试。</p>
             </div>
           )}
         </main>

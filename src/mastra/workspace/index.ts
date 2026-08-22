@@ -13,7 +13,8 @@
  * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
  */
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import {
   LocalFilesystem,
   LocalSandbox,
@@ -398,4 +399,42 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
   });
   workspaceCache.set(workspacePath, workspace);
   return workspace;
+}
+
+/**
+ * 线程删除时清理物理工作区与内存实例:
+ * - 隐式工作区(<threadsRoot>/<threadId>/):物理删除磁盘目录与文件
+ * - 显式绑定工作区:保护用户外部物理项目目录不被删除,仅释放并销毁内存中的 Workspace 实例与子进程
+ */
+export async function deleteThreadWorkspace(threadId: string, metadata?: unknown): Promise<void> {
+  const meta = metadata as { workspacePath?: string; workspaceExplicit?: boolean } | undefined;
+  const implicitPath = implicitThreadWorkspacePath(threadId);
+
+  // 1. 销毁并清除隐式工作区的 Workspace 实例及物理目录
+  const implicitCached = workspaceCache.get(implicitPath);
+  if (implicitCached) {
+    workspaceCache.delete(implicitPath);
+    await Promise.resolve()
+      .then(() => implicitCached.destroy())
+      .catch(() => undefined);
+  }
+  await rm(implicitPath, { recursive: true, force: true }).catch(() => undefined);
+
+  // 2. 若 metadata 指向了自定义路径:
+  if (meta?.workspacePath) {
+    const explicitCached = workspaceCache.get(meta.workspacePath);
+    if (explicitCached) {
+      workspaceCache.delete(meta.workspacePath);
+      await Promise.resolve()
+        .then(() => explicitCached.destroy())
+        .catch(() => undefined);
+    }
+    // 如果该路径非用户外部显式选中的项目(例如位于 threadsRoot 内部),亦物理清理
+    if (
+      !meta.workspaceExplicit &&
+      resolve(meta.workspacePath).startsWith(resolve(config.threadsRoot))
+    ) {
+      await rm(meta.workspacePath, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
 }

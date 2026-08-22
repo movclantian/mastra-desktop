@@ -1,7 +1,16 @@
-import { LoaderCircleIcon, PlugZapIcon, TestTube2Icon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  Globe2Icon,
+  LoaderCircleIcon,
+  PlugZapIcon,
+  SquareTerminalIcon,
+  TestTube2Icon,
+} from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -68,6 +77,26 @@ function parseKeyValue(value: string) {
   );
 }
 
+function generatedServerId(form: McpFormServer) {
+  const source =
+    form.name.trim() ||
+    (form.transport === "http" ? form.url?.trim() : form.command?.trim()) ||
+    "mcp";
+  const normalized = source
+    .toLocaleLowerCase()
+    .replace(/^[a-z]+:\/\//, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 56);
+  if (normalized) return normalized;
+  let hash = 2166136261;
+  for (const character of source) {
+    hash ^= character.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return `mcp-${(hash >>> 0).toString(36)}`;
+}
+
 export function McpDialog({ open, onOpenChange, onSaved }: Props) {
   const [form, setForm] = React.useState<McpFormServer>(initial);
   const [headersText, setHeadersText] = React.useState("");
@@ -88,10 +117,11 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
 
   const update = (patch: Partial<McpFormServer>) =>
     setForm((current) => ({ ...current, ...patch }));
+
   const payload = () => ({
     ...form,
-    id: form.id.trim(),
-    name: form.name.trim() || form.id.trim(),
+    id: form.id.trim() || generatedServerId(form),
+    name: form.name.trim() || generatedServerId(form),
     headers: parseKeyValue(headersText),
     env: parseKeyValue(envText),
     args: parseLines(argsText),
@@ -99,7 +129,24 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
       parseLines(allowedHostsText).length > 0 ? parseLines(allowedHostsText) : undefined,
   });
 
+  const validate = () => {
+    if (!form.name.trim()) {
+      toast.error("请输入连接名称");
+      return false;
+    }
+    if (form.transport === "http" && !form.url?.trim()) {
+      toast.error("请输入 MCP URL");
+      return false;
+    }
+    if (form.transport === "stdio" && !form.command?.trim()) {
+      toast.error("请输入启动命令");
+      return false;
+    }
+    return true;
+  };
+
   const test = async () => {
+    if (!validate()) return;
     setTesting(true);
     try {
       const response = await fetch(`${MASTRA_SERVER_URL}/work/mcp/test`, {
@@ -122,6 +169,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
   };
 
   const save = async () => {
+    if (!validate()) return;
     setSaving(true);
     try {
       const response = await fetch(`${MASTRA_SERVER_URL}/work/mcp`, {
@@ -143,173 +191,268 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(90vh,46rem)] max-w-2xl overflow-hidden p-0">
-        <DialogHeader className="bg-muted/40 px-5 py-4">
-          <DialogTitle className="flex items-center gap-2">
-            <PlugZapIcon className="size-4 text-primary" />
-            添加 MCP 外部能力
-          </DialogTitle>
-          <DialogDescription>
-            连接远程 MCP 服务或本地 stdio 服务。密钥只保存在本地服务端。
-          </DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="grid gap-4 px-5 py-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="grid gap-1.5 text-sm" htmlFor="mcp-name">
-                <span className="text-xs font-medium">显示名称</span>
-                <Input
-                  id="mcp-name"
-                  value={form.name}
-                  onChange={(event) => update({ name: event.target.value })}
-                  placeholder="例如 GitHub"
-                />
-              </label>
-              <label className="grid gap-1.5 text-sm" htmlFor="mcp-id">
-                <span className="text-xs font-medium">唯一 ID</span>
-                <Input
-                  id="mcp-id"
-                  value={form.id}
-                  onChange={(event) => update({ id: event.target.value })}
-                  placeholder="github"
-                />
-              </label>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Button
-                type="button"
-                variant={form.transport === "http" ? "default" : "outline"}
-                onClick={() => update({ transport: "http" })}
-              >
-                Streamable HTTP / SSE
-              </Button>
-              <Button
-                type="button"
-                variant={form.transport === "stdio" ? "default" : "outline"}
-                onClick={() => update({ transport: "stdio" })}
-              >
-                本地命令 / stdio
-              </Button>
-            </div>
-            {form.transport === "http" ? (
-              <>
-                <label className="grid gap-1.5 text-sm" htmlFor="mcp-url">
-                  <span className="text-xs font-medium">MCP URL</span>
-                  <Input
-                    id="mcp-url"
-                    value={form.url}
-                    onChange={(event) => update({ url: event.target.value })}
-                    placeholder="https://example.com/mcp"
-                  />
-                </label>
-                <Field
-                  label="请求 Headers（每行 KEY=VALUE）"
-                  value={headersText}
-                  onChange={setHeadersText}
-                  placeholder="Authorization=Bearer ..."
-                  secret
-                />
-                <Field
-                  label="允许访问的 Host（每行一个，可留空）"
-                  value={allowedHostsText}
-                  onChange={setAllowedHostsText}
-                  placeholder="api.example.com"
-                />
-              </>
-            ) : (
-              <>
-                <label className="grid gap-1.5 text-sm" htmlFor="mcp-command">
-                  <span className="text-xs font-medium">启动命令</span>
-                  <Input
-                    id="mcp-command"
-                    value={form.command}
-                    onChange={(event) => update({ command: event.target.value })}
-                    placeholder="npx"
-                  />
-                </label>
-                <Field
-                  label="命令参数（每行一个）"
-                  value={argsText}
-                  onChange={setArgsText}
-                  placeholder="-y\n@modelcontextprotocol/server-filesystem\nC:\\Projects"
-                />
-                <Field
-                  label="环境变量（每行 KEY=VALUE）"
-                  value={envText}
-                  onChange={setEnvText}
-                  placeholder="API_KEY=..."
-                  secret
-                />
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    checked={form.inheritDefaultEnv}
-                    onChange={(event) => update({ inheritDefaultEnv: event.target.checked })}
-                    type="checkbox"
-                  />
-                  继承 MCP SDK 默认环境变量
-                </label>
-              </>
-            )}
-            <div className="grid gap-2 rounded-lg border bg-muted/20 p-3 text-sm">
-              <label className="flex items-center gap-2">
-                <input
-                  checked={form.enabled}
-                  onChange={(event) => update({ enabled: event.target.checked })}
-                  type="checkbox"
-                />
-                保存后启用
-              </label>
-              <label className="flex items-center gap-2">
-                <input
-                  checked={form.requireToolApproval}
-                  onChange={(event) => update({ requireToolApproval: event.target.checked })}
-                  type="checkbox"
-                />
-                调用此 MCP 的工具前要求批准（推荐）
-              </label>
+      <DialogContent className="flex h-[min(46rem,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
+        <DialogHeader className="shrink-0 border-b bg-background px-6 py-5 pr-14">
+          <div className="flex items-start gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <PlugZapIcon className="size-4" />
+            </span>
+            <div className="min-w-0">
+              <DialogTitle className="text-lg">添加 MCP 外部能力</DialogTitle>
+              <DialogDescription className="mt-1 leading-5">
+                连接远程 MCP 服务或本地 stdio 服务。密钥只保存在本地服务端。
+              </DialogDescription>
             </div>
           </div>
+        </DialogHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="grid gap-6 px-6 py-6">
+            <section className="grid gap-4">
+              <div>
+                <h3 className="text-sm font-medium">基本信息</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  给这个连接一个容易识别的名称，唯一 ID 会自动生成。
+                </p>
+              </div>
+              <div className="grid gap-4">
+                <TextField
+                  id="mcp-name"
+                  label="连接名称"
+                  value={form.name}
+                  onChange={(value) => update({ name: value })}
+                  placeholder="例如 GitHub"
+                  required
+                />
+              </div>
+            </section>
+
+            <section className="grid gap-3">
+              <div>
+                <h3 className="text-sm font-medium">传输方式</h3>
+                <p className="mt-1 text-xs text-muted-foreground">选择服务的连接协议。</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="传输方式">
+                <Button
+                  aria-pressed={form.transport === "http"}
+                  className="h-10 justify-start"
+                  type="button"
+                  variant={form.transport === "http" ? "default" : "outline"}
+                  onClick={() => update({ transport: "http" })}
+                >
+                  <Globe2Icon className="size-4" />
+                  Streamable HTTP / SSE
+                </Button>
+                <Button
+                  aria-pressed={form.transport === "stdio"}
+                  className="h-10 justify-start"
+                  type="button"
+                  variant={form.transport === "stdio" ? "default" : "outline"}
+                  onClick={() => update({ transport: "stdio" })}
+                >
+                  <SquareTerminalIcon className="size-4" />
+                  本地命令 / stdio
+                </Button>
+              </div>
+            </section>
+
+            {form.transport === "http" ? (
+              <section className="grid gap-4">
+                <TextField
+                  id="mcp-url"
+                  label="MCP URL"
+                  value={form.url ?? ""}
+                  onChange={(value) => update({ url: value })}
+                  placeholder="https://example.com/mcp"
+                  required
+                />
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20 px-4">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between py-3 text-left text-sm font-medium">
+                    高级连接选项
+                    <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="grid gap-4 pb-4">
+                    <TextAreaField
+                      label="请求 Headers"
+                      value={headersText}
+                      onChange={setHeadersText}
+                      placeholder="Authorization=Bearer …"
+                      hint="每行一个 KEY=VALUE，可留空。"
+                    />
+                    <TextAreaField
+                      label="允许访问的 Host"
+                      value={allowedHostsText}
+                      onChange={setAllowedHostsText}
+                      placeholder="api.example.com"
+                      hint="每行一个 Host，可留空。"
+                    />
+                  </CollapsibleContent>
+                </Collapsible>
+              </section>
+            ) : (
+              <section className="grid gap-4">
+                <TextField
+                  id="mcp-command"
+                  label="启动命令"
+                  value={form.command ?? ""}
+                  onChange={(value) => update({ command: value })}
+                  placeholder="npx"
+                  required
+                />
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20 px-4">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between py-3 text-left text-sm font-medium">
+                    高级命令选项
+                    <ChevronDownIcon className="size-4 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="grid gap-4 pb-4">
+                    <TextAreaField
+                      label="命令参数"
+                      value={argsText}
+                      onChange={setArgsText}
+                      placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\Projects"}
+                      hint="每行一个参数，可留空。"
+                    />
+                    <TextAreaField
+                      label="环境变量"
+                      value={envText}
+                      onChange={setEnvText}
+                      placeholder="API_KEY=…"
+                      hint="每行一个 KEY=VALUE，可留空。"
+                    />
+                    <CheckField
+                      id="mcp-inherit-env"
+                      checked={form.inheritDefaultEnv ?? true}
+                      onCheckedChange={(checked) => update({ inheritDefaultEnv: checked })}
+                    >
+                      继承 MCP SDK 默认环境变量
+                    </CheckField>
+                  </CollapsibleContent>
+                </Collapsible>
+              </section>
+            )}
+
+            <section className="grid gap-3 rounded-lg border bg-muted/20 p-4">
+              <CheckField
+                id="mcp-enabled"
+                checked={form.enabled}
+                onCheckedChange={(checked) => update({ enabled: checked })}
+              >
+                <span className="font-medium">保存后启用</span>
+              </CheckField>
+              <CheckField
+                id="mcp-approval"
+                checked={form.requireToolApproval ?? true}
+                onCheckedChange={(checked) => update({ requireToolApproval: checked })}
+              >
+                <span className="font-medium">调用工具前要求批准</span>
+                <span className="text-xs text-muted-foreground">推荐开启，避免工具被意外调用。</span>
+              </CheckField>
+            </section>
+          </div>
         </ScrollArea>
-        <DialogFooter className="flex-row justify-end">
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none border-0 border-t bg-background px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <Button disabled={testing || saving} onClick={() => void test()} variant="outline">
             <TestTube2Icon />
             {testing ? "测试中…" : "测试连接"}
           </Button>
-          <Button disabled={saving || testing} onClick={() => void save()}>
-            {saving ? <LoaderCircleIcon className="animate-spin" /> : null}
-            {saving ? "保存中…" : "保存 MCP"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button disabled={testing || saving} onClick={() => onOpenChange(false)} variant="ghost">
+              取消
+            </Button>
+            <Button disabled={saving || testing || !form.name.trim()} onClick={() => void save()}>
+              {saving ? <LoaderCircleIcon className="animate-spin" /> : null}
+              {saving ? "保存中…" : "保存 MCP"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function Field({
+function TextField({
+  id,
   label,
   value,
   onChange,
   placeholder,
-  secret = false,
+  required = false,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <label className="grid gap-1.5 text-sm" htmlFor={id}>
+      <span className="font-medium">
+        {label}
+        {required ? <span className="ml-1 text-destructive">*</span> : null}
+      </span>
+      <Input
+        id={id}
+        autoComplete="off"
+        required={required}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+      />
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  secret?: boolean;
+  hint?: string;
 }) {
   const fieldId = React.useId();
   return (
     <label className="grid gap-1.5 text-sm" htmlFor={fieldId}>
-      <span className="text-xs font-medium">{label}</span>
+      <span className="font-medium">{label}</span>
       <Textarea
         id={fieldId}
-        className="min-h-20 font-mono text-xs"
+        className="min-h-20 resize-y font-mono text-xs"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         value={value}
-        {...(secret ? { spellCheck: false } : {})}
+        spellCheck={false}
       />
+      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
     </label>
+  );
+}
+
+function CheckField({
+  id,
+  checked,
+  onCheckedChange,
+  children,
+}: {
+  id: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(value === true)}
+      />
+      <label className="grid cursor-pointer gap-0.5 text-sm leading-5" htmlFor={id}>
+        {children}
+      </label>
+    </div>
   );
 }

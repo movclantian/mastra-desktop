@@ -7,11 +7,12 @@ import { SettingsDialog } from "@/components/app/settings";
 import { AppSidebar } from "@/components/app/sidebar";
 import { SkillHub } from "@/components/app/skills";
 import { Button } from "@/components/ui/button";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { useWorkbench, WorkbenchProvider } from "@/lib/workbench";
 
 const WorkspacePanel = React.lazy(() => import("@/components/app/workbench/workspace-panel"));
@@ -54,10 +55,68 @@ function AppShell() {
     openBrowserUrl,
   } = useWorkbench();
   const [librarySettingsOpen, setLibrarySettingsOpen] = React.useState(false);
+  const [workspaceWidth, setWorkspaceWidth] = React.useState(560);
+  const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
+  const [terminalHeight, setTerminalHeight] = React.useState(280);
+  const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
+
   React.useEffect(() => {
     if (!libraryOpen) setLibrarySettingsOpen(false);
   }, [libraryOpen]);
+
   const activeThread = threads.find((t) => t.id === activeThreadId);
+
+  // 工作区水平拖拽拉伸
+  const handleWorkspaceResizeStart = React.useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      setIsDraggingWorkspace(true);
+      const startX = event.clientX;
+      const startWidth = workspaceWidth;
+
+      const onPointerMove = (e: PointerEvent) => {
+        const deltaX = startX - e.clientX;
+        const newWidth = Math.max(340, Math.min(window.innerWidth * 0.7, startWidth + deltaX));
+        setWorkspaceWidth(newWidth);
+      };
+
+      const onPointerUp = () => {
+        setIsDraggingWorkspace(false);
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+    },
+    [workspaceWidth],
+  );
+
+  // 终端垂直拖拽拉伸
+  const handleTerminalResizeStart = React.useCallback(
+    (event: React.PointerEvent) => {
+      event.preventDefault();
+      setIsDraggingTerminal(true);
+      const startY = event.clientY;
+      const startHeight = terminalHeight;
+
+      const onPointerMove = (e: PointerEvent) => {
+        const deltaY = startY - e.clientY;
+        const newHeight = Math.max(140, Math.min(window.innerHeight * 0.6, startHeight + deltaY));
+        setTerminalHeight(newHeight);
+      };
+
+      const onPointerUp = () => {
+        setIsDraggingTerminal(false);
+        window.removeEventListener("pointermove", onPointerMove);
+        window.removeEventListener("pointerup", onPointerUp);
+      };
+
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+    },
+    [terminalHeight],
+  );
 
   React.useEffect(() => {
     const routeClick = (event: MouseEvent) => {
@@ -85,6 +144,7 @@ function AppShell() {
       document.removeEventListener("auxclick", routeAuxClick, true);
     };
   }, [openBrowserUrl]);
+
   // 顶栏标题按页面切换;新建会话只属于会话页,资料库设置固定在资料库页右上角
   const title = skillOpen
     ? "技能套件"
@@ -92,18 +152,19 @@ function AppShell() {
       ? "资料库"
       : (activeThread?.title ?? "MastraWork");
 
+  const showWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen;
+
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
-      <ResizablePanelGroup className="h-svh min-h-0 min-w-0 flex-1" orientation="horizontal">
-        {/* h-svh:主内容和右侧工作区都锁定整窗高度；header 只属于聊天 surface。 */}
-        <ResizablePanel
-          defaultSize={workspacePanelOpen && !skillOpen && !libraryOpen ? "58%" : "100%"}
-          minSize="34%"
-        >
-          <SidebarInset className="h-svh overflow-hidden rounded-none shadow-none">
-            <PanelHeader className="relative z-10 h-12 px-4">
-              <div className="min-w-0 flex-1">
+      <SidebarInset className="overflow-hidden border shadow-sm">
+        <div className="flex size-full min-h-0 min-w-0 overflow-hidden bg-background">
+          {/* 左侧主体(聊天 / 技能 / 资料库 / 终端) */}
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <PanelHeader className="relative z-10 h-12 shrink-0 px-4">
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <SidebarTrigger className="-ml-1" />
+                <Separator orientation="vertical" className="mx-1 h-4" />
                 <p className="truncate text-sm font-medium">{title}</p>
               </div>
               {!skillOpen && !libraryOpen ? (
@@ -153,7 +214,8 @@ function AppShell() {
                 </Button>
               ) : null}
             </PanelHeader>
-            <main className="relative z-0 min-h-0 flex-1">
+
+            <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
               {skillOpen ? (
                 <SkillHub />
               ) : libraryOpen ? (
@@ -164,36 +226,84 @@ function AppShell() {
                   />
                 </React.Suspense>
               ) : (
-                <ResizablePanelGroup orientation="vertical">
-                  <ResizablePanel defaultSize={terminalPanelOpen ? "72%" : "100%"} minSize="35%">
+                <div className="flex size-full min-h-0 flex-col overflow-hidden">
+                  <div className="min-h-0 flex-1 overflow-hidden">
                     <ChatPanel />
-                  </ResizablePanel>
-                  {terminalPanelOpen ? (
-                    <>
-                      <ResizableHandle />
-                      <ResizablePanel defaultSize="28%" minSize="18%" maxSize="65%">
-                        <React.Suspense fallback={<PanelFallback />}>
-                          <TerminalPanel />
-                        </React.Suspense>
-                      </ResizablePanel>
-                    </>
-                  ) : null}
-                </ResizablePanelGroup>
+                  </div>
+
+                  {/* 底部终端抽屉:平滑滑入/滑出与可拉伸高度 */}
+                  <aside
+                    style={{
+                      height: terminalPanelOpen ? `${terminalHeight}px` : 0,
+                    }}
+                    className={cn(
+                      "relative flex w-full min-w-0 flex-col border-t bg-background overflow-hidden shrink-0",
+                      !isDraggingTerminal && "transition-[height,opacity] duration-200 ease-linear",
+                      terminalPanelOpen
+                        ? "opacity-100"
+                        : "border-t-0 opacity-0 pointer-events-none",
+                    )}
+                  >
+                    {terminalPanelOpen ? (
+                      <div
+                        onPointerDown={handleTerminalResizeStart}
+                        className="group/resizer absolute -top-1.5 inset-x-0 z-30 h-3 cursor-row-resize select-none"
+                      >
+                        <div className="my-auto h-px w-full bg-border group-hover/resizer:h-0.5 group-hover/resizer:bg-primary transition-colors" />
+                      </div>
+                    ) : null}
+                    <div
+                      style={{ height: `${terminalHeight}px` }}
+                      className={cn(
+                        "flex w-full min-h-0 shrink-0 flex-col",
+                        !isDraggingTerminal && "transition-transform duration-200 ease-linear",
+                        terminalPanelOpen ? "translate-y-0" : "translate-y-4",
+                      )}
+                    >
+                      <React.Suspense fallback={<PanelFallback />}>
+                        <TerminalPanel />
+                      </React.Suspense>
+                    </div>
+                  </aside>
+                </div>
               )}
             </main>
-          </SidebarInset>
-        </ResizablePanel>
-        {workspacePanelOpen && !skillOpen && !libraryOpen ? (
-          <>
-            <ResizableHandle />
-            <ResizablePanel defaultSize="42%" minSize="30%" maxSize="66%">
+          </div>
+
+          {/* 右侧工作区抽屉:平滑滑入/滑出与可拉伸宽度 */}
+          <aside
+            style={{
+              width: showWorkspace ? `${workspaceWidth}px` : 0,
+            }}
+            className={cn(
+              "relative flex h-full min-h-0 flex-col border-l bg-background overflow-hidden shrink-0",
+              !isDraggingWorkspace && "transition-[width,opacity] duration-200 ease-linear",
+              showWorkspace ? "opacity-100" : "border-l-0 opacity-0 pointer-events-none",
+            )}
+          >
+            {showWorkspace ? (
+              <div
+                onPointerDown={handleWorkspaceResizeStart}
+                className="group/resizer absolute inset-y-0 -left-1.5 z-30 w-3 cursor-col-resize select-none"
+              >
+                <div className="mx-auto h-full w-px bg-border group-hover/resizer:w-0.5 group-hover/resizer:bg-primary transition-colors" />
+              </div>
+            ) : null}
+            <div
+              style={{ width: `${workspaceWidth}px` }}
+              className={cn(
+                "flex h-full min-h-0 shrink-0 flex-col",
+                !isDraggingWorkspace && "transition-transform duration-200 ease-linear",
+                showWorkspace ? "translate-x-0" : "translate-x-4",
+              )}
+            >
               <React.Suspense fallback={<PanelFallback />}>
                 <WorkspacePanel />
               </React.Suspense>
-            </ResizablePanel>
-          </>
-        ) : null}
-      </ResizablePanelGroup>
+            </div>
+          </aside>
+        </div>
+      </SidebarInset>
       <SettingsDialog />
     </SidebarProvider>
   );

@@ -12,7 +12,7 @@ import {
 import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
-import { PanelFooter, PanelHeader, PanelSurface } from "@/components/app/primitives";
+import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -117,9 +117,19 @@ export function TerminalSession({
 
   const title = workspacePath ? `终端 · ${workspacePath.split(/[/\\]/).pop()}` : "系统终端";
 
+  /**
+   * 回调放进 ref 再通知宿主:宿主几乎总是传内联箭头函数(每次渲染新引用),
+   * 若让通知 effect 直接依赖它,宿主的任何一次重渲染都会重跑 effect 并回调
+   * 宿主 → 宿主再渲染 → 无限循环。这里只在状态**真的**变了时才通知。
+   */
+  const onStateChangeRef = React.useRef(onStateChange);
   React.useEffect(() => {
-    onStateChange?.({ status, sessionId });
-  }, [onStateChange, sessionId, status]);
+    onStateChangeRef.current = onStateChange;
+  }, [onStateChange]);
+
+  React.useEffect(() => {
+    onStateChangeRef.current?.({ status, sessionId });
+  }, [sessionId, status]);
 
   // 会话信息登记到 workbench 注册表;卸载时撤销,让聚合上报立刻反映真实会话数
   React.useEffect(() => {
@@ -222,7 +232,7 @@ export function TerminalSession({
       terminalRef.current = undefined;
       fitRef.current = undefined;
     };
-  }, [activeThreadId, terminalApi, workspacePath]);
+  }, [terminalApi, workspacePath]);
 
   // 只处理属于本会话的事件:主进程的事件流是所有会话共享的
   React.useEffect(() => {
@@ -345,18 +355,19 @@ export default function TerminalPanel() {
   const nextIndexRef = React.useRef(1);
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 
-  const updateTab = React.useCallback(
-    (id: string, patch: Partial<BottomTerminalTab>) => {
-      setTabs((current) =>
-        current.map((tab) =>
-          tab.id === id && (tab.status !== patch.status || tab.sessionId !== patch.sessionId)
-            ? { ...tab, ...patch }
-            : tab,
-        ),
-      );
-    },
-    [],
-  );
+  // 状态没变就返回原数组:map() 总会造新数组,React 按引用比较,
+  // 那样每次上报都算一次 state 变化,足以和会话侧的通知构成死循环。
+  const updateTab = React.useCallback((id: string, patch: Partial<BottomTerminalTab>) => {
+    setTabs((current) => {
+      const index = current.findIndex((tab) => tab.id === id);
+      if (index < 0) return current;
+      const tab = current[index];
+      if (tab.status === patch.status && tab.sessionId === patch.sessionId) return current;
+      const next = [...current];
+      next[index] = { ...tab, ...patch };
+      return next;
+    });
+  }, []);
 
   const addTab = () => {
     const tab = createBottomTab(++nextIndexRef.current);
@@ -461,7 +472,10 @@ export default function TerminalPanel() {
       {/* 所有会话常驻,靠 hidden 切换:xterm 卸载会丢 scrollback,PTY 也会被关掉 */}
       <div className="min-h-0 flex-1 overflow-hidden bg-background px-3 py-2">
         {tabs.map((tab) => (
-          <div className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")} key={tab.id}>
+          <div
+            className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")}
+            key={tab.id}
+          >
             <TerminalSession
               active={tab.id === activeTabId}
               onStateChange={(next) => updateTab(tab.id, next)}
@@ -470,10 +484,10 @@ export default function TerminalPanel() {
           </div>
         ))}
       </div>
-      <PanelFooter className="gap-1 px-3 text-[11px]">
+      {/* <PanelFooter className="gap-1 px-3 text-[11px]">
         <TerminalIcon className="size-3" />
         <span>真实系统终端</span>
-      </PanelFooter>
+      </PanelFooter> */}
     </PanelSurface>
   );
 }

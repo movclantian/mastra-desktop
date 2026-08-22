@@ -8,6 +8,7 @@
 - Use the Tavily MCP exclusively for all web searches and online documentation retrieval.
 - Do not start any applications, dev servers, background processes, or automated tests. Only generate and modify code; all execution and verification will be done manually by the user.
 - Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
+- 前端 UI 修改必须严格遵守根目录的 `DESIGN.md` 设计规范。在修改或新增任何前端组件前，必须先在 `docs/examples/` 目录下（以及针对 AI 交互组件在 `docs/aielements/` 目录下）查找对应组件前缀（如 `sidebar-*`, `button-*`, `dialog-*`, `card-*`, `table-*` 等）的官方实现示例，通过匹配文件名前缀精准定位并读取参考之后方可进行编码。
 - Avoid loose or overflow-prone frontend layouts. Do not use excessive margins or paddings that create unnecessary whitespace. Always use flexbox/grid responsive structures, enforce text wrapping, and incorporate `ScrollArea` components to prevent UI content from clipping or overflowing the viewport.`
 - For long-running asynchronous work:Empty `write_stdin` polls MUST use `yield_time_ms >= 180000`;prefer `300000` when intermediate output is not needed.`functions.wait` MUST use `yield_time_ms >= 180000`;`functions.exec` MUST set its outer `@exec yield_time_ms` at least 30000 ms longer than the longest nested tool wait, so the outer code cell does not yield first.
 - Do not apply the long wait to non-empty `write_stdin` calls that send interactive input.These tools return early when the process or cell completes.

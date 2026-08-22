@@ -21,6 +21,7 @@ import {
   RefreshCwIcon,
   SaveIcon,
   SquareIcon,
+  TerminalIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -36,6 +37,12 @@ import {
 import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Empty,
   EmptyDescription,
   EmptyHeader,
@@ -48,11 +55,17 @@ import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { reportWorkbenchState, type TreeEntry, useWorkbench } from "@/lib/workbench";
+import { TerminalSession } from "./terminal-panel";
+
+const NEW_BROWSER_TAB_URL = "https://www.bing.com";
 
 function editorExtension(path: string) {
   const lower = path.toLowerCase();
   if (/\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/.test(lower)) {
-    return javascript({ jsx: /x$/.test(lower), typescript: /\.(?:ts|tsx|mts|cts)$/.test(lower) });
+    return javascript({
+      jsx: /x$/.test(lower),
+      typescript: /\.(?:ts|tsx|mts|cts)$/.test(lower),
+    });
   }
   if (/\.py$/.test(lower)) return python();
   if (/\.(?:json|jsonc)$/.test(lower)) return json();
@@ -107,8 +120,15 @@ function CodeEditor({
             if (update.docChanged) onChangeRef.current(update.state.doc.toString());
           }),
           EditorView.theme({
-            "&": { height: "100%", backgroundColor: "transparent", fontSize: "13px" },
-            ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)" },
+            "&": {
+              height: "100%",
+              backgroundColor: "transparent",
+              fontSize: "13px",
+            },
+            ".cm-scroller": {
+              overflow: "auto",
+              fontFamily: "var(--font-mono)",
+            },
             ".cm-gutters": {
               backgroundColor: "transparent",
               borderRight: "1px solid var(--border)",
@@ -131,7 +151,9 @@ function CodeEditor({
   React.useEffect(() => {
     const view = viewRef.current;
     if (!view || view.state.doc.toString() === value) return;
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: value },
+    });
   }, [value]);
 
   return <div className="size-full overflow-hidden" ref={hostRef} />;
@@ -463,7 +485,7 @@ const EMPTY_BROWSER_STATE: BrowserState = {
  */
 function useBrowserSession() {
   const { activeThreadId, activePanelTab, browserRequest, user } = useWorkbench();
-  // 浏览器标签当前是否激活:门控空白页自动 ensure 与 SSE 视频流(见下注释)
+  // 浏览器标签当前是否激活:只在用户或 Agent 已打开浏览器时连接 SSE 视频流。
   const viewActive = activePanelTab.kind === "browser";
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
   const [frame, setFrame] = React.useState<{
@@ -476,7 +498,6 @@ function useBrowserSession() {
   );
   const [screencastAttempt, setScreencastAttempt] = React.useState(0);
   const pointerMoveAtRef = React.useRef(0);
-  const browserInitRef = React.useRef<string | null>(null);
   const browserPath = activeThreadId
     ? `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/browser`
     : "";
@@ -507,42 +528,6 @@ function useBrowserSession() {
     return () => window.clearInterval(timer);
   }, [refreshState, stateUrl]);
 
-  // 自动 ensure 一个空白页会拉起 Chromium,所以只在浏览器视图真正被看时才做 ——
-  // 只打开右侧面板看文件树不该启动浏览器进程
-  React.useEffect(() => {
-    void screencastAttempt;
-    if (!viewActive || !activeThreadId || !stateUrl) return;
-    if (browserInitRef.current === activeThreadId) return;
-    browserInitRef.current = activeThreadId;
-    void (async () => {
-      const existingResponse = await fetch(stateUrl);
-      const existing = existingResponse.ok
-        ? ((await existingResponse.json()) as BrowserState)
-        : EMPTY_BROWSER_STATE;
-      setState(existing);
-      if (existing.active && existing.tabs.length > 0) return;
-      const response = await fetch(browserUrl("/navigate"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: "about:blank" }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json().catch(() => ({}))) as {
-          error?: string;
-          message?: string;
-        };
-        throw new Error(payload.message || payload.error || "浏览器启动失败");
-      }
-      const payload = (await response.json()) as { state?: BrowserState };
-      if (payload.state) setState(payload.state);
-      setFrameState("connecting");
-    })().catch((error) => {
-      browserInitRef.current = null;
-      setFrameState("error");
-      toastError(error, "浏览器启动失败");
-    });
-  }, [activeThreadId, browserUrl, screencastAttempt, stateUrl, viewActive]);
-
   React.useEffect(() => {
     void screencastAttempt;
     // 切到文件标签时断开视频流:标签栏只需要 refreshState 的轮询就够了
@@ -554,7 +539,9 @@ function useBrowserSession() {
       setFrameState("connected");
     });
     source.addEventListener("url", (event) => {
-      const { url } = JSON.parse((event as MessageEvent<string>).data) as { url: string };
+      const { url } = JSON.parse((event as MessageEvent<string>).data) as {
+        url: string;
+      };
       setState((current) => ({ ...current, currentUrl: url }));
     });
     source.addEventListener("stop", () => source.close());
@@ -566,7 +553,6 @@ function useBrowserSession() {
   }, [browserUrl, screencastAttempt, viewActive, state.active, stateUrl]);
 
   const retryFrame = React.useCallback(() => {
-    browserInitRef.current = null;
     setFrame(undefined);
     setFrameState("connecting");
     setScreencastAttempt((attempt) => attempt + 1);
@@ -608,7 +594,11 @@ function useBrowserSession() {
         const response = await fetch(browserUrl("/action"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: name, index, ...(url ? { url } : {}) }),
+          body: JSON.stringify({
+            action: name,
+            index,
+            ...(url ? { url } : {}),
+          }),
         });
         const payload = (await response.json()) as {
           error?: string;
@@ -731,16 +721,16 @@ function useBrowserSession() {
     [browserUrl, stateUrl],
   );
 
-  /** 关闭线程浏览器并把本地视图归零(下次进入会重新 ensure 一个空白页) */
+  /** 关闭线程浏览器并把本地视图归零;再次使用时由显式导航或新建标签按需启动。 */
   const closeBrowser = React.useCallback(() => {
     if (!stateUrl) return;
+    setState(EMPTY_BROWSER_STATE);
+    setFrame(undefined);
+    setFrameState("idle");
     void fetch(stateUrl, { method: "DELETE" }).then(() => {
-      browserInitRef.current = null;
-      setState(EMPTY_BROWSER_STATE);
-      setFrame(undefined);
-      setFrameState("idle");
+      void refreshState();
     });
-  }, [stateUrl]);
+  }, [refreshState, stateUrl]);
 
   return {
     action,
@@ -766,11 +756,16 @@ type BrowserSession = ReturnType<typeof useBrowserSession>;
  * 浏览器视图:导航栏 + 实时画面 + 输入注入。
  * 页面标签栏不在这里 —— 它和「文件」标签合成一条,渲染在 WorkspacePanel 上。
  */
-function BrowserView({ session }: { session: BrowserSession }) {
+function BrowserView({
+  onCloseBrowser,
+  session,
+}: {
+  onCloseBrowser: () => void;
+  session: BrowserSession;
+}) {
   const {
     action,
     busy,
-    closeBrowser,
     frame,
     frameState,
     hasThread,
@@ -838,7 +833,7 @@ function BrowserView({ session }: { session: BrowserSession }) {
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton
           disabled={!state.active}
-          onClick={() => closeBrowser()}
+          onClick={onCloseBrowser}
           tooltip="关闭浏览器"
         >
           <SquareIcon />
@@ -913,7 +908,6 @@ export default function WorkspacePanel() {
     activatePanelTab,
     addPanelTab,
     closePanelTab,
-    openWorkspacePanel,
     panelTabs,
     setWorkspacePanelOpen,
   } = useWorkbench();
@@ -921,6 +915,16 @@ export default function WorkspacePanel() {
   const browserSession = useBrowserSession();
   const { action, closeBrowser, state } = browserSession;
   const browserActive = activePanelTab.kind === "browser";
+
+  const closeBrowserAndReturnToLocalTab = () => {
+    closeBrowser();
+    const fallback = panelTabs[0];
+    if (fallback) {
+      activatePanelTab({ kind: fallback.kind, id: fallback.id });
+    } else {
+      setWorkspacePanelOpen(false);
+    }
+  };
 
   /** 切到某个浏览器页面:先切服务端活动页,再把面板切到浏览器视图 */
   const openBrowserTab = (index: number) => {
@@ -937,9 +941,7 @@ export default function WorkspacePanel() {
    */
   const closeBrowserTab = (index: number) => {
     if (state.tabs.length <= 1) {
-      closeBrowser();
-      const fallback = panelTabs[0];
-      if (fallback) activatePanelTab({ kind: fallback.kind, id: fallback.id });
+      closeBrowserAndReturnToLocalTab();
       return;
     }
     void action("close-tab", index);
@@ -1044,7 +1046,10 @@ export default function WorkspacePanel() {
               <DropdownMenuContent align="start">
                 <DropdownMenuItem
                   onClick={() => {
-                    activatePanelTab({ kind: "browser", index: state.tabs.length });
+                    activatePanelTab({
+                      kind: "browser",
+                      index: state.tabs.length,
+                    });
                     void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
                   }}
                 >
@@ -1086,13 +1091,15 @@ export default function WorkspacePanel() {
               {tab.kind === "files" ? (
                 <FilesWorkspace active={selected} />
               ) : (
-                <TerminalSession active={selected} />
+                <div className="size-full px-3 py-2">
+                  <TerminalSession active={selected} />
+                </div>
               )}
             </div>
           );
         })}
         <div className={cn("size-full", browserActive ? "block" : "hidden")}>
-          <BrowserView session={browserSession} />
+          <BrowserView onCloseBrowser={closeBrowserAndReturnToLocalTab} session={browserSession} />
         </div>
         {panelTabs.length === 0 && state.tabs.length === 0 ? (
           <Empty className="h-full">

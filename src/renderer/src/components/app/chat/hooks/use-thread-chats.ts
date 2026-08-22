@@ -4,8 +4,8 @@ import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
+import { isTransientStreamError, STREAM_RECONNECT_LIMIT, streamErrorMessage } from "../lib/display";
 import type { WorkUIMessage } from "../types";
-import { STREAM_RECONNECT_LIMIT, isTransientStreamError, streamErrorMessage } from "../lib/display";
 
 // ---------------------------------------------------------------------------
 // 每线程一个 Chat 实例的自定义 Hook。

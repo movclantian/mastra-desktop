@@ -155,6 +155,18 @@ export type ActivePanelTab =
   | { kind: "files" | "terminal"; id: string }
   | { kind: "browser"; index: number };
 
+/**
+ * 两个激活项是否指向同一个标签。激活入口(点击标签、工具调用自动聚焦)每次都
+ * 现造一个对象字面量,不比较就会让「切到已经激活的标签」也算一次 state 变化 ——
+ * context value 随之重算,全体 consumer 白重渲染一轮。
+ */
+function isSamePanelTab(left: ActivePanelTab, right: ActivePanelTab): boolean {
+  if (left.kind === "browser" || right.kind === "browser") {
+    return left.kind === "browser" && right.kind === "browser" && left.index === right.index;
+  }
+  return left.kind === right.kind && left.id === right.id;
+}
+
 export interface TerminalRequest {
   id: number;
   command?: string;
@@ -308,7 +320,7 @@ interface WorkbenchValue {
   archiveThread: (threadId: string, archived: boolean) => Promise<void>;
   cloneThread: (
     threadId: string,
-    selection?: number | { messageLimit?: number; messageIds?: string[] },
+    selection?: { messageIds?: string[] },
   ) => Promise<WorkThread | null>;
   searchMessages: (query: string) => Promise<MessageSearchHit[]>;
   // 近期显式绑定的工作区目录(promptInput 选择器数据源)
@@ -669,7 +681,44 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
 
-  const activatePanelTab = useCallback((tab: ActivePanelTab) => {    setActivePanelTab(tab);
+  const reportTerminalSession = useCallback((id: string, info: TerminalSessionInfo | null) => {
+    if (info) terminalSessionsRef.current.set(id, info);
+    else if (!terminalSessionsRef.current.delete(id)) return;
+    setTerminalSessionsVersion((version) => version + 1);
+  }, []);
+
+  /**
+   * 终端会话 → terminal state lane。两个面板的会话在这里合并成一份:
+   * sessionCount 是总数,lastCommand/lastExitCode 取最近结束的那条命令,
+   * activeStatus 取第一个就绪会话(没有就绪的就取第一个,用于反映连接中/出错)。
+   */
+  useEffect(() => {
+    void terminalSessionsVersion;
+    const sessions = [...terminalSessionsRef.current.values()];
+    if (sessions.length === 0) {
+      reportWorkbenchState(activeThreadId, user.id, {
+        terminal: { open: false, sessionCount: 0 },
+      });
+      return;
+    }
+    const settled = sessions
+      .filter((session) => session.settledAt !== undefined)
+      .sort((a, b) => (b.settledAt ?? 0) - (a.settledAt ?? 0))[0];
+    const focused = sessions.find((session) => session.status === "ready") ?? sessions[0];
+    reportWorkbenchState(activeThreadId, user.id, {
+      terminal: {
+        open: true,
+        sessionCount: sessions.length,
+        activeTitle: focused.title,
+        activeStatus: focused.status,
+        ...(settled?.lastCommand ? { lastCommand: settled.lastCommand } : {}),
+        ...(settled?.lastExitCode === undefined ? {} : { lastExitCode: settled.lastExitCode }),
+      },
+    });
+  }, [activeThreadId, terminalSessionsVersion]);
+
+  const activatePanelTab = useCallback((tab: ActivePanelTab) => {
+    setActivePanelTab((active) => (isSamePanelTab(active, tab) ? active : tab));
     setWorkspacePanelOpen(true);
   }, []);
 
@@ -717,7 +766,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setPanelTabs((current) => {
       const existing = current.find((tab) => tab.kind === kind);
       if (existing) {
-        setActivePanelTab({ kind, id: existing.id });
+        const next: ActivePanelTab = { kind, id: existing.id };
+        setActivePanelTab((active) => (isSamePanelTab(active, next) ? active : next));
         return current;
       }
       // 该类型还没有标签(比如文件树被关掉过)→ 现开一个
@@ -726,7 +776,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       counts[kind] += 1;
       const label = kind === "files" ? "文件" : "终端";
       setActivePanelTab({ kind, id });
-      return [...current, { id, kind, title: counts[kind] > 1 ? `${label} ${counts[kind]}` : label }];
+      return [
+        ...current,
+        { id, kind, title: counts[kind] > 1 ? `${label} ${counts[kind]}` : label },
+      ];
     });
   }, []);
 
@@ -1007,21 +1060,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [activeThreadId, threads, providers, providersLoaded]);
 
   // 官方 Memory.cloneThread(POST /work/threads/:id/clone)
-  // messageLimit:仅克隆最近 N 条(options.messageLimit),用于「从此消息克隆」
+  // messageIds 使用官方 messageFilter 精确选择要复制的历史行。
   const cloneThread = useCallback(
-    async (
-      threadId: string,
-      selection?: number | { messageLimit?: number; messageIds?: string[] },
-    ) => {
-      const options = typeof selection === "number" ? { messageLimit: selection } : selection;
+    async (threadId: string, selection?: { messageIds?: string[] }) => {
       try {
         const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/clone`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             resourceId: user.id,
-            ...(options?.messageLimit !== undefined ? { messageLimit: options.messageLimit } : {}),
-            ...(options?.messageIds ? { messageIds: options.messageIds } : {}),
+            ...(selection?.messageIds ? { messageIds: selection.messageIds } : {}),
           }),
         });
         if (!response.ok) return null;
@@ -1129,6 +1177,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       openWorkspacePanel,
       terminalPanelOpen,
       setTerminalPanelOpen,
+      reportTerminalSession,
       terminalRequest,
       requestTerminalCommand,
       browserRequest,
@@ -1181,6 +1230,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       closePanelTab,
       openWorkspacePanel,
       terminalPanelOpen,
+      reportTerminalSession,
       terminalRequest,
       requestTerminalCommand,
       browserRequest,

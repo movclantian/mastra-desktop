@@ -11,6 +11,7 @@ import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../../agents";
 import { workError } from "../../../errors";
 import { workSessionHost } from "../../../harness";
+import { deleteThreadWorkspace } from "../../../workspace";
 import { getOwnedThread, getWorkMemory } from "./shared";
 import type { ThreadMetadata } from "./types";
 
@@ -151,7 +152,8 @@ export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
     const resourceId = c.req.query("resourceId");
     if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
-    if (!(await getOwnedThread(memory, threadId, resourceId))) {
+    const thread = await getOwnedThread(memory, threadId, resourceId);
+    if (!thread) {
       throw workError("THREAD_NOT_FOUND");
     }
     const session = workSessionHost.get(resourceId);
@@ -161,6 +163,9 @@ export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
     if (workBrowser.hasThreadSession(threadId)) {
       await workBrowser.closeThreadSession(threadId);
     }
+    // 物理清理本地工作区目录及释放 Workspace 内存实例
+    await deleteThreadWorkspace(threadId, thread.metadata);
+
     await memory.deleteThread(threadId);
     // settled.mdx(@mastra/memory 1.27 起随 latest 发布):等待 deleteThread 触发的
     // 后台向量清理与仍在进行的观察记忆写入落盘,响应返回即代表线程已彻底清理。

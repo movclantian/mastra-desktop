@@ -1,5 +1,8 @@
 export {
   CapabilityBadges,
+  currentModelRouterString,
+  FOLLOW_CURRENT_MODEL,
+  getSelectedModelLabel,
   ModelSelectDropdown,
   NumberRow,
   ScopeSelect,
@@ -10,7 +13,4 @@ export {
   SwitchRow,
   TagMultiSelect,
   TextAreaRow,
-  currentModelRouterString,
-  getSelectedModelLabel,
-  FOLLOW_CURRENT_MODEL,
 } from "./controls";

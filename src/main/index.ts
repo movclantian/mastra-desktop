@@ -285,14 +285,13 @@ async function killProcessesOnPort(port: number): Promise<void> {
             .filter((cols) => (cols[1] ?? "").endsWith(`:${port}`))
             .map((cols) => Number(cols[cols.length - 1])),
         ),
-      ].filter((pid) => Number.isInteger(pid) && pid > 0);
+      ].filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
       for (const pid of pids) {
-        spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore" }).on(
-          "error",
-          () => {
-            /* noop */
-          },
-        );
+        try {
+          await execFileAsync("taskkill", ["/pid", String(pid), "/T", "/F"]);
+        } catch {
+          /* 进程已退出 */
+        }
       }
     } else {
       const { stdout } = await execFileAsync("lsof", [
@@ -305,12 +304,12 @@ async function killProcessesOnPort(port: number): Promise<void> {
       pids = stdout
         .split(/\s+/)
         .map(Number)
-        .filter((pid) => Number.isInteger(pid) && pid > 0);
+        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
       for (const pid of pids) {
         try {
           process.kill(pid, "SIGKILL");
         } catch {
-          /* noop */
+          /* 进程已退出 */
         }
       }
     }
@@ -386,8 +385,9 @@ function ensureMastraRunning(): Promise<void> {
     };
 
     void (async () => {
-      // 预检:已有服务在 4111 上响应 → 上次残留的孤儿,先清掉
+      // 预检:强力清理上次异常退出/直接关闭终端遗留的孤儿进程
       try {
+        await killProcessesOnPort(MASTRA_PORT);
         if (await isServerUp()) await freeStaleServer();
       } catch (err) {
         fail(err instanceof Error ? err : new Error(String(err)));
@@ -505,9 +505,7 @@ function ensureMastraRunning(): Promise<void> {
 /** 数据落盘目录:优先在服务存活时问 /work/storage,拿不到再用默认位置推算 */
 function defaultMastraDataDir(): string {
   try {
-    return is.dev
-      ? join(getProjectRoot(), "src/mastra/public")
-      : join(process.resourcesPath, "src/mastra/public");
+    return is.dev ? join(getProjectRoot(), "data") : join(process.resourcesPath, "data");
   } catch {
     return "";
   }
@@ -517,8 +515,8 @@ function defaultMastraDataDir(): string {
 function defaultMastraObservabilityDir(): string {
   try {
     return is.dev
-      ? join(getProjectRoot(), ".mastra", "observability")
-      : join(process.resourcesPath, ".mastra", "observability");
+      ? join(getProjectRoot(), "data", "observability")
+      : join(process.resourcesPath, "data", "observability");
   } catch {
     return "";
   }
@@ -791,6 +789,14 @@ function bootstrap(): void {
     if (process.platform !== "darwin") {
       app.quit();
     }
+  });
+
+  // 处理终端 Ctrl+C 信号:开发模式下强制回收 Mastra 进程树,防止孤儿进程锁库
+  process.on("SIGINT", () => {
+    void stopMastra().finally(() => process.exit(0));
+  });
+  process.on("SIGTERM", () => {
+    void stopMastra().finally(() => process.exit(0));
   });
 }
 

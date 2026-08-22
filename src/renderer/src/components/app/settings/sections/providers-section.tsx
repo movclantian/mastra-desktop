@@ -656,7 +656,7 @@ export function ProvidersSection() {
   const [editingProvider, setEditingProvider] = React.useState<ProviderConfig | null>(null);
 
   return (
-    <div className="flex min-w-0 flex-col gap-2 p-4 pt-0">
+    <div className="flex min-w-0 flex-col gap-2 p-4 pt-1">
       <div className="flex items-center justify-between gap-4">
         <p className="text-sm text-muted-foreground">
           预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。

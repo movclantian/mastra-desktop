@@ -10,3 +10,5 @@ out
 public
 .env
 resources/browsers
+data
+storage-location.json

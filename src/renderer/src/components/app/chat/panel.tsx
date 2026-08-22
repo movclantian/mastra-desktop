@@ -1,12 +1,13 @@
 import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { FileUIPart, LanguageModelUsage } from "ai";
-import { MessageCircleDashedIcon, WaypointsIcon } from "lucide-react";
+import { MessageCircleDashedIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { Queue } from "@/components/ai-elements/queue";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import {
   Empty,
   EmptyDescription,
@@ -15,6 +16,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
+import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -37,6 +39,7 @@ import { useWorkbench } from "@/lib/workbench";
 import {
   AgentInteractionPanel,
   AgentQueuePanel,
+  AssistantAvatar,
   ChatPromptInput,
   ChatWorkspaceSelector,
   MessageItem,
@@ -137,21 +140,17 @@ export function ChatPanel() {
     [user.id],
   );
 
-  // 官方 Memory.cloneThread:克隆线程并切换。
-  // messageLimit = index + 1:克隆「到该消息为止」的最近 N 条(options.messageLimit)
+  // 官方 Memory.cloneThread:按消息 ID 精确选择克隆内容,从而表达对话前缀。
   const handleCloneThread = React.useCallback(
-    async (selection?: number | { messageLimit?: number; messageIds?: string[] }) => {
+    async (selection?: { messageIds?: string[] }) => {
       if (!activeThreadId) return;
       const thread = await cloneThread(activeThreadId, selection);
-      const messageLimit = typeof selection === "number" ? selection : selection?.messageLimit;
-      const singleMessage = typeof selection !== "number" && selection?.messageIds?.length === 1;
+      const singleMessage = selection?.messageIds?.length === 1;
       if (thread) {
         toast.success(
           singleMessage
             ? `已将选定消息克隆到新线程「${thread.title}」`
-            : messageLimit
-              ? `已从此处克隆到新线程「${thread.title}」`
-              : `已克隆到新线程「${thread.title}」`,
+            : `已克隆到新线程「${thread.title}」`,
         );
       } else {
         toast.error("克隆线程失败");
@@ -226,6 +225,47 @@ export function ChatPanel() {
   // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器
   const workspaceLocked = Boolean(activeThread?.metadata.workspacePath) || messages.length > 0;
   workspaceLockedRef.current = workspaceLocked;
+
+  const handleCloneFromHere = React.useCallback(
+    (messageIndex: number) => {
+      const messageIds = messages
+        .slice(0, messageIndex + 1)
+        .map((message) => message.id)
+        .filter((id): id is string => Boolean(id));
+      if (messageIds.length > 0) void handleCloneThread({ messageIds });
+    },
+    [handleCloneThread, messages],
+  );
+
+  const handleCloneMessage = React.useCallback(
+    (messageId: string, messageIndex: number) => {
+      const selectedIndex = Math.max(
+        0,
+        messages.findIndex((message) => message.id === messageId),
+        messageIndex,
+      );
+      const selected = messages[selectedIndex];
+      if (!selected) return;
+
+      // An assistant-only history is not a valid continuation context. Clone
+      // the user turn plus every assistant row belonging to that turn.
+      const startIndex =
+        selected.role === "assistant"
+          ? Math.max(
+              0,
+              messages
+                .slice(0, selectedIndex + 1)
+                .findLastIndex((message) => message.role === "user"),
+            )
+          : selectedIndex;
+      const messageIds = messages
+        .slice(startIndex, selectedIndex + 1)
+        .map((message) => message.id)
+        .filter((id): id is string => Boolean(id));
+      if (messageIds.length > 0) void handleCloneThread({ messageIds });
+    },
+    [handleCloneThread, messages],
+  );
 
   // 首条消息会在服务端请求开始时锁定工作区,但线程列表仍是旧快照。
   // 在本地消息出现后补一次刷新,让右侧文件树及时拿到 workspaceExplicit。
@@ -1126,8 +1166,14 @@ export function ChatPanel() {
                   className="mx-auto w-full max-w-3xl px-4 py-6"
                 >
                   {displayMessages.map(({ message, sourceIds, sourceEndIndex }) => (
+                    // key 取合并组的**首条**源消息 id:每跨一个工具/推理边界,Mastra 就再封
+                    // 一条 assistant 行并被合并进同一组(见 buildDisplayMessages),sourceIds
+                    // 因此在流式途中不断增长。用全量拼接当 key 会让 key 每次都变,React 于是
+                    // 销毁重建整条消息的 DOM —— 既白扔掉工具卡片的展开态,又让 MessageScroller
+                    // 把全新元素当成没锚定过的新锚点反复重锚,滚动状态store 每轮同步翻新一次,
+                    // 嵌套更新计数一路累加到上限。组的起点一旦建立就不再变,是唯一稳定的身份。
                     <MessageItem
-                      key={sourceIds.join(":")}
+                      key={sourceIds[0]}
                       message={message}
                       messageIndex={sourceEndIndex}
                       isStreaming={sourceIds.includes(streamingMessageId ?? "")}
@@ -1138,21 +1184,21 @@ export function ChatPanel() {
                       onEditCompacted={handleCompactedEdit}
                       userId={user.id}
                       onRetry={handleRetry}
-                      onClone={handleCloneThread}
-                      onCloneMessage={(messageId) =>
-                        void handleCloneThread({ messageIds: [messageId] })
-                      }
+                      onClone={handleCloneFromHere}
+                      onCloneMessage={handleCloneMessage}
                     />
                   ))}
                   {isBusy && lastMessage?.role !== "assistant" ? (
-                    <MessageScrollerItem
-                      className="flex items-center gap-2 py-2 text-xs text-muted-foreground"
-                      messageId="typing-indicator"
-                    >
-                      <WaypointsIcon className="size-4 animate-pulse" />
-                      <span>
-                        <span className="font-medium">MastraWork</span> 正在思考...
-                      </span>
+                    <MessageScrollerItem messageId="typing-indicator">
+                      <Message>
+                        <MessageAvatar className="self-start">
+                          <AssistantAvatar />
+                        </MessageAvatar>
+                        <MessageContent>
+                          <MessageHeader className="px-0">MastraWork</MessageHeader>
+                          <Shimmer className="text-sm">思考中...</Shimmer>
+                        </MessageContent>
+                      </Message>
                     </MessageScrollerItem>
                   ) : null}
                   {/* 压缩进行中 Marker(marker-status / marker-shimmer):仅压缩期间显示。

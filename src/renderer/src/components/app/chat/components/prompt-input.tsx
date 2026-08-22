@@ -74,13 +74,13 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
+import type { CompressResult, MessageFileReference, QueuedRequest } from "../types";
 import { ChatApprovalSelector } from "./approval-selector";
 import { ChatContextUsage } from "./context-usage";
 import { ChatModeSelector } from "./mode-selector";
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
 import { ChatSearchSelector } from "./search-selector";
-import type { CompressResult, MessageFileReference, QueuedRequest } from "../types";
 
 // ---------------------------------------------------------------------------
 // 输入区工具按钮(Paperclip 附件 / 审批模式 / 联网检索多级菜单)

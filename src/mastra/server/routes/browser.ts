@@ -40,7 +40,7 @@ async function ensureBrowserTab(threadId: string): Promise<void> {
   await workBrowser.ensureReady();
   const state = await workBrowser.getBrowserState(threadId);
   if (!state || state.tabs.length === 0) {
-    const result = await workBrowser.goto({ url: "about:blank" }, threadId);
+    const result = await workBrowser.goto({ url: "https://www.bing.com" }, threadId);
     if (!("success" in result) || result.success !== true) {
       throw new Error(
         "message" in result && typeof result.message === "string"

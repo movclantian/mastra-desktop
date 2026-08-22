@@ -15,8 +15,8 @@ import {
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
-import { AssistantAvatar, UserAvatar } from "./avatars";
 import type { CompactedHistoryEntry } from "../types";
+import { AssistantAvatar, UserAvatar } from "./avatars";
 
 // ---------------------------------------------------------------------------
 // 压缩历史:线程被 summarize 重写后,线程头部出现一条摘要消息卡片;展开可

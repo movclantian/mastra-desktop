@@ -9,8 +9,7 @@ import {
   HardDriveIcon,
   LoaderCircleIcon,
   MoreVerticalIcon,
-  PanelLeftCloseIcon,
-  PanelLeftOpenIcon,
+  PanelLeftIcon,
   PencilIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -49,7 +48,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -58,12 +56,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import {
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/ui/sidebar";
 import { Switch } from "@/components/ui/switch";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import { useWorkbench } from "@/lib/workbench";
+import { type LibraryUploadTarget, useLibraryUpload } from "./hooks";
 import {
   DEFAULT_LIBRARY_SETTINGS,
   formatBytes,
@@ -74,7 +80,6 @@ import {
   type RenameTarget,
   statusLabel,
 } from "./types";
-import { type LibraryUploadTarget, useLibraryUpload } from "./hooks";
 
 const LibraryFilePreview = React.lazy(() => import("./components/file-preview"));
 
@@ -111,7 +116,6 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
   const [renameValue, setRenameValue] = React.useState("");
   const [reindexingIds, setReindexingIds] = React.useState<Set<string>>(() => new Set());
   const [batchReindexing, setBatchReindexing] = React.useState(false);
-  const isMobile = useIsMobile();
 
   const refresh = React.useCallback(
     async (silent = false) => {
@@ -451,21 +455,16 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
 
   const renderAssetRow = (asset: LibraryAsset, depth = 0, keyPrefix = "asset") => {
     return (
-      <div
-        key={`${keyPrefix}-${asset.id}`}
-        className={cn(
-          "group flex min-w-0 items-center gap-1 rounded-md py-1.5 pr-1 hover:bg-accent",
-          selectedId === asset.id && "bg-accent",
-        )}
-        style={{ paddingLeft: `${8 + depth * 16}px` }}
-      >
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      <SidebarMenuItem key={`${keyPrefix}-${asset.id}`}>
+        <SidebarMenuButton
+          isActive={selectedId === asset.id}
           onClick={() => setSelectedId(asset.id)}
+          tooltip={asset.filename}
+          className="h-auto py-1.5"
+          style={{ paddingLeft: directoryOpen ? `${8 + depth * 12}px` : undefined }}
         >
           <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
-          <span className="min-w-0 flex-1">
+          <span className="min-w-0 flex-1 group-data-[collapsible=icon]/sidebar:hidden">
             <span className="block truncate text-sm">{asset.filename}</span>
             <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
               <span>{formatBytes(asset.byteSize)}</span>
@@ -489,20 +488,19 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
               </span>
             ) : null}
           </span>
-        </button>
+        </SidebarMenuButton>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              <SidebarMenuAction
+                showOnHover
                 title="文件操作"
-              />
+                className="group-data-[collapsible=icon]/sidebar:hidden"
+              >
+                <MoreVerticalIcon />
+              </SidebarMenuAction>
             }
-          >
-            <MoreVerticalIcon />
-          </DropdownMenuTrigger>
+          />
           <DropdownMenuContent align="end">
             {asset.status === "error" || asset.status === "unsupported" ? (
               <DropdownMenuItem
@@ -540,7 +538,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-      </div>
+      </SidebarMenuItem>
     );
   };
 
@@ -561,201 +559,175 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
   };
 
   return (
-    <div className="flex size-full min-h-0 min-w-0 overflow-hidden">
-      <ResizablePanelGroup
-        className="min-h-0 min-w-0 flex-1"
-        orientation={isMobile ? "vertical" : "horizontal"}
-      >
-        {directoryOpen ? (
-          <>
-            <ResizablePanel
-              className="min-h-0 min-w-0"
-              defaultSize="28%"
-              minSize="22%"
-              maxSize="44%"
-            >
-              <aside className="flex size-full min-h-0 min-w-0 flex-col bg-sidebar/95">
-                {/* 标题「资料库」由应用顶栏显示;设置/目录开关已合并到右侧预览栏头部 */}
-                <div className="shrink-0 space-y-1 bg-sidebar-accent/25 px-2 py-2">
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors hover:bg-sidebar-accent",
-                      view === "search" && "bg-sidebar-accent font-medium",
-                    )}
-                    onClick={() => {
-                      setFileSearchOpen(true);
-                    }}
+    <>
+      <div className="flex size-full min-h-0 min-w-0 overflow-hidden bg-background">
+        {/* 资料库内部二级侧栏:纯 relative 布局,绝对不逃逸出当前容器,完美收缩为 48px 图标栏 */}
+        <aside
+          data-state={directoryOpen ? "expanded" : "collapsed"}
+          data-collapsible={directoryOpen ? "" : "icon"}
+          data-slot="sidebar"
+          data-sidebar="sidebar"
+          className={cn(
+            "group/sidebar relative flex h-full min-h-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-linear overflow-hidden shrink-0",
+            directoryOpen ? "w-64 md:w-72" : "w-12",
+          )}
+        >
+          <div className="flex h-full w-full min-h-0 shrink-0 flex-col">
+            {/* Header 导航 */}
+            <div className="border-b border-sidebar-border p-2 shrink-0">
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={view === "search"}
+                    onClick={() => setFileSearchOpen(true)}
+                    tooltip="搜索资料"
                   >
-                    <SearchIcon className="size-4 text-muted-foreground" />
-                    <span>搜索</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex h-9 w-full items-center gap-3 rounded-md px-3 text-sm transition-colors hover:bg-sidebar-accent",
-                      view === "session" && "bg-sidebar-accent font-medium",
-                    )}
+                    <SearchIcon />
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">搜索资料</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={view === "session"}
                     onClick={() => {
                       setView("session");
                       setFolderId(null);
                       setQuery("");
                     }}
+                    tooltip="会话文件"
                   >
-                    <HardDriveIcon className="size-4 text-muted-foreground" />
-                    <span>会话文件</span>
-                    <span className="ml-auto text-xs tabular-nums text-muted-foreground">
-                      {sessionAssetCount}
-                    </span>
-                  </button>
-                  {view === "search" ? (
-                    <div className="relative px-1 pt-1">
-                      <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                      <Input
-                        autoFocus
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        className="h-9 bg-background pl-9"
-                        placeholder="搜索文件名"
-                      />
-                    </div>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 items-center gap-2 bg-sidebar-accent/15 px-3 py-3">
-                  <button
-                    type="button"
-                    className={cn(
-                      "flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-medium",
-                      view === "documents" ? "text-foreground" : "text-muted-foreground",
-                    )}
+                    <HardDriveIcon />
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">会话文件</span>
+                  </SidebarMenuButton>
+                  <SidebarMenuBadge className="group-data-[collapsible=icon]/sidebar:hidden">
+                    {sessionAssetCount}
+                  </SidebarMenuBadge>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={view === "documents"}
                     onClick={() => {
                       setView("documents");
                       setQuery("");
                     }}
+                    tooltip="我的文档"
                   >
                     <FolderTypeIcon name="资料库" open={view === "documents"} />
-                    <span className="truncate">我的文档</span>
-                  </button>
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">我的文档</span>
+                  </SidebarMenuButton>
                   {failedAssetCount > 0 ? (
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      className="shrink-0 text-destructive hover:text-destructive"
-                      disabled={batchReindexing}
-                      aria-label={`重新索引 ${failedAssetCount} 个失败文件`}
-                      title={`重新索引 ${failedAssetCount} 个失败文件`}
+                    <SidebarMenuAction
+                      showOnHover
                       onClick={() => void reindexFailed()}
+                      title={`重新索引 ${failedAssetCount} 个失败文件`}
+                      className="group-data-[collapsible=icon]/sidebar:hidden"
                     >
-                      <RefreshCwIcon className={cn(batchReindexing && "animate-spin")} />
-                    </Button>
+                      <RefreshCwIcon
+                        className={cn(batchReindexing && "animate-spin", "text-destructive")}
+                      />
+                    </SidebarMenuAction>
                   ) : null}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          className="shrink-0"
-                          title="添加文档、表格或文件夹"
-                        />
-                      }
-                    >
-                      <PlusIcon />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        disabled={uploading}
-                        onClick={() => openUpload(uploadTarget)}
-                      >
-                        {uploading ? <LoaderCircleIcon className="animate-spin" /> : <UploadIcon />}
-                        <span>上传文件</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={uploading}
-                        onClick={() => createBlankFile("document", uploadTarget)}
-                      >
-                        <FileTextIcon />
-                        <span>新建文档（Markdown）</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        disabled={uploading}
-                        onClick={() => createBlankFile("spreadsheet", uploadTarget)}
-                      >
-                        <FileSpreadsheetIcon />
-                        <span>新建表格（CSV）</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => openCreateFolder(folderId)}>
-                        <FolderPlusIcon />
-                        <span>新建文件夹</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <input
-                    ref={inputRef}
-                    hidden
-                    type="file"
-                    multiple
-                    onChange={(event) =>
-                      void uploadFiles(
-                        event.target.files ? [...event.target.files] : [],
-                        uploadTargetRef.current,
-                      )
-                    }
+                </SidebarMenuItem>
+              </SidebarMenu>
+
+              {view === "search" && directoryOpen ? (
+                <div className="relative pt-2">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    autoFocus
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    className="h-8 bg-background pl-8 text-xs"
+                    placeholder="过滤文件名..."
                   />
                 </div>
-                {uploading || uploadError ? (
-                  <div className="shrink-0 space-y-1.5 bg-background/40 p-3">
-                    <div className="flex items-center justify-between gap-2 text-xs">
-                      <span className="truncate">
-                        {uploadError ? uploadError : `正在上传 ${retryFiles.length} 个文件`}
-                      </span>
-                      <span className="shrink-0 tabular-nums">{uploadProgress}%</span>
-                    </div>
-                    <Progress value={uploadProgress} />
-                    {uploading ? (
+              ) : null}
+            </div>
+
+            {/* Content 文件列表 */}
+            <div className="min-h-0 flex-1 flex flex-col p-2 overflow-hidden">
+              <div className="flex h-8 shrink-0 items-center justify-between px-1 text-xs font-medium text-sidebar-foreground/70">
+                <span className="group-data-[collapsible=icon]/sidebar:hidden">
+                  {view === "documents" ? "文档目录" : view === "session" ? "会话附件" : "搜索结果"}
+                </span>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
                       <Button
-                        className="w-full"
-                        size="sm"
+                        size="icon-xs"
                         variant="ghost"
-                        onClick={() => void cancelUpload()}
+                        className="size-5 rounded-md p-0 group-data-[collapsible=icon]/sidebar:mx-auto"
+                        title="添加文档、表格或文件夹"
                       >
-                        取消上传
+                        <PlusIcon className="size-3.5" />
                       </Button>
-                    ) : null}
-                    {uploadError && !uploading ? (
-                      <Button className="w-full" size="sm" variant="outline" onClick={retryUpload}>
-                        从断点重试
-                      </Button>
-                    ) : null}
-                  </div>
-                ) : null}
-                <ScrollArea className="min-h-0 flex-1">
-                  <div className="space-y-1 p-1">
-                    {loading ? (
-                      <p className="p-3 text-sm text-muted-foreground">正在读取…</p>
-                    ) : null}
-                    {!loading && view !== "documents" && visibleAssets.length === 0 ? (
-                      <p className="p-3 text-sm text-muted-foreground">
-                        {view === "search"
-                          ? "没有匹配的文件"
-                          : view === "session" && !activeThreadId
-                            ? "当前没有活动会话"
-                            : "这里还没有文件"}
-                      </p>
-                    ) : null}
-                    {!loading && view === "documents"
-                      ? documentTree.map((entry) =>
-                          entry.kind === "folder" ? (
-                            <div
-                              key={`folder-${entry.folder.id}`}
-                              className="group/folder flex min-w-0 items-center gap-1"
-                            >
+                    }
+                  />
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem disabled={uploading} onClick={() => openUpload(uploadTarget)}>
+                      {uploading ? <LoaderCircleIcon className="animate-spin" /> : <UploadIcon />}
+                      <span>上传文件</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={uploading}
+                      onClick={() => createBlankFile("document", uploadTarget)}
+                    >
+                      <FileTextIcon />
+                      <span>新建文档（Markdown）</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={uploading}
+                      onClick={() => createBlankFile("spreadsheet", uploadTarget)}
+                    >
+                      <FileSpreadsheetIcon />
+                      <span>新建表格（CSV）</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => openCreateFolder(folderId)}>
+                      <FolderPlusIcon />
+                      <span>新建文件夹</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <input
+                  ref={inputRef}
+                  hidden
+                  type="file"
+                  multiple
+                  onChange={(event) =>
+                    void uploadFiles(
+                      event.target.files ? [...event.target.files] : [],
+                      uploadTargetRef.current,
+                    )
+                  }
+                />
+              </div>
+              <ScrollArea className="min-h-0 flex-1">
+                <SidebarMenu>
+                  {loading ? (
+                    <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                      正在读取…
+                    </p>
+                  ) : null}
+                  {!loading && view !== "documents" && visibleAssets.length === 0 ? (
+                    <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                      {view === "search"
+                        ? "没有匹配的文件"
+                        : view === "session" && !activeThreadId
+                          ? "当前没有活动会话"
+                          : "这里还没有文件"}
+                    </p>
+                  ) : null}
+                  {!loading && view === "documents"
+                    ? documentTree.map((entry) =>
+                        entry.kind === "folder" ? (
+                          <SidebarMenuItem key={`folder-${entry.folder.id}`}>
+                            <div className="flex w-full min-w-0 items-center gap-0.5">
                               <Button
                                 size="icon-xs"
                                 variant="ghost"
-                                className="shrink-0"
-                                style={{ marginLeft: `${entry.depth * 16}px` }}
+                                className="size-6 shrink-0 group-data-[collapsible=icon]/sidebar:hidden"
+                                style={{ marginLeft: `${entry.depth * 12}px` }}
                                 title={
                                   collapsedFolderIds.has(entry.folder.id)
                                     ? "展开文件夹"
@@ -772,204 +744,233 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                               >
                                 <ChevronDownIcon
                                   className={cn(
-                                    "size-3.5 transition-transform",
+                                    "size-3.5 transition-transform duration-200",
                                     collapsedFolderIds.has(entry.folder.id) && "-rotate-90",
                                   )}
                                 />
                               </Button>
-                              <button
-                                type="button"
-                                className={cn(
-                                  "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm hover:bg-sidebar-accent",
-                                  folderId === entry.folder.id && "bg-sidebar-accent font-medium",
-                                )}
+                              <SidebarMenuButton
+                                isActive={folderId === entry.folder.id}
                                 onClick={() => setFolderId(entry.folder.id)}
+                                tooltip={entry.folder.name}
+                                className="min-w-0 flex-1"
                               >
                                 <FolderTypeIcon
                                   name={entry.folder.name}
                                   open={!collapsedFolderIds.has(entry.folder.id)}
                                 />
-                                <span className="truncate">{entry.folder.name}</span>
-                              </button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger
-                                  render={
-                                    <Button
-                                      size="icon-xs"
-                                      variant="ghost"
-                                      className="mr-1 opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100"
-                                      title="文件夹操作"
-                                    />
+                                <span className="truncate group-data-[collapsible=icon]/sidebar:hidden">
+                                  {entry.folder.name}
+                                </span>
+                              </SidebarMenuButton>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <SidebarMenuAction
+                                    showOnHover
+                                    title="文件夹操作"
+                                    className="group-data-[collapsible=icon]/sidebar:hidden"
+                                  >
+                                    <MoreVerticalIcon />
+                                  </SidebarMenuAction>
+                                }
+                              />
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  disabled={uploading}
+                                  onClick={() =>
+                                    openUpload({ folderId: entry.folder.id, threadId: null })
                                   }
                                 >
-                                  <MoreVerticalIcon />
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end">
-                                  <DropdownMenuItem
-                                    disabled={uploading}
-                                    onClick={() =>
-                                      openUpload({ folderId: entry.folder.id, threadId: null })
-                                    }
-                                  >
-                                    <UploadIcon />
-                                    <span>上传文件到此文件夹</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={uploading}
-                                    onClick={() =>
-                                      createBlankFile("document", {
-                                        folderId: entry.folder.id,
-                                        threadId: null,
-                                      })
-                                    }
-                                  >
-                                    <FileTextIcon />
-                                    <span>新建文档（Markdown）</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={uploading}
-                                    onClick={() =>
-                                      createBlankFile("spreadsheet", {
-                                        folderId: entry.folder.id,
-                                        threadId: null,
-                                      })
-                                    }
-                                  >
-                                    <FileSpreadsheetIcon />
-                                    <span>新建表格（CSV）</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => openCreateFolder(entry.folder.id)}
-                                  >
-                                    <FolderPlusIcon />
-                                    <span>新建子文件夹</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem
-                                    onClick={() =>
-                                      openRename({
-                                        kind: "folder",
-                                        id: entry.folder.id,
-                                        name: entry.folder.name,
-                                      })
-                                    }
-                                  >
-                                    <FolderPenIcon />
-                                    <span>重命名</span>
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    variant="destructive"
-                                    onClick={() => void removeFolder(entry.folder)}
-                                  >
-                                    <Trash2Icon />
-                                    <span>删除文件夹</span>
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
-                          ) : (
-                            renderAssetRow(entry.asset, entry.depth, "tree")
-                          ),
-                        )
-                      : null}
-                    {!loading && view === "documents" && visibleAssets.length === 0 ? (
-                      <p className="p-3 text-sm text-muted-foreground">这里还没有文件</p>
-                    ) : null}
-                    {!loading && view !== "documents"
-                      ? visibleAssets.map((asset) => renderAssetRow(asset, 0, view))
-                      : null}
-                  </div>
-                </ScrollArea>
-              </aside>
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-          </>
-        ) : null}
-
-        <ResizablePanel
-          className="min-h-0 min-w-0"
-          defaultSize={directoryOpen ? "76%" : "100%"}
-          minSize="40%"
-        >
-          <div className="flex size-full min-h-0 min-w-0 flex-col">
-            {/* 预览栏只负责目录开关、文件状态和文件操作;资料库设置位于应用顶栏右上角 */}
-            <div className="flex h-12 shrink-0 items-center gap-2 bg-muted/40 px-4">
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                title={directoryOpen ? "收起资料目录" : "展开资料目录"}
-                onClick={() => setDirectoryOpen(!directoryOpen)}
-              >
-                {directoryOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
-              </Button>
-              <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                <span className="flex min-w-0 items-center gap-2">
-                  {selected ? (
-                    <FileTypeIcon mediaType={selected.mediaType} name={selected.filename} />
+                                  <UploadIcon />
+                                  <span>上传文件到此文件夹</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={uploading}
+                                  onClick={() =>
+                                    createBlankFile("document", {
+                                      folderId: entry.folder.id,
+                                      threadId: null,
+                                    })
+                                  }
+                                >
+                                  <FileTextIcon />
+                                  <span>新建文档（Markdown）</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  disabled={uploading}
+                                  onClick={() =>
+                                    createBlankFile("spreadsheet", {
+                                      folderId: entry.folder.id,
+                                      threadId: null,
+                                    })
+                                  }
+                                >
+                                  <FileSpreadsheetIcon />
+                                  <span>新建表格（CSV）</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openCreateFolder(entry.folder.id)}>
+                                  <FolderPlusIcon />
+                                  <span>新建子文件夹</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    openRename({
+                                      kind: "folder",
+                                      id: entry.folder.id,
+                                      name: entry.folder.name,
+                                    })
+                                  }
+                                >
+                                  <FolderPenIcon />
+                                  <span>重命名</span>
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onClick={() => void removeFolder(entry.folder)}
+                                >
+                                  <Trash2Icon />
+                                  <span>删除文件夹</span>
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </SidebarMenuItem>
+                        ) : (
+                          renderAssetRow(entry.asset, entry.depth, "tree")
+                        ),
+                      )
+                    : null}
+                  {!loading && view === "documents" && visibleAssets.length === 0 ? (
+                    <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                      这里还没有文件
+                    </p>
                   ) : null}
-                  <span className="truncate">{selected?.filename ?? "文件预览"}</span>
-                </span>
-              </p>
-              {selected ? <Badge variant="outline">{statusLabel(selected.status)}</Badge> : null}
-              {selected ? (
-                <a
-                  className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                  download={selected.filename}
-                  href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
-                  title="下载文件"
-                >
-                  <DownloadIcon className="size-4" />
-                </a>
-              ) : null}
+                  {!loading && view !== "documents"
+                    ? visibleAssets.map((asset) => renderAssetRow(asset, 0, view))
+                    : null}
+                </SidebarMenu>
+              </ScrollArea>
             </div>
-            {selected?.status === "error" ? (
-              <div className="flex min-w-0 shrink-0 items-center gap-2 bg-destructive/5 px-4 py-2 text-xs">
-                <span
-                  className="min-w-0 flex-1 truncate text-destructive"
-                  title={selected.indexError ?? undefined}
-                >
-                  {selected.indexStage ? `${indexStageLabel(selected.indexStage)}失败` : "索引失败"}
-                  {selected.indexError ? `：${selected.indexError}` : ""}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="shrink-0"
-                  disabled={reindexingIds.has(selected.id)}
-                  onClick={() => void reindexOne(selected)}
-                >
-                  <RefreshCwIcon className={cn(reindexingIds.has(selected.id) && "animate-spin")} />
-                  重试
-                </Button>
+
+            {/* Footer 上传进度 */}
+            {uploading || uploadError ? (
+              <div className="border-t border-sidebar-border p-2 shrink-0">
+                <div className="space-y-1.5 bg-background/40 p-2 rounded-md group-data-[collapsible=icon]/sidebar:hidden">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="truncate">
+                      {uploadError ? uploadError : `正在上传 ${retryFiles.length} 个文件`}
+                    </span>
+                    <span className="shrink-0 tabular-nums">{uploadProgress}%</span>
+                  </div>
+                  <Progress value={uploadProgress} />
+                  {uploading ? (
+                    <Button
+                      className="w-full h-7 text-xs"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => void cancelUpload()}
+                    >
+                      取消上传
+                    </Button>
+                  ) : null}
+                  {uploadError && !uploading ? (
+                    <Button
+                      className="w-full h-7 text-xs"
+                      size="sm"
+                      variant="outline"
+                      onClick={retryUpload}
+                    >
+                      从断点重试
+                    </Button>
+                  ) : null}
+                </div>
               </div>
             ) : null}
-            <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
-              {selected ? (
-                <React.Suspense
-                  fallback={
-                    <div className="flex size-full items-center justify-center text-sm text-muted-foreground">
-                      <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
-                      正在加载预览器
-                    </div>
-                  }
-                >
-                  <LibraryFilePreview
-                    asset={{
-                      ...selected,
-                      url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
-                    }}
-                  />
-                </React.Suspense>
-              ) : (
-                <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <FileTypeIcon className="size-8" name="" />
-                  <p className="text-sm">选择一个文件进行预览</p>
-                </div>
-              )}
-            </div>
           </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </aside>
+
+        {/* 右侧文件预览主区域 */}
+        <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+          <div className="flex h-12 shrink-0 items-center gap-2 bg-muted/40 px-4">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              className="-ml-1"
+              title={directoryOpen ? "收起资料目录" : "展开资料目录"}
+              onClick={() => setDirectoryOpen(!directoryOpen)}
+            >
+              <PanelLeftIcon />
+            </Button>
+            <Separator orientation="vertical" className="mx-1 h-4" />
+            <p className="min-w-0 flex-1 truncate text-sm font-medium">
+              <span className="flex min-w-0 items-center gap-2">
+                {selected ? (
+                  <FileTypeIcon mediaType={selected.mediaType} name={selected.filename} />
+                ) : null}
+                <span className="truncate">{selected?.filename ?? "文件预览"}</span>
+              </span>
+            </p>
+            {selected ? <Badge variant="outline">{statusLabel(selected.status)}</Badge> : null}
+            {selected ? (
+              <a
+                className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                download={selected.filename}
+                href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
+                title="下载文件"
+              >
+                <DownloadIcon className="size-4" />
+              </a>
+            ) : null}
+          </div>
+          {selected?.status === "error" ? (
+            <div className="flex min-w-0 shrink-0 items-center gap-2 bg-destructive/5 px-4 py-2 text-xs">
+              <span
+                className="min-w-0 flex-1 truncate text-destructive"
+                title={selected.indexError ?? undefined}
+              >
+                {selected.indexStage ? `${indexStageLabel(selected.indexStage)}失败` : "索引失败"}
+                {selected.indexError ? `：${selected.indexError}` : ""}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                disabled={reindexingIds.has(selected.id)}
+                onClick={() => void reindexOne(selected)}
+              >
+                <RefreshCwIcon className={cn(reindexingIds.has(selected.id) && "animate-spin")} />
+                重试
+              </Button>
+            </div>
+          ) : null}
+          <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
+            {selected ? (
+              <React.Suspense
+                fallback={
+                  <div className="flex size-full items-center justify-center text-sm text-muted-foreground">
+                    <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
+                    正在加载预览器
+                  </div>
+                }
+              >
+                <LibraryFilePreview
+                  asset={{
+                    ...selected,
+                    url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
+                  }}
+                />
+              </React.Suspense>
+            ) : (
+              <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">
+                <FileTypeIcon className="size-8" name="" />
+                <p className="text-sm">选择一个文件进行预览</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
         <DialogContent>
@@ -1422,6 +1423,6 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
           </CommandList>
         </Command>
       </CommandDialog>
-    </div>
+    </>
   );
 }

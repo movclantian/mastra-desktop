@@ -8,6 +8,6 @@ export {
 export {
   buildDisplayMessages,
   isTransientStreamError,
-  streamErrorMessage,
   STREAM_RECONNECT_LIMIT,
+  streamErrorMessage,
 } from "./display";
