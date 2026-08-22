@@ -1436,5 +1436,279 @@
   color: var(--foreground);
 }
 
+/* ==========================================================================
+   6. 像素渲染与排版度量 —— 补齐官方像素/衬线主题的"神"
+   官方 8bitcn/pixelact 关闭抗锯齿、加大行高、瞬时切换;
+   官方 gymnopedies 用 1.6+ 衬线行高与超大标题; thegridcn HUD 数字等宽。
+   ========================================================================== */
+
+/* 6.1 像素字体关闭抗锯齿(继承属性,crisp edges 是像素感的灵魂) */
+[data-theme-style="8bitcn"],
+[data-theme-style="pixelact"] {
+  -webkit-font-smoothing: none;
+}
+
+/* 6.2 像素主题行高与字距补偿(Silkscreen/VT323 基线偏高,官方 demo 均 1.6+) */
+[data-theme-style="8bitcn"] body,
+[data-theme-style="pixelact"] body {
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+}
+
+/* 6.3 HUD 数字等宽对齐(thegridcn 数据面板) */
+[data-theme-style="thegridcn"] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 6.4 thegridcn HUD 标题字距(Orbitron 需要 tracking 才有仪表感) */
+[data-theme-style="thegridcn"] h1,
+[data-theme-style="thegridcn"] h2,
+[data-theme-style="thegridcn"] h3 {
+  letter-spacing: 0.06em;
+}
+
+/* 6.5 衬线主题行高与标题放大(gymnopedies 官方优雅排版) */
+[data-theme-style="gymnopedies"] body {
+  line-height: 1.65;
+}
+[data-theme-style="gymnopedies"] h1 {
+  font-size: 1.3em;
+}
+[data-theme-style="gymnopedies"] h2 {
+  font-size: 1.2em;
+}
+
+/* ==========================================================================
+   7. 主题专属环境背景层 —— 纯 CSS 纹理(SVG data URI / 渐变)
+   覆盖层置于最顶层但 pointer-events 穿透: CRT 扫描线 / HUD 网格 /
+   像素 dither / 胶片颗粒 / 宣纸噪点, 均为官方 demo 的氛围来源。
+   ========================================================================== */
+
+/* 7.1 环境层公共基座 */
+[data-theme-style="thegridcn"] body::before,
+[data-theme-style="thegridcn"] body::after,
+[data-theme-style="8bitcn"] body::after,
+[data-theme-style="pixelact"] body::after,
+[data-theme-style="usva"] body::after,
+[data-theme-style="gymnopedies"] body::after,
+[data-theme-style="washiveil"] body::after,
+[data-theme-style="motion"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+/* 7.2 thegridcn: HUD 网格 + 静态扫描线(::before) */
+[data-theme-style="thegridcn"] body::before {
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--primary) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--primary) 5%, transparent) 1px, transparent 1px),
+    repeating-linear-gradient(0deg, transparent 0 2px, color-mix(in oklab, var(--primary) 2.5%, transparent) 2px 4px);
+  background-size: 36px 36px, 36px 36px, auto;
+}
+
+/* 7.3 thegridcn: 周期下扫的 HUD 光带(::after) */
+[data-theme-style="thegridcn"] body::after {
+  background-image: linear-gradient(180deg, transparent, color-mix(in oklab, var(--primary) 6%, transparent), transparent);
+  background-size: 100% 18vh;
+  background-repeat: no-repeat;
+  animation: hud-scan 7s linear infinite;
+}
+
+@keyframes hud-scan {
+  from {
+    background-position: 0 -20vh;
+  }
+  to {
+    background-position: 0 100vh;
+  }
+}
+
+/* 7.4 8bitcn: 棋盘 dither 底纹 */
+[data-theme-style="8bitcn"] body::after {
+  background-image: conic-gradient(
+    color-mix(in oklab, var(--foreground) 4%, transparent) 25%,
+    transparent 0 50%,
+    color-mix(in oklab, var(--foreground) 4%, transparent) 0 75%,
+    transparent 0
+  );
+  background-size: 4px 4px;
+}
+
+/* 7.5 pixelact: CRT 横向扫描线 */
+[data-theme-style="pixelact"] body::after {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0 3px,
+    color-mix(in oklab, var(--foreground) 2%, transparent) 3px 4px
+  );
+}
+
+/* 7.6 usva / gymnopedies / washiveil: SVG feTurbulence 胶片颗粒与纸纹 */
+[data-theme-style="usva"] body::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  opacity: 0.035;
+}
+
+[data-theme-style="gymnopedies"] body::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  opacity: 0.05;
+}
+
+[data-theme-style="washiveil"] body::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E");
+  opacity: 0.045;
+}
+
+/* ==========================================================================
+   8. 微交互签名与运动 token —— 官方主题的交互手感
+   8.1-8.3 焦点环/hover 签名; 8.4 每主题家族的过渡时长与缓动(--theme-transition-*);
+   8.5 像素主题瞬时切换(置于 token 应用之后以赢得级联)。
+   ========================================================================== */
+
+/* 8.1 粗野家族焦点环: 实体描边取代柔光环 */
+[data-theme-style="boldkit"] button:focus-visible,
+[data-theme-style="neobrutalism"] button:focus-visible,
+[data-theme-style="retroui"] button:focus-visible,
+[data-theme-style="saaskit"] button:focus-visible,
+[data-theme-style="boldkit"] [data-slot="menu-item"]:focus-visible,
+[data-theme-style="neobrutalism"] [data-slot="menu-item"]:focus-visible,
+[data-theme-style="retroui"] [data-slot="menu-item"]:focus-visible,
+[data-theme-style="saaskit"] [data-slot="menu-item"]:focus-visible,
+[data-theme-style="boldkit"] [data-slot="tabs-trigger"]:focus-visible,
+[data-theme-style="neobrutalism"] [data-slot="tabs-trigger"]:focus-visible,
+[data-theme-style="retroui"] [data-slot="tabs-trigger"]:focus-visible,
+[data-theme-style="saaskit"] [data-slot="tabs-trigger"]:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 2px;
+}
+
+/* 8.2 neobrutalism 官方签名: hover 位移抬升 + 阴影加深 */
+[data-theme-style="neobrutalism"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0px var(--border);
+}
+
+/* 8.3 像素主题官方签名: hover 前景/背景反色 */
+[data-theme-style="8bitcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled),
+[data-theme-style="pixelact"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled) {
+  background-color: var(--foreground);
+  border-color: var(--foreground);
+  color: var(--background);
+}
+
+/* 8.4 运动签名 token: 每个主题家族的过渡时长与缓动曲线 */
+[data-theme-style="boldkit"],
+[data-theme-style="neobrutalism"],
+[data-theme-style="retroui"],
+[data-theme-style="saaskit"] {
+  --theme-transition-duration: 90ms;
+  --theme-transition-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-theme-style="pouf"] {
+  --theme-transition-duration: 240ms;
+  --theme-transition-easing: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+[data-theme-style="glasscn"],
+[data-theme-style="einui"] {
+  --theme-transition-duration: 220ms;
+  --theme-transition-easing: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme-style="sabraman"] {
+  --theme-transition-duration: 160ms;
+  --theme-transition-easing: ease-out;
+}
+
+[data-theme-style="thegridcn"] {
+  --theme-transition-duration: 100ms;
+  --theme-transition-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-theme-style="gymnopedies"] {
+  --theme-transition-duration: 280ms;
+  --theme-transition-easing: ease;
+}
+
+[data-theme-style="atroui"],
+[data-theme-style="usva"] {
+  --theme-transition-duration: 180ms;
+  --theme-transition-easing: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme-style="whiskeyjack"] {
+  --theme-transition-duration: 120ms;
+  --theme-transition-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+[data-theme-style="motion"] {
+  --theme-transition-duration: 300ms;
+  --theme-transition-easing: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* token 应用到交互控件 */
+[data-theme-style] button,
+[data-theme-style] [data-slot="menu-item"],
+[data-theme-style] [data-slot="tabs-trigger"],
+[data-theme-style] [data-slot="accordion-item"],
+[data-theme-style] [data-slot="switch"],
+[data-theme-style] [data-slot="checkbox"],
+[data-theme-style] [data-slot="radio-group-item"] {
+  transition-duration: var(--theme-transition-duration, 150ms);
+  transition-timing-function: var(--theme-transition-easing, ease);
+}
+
+/* 8.5 像素主题瞬时切换(官方 8bitcn 无平滑过渡,一切跳变; 置于 token 之后) */
+[data-theme-style="8bitcn"] button[data-slot="button"],
+[data-theme-style="8bitcn"] [data-slot="menu-item"],
+[data-theme-style="8bitcn"] [data-slot="tabs-trigger"],
+[data-theme-style="8bitcn"] [data-slot="accordion-item"],
+[data-theme-style="8bitcn"] [data-slot="switch"],
+[data-theme-style="8bitcn"] [data-slot="checkbox"],
+[data-theme-style="8bitcn"] [data-slot="radio-group-item"],
+[data-theme-style="pixelact"] button[data-slot="button"],
+[data-theme-style="pixelact"] [data-slot="menu-item"],
+[data-theme-style="pixelact"] [data-slot="tabs-trigger"],
+[data-theme-style="pixelact"] [data-slot="accordion-item"],
+[data-theme-style="pixelact"] [data-slot="switch"],
+[data-theme-style="pixelact"] [data-slot="checkbox"],
+[data-theme-style="pixelact"] [data-slot="radio-group-item"] {
+  transition: none;
+}
+
+/* ==========================================================================
+   9. Motion 动效预设专属 —— 极光渐变环境光 + 弹性运动
+   ========================================================================== */
+
+/* 9.1 极光环境光(浅色低强度) */
+[data-theme-style="motion"] body::after {
+  background-image:
+    radial-gradient(56% 44% at 18% 8%, color-mix(in oklab, var(--primary) 5%, transparent), transparent 70%),
+    radial-gradient(48% 40% at 86% 18%, color-mix(in oklab, var(--accent) 5%, transparent), transparent 70%),
+    radial-gradient(44% 40% at 50% 96%, color-mix(in oklab, var(--secondary) 7%, transparent), transparent 70%);
+  animation: aurora-drift 16s ease-in-out infinite alternate;
+}
+
+/* 9.2 极光环境光(暗色增强,magicui 官方 demo 的深空氛围) */
+.dark[data-theme-style="motion"] body::after {
+  background-image:
+    radial-gradient(56% 44% at 18% 8%, color-mix(in oklab, var(--primary) 12%, transparent), transparent 70%),
+    radial-gradient(48% 40% at 86% 18%, color-mix(in oklab, var(--accent) 12%, transparent), transparent 70%),
+    radial-gradient(44% 40% at 50% 96%, color-mix(in oklab, var(--secondary) 14%, transparent), transparent 70%);
+}
+
+@keyframes aurora-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(2%, -1.5%, 0) scale(1.06);
+  }
+}
+
 
 

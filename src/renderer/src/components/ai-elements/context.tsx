@@ -6,7 +6,8 @@ import { createContext, useContext, useMemo } from "react";
 import { getUsage } from "tokenlens";
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Progress } from "@/components/ui/progress";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { SlidingNumber } from "@/components/ui/sliding-number";
 import { cn } from "@/lib/utils";
 
 const PERCENT_MAX = 100;
@@ -14,6 +15,31 @@ const ICON_RADIUS = 10;
 const ICON_VIEWBOX = 24;
 const ICON_CENTER = 12;
 const ICON_STROKE_WIDTH = 2;
+
+const PERCENT_FORMATTER = new Intl.NumberFormat("en-US", {
+  maximumFractionDigits: 1,
+  style: "percent",
+});
+const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 1,
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+type ContextUsageColor = "teal" | "amber" | "violet";
+
+interface ContextUsageMetric {
+  id: "input" | "output" | "reasoning";
+  label: string;
+  tokens: number;
+  color: ContextUsageColor;
+}
+
+const CONTEXT_USAGE_COLOR_CLASSES: Record<ContextUsageColor, string> = {
+  amber: "bg-amber-400",
+  teal: "bg-teal-500",
+  violet: "bg-violet-500",
+};
 
 type ModelId = string;
 
@@ -36,6 +62,33 @@ const useContextValue = () => {
   return context;
 };
 
+const getUsagePercent = (tokens: number, maxTokens: number) => {
+  if (!Number.isFinite(tokens) || !Number.isFinite(maxTokens) || maxTokens <= 0) return 0;
+  return Math.min(PERCENT_MAX, Math.max(0, (tokens / maxTokens) * PERCENT_MAX));
+};
+
+const formatUsagePercent = (percent: number) => PERCENT_FORMATTER.format(percent / PERCENT_MAX);
+
+const formatCompactTokens = (tokens: number) => COMPACT_NUMBER_FORMATTER.format(tokens);
+
+const getContextUsageMetrics = (usage?: LanguageModelUsage): ContextUsageMetric[] => {
+  if (!usage) return [];
+
+  const outputTokens = Math.max(0, usage.outputTokens ?? 0);
+  const reasoningTokens = Math.min(outputTokens, usage.outputTokenDetails?.reasoningTokens ?? 0);
+
+  return [
+    { color: "teal", id: "input", label: "输入", tokens: usage.inputTokens ?? 0 },
+    {
+      color: "amber",
+      id: "output",
+      label: "输出",
+      tokens: outputTokens - reasoningTokens,
+    },
+    { color: "violet", id: "reasoning", label: "思考", tokens: reasoningTokens },
+  ];
+};
+
 export type ContextProps = ComponentProps<typeof HoverCard> & ContextSchema;
 
 export const Context = ({ usedTokens, maxTokens, usage, modelId, ...props }: ContextProps) => {
@@ -54,7 +107,7 @@ export const Context = ({ usedTokens, maxTokens, usage, modelId, ...props }: Con
 const ContextIcon = () => {
   const { usedTokens, maxTokens } = useContextValue();
   const circumference = 2 * Math.PI * ICON_RADIUS;
-  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
+  const usedPercent = getUsagePercent(usedTokens, maxTokens) / PERCENT_MAX;
   const dashOffset = circumference * (1 - usedPercent);
 
   return (
@@ -96,17 +149,15 @@ export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
-  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
-  const renderedPercent = new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 1,
-    style: "percent",
-  }).format(usedPercent);
+  const percentNumber = getUsagePercent(usedTokens, maxTokens);
 
   return (
     <HoverCardTrigger closeDelay={0} delay={0}>
       {children ?? (
         <Button type="button" variant="ghost" {...props}>
-          <span className="font-medium text-muted-foreground">{renderedPercent}</span>
+          <span className="flex items-center gap-0.5 font-medium tabular-nums text-muted-foreground">
+            <SlidingNumber number={percentNumber} decimalPlaces={1} />%
+          </span>
           <ContextIcon />
         </Button>
       )}
@@ -117,7 +168,10 @@ export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
 export type ContextContentProps = ComponentProps<typeof HoverCardContent>;
 
 export const ContextContent = ({ className, ...props }: ContextContentProps) => (
-  <HoverCardContent className={cn("min-w-60 divide-y overflow-hidden p-0", className)} {...props} />
+  <HoverCardContent
+    className={cn("w-72 min-w-60 max-w-[calc(100vw-2rem)] divide-y overflow-hidden p-0", className)}
+    {...props}
+  />
 );
 
 export type ContextContentHeaderProps = ComponentProps<"div">;
@@ -127,31 +181,47 @@ export const ContextContentHeader = ({
   className,
   ...props
 }: ContextContentHeaderProps) => {
-  const { usedTokens, maxTokens } = useContextValue();
-  const usedPercent = Math.min(1, Math.max(0, usedTokens / maxTokens));
-  const displayPct = new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 1,
-    style: "percent",
-  }).format(usedPercent);
-  const used = new Intl.NumberFormat("en-US", {
-    notation: "compact",
-  }).format(usedTokens);
-  const total = new Intl.NumberFormat("en-US", {
-    notation: "compact",
-  }).format(maxTokens);
+  const { usage, usedTokens, maxTokens } = useContextValue();
+  const metrics = getContextUsageMetrics(usage);
+  const percentNumber = getUsagePercent(usedTokens, maxTokens);
 
   return (
-    <div className={cn("w-full space-y-2 p-3", className)} {...props}>
+    <div className={cn("w-full space-y-2.5 p-3", className)} {...props}>
       {children ?? (
         <>
-          <div className="flex items-center justify-between gap-3 text-xs">
-            <p>{displayPct}</p>
-            <p className="font-mono text-muted-foreground">
-              {used} / {total}
+          <h3 className="text-base font-semibold">上下文用量</h3>
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="flex items-baseline gap-0.5 text-xl font-semibold tabular-nums">
+              <SlidingNumber number={percentNumber} decimalPlaces={1} />
+              <span className="text-sm">%</span>
+            </p>
+            <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+              <span>已使用</span>
+              <span>{formatCompactTokens(usedTokens)}</span>
+              <span>/</span>
+              <span>{formatCompactTokens(maxTokens)}</span>
             </p>
           </div>
-          <div className="space-y-2">
-            <Progress className="bg-muted" value={usedPercent * PERCENT_MAX} />
+          <div
+            aria-label="上下文分类用量"
+            aria-valuemax={PERCENT_MAX}
+            aria-valuemin={0}
+            aria-valuenow={percentNumber}
+            className="flex h-2 w-full gap-px overflow-hidden rounded-sm bg-muted"
+            role="progressbar"
+          >
+            {metrics.map((metric) => {
+              const percent = getUsagePercent(metric.tokens, maxTokens);
+              if (percent <= 0) return null;
+              return (
+                <span
+                  aria-label={`${metric.label} ${formatUsagePercent(percent)}`}
+                  className={cn("h-full shrink-0", CONTEXT_USAGE_COLOR_CLASSES[metric.color])}
+                  key={metric.id}
+                  style={{ width: `${percent}%` }}
+                />
+              );
+            })}
           </div>
         </>
       )}
@@ -162,10 +232,51 @@ export const ContextContentHeader = ({
 export type ContextContentBodyProps = ComponentProps<"div">;
 
 export const ContextContentBody = ({ children, className, ...props }: ContextContentBodyProps) => (
-  <div className={cn("w-full p-3", className)} {...props}>
-    {children}
+  <div className={cn("w-full", className)} {...props}>
+    <ScrollArea className="max-h-[min(32rem,calc(100svh-12rem))]">
+      <div className="w-full space-y-3 p-4">{children}</div>
+    </ScrollArea>
   </div>
 );
+
+export type ContextContentBreakdownProps = ComponentProps<"div">;
+
+export const ContextContentBreakdown = ({ className, ...props }: ContextContentBreakdownProps) => {
+  const { usage, maxTokens } = useContextValue();
+  const metrics = getContextUsageMetrics(usage);
+
+  if (metrics.length === 0) return null;
+
+  return (
+    <div className={cn("w-full space-y-2.5", className)} role="list" {...props}>
+      {metrics.map((metric) => {
+        const percent = getUsagePercent(metric.tokens, maxTokens);
+        return (
+          <div
+            className="flex min-w-0 items-center justify-between gap-3"
+            key={metric.id}
+            role="listitem"
+          >
+            <span className="flex min-w-0 items-center gap-2 text-sm">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "size-2.5 shrink-0 rounded-full",
+                  CONTEXT_USAGE_COLOR_CLASSES[metric.color],
+                )}
+              />
+              <span className="truncate">{metric.label}</span>
+            </span>
+            <span className="flex shrink-0 items-baseline gap-2 font-mono text-xs tabular-nums">
+              <span className="text-muted-foreground">{formatCompactTokens(metric.tokens)}</span>
+              <span className="font-semibold text-foreground">{formatUsagePercent(percent)}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
 
 export type ContextContentFooterProps = ComponentProps<"div">;
 
@@ -203,153 +314,6 @@ export const ContextContentFooter = ({
           <span>{totalCost}</span>
         </>
       )}
-    </div>
-  );
-};
-
-const TokensWithCost = ({ tokens, costText }: { tokens?: number; costText?: string }) => (
-  <span>
-    {tokens === undefined
-      ? "—"
-      : new Intl.NumberFormat("en-US", {
-          notation: "compact",
-        }).format(tokens)}
-    {costText ? <span className="ml-2 text-muted-foreground">• {costText}</span> : null}
-  </span>
-);
-
-export type ContextInputUsageProps = ComponentProps<"div">;
-
-export const ContextInputUsage = ({ className, children, ...props }: ContextInputUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const inputTokens = usage?.inputTokens ?? 0;
-
-  if (children) {
-    return children;
-  }
-
-  if (!inputTokens) {
-    return null;
-  }
-
-  const inputCost = modelId
-    ? getUsage({
-        modelId,
-        usage: { input: inputTokens, output: 0 },
-      }).costUSD?.totalUSD
-    : undefined;
-  const inputCostText = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format(inputCost ?? 0);
-
-  return (
-    <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">输入</span>
-      <TokensWithCost costText={inputCostText} tokens={inputTokens} />
-    </div>
-  );
-};
-
-export type ContextOutputUsageProps = ComponentProps<"div">;
-
-export const ContextOutputUsage = ({ className, children, ...props }: ContextOutputUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const outputTokens = usage?.outputTokens ?? 0;
-
-  if (children) {
-    return children;
-  }
-
-  if (!outputTokens) {
-    return null;
-  }
-
-  const outputCost = modelId
-    ? getUsage({
-        modelId,
-        usage: { input: 0, output: outputTokens },
-      }).costUSD?.totalUSD
-    : undefined;
-  const outputCostText = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format(outputCost ?? 0);
-
-  return (
-    <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">输出</span>
-      <TokensWithCost costText={outputCostText} tokens={outputTokens} />
-    </div>
-  );
-};
-
-export type ContextReasoningUsageProps = ComponentProps<"div">;
-
-export const ContextReasoningUsage = ({
-  className,
-  children,
-  ...props
-}: ContextReasoningUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const reasoningTokens = usage?.outputTokenDetails?.reasoningTokens ?? 0;
-
-  if (children) {
-    return children;
-  }
-
-  if (!reasoningTokens) {
-    return null;
-  }
-
-  const reasoningCost = modelId
-    ? getUsage({
-        modelId,
-        usage: { reasoningTokens },
-      }).costUSD?.totalUSD
-    : undefined;
-  const reasoningCostText = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format(reasoningCost ?? 0);
-
-  return (
-    <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">思考</span>
-      <TokensWithCost costText={reasoningCostText} tokens={reasoningTokens} />
-    </div>
-  );
-};
-
-export type ContextCacheUsageProps = ComponentProps<"div">;
-
-export const ContextCacheUsage = ({ className, children, ...props }: ContextCacheUsageProps) => {
-  const { usage, modelId } = useContextValue();
-  const cacheTokens = usage?.inputTokenDetails?.cacheReadTokens ?? 0;
-
-  if (children) {
-    return children;
-  }
-
-  if (!cacheTokens) {
-    return null;
-  }
-
-  const cacheCost = modelId
-    ? getUsage({
-        modelId,
-        usage: { cacheReads: cacheTokens, input: 0, output: 0 },
-      }).costUSD?.totalUSD
-    : undefined;
-  const cacheCostText = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format(cacheCost ?? 0);
-
-  return (
-    <div className={cn("flex items-center justify-between text-xs", className)} {...props}>
-      <span className="text-muted-foreground">缓存</span>
-      <TokensWithCost costText={cacheCostText} tokens={cacheTokens} />
     </div>
   );
 };

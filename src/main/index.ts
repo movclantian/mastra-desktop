@@ -7,6 +7,7 @@ import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
@@ -609,6 +610,204 @@ function createWindow(): void {
   }
 }
 
+interface DetectedIdeInfo {
+  id: string;
+  name: string;
+  command: string;
+  category: "ide" | "system";
+}
+
+interface IdeCandidate {
+  id: string;
+  name: string;
+  commands: string[];
+  windowsPaths?: string[];
+  macPaths?: string[];
+  linuxPaths?: string[];
+}
+
+const IDE_REGISTRY: IdeCandidate[] = [
+  {
+    id: "trae",
+    name: "TraeCode CN",
+    commands: ["trae", "trae.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "Trae", "Trae.exe"),
+      "D:\\Trae CN\\bin\\trae.cmd",
+      "D:\\Trae CN\\Trae.exe",
+      "C:\\Program Files\\Trae\\Trae.exe",
+    ],
+    macPaths: ["/Applications/Trae.app"],
+  },
+  {
+    id: "vscode",
+    name: "Visual Studio Code",
+    commands: ["code", "code.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "bin", "code.cmd"),
+      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"),
+      "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
+      "D:\\Microsoft VS Code\\bin\\code.cmd",
+    ],
+    macPaths: ["/Applications/Visual Studio Code.app"],
+    linuxPaths: ["/usr/bin/code", "/snap/bin/code"],
+  },
+  {
+    id: "antigravity",
+    name: "Antigravity",
+    commands: ["agy", "agy.cmd", "antigravity", "antigravity.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "agy", "bin", "agy.exe"),
+      join(process.env.LOCALAPPDATA || "", "Programs", "Antigravity", "Antigravity.exe"),
+    ],
+    macPaths: ["/Applications/Antigravity.app", join(homedir(), ".agy", "bin", "agy")],
+  },
+  {
+    id: "cursor",
+    name: "Cursor",
+    commands: ["cursor", "cursor.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "Cursor.exe"),
+      join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "resources", "app", "bin", "cursor.cmd"),
+    ],
+    macPaths: ["/Applications/Cursor.app"],
+  },
+  {
+    id: "windsurf",
+    name: "Windsurf",
+    commands: ["windsurf", "windsurf.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "Windsurf", "Windsurf.exe"),
+      join(process.env.LOCALAPPDATA || "", "Programs", "Windsurf", "bin", "windsurf.cmd"),
+    ],
+    macPaths: ["/Applications/Windsurf.app"],
+  },
+  {
+    id: "vscode-insiders",
+    name: "VS Code Insiders",
+    commands: ["code-insiders", "code-insiders.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code Insiders", "bin", "code-insiders.cmd"),
+    ],
+    macPaths: ["/Applications/Visual Studio Code - Insiders.app"],
+  },
+  {
+    id: "webstorm",
+    name: "WebStorm",
+    commands: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
+    macPaths: ["/Applications/WebStorm.app"],
+  },
+  {
+    id: "idea",
+    name: "IntelliJ IDEA",
+    commands: ["idea", "idea64.exe", "idea.cmd"],
+    macPaths: ["/Applications/IntelliJ IDEA.app", "/Applications/IntelliJ IDEA CE.app"],
+  },
+  {
+    id: "pycharm",
+    name: "PyCharm",
+    commands: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
+    macPaths: ["/Applications/PyCharm.app", "/Applications/PyCharm CE.app"],
+  },
+  {
+    id: "sublime",
+    name: "Sublime Text",
+    commands: ["subl", "sublime_text"],
+    macPaths: ["/Applications/Sublime Text.app"],
+  },
+  {
+    id: "positron",
+    name: "Positron",
+    commands: ["positron", "positron.cmd"],
+    windowsPaths: [
+      join(process.env.LOCALAPPDATA || "", "Programs", "Positron", "Positron.exe"),
+    ],
+    macPaths: ["/Applications/Positron.app"],
+  },
+];
+
+async function isCommandAvailable(command: string): Promise<boolean> {
+  try {
+    const isWin = process.platform === "win32";
+    const lookupTool = isWin ? "where.exe" : "which";
+    await execFileAsync(lookupTool, [command], { timeout: 1500 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPathAvailable(paths: string[] = []): boolean {
+  for (const p of paths) {
+    if (p && existsSync(p)) return true;
+  }
+  return false;
+}
+
+let cachedDetectedIdes: DetectedIdeInfo[] | null = null;
+let lastDetectionTime = 0;
+
+async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIdeInfo[]> {
+  if (!forceRefresh && cachedDetectedIdes && Date.now() - lastDetectionTime < 120_000) {
+    return cachedDetectedIdes;
+  }
+
+  const results: DetectedIdeInfo[] = [];
+
+  await Promise.all(
+    IDE_REGISTRY.map(async (candidate) => {
+      const platformPaths =
+        process.platform === "win32"
+          ? candidate.windowsPaths
+          : process.platform === "darwin"
+          ? candidate.macPaths
+          : candidate.linuxPaths;
+
+      if (isPathAvailable(platformPaths)) {
+        results.push({
+          id: candidate.id,
+          name: candidate.name,
+          command: candidate.commands[0],
+          category: "ide",
+        });
+        return;
+      }
+
+      for (const cmd of candidate.commands) {
+        if (await isCommandAvailable(cmd)) {
+          results.push({
+            id: candidate.id,
+            name: candidate.name,
+            command: cmd,
+            category: "ide",
+          });
+          return;
+        }
+      }
+    }),
+  );
+
+  const orderMap = new Map(IDE_REGISTRY.map((item, idx) => [item.id, idx]));
+  results.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+
+  results.push({
+    id: "terminal",
+    name: "终端",
+    command: "terminal",
+    category: "system",
+  });
+  results.push({
+    id: "explorer",
+    name: "文件资源管理器",
+    command: "explorer",
+    category: "system",
+  });
+
+  cachedDetectedIdes = results;
+  lastDetectionTime = Date.now();
+  return results;
+}
+
 function bootstrap(): void {
   // 提前拉起 Mastra,与 Electron 自身初始化并行;窗口仍要等健康检查通过才创建,
   // 保证"后端就绪 → 前端加载"的顺序。失败在 whenReady 里统一弹窗。
@@ -648,6 +847,74 @@ function bootstrap(): void {
 
     // 打开存储目录(Electron 官方 shell.openPath)
     ipcMain.handle("open-directory", (_event, directory: string) => shell.openPath(directory));
+
+    // 动态检测用户操作系统中实际安装的各类 IDE 与系统工具
+    ipcMain.handle("detect-ides", async () => detectInstalledIdes());
+
+    // 在本地外部 IDE 或系统工具中打开工作区目录
+    ipcMain.handle(
+      "open-in-app",
+      async (_event, payload: { app: string; targetPath: string }) => {
+        const { app: appName, targetPath } = payload || {};
+        if (!targetPath) return { ok: false, error: "未指定工作区路径" };
+
+        try {
+          if (appName === "explorer") {
+            await shell.openPath(targetPath);
+            return { ok: true };
+          }
+
+          if (appName === "terminal") {
+            if (process.platform === "win32") {
+              const child = spawn("cmd.exe", ["/c", "start", "wt.exe", "-d", targetPath], {
+                detached: true,
+                stdio: "ignore",
+                shell: true,
+              });
+              child.on("error", () => {
+                spawn("cmd.exe", ["/c", "start", "cmd.exe", "/K", `cd /d "${targetPath}"`], {
+                  detached: true,
+                  stdio: "ignore",
+                  shell: true,
+                });
+              });
+            } else if (process.platform === "darwin") {
+              spawn("open", ["-a", "Terminal", targetPath], { detached: true, stdio: "ignore" });
+            } else {
+              spawn("x-terminal-emulator", [], { cwd: targetPath, detached: true, stdio: "ignore" });
+            }
+            return { ok: true };
+          }
+
+          // IDE 映射表
+          const ideCommands: Record<string, string[]> = {
+            trae: ["trae", "trae.cmd"],
+            vscode: ["code", "code.cmd"],
+            antigravity: ["antigravity", "antigravity.cmd", "agy", "agy.cmd"],
+            cursor: ["cursor", "cursor.cmd"],
+            windsurf: ["windsurf", "windsurf.cmd"],
+            "vscode-insiders": ["code-insiders", "code-insiders.cmd"],
+            webstorm: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
+            idea: ["idea", "idea64.exe", "idea.cmd"],
+            pycharm: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
+            sublime: ["subl", "sublime_text"],
+            positron: ["positron", "positron.cmd"],
+          };
+
+          const candidates = ideCommands[appName] || [appName];
+          const cmd = candidates[0];
+          const child = spawn(cmd, [targetPath], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+          });
+          child.unref();
+          return { ok: true };
+        } catch (error: any) {
+          return { ok: false, error: error?.message || "启动应用失败" };
+        }
+      },
+    );
 
     ipcMain.handle("open-external", async (_event, value: string) => {
       let url: URL;

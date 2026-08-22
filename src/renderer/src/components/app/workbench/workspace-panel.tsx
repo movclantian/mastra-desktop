@@ -13,10 +13,13 @@ import {
   BotIcon,
   ExternalLinkIcon,
   FileCode2Icon,
+  FilePlus2Icon,
   FolderTreeIcon,
+  FolderPlusIcon,
   Globe2Icon,
   ListTodoIcon,
   LoaderCircleIcon,
+  MoreHorizontalIcon,
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -48,8 +51,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { toastError } from "@/lib/errors";
@@ -215,21 +228,39 @@ function FilesWorkspace({ active }: { active: boolean }) {
   }>();
   const [draft, setDraft] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [treeLoading, setTreeLoading] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
+  const [createKind, setCreateKind] = React.useState<"file" | "dir">();
+  const [createName, setCreateName] = React.useState("");
   const loadedPathsRef = React.useRef(new Set<string>());
   const dirty = file ? draft !== file.content : false;
 
-  React.useEffect(() => {
+  const allEntries = React.useMemo(
+    () => [entries, ...Object.values(childrenByPath)].flat(),
+    [childrenByPath, entries],
+  );
+
+  const refreshTree = React.useCallback(async () => {
+    if (!activeThreadId) return;
+    setTreeLoading(true);
+    loadedPathsRef.current = new Set();
     setEntries([]);
     setChildrenByPath({});
     setExpanded(new Set());
     setSelectedPath(undefined);
+    try {
+      setEntries(await fetchTreeEntries(activeThreadId));
+    } finally {
+      setTreeLoading(false);
+    }
+  }, [activeThreadId, fetchTreeEntries]);
+
+  React.useEffect(() => {
+    setSelectedPath(undefined);
     setFile(undefined);
     setDraft("");
-    loadedPathsRef.current = new Set();
-    if (!activeThreadId || activeThread?.metadata.workspaceExplicit !== true) return;
-    void fetchTreeEntries(activeThreadId).then(setEntries);
-  }, [activeThread?.metadata.workspaceExplicit, activeThreadId, fetchTreeEntries]);
+    void refreshTree();
+  }, [refreshTree]);
 
   // 编辑器状态 → editor state lane:模型据此知道用户正在看哪个文件、有没有
   // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)。
@@ -276,11 +307,11 @@ function FilesWorkspace({ active }: { active: boolean }) {
 
   const selectFile = React.useCallback(
     (path: string) => {
-      const allEntries = [entries, ...Object.values(childrenByPath)].flat();
-      if (allEntries.find((entry) => entry.path === path)?.type === "dir") return;
+      const selectedEntry = allEntries.find((entry) => entry.path === path);
+      setSelectedPath(path);
+      if (selectedEntry?.type === "dir") return;
       if (dirty && !window.confirm("当前文件有未保存更改，是否放弃并打开其他文件？")) return;
       if (!activeThreadId) return;
-      setSelectedPath(path);
       setLoading(true);
       fetch(
         `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/file?resourceId=${encodeURIComponent(user.id)}&path=${encodeURIComponent(path)}`,
@@ -300,8 +331,59 @@ function FilesWorkspace({ active }: { active: boolean }) {
         .catch((error) => toastError(error, "文件读取失败"))
         .finally(() => setLoading(false));
     },
-    [activeThreadId, childrenByPath, dirty, entries, user.id],
+    [activeThreadId, allEntries, dirty, user.id],
   );
+
+  const createDirectory = React.useMemo(() => {
+    if (!selectedPath) return "";
+    const selectedEntry = allEntries.find((entry) => entry.path === selectedPath);
+    if (selectedEntry?.type === "dir") return selectedEntry.path;
+    return selectedPath.includes("/") ? selectedPath.slice(0, selectedPath.lastIndexOf("/")) : "";
+  }, [allEntries, selectedPath]);
+
+  const createEntry = React.useCallback(async () => {
+    const name = createName.trim();
+    if (!createKind || !activeThreadId || !name) return;
+    if (name.includes("/") || name.includes("\\")) {
+      toast.error("名称不能包含路径分隔符");
+      return;
+    }
+    const path = createDirectory ? `${createDirectory}/${name}` : name;
+    try {
+      const response = await fetch(
+        `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/tree?resourceId=${encodeURIComponent(user.id)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, type: createKind }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string; message?: string };
+      if (!response.ok) throw new Error(payload.error || payload.message || "创建失败");
+      toast.success(createKind === "dir" ? `已创建文件夹 ${name}` : `已创建文件 ${name}`);
+      setCreateKind(undefined);
+      setCreateName("");
+      await refreshTree();
+      if (createDirectory) {
+        const directoryParts = createDirectory.split("/");
+        const directories = directoryParts.map((_, index) =>
+          directoryParts.slice(0, index + 1).join("/"),
+        );
+        setExpanded(new Set(directories));
+        for (const directory of directories) loadDirectory(directory);
+      }
+    } catch (error) {
+      toastError(error, createKind === "dir" ? "新建文件夹失败" : "添加文件失败");
+    }
+  }, [
+    activeThreadId,
+    createDirectory,
+    createKind,
+    createName,
+    loadDirectory,
+    refreshTree,
+    user.id,
+  ]);
 
   const saveFile = React.useCallback(async (): Promise<boolean> => {
     if (!activeThreadId || !file || !dirty || saving) return false;
@@ -334,131 +416,194 @@ function FilesWorkspace({ active }: { active: boolean }) {
     requestTerminalCommand({ filePath: file.path });
   }, [activeThreadId, dirty, file, requestTerminalCommand, saveFile, saving]);
 
-  if (activeThread?.metadata.workspaceExplicit !== true) {
-    if (!activeThread) {
-      return (
-        <Empty className="h-full">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <FolderTreeIcon />
-            </EmptyMedia>
-            <EmptyTitle>尚未选择会话</EmptyTitle>
-            <EmptyDescription>选择或创建一个会话后,这里会显示它的工作区。</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      );
-    }
-    const hasImplicitWorkspace = Boolean(activeThread?.metadata.workspacePath);
+  if (!activeThread) {
     return (
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <FolderTreeIcon />
           </EmptyMedia>
-          <EmptyTitle>
-            {hasImplicitWorkspace ? "当前为 Agent 默认工作区" : "未绑定可浏览工作区"}
-          </EmptyTitle>
-          <EmptyDescription>
-            {hasImplicitWorkspace
-              ? "当前会话可使用默认工作目录执行任务,但未选择本地目录,因此不展示文件树。"
-              : "发送首条消息前,在输入框上方选择一个本地目录即可浏览和编辑文件。"}
-          </EmptyDescription>
+          <EmptyTitle>尚未选择会话</EmptyTitle>
+          <EmptyDescription>选择或创建一个会话后,这里会显示它的工作区。</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
   }
 
   return (
-    <ResizablePanelGroup className="min-h-0" orientation="horizontal">
-      <ResizablePanel defaultSize="72%" minSize="42%">
-        <PanelSurface>
-          <PanelHeader className="gap-2 px-3">
-            {file ? (
-              <FileTypeIcon name={file.name} />
-            ) : (
-              <FileCode2Icon className="size-4 text-muted-foreground" />
-            )}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium" title={file?.path}>
-              {file?.path ?? "未打开文件"}
-            </span>
-            {dirty ? <span className="size-2 rounded-full bg-amber-500" title="未保存" /> : null}
-            {file && RUNNABLE_FILE.test(file.path) ? (
+    <>
+      <ResizablePanelGroup className="min-h-0" orientation="horizontal">
+        <ResizablePanel defaultSize="72%" minSize="42%">
+          <PanelSurface>
+            <PanelHeader className="gap-2 px-3">
+              {file ? (
+                <FileTypeIcon name={file.name} />
+              ) : (
+                <FileCode2Icon className="size-4 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-xs font-medium" title={file?.path}>
+                {file?.path ?? "未打开文件"}
+              </span>
+              {dirty ? <span className="size-2 rounded-full bg-amber-500" title="未保存" /> : null}
+              {file && RUNNABLE_FILE.test(file.path) ? (
+                <Button
+                  aria-label="运行当前文件"
+                  disabled={saving}
+                  onClick={() => void runFile()}
+                  size="icon-sm"
+                  title={dirty ? "保存并运行当前文件" : "运行当前文件"}
+                  variant="ghost"
+                >
+                  <PlayIcon />
+                </Button>
+              ) : null}
               <Button
-                aria-label="运行当前文件"
-                disabled={saving}
-                onClick={() => void runFile()}
+                aria-label="保存文件"
+                disabled={!dirty || saving}
+                onClick={() => void saveFile()}
                 size="icon-sm"
-                title={dirty ? "保存并运行当前文件" : "运行当前文件"}
+                title="保存文件 (Ctrl+S)"
                 variant="ghost"
               >
-                <PlayIcon />
+                {saving ? <LoaderCircleIcon className="animate-spin" /> : <SaveIcon />}
               </Button>
-            ) : null}
-            <Button
-              aria-label="保存文件"
-              disabled={!dirty || saving}
-              onClick={() => void saveFile()}
-              size="icon-sm"
-              title="保存文件 (Ctrl+S)"
-              variant="ghost"
-            >
-              {saving ? <LoaderCircleIcon className="animate-spin" /> : <SaveIcon />}
+            </PanelHeader>
+            <div className="min-h-0 flex-1 overflow-hidden">
+              {loading ? (
+                <div className="flex size-full items-center justify-center text-muted-foreground">
+                  <LoaderCircleIcon className="size-5 animate-spin" />
+                </div>
+              ) : file ? (
+                <CodeEditor
+                  key={file.path}
+                  onChange={setDraft}
+                  onSave={() => void saveFile()}
+                  path={file.path}
+                  value={draft}
+                />
+              ) : (
+                <Empty className="h-full">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <FileCode2Icon />
+                    </EmptyMedia>
+                    <EmptyTitle>尚未打开文件</EmptyTitle>
+                  </EmptyHeader>
+                </Empty>
+              )}
+            </div>
+          </PanelSurface>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize="28%" minSize="22%" maxSize="46%">
+          <aside className="flex size-full min-w-0 flex-col bg-muted/20">
+            <PanelHeader className="bg-muted/60 px-3 text-xs font-medium">
+              <FolderTreeIcon className="size-4 text-muted-foreground" />
+              <span className="min-w-0 flex-1 truncate" title={activeThread.metadata.workspacePath}>
+                {activeThread.metadata.workspacePath
+                  ?.replaceAll("\\", "/")
+                  .split("/")
+                  .filter(Boolean)
+                  .at(-1)}
+              </span>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      aria-label="文件管理操作"
+                      className="size-7 shrink-0"
+                      size="icon-sm"
+                      title="文件管理操作"
+                      variant="ghost"
+                    />
+                  }
+                >
+                  <MoreHorizontalIcon />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setCreateKind("file");
+                      setCreateName("");
+                    }}
+                  >
+                    <FilePlus2Icon />
+                    添加文件
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setCreateKind("dir");
+                      setCreateName("");
+                    }}
+                  >
+                    <FolderPlusIcon />
+                    新建文件夹
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => void refreshTree()}>
+                    <RefreshCwIcon className={cn(treeLoading && "animate-spin")} />
+                    刷新
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </PanelHeader>
+            <ScrollArea className="min-h-0 flex-1">
+              <FileTree
+                className="min-w-max rounded-none border-0 bg-transparent text-xs"
+                expanded={expanded}
+                onExpandedChange={handleExpandedChange}
+                onSelect={selectFile}
+                selectedPath={selectedPath}
+              >
+                {treeLoading ? (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">正在读取目录…</p>
+                ) : entries.length === 0 ? (
+                  <p className="px-2 py-2 text-xs text-muted-foreground">空目录</p>
+                ) : (
+                  <TreeRows childrenByPath={childrenByPath} entries={entries} />
+                )}
+              </FileTree>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </aside>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreateKind(undefined);
+            setCreateName("");
+          }
+        }}
+        open={createKind !== undefined}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{createKind === "dir" ? "新建文件夹" : "添加文件"}</DialogTitle>
+            <DialogDescription>
+              将在 {createDirectory ? `“${createDirectory}”` : "项目根目录"} 中创建。
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            onChange={(event) => setCreateName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void createEntry();
+            }}
+            placeholder={createKind === "dir" ? "文件夹名称" : "文件名,例如 README.md"}
+            value={createName}
+          />
+          <DialogFooter>
+            <Button onClick={() => setCreateKind(undefined)} variant="outline">
+              取消
             </Button>
-          </PanelHeader>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {loading ? (
-              <div className="flex size-full items-center justify-center text-muted-foreground">
-                <LoaderCircleIcon className="size-5 animate-spin" />
-              </div>
-            ) : file ? (
-              <CodeEditor
-                key={file.path}
-                onChange={setDraft}
-                onSave={() => void saveFile()}
-                path={file.path}
-                value={draft}
-              />
-            ) : (
-              <Empty className="h-full">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <FileCode2Icon />
-                  </EmptyMedia>
-                  <EmptyTitle>尚未打开文件</EmptyTitle>
-                </EmptyHeader>
-              </Empty>
-            )}
-          </div>
-        </PanelSurface>
-      </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize="28%" minSize="22%" maxSize="46%">
-        <aside className="flex size-full min-w-0 flex-col bg-muted/20">
-          <PanelHeader className="bg-muted/60 px-3 text-xs font-medium">
-            <FolderTreeIcon className="size-4 text-muted-foreground" />
-            <span className="truncate" title={activeThread.metadata.workspacePath}>
-              {activeThread.metadata.workspacePath
-                ?.replaceAll("\\", "/")
-                .split("/")
-                .filter(Boolean)
-                .at(-1)}
-            </span>
-          </PanelHeader>
-          <ScrollArea className="min-h-0 flex-1">
-            <FileTree
-              className="min-w-max rounded-none border-0 bg-transparent text-xs"
-              expanded={expanded}
-              onExpandedChange={handleExpandedChange}
-              onSelect={selectFile}
-              selectedPath={selectedPath}
-            >
-              <TreeRows childrenByPath={childrenByPath} entries={entries} />
-            </FileTree>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        </aside>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+            <Button disabled={!createName.trim()} onClick={() => void createEntry()}>
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1021,8 +1166,7 @@ export default function WorkspacePanel() {
             );
           })}
           {state.tabs.map((tab, index) => {
-            const isSelected =
-              activePanelTab.kind === "browser" && activePanelTab.index === index;
+            const isSelected = activePanelTab.kind === "browser" && activePanelTab.index === index;
             return (
               <div
                 className="group relative flex h-7 shrink-0 items-center"

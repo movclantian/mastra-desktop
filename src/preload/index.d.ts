@@ -6,6 +6,12 @@ declare global {
     electron: ElectronAPI;
     api: {
       openDirectory: (directory: string) => Promise<string>;
+      /** 动态检测用户系统中已安装的各类本地 IDE 与系统工具 */
+      detectIdes: () => Promise<
+        Array<{ id: string; name: string; command: string; category: "ide" | "system" }>
+      >;
+      /** 打开本地外部 IDE 或系统工具(TraeCode, VS Code, Antigravity, 终端, 资源管理器)并定位到工作区 */
+      openInApp: (app: string, targetPath: string) => Promise<{ ok: boolean; error?: string }>;
       /** 使用操作系统默认浏览器打开 HTTP(S) URL。 */
       openExternal: (url: string) => Promise<void>;
       /** 打开系统目录选择器;用户取消时返回空串 */

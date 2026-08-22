@@ -2,14 +2,11 @@ import type { LanguageModelUsage } from "ai";
 import { InfoIcon, SparklesIcon } from "lucide-react";
 import {
   Context,
-  ContextCacheUsage,
   ContextContent,
   ContextContentBody,
+  ContextContentBreakdown,
   ContextContentFooter,
   ContextContentHeader,
-  ContextInputUsage,
-  ContextOutputUsage,
-  ContextReasoningUsage,
   ContextTrigger,
 } from "@/components/ai-elements/context";
 import { Button } from "@/components/ui/button";
@@ -84,13 +81,9 @@ export function ChatContextUsage({
     return null;
   }
 
-  const usedTokens =
-    usage?.inputTokens && usage.inputTokens > 0
-      ? usage.inputTokens
-      : Math.max(
-          estimatedUsedTokens ?? 0,
-          usage?.totalTokens ?? (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0),
-        );
+  const reportedTokens =
+    usage?.totalTokens ?? (usage?.inputTokens ?? 0) + (usage?.outputTokens ?? 0);
+  const usedTokens = Math.max(estimatedUsedTokens ?? 0, reportedTokens);
   const maxTokens = getModelContextWindow(selectedProvider, modelSelection.modelId, catalog);
   if (!maxTokens) {
     return <ContextUnavailable catalogStatus={catalogStatus} />;
@@ -111,10 +104,7 @@ export function ChatContextUsage({
         <ContextContent>
           <ContextContentHeader />
           <ContextContentBody>
-            <ContextInputUsage />
-            <ContextOutputUsage />
-            <ContextReasoningUsage />
-            <ContextCacheUsage />
+            <ContextContentBreakdown />
             {/* 手动压缩上下文(summarizeConversation.mdx / summarizeThread.mdx)。
                 进行中/完成状态由消息流尾部 Marker 展示(marker-status / marker-shimmer)。 */}
             {activeThreadId ? (

@@ -2,6 +2,8 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ChevronRightIcon,
+  FolderOpenIcon,
+  FolderTreeIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -10,8 +12,8 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import * as React from "react";
-import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
-import { FileTypeIcon, FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
+import { FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
+import { openPathInApp } from "@/components/ai-elements/open-in-chat";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -31,13 +33,11 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { dirName, type TreeEntry, useWorkbench, type WorkThread } from "@/lib/workbench";
+import { dirName, useWorkbench, type WorkThread } from "@/lib/workbench";
 import { cn } from "@/lib/utils";
 
-// 侧栏「任务列表」分组:直接线程平铺 + 显式绑定目录作为可折叠文件夹
-// (docs/examples/base/sidebar-menu-collapsible.tsx 的 Collapsible +
-//  SidebarMenuSub 写法);工作区文件夹内含同目录会话与文件树懒加载
-// (Harness session 概念:目录在首条消息时锁定,不可中途更换)
+// 侧栏「任务列表」分组:直接线程平铺 + 显式绑定目录作为可折叠文件夹。
+// 工作区文件统一从线程菜单进入右侧文件管理器,避免在任务列表中重复展开。
 
 export function sortThreads(threads: WorkThread[]): WorkThread[] {
   return [...threads].sort((a, b) => {
@@ -58,7 +58,15 @@ function ThreadActionMenu({
   sub?: boolean;
 }) {
   const { isMobile } = useSidebar();
-  const { pinThread, archiveThread, deleteThread } = useWorkbench();
+  const {
+    activeThreadId,
+    archiveThread,
+    deleteThread,
+    openWorkspacePanel,
+    pinThread,
+    setActiveThreadId,
+  } = useWorkbench();
+  const workspacePath = thread.metadata.workspacePath;
 
   return (
     <DropdownMenu>
@@ -90,6 +98,25 @@ function ThreadActionMenu({
           )}
           <span>{thread.metadata.pinned ? "取消置顶" : "置顶"}</span>
         </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!workspacePath}
+          onClick={() => {
+            if (workspacePath) void openPathInApp("explorer", workspacePath, "文件资源管理器");
+          }}
+        >
+          <FolderOpenIcon className="text-muted-foreground" />
+          <span>在资源管理器打开</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => {
+            if (activeThreadId !== thread.id) setActiveThreadId(thread.id);
+            openWorkspacePanel("files");
+          }}
+        >
+          <FolderTreeIcon className="text-muted-foreground" />
+          <span>文件管理</span>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => onRename(thread)}>
           <PencilIcon className="text-muted-foreground" />
           <span>重命名</span>
@@ -166,96 +193,6 @@ function WorkspaceThreadItem({
   );
 }
 
-// ---------------------------------------------------------------------------
-// 工作区文件树:经 GET /work/threads/:id/tree 按需逐层懒加载
-// (组件位于 CollapsibleContent 内,展开工作区文件夹时才挂载并拉取根目录)
-// ---------------------------------------------------------------------------
-
-function TreeEntryNode({
-  entry,
-  entriesByDir,
-}: {
-  entry: TreeEntry;
-  entriesByDir: Map<string, TreeEntry[]>;
-}) {
-  if (entry.type === "dir") {
-    const children = entriesByDir.get(entry.path);
-    return (
-      <FileTreeFolder
-        icon={<FolderTypeIcon name={entry.name} />}
-        name={entry.name}
-        openIcon={<FolderTypeIcon name={entry.name} open />}
-        path={entry.path}
-      >
-        {children === undefined ? (
-          <p className="px-2 py-1 text-xs text-muted-foreground">加载…</p>
-        ) : (
-          children.map((child) => (
-            <TreeEntryNode key={child.path} entriesByDir={entriesByDir} entry={child} />
-          ))
-        )}
-      </FileTreeFolder>
-    );
-  }
-  return (
-    <FileTreeFile icon={<FileTypeIcon name={entry.name} />} name={entry.name} path={entry.path} />
-  );
-}
-
-function ThreadWorkspaceTree({ threadId }: { threadId: string }) {
-  const { fetchTreeEntries } = useWorkbench();
-  const [expanded, setExpanded] = React.useState<Set<string>>(() => new Set());
-  const [entriesByDir, setEntriesByDir] = React.useState<Map<string, TreeEntry[]>>(() => new Map());
-
-  const loadDir = React.useCallback(
-    async (dir: string) => {
-      const entries = await fetchTreeEntries(threadId, dir === "" ? undefined : dir);
-      setEntriesByDir((current) => {
-        if (current.has(dir)) return current;
-        const next = new Map(current);
-        next.set(dir, entries);
-        return next;
-      });
-    },
-    [fetchTreeEntries, threadId],
-  );
-
-  React.useEffect(() => {
-    void loadDir("");
-  }, [loadDir]);
-
-  // 展开目录时按需拉取该层条目(空串 = 工作区根)
-  const handleExpandedChange = React.useCallback(
-    (next: Set<string>) => {
-      setExpanded(next);
-      for (const path of next) {
-        if (!entriesByDir.has(path)) void loadDir(path);
-      }
-    },
-    [entriesByDir, loadDir],
-  );
-
-  const rootEntries = entriesByDir.get("");
-
-  return (
-    <FileTree
-      className="border-none bg-transparent font-sans text-xs"
-      expanded={expanded}
-      onExpandedChange={handleExpandedChange}
-    >
-      {rootEntries === undefined ? (
-        <p className="px-2 py-1 text-xs text-muted-foreground">加载目录…</p>
-      ) : rootEntries.length === 0 ? (
-        <p className="px-2 py-1 text-xs text-muted-foreground">空目录</p>
-      ) : (
-        rootEntries.map((entry) => (
-          <TreeEntryNode key={entry.path} entriesByDir={entriesByDir} entry={entry} />
-        ))
-      )}
-    </FileTree>
-  );
-}
-
 /** 显式绑定目录 = 任务列表内的可折叠文件夹:同目录会话 + 工作区文件树 */
 export function WorkspaceGroup({
   path,
@@ -268,8 +205,6 @@ export function WorkspaceGroup({
 }) {
   const sorted = sortThreads(threads);
   const [open, setOpen] = React.useState(false);
-  // 文件树按线程查目录(路由从 thread.metadata.workspacePath 解析),组内任一线程均可
-  const treeThreadId = sorted[0]?.id;
   return (
     <Collapsible className="group/collapsible" onOpenChange={setOpen} open={open}>
       <SidebarMenuItem>
@@ -291,14 +226,6 @@ export function WorkspaceGroup({
             {sorted.map((thread) => (
               <WorkspaceThreadItem key={thread.id} thread={thread} onRename={onRename} />
             ))}
-            {treeThreadId ? (
-              <SidebarMenuSubItem>
-                <p className="px-2 pb-1 text-[10px] font-medium text-muted-foreground">
-                  工作区目录
-                </p>
-                <ThreadWorkspaceTree threadId={treeThreadId} />
-              </SidebarMenuSubItem>
-            ) : null}
           </SidebarMenuSub>
         </CollapsibleContent>
       </SidebarMenuItem>

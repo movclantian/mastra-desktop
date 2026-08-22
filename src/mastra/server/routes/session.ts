@@ -99,9 +99,14 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   if (!thread) {
     throw workError("THREAD_NOT_FOUND");
   }
-  const session = workSessionHost.getOrCreate({ resourceId, scope, threadId });
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const profile = await getAgentProfile(metadata.agentProfileId);
+  const session = workSessionHost.getOrCreate({
+    resourceId,
+    scope,
+    threadId,
+    agent: c.get("mastra").getAgentById(profile.id),
+  });
   const mode = resolveMode(metadata.modeId);
   session.setMode(mode.id);
   const requestContext = c.get("requestContext");
@@ -140,9 +145,12 @@ async function sessionExecutionOptions(
 ): Promise<AgentExecutionOptions> {
   const requestContext = c.get("requestContext");
   const profile = await getAgentProfile(
-    typeof body.agentProfileId === "string" ? body.agentProfileId : undefined,
+    typeof body.agentProfileId === "string"
+      ? body.agentProfileId
+      : ((result.thread.metadata as ThreadMetadata | undefined)?.agentProfileId ?? undefined),
   );
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
+  result.session.setAgent(c.get("mastra").getAgentById(profile.id));
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(
@@ -197,21 +205,23 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     threadId: result.threadId,
     type: TASK_STATE_TYPE,
   });
-  const agent = c.get("mastra").getAgentById("mastra-work-agent");
+  const metadata = (result.thread.metadata ?? {}) as ThreadMetadata;
+  const profile = await getAgentProfile(metadata.agentProfileId);
+  const agent = c.get("mastra").getAgentById(profile.id);
   const { runs } = await agent.listSuspendedRuns({
     threadId: result.threadId,
     resourceId: result.resourceId,
   });
-  const metadata = (result.thread.metadata ?? {}) as {
+  const policyMetadata = (result.thread.metadata ?? {}) as {
     modeId?: string;
     permissionRules?: unknown;
   };
   const rules = applyModeToRules(
-    applySessionGrants(parsePermissionRules(metadata.permissionRules), {
+    applySessionGrants(parsePermissionRules(policyMetadata.permissionRules), {
       ...result.session.getGrants(),
       yolo: result.session.getState().yolo === true,
     }),
-    resolveMode(metadata.modeId),
+    resolveMode(policyMetadata.modeId),
   );
   return {
     ...displayState,

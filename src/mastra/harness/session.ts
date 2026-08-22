@@ -101,7 +101,7 @@ export class WorkSession {
   private grants: WorkSessionGrants = { categories: [], tools: [] };
   private state: WorkSessionState = {};
   private executionDefaults: AgentExecutionOptions = {};
-  private readonly agent: Agent;
+  private agent: Agent;
   private readonly subscriptions = new Map<AgentThreadSubscription, string>();
   private readonly followUps: QueuedFollowUp[] = [];
   private readonly followUpTargets = new Map<string, QueuedFollowUp>();
@@ -131,6 +131,12 @@ export class WorkSession {
     if (this.currentThreadId === threadId) return;
     this.abort();
     this.currentThreadId = threadId;
+  }
+
+  setAgent(agent: Agent): void {
+    if (this.agent === agent) return;
+    this.abort();
+    this.agent = agent;
   }
 
   setMode(modeId: string): void {
@@ -462,11 +468,17 @@ export class WorkSession {
 class WorkSessionHost {
   private readonly sessions = new Map<string, WorkSession>();
 
-  getOrCreate(options: { resourceId: string; scope?: string; threadId: string }): WorkSession {
+  getOrCreate(options: {
+    resourceId: string;
+    scope?: string;
+    threadId: string;
+    agent?: Agent;
+  }): WorkSession {
     const key = `${options.resourceId}:${options.scope ?? SESSION_SCOPE_DEFAULT}`;
     const existing = this.sessions.get(key);
     if (existing) {
       existing.setThreadId(options.threadId);
+      if (options.agent) existing.setAgent(options.agent);
       return existing;
     }
     const session = new WorkSession({
@@ -474,6 +486,7 @@ class WorkSessionHost {
       resourceId: options.resourceId,
       scope: options.scope,
       threadId: options.threadId,
+      ...(options.agent ? { agent: options.agent } : {}),
     });
     this.sessions.set(key, session);
     return session;

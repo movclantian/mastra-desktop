@@ -28,6 +28,7 @@ import {
   updateThreadRoute,
 } from "./threads";
 import { getWorkingMemoryRoute, updateWorkingMemoryRoute } from "./working-memory";
+import { generateThreadTitleRoute, generateThreadTitleHelper } from "./title";
 
 export const threadRoutes = [
   listThreadsRoute,
@@ -46,7 +47,9 @@ export const threadRoutes = [
   updateObservationalMemoryConfigRoute,
   summarizeThreadRoute,
   searchMessagesRoute,
+  generateThreadTitleRoute,
 ];
 
 export { getWorkMemory } from "./shared";
+export { generateThreadTitleHelper } from "./title";
 export type { ThreadMetadata } from "./types";

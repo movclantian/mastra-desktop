@@ -40,7 +40,6 @@ import { Input } from "@/components/ui/input";
 import { MagicCard } from "@/components/ui/magic-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";

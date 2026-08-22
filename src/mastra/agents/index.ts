@@ -6,6 +6,7 @@
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
 import { Agent, type DelegationConfig, type ToolsInput } from "@mastra/core/agent";
+import type { AnyWorkflow } from "@mastra/core/workflows";
 import { TaskSignalProvider } from "@mastra/core/signals";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { notificationInboxTool, setDefaultWorkAgent, workWebhookSignals } from "../harness";
@@ -68,9 +69,13 @@ import { workSubagents } from "./subagents";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
+  type AgentMemberDefinition,
+  type AgentProfile,
   getAgentProfile,
-  profileInstructions,
+  resolveManagedSkillPaths,
   resolveProfileMembers,
+  getRegisteredProfileWorkflow,
+  setProfileAgentFactories,
 } from "./custom";
 
 export { workBrowser } from "./browser";
@@ -155,157 +160,221 @@ const WORK_DELEGATION: DelegationConfig = {
 
 export const SKILL_NAMES_CONTEXT_KEY = "mastra-work:selected-skills";
 
-export const mastraWorkAgent = new Agent({
-  id: "mastra-work-agent",
-  name: "MastraWork",
-  instructions: async ({ requestContext }) => {
-    const { mode, rules } = resolveSessionPolicy(
-      requestContext?.get(MODE_ID_CONTEXT_KEY),
-      requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-      requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-    );
-    const selection = parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY));
-    const instructions = [
-      BASE_INSTRUCTIONS,
-      ...(isCodeModeAvailable(rules) ? [codeMode.instructions] : []),
-      mode.instructions,
-    ];
-    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
-    instructions.push(...(await profileInstructions(profile)));
-    if (selection) {
-      const tools = await resolveWebSearchTools(
-        selection,
-        requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+function createWorkAgent(fixedProfile?: AgentProfile, member?: AgentMemberDefinition): Agent {
+  return new Agent({
+    id: member ? `${fixedProfile?.id}--${member.id}` : (fixedProfile?.id ?? "mastra-work-agent"),
+    name: member?.name ?? fixedProfile?.displayName ?? "MastraWork",
+    ...(member ? { description: member.description || member.profession } : {}),
+    instructions: async ({ requestContext }) => {
+      const { mode, rules } = resolveSessionPolicy(
+        requestContext?.get(MODE_ID_CONTEXT_KEY),
+        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
+        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
       );
-      const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
-      instructions.push(webSearchInstructions(selection, searchAvailable));
-    }
-    const libraryContext = requestContext?.get(LIBRARY_SEARCH_CONTEXT_KEY);
-    if (typeof libraryContext === "string" && libraryContext) {
-      instructions.push(
-        `Use the following library context when it is relevant. Cite library sources with standard GFM footnotes using the supplied [^library-n] definitions. Do not invent URLs.\n${libraryContext}`,
-      );
-    }
-    const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
-    if (Array.isArray(selectedSkills)) {
-      const activated = await Promise.all(
-        selectedSkills
-          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-          .slice(0, 4)
-          .map((name) => mastraWorkAgent.getSkill(name)),
-      );
-      for (const skill of activated) {
-        if (skill) {
-          instructions.push(
-            `The user explicitly activated the skill "${skill.name}". Follow its instructions for this request:\n${skill.instructions}`,
-          );
+      const selection = parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY));
+      const profile =
+        fixedProfile ??
+        (await getAgentProfile(
+          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+        ));
+      const registeredWorkflow =
+        !member && profile.type === "team" ? getRegisteredProfileWorkflow(profile.id) : undefined;
+      const instructions = member
+        ? [
+            BASE_INSTRUCTIONS,
+            member.instructions ||
+              `你是团队成员 ${member.name},负责${member.profession || "完成分配的专业任务"}。`,
+          ]
+        : [
+            BASE_INSTRUCTIONS,
+            ...(isCodeModeAvailable(rules) ? [codeMode.instructions] : []),
+            mode.instructions,
+            profile.instructions,
+            ...(registeredWorkflow
+              ? [
+                  "当前团队提供一个名为 teamWorkflow 的可执行协作流程。对于符合已定义成员流程的任务，优先调用该 workflow；开放式任务才使用成员 delegation。",
+                ]
+              : []),
+          ].filter(Boolean);
+      if (selection) {
+        const tools = await resolveWebSearchTools(
+          selection,
+          requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+        );
+        const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
+        instructions.push(webSearchInstructions(selection, searchAvailable));
+      }
+      const libraryContext = requestContext?.get(LIBRARY_SEARCH_CONTEXT_KEY);
+      if (typeof libraryContext === "string" && libraryContext) {
+        instructions.push(
+          `Use the following library context when it is relevant. Cite library sources with standard GFM footnotes using the supplied [^library-n] definitions. Do not invent URLs.\n${libraryContext}`,
+        );
+      }
+      const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
+      if (!member && Array.isArray(selectedSkills)) {
+        const activated = await Promise.all(
+          selectedSkills
+            .filter(
+              (value): value is string => typeof value === "string" && value.trim().length > 0,
+            )
+            .slice(0, 4)
+            .map((name) => mastraWorkAgent.getSkill(name)),
+        );
+        for (const skill of activated) {
+          if (skill) {
+            instructions.push(
+              `The user explicitly activated the skill "${skill.name}". Follow its instructions for this request:\n${skill.instructions}`,
+            );
+          }
         }
       }
-    }
-    return instructions;
-  },
-  model: async ({ requestContext }) => {
-    const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
-      | { id: `${string}/${string}`; apiKey: string }
-      | GatewayLanguageModel
-      | undefined;
-    if (requestModel) return requestModel;
-    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
-    if (profile.model) {
-      const configured = await resolveConfiguredModel(profile.model.providerId, profile.model.modelId);
-      if (configured) return configured;
-    }
-    const modelId = await resolveDefaultModelId();
-    if (!modelId) {
-      throw new Error(
-        "尚未配置模型供应商。请在 MastraWork 的设置 →「模型供应商」中添加供应商与 API Key,并选定一个模型。",
+      return instructions;
+    },
+    model: async ({ requestContext }) => {
+      const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
+        | { id: `${string}/${string}`; apiKey: string }
+        | GatewayLanguageModel
+        | undefined;
+      const profile =
+        fixedProfile ??
+        (await getAgentProfile(
+          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+        ));
+      const preferredModel = member?.model ?? profile.model;
+      if (preferredModel) {
+        const configured = await resolveConfiguredModel(
+          preferredModel.providerId,
+          preferredModel.modelId,
+        );
+        if (configured) return configured;
+      }
+      if (requestModel) return requestModel;
+      const modelId = await resolveDefaultModelId();
+      if (!modelId) {
+        throw new Error(
+          "尚未配置模型供应商。请在 MastraWork 的设置 →「模型供应商」中添加供应商与 API Key,并选定一个模型。",
+        );
+      }
+      return modelId;
+    },
+    memory: ({ requestContext }) =>
+      getMemory({
+        requestContext,
+        ...(member ? { memoryScope: member.memoryScope } : {}),
+      }),
+    skills: fixedProfile
+      ? async () => resolveManagedSkillPaths(member?.skills ?? fixedProfile.skills)
+      : [getManagedSkillsDirectory()],
+    inputProcessors: async ({ requestContext }) => [
+      libraryAttachmentProcessor,
+      editorStateProcessor,
+      terminalStateProcessor,
+      workbenchStateProcessor,
+      agentsMdProcessor,
+      ...(await buildGuardrailInputProcessors(requestContext)),
+    ],
+    outputProcessors: async () => buildGuardrailOutputProcessors(),
+    errorProcessors: async () => buildGuardrailErrorProcessors(),
+    signals: [new TaskSignalProvider(), workWebhookSignals],
+    agents: async ({ requestContext }) => {
+      if (member) return {};
+      const profile =
+        fixedProfile ??
+        (await getAgentProfile(
+          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+        ));
+      if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
+      return {
+        ...workSubagents,
+        ...(await resolveProfileMembers(profile)),
+      };
+    },
+    workflows: async (): Promise<Record<string, AnyWorkflow>> => {
+      if (!fixedProfile || fixedProfile.type !== "team") return {};
+      const workflow = getRegisteredProfileWorkflow(fixedProfile.id);
+      return workflow ? { teamWorkflow: workflow } : {};
+    },
+    browser: workBrowser,
+    workspace: async ({ requestContext }) => {
+      if (!isWorkspaceEnabled()) return undefined;
+      const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
+      if (!path) return undefined;
+      return getThreadWorkspace(path);
+    },
+    tools: async ({ requestContext }) => {
+      const { mode, rules } = resolveSessionPolicy(
+        requestContext?.get(MODE_ID_CONTEXT_KEY),
+        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
+        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
       );
-    }
-    return modelId;
-  },
-  memory: ({ requestContext }) => getMemory({ requestContext }),
-  skills: [getManagedSkillsDirectory()],
-  inputProcessors: async ({ requestContext }) => [
-    libraryAttachmentProcessor,
-    editorStateProcessor,
-    terminalStateProcessor,
-    workbenchStateProcessor,
-    agentsMdProcessor,
-    ...(await buildGuardrailInputProcessors(requestContext)),
-  ],
-  outputProcessors: async () => buildGuardrailOutputProcessors(),
-  errorProcessors: async () => buildGuardrailErrorProcessors(),
-  signals: [new TaskSignalProvider(), workWebhookSignals],
-  agents: async ({ requestContext }) => {
-    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
-    if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
-    return { ...workSubagents, ...(await resolveProfileMembers(profile)) };
-  },
-  browser: workBrowser,
-  workspace: async ({ requestContext }) => {
-    if (!isWorkspaceEnabled()) return undefined;
-    const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
-    if (!path) return undefined;
-    return getThreadWorkspace(path);
-  },
-  tools: async ({ requestContext }) => {
-    const { mode, rules } = resolveSessionPolicy(
-      requestContext?.get(MODE_ID_CONTEXT_KEY),
-      requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-      requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-    );
-    const tools: ToolsInput = {
-      ...mode.additionalTools,
-      ask_user: askUserTool,
-      ...(isCodeModeAvailable(rules) ? { execute_typescript: codeMode.tool } : {}),
-      submit_plan: submitPlanTool,
-      library_vector_search: libraryVectorSearchTool,
-      library_graph_search: libraryGraphSearchTool,
-      library_document_chunker: libraryDocumentChunkerTool,
-      notification_inbox: notificationInboxTool,
-      ...(await resolveWebSearchTools(
-        parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
-        requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
-      )),
-      ...(await getConfiguredMcpTools()),
-    };
-    const visibleTools = mode.availableTools
-      ? Object.fromEntries(
-          Object.entries(tools).filter(([name]) => mode.availableTools?.includes(name)),
-        )
-      : tools;
-    return withoutDeniedTools(visibleTools, rules);
-  },
-  defaultOptions: async ({ requestContext }) => {
-    const { rules } = resolveSessionPolicy(
-      requestContext?.get(MODE_ID_CONTEXT_KEY),
-      requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-      requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-    );
-    const retries = getGuardrailsRuntimeConfig().maxProcessorRetries;
-    const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
-    const modelRetries = { maxRetries: 4 };
-    if (isFullyAllowed(rules)) {
-      return { ...processorRetries, ...modelRetries, delegation: WORK_DELEGATION };
-    }
-    return {
-      ...processorRetries,
-      ...modelRetries,
-      delegation: WORK_DELEGATION,
-      requireToolApproval: ({ toolName }: { toolName: string }) =>
-        isToolApprovalRequired(rules, toolName),
-      hooks: {
-        beforeToolCall: ({ toolName }: { toolName: string }) =>
-          isToolDenied(rules, toolName)
-            ? {
-                proceed: false as const,
-                output: `Tool "${toolName}" is blocked by the current session policy (mode or permission rules). Do not retry it; tell the user which capability you need and let them change the policy.`,
-              }
-            : undefined,
-      },
-    };
-  },
-});
+      const tools: ToolsInput = {
+        ...mode.additionalTools,
+        ask_user: askUserTool,
+        ...(isCodeModeAvailable(rules) ? { execute_typescript: codeMode.tool } : {}),
+        submit_plan: submitPlanTool,
+        library_vector_search: libraryVectorSearchTool,
+        library_graph_search: libraryGraphSearchTool,
+        library_document_chunker: libraryDocumentChunkerTool,
+        notification_inbox: notificationInboxTool,
+        ...(await resolveWebSearchTools(
+          parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
+          requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+        )),
+        ...(await getConfiguredMcpTools()),
+      };
+      const visibleTools = mode.availableTools
+        ? Object.fromEntries(
+            Object.entries(tools).filter(([name]) => mode.availableTools?.includes(name)),
+          )
+        : tools;
+      const scopedTools = member?.tools.length
+        ? Object.fromEntries(
+            Object.entries(visibleTools).filter(([name]) => member.tools.includes(name)),
+          )
+        : visibleTools;
+      return withoutDeniedTools(scopedTools, rules);
+    },
+    defaultOptions: async ({ requestContext }) => {
+      const { rules } = resolveSessionPolicy(
+        requestContext?.get(MODE_ID_CONTEXT_KEY),
+        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
+        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
+      );
+      const retries = getGuardrailsRuntimeConfig().maxProcessorRetries;
+      const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
+      const modelRetries = { maxRetries: 4 };
+      if (member) return { ...processorRetries, ...modelRetries };
+      if (isFullyAllowed(rules)) {
+        return { ...processorRetries, ...modelRetries, delegation: WORK_DELEGATION };
+      }
+      return {
+        ...processorRetries,
+        ...modelRetries,
+        delegation: WORK_DELEGATION,
+        requireToolApproval: ({ toolName }: { toolName: string }) =>
+          isToolApprovalRequired(rules, toolName),
+        hooks: {
+          beforeToolCall: ({ toolName }: { toolName: string }) =>
+            isToolDenied(rules, toolName)
+              ? {
+                  proceed: false as const,
+                  output: `Tool "${toolName}" is blocked by the current session policy (mode or permission rules). Do not retry it; tell the user which capability you need and let them change the policy.`,
+                }
+              : undefined,
+        },
+      };
+    },
+  });
+}
+
+export const mastraWorkAgent = createWorkAgent();
+export const createProfileAgent = (profile: AgentProfile): Agent => createWorkAgent(profile);
+export const createProfileMemberAgent = (
+  profile: AgentProfile,
+  member: AgentMemberDefinition,
+): Agent => createWorkAgent(profile, member);
+
+setProfileAgentFactories({ profile: createProfileAgent, member: createProfileMemberAgent });
 
 /** 注册默认 Agent, 供 harness 会话层通过 registry 懒取(避免循环依赖) */
 setDefaultWorkAgent(mastraWorkAgent);

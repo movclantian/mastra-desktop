@@ -72,7 +72,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 0,
     },
     typography: {
-      fontSans: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
+      fontSans:
+        'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif',
       fontMono: '"JetBrains Mono", "SF Mono", Consolas, monospace',
       headingWeight: "600",
       letterSpacing: "-0.015em",
@@ -163,7 +164,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Classic NeoBrutalism",
     category: "brutalism",
     categoryLabel: "粗野主义",
-    description: "经典新粗野主义，0 弧度锐角几何、2px 纯黑外边框、4px 硬阴影与赛博柠檬黄、霓虹青撞色。",
+    description:
+      "经典新粗野主义，0 弧度锐角几何、2px 纯黑外边框、4px 硬阴影与赛博柠檬黄、霓虹青撞色。",
     registrySource: "@neobrutalism",
     styleKey: "neobrutalism",
     light: {
@@ -475,7 +477,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Glassmorphism UI",
     category: "clay_glass",
     categoryLabel: "拟物与质感",
-    description: "受 Apple 现代界面启发的半透明玻璃拟态，高饱和亚克力模糊、晶亮边缘微光与空间折射感。",
+    description:
+      "受 Apple 现代界面启发的半透明玻璃拟态，高饱和亚克力模糊、晶亮边缘微光与空间折射感。",
     registrySource: "@glasscn",
     styleKey: "glasscn",
     light: {
@@ -540,7 +543,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 0,
     },
     typography: {
-      fontSans: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Plus Jakarta Sans", "Inter", system-ui, sans-serif',
+      fontSans:
+        '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Plus Jakarta Sans", "Inter", system-ui, sans-serif',
       fontMono: '"SF Mono", "JetBrains Mono", monospace',
       headingWeight: "600",
       letterSpacing: "-0.02em",
@@ -631,7 +635,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Sabraman Skeuomorphism",
     category: "clay_glass",
     categoryLabel: "拟物与质感",
-    description: "致敬经典 UI 的高保真拟物风格，顶部高光倒角、立体渐变浮雕、真实物理按压触感与暖调质感。",
+    description:
+      "致敬经典 UI 的高保真拟物风格，顶部高光倒角、立体渐变浮雕、真实物理按压触感与暖调质感。",
     registrySource: "@sabraman",
     styleKey: "sabraman",
     light: {
@@ -709,7 +714,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Tron: Ares Cyber Sci-Fi",
     category: "scifi_dark",
     categoryLabel: "科幻与发光",
-    description: "受《创：战纪》(Tron: Ares) 启发的赛博科幻 HUD 系统，激光赤红与霓虹青蓝、HUD 扫描线与硬核电光发光。",
+    description:
+      "受《创：战纪》(Tron: Ares) 启发的赛博科幻 HUD 系统，激光赤红与霓虹青蓝、HUD 扫描线与硬核电光发光。",
     registrySource: "@thegridcn",
     styleKey: "thegridcn",
     light: {
@@ -787,7 +793,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Satie Literary Dark Glow",
     category: "scifi_dark",
     categoryLabel: "科幻与发光",
-    description: "灵感源自埃里克·萨蒂《裸体歌舞》的暗调静谧文学主题，古老衬线排版、烛光微金暖光与沉浸式夜读氛围。",
+    description:
+      "灵感源自埃里克·萨蒂《裸体歌舞》的暗调静谧文学主题，古老衬线排版、烛光微金暖光与沉浸式夜读氛围。",
     registrySource: "@gymnopedies",
     styleKey: "gymnopedies",
     light: {
@@ -1086,8 +1093,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 3,
     },
     typography: {
-      fontSans: '"Press Start 2P", "Silkscreen", "Space Mono", monospace',
-      fontMono: '"Press Start 2P", "Space Mono", monospace',
+      fontSans: '"Silkscreen", "Press Start 2P", "Space Mono", monospace',
+      fontMono: '"Space Mono", "Press Start 2P", monospace',
       headingWeight: "700",
       letterSpacing: "0.05em",
       textTransform: "uppercase",
@@ -1099,7 +1106,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Pixelact Playful Art",
     category: "pixel_retro",
     categoryLabel: "像素与游戏",
-    description: "俏皮活泼的像素艺术与 RPG 游戏化设计语言，马赛克边框、游戏糖果色系与像素动态交互。",
+    description:
+      "俏皮活泼的像素艺术与 RPG 游戏化设计语言，马赛克边框、游戏糖果色系与像素动态交互。",
     registrySource: "@pixelact-ui",
     styleKey: "pixelact",
     light: {
@@ -1242,7 +1250,8 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 0,
     },
     typography: {
-      fontSans: '"Noto Serif SC Variable", "Shippori Mincho", "Songti SC", "Cormorant Garamond", serif',
+      fontSans:
+        '"Noto Serif SC Variable", "Shippori Mincho", "Songti SC", "Cormorant Garamond", serif',
       fontMono: '"JetBrains Mono", monospace',
       headingWeight: "600",
       letterSpacing: "0.06em",
@@ -1255,7 +1264,8 @@ export const THEME_PRESETS: ThemePreset[] = [
     englishName: "Whiskeyjack Desktop Hub",
     category: "oriental_desktop",
     categoryLabel: "东方与桌面",
-    description: "为跨端桌面软件 (Tauri/Electron) 打造的现代流线视觉系统，Metro 风格枢纽导航、磨砂操作条与紧凑桌面机能。",
+    description:
+      "为跨端桌面软件 (Tauri/Electron) 打造的现代流线视觉系统，Metro 风格枢纽导航、磨砂操作条与紧凑桌面机能。",
     registrySource: "@whiskeyjack",
     styleKey: "whiskeyjack",
     light: {
@@ -1324,6 +1334,85 @@ export const THEME_PRESETS: ThemePreset[] = [
       fontMono: '"SF Mono", "JetBrains Mono", monospace',
       headingWeight: "600",
       letterSpacing: "-0.015em",
+      textTransform: "none",
+    },
+  },
+  {
+    id: "motion",
+    name: "动效流光",
+    englishName: "Motion Flow",
+    category: "modern",
+    categoryLabel: "动效主导",
+    description:
+      "以 Magic UI 动效语言为核心的现代主题：极光渐变环境光、弹性过渡曲线，与光效/粒子组件深度联动。",
+    registrySource: "@magicui",
+    styleKey: "motion",
+    light: {
+      background: "#fafafa",
+      foreground: "#09090b",
+      card: "#ffffff",
+      cardForeground: "#09090b",
+      popover: "#ffffff",
+      popoverForeground: "#09090b",
+      primary: "#7c3aed",
+      primaryForeground: "#ffffff",
+      secondary: "#f4f4f5",
+      secondaryForeground: "#18181b",
+      muted: "#f4f4f5",
+      mutedForeground: "#71717a",
+      accent: "#8b5cf6",
+      accentForeground: "#ffffff",
+      destructive: "#ef4444",
+      destructiveForeground: "#ffffff",
+      border: "#e4e4e7",
+      input: "#e4e4e7",
+      ring: "#7c3aed",
+      sidebar: "#f8f7fc",
+      sidebarForeground: "#18181b",
+      sidebarPrimary: "#7c3aed",
+      sidebarPrimaryForeground: "#ffffff",
+      sidebarAccent: "#ededf6",
+      sidebarAccentForeground: "#18181b",
+      sidebarBorder: "#e4e4e7",
+    },
+    dark: {
+      background: "#08070d",
+      foreground: "#f4f4f5",
+      card: "#0f0e17",
+      cardForeground: "#f4f4f5",
+      popover: "#0f0e17",
+      popoverForeground: "#f4f4f5",
+      primary: "#a78bfa",
+      primaryForeground: "#0f0e17",
+      secondary: "#1c1a27",
+      secondaryForeground: "#f4f4f5",
+      muted: "#171522",
+      mutedForeground: "#a1a1aa",
+      accent: "#fe8fb5",
+      accentForeground: "#0f0e17",
+      destructive: "#f87171",
+      destructiveForeground: "#0f0e17",
+      border: "#262338",
+      input: "#262338",
+      ring: "#a78bfa",
+      sidebar: "#060509",
+      sidebarForeground: "#f4f4f5",
+      sidebarPrimary: "#a78bfa",
+      sidebarPrimaryForeground: "#0f0e17",
+      sidebarAccent: "#1c1a27",
+      sidebarAccentForeground: "#f4f4f5",
+      sidebarBorder: "#262338",
+    },
+    geometry: {
+      radius: 12,
+      borderWidth: 1,
+      shadowDepth: 0,
+    },
+    typography: {
+      fontSans: '"Inter", "Geist", "Plus Jakarta Sans", sans-serif',
+      fontMono: '"JetBrains Mono", monospace',
+      headingWeight: "700",
+      letterSpacing: "-0.02em",
       textTransform: "none",
     },
   },
@@ -1484,5 +1573,3 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
     border: "#000000",
   },
 ];
-
-

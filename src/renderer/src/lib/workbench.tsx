@@ -128,6 +128,15 @@ export interface AgentMemberDefinition {
   description: string;
   instructions: string;
   model?: { providerId: string; modelId: string };
+  skills: string[];
+  tools: string[];
+  memoryScope: "thread" | "resource";
+}
+
+export interface AgentWorkflowDefinition {
+  strategy: "supervisor" | "sequence" | "parallel";
+  steps: Array<{ id: string; memberId: string; prompt?: string }>;
+  synthesis: boolean;
 }
 
 export interface AgentProfile {
@@ -141,7 +150,7 @@ export interface AgentProfile {
   model?: { providerId: string; modelId: string };
   skills: string[];
   members: AgentMemberDefinition[];
-  workflow: string;
+  workflow?: AgentWorkflowDefinition;
   categoryId?: string;
   tags: string[];
   quickPrompts: string[];
@@ -161,7 +170,7 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   instructions: "",
   skills: [],
   members: [],
-  workflow: "",
+  workflow: undefined,
   tags: ["默认"],
   quickPrompts: [],
   enabled: true,
@@ -361,6 +370,7 @@ interface WorkbenchValue {
   refreshThreads: () => Promise<void>;
   createThread: (title?: string) => Promise<WorkThread | null>;
   renameThread: (threadId: string, title: string) => Promise<void>;
+  generateThreadTitle: (threadId: string) => Promise<string | null>;
   deleteThread: (threadId: string) => Promise<void>;
   pinThread: (threadId: string, pinned: boolean) => Promise<void>;
   archiveThread: (threadId: string, archived: boolean) => Promise<void>;
@@ -672,8 +682,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       const payload = (await response.json()) as { agents?: AgentProfile[] };
       const next = Array.isArray(payload.agents) ? payload.agents : [];
       setAgents(next);
-      setAgentSelectionState((current) =>
-        current.id === DEFAULT_AGENT_PROFILE.id && next[0] ? next[0] : current,
+      setAgentSelectionState(
+        (current) =>
+          next.find((profile) => profile.id === current.id) ??
+          next.find((profile) => profile.id === DEFAULT_AGENT_PROFILE.id) ??
+          DEFAULT_AGENT_PROFILE,
       );
     } catch {
       setAgents([]);

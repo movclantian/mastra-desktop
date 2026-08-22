@@ -17,8 +17,11 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/components/theme-provider";
+import { AnimatedChevron } from "@/components/ui/animated-icon";
+import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import { AnimatedGradientText } from "@/components/ui/animated-gradient-text";
 import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
+import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +39,7 @@ import { Ripple } from "@/components/ui/ripple";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
+import { SlidingNumber } from "@/components/ui/sliding-number";
 import { Slider } from "@/components/ui/slider";
 import { SparklesText } from "@/components/ui/sparkles-text";
 import { THEME_INSPIRATIONS } from "@/lib/theme/presets";
@@ -142,6 +146,10 @@ export function ThemeSection() {
     | "oriental_desktop"
     | "modern"
   >("all");
+
+  const [animateCounter, setAnimateCounter] = React.useState(1420);
+  const [activeAnimateTab, setActiveAnimateTab] = React.useState("tab-1");
+  const [animateCollapseOpen, setAnimateCollapseOpen] = React.useState(true);
 
   const filteredPresets = React.useMemo(() => {
     return presets.filter((p) => {
@@ -1104,6 +1112,134 @@ export function ThemeSection() {
                       </AnimatedGradientText>
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ------------------------------------------------------------- */}
+            {/* 模块 5: Animate UI 物理弹簧与微交互控制矩阵 (Animate UI Matrix) */}
+            {/* ------------------------------------------------------------- */}
+            <Card className="border shadow-xs overflow-hidden">
+              <CardHeader className="pb-3 pt-4 px-4">
+                <CardTitle className="text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <FlameIcon className="size-4 text-primary" />
+                    <span>Animate UI 物理弹簧与全局微交互</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    Spring Physics & Odometer
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  控件级平滑物理弹簧、数字翻页滚动跳变、选项卡惯性吸附滑块与动态形变图标。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 px-4 pb-4">
+                {/* 1. SlidingNumber 动态数字滚动 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-foreground">
+                      SlidingNumber 动态数字翻页钟 (Odometer)
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setAnimateCounter((c) => c + 150)}
+                      >
+                        +150 Tokens
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() => setAnimateCounter((c) => Math.max(0, c - 80))}
+                      >
+                        -80
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        className="h-6 text-[11px] px-2"
+                        onClick={() =>
+                          setAnimateCounter(Math.floor(Math.random() * 9000) + 1000)
+                        }
+                      >
+                        随机数值
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between p-3 rounded-md border bg-background/80">
+                    <div className="flex flex-col">
+                      <span className="text-xs text-muted-foreground">当前会话 Token 消耗</span>
+                      <div className="flex items-baseline gap-1 text-xl font-bold font-mono text-primary">
+                        <SlidingNumber
+                          number={animateCounter}
+                          thousandSeparator=","
+                        />
+                        <span className="text-xs font-normal text-muted-foreground">tokens</span>
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-xs text-muted-foreground">上下文占比</span>
+                      <div className="flex items-baseline gap-0.5 text-xl font-bold font-mono text-foreground">
+                        <SlidingNumber
+                          number={Math.min(100, (animateCounter / 16384) * 100)}
+                          decimalPlaces={1}
+                        />
+                        <span className="text-xs font-normal text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. AnimatedTabs 胶囊惯性吸附滑块 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    AnimatedTabs 选项卡平滑胶囊吸附 (Morphing Pill Indicator)
+                  </span>
+                  <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
+                    <AnimatedTabs
+                      variant="segmented"
+                      activeTab={activeAnimateTab}
+                      onChange={setActiveAnimateTab}
+                      tabs={[
+                        { id: "tab-1", label: "智能体流水线", icon: <SparklesIcon className="size-3.5" /> },
+                        { id: "tab-2", label: "工具调用轨迹", icon: <ZapIcon className="size-3.5" /> },
+                        { id: "tab-3", label: "知识库向量", icon: <TypeIcon className="size-3.5" /> },
+                      ]}
+                    />
+                    <Badge variant="outline" className="font-mono text-xs">
+                      Active: {activeAnimateTab}
+                    </Badge>
+                  </div>
+                </div>
+
+                {/* 3. AnimatedCollapsible 物理弹簧高度展开 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-medium text-foreground">
+                      AnimatedCollapsible 物理阻尼弹性折叠
+                    </span>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      className="h-7 text-xs flex items-center gap-1.5"
+                      onClick={() => setAnimateCollapseOpen(!animateCollapseOpen)}
+                    >
+                      <span>{animateCollapseOpen ? "收起执行详情" : "展开执行详情"}</span>
+                      <AnimatedChevron open={animateCollapseOpen} size={14} />
+                    </Button>
+                  </div>
+                  <AnimatedCollapsible open={animateCollapseOpen}>
+                    <div className="p-3 mt-1 rounded-md border bg-background/80 text-xs font-mono space-y-1.5 text-muted-foreground">
+                      <p className="text-foreground font-semibold">⚡ 工具调用轨迹 (Tool Trace):</p>
+                      <p>• [Agent-01] 检索工作区知识库已完成 (耗时: 120ms)</p>
+                      <p>• [Agent-02] 正在进行 TypeScript 语法树静态分析...</p>
+                      <p>• [Agent-03] 物理弹簧阻尼高度动态自适应展开无闪烁。</p>
+                    </div>
+                  </AnimatedCollapsible>
                 </div>
               </CardContent>
             </Card>

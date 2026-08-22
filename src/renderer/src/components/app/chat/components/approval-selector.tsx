@@ -22,6 +22,7 @@ import {
   matchApprovalPreset,
   PERMISSION_POLICIES,
   type PermissionPolicy,
+  type PermissionRules,
   POLICY_META,
   TOOL_CATEGORIES,
   WORK_MODE_META,
@@ -75,27 +76,42 @@ export function ChatApprovalSelector() {
             工具审批
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {APPROVAL_PRESETS.map((preset) => (
-            <DropdownMenuItem
-              className="items-start gap-2"
-              key={preset.id}
-              onClick={() => setPermissionRules(preset.rules)}
-            >
-              <span className="flex min-w-0 flex-col gap-0.5">
-                <span className="flex items-center gap-1.5">
-                  {preset.label}
-                  {activePreset === preset.id ? <CheckIcon className="ml-auto size-3.5" /> : null}
-                </span>
-                <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
-                  {preset.description}
-                </Badge>
-              </span>
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel>按类别微调</DropdownMenuLabel>
+          <ApprovalMenuItems
+            activePreset={activePreset}
+            lockedCategories={lockedCategories}
+            modeId={modeId}
+            permissionRules={permissionRules}
+            setPermissionRules={setPermissionRules}
+          />
         </DropdownMenuGroup>
-        {TOOL_CATEGORIES.map((category) => {
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+export function ApprovalMenuItems({
+  activePreset,
+  lockedCategories,
+  modeId,
+  permissionRules,
+  setPermissionRules,
+}: {
+  activePreset: ReturnType<typeof matchApprovalPreset>;
+  lockedCategories: readonly string[];
+  modeId: keyof typeof WORK_MODE_META;
+  permissionRules: PermissionRules;
+  setPermissionRules: (rules: PermissionRules) => Promise<void>;
+}) {
+  return (
+    <>
+      {APPROVAL_PRESETS.map((preset) => (
+        <DropdownMenuItem className="items-start gap-2" key={preset.id} onClick={() => void setPermissionRules(preset.rules)}>
+          <span className="flex min-w-0 flex-col gap-0.5"><span className="flex items-center gap-1.5">{preset.label}{activePreset === preset.id ? <CheckIcon className="ml-auto size-3.5" /> : null}</span><Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">{preset.description}</Badge></span>
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuSeparator />
+      <DropdownMenuLabel>按类别微调</DropdownMenuLabel>
+      {TOOL_CATEGORIES.map((category) => {
           const meta = CATEGORY_META[category];
           const locked = lockedCategories.includes(category);
           const policy: PermissionPolicy = locked
@@ -122,7 +138,7 @@ export function ChatApprovalSelector() {
                   ) : (
                     <DropdownMenuRadioGroup
                       onValueChange={(next) =>
-                        setPermissionRules(
+                        void setPermissionRules(
                           withCategoryPolicy(permissionRules, category, next as PermissionPolicy),
                         )
                       }
@@ -144,8 +160,7 @@ export function ChatApprovalSelector() {
               </DropdownMenuSubContent>
             </DropdownMenuSub>
           );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      })}
+    </>
   );
 }

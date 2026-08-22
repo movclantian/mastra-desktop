@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  BotIcon,
   ChevronsUpDown,
   LaptopIcon,
   LibraryBigIcon,
@@ -227,6 +228,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     setLibraryOpen,
     skillOpen,
     setSkillOpen,
+    agentOpen,
+    setAgentOpen,
   } = useWorkbench();
 
   const [renaming, setRenaming] = React.useState<WorkThread | null>(null);
@@ -291,6 +294,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   onClick={() => {
                     setLibraryOpen(false);
                     setSkillOpen(false);
+                    setAgentOpen(false);
                     void createThread();
                   }}
                 >
@@ -303,6 +307,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   isActive={skillOpen}
                   onClick={() => {
                     setLibraryOpen(false);
+                    setAgentOpen(false);
                     setSkillOpen(true);
                   }}
                   tooltip="技能套件"
@@ -317,11 +322,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                   isActive={libraryOpen}
                   onClick={() => {
                     setSkillOpen(false);
+                    setAgentOpen(false);
                     setLibraryOpen(true);
                   }}
                 >
                   <LibraryBigIcon />
                   <span>资料库</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  tooltip="专家"
+                  isActive={agentOpen}
+                  onClick={() => {
+                    setLibraryOpen(false);
+                    setSkillOpen(false);
+                    setAgentOpen(true);
+                  }}
+                >
+                  <BotIcon />
+                  <span>专家</span>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

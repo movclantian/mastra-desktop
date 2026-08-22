@@ -2,39 +2,40 @@
 
 import {
   Context,
-  ContextCacheUsage,
   ContextContent,
   ContextContentBody,
+  ContextContentBreakdown,
   ContextContentFooter,
   ContextContentHeader,
-  ContextInputUsage,
-  ContextOutputUsage,
-  ContextReasoningUsage,
   ContextTrigger,
 } from "@repo/elements/context";
 
 const Example = () => (
   <div className="flex items-center justify-center p-8">
     <Context
-      maxTokens={128_000}
+      maxTokens={168_000}
       modelId="openai:gpt-5"
       usage={{
-        cachedInputTokens: 0,
-        inputTokens: 32_000,
+        inputTokens: 32_656,
+        inputTokenDetails: {
+          noCacheTokens: 32_656,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+        },
         outputTokens: 8000,
-        reasoningTokens: 0,
-        totalTokens: 40_000,
+        outputTokenDetails: {
+          textTokens: 8000,
+          reasoningTokens: 0,
+        },
+        totalTokens: 40_656,
       }}
-      usedTokens={40_000}
+      usedTokens={40_656}
     >
       <ContextTrigger />
       <ContextContent>
         <ContextContentHeader />
         <ContextContentBody>
-          <ContextInputUsage />
-          <ContextOutputUsage />
-          <ContextReasoningUsage />
-          <ContextCacheUsage />
+          <ContextContentBreakdown />
         </ContextContentBody>
         <ContextContentFooter />
       </ContextContent>

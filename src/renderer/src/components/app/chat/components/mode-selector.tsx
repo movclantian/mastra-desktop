@@ -9,10 +9,14 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { WORK_MODE_IDS, WORK_MODE_META, type WorkModeId } from "@/lib/session-policy";
+import { matchApprovalPreset, WORK_MODE_IDS, WORK_MODE_META, type WorkModeId } from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
+import { ApprovalMenuItems } from "./approval-selector";
 
 // ---------------------------------------------------------------------------
 // 会话模式选择器(plan → build → review)
@@ -28,7 +32,7 @@ const MODE_ICONS: Record<WorkModeId, ComponentType<{ className?: string }>> = {
 };
 
 export function ChatModeSelector() {
-  const { modeId, setModeId } = useWorkbench();
+  const { modeId, setModeId, permissionRules, setPermissionRules } = useWorkbench();
   const ActiveIcon = MODE_ICONS[modeId];
 
   return (
@@ -57,27 +61,30 @@ export function ChatModeSelector() {
             const meta = WORK_MODE_META[id];
             const Icon = MODE_ICONS[id];
             return (
-              <DropdownMenuItem
-                className="items-start gap-2"
-                key={id}
-                onClick={() => setModeId(id)}
-              >
-                <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="flex items-center gap-1.5">
-                    {meta.label}
-                    {id === modeId ? <CheckIcon className="ml-auto size-3.5" /> : null}
+              <DropdownMenuSub key={id}>
+                <DropdownMenuSubTrigger className="items-start gap-2 py-2">
+                  <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex items-center gap-1.5">{meta.label}{id === modeId ? <CheckIcon className="ml-auto size-3.5" /> : null}</span>
+                    <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">{meta.description}</span>
+                    <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">{meta.hint}</Badge>
                   </span>
-                  <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">
-                    {meta.description}
-                  </span>
-                  <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground/80">
-                    <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
-                      {meta.hint}
-                    </Badge>
-                  </span>
-                </span>
-              </DropdownMenuItem>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-72">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>模式与工具审批</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={() => void setModeId(id)}>切换到{meta.label}</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <ApprovalMenuItems
+                      activePreset={matchApprovalPreset(permissionRules)}
+                      lockedCategories={meta.deniedCategories}
+                      modeId={id}
+                      permissionRules={permissionRules}
+                      setPermissionRules={setPermissionRules}
+                    />
+                  </DropdownMenuGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
             );
           })}
         </DropdownMenuGroup>

@@ -61,7 +61,7 @@ import {
   isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
 } from "../../workspace";
-import { getWorkMemory } from "./threads";
+import { generateThreadTitleHelper, getWorkMemory } from "./threads";
 import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
 import type { ThreadMetadata } from "./threads/types";
 
@@ -311,17 +311,38 @@ function durableClientStream<C>(
 
 async function persistLatestUsage(
   threadId: string | undefined,
+  resourceId: string | undefined,
   usage: LanguageModelUsage | undefined,
+  userMessageText?: string,
+  model?: unknown,
 ) {
-  if (!threadId || !usage) return;
+  if (!threadId) return;
   const memory = await getWorkMemory();
   const thread = await memory.getThreadById({ threadId });
   if (!thread) return;
+
+  let title = thread.title;
+  // 首轮消息自动智能提炼标题：仅在标题仍为默认或草稿时生成
+  if (resourceId && (thread.title === "New Chat" || thread.metadata?.draft)) {
+    try {
+      const generated = await generateThreadTitleHelper({
+        threadId,
+        resourceId,
+        userMessage: userMessageText,
+        model,
+        force: false,
+      });
+      if (generated) title = generated;
+    } catch {
+      // 保证主流程永不因起名中断
+    }
+  }
+
   await memory.updateThread({
     id: threadId,
-    title: thread.title,
+    title,
     // draft 一经产生真实消息往来即失效(新会话线程 = 无任何历史消息)
-    metadata: { ...thread.metadata, draft: false, contextUsage: usage },
+    metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
   });
 }
 
@@ -364,7 +385,8 @@ async function prepareThreadSession(options: {
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const patch: ThreadMetadata = {};
   const profile = await getAgentProfile(options.agentProfileId ?? metadata.agentProfileId);
-  if (metadata.agentProfileId !== profile.id && options.agentProfileId) patch.agentProfileId = profile.id;
+  if (metadata.agentProfileId !== profile.id && options.agentProfileId)
+    patch.agentProfileId = profile.id;
 
   const workspaceEnabled = isWorkspaceEnabled();
   let workspacePath = workspaceEnabled ? metadata.workspacePath : undefined;
@@ -528,7 +550,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         Math.max(0, Math.floor(attachmentTokenBudget)),
       );
     }
-    const profile = await getAgentProfile(typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined);
+    const requestedAgentProfileId =
+      typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined;
+    let profile = await getAgentProfile(requestedAgentProfileId);
     requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     requestContext.set(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY, {
       vision: attachmentCapabilities?.vision === true,
@@ -564,9 +588,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         requestedWorkspacePath: rawWorkspacePath,
         modelSnapshot: parseModelSnapshot(rawModelSelection),
         planApproved: isPlanApproval(body.resumeData),
-        agentProfileId: profile.id,
+        agentProfileId: requestedAgentProfileId,
       });
       if (session) {
+        profile = await getAgentProfile(session.agentProfileId);
         if (session.workspacePath) {
           requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, session.workspacePath);
         }
@@ -589,6 +614,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             resourceId: body.memory.resource,
             scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
             threadId: body.memory.thread,
+            agent: mastra.getAgentById(session.agentProfileId),
           });
           liveSession.setMode(session.modeId);
         }
@@ -647,7 +673,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     // (docs/en/reference/ai-sdk/handle-chat-stream.mdx)。
     const handlerOptions = {
       mastra,
-      agentId: c.req.param("agentId"),
+      agentId: profile.id,
       version: "v7" as const,
       sendReasoning: true,
       messageMetadata: ({ part }: { part: TextStreamPart<ToolSet> }) =>
@@ -704,6 +730,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           resourceId: body.memory.resource,
           scope: sessionScope,
           threadId: body.memory.thread,
+          agent: mastra.getAgentById(profile.id),
         })
         .setExecutionDefaults(sessionExecutionOptions);
     }
@@ -714,7 +741,19 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       durableClientStream(stream, {
         librarySources: librarySources ?? [],
         onFinish: async (usage) => {
-          await persistLatestUsage(body.memory?.thread, usage);
+          const firstUserMsg = [...body.messages].find((m) => m.role === "user");
+          const firstUserText = firstUserMsg?.parts
+            .filter((p) => p.type === "text")
+            .map((p) => ("text" in p ? p.text : ""))
+            .join(" ")
+            .trim();
+          await persistLatestUsage(
+            body.memory?.thread,
+            body.memory?.resource,
+            usage,
+            firstUserText,
+            rawModel,
+          );
           await persistMessageBranchOperation({
             memory: await getWorkMemory(),
             threadId: body.memory?.thread,
@@ -738,6 +777,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: body.memory.resource,
         scope: sessionScope,
         threadId: body.memory.thread,
+        agent: mastra.getAgentById(profile.id),
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const signal = await session.steer(
@@ -782,6 +822,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: sessionMemory.resource,
         scope: sessionScope,
         threadId: sessionMemory.thread,
+        agent: mastra.getAgentById(profile.id),
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const subscription = await session.subscribe(sessionMemory.thread);

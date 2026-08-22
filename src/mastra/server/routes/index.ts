@@ -4,7 +4,12 @@
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 import { browserRoutes } from "./browser";
-import { agentProfilesRoute, deleteAgentProfileRoute, saveAgentProfileRoute } from "./agents";
+import {
+  agentProfilesRoute,
+  assistAgentProfileRoute,
+  deleteAgentProfileRoute,
+  saveAgentProfileRoute,
+} from "./agents";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -68,6 +73,9 @@ import { storageInfoRoute } from "./storage";
 import { threadRoutes } from "./threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import {
+  detectedIdesRoute,
+  createThreadTreeEntryRoute,
+  openInAppRoute,
   recentWorkspacesRoute,
   saveThreadFileRoute,
   saveWorkspaceConfigRoute,
@@ -77,9 +85,12 @@ import {
 } from "./workspace";
 
 export const workRoutes = [
+  detectedIdesRoute,
+  openInAppRoute,
   agentProfilesRoute,
   saveAgentProfileRoute,
   deleteAgentProfileRoute,
+  assistAgentProfileRoute,
   ...browserRoutes,
   ...threadRoutes,
   ...signalRoutes,
@@ -122,6 +133,7 @@ export const workRoutes = [
   saveWorkspaceConfigRoute,
   recentWorkspacesRoute,
   threadTreeRoute,
+  createThreadTreeEntryRoute,
   threadFileRoute,
   saveThreadFileRoute,
   toolsConfigRoute,

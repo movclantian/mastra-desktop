@@ -23,6 +23,7 @@
  *   8bitcn                : Press Start 2P + Silkscreen + Space Mono
  *   pixelact              : VT323 + Silkscreen + Space Mono
  *   washiveil             : Noto Serif SC (Variable) + Shippori Mincho + Cormorant Garamond
+ *   motion                : Inter + Geist + JetBrains Mono
  */
 
 // ============================================================================
@@ -169,4 +170,5 @@ export const THEME_FONT_MAP: Record<string, string[]> = {
   pixelact: ["VT323", "Silkscreen", "Space Mono"],
   washiveil: ["Noto Serif SC Variable", "Shippori Mincho", "Cormorant Garamond"],
   whiskeyjack: ["system-ui", "Inter", "JetBrains Mono"],
+  motion: ["Inter", "Geist", "Plus Jakarta Sans", "JetBrains Mono"],
 };

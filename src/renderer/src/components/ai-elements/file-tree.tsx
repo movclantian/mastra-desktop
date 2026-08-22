@@ -173,7 +173,7 @@ export const FileTreeFolder = ({
             </button>
           </div>
           <CollapsibleContent>
-            <div className="ml-4 border-l pl-2">{children}</div>
+            <div className="ml-2 border-l">{children}</div>
           </CollapsibleContent>
         </div>
       </Collapsible>
@@ -240,7 +240,7 @@ export const FileTreeFile = ({
         {children ?? (
           <>
             {/* Spacer for alignment */}
-            <span className="size-4 shrink-0" />
+            <span className="size-0 shrink-0" />
             <FileTreeIcon>
               {icon ?? <FileIcon className="size-4 text-muted-foreground" />}
             </FileTreeIcon>

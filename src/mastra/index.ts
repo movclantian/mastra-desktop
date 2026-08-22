@@ -17,6 +17,7 @@ import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
+import { initializeAgentProfiles } from "./agents/custom";
 import { getConfiguredProcessorRegistry } from "./agents/guardrails";
 import {
   agentsMdProcessor,
@@ -148,6 +149,11 @@ export const mastra = new Mastra({
     },
   }),
 });
+
+// 用户保存的 Agent/Team 在启动时注册为真正的 Mastra agents，并把 Team
+// workflow 作为 dynamic workflow 持久化和恢复。默认 Agent 仍由上面的静态
+// registry 提供，避免 profile storage 读取失败时工作台无法启动。
+await initializeAgentProfiles(mastra);
 
 // Studio 的 /workspaces 页面读取 editor workspace domain 而非运行时注册表
 // (docs/en/docs/studio/editor.mdx)。把线程工作区快照持久化一次,

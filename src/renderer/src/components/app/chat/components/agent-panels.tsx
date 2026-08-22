@@ -324,7 +324,9 @@ export function AgentQuestionnairePanel({
           >
             取消
           </Button>
-          <QuestionnaireSubmit disabled={busy}>提交回答</QuestionnaireSubmit>
+          <QuestionnaireSubmit disabled={busy}>
+            {busy ? "正在提交..." : "提交回答"}
+          </QuestionnaireSubmit>
         </QuestionnaireActions>
       </Questionnaire>
     </div>

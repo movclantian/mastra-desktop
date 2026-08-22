@@ -32,6 +32,7 @@ import {
 } from "@/components/ai-elements/stack-trace";
 import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
+import { AnimatedChevron } from "@/components/ui/animated-icon";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
 import { getTraceStepStatus, type TracePart } from "../types";
@@ -254,7 +255,7 @@ function ToolGroup({ tools }: { tools: ToolPart[] }) {
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
             <WrenchIcon className="size-4" />
             <p className="flex-1 text-left text-sm">工具调用 · {tools.length} 步</p>
-            <ChevronDownIcon className="size-4 transition-transform group-data-[state=open]:rotate-180" />
+            <AnimatedChevron open={false} className="size-4 group-data-[state=open]:rotate-180 transition-transform duration-200" />
           </div>
         </TaskTrigger>
         <TaskContent>

@@ -79,7 +79,7 @@ import {
   type MessageFileReference,
   type QueuedRequest,
 } from "../types";
-import { ChatApprovalSelector } from "./approval-selector";
+import { ChatAgentSelector } from "./agent-selector";
 import { ChatContextUsage } from "./context-usage";
 import { ChatModeSelector } from "./mode-selector";
 import { ChatModelSelector } from "./model-selector";
@@ -87,7 +87,7 @@ import { PromptInputGlow } from "./prompt-input-glow";
 import { ChatSearchSelector } from "./search-selector";
 
 // ---------------------------------------------------------------------------
-// 输入区工具按钮(Paperclip 附件 / 审批模式 / 联网检索多级菜单)
+// 输入区工具按钮(Paperclip 附件 / Agent 选择 / 联网检索多级菜单)
 // 必须位于 PromptInputProvider 内部以访问附件上下文
 // ---------------------------------------------------------------------------
 
@@ -98,7 +98,7 @@ function PromptInputActions() {
     // 基类自带 min-w-0,整组可随容器收缩;收缩只发生在各按钮的文字标签上
     // (审批/检索的 span 都是 truncate),按钮尺寸与图标不受影响。
     <PromptInputTools>
-      {/* 附件 → 审批模式 → 联网检索,依次排在整个输入区的左侧 */}
+      {/* 附件 → Agent / Agent 团队 → 联网检索,依次排在整个输入区的左侧 */}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -117,7 +117,7 @@ function PromptInputActions() {
           <p>添加附件</p>
         </TooltipContent>
       </Tooltip>
-      <ChatApprovalSelector />
+      <ChatAgentSelector />
       <ChatSearchSelector />
     </PromptInputTools>
   );
@@ -722,8 +722,8 @@ export function ChatPromptInput({
    * 宽度。这个数只有内容自己知道(控件增删、标签改名、换更长的模型名都会变),
    * 所以必须实测,不能写成常量。
    *
-   * 两组只在空白见底之后才开始内部收缩,那之后量到的是压缩值、不能当边界用,
-   * 所以 slack 为负时保留上一次的结果。
+   * 要紧的是这个数必须只反映**内容**、绝不反映**当前容器有多宽**:一旦压缩值能
+   * 被报上去,下限就会随容器一起缩,约束越放越松,挤压于是被固化而不是被纠正。
    */
   const footerRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -732,13 +732,33 @@ export function ChatPromptInput({
     const right = footer?.lastElementChild;
     if (!footer || !(left instanceof HTMLElement) || !(right instanceof HTMLElement)) return;
     if (left === right) return;
+    /**
+     * 读一组在「不被 flex 压缩」时的宽度。
+     *
+     * 空白见底后 flex 会把两组压到刚好塞满容器 —— 也就是说压缩态下
+     * 「两组之和 ≈ 容器宽」恒成立,靠比对容器宽根本判不出是否失真。
+     * 所以这里临时用 max-content 顶开压缩再读。写-读-还原在同一个同步块内,
+     * 浏览器只多算一次布局、不会绘制中间态;回调结束时尺寸已复原,
+     * 也不会引起 ResizeObserver 自激。内部 label 的 max-w 上限依然生效,
+     * 量到的正是「标签完整显示」时的宽度,而不是无限伸展。
+     */
+    const naturalWidth = (element: HTMLElement) => {
+      const previous = element.style.minWidth;
+      element.style.minWidth = "max-content";
+      const width = element.offsetWidth;
+      element.style.minWidth = previous;
+      return width;
+    };
     const measure = () => {
       const styles = getComputedStyle(footer);
       const padding =
         Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
-      const used = left.offsetWidth + right.offsetWidth + padding;
-      if (footer.clientWidth < used) return;
-      reportPromptMinWidth(used);
+      // 中间那段由右组 ml-auto 独占的弹性空白。还有余量说明两组都是自然宽度,
+      // 直接量即可(零额外布局开销);见底了才走上面的顶开测量。
+      const slack = right.offsetLeft - left.offsetLeft - left.offsetWidth;
+      const used =
+        slack > 0 ? left.offsetWidth + right.offsetWidth : naturalWidth(left) + naturalWidth(right);
+      reportPromptMinWidth(used + padding);
     };
     measure();
     // 同时观察两组自身:换模型、开关检索都会改变它们的宽度,而 footer 尺寸未必变

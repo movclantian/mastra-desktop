@@ -422,23 +422,35 @@ export const OM_MODELS_CONTEXT_KEY = "mastra-work:om-models";
 interface OmModelSelection {
   observerModelId?: string;
   reflectorModelId?: string;
+  memoryScope?: "thread" | "resource";
 }
 
 /**
  * 当前 Memory 实例。Agent 以函数形式引用(memory: () => getMemory()),
  * 配置保存后无需重启即对后续请求生效。
  */
-export function getMemory(options?: { requestContext?: RequestContext }): Memory {
+export function getMemory(options?: {
+  requestContext?: RequestContext;
+  memoryScope?: "thread" | "resource";
+}): Memory {
   const selection = options?.requestContext?.get(OM_MODELS_CONTEXT_KEY) as
     | OmModelSelection
     | undefined;
   const observerModelId = selection?.observerModelId?.trim() || undefined;
   const reflectorModelId = selection?.reflectorModelId?.trim() || undefined;
-  if (observerModelId || reflectorModelId) {
-    const key = JSON.stringify([observerModelId ?? null, reflectorModelId ?? null]);
+  if (observerModelId || reflectorModelId || options?.memoryScope) {
+    const key = JSON.stringify([
+      observerModelId ?? null,
+      reflectorModelId ?? null,
+      options?.memoryScope ?? null,
+    ]);
     const existing = memoryByOmModels.get(key);
     if (existing) return existing;
-    const memory = buildMemory({ observerModelId, reflectorModelId });
+    const memory = buildMemory({
+      observerModelId,
+      reflectorModelId,
+      memoryScope: options?.memoryScope,
+    });
     memoryByOmModels.set(key, memory);
     return memory;
   }
@@ -458,6 +470,9 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
   const omObserverModel = overrides.observerModelId?.trim() || config.omObserverModel.trim();
   const omReflectionModel = overrides.reflectorModelId?.trim() || config.omReflectionModel.trim();
   const omTopModel = omObserverModel || omReflectionModel ? undefined : config.omModel.trim();
+  const semanticRecallScope = overrides.memoryScope ?? config.semanticRecallScope;
+  const workingMemoryScope = overrides.memoryScope ?? config.workingMemoryScope;
+  const observationalMemoryScope = overrides.memoryScope ?? config.omScope;
   // OM 的配置对象不能省略 model:Mastra 会把「未配置」静默解析为
   // google/gemini-2.5-flash,这会让用户明明选择了自定义网关却在后台观察任务里
   // 触发 Google 的环境变量检查。空配置必须动态跟随工作台当前模型,并在没有模型
@@ -502,7 +517,7 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
                 before: config.semanticRecallMessageRangeBefore,
                 after: config.semanticRecallMessageRangeAfter,
               },
-              scope: config.semanticRecallScope,
+              scope: semanticRecallScope,
             },
           }
         : {}),
@@ -515,16 +530,16 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
                 ? (() => {
                     const schema = parseWorkingMemorySchema(config.workingMemorySchema);
                     return schema
-                      ? { enabled: true, scope: config.workingMemoryScope, schema }
+                      ? { enabled: true, scope: workingMemoryScope, schema }
                       : {
                           enabled: true,
-                          scope: config.workingMemoryScope,
+                          scope: workingMemoryScope,
                           template: config.workingMemoryTemplate,
                         };
                   })()
                 : {
                     enabled: true,
-                    scope: config.workingMemoryScope,
+                    scope: workingMemoryScope,
                     template: config.workingMemoryTemplate,
                   },
           }
@@ -554,7 +569,7 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
               ...(omObserverModel || omReflectionModel
                 ? {}
                 : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
-              scope: config.omScope,
+              scope: observationalMemoryScope,
               ...(config.omTemporalMarkers ? { temporalMarkers: true } : {}),
               // retrieval:布尔之外的 { vector, scope } 形态(retrieval 默认 scope = resource)
               ...(config.omRetrieval

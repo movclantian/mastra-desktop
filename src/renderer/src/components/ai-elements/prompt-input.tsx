@@ -1322,8 +1322,8 @@ export type PromptInputFooterProps = Omit<ComponentProps<typeof InputGroupAddon>
 export const PromptInputFooter = ({ className, ...props }: PromptInputFooterProps) => (
   // gap-0:左右两组之间的距离由右组的 ml-auto(弹性空白)独占提供。留着 gap 会在
   // 那段空白之外再吃掉固定宽度,让「空白见底」提前发生,也让实测的最小宽度虚高。
-  // 必须显式归零 —— 不写的话会回落到 InputGroupAddon 基类的 gap-2。
-  <InputGroupAddon align="block-end" className={cn("justify-between gap-0", className)} {...props} />
+  // 暂时改成gap-1
+  <InputGroupAddon align="block-end" className={cn("justify-between gap-1", className)} {...props} />
 );
 
 export type PromptInputToolsProps = HTMLAttributes<HTMLDivElement>;

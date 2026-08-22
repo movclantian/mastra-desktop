@@ -31,28 +31,28 @@ importers:
         specifier: 1.7.0
         version: 1.7.0(@date-fns/tz@1.5.0)(@types/react@19.2.18)(date-fns@4.4.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@codemirror/lang-css':
-        specifier: ^6.3.1
+        specifier: 6.3.1
         version: 6.3.1
       '@codemirror/lang-html':
-        specifier: ^6.4.12
+        specifier: 6.4.12
         version: 6.4.12
       '@codemirror/lang-javascript':
-        specifier: ^6.2.5
+        specifier: 6.2.5
         version: 6.2.5
       '@codemirror/lang-json':
-        specifier: ^6.0.2
+        specifier: 6.0.2
         version: 6.0.2
       '@codemirror/lang-markdown':
-        specifier: ^6.5.2
+        specifier: 6.5.2
         version: 6.5.2
       '@codemirror/lang-python':
-        specifier: ^6.2.1
+        specifier: 6.2.1
         version: 6.2.1
       '@codemirror/state':
-        specifier: ^6.7.1
+        specifier: 6.7.1
         version: 6.7.1
       '@codemirror/view':
-        specifier: ^6.43.9
+        specifier: 6.43.9
         version: 6.43.9
       '@dnd-kit/core':
         specifier: 6.3.1
@@ -70,76 +70,76 @@ importers:
         specifier: 4.0.0
         version: 4.0.0(electron@43.4.1(supports-color@10.2.2))
       '@fastify/busboy':
-        specifier: ^3.2.2
+        specifier: 3.2.2
         version: 3.2.2
       '@fontsource-variable/bricolage-grotesque':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource-variable/noto-serif-sc':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/cinzel':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/cormorant-garamond':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/fira-code':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/geist':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/geist-mono':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/inter':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/jetbrains-mono':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/nunito':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/orbitron':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/plus-jakarta-sans':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/press-start-2p':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/public-sans':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/rajdhani':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/shippori-mincho':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/silkscreen':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/space-grotesk':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/space-mono':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@fontsource/vt323':
-        specifier: ^5.2.0
+        specifier: 5.3.0
         version: 5.3.0
       '@iconify-json/material-icon-theme':
-        specifier: ^1.2.70
+        specifier: 1.2.70
         version: 1.2.70
       '@libsql/client':
         specifier: 0.17.4
         version: 0.17.4
       '@mastra/agent-browser':
-        specifier: ^0.5.1
+        specifier: 0.5.1
         version: 0.5.1(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))(supports-color@10.2.2)(zod@4.4.3)
       '@mastra/ai-sdk':
         specifier: 1.9.1
@@ -151,7 +151,7 @@ importers:
         specifier: 1.6.2
         version: 1.6.2(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))
       '@mastra/editor':
-        specifier: ^0.14.0
+        specifier: 0.14.0
         version: 0.14.0(@aws-sdk/credential-provider-node@3.972.80)(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))(@mastra/mcp@1.17.1(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(hono@4.13.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(zod@4.4.3))(@smithy/signature-v4@5.7.2)(supports-color@10.2.2)(ws@8.21.3)(zod@4.4.3)
       '@mastra/fastembed':
         specifier: 1.2.0
@@ -172,7 +172,7 @@ importers:
         specifier: 2.6.0
         version: 2.6.0(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))(zod@4.4.3)
       '@mastra/tavily':
-        specifier: ^1.1.1
+        specifier: 1.1.1
         version: 1.1.1(@mastra/core@1.61.0(ai@7.0.77(zod@4.4.3))(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod@4.4.3))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.4.3)
       '@open-file-viewer/core':
         specifier: 0.1.42
@@ -202,19 +202,19 @@ importers:
         specifier: 1.0.2
         version: 1.0.2(react@19.2.8)
       '@tavily/core':
-        specifier: ^0.7.7
+        specifier: 0.7.7
         version: 0.7.7(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       '@xterm/addon-fit':
-        specifier: ^0.11.0
+        specifier: 0.11.0
         version: 0.11.0
       '@xterm/xterm':
-        specifier: ^6.0.0
+        specifier: 6.0.0
         version: 6.0.0
       '@xyflow/react':
         specifier: 12.11.3
         version: 12.11.3(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(immer@11.1.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       adm-zip:
-        specifier: ^0.6.0
+        specifier: 0.6.0
         version: 0.6.0
       ai:
         specifier: 7.0.77
@@ -223,7 +223,7 @@ importers:
         specifier: 6.2.6
         version: 6.2.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       border-beam:
-        specifier: ^1.3.0
+        specifier: 1.3.0
         version: 1.3.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority:
         specifier: 0.7.1
@@ -235,7 +235,7 @@ importers:
         specifier: 1.1.1
         version: 1.1.1(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       codemirror:
-        specifier: ^6.0.2
+        specifier: 6.0.2
         version: 6.0.2
       date-fns:
         specifier: 4.4.0
@@ -244,7 +244,7 @@ importers:
         specifier: 8.6.0
         version: 8.6.0(react@19.2.8)
       firecrawl:
-        specifier: ^4.35.0
+        specifier: 4.35.0
         version: 4.35.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       input-otp:
         specifier: 1.5.0
@@ -253,7 +253,7 @@ importers:
         specifier: 1.33.0
         version: 1.33.0(react@19.2.8)
       mammoth:
-        specifier: ^1.12.1
+        specifier: 1.12.1
         version: 1.12.1
       mastra:
         specifier: 1.26.0
@@ -271,10 +271,10 @@ importers:
         specifier: 0.4.6
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       node-pty:
-        specifier: ^1.1.0
+        specifier: 1.1.0
         version: 1.1.0
       pdf-parse:
-        specifier: ^2.4.5
+        specifier: 2.4.5
         version: 2.4.5
       pdfjs-dist:
         specifier: 6.2.108
@@ -313,13 +313,13 @@ importers:
         specifier: 1.1.6
         version: 1.1.6(react@19.2.8)
       vscode-jsonrpc:
-        specifier: ^9.0.1
+        specifier: 9.0.1
         version: 9.0.1
       vscode-languageserver-protocol:
-        specifier: ^3.18.2
+        specifier: 3.18.2
         version: 3.18.2
       xlsx:
-        specifier: ^0.18.5
+        specifier: 0.18.5
         version: 0.18.5
       zod:
         specifier: 4.4.3
@@ -347,7 +347,7 @@ importers:
         specifier: 6.1.0
         version: 6.1.0(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       concurrently:
-        specifier: ^10.0.5
+        specifier: 10.0.5
         version: 10.0.5
       electron:
         specifier: 43.4.1
@@ -950,6 +950,9 @@ packages:
 
   '@codemirror/search@6.7.1':
     resolution: {integrity: sha512-uMe5UO6PamJtSHrXhhHOzSX3ReWtiJrva6GnPMwSOrZtiExb5X5eExhr2OUZQVvdxPsKpY3Ro2mFbQadpPWmHA==}
+
+  '@codemirror/state@6.7.0':
+    resolution: {integrity: sha512-Zbl9NyscLMZkfXPQnNAIIAFftidrA1UbcJEIMp24C0Bukc2I5T8wJS0wsXYsnDOqCFJUeJ1BITGNs5CqPDSmSg==}
 
   '@codemirror/state@6.7.1':
     resolution: {integrity: sha512-9QzNDgE4EYDnAHfrTlR2lwiPciiOymLtwKK+8yHQzCc7GXhAP9xdEbEJFy2IWB1j9UGUl9BsgMmTo/ImA02T7A==}
@@ -4687,10 +4690,6 @@ packages:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
     engines: {node: '>= 0.8'}
 
-  http-proxy-agent@7.0.0:
-    resolution: {integrity: sha512-+ZT+iBxVUQ1asugqnD6oWoRiS25AkjNfG085dKJGtGxkdwLQrMKU5wJr2bOOFAXzKcTuqq+7fZlTMgG3SRfIYQ==}
-    engines: {node: '>= 14'}
-
   http-proxy-agent@7.0.2:
     resolution: {integrity: sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==}
     engines: {node: '>= 14'}
@@ -7448,7 +7447,7 @@ snapshots:
       '@babel/types': 7.29.8
       '@jridgewell/remapping': 2.3.5
       convert-source-map: 2.0.0
-      debug: 4.4.3(supports-color@7.1.0)
+      debug: 4.4.3(supports-color@10.2.2)
       gensync: 1.0.0-beta.2
       json5: 2.2.3
       semver: 6.3.1
@@ -7769,7 +7768,7 @@ snapshots:
   '@codemirror/autocomplete@6.20.3':
     dependencies:
       '@codemirror/language': 6.12.4
-      '@codemirror/state': 6.7.1
+      '@codemirror/state': 6.7.0
       '@codemirror/view': 6.43.9
       '@lezer/common': 1.5.2
 
@@ -7853,6 +7852,10 @@ snapshots:
       '@codemirror/state': 6.7.1
       '@codemirror/view': 6.43.9
       crelt: 1.0.7
+
+  '@codemirror/state@6.7.0':
+    dependencies:
+      '@marijn/find-cluster-break': 1.0.3
 
   '@codemirror/state@6.7.1':
     dependencies:
@@ -10812,12 +10815,6 @@ snapshots:
     optionalDependencies:
       supports-color: 10.2.2
 
-  debug@4.4.3(supports-color@7.1.0):
-    dependencies:
-      ms: 2.1.3
-    optionalDependencies:
-      supports-color: 7.1.0
-
   decamelize@6.0.1: {}
 
   decimal.js-light@2.5.1: {}
@@ -11751,13 +11748,6 @@ snapshots:
       setprototypeof: 1.2.0
       statuses: 2.0.2
       toidentifier: 1.0.1
-
-  http-proxy-agent@7.0.0(supports-color@10.2.2):
-    dependencies:
-      agent-base: 7.1.4
-      debug: 4.4.3(supports-color@10.2.2)
-    transitivePeerDependencies:
-      - supports-color
 
   http-proxy-agent@7.0.2(supports-color@10.2.2):
     dependencies:
@@ -12917,7 +12907,7 @@ snapshots:
       agent-base: 7.1.4
       debug: 4.4.3(supports-color@10.2.2)
       get-uri: 6.0.5(supports-color@10.2.2)
-      http-proxy-agent: 7.0.0(supports-color@10.2.2)
+      http-proxy-agent: 7.0.2(supports-color@10.2.2)
       https-proxy-agent: 7.0.6(supports-color@10.2.2)
       pac-resolver: 7.0.1
       socks-proxy-agent: 8.0.5(supports-color@10.2.2)

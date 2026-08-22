@@ -1,23 +1,14 @@
 import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { FileUIPart, LanguageModelUsage } from "ai";
-import { MessageCircleDashedIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { Queue } from "@/components/ai-elements/queue";
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { DotPattern } from "@/components/ui/dot-pattern";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { MagicCard } from "@/components/ui/magic-card";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
@@ -686,9 +677,12 @@ export function ChatPanel() {
     [messageBranchByMessageId, messages],
   );
 
+  const [resumingKeys, setResumingKeys] = React.useState<Set<string>>(new Set());
+
   const handleResumeInteraction = React.useCallback(
     async (interaction: AgentInteraction, resumeData: unknown) => {
-      if (!activeThreadId || isBusy) return;
+      if (!activeThreadId || resumingKeys.has(interaction.key)) return;
+      setResumingKeys((current) => new Set(current).add(interaction.key));
       // 过期预检:审批可能已被另一个窗口处理、或该 run 已自行结束。
       // 挂起快照是存储支撑的(不是内存态),所以「不在列表里」= 这次交互已经落定,
       // 此时再 resume 只会拿到一个无效 runId。取不到列表(网络/服务未起)不拦,
@@ -738,15 +732,21 @@ export function ChatPanel() {
           return next;
         });
         toast.error("无法继续 Agent 工具调用,请重试");
+      } finally {
+        setResumingKeys((current) => {
+          const next = new Set(current);
+          next.delete(interaction.key);
+          return next;
+        });
       }
     },
     [
       activeThreadId,
       fetchSuspendedInteractions,
       getThreadChat,
-      isBusy,
       refreshThreadSettings,
       reloadMessages,
+      resumingKeys,
     ],
   );
 
@@ -1118,7 +1118,7 @@ export function ChatPanel() {
 
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
-          busy={isBusy}
+          busy={resumingKeys.size > 0}
           interactions={interactions}
           messages={messages}
           onAlwaysAllow={handleAlwaysAllowCategory}
@@ -1220,7 +1220,7 @@ export function ChatPanel() {
                     gradientFrom="var(--primary)"
                     gradientTo="var(--accent)"
                     onClick={() => {
-                      handleSubmit({ text: starter.prompt, files: [] });
+                      handleSubmit({ text: starter.prompt, files: [] }, () => undefined);
                     }}
                     className="p-3 cursor-pointer hover:border-primary/50 transition-colors bg-card/60 backdrop-blur-xs flex flex-col justify-between gap-1"
                   >

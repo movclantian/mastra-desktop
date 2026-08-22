@@ -25,6 +25,13 @@ import {
 // Custom APIs for renderer
 const api = {
   openDirectory: (directory: string) => ipcRenderer.invoke("open-directory", directory),
+  /** 动态检测用户系统中已安装的各类本地 IDE 与系统工具 */
+  detectIdes: () =>
+    ipcRenderer.invoke("detect-ides") as Promise<
+      Array<{ id: string; name: string; command: string; category: "ide" | "system" }>
+    >,
+  openInApp: (app: string, targetPath: string) =>
+    ipcRenderer.invoke("open-in-app", { app, targetPath }),
   openExternal: (url: string) => ipcRenderer.invoke("open-external", url),
   pickDirectory: () => ipcRenderer.invoke("pick-directory"),
   migrateStorage: (directory: string) => ipcRenderer.invoke("migrate-storage", directory),
