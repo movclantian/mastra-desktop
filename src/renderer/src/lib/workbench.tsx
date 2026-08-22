@@ -137,7 +137,23 @@ export interface PendingJump {
   messageId: string;
 }
 
-export type WorkspacePanelTab = "files" | "browser";
+/** 右侧面板可承载的模块类型。browser 页面由服务端浏览器状态派生,其余是前端实例。 */
+export type PanelTabKind = "files" | "terminal" | "browser";
+
+/**
+ * 前端拥有的右侧标签实例(文件树 / 终端各可多开)。
+ * 浏览器页面标签不在这里 —— 它们直接映射服务端的 state.tabs,按 index 寻址。
+ */
+export interface LocalPanelTab {
+  id: string;
+  kind: "files" | "terminal";
+  title: string;
+}
+
+/** 当前激活的右侧标签。浏览器用 index 而非 id:Mastra 的 tabs API 只按下标寻址。 */
+export type ActivePanelTab =
+  | { kind: "files" | "terminal"; id: string }
+  | { kind: "browser"; index: number };
 
 export interface TerminalRequest {
   id: number;
@@ -255,6 +271,23 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+/** 单个终端会话向 workbench 注册表登记的信息 */
+export interface TerminalSessionInfo {
+  title: string;
+  status: "connecting" | "ready" | "exited" | "error";
+  lastCommand?: string;
+  lastExitCode?: number;
+  /** 命令结束的时刻,用于在多个会话里挑出「最近结束的那条命令」 */
+  settledAt?: number;
+}
+
+/** 右侧面板的初始标签。用固定 id 而非 nanoid,让初始激活项能与它同步声明。 */
+const INITIAL_FILES_TAB: LocalPanelTab = {
+  id: "panel-tab-files-initial",
+  kind: "files",
+  title: "文件",
+};
+
 const DEFAULT_USER: WorkUser = {
   id: "user-local",
   name: "Local User",
@@ -327,11 +360,23 @@ interface WorkbenchValue {
   clearPendingLibraryFiles: () => void;
   // 线程级工作面板(Minke right/bottom tabs 对应的应用状态)
   workspacePanelOpen: boolean;
-  workspacePanelTab: WorkspacePanelTab;
-  openWorkspacePanel: (tab?: WorkspacePanelTab) => void;
   setWorkspacePanelOpen: (open: boolean) => void;
+  /** 右侧面板里前端拥有的标签实例(文件树 / 终端);浏览器页面由面板自己派生渲染 */
+  panelTabs: LocalPanelTab[];
+  activePanelTab: ActivePanelTab;
+  activatePanelTab: (tab: ActivePanelTab) => void;
+  /** 新建一个本地标签并激活它,返回新标签 id */
+  addPanelTab: (kind: "files" | "terminal") => string;
+  closePanelTab: (id: string) => void;
+  /** 打开面板并聚焦该类型的第一个标签(browser 聚焦当前活动页) */
+  openWorkspacePanel: (kind?: PanelTabKind) => void;
   terminalPanelOpen: boolean;
   setTerminalPanelOpen: (open: boolean) => void;
+  /**
+   * 终端会话登记。底部面板与右侧终端标签的会话都往这里登记,由 workbench 聚合成
+   * 一份 terminal state lane —— 否则模型只能看到其中一个面板里的终端。传 null 撤销。
+   */
+  reportTerminalSession: (id: string, info: TerminalSessionInfo | null) => void;
   terminalRequest: TerminalRequest | null;
   requestTerminalCommand: (request: Omit<TerminalRequest, "id">) => void;
   /** 打开当前线程的右侧浏览器并导航。普通网页链接均经此入口。 */
@@ -468,7 +513,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
-  const [workspacePanelTab, setWorkspacePanelTab] = useState<WorkspacePanelTab>("files");
+  const [panelTabs, setPanelTabs] = useState<LocalPanelTab[]>(() => [INITIAL_FILES_TAB]);
+  const [activePanelTab, setActivePanelTab] = useState<ActivePanelTab>({
+    kind: "files",
+    id: INITIAL_FILES_TAB.id,
+  });
+  /** 标签标题的序号来源:第一个文件树叫「文件」,之后是「文件 2」「终端 1」… */
+  const panelTabCountsRef = useRef({ files: 1, terminal: 0 });
+  /** 两个面板的终端会话都登记在这里,聚合后上报 terminal state lane */
+  const terminalSessionsRef = useRef(new Map<string, TerminalSessionInfo>());
+  const [terminalSessionsVersion, setTerminalSessionsVersion] = useState(0);
   const [terminalPanelOpen, setTerminalPanelOpen] = useState(false);
   const [terminalRequest, setTerminalRequest] = useState<TerminalRequest | null>(null);
   const terminalRequestIdRef = useRef(0);
@@ -485,9 +539,14 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   // 面板可见性 → workbench state lane:让模型知道用户此刻的注意力在哪
   useEffect(() => {
     reportWorkbenchState(activeThreadId, user.id, {
-      workbench: { workspacePanelOpen, workspacePanelTab, terminalPanelOpen, libraryOpen },
+      workbench: {
+        workspacePanelOpen,
+        workspacePanelTab: activePanelTab.kind,
+        terminalPanelOpen,
+        libraryOpen,
+      },
     });
-  }, [activeThreadId, libraryOpen, terminalPanelOpen, workspacePanelOpen, workspacePanelTab]);
+  }, [activeThreadId, activePanelTab.kind, libraryOpen, terminalPanelOpen, workspacePanelOpen]);
   useEffect(() => {
     localStorage.setItem(MODE_KEY, JSON.stringify(modeId));
   }, [modeId]);
@@ -610,9 +669,65 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
 
   const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
 
-  const openWorkspacePanel = useCallback((tab: WorkspacePanelTab = "files") => {
-    setWorkspacePanelTab(tab);
+  const activatePanelTab = useCallback((tab: ActivePanelTab) => {    setActivePanelTab(tab);
     setWorkspacePanelOpen(true);
+  }, []);
+
+  const addPanelTab = useCallback((kind: "files" | "terminal") => {
+    const id = nanoid();
+    const counts = panelTabCountsRef.current;
+    counts[kind] += 1;
+    const label = kind === "files" ? "文件" : "终端";
+    setPanelTabs((current) => [
+      ...current,
+      { id, kind, title: counts[kind] > 1 ? `${label} ${counts[kind]}` : label },
+    ]);
+    setActivePanelTab({ kind, id });
+    setWorkspacePanelOpen(true);
+    return id;
+  }, []);
+
+  /**
+   * 关闭一个本地标签。若关掉的正是激活项,就近激活它的邻居;一个本地标签都不剩时
+   * 交给面板自己回落到浏览器页面(或空态)。
+   */
+  const closePanelTab = useCallback((id: string) => {
+    setPanelTabs((current) => {
+      const index = current.findIndex((tab) => tab.id === id);
+      if (index < 0) return current;
+      const next = current.filter((tab) => tab.id !== id);
+      setActivePanelTab((active) => {
+        if (active.kind === "browser" || active.id !== id) return active;
+        const neighbor = next[Math.max(0, index - 1)];
+        return neighbor ? { kind: neighbor.kind, id: neighbor.id } : { kind: "browser", index: 0 };
+      });
+      return next;
+    });
+  }, []);
+
+  /** 打开面板并聚焦某类模块的第一个标签。browser 聚焦当前活动页(下标由面板同步)。 */
+  const openWorkspacePanel = useCallback((kind: PanelTabKind = "files") => {
+    setWorkspacePanelOpen(true);
+    if (kind === "browser") {
+      setActivePanelTab((active) =>
+        active.kind === "browser" ? active : { kind: "browser", index: 0 },
+      );
+      return;
+    }
+    setPanelTabs((current) => {
+      const existing = current.find((tab) => tab.kind === kind);
+      if (existing) {
+        setActivePanelTab({ kind, id: existing.id });
+        return current;
+      }
+      // 该类型还没有标签(比如文件树被关掉过)→ 现开一个
+      const id = nanoid();
+      const counts = panelTabCountsRef.current;
+      counts[kind] += 1;
+      const label = kind === "files" ? "文件" : "终端";
+      setActivePanelTab({ kind, id });
+      return [...current, { id, kind, title: counts[kind] > 1 ? `${label} ${counts[kind]}` : label }];
+    });
   }, []);
 
   const requestTerminalCommand = useCallback((request: Omit<TerminalRequest, "id">) => {
@@ -632,7 +747,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       }
       setLibraryOpen(false);
       setSkillOpen(false);
-      setWorkspacePanelTab("browser");
+      // 新页会追加到 state.tabs 末尾,面板的活动页下标由服务端状态同步过来
+      setActivePanelTab((active) =>
+        active.kind === "browser" ? active : { kind: "browser", index: 0 },
+      );
       setWorkspacePanelOpen(true);
       setBrowserRequest({
         id: ++browserRequestIdRef.current,
@@ -1002,9 +1120,13 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       queueLibraryFiles,
       clearPendingLibraryFiles,
       workspacePanelOpen,
-      workspacePanelTab,
-      openWorkspacePanel,
       setWorkspacePanelOpen,
+      panelTabs,
+      activePanelTab,
+      activatePanelTab,
+      addPanelTab,
+      closePanelTab,
+      openWorkspacePanel,
       terminalPanelOpen,
       setTerminalPanelOpen,
       terminalRequest,
@@ -1052,7 +1174,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       queueLibraryFiles,
       clearPendingLibraryFiles,
       workspacePanelOpen,
-      workspacePanelTab,
+      panelTabs,
+      activePanelTab,
+      activatePanelTab,
+      addPanelTab,
+      closePanelTab,
       openWorkspacePanel,
       terminalPanelOpen,
       terminalRequest,

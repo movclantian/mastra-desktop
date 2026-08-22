@@ -34,11 +34,16 @@ import {
 } from "@/lib/providers";
 import type { ToolCategory } from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
-import { AgentInteractionPanel, AgentQueuePanel } from "./agent-panels";
-import { persistAttachments as uploadAttachments } from "./attachments";
-import { buildDisplayMessages } from "./display";
-import { MessageItem } from "./message-list";
-import { ChatPromptInput, UserRequestQueuePanel } from "./prompt-input";
+import {
+  AgentInteractionPanel,
+  AgentQueuePanel,
+  ChatPromptInput,
+  ChatWorkspaceSelector,
+  MessageItem,
+  UserRequestQueuePanel,
+} from "./components";
+import { usePlaceholderChat, useThreadChats } from "./hooks";
+import { buildDisplayMessages, persistAttachments as uploadAttachments } from "./lib";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -60,8 +65,6 @@ import {
   type WorkDisplayState,
   type WorkUIMessage,
 } from "./types";
-import { usePlaceholderChat, useThreadChats } from "./use-thread-chats";
-import { ChatWorkspaceSelector } from "./workspace-selector";
 
 // ---------------------------------------------------------------------------
 // 会话面板

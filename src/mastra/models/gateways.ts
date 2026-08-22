@@ -4,10 +4,6 @@
  * 供应商与 Key —— fetchProviders 决定模型选择器内容,resolveAuth 在
  * getApiKey / env 回退之前被调用,凭据由网关自己从数据库取。
  */
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   type GatewayAuthRequest,
   type GatewayAuthResult,
@@ -15,8 +11,8 @@ import {
   type ProviderConfig as GatewayProviderConfig,
   MastraModelGateway,
 } from "@mastra/core/llm";
+import { createGatewayModel, type GatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
 import {
-  type GatewayProtocol,
   getProvidersConfig,
   routerPrefix,
   splitRouterId,
@@ -25,46 +21,6 @@ import {
 } from "./providers";
 
 export type { GatewayLanguageModel };
-
-export const WORKBENCH_GATEWAY_ID = "mastra-work";
-
-/**
- * 用官方 provider 包构造真实端点的 LanguageModel 实例,协议真实生效:
- * anthropic 走 Messages API、gemini 走原生 generateContent、
- * openai 按 useResponses 走 Responses 或 Chat Completions。
- *
- * OpenAI-compatible 网关使用 AI SDK 官方的 openai-compatible provider，
- * 原生支持 reasoning_content / reasoning、tool call 和标准 v4 stream。
- */
-export function createGatewayModel(options: {
-  modelId: string;
-  apiKey: string;
-  baseUrl?: string;
-  protocol: GatewayProtocol | undefined;
-  useResponses?: boolean;
-}): GatewayLanguageModel {
-  const { modelId, apiKey, baseUrl, protocol, useResponses } = options;
-  switch (protocol) {
-    case "anthropic":
-      return createAnthropic({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey })(modelId);
-    case "gemini":
-      return createGoogleGenerativeAI({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey })(
-        modelId,
-      );
-    default: {
-      const openai = createOpenAI({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey });
-      if (useResponses) return openai.responses(modelId);
-      if (baseUrl) {
-        return createOpenAICompatible({
-          name: "mastra-work-openai-compatible",
-          baseURL: baseUrl,
-          apiKey,
-        }).chatModel(modelId);
-      }
-      return openai.chat(modelId);
-    }
-  }
-}
 
 export class WorkbenchGateway extends MastraModelGateway {
   readonly id = WORKBENCH_GATEWAY_ID;
@@ -124,11 +80,12 @@ export class WorkbenchGateway extends MastraModelGateway {
     const baseUrl = provider?.baseUrl;
     if (!baseUrl) {
       const protocol = inferProtocol(args.providerId);
-      if (protocol === "anthropic") return createAnthropic({ apiKey: args.apiKey })(args.modelId);
-      if (protocol === "gemini") {
-        return createGoogleGenerativeAI({ apiKey: args.apiKey })(args.modelId);
-      }
-      return createOpenAI({ apiKey: args.apiKey }).responses(args.modelId);
+      return createGatewayModel({
+        modelId: args.modelId,
+        apiKey: args.apiKey,
+        protocol,
+        useResponses: provider?.useResponses,
+      });
     }
     return createGatewayModel({
       modelId: args.modelId,

@@ -33,6 +33,7 @@ import {
   WebPreviewNavigationButton,
   WebPreviewUrl,
 } from "@/components/ai-elements/web-preview";
+import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -169,7 +170,13 @@ function TreeRows({
 
 const RUNNABLE_FILE = /\.(?:[cm]?js|[cm]?ts|py|ps1|sh)$/i;
 
-function FilesWorkspace() {
+/**
+ * 文件树 + 编辑器。可多开 —— 每个标签一个独立实例,各自持有展开态与打开的文件。
+ *
+ * active:只有激活的那个实例上报 editor state lane。多实例同时上报会在同一条
+ * lane 上互相覆盖,模型看到的「当前打开的文件」会在几个标签之间来回跳。
+ */
+function FilesWorkspace({ active }: { active: boolean }) {
   const { activeThreadId, fetchTreeEntries, requestTerminalCommand, threads, user } =
     useWorkbench();
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
@@ -202,8 +209,10 @@ function FilesWorkspace() {
   }, [activeThread?.metadata.workspaceExplicit, activeThreadId, fetchTreeEntries]);
 
   // 编辑器状态 → editor state lane:模型据此知道用户正在看哪个文件、有没有
-  // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)
+  // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)。
+  // 只有激活实例上报 —— 见组件顶部关于 active 的说明。
   React.useEffect(() => {
+    if (!active) return;
     reportWorkbenchState(activeThreadId, user.id, {
       editor: {
         ...(activeThread?.metadata.workspacePath
@@ -214,6 +223,7 @@ function FilesWorkspace() {
       },
     });
   }, [
+    active,
     activeThread?.metadata.workspacePath,
     activeThreadId,
     dirty,
@@ -338,8 +348,8 @@ function FilesWorkspace() {
   return (
     <ResizablePanelGroup className="min-h-0" orientation="horizontal">
       <ResizablePanel defaultSize="72%" minSize="42%">
-        <section className="flex size-full min-w-0 flex-col bg-background">
-          <header className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
+        <PanelSurface>
+          <PanelHeader className="gap-2 px-3">
             {file ? (
               <FileTypeIcon name={file.name} />
             ) : (
@@ -371,7 +381,7 @@ function FilesWorkspace() {
             >
               {saving ? <LoaderCircleIcon className="animate-spin" /> : <SaveIcon />}
             </Button>
-          </header>
+          </PanelHeader>
           <div className="min-h-0 flex-1 overflow-hidden">
             {loading ? (
               <div className="flex size-full items-center justify-center text-muted-foreground">
@@ -396,12 +406,12 @@ function FilesWorkspace() {
               </Empty>
             )}
           </div>
-        </section>
+        </PanelSurface>
       </ResizablePanel>
       <ResizableHandle />
       <ResizablePanel defaultSize="28%" minSize="22%" maxSize="46%">
         <aside className="flex size-full min-w-0 flex-col bg-muted/20">
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3 text-xs font-medium">
+          <PanelHeader className="bg-muted/60 px-3 text-xs font-medium">
             <FolderTreeIcon className="size-4 text-muted-foreground" />
             <span className="truncate" title={activeThread.metadata.workspacePath}>
               {activeThread.metadata.workspacePath
@@ -410,7 +420,7 @@ function FilesWorkspace() {
                 .filter(Boolean)
                 .at(-1)}
             </span>
-          </div>
+          </PanelHeader>
           <ScrollArea className="min-h-0 flex-1">
             <FileTree
               className="min-w-max rounded-none border-0 bg-transparent text-xs"
@@ -452,9 +462,9 @@ const EMPTY_BROWSER_STATE: BrowserState = {
  * WorkspacePanel 的 header 上 —— state.tabs 与 action() 必须在那一层可见。
  */
 function useBrowserSession() {
-  const { activeThreadId, browserRequest, user, workspacePanelTab } = useWorkbench();
+  const { activeThreadId, activePanelTab, browserRequest, user } = useWorkbench();
   // 浏览器标签当前是否激活:门控空白页自动 ensure 与 SSE 视频流(见下注释)
-  const viewActive = workspacePanelTab === "browser";
+  const viewActive = activePanelTab.kind === "browser";
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
   const [frame, setFrame] = React.useState<{
     data: string;
@@ -898,43 +908,92 @@ function panelTabClass(selected: boolean): string {
 }
 
 export default function WorkspacePanel() {
-  const { openWorkspacePanel, setWorkspacePanelOpen, workspacePanelTab } = useWorkbench();
+  const {
+    activePanelTab,
+    activatePanelTab,
+    addPanelTab,
+    closePanelTab,
+    openWorkspacePanel,
+    panelTabs,
+    setWorkspacePanelOpen,
+  } = useWorkbench();
   // 会话状态在面板层建立(无条件调用),浏览器视图按当前标签渲染
   const browserSession = useBrowserSession();
-  const { action, state } = browserSession;
+  const { action, closeBrowser, state } = browserSession;
+  const browserActive = activePanelTab.kind === "browser";
 
   /** 切到某个浏览器页面:先切服务端活动页,再把面板切到浏览器视图 */
   const openBrowserTab = (index: number) => {
-    openWorkspacePanel("browser");
+    activatePanelTab({ kind: "browser", index });
     void action("switch-tab", index);
   };
 
+  /**
+   * 关闭一个页面标签。
+   *
+   * Mastra 的 tabs API 拒绝关掉最后一个标签(会抛 "Cannot close the last tab"),
+   * 因为那等价于关掉整个浏览器 —— 所以这里就按它说的做:走 close 关浏览器,
+   * 并把焦点交回第一个本地标签。
+   */
+  const closeBrowserTab = (index: number) => {
+    if (state.tabs.length <= 1) {
+      closeBrowser();
+      const fallback = panelTabs[0];
+      if (fallback) activatePanelTab({ kind: fallback.kind, id: fallback.id });
+      return;
+    }
+    void action("close-tab", index);
+  };
+
   return (
-    <section className="flex size-full min-w-0 flex-col border-l bg-background">
-      <header className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
-        {/* 一条统一标签栏:文件固定排首位,其后是由服务端 state.tabs 派生的
-            浏览器页面 —— agent 用 browser_tabs 开的页面会自动出现在这里。
-            标签过多时横向滚动,不挤压右侧的关闭按钮。 */}
+    <PanelSurface>
+      <PanelHeader className="gap-1 bg-muted/40 px-2">
+        {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端,按创建顺序),
+            后半是由服务端 state.tabs 派生的浏览器页面 —— agent 用 browser_tabs
+            开的页面会自动出现在这里。标签过多时横向滚动,不挤压右侧按钮。 */}
         <ScrollArea className="min-w-0 flex-1">
           <div className="flex min-w-max items-center gap-0.5 py-1.5" role="tablist">
-            <div
-              aria-selected={workspacePanelTab === "files"}
-              className={panelTabClass(workspacePanelTab === "files")}
-              onClick={() => openWorkspacePanel("files")}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  openWorkspacePanel("files");
-                }
-              }}
-              role="tab"
-              tabIndex={0}
-            >
-              <FolderTreeIcon className="size-3.5 shrink-0" />
-              文件
-            </div>
+            {panelTabs.map((tab) => {
+              const selected = activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
+              const activate = () => activatePanelTab({ kind: tab.kind, id: tab.id });
+              return (
+                <div
+                  aria-selected={selected}
+                  className={cn("group", panelTabClass(selected))}
+                  key={tab.id}
+                  onClick={activate}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      activate();
+                    }
+                  }}
+                  role="tab"
+                  tabIndex={0}
+                  title={tab.title}
+                >
+                  {tab.kind === "files" ? (
+                    <FolderTreeIcon className="size-3.5 shrink-0" />
+                  ) : (
+                    <TerminalIcon className="size-3.5 shrink-0" />
+                  )}
+                  <span className="truncate">{tab.title}</span>
+                  <button
+                    aria-label={`关闭${tab.title}`}
+                    className="ml-auto rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      closePanelTab(tab.id);
+                    }}
+                    type="button"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </div>
+              );
+            })}
             {state.tabs.map((tab, index) => {
-              const selected = workspacePanelTab === "browser" && index === state.activeTabIndex;
+              const selected = browserActive && index === state.activeTabIndex;
               return (
                 <div
                   aria-selected={selected}
@@ -959,11 +1018,7 @@ export default function WorkspacePanel() {
                     className="ml-auto rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
                     onClick={(event) => {
                       event.stopPropagation();
-                      // length <= 1 是关闭前的值:关完就没有可显示的页面了,回到文件树
-                      const isLast = state.tabs.length <= 1;
-                      void action("close-tab", index).then(() => {
-                        if (isLast) openWorkspacePanel("files");
-                      });
+                      closeBrowserTab(index);
                     }}
                     type="button"
                   >
@@ -972,19 +1027,40 @@ export default function WorkspacePanel() {
                 </div>
               );
             })}
-            <Button
-              aria-label="新建浏览页面"
-              className="size-7 shrink-0"
-              onClick={() => {
-                openWorkspacePanel("browser");
-                void action("new-tab");
-              }}
-              size="icon-sm"
-              title="新建浏览页面"
-              variant="ghost"
-            >
-              <PlusIcon />
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    aria-label="新建标签"
+                    className="size-7 shrink-0"
+                    size="icon-sm"
+                    title="新建标签"
+                    variant="ghost"
+                  />
+                }
+              >
+                <PlusIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem
+                  onClick={() => {
+                    activatePanelTab({ kind: "browser", index: state.tabs.length });
+                    void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                  }}
+                >
+                  <Globe2Icon />
+                  新建浏览页面
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => addPanelTab("terminal")}>
+                  <TerminalIcon />
+                  新建终端
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => addPanelTab("files")}>
+                  <FolderTreeIcon />
+                  新建文件树
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <ScrollBar orientation="horizontal" />
         </ScrollArea>
@@ -998,14 +1074,38 @@ export default function WorkspacePanel() {
         >
           <XIcon />
         </Button>
-      </header>
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {workspacePanelTab === "files" ? (
-          <FilesWorkspace />
-        ) : (
+      </PanelHeader>
+      {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
+          文件树卸载会丢展开层级。浏览器只有一个实例 —— screencast 是每线程单路的,
+          页面之间靠 switch-tab 切换而不是多份视图。 */}
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        {panelTabs.map((tab) => {
+          const selected = activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
+          return (
+            <div className={cn("size-full", selected ? "block" : "hidden")} key={tab.id}>
+              {tab.kind === "files" ? (
+                <FilesWorkspace active={selected} />
+              ) : (
+                <TerminalSession active={selected} />
+              )}
+            </div>
+          );
+        })}
+        <div className={cn("size-full", browserActive ? "block" : "hidden")}>
           <BrowserView session={browserSession} />
-        )}
+        </div>
+        {panelTabs.length === 0 && state.tabs.length === 0 ? (
+          <Empty className="h-full">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <PlusIcon />
+              </EmptyMedia>
+              <EmptyTitle>没有打开的标签</EmptyTitle>
+              <EmptyDescription>用标签栏右侧的 + 新建文件树、终端或浏览页面。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        ) : null}
       </div>
-    </section>
+    </PanelSurface>
   );
 }

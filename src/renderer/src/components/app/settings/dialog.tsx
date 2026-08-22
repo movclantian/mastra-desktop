@@ -27,12 +27,14 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar";
 import { useWorkbench } from "@/lib/workbench";
-import { GuardrailsSection } from "./guardrails-section";
-import { MemorySection } from "./memory-section";
-import { ProvidersSection } from "./providers-section";
-import { StorageSection } from "./storage-section";
-import { ToolsSection } from "./tools-section";
-import { WorkspaceSection } from "./workspace-section";
+import {
+  GuardrailsSection,
+  MemorySection,
+  ProvidersSection,
+  StorageSection,
+  ToolsSection,
+  WorkspaceSection,
+} from "./sections";
 
 // 布局照搬 .vscode/1.txt(shadcn 官方 Settings Dialog):
 // Dialog 内嵌 SidebarProvider + Sidebar(collapsible="none") 左侧导航,

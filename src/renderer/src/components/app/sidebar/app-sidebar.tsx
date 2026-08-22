@@ -61,12 +61,12 @@ import {
   ThreadFolder,
   ThreadListSkeleton,
   WorkspaceGroup,
-} from "./thread-list";
-import { ThreadSearchDialog } from "./thread-search-dialog";
+  ThreadSearchDialog,
+} from "./components";
 
 // 结构参考:
 // - 第一组(无 label)直接操作:新建任务
-// - 第二组「任务列表」:thread-list.tsx 提供(直接线程平铺 + 显式绑定目录
+// - 第二组「任务列表」:components/thread-list.tsx 提供(直接线程平铺 + 显式绑定目录
 //   可折叠文件夹 + 工作区文件树懒加载)
 
 function SidebarHeaderBrand() {
@@ -239,9 +239,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar collapsible="icon" side="left" variant="sidebar" {...props}>
-      {/* h-12(内容 h-8 + 上下 p-2)+ 底部线条:与页面顶栏(SidebarInset 内
-          h-12 header 的 border-b)落在同一条水平线上 */}
-      <SidebarHeader className="border-b border-sidebar-border">
+      {/* 头部使用轻微底色层级,与主内容顶栏保持同一高度。 */}
+      <SidebarHeader className="bg-sidebar-accent/30">
         <SidebarHeaderBrand />
       </SidebarHeader>
       <SidebarContent>

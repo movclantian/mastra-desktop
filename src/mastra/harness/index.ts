@@ -4,6 +4,7 @@
  * - signals: WebhookSignalProvider 与 NotificationInbox (signals.mdx)
  */
 
+export { setDefaultWorkAgent } from "./registry";
 export {
   isTerminalAgentChunk,
   SESSION_SCOPE_DEFAULT,

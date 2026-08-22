@@ -8,12 +8,10 @@
  */
 import { type GatewayLanguageModel, ModelRouterEmbeddingModel } from "@mastra/core/llm";
 import { getAppConfig, setAppConfig } from "../storage";
-import { createGatewayModel, WORKBENCH_GATEWAY_ID } from "./gateways";
+import { createGatewayModel, type GatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
 
 /** 请求级模型覆盖:chat 路由写入,Agent / 子 Agent 的 model 回调读取 */
 export const REQUEST_MODEL_CONTEXT_KEY = "mastra-work:request-model";
-
-export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export interface EnabledModel {
   id: string;

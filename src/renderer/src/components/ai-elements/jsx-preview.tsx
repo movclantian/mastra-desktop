@@ -142,15 +142,15 @@ export const JSXPreview = memo(
     children,
     ...props
   }: JSXPreviewProps) => {
-    const [prevJsx, setPrevJsx] = useState(jsx);
     const [error, setError] = useState<Error | null>(null);
     const [_lastGoodJsx, setLastGoodJsx] = useState("");
+    const prevJsxRef = useRef(jsx);
 
-    // Clear error when jsx changes (derived state pattern)
-    if (jsx !== prevJsx) {
-      setPrevJsx(jsx);
+    useEffect(() => {
+      if (jsx === prevJsxRef.current) return;
+      prevJsxRef.current = jsx;
       setError(null);
-    }
+    }, [jsx]);
 
     const processedJsx = useMemo(
       () => (isStreaming ? completeJsxTag(jsx) : jsx),

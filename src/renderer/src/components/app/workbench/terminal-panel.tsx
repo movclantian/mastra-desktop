@@ -9,32 +9,16 @@ import {
   TerminalIcon,
   XIcon,
 } from "lucide-react";
+import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
+import { PanelFooter, PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
 import { toastError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { reportWorkbenchNotification, reportWorkbenchState, useWorkbench } from "@/lib/workbench";
+import { reportWorkbenchNotification, type TerminalRequest, useWorkbench } from "@/lib/workbench";
 
-interface TerminalTab {
-  id: number;
-  title: string;
-  sessionId?: string;
-  status: "connecting" | "ready" | "exited" | "error";
-}
-
-interface TerminalRuntime {
-  threadId: string | null;
-  terminal: XtermTerminal;
-  fit: FitAddon;
-  sessionId?: string;
-}
-
-const createTerminalTab = (id: number): TerminalTab => ({
-  id,
-  status: "connecting",
-  title: `终端 ${id}`,
-});
+export type TerminalStatus = "connecting" | "ready" | "exited" | "error";
 
 function cssColor(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -91,40 +75,67 @@ function commandForFile(path: string): string | undefined {
 /** 超过这个时长的应用发起命令在结束时投一条通知记录进收件箱 */
 const LONG_COMMAND_MS = 10_000;
 
-export default function TerminalPanel() {
-  const { activeThreadId, setTerminalPanelOpen, terminalRequest, threads, user } = useWorkbench();
+/**
+ * 单个真实终端会话:一个 xterm + 一个主进程 PTY。
+ *
+ * 抽成独立组件是为了让「一标签即一会话」在两处都成立 —— 底部面板用它渲染自己
+ * 标签条里的每个会话,右侧工作区面板的每个终端标签也各挂一个,两边的会话彼此
+ * 独立。会话状态统一登记到 workbench 的注册表,由那里聚合成 terminal state lane
+ * (否则模型只能看到其中一个面板里的终端)。
+ */
+export function TerminalSession({
+  active,
+  request,
+  onStateChange,
+}: {
+  /** 是否为宿主面板当前可见的标签。隐藏元素尺寸为 0,fit() 只在可见时才有意义。 */
+  active: boolean;
+  /** 应用发起的待执行命令(只有底部面板消费 requestTerminalCommand,避免同一条命令被两处执行) */
+  request?: TerminalRequest | null;
+  /** 状态与会话 id 变化,供宿主渲染标题栏、发送中断信号 */
+  onStateChange?: (state: { status: TerminalStatus; sessionId?: string }) => void;
+}) {
+  const { activeThreadId, reportTerminalSession, threads, user } = useWorkbench();
   const terminalApi = typeof window === "undefined" ? undefined : window.api?.terminal;
-  const activeThread = threads.find((thread) => thread.id === activeThreadId);
-  const workspacePath = activeThread?.metadata.workspacePath;
-  const [tabs, setTabs] = React.useState<TerminalTab[]>(() => [createTerminalTab(1)]);
-  const [activeTabId, setActiveTabId] = React.useState(1);
-  const [themeVersion, setThemeVersion] = React.useState(0);
-  const nextTabIdRef = React.useRef(1);
-  const hostRefs = React.useRef(new Map<number, HTMLDivElement>());
-  const runtimeRefs = React.useRef(new Map<number, TerminalRuntime>());
-  const consumedRequestRef = React.useRef(0);
-  const pendingRunRef = React.useRef<{ command?: string; filePath?: string } | undefined>(
-    undefined,
-  );
-  /**
-   * 由应用发起的命令(运行文件 / 工具请求)的跟踪记录。用户在 xterm 里手敲的
-   * 命令拿不到文本(那是裸字节流),但退出码对模型同样有用 —— 所以两种情况都
-   * 上报 lane,只有应用发起的这一类能带上命令原文与耗时。
-   */
-  const lastRunRef = React.useRef<
-    { command: string; sessionId: string; startedAt: number } | undefined
-  >(undefined);
-  const [lastExit, setLastExit] = React.useState<{ command?: string; exitCode?: number }>();
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+  const workspacePath = threads.find((thread) => thread.id === activeThreadId)?.metadata
+    .workspacePath;
 
-  /** 记录并下发一条应用发起的命令,让退出时能还原「跑了什么、跑了多久」 */
-  const runTrackedCommand = React.useCallback(
-    (command: string, sessionId: string) => {
-      lastRunRef.current = { command, sessionId, startedAt: Date.now() };
-      terminalApi?.write({ data: `${command}\r`, sessionId });
-    },
-    [terminalApi],
-  );
+  const hostRef = React.useRef<HTMLDivElement>(null);
+  const terminalRef = React.useRef<XtermTerminal | undefined>(undefined);
+  const fitRef = React.useRef<FitAddon | undefined>(undefined);
+  const sessionIdRef = React.useRef<string | undefined>(undefined);
+  /** 本会话在 workbench 注册表里的稳定键 */
+  const registryKeyRef = React.useRef<string>(nanoid());
+  /** 应用发起命令的跟踪:用户手敲的命令是裸字节流,拿不到文本,只有退出码 */
+  const lastRunRef = React.useRef<{ command: string; startedAt: number } | undefined>(undefined);
+  const consumedRequestRef = React.useRef(0);
+
+  const [status, setStatus] = React.useState<TerminalStatus>("connecting");
+  const [sessionId, setSessionId] = React.useState<string>();
+  const [lastExit, setLastExit] = React.useState<{ command?: string; exitCode?: number }>();
+  const [themeVersion, setThemeVersion] = React.useState(0);
+
+  const title = workspacePath ? `终端 · ${workspacePath.split(/[/\\]/).pop()}` : "系统终端";
+
+  React.useEffect(() => {
+    onStateChange?.({ status, sessionId });
+  }, [onStateChange, sessionId, status]);
+
+  // 会话信息登记到 workbench 注册表;卸载时撤销,让聚合上报立刻反映真实会话数
+  React.useEffect(() => {
+    reportTerminalSession(registryKeyRef.current, {
+      title,
+      status,
+      ...(lastExit?.command ? { lastCommand: lastExit.command } : {}),
+      ...(lastExit?.exitCode === undefined ? {} : { lastExitCode: lastExit.exitCode }),
+      ...(lastExit ? { settledAt: Date.now() } : {}),
+    });
+  }, [lastExit, reportTerminalSession, status, title]);
+
+  React.useEffect(() => {
+    const key = registryKeyRef.current;
+    return () => reportTerminalSession(key, null);
+  }, [reportTerminalSession]);
 
   React.useEffect(() => {
     const observer = new MutationObserver(() => setThemeVersion((value) => value + 1));
@@ -135,254 +146,241 @@ export default function TerminalPanel() {
     return () => observer.disconnect();
   }, []);
 
-  const updateTab = React.useCallback(
-    (tabId: number, update: (tab: TerminalTab) => TerminalTab) => {
-      setTabs((current) => current.map((tab) => (tab.id === tabId ? update(tab) : tab)));
-    },
-    [],
-  );
+  React.useEffect(() => {
+    void themeVersion;
+    if (terminalRef.current) terminalRef.current.options.theme = readTerminalTheme();
+  }, [themeVersion]);
 
-  const disposeRuntime = React.useCallback(
-    (tabId: number) => {
-      const runtime = runtimeRefs.current.get(tabId);
-      if (!runtime) return;
-      if (runtime.sessionId) terminalApi?.close(runtime.sessionId);
-      runtime.terminal.dispose();
-      runtimeRefs.current.delete(tabId);
-      hostRefs.current.delete(tabId);
+  /** 下发一条应用发起的命令,记下起点以便退出时还原「跑了什么、跑了多久」 */
+  const runTrackedCommand = React.useCallback(
+    (command: string, target: string) => {
+      lastRunRef.current = { command, startedAt: Date.now() };
+      terminalApi?.write({ data: `${command}\r`, sessionId: target });
     },
     [terminalApi],
   );
 
+  // 建 xterm 并拉起 PTY。线程换了就整个重建 —— 会话的工作目录跟着线程工作区走。
   React.useEffect(() => {
-    void activeThreadId;
-    for (const tabId of runtimeRefs.current.keys()) disposeRuntime(tabId);
-    nextTabIdRef.current = 1;
-    setTabs([createTerminalTab(1)]);
-    setActiveTabId(1);
-    pendingRunRef.current = undefined;
-  }, [activeThreadId, disposeRuntime]);
+    if (!terminalApi || !hostRef.current) return;
+    const terminal = new XtermTerminal({
+      convertEol: true,
+      cursorBlink: true,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontSize: 13,
+      scrollback: 10_000,
+      theme: readTerminalTheme(),
+    });
+    const fit = new FitAddon();
+    terminal.loadAddon(fit);
+    terminal.open(hostRef.current);
+    terminalRef.current = terminal;
+    fitRef.current = fit;
+    setStatus("connecting");
 
+    terminal.onData((data) => {
+      if (sessionIdRef.current) terminalApi.write({ data, sessionId: sessionIdRef.current });
+    });
+    terminal.onResize(({ cols, rows }) => {
+      if (sessionIdRef.current) {
+        terminalApi.resize({ cols, rows, sessionId: sessionIdRef.current });
+      }
+    });
+    try {
+      fit.fit();
+    } catch {
+      /* 隐藏的标签尺寸为 0,变可见时再 fit */
+    }
+
+    let disposed = false;
+    void terminalApi
+      .create({
+        cwd: workspacePath,
+        cols: Math.max(2, terminal.cols),
+        rows: Math.max(2, terminal.rows),
+      })
+      .then(({ sessionId: created }) => {
+        if (disposed) {
+          terminalApi.close(created);
+          return;
+        }
+        sessionIdRef.current = created;
+        setSessionId(created);
+        setStatus("ready");
+      })
+      .catch((error) => {
+        if (disposed) return;
+        setStatus("error");
+        toastError(error, "终端启动失败");
+      });
+
+    return () => {
+      disposed = true;
+      if (sessionIdRef.current) terminalApi.close(sessionIdRef.current);
+      sessionIdRef.current = undefined;
+      terminal.dispose();
+      terminalRef.current = undefined;
+      fitRef.current = undefined;
+    };
+  }, [activeThreadId, terminalApi, workspacePath]);
+
+  // 只处理属于本会话的事件:主进程的事件流是所有会话共享的
   React.useEffect(() => {
-    if (!terminalApi) return;
-    const unsubscribe = terminalApi.subscribe((event) => {
-      const entry = [...runtimeRefs.current.entries()].find(
-        ([, runtime]) => runtime.sessionId === event.sessionId,
-      );
-      if (!entry) return;
-      const [tabId, runtime] = entry;
-      if (event.type === "data") runtime.terminal.write(event.data);
+    if (!terminalApi || !sessionId) return;
+    return terminalApi.subscribe((event) => {
+      if (event.sessionId !== sessionId) return;
+      const terminal = terminalRef.current;
+      if (!terminal) return;
+      if (event.type === "data") terminal.write(event.data);
       if (event.type === "error") {
-        runtime.terminal.write(`\r\n\x1b[31m${event.message}\x1b[0m\r\n`);
-        updateTab(tabId, (tab) => ({ ...tab, status: "error" }));
+        terminal.write(`\r\n\x1b[31m${event.message}\x1b[0m\r\n`);
+        setStatus("error");
       }
       if (event.type === "exit") {
-        runtime.terminal.write(
-          `\r\n\x1b[90m[进程已退出，代码 ${event.exitCode ?? "?"}]\x1b[0m\r\n`,
-        );
-        updateTab(tabId, (tab) => ({ ...tab, status: "exited" }));
-        const run =
-          lastRunRef.current?.sessionId === event.sessionId ? lastRunRef.current : undefined;
+        terminal.write(`\r\n\x1b[90m[进程已退出，代码 ${event.exitCode ?? "?"}]\x1b[0m\r\n`);
+        setStatus("exited");
+        const run = lastRunRef.current;
         const exitCode = event.exitCode ?? undefined;
         setLastExit({
           ...(run ? { command: run.command } : {}),
           ...(exitCode === undefined ? {} : { exitCode }),
         });
-        if (run) {
-          lastRunRef.current = undefined;
-          // 短命令靠 state lane 传达就够了;跑够久的才值得占一条收件箱记录
-          if (Date.now() - run.startedAt >= LONG_COMMAND_MS) {
-            reportWorkbenchNotification(activeThreadId, user.id, {
-              source: "terminal",
-              kind: "command-exit",
-              priority: exitCode === 0 ? "medium" : "high",
-              summary: `Terminal command finished with exit code ${exitCode ?? "unknown"}: ${run.command}`,
-              payload: {
-                command: run.command,
-                exitCode,
-                durationMs: Date.now() - run.startedAt,
-              },
-              dedupeKey: `terminal:${event.sessionId}:${run.command}`,
-            });
-          }
-        }
+        if (!run) return;
+        lastRunRef.current = undefined;
+        // 短命令靠 state lane 传达就够了;跑够久的才值得占一条收件箱记录
+        const durationMs = Date.now() - run.startedAt;
+        if (durationMs < LONG_COMMAND_MS) return;
+        reportWorkbenchNotification(activeThreadId, user.id, {
+          source: "terminal",
+          kind: "command-exit",
+          priority: exitCode === 0 ? "medium" : "high",
+          summary: `Terminal command finished with exit code ${exitCode ?? "unknown"}: ${run.command}`,
+          payload: { command: run.command, exitCode, durationMs },
+          dedupeKey: `terminal:${sessionId}:${run.command}`,
+        });
       }
     });
-    return unsubscribe;
-  }, [activeThreadId, terminalApi, updateTab, user.id]);
+  }, [activeThreadId, sessionId, terminalApi, user.id]);
 
-  // 终端状态 → terminal state lane:会话数、活动会话状态、最近一条命令的结果
+  // 变可见或容器尺寸变化时重新 fit:隐藏期间拿不到有效尺寸
   React.useEffect(() => {
-    reportWorkbenchState(activeThreadId, user.id, {
-      terminal: {
-        open: true,
-        sessionCount: tabs.filter((tab) => tab.sessionId).length,
-        ...(activeTab?.title ? { activeTitle: activeTab.title } : {}),
-        ...(activeTab?.status ? { activeStatus: activeTab.status } : {}),
-        ...(lastExit?.command ? { lastCommand: lastExit.command } : {}),
-        ...(lastExit?.exitCode === undefined ? {} : { lastExitCode: lastExit.exitCode }),
-      },
-    });
-  }, [activeTab?.status, activeTab?.title, activeThreadId, lastExit, tabs, user.id]);
-
-  React.useEffect(() => {
-    void themeVersion;
-    const theme = readTerminalTheme();
-    for (const runtime of runtimeRefs.current.values()) runtime.terminal.options.theme = theme;
-  }, [themeVersion]);
-
-  React.useEffect(() => {
-    if (!terminalApi) return;
-    for (const tab of tabs) {
-      if (runtimeRefs.current.has(tab.id)) continue;
-      const host = hostRefs.current.get(tab.id);
-      if (!host) continue;
-      const terminal = new XtermTerminal({
-        convertEol: true,
-        cursorBlink: true,
-        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-        fontSize: 13,
-        scrollback: 10_000,
-        theme: readTerminalTheme(),
-      });
-      const fit = new FitAddon();
-      terminal.loadAddon(fit);
-      terminal.open(host);
-      const runtime: TerminalRuntime = { fit, terminal, threadId: activeThreadId };
-      runtimeRefs.current.set(tab.id, runtime);
-      terminal.onData((data) => {
-        if (runtime.sessionId) terminalApi.write({ data, sessionId: runtime.sessionId });
-      });
-      terminal.onResize(({ cols, rows }) => {
-        if (runtime.sessionId) terminalApi.resize({ cols, rows, sessionId: runtime.sessionId });
-      });
+    if (!active) return;
+    const resize = () => {
+      const terminal = terminalRef.current;
+      const fit = fitRef.current;
+      if (!terminal || !fit) return;
       try {
         fit.fit();
-      } catch {
-        /* Hidden panel gets fitted when it becomes visible. */
-      }
-      void terminalApi
-        .create({
-          cwd: workspacePath,
-          cols: Math.max(2, terminal.cols),
-          rows: Math.max(2, terminal.rows),
-        })
-        .then(({ sessionId }) => {
-          runtime.sessionId = sessionId;
-          updateTab(tab.id, (current) => ({ ...current, sessionId, status: "ready" }));
-          if (tab.id === activeTabId) {
-            fit.fit();
-            terminalApi.resize({ cols: terminal.cols, rows: terminal.rows, sessionId });
-          }
-          const pending = pendingRunRef.current;
-          if (pending && tab.id === activeTabId) {
-            pendingRunRef.current = undefined;
-            const command =
-              pending.command ?? (pending.filePath ? commandForFile(pending.filePath) : undefined);
-            if (command) runTrackedCommand(command, sessionId);
-          }
-        })
-        .catch((error) => {
-          updateTab(tab.id, (current) => ({ ...current, status: "error" }));
-          toastError(error, "终端启动失败");
-        });
-    }
-  }, [activeTabId, activeThreadId, runTrackedCommand, tabs, terminalApi, updateTab, workspacePath]);
-
-  React.useEffect(() => {
-    const runtime = activeTab ? runtimeRefs.current.get(activeTab.id) : undefined;
-    if (!runtime) return;
-    const resize = () => {
-      try {
-        runtime.fit.fit();
-        if (runtime.sessionId)
+        if (sessionIdRef.current) {
           terminalApi?.resize({
-            cols: runtime.terminal.cols,
-            rows: runtime.terminal.rows,
-            sessionId: runtime.sessionId,
+            cols: terminal.cols,
+            rows: terminal.rows,
+            sessionId: sessionIdRef.current,
           });
+        }
       } catch {
-        /* Ignore transient zero-size layouts. */
+        /* 忽略瞬时的零尺寸布局 */
       }
     };
     resize();
     const observer = new ResizeObserver(resize);
-    const host = hostRefs.current.get(activeTab.id);
-    if (host) observer.observe(host);
+    if (hostRef.current) observer.observe(hostRef.current);
     return () => observer.disconnect();
-  }, [activeTab, terminalApi]);
+  }, [active, terminalApi]);
 
+  // 应用发起的命令(文件树的「运行此文件」)。只在会话就绪且本会话可见时消费。
   React.useEffect(() => {
-    if (!terminalRequest || terminalRequest.id === consumedRequestRef.current) return;
-    consumedRequestRef.current = terminalRequest.id;
-    pendingRunRef.current = terminalRequest;
-    const runtime = activeTab ? runtimeRefs.current.get(activeTab.id) : undefined;
-    if (!runtime?.sessionId) return;
+    if (!request || !active || !sessionId) return;
+    if (request.id === consumedRequestRef.current) return;
+    consumedRequestRef.current = request.id;
     const command =
-      terminalRequest.command ??
-      (terminalRequest.filePath ? commandForFile(terminalRequest.filePath) : undefined);
-    pendingRunRef.current = undefined;
+      request.command ?? (request.filePath ? commandForFile(request.filePath) : undefined);
     if (!command) {
       toast.error("当前文件类型没有可用的运行命令");
       return;
     }
-    runTrackedCommand(command, runtime.sessionId);
-  }, [activeTab, runTrackedCommand, terminalRequest]);
-
-  React.useEffect(
-    () => () => {
-      for (const tabId of runtimeRefs.current.keys()) disposeRuntime(tabId);
-    },
-    [disposeRuntime],
-  );
-
-  // 面板关闭时把 lane 归零,否则模型会一直看到一份已经不存在的终端快照
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 只在卸载时跑一次,依赖当时的闭包值即可
-  React.useEffect(
-    () => () => {
-      reportWorkbenchState(activeThreadId, user.id, {
-        terminal: { open: false, sessionCount: 0 },
-      });
-    },
-    [],
-  );
-
-  const addTab = () => {
-    const id = ++nextTabIdRef.current;
-    setTabs((current) => [...current, createTerminalTab(id)]);
-    setActiveTabId(id);
-  };
-  const closeTab = (tabId: number) => {
-    disposeRuntime(tabId);
-    setTabs((current) => {
-      if (current.length === 1) {
-        const replacement = createTerminalTab(++nextTabIdRef.current);
-        setActiveTabId(replacement.id);
-        return [replacement];
-      }
-      const index = current.findIndex((tab) => tab.id === tabId);
-      const next = current.filter((tab) => tab.id !== tabId);
-      if (activeTabId === tabId) setActiveTabId(next[Math.max(0, index - 1)]?.id ?? next[0].id);
-      return next;
-    });
-  };
+    runTrackedCommand(command, sessionId);
+  }, [active, request, runTrackedCommand, sessionId]);
 
   if (!terminalApi) {
     return (
-      <section className="flex size-full min-h-0 flex-col items-center justify-center gap-3 border-t bg-background px-6 text-center text-muted-foreground">
+      <div className="flex size-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
         <TerminalIcon className="size-5" />
         <p className="text-sm">终端桥接尚未加载，请重新加载窗口。</p>
         <Button onClick={() => window.location.reload()} size="sm" variant="outline">
           <RefreshCwIcon />
           重新加载
         </Button>
-      </section>
+      </div>
     );
   }
 
+  return <div className="size-full" ref={hostRef} />;
+}
+
+interface BottomTerminalTab {
+  id: string;
+  title: string;
+  status: TerminalStatus;
+  sessionId?: string;
+}
+
+const createBottomTab = (index: number): BottomTerminalTab => ({
+  id: nanoid(),
+  status: "connecting",
+  title: `终端 ${index}`,
+});
+
+/**
+ * 底部终端面板:宽屏读日志的那一路。自带标签条与会话列表,与右侧工作区面板的
+ * 终端标签**互不共享会话** —— 两处各开各的,由 TerminalSession 各自持有 PTY。
+ */
+export default function TerminalPanel() {
+  const { activeThreadId, setTerminalPanelOpen, terminalRequest, threads } = useWorkbench();
+  const terminalApi = typeof window === "undefined" ? undefined : window.api?.terminal;
+  const workspacePath = threads.find((thread) => thread.id === activeThreadId)?.metadata
+    .workspacePath;
+  const [tabs, setTabs] = React.useState<BottomTerminalTab[]>(() => [createBottomTab(1)]);
+  const [activeTabId, setActiveTabId] = React.useState<string>(() => tabs[0].id);
+  const nextIndexRef = React.useRef(1);
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
+
+  const updateTab = React.useCallback(
+    (id: string, patch: Partial<BottomTerminalTab>) => {
+      setTabs((current) =>
+        current.map((tab) =>
+          tab.id === id && (tab.status !== patch.status || tab.sessionId !== patch.sessionId)
+            ? { ...tab, ...patch }
+            : tab,
+        ),
+      );
+    },
+    [],
+  );
+
+  const addTab = () => {
+    const tab = createBottomTab(++nextIndexRef.current);
+    setTabs((current) => [...current, tab]);
+    setActiveTabId(tab.id);
+  };
+
+  const closeTab = (id: string) => {
+    setTabs((current) => {
+      if (current.length === 1) {
+        const replacement = createBottomTab(++nextIndexRef.current);
+        setActiveTabId(replacement.id);
+        return [replacement];
+      }
+      const index = current.findIndex((tab) => tab.id === id);
+      const next = current.filter((tab) => tab.id !== id);
+      if (activeTabId === id) setActiveTabId(next[Math.max(0, index - 1)]?.id ?? next[0].id);
+      return next;
+    });
+  };
+
   return (
-    <section className="flex size-full min-h-0 flex-col overflow-hidden border-t bg-background text-foreground">
-      <header className="flex h-10 shrink-0 items-center gap-2 border-border border-b px-3">
+    <PanelSurface className="border-t">
+      <PanelHeader className="gap-2 px-3">
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
           {tabs.map((tab) => (
             <div
@@ -437,7 +435,8 @@ export default function TerminalPanel() {
               className="size-7"
               onClick={() => {
                 if (activeTab.sessionId) {
-                  terminalApi.write({ data: "\u0003", sessionId: activeTab.sessionId });
+                  // ETX(Ctrl-C):用转义写法而不是裸控制字符,免得被编辑器或格式化吞掉
+                  terminalApi?.write({ data: "\u0003", sessionId: activeTab.sessionId });
                 }
               }}
               size="icon"
@@ -458,23 +457,23 @@ export default function TerminalPanel() {
             <XIcon />
           </Button>
         </div>
-      </header>
+      </PanelHeader>
+      {/* 所有会话常驻,靠 hidden 切换:xterm 卸载会丢 scrollback,PTY 也会被关掉 */}
       <div className="min-h-0 flex-1 overflow-hidden bg-background px-3 py-2">
         {tabs.map((tab) => (
-          <div
-            className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")}
-            key={tab.id}
-            ref={(node) => {
-              if (node) hostRefs.current.set(tab.id, node);
-              else hostRefs.current.delete(tab.id);
-            }}
-          />
+          <div className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")} key={tab.id}>
+            <TerminalSession
+              active={tab.id === activeTabId}
+              onStateChange={(next) => updateTab(tab.id, next)}
+              request={tab.id === activeTabId ? terminalRequest : null}
+            />
+          </div>
         ))}
       </div>
-      <div className="flex h-6 shrink-0 items-center gap-1 border-border border-t px-3 text-[11px] text-muted-foreground">
+      <PanelFooter className="gap-1 px-3 text-[11px]">
         <TerminalIcon className="size-3" />
         <span>真实系统终端</span>
-      </div>
-    </section>
+      </PanelFooter>
+    </PanelSurface>
   );
 }

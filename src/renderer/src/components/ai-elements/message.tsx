@@ -104,8 +104,7 @@ interface MessageBranchContextType {
   totalBranches: number;
   goToPrevious: () => void;
   goToNext: () => void;
-  branches: ReactElement[];
-  setBranches: (branches: ReactElement[]) => void;
+  setBranchCount: (count: number) => void;
 }
 
 const MessageBranchContext = createContext<MessageBranchContextType | null>(null);
@@ -132,15 +131,15 @@ export const MessageBranch = ({
   ...props
 }: MessageBranchProps) => {
   const [currentBranch, setCurrentBranch] = useState(defaultBranch);
-  const [branches, setBranches] = useState<ReactElement[]>([]);
+  const [branchCount, setBranchCount] = useState(0);
 
   // The branch index is persisted by the parent message list. Keep the local
   // selector in sync when that persisted selection changes (for example after
   // a message edit, a history reload, or switching back to an older branch).
   useEffect(() => {
-    if (branches.length === 0) return;
-    setCurrentBranch(Math.min(Math.max(defaultBranch, 0), branches.length - 1));
-  }, [defaultBranch, branches.length]);
+    if (branchCount === 0) return;
+    setCurrentBranch(Math.min(Math.max(defaultBranch, 0), branchCount - 1));
+  }, [defaultBranch, branchCount]);
 
   const handleBranchChange = useCallback(
     (newBranch: number) => {
@@ -151,25 +150,24 @@ export const MessageBranch = ({
   );
 
   const goToPrevious = useCallback(() => {
-    const newBranch = currentBranch > 0 ? currentBranch - 1 : branches.length - 1;
+    const newBranch = currentBranch > 0 ? currentBranch - 1 : branchCount - 1;
     handleBranchChange(newBranch);
-  }, [currentBranch, branches.length, handleBranchChange]);
+  }, [currentBranch, branchCount, handleBranchChange]);
 
   const goToNext = useCallback(() => {
-    const newBranch = currentBranch < branches.length - 1 ? currentBranch + 1 : 0;
+    const newBranch = currentBranch < branchCount - 1 ? currentBranch + 1 : 0;
     handleBranchChange(newBranch);
-  }, [currentBranch, branches.length, handleBranchChange]);
+  }, [currentBranch, branchCount, handleBranchChange]);
 
   const contextValue = useMemo<MessageBranchContextType>(
     () => ({
-      branches,
       currentBranch,
       goToNext,
       goToPrevious,
-      setBranches,
-      totalBranches: branches.length,
+      setBranchCount,
+      totalBranches: branchCount,
     }),
-    [branches, currentBranch, goToNext, goToPrevious],
+    [branchCount, currentBranch, goToNext, goToPrevious],
   );
 
   return (
@@ -182,22 +180,20 @@ export const MessageBranch = ({
 export type MessageBranchContentProps = HTMLAttributes<HTMLDivElement>;
 
 export const MessageBranchContent = ({ children, ...props }: MessageBranchContentProps) => {
-  const { currentBranch, setBranches, branches } = useMessageBranch();
+  const { currentBranch, setBranchCount, totalBranches } = useMessageBranch();
   const childrenArray = useMemo(
     () => Children.toArray(children).filter(isValidElement) as ReactElement[],
     [children],
   );
 
-  // Keep branch state synchronized by identity as well as length. A response
-  // can be replaced in-place while the number of versions stays unchanged.
+  // Keep only the count in branch state. React elements belong to the current
+  // render; retaining them in state makes streaming updates prone to effect
+  // loops when the parent recreates children.
   useEffect(() => {
-    const sameBranches =
-      branches.length === childrenArray.length &&
-      branches.every((branch, index) => branch.key === childrenArray[index]?.key);
-    if (!sameBranches) {
-      setBranches(childrenArray);
+    if (totalBranches !== childrenArray.length) {
+      setBranchCount(childrenArray.length);
     }
-  }, [childrenArray, branches, setBranches]);
+  }, [childrenArray.length, setBranchCount, totalBranches]);
 
   return childrenArray.map((branch, index) => (
     <div

@@ -1,10 +1,11 @@
 import { PanelBottomIcon, PanelRightIcon, PlusIcon, Settings2Icon } from "lucide-react";
 import * as React from "react";
 
-import { ChatPanel } from "@/components/app/chat/panel";
-import { SettingsDialog } from "@/components/app/settings/dialog";
-import { AppSidebar } from "@/components/app/sidebar/app-sidebar";
-import { SkillHub } from "@/components/app/skill-hub";
+import { ChatPanel } from "@/components/app/chat";
+import { PanelHeader } from "@/components/app/primitives";
+import { SettingsDialog } from "@/components/app/settings";
+import { AppSidebar } from "@/components/app/sidebar";
+import { SkillHub } from "@/components/app/skills";
 import { Button } from "@/components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -16,9 +17,7 @@ import { useWorkbench, WorkbenchProvider } from "@/lib/workbench";
 const WorkspacePanel = React.lazy(() => import("@/components/app/workbench/workspace-panel"));
 const TerminalPanel = React.lazy(() => import("@/components/app/workbench/terminal-panel"));
 const KnowledgeLibrary = React.lazy(() =>
-  import("@/components/app/library/knowledge-library").then((module) => ({
-    default: module.KnowledgeLibrary,
-  })),
+  import("@/components/app/library").then((module) => ({ default: module.KnowledgeLibrary })),
 );
 
 function PanelFallback() {
@@ -103,7 +102,7 @@ function AppShell() {
           minSize="34%"
         >
           <SidebarInset className="h-svh overflow-hidden rounded-none shadow-none">
-            <header className="bg-muted/50 relative z-10 flex h-12 shrink-0 items-center gap-2 px-4">
+            <PanelHeader className="relative z-10 h-12 px-4">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{title}</p>
               </div>
@@ -153,7 +152,7 @@ function AppShell() {
                   <Settings2Icon />
                 </Button>
               ) : null}
-            </header>
+            </PanelHeader>
             <main className="relative z-0 min-h-0 flex-1">
               {skillOpen ? (
                 <SkillHub />

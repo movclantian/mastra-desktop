@@ -225,7 +225,7 @@ function Sidebar({
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
-            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+            : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:shadow-[1px_0_0_var(--sidebar-border)] group-data-[side=right]:shadow-[-1px_0_0_var(--sidebar-border)]",
           className,
         )}
         {...props}
@@ -610,7 +610,7 @@ function SidebarMenuSub({ className, ...props }: React.ComponentProps<"ul">) {
       data-slot="sidebar-menu-sub"
       data-sidebar="menu-sub"
       className={cn(
-        "mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 border-l border-sidebar-border px-2.5 py-0.5 group-data-[collapsible=icon]:hidden",
+        "relative mx-3.5 flex min-w-0 translate-x-px flex-col gap-1 px-2.5 py-0.5 before:pointer-events-none before:absolute before:inset-y-0 before:left-0 before:w-px before:bg-sidebar-border group-data-[collapsible=icon]:hidden",
         className,
       )}
       {...props}

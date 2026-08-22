@@ -20,6 +20,20 @@ export function PanelHeader({ className, ...props }: React.ComponentProps<"heade
   );
 }
 
+/**
+ * 面板外壳:给聊天、工作台、终端和资料库统一最小尺寸约束。
+ * 横向面板的分隔交给 ResizableHandle 与背景层,内容本身不再堆叠 border。
+ */
+export function PanelSurface({ className, ...props }: React.ComponentProps<"section">) {
+  return (
+    <section
+      data-slot="panel-surface"
+      className={cn("flex size-full min-h-0 min-w-0 flex-col bg-background", className)}
+      {...props}
+    />
+  );
+}
+
 /** 面板底栏:状态条/快捷操作,统一 h-7、小号文本 */
 export function PanelFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (

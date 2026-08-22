@@ -8,7 +8,7 @@
 import { Agent, type DelegationConfig, type ToolsInput } from "@mastra/core/agent";
 import { TaskSignalProvider } from "@mastra/core/signals";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
-import { notificationInboxTool, workWebhookSignals } from "../harness";
+import { notificationInboxTool, setDefaultWorkAgent, workWebhookSignals } from "../harness";
 import { getMemory } from "../memory";
 import {
   type GatewayLanguageModel,
@@ -287,3 +287,6 @@ export const mastraWorkAgent = new Agent({
     };
   },
 });
+
+/** 注册默认 Agent, 供 harness 会话层通过 registry 懒取(避免循环依赖) */
+setDefaultWorkAgent(mastraWorkAgent);

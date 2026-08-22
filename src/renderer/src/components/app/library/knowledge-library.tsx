@@ -74,9 +74,9 @@ import {
   type RenameTarget,
   statusLabel,
 } from "./types";
-import { type LibraryUploadTarget, useLibraryUpload } from "./upload";
+import { type LibraryUploadTarget, useLibraryUpload } from "./hooks";
 
-const LibraryFilePreview = React.lazy(() => import("./file-preview"));
+const LibraryFilePreview = React.lazy(() => import("./components/file-preview"));
 
 type LibraryView = "documents" | "session" | "search";
 
@@ -574,9 +574,9 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
               minSize="22%"
               maxSize="44%"
             >
-              <aside className="flex size-full min-h-0 min-w-0 flex-col border-r bg-sidebar">
+              <aside className="flex size-full min-h-0 min-w-0 flex-col bg-sidebar/95">
                 {/* 标题「资料库」由应用顶栏显示;设置/目录开关已合并到右侧预览栏头部 */}
-                <div className="shrink-0 space-y-1 border-b px-2 py-2">
+                <div className="shrink-0 space-y-1 bg-sidebar-accent/25 px-2 py-2">
                   <button
                     type="button"
                     className={cn(
@@ -621,7 +621,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                     </div>
                   ) : null}
                 </div>
-                <div className="flex shrink-0 items-center gap-2 border-b px-3 py-3">
+                <div className="flex shrink-0 items-center gap-2 bg-sidebar-accent/15 px-3 py-3">
                   <button
                     type="button"
                     className={cn(
@@ -705,7 +705,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                   />
                 </div>
                 {uploading || uploadError ? (
-                  <div className="shrink-0 space-y-1.5 border-b bg-background/40 p-3">
+                  <div className="shrink-0 space-y-1.5 bg-background/40 p-3">
                     <div className="flex items-center justify-between gap-2 text-xs">
                       <span className="truncate">
                         {uploadError ? uploadError : `正在上传 ${retryFiles.length} 个文件`}
@@ -893,7 +893,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
         >
           <div className="flex size-full min-h-0 min-w-0 flex-col">
             {/* 预览栏只负责目录开关、文件状态和文件操作;资料库设置位于应用顶栏右上角 */}
-            <div className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+            <div className="flex h-12 shrink-0 items-center gap-2 bg-muted/40 px-4">
               <Button
                 size="icon-sm"
                 variant="ghost"
@@ -923,7 +923,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
               ) : null}
             </div>
             {selected?.status === "error" ? (
-              <div className="flex min-w-0 shrink-0 items-center gap-2 border-b bg-destructive/5 px-4 py-2 text-xs">
+              <div className="flex min-w-0 shrink-0 items-center gap-2 bg-destructive/5 px-4 py-2 text-xs">
                 <span
                   className="min-w-0 flex-1 truncate text-destructive"
                   title={selected.indexError ?? undefined}

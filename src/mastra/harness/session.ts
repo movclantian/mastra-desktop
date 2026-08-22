@@ -12,8 +12,8 @@ import type {
   AgentThreadSubscription,
 } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
-import { mastraWorkAgent } from "../agents";
 import { SESSION_GRANTS_CONTEXT_KEY, type ToolCategory } from "../agents/permissions";
+import { getDefaultWorkAgent } from "./registry";
 import type { WorkNotificationInput } from "./signals";
 
 /** Live state mirrors the Session state boundary in agent-controller.mdx. */
@@ -46,6 +46,17 @@ type AgentStreamChunk = {
   type?: string;
   runId?: string;
 };
+
+/** 默认 Agent 由 agents/index.ts 在模块加载时注册; 会话实例化总在启动之后 */
+function resolveDefaultAgent(): Agent {
+  const agent = getDefaultWorkAgent();
+  if (!agent) {
+    throw new Error(
+      "Default work agent is not registered. Import src/mastra/agents before creating a WorkSession.",
+    );
+  }
+  return agent;
+}
 
 export function isTerminalAgentChunk(chunk: unknown): boolean {
   if (typeof chunk !== "object" || chunk === null) return false;
@@ -94,7 +105,7 @@ export class WorkSession {
     this.resourceId = options.resourceId;
     this.scope = options.scope ?? SESSION_SCOPE_DEFAULT;
     this.currentThreadId = options.threadId;
-    this.agent = options.agent ?? (mastraWorkAgent as unknown as Agent);
+    this.agent = options.agent ?? resolveDefaultAgent();
   }
 
   get threadId(): string {
