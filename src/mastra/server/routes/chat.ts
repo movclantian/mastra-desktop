@@ -25,6 +25,7 @@ import {
   type UIMessage,
 } from "ai";
 import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
 import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
@@ -344,6 +345,7 @@ async function prepareThreadSession(options: {
   requestedWorkspacePath?: string;
   modelSnapshot?: NonNullable<ThreadMetadata["modelSelectionByMode"]>[string];
   planApproved: boolean;
+  agentProfileId?: string;
 }): Promise<
   | {
       workspacePath?: string;
@@ -352,6 +354,7 @@ async function prepareThreadSession(options: {
       subagentModels?: Record<string, string>;
       observerModelId?: string;
       reflectorModelId?: string;
+      agentProfileId: string;
     }
   | undefined
 > {
@@ -360,6 +363,8 @@ async function prepareThreadSession(options: {
   if (!thread) return undefined;
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const patch: ThreadMetadata = {};
+  const profile = await getAgentProfile(options.agentProfileId ?? metadata.agentProfileId);
+  if (metadata.agentProfileId !== profile.id && options.agentProfileId) patch.agentProfileId = profile.id;
 
   const workspaceEnabled = isWorkspaceEnabled();
   let workspacePath = workspaceEnabled ? metadata.workspacePath : undefined;
@@ -417,6 +422,7 @@ async function prepareThreadSession(options: {
     subagentModels: metadata.subagentModels,
     observerModelId: metadata.observerModelId,
     reflectorModelId: metadata.reflectorModelId,
+    agentProfileId: profile.id,
   };
 }
 
@@ -461,6 +467,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       skillNames?: string[];
       sessionScope?: string;
       sessionAction?: "steer";
+      agentProfileId?: string;
       [key: string]: unknown;
     };
     const branchOperation = await prepareMessageBranchOperation({
@@ -494,6 +501,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       skillNames,
       sessionScope,
       sessionAction,
+      agentProfileId: rawAgentProfileId,
       responseMessageId,
       modelSettings: rawModelSettings,
       ...bodyRest
@@ -520,6 +528,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         Math.max(0, Math.floor(attachmentTokenBudget)),
       );
     }
+    const profile = await getAgentProfile(typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined);
+    requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     requestContext.set(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY, {
       vision: attachmentCapabilities?.vision === true,
       audio: attachmentCapabilities?.audio === true,
@@ -554,6 +564,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         requestedWorkspacePath: rawWorkspacePath,
         modelSnapshot: parseModelSnapshot(rawModelSelection),
         planApproved: isPlanApproval(body.resumeData),
+        agentProfileId: profile.id,
       });
       if (session) {
         if (session.workspacePath) {
@@ -566,6 +577,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         if (session.subagentModels) {
           requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, session.subagentModels);
         }
+        requestContext.set(AGENT_PROFILE_CONTEXT_KEY, session.agentProfileId);
         if (session.observerModelId || session.reflectorModelId) {
           requestContext.set(OM_MODELS_CONTEXT_KEY, {
             observerModelId: session.observerModelId,

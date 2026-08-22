@@ -713,7 +713,41 @@ export function ChatPromptInput({
     clearPendingLibraryFiles,
     pendingPrompt,
     setPendingPrompt,
+    reportPromptMinWidth,
   } = useWorkbench();
+  /**
+   * 实测输入区的最小边界并上报,由 AppShell 用来限制面板拖拽幅度与窗口最小宽度。
+   *
+   * 量的是「左组宽 + 右组宽 + 左右内距」—— 也就是中间那段弹性空白刚被消费完时的
+   * 宽度。这个数只有内容自己知道(控件增删、标签改名、换更长的模型名都会变),
+   * 所以必须实测,不能写成常量。
+   *
+   * 两组只在空白见底之后才开始内部收缩,那之后量到的是压缩值、不能当边界用,
+   * 所以 slack 为负时保留上一次的结果。
+   */
+  const footerRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const footer = footerRef.current;
+    const left = footer?.firstElementChild;
+    const right = footer?.lastElementChild;
+    if (!footer || !(left instanceof HTMLElement) || !(right instanceof HTMLElement)) return;
+    if (left === right) return;
+    const measure = () => {
+      const styles = getComputedStyle(footer);
+      const padding =
+        Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
+      const used = left.offsetWidth + right.offsetWidth + padding;
+      if (footer.clientWidth < used) return;
+      reportPromptMinWidth(used);
+    };
+    measure();
+    // 同时观察两组自身:换模型、开关检索都会改变它们的宽度,而 footer 尺寸未必变
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    observer.observe(left);
+    observer.observe(right);
+    return () => observer.disconnect();
+  }, [reportPromptMinWidth]);
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<
     MessageFileReference[]
@@ -851,13 +885,17 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* 不换行、不滚动、不溢出。收缩按优先级发生:
-            1. 中间那段空白 —— 由 ml-auto 吸收,第一顺位被压;
-            2. 模式 / 模型的文字标签 —— 两者都是 truncate,逐渐截短;
-            按钮尺寸与图标始终不动(inputGroupButtonVariants 的 [&>svg]:shrink-0),
-            发送按钮额外显式 shrink-0:它是纯图标,被压一点就没法点了。
-            最小宽度由内容自然决定,不需要任何魔数。 */}
-        <PromptInputFooter className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2">
+        {/* 唯一被消费的是中间那段弹性空白 —— 由右组的 ml-auto 独占提供(Footer 自身
+            gap-0,不在空白之外再吃固定宽度)。空白被压到 0 时的宽度就是输入区真正的
+            最小边界,由上面的 ResizeObserver 实测上报,AppShell 用它去限制面板能拖多宽、
+            以及窗口能缩多窄 —— 所以正常情况下根本走不到「空白见底」这一步,
+            两组控件既不换行也不溢出,更不需要滚动条,而这个边界没有任何魔数。
+            万一约束还没到位(首帧、内容刚变长),两组的 min-w-0 会让模式/模型的标签
+            先截短兜底,而不是把发送按钮顶到容器外面去。 */}
+        <PromptInputFooter
+          className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2"
+          ref={footerRef}
+        >
           <PromptInputActions />
           <div className="ml-auto flex min-w-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}

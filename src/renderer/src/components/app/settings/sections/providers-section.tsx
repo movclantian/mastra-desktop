@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MagicCard } from "@/components/ui/magic-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -34,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { toastError } from "@/lib/errors";
@@ -397,9 +399,15 @@ export function ProviderItem({
   };
 
   return (
-    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs">
-      {/* 头部:名称 + 操作(禁用 / 编辑 / 展开 / 删除) */}
-      <div className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}>
+    <MagicCard
+      gradientSize={220}
+      gradientFrom="var(--primary)"
+      gradientTo="var(--accent)"
+      className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-colors"
+    >
+      <section className="w-full">
+        {/* 头部:名称 + 操作(禁用 / 编辑 / 展开 / 删除) */}
+        <div className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}>
         <div className="min-w-0 flex-1">
           <p className="flex items-center gap-2 truncate text-sm font-medium">
             {provider.name}
@@ -467,7 +475,8 @@ export function ProviderItem({
         </CollapsibleContent>
       </Collapsible>
     </section>
-  );
+  </MagicCard>
+);
 }
 
 /** 模型列表区块:模糊搜索 / 无结果添加自定义 ID / 每行连接测试 / 手动刷新 */
@@ -661,10 +670,13 @@ export function ProvidersSection() {
         <p className="text-sm text-muted-foreground">
           预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。
         </p>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
-          <PlusIcon />
-          添加
-        </Button>
+        <ShimmerButton
+          className="h-8 px-3 text-xs shadow-xs"
+          onClick={() => setAddOpen(true)}
+        >
+          <PlusIcon className="size-3.5 mr-1" />
+          添加供应商
+        </ShimmerButton>
       </div>
 
       <AddProviderDialog registry={registry} open={addOpen} onOpenChange={setAddOpen} />

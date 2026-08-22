@@ -13,6 +13,7 @@ import { getMemory } from "../memory";
 import {
   type GatewayLanguageModel,
   REQUEST_MODEL_CONTEXT_KEY,
+  resolveConfiguredModel,
   resolveDefaultModelId,
 } from "../models";
 import {
@@ -64,6 +65,13 @@ import {
   workbenchStateProcessor,
 } from "./processors";
 import { workSubagents } from "./subagents";
+import {
+  AGENT_PROFILE_CONTEXT_KEY,
+  DEFAULT_AGENT_PROFILE_ID,
+  getAgentProfile,
+  profileInstructions,
+  resolveProfileMembers,
+} from "./custom";
 
 export { workBrowser } from "./browser";
 
@@ -162,6 +170,8 @@ export const mastraWorkAgent = new Agent({
       ...(isCodeModeAvailable(rules) ? [codeMode.instructions] : []),
       mode.instructions,
     ];
+    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
+    instructions.push(...(await profileInstructions(profile)));
     if (selection) {
       const tools = await resolveWebSearchTools(
         selection,
@@ -200,6 +210,11 @@ export const mastraWorkAgent = new Agent({
       | GatewayLanguageModel
       | undefined;
     if (requestModel) return requestModel;
+    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
+    if (profile.model) {
+      const configured = await resolveConfiguredModel(profile.model.providerId, profile.model.modelId);
+      if (configured) return configured;
+    }
     const modelId = await resolveDefaultModelId();
     if (!modelId) {
       throw new Error(
@@ -221,7 +236,11 @@ export const mastraWorkAgent = new Agent({
   outputProcessors: async () => buildGuardrailOutputProcessors(),
   errorProcessors: async () => buildGuardrailErrorProcessors(),
   signals: [new TaskSignalProvider(), workWebhookSignals],
-  agents: workSubagents,
+  agents: async ({ requestContext }) => {
+    const profile = await getAgentProfile(requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined);
+    if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
+    return { ...workSubagents, ...(await resolveProfileMembers(profile)) };
+  },
   browser: workBrowser,
   workspace: async ({ requestContext }) => {
     if (!isWorkspaceEnabled()) return undefined;

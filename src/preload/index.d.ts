@@ -13,6 +13,11 @@ declare global {
       /** 迁移存储位置到目标目录:杀服务释放句柄 → 搬数据库文件 → 重启;失败 reject */
       migrateStorage: (directory: string) => Promise<boolean>;
       resetAppData: () => Promise<boolean>;
+      /**
+       * 设置窗口最小宽度。值来自渲染进程实测的布局下限(输入区最小边界 + 外围占用),
+       * 所以窗口能缩到多窄由布局自己说话,不写死常量。
+       */
+      setMinimumWidth: (width: number) => void;
       terminal: {
         create: (request: {
           cwd?: string;

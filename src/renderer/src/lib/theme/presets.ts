@@ -306,7 +306,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 3,
     },
     typography: {
-      fontSans: '"Bricolage Grotesque", "Plus Jakarta Sans", -apple-system, sans-serif',
+      fontSans: '"Bricolage Grotesque Variable", "Plus Jakarta Sans", -apple-system, sans-serif',
       fontMono: '"Space Mono", monospace',
       headingWeight: "700",
       letterSpacing: "-0.02em",
@@ -1242,7 +1242,7 @@ export const THEME_PRESETS: ThemePreset[] = [
       shadowDepth: 0,
     },
     typography: {
-      fontSans: '"Noto Serif SC", "Shippori Mincho", "Songti SC", "Cormorant Garamond", serif',
+      fontSans: '"Noto Serif SC Variable", "Shippori Mincho", "Songti SC", "Cormorant Garamond", serif',
       fontMono: '"JetBrains Mono", monospace',
       headingWeight: "600",
       letterSpacing: "0.06em",

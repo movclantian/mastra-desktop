@@ -4,6 +4,7 @@
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 import { browserRoutes } from "./browser";
+import { agentProfilesRoute, deleteAgentProfileRoute, saveAgentProfileRoute } from "./agents";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -76,6 +77,9 @@ import {
 } from "./workspace";
 
 export const workRoutes = [
+  agentProfilesRoute,
+  saveAgentProfileRoute,
+  deleteAgentProfileRoute,
   ...browserRoutes,
   ...threadRoutes,
   ...signalRoutes,

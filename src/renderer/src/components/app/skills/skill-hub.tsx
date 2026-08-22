@@ -37,8 +37,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { MagicCard } from "@/components/ui/magic-card";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
@@ -668,13 +670,16 @@ function SkillCategory({
         <span className="text-xs text-muted-foreground">{skills.length} 个技能</span>
       </div>
       <Separator className="mt-4" />
-      <div className="mt-2 grid gap-x-12 md:grid-cols-2">
+      <div className="mt-2 grid gap-3 md:grid-cols-2">
         {skills.map((skill, index) => {
           const isInstalled = installed.some((item) => item.name === skill.name);
           return (
-            <div
-              className="flex min-w-0 items-center gap-3 rounded-lg py-3 transition-colors hover:bg-muted/40"
+            <MagicCard
               key={skill.name}
+              gradientSize={160}
+              gradientFrom="var(--primary)"
+              gradientTo="var(--accent)"
+              className="flex min-w-0 items-center justify-between gap-3 rounded-xl border bg-card/60 p-3 transition-colors hover:border-primary/40"
             >
               <button
                 aria-label={`查看技能 ${skill.name}`}
@@ -686,15 +691,15 @@ function SkillCategory({
                   {skillIcon(skill, index)}
                 </span>
                 <span className="min-w-0">
-                  <span className="block truncate font-medium">{skill.name}</span>
-                  <span className="mt-1 block truncate text-sm text-muted-foreground">
+                  <span className="block truncate font-medium text-foreground">{skill.name}</span>
+                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                     {skill.description || "未提供描述"}
                   </span>
                 </span>
               </button>
               {isInstalled ? (
-                <Badge variant="secondary">
-                  <CheckIcon />
+                <Badge variant="secondary" className="shrink-0">
+                  <CheckIcon className="size-3 mr-1" />
                   已安装
                 </Badge>
               ) : (
@@ -706,16 +711,17 @@ function SkillCategory({
                   }}
                   size="sm"
                   variant="outline"
+                  className="shrink-0 h-7 text-xs"
                 >
                   {installing === skill.name ? (
-                    <LoaderCircleIcon className="animate-spin" />
+                    <LoaderCircleIcon className="animate-spin size-3.5" />
                   ) : (
-                    <PlusIcon />
+                    <PlusIcon className="size-3.5" />
                   )}
                   安装
                 </Button>
               )}
-            </div>
+            </MagicCard>
           );
         })}
       </div>

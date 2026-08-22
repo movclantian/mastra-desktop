@@ -1,6 +1,7 @@
 import {
   CheckIcon,
   CopyIcon,
+  FlameIcon,
   LaptopIcon,
   MoonIcon,
   PaletteIcon,
@@ -10,21 +11,33 @@ import {
   SparklesIcon,
   SunMediumIcon,
   TypeIcon,
+  Wand2Icon,
+  ZapIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/components/theme-provider";
+import { AnimatedGradientText } from "@/components/ui/animated-gradient-text";
+import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DotPattern } from "@/components/ui/dot-pattern";
+import { HyperText } from "@/components/ui/hyper-text";
 import { Input } from "@/components/ui/input";
+import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
+import { MagicCard } from "@/components/ui/magic-card";
+import { Meteors } from "@/components/ui/meteors";
+import { NeonGradientCard } from "@/components/ui/neon-gradient-card";
+import { OrbitingCircles } from "@/components/ui/orbiting-circles";
+import { PulsatingButton } from "@/components/ui/pulsating-button";
+import { RainbowButton } from "@/components/ui/rainbow-button";
+import { Ripple } from "@/components/ui/ripple";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
+import { ShimmerButton } from "@/components/ui/shimmer-button";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Slider } from "@/components/ui/slider";
+import { SparklesText } from "@/components/ui/sparkles-text";
 import { THEME_INSPIRATIONS } from "@/lib/theme/presets";
 import type { ThemeColorTokens } from "@/lib/theme/types";
 import { cn } from "@/lib/utils";
@@ -52,13 +65,7 @@ interface ColorFieldProps {
   recommendedSwatches?: string[];
 }
 
-function ColorField({
-  label,
-  description,
-  value,
-  onChange,
-  recommendedSwatches,
-}: ColorFieldProps) {
+function ColorField({ label, description, value, onChange, recommendedSwatches }: ColorFieldProps) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border bg-card/60 p-3 shadow-xs transition-colors hover:bg-card">
       <div className="flex items-center justify-between gap-2">
@@ -127,7 +134,13 @@ export function ThemeSection() {
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchQuery, setSearchQuery] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState<
-    "all" | "brutalism" | "clay_glass" | "scifi_dark" | "pixel_retro" | "oriental_desktop" | "modern"
+    | "all"
+    | "brutalism"
+    | "clay_glass"
+    | "scifi_dark"
+    | "pixel_retro"
+    | "oriental_desktop"
+    | "modern"
   >("all");
 
   const filteredPresets = React.useMemo(() => {
@@ -140,8 +153,10 @@ export function ThemeSection() {
 
       const matchCategory =
         categoryFilter === "all" ||
-        (categoryFilter === "brutalism" && (p.category === "brutalism" || p.category === "soft_brutalism")) ||
-        (categoryFilter === "clay_glass" && (p.category === "clay_glass" || p.category === "skeuomorphism")) ||
+        (categoryFilter === "brutalism" &&
+          (p.category === "brutalism" || p.category === "soft_brutalism")) ||
+        (categoryFilter === "clay_glass" &&
+          (p.category === "clay_glass" || p.category === "skeuomorphism")) ||
         (categoryFilter === "scifi_dark" && p.category === "scifi_dark") ||
         (categoryFilter === "pixel_retro" && p.category === "pixel_retro") ||
         (categoryFilter === "oriental_desktop" && p.category === "oriental_desktop") ||
@@ -307,9 +322,18 @@ export function ThemeSection() {
                             className="flex h-4 w-6 shrink-0 overflow-hidden rounded-xs border"
                             style={{ borderColor: colors.border }}
                           >
-                            <span className="w-1/3 h-full" style={{ backgroundColor: colors.background }} />
-                            <span className="w-1/3 h-full" style={{ backgroundColor: colors.primary }} />
-                            <span className="w-1/3 h-full" style={{ backgroundColor: colors.accent }} />
+                            <span
+                              className="w-1/3 h-full"
+                              style={{ backgroundColor: colors.background }}
+                            />
+                            <span
+                              className="w-1/3 h-full"
+                              style={{ backgroundColor: colors.primary }}
+                            />
+                            <span
+                              className="w-1/3 h-full"
+                              style={{ backgroundColor: colors.accent }}
+                            />
                           </div>
                           <span className="font-semibold text-xs truncate group-data-[collapsible=icon]/sidebar:hidden">
                             {preset.name}
@@ -545,7 +569,9 @@ export function ThemeSection() {
                 {/* 3. 实体硬阴影深度 Shadow Depth */}
                 <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-foreground">实体硬阴影深度 (Hard Shadow Offset)</span>
+                    <span className="font-medium text-foreground">
+                      实体硬阴影深度 (Hard Shadow Offset)
+                    </span>
                     <span className="font-mono text-primary font-bold tabular-nums">
                       {resolvedGeometry.shadowDepth} px
                     </span>
@@ -600,7 +626,8 @@ export function ThemeSection() {
                     <span>字体排版与文字规范</span>
                   </div>
                   <Badge variant="outline" className="text-xs font-mono">
-                    {activePreset.typography.headingWeight} Weight | {activePreset.typography.letterSpacing}
+                    {activePreset.typography.headingWeight} Weight |{" "}
+                    {activePreset.typography.letterSpacing}
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
@@ -611,7 +638,9 @@ export function ThemeSection() {
                 {/* 字体栈选择 */}
                 <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-foreground">无衬线字体栈 (Sans-Serif Font Stack)</span>
+                    <span className="font-medium text-foreground">
+                      无衬线字体栈 (Sans-Serif Font Stack)
+                    </span>
                     <span className="font-mono text-[11px] text-muted-foreground truncate max-w-[200px]">
                       {resolvedTypography.fontSans.split(",")[0]}
                     </span>
@@ -702,7 +731,9 @@ export function ThemeSection() {
                 {/* 标题字重 & 字符间距 */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/20 p-2.5">
-                    <span className="text-xs font-medium text-foreground">标题字重 (Heading Weight)</span>
+                    <span className="text-xs font-medium text-foreground">
+                      标题字重 (Heading Weight)
+                    </span>
                     <div className="flex items-center gap-1">
                       {[
                         { label: "600 半粗", val: "600" },
@@ -712,7 +743,9 @@ export function ThemeSection() {
                         <Button
                           key={item.val}
                           size="xs"
-                          variant={resolvedTypography.headingWeight === item.val ? "default" : "outline"}
+                          variant={
+                            resolvedTypography.headingWeight === item.val ? "default" : "outline"
+                          }
                           className="h-6 text-[11px] px-2 flex-1"
                           onClick={() =>
                             updateActiveCustomization({
@@ -727,7 +760,9 @@ export function ThemeSection() {
                   </div>
 
                   <div className="flex flex-col gap-1.5 rounded-lg border bg-muted/20 p-2.5">
-                    <span className="text-xs font-medium text-foreground">字符间距 (Letter Spacing)</span>
+                    <span className="text-xs font-medium text-foreground">
+                      字符间距 (Letter Spacing)
+                    </span>
                     <div className="flex items-center gap-1">
                       {[
                         { label: "-0.03em 紧绷", val: "-0.03em" },
@@ -738,7 +773,9 @@ export function ThemeSection() {
                         <Button
                           key={item.val}
                           size="xs"
-                          variant={resolvedTypography.letterSpacing === item.val ? "default" : "outline"}
+                          variant={
+                            resolvedTypography.letterSpacing === item.val ? "default" : "outline"
+                          }
                           className="h-6 text-[11px] px-1.5 flex-1"
                           onClick={() =>
                             updateActiveCustomization({
@@ -858,7 +895,15 @@ export function ThemeSection() {
                     handleColorChange("border", v);
                     handleColorChange("sidebarBorder", v);
                   }}
-                  recommendedSwatches={["#000000", "#09090b", "#1c1917", "#27272a", "#facc15", "#ff5400", "#e5e5e5"]}
+                  recommendedSwatches={[
+                    "#000000",
+                    "#09090b",
+                    "#1c1917",
+                    "#27272a",
+                    "#facc15",
+                    "#ff5400",
+                    "#e5e5e5",
+                  ]}
                 />
                 <ColorField
                   label="画布背景 (Background)"
@@ -869,7 +914,16 @@ export function ThemeSection() {
                     handleColorChange("card", v);
                     handleColorChange("popover", v);
                   }}
-                  recommendedSwatches={["#ffffff", "#fefcf6", "#fffdfa", "#faf6ee", "#f8fafc", "#121212", "#09090b", "#161311"]}
+                  recommendedSwatches={[
+                    "#ffffff",
+                    "#fefcf6",
+                    "#fffdfa",
+                    "#faf6ee",
+                    "#f8fafc",
+                    "#121212",
+                    "#09090b",
+                    "#161311",
+                  ]}
                 />
                 <ColorField
                   label="文字前景 (Foreground)"
@@ -880,14 +934,31 @@ export function ThemeSection() {
                     handleColorChange("cardForeground", v);
                     handleColorChange("popoverForeground", v);
                   }}
-                  recommendedSwatches={["#000000", "#171717", "#09090b", "#1c1917", "#ffffff", "#fafafa", "#f4f4f5"]}
+                  recommendedSwatches={[
+                    "#000000",
+                    "#171717",
+                    "#09090b",
+                    "#1c1917",
+                    "#ffffff",
+                    "#fafafa",
+                    "#f4f4f5",
+                  ]}
                 />
                 <ColorField
                   label="侧边栏背景 (Sidebar)"
                   description="左侧导航底色、工作区垫底层"
                   value={resolvedColors.sidebar}
                   onChange={(v) => handleColorChange("sidebar", v)}
-                  recommendedSwatches={["#fafafa", "#faf3e0", "#fdf8e6", "#f3ecde", "#f1f5f9", "#18181b", "#0b0b0d", "#050507"]}
+                  recommendedSwatches={[
+                    "#fafafa",
+                    "#faf3e0",
+                    "#fdf8e6",
+                    "#f3ecde",
+                    "#f1f5f9",
+                    "#18181b",
+                    "#0b0b0d",
+                    "#050507",
+                  ]}
                 />
                 <ColorField
                   label="危险告警 (Destructive)"
@@ -896,6 +967,144 @@ export function ThemeSection() {
                   onChange={(v) => handleColorChange("destructive", v)}
                   recommendedSwatches={["#ef4444", "#dc2626", "#e11d48", "#f43f5e", "#f87171"]}
                 />
+              </CardContent>
+            </Card>
+
+            {/* ------------------------------------------------------------- */}
+            {/* 模块 4: Magic UI 动效与全套视觉特效矩阵 (Magic UI Motion Matrix) */}
+            {/* ------------------------------------------------------------- */}
+            <Card className="border shadow-xs overflow-hidden relative">
+              <DotPattern className="opacity-40" />
+              <CardHeader className="pb-3 pt-4 px-4 relative z-10">
+                <CardTitle className="text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <SparklesIcon className="size-4 text-primary" />
+                    <span>Magic UI 动效与特效交互展台</span>
+                  </div>
+                  <Badge variant="secondary" className="text-xs font-mono">
+                    14 官方动效组件实时联动
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  所有按钮、光效、粒子与流体卡片实时响应当前激活的主题风格与调色板 Tokens。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 px-4 pb-4 relative z-10">
+                {/* 1. 动效文字与字符重组 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-background/80 backdrop-blur-xs p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    文字特效 (Text Motion & Reveal)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                      <AnimatedShinyText shimmerWidth={120} className="text-xs font-semibold">
+                        ✨ 实时文字扫光高亮
+                      </AnimatedShinyText>
+                    </div>
+                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                      <SparklesText text="星芒闪烁文字" className="text-xs font-bold" />
+                    </div>
+                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                      <HyperText
+                        text="CYBER_DECRYPT_01"
+                        className="text-xs text-primary font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. 动效按钮与交互触感 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-background/80 backdrop-blur-xs p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    高光按钮与微交互 (Action Buttons)
+                  </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <ShimmerButton
+                      shimmerColor="rgba(255, 255, 255, 0.8)"
+                      className="text-xs py-2 px-4 shadow-md"
+                    >
+                      <SparklesIcon className="size-3.5 mr-1.5" />
+                      Shimmer 金属扫光
+                    </ShimmerButton>
+
+                    <RainbowButton className="text-xs h-8 px-4">
+                      <ZapIcon className="size-3.5 mr-1.5" />
+                      Rainbow 彩虹流光
+                    </RainbowButton>
+
+                    <InteractiveHoverButton text="探索工作流" className="text-xs py-1.5 px-4 h-8" />
+
+                    <PulsatingButton duration="2s" className="text-xs py-1.5 px-3.5 h-8">
+                      <FlameIcon className="size-3.5 mr-1" />
+                      呼吸脉冲
+                    </PulsatingButton>
+                  </div>
+                </div>
+
+                {/* 3. 探照灯光晕卡片与霓虹流光 */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <MagicCard
+                    gradientSize={180}
+                    gradientFrom="var(--primary)"
+                    gradientTo="var(--accent)"
+                    className="p-4 flex flex-col justify-between min-h-[110px]"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold">MagicCard 鼠标探照灯</span>
+                      <Wand2Icon className="size-4 text-primary" />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      移动鼠标即可看到随光标动态游走的主题色彩放射光斑。
+                    </p>
+                  </MagicCard>
+
+                  <div className="relative min-h-[110px]">
+                    <NeonGradientCard borderRadius={8} borderSize={1.5} className="min-h-[110px]">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-semibold">NeonGradient 霓虹发光</span>
+                        <Badge variant="outline" className="text-[10px]">
+                          360° 旋转
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        绚丽的双色霓虹流体外边框与环境弥散柔光。
+                      </p>
+                    </NeonGradientCard>
+                  </div>
+                </div>
+
+                {/* 4. 环境粒子、轨道与涟漪 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-background/80 backdrop-blur-xs p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    环境粒子与轨道 (Ambient Particles & Orbit)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px]">
+                      <Meteors number={10} />
+                      <OrbitingCircles radius={26} duration={16} delay={2}>
+                        <SparklesIcon className="size-3 text-primary" />
+                      </OrbitingCircles>
+                      <OrbitingCircles radius={44} duration={22} delay={8} reverse>
+                        <ZapIcon className="size-3.5 text-primary" />
+                      </OrbitingCircles>
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                        <span className="text-[10px] font-mono text-muted-foreground">
+                          METEOR FIELD
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px] flex items-center justify-center">
+                      <Ripple mainCircleSize={48} numCircles={4} mainCircleOpacity={0.32} />
+                      <AnimatedGradientText
+                        speed={2}
+                        className="relative z-10 text-[11px] font-medium"
+                      >
+                        ✨ Gradient 流光描边
+                      </AnimatedGradientText>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>

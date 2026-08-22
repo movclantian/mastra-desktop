@@ -29,6 +29,8 @@ const api = {
   pickDirectory: () => ipcRenderer.invoke("pick-directory"),
   migrateStorage: (directory: string) => ipcRenderer.invoke("migrate-storage", directory),
   resetAppData: () => ipcRenderer.invoke("reset-app-data"),
+  /** 把渲染进程实测的布局下限设为窗口最小宽度(单向通知,不需要回执) */
+  setMinimumWidth: (width: number) => ipcRenderer.send("set-minimum-width", width),
   terminal: {
     create: async (request: TerminalCreateRequest) =>
       parseTerminalCreateResult(

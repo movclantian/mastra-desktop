@@ -12,6 +12,7 @@ import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
 import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import {
   applySessionGrants,
@@ -84,6 +85,7 @@ interface SessionMessageBody {
   modelSettings?: unknown;
   providerOptions?: unknown;
   webSearch?: unknown;
+  agentProfileId?: unknown;
 }
 
 async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
@@ -99,10 +101,12 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   }
   const session = workSessionHost.getOrCreate({ resourceId, scope, threadId });
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
+  const profile = await getAgentProfile(metadata.agentProfileId);
   const mode = resolveMode(metadata.modeId);
   session.setMode(mode.id);
   const requestContext = c.get("requestContext");
   requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
+  requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   requestContext.set(PERMISSION_RULES_CONTEXT_KEY, metadata.permissionRules);
   if (metadata.workspacePath) {
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, metadata.workspacePath);
@@ -135,6 +139,10 @@ async function sessionExecutionOptions(
   body: SessionMessageBody,
 ): Promise<AgentExecutionOptions> {
   const requestContext = c.get("requestContext");
+  const profile = await getAgentProfile(
+    typeof body.agentProfileId === "string" ? body.agentProfileId : undefined,
+  );
+  requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(

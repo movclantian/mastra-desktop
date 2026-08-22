@@ -46,6 +46,7 @@ export interface WorkUser {
 }
 
 export interface ThreadMetadata {
+  agentProfileId?: string;
   /** 线程绑定的工作区目录(绝对路径,首条消息时由服务端锁定) */
   workspacePath?: string;
   /** true = 用户显式选定的目录(可浏览文件树);false/缺省 = 隐式默认目录 */
@@ -119,6 +120,54 @@ export interface ModelSelection {
   modelName: string;
   reasoningEffort: ReasoningEffort | "off";
 }
+
+export interface AgentMemberDefinition {
+  id: string;
+  name: string;
+  profession: string;
+  description: string;
+  instructions: string;
+  model?: { providerId: string; modelId: string };
+}
+
+export interface AgentProfile {
+  id: string;
+  type: "agent" | "team";
+  name: string;
+  displayName: string;
+  profession: string;
+  description: string;
+  instructions: string;
+  model?: { providerId: string; modelId: string };
+  skills: string[];
+  members: AgentMemberDefinition[];
+  workflow: string;
+  categoryId?: string;
+  tags: string[];
+  quickPrompts: string[];
+  avatar?: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const DEFAULT_AGENT_PROFILE: AgentProfile = {
+  id: "mastra-work-agent",
+  type: "agent",
+  name: "MastraWork",
+  displayName: "MastraWork",
+  profession: "通用工作 Agent",
+  description: "默认工作 Agent",
+  instructions: "",
+  skills: [],
+  members: [],
+  workflow: "",
+  tags: ["默认"],
+  quickPrompts: [],
+  enabled: true,
+  createdAt: "",
+  updatedAt: "",
+};
 
 /** Memory.recall 跨线程检索结果(GET /work/memory/search) */
 export interface MessageSearchHit {
@@ -340,6 +389,10 @@ interface WorkbenchValue {
   // 模型选择
   modelSelection: ModelSelection | null;
   setModelSelection: (selection: ModelSelection | null) => void;
+  agents: AgentProfile[];
+  agentSelection: AgentProfile;
+  setAgentSelection: (profile: AgentProfile) => Promise<void>;
+  refreshAgents: () => Promise<void>;
   // 会话模式(plan/build/review;真相在 thread.metadata.modeId)
   modeId: WorkModeId;
   setModeId: (modeId: WorkModeId) => Promise<void>;
@@ -367,6 +420,8 @@ interface WorkbenchValue {
   setLibraryOpen: (open: boolean) => void;
   skillOpen: boolean;
   setSkillOpen: (open: boolean) => void;
+  agentOpen: boolean;
+  setAgentOpen: (open: boolean) => void;
   /** 技能示例写入新会话输入框的一次性文本。 */
   pendingPrompt: string | null;
   setPendingPrompt: (prompt: string | null) => void;
@@ -508,6 +563,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   // Agent 的默认模型都要读到它,而 Studio 跑在 Mastra 进程里、读不到 localStorage。
   const [providers, setProvidersState] = useState<ProviderConfig[]>([]);
   const [modelSelection, setModelSelectionState] = useState<ModelSelection | null>(null);
+  const [agents, setAgents] = useState<AgentProfile[]>([]);
+  const [agentSelection, setAgentSelectionState] = useState<AgentProfile>(DEFAULT_AGENT_PROFILE);
   /** 服务端配置是否已到位 —— 到位前不回写,避免用空配置覆盖数据库 */
   const [providersLoaded, setProvidersLoaded] = useState(false);
   const [searchSelection, setSearchSelectionState] = useState<SearchSelection | null>(() =>
@@ -542,6 +599,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   /** 输入区实测的最小边界(见 WorkbenchValue.promptMinWidth);0 = 尚未测到 */
   const [promptMinWidth, setPromptMinWidth] = useState(0);
@@ -606,6 +664,25 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         setCatalogStatus("error");
       });
   }, []);
+
+  const refreshAgents = useCallback(async () => {
+    try {
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/agents`);
+      if (!response.ok) return;
+      const payload = (await response.json()) as { agents?: AgentProfile[] };
+      const next = Array.isArray(payload.agents) ? payload.agents : [];
+      setAgents(next);
+      setAgentSelectionState((current) =>
+        current.id === DEFAULT_AGENT_PROFILE.id && next[0] ? next[0] : current,
+      );
+    } catch {
+      setAgents([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAgents();
+  }, [refreshAgents]);
 
   // 供应商配置:挂载时从服务端读取(app_config key="providers")
   useEffect(() => {
@@ -686,9 +763,32 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setSearchSelectionState(selection);
   }, []);
 
+  const setAgentSelection = useCallback(
+    async (profile: AgentProfile) => {
+      setAgentSelectionState(profile);
+      setAgentOpen(false);
+      if (!activeThreadId) return;
+      const current = threads.find((thread) => thread.id === activeThreadId);
+      const metadata = { ...(current?.metadata ?? {}), agentProfileId: profile.id };
+      setThreads((items) =>
+        items.map((thread) => (thread.id === activeThreadId ? { ...thread, metadata } : thread)),
+      );
+      await fetch(
+        `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(activeThreadId)}?resourceId=${encodeURIComponent(user.id)}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ metadata }),
+        },
+      );
+    },
+    [activeThreadId, threads, user.id],
+  );
+
   const selectThread = useCallback((id: string | null) => {
     setLibraryOpen(false);
     setSkillOpen(false);
+    setAgentOpen(false);
     setSettingsOpen(false);
     setActiveThreadId(id);
   }, []);
@@ -925,6 +1025,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
               title,
               metadata: {
                 draft: title === "New Chat",
+                agentProfileId: agentSelection?.id,
                 // 新线程继承当前会话的模式与审批规则(官方:Session 默认 → thread settings)
                 modeId,
                 permissionRules,
@@ -957,7 +1058,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       );
       return request;
     },
-    [refreshThreads, selectThread, modeId, modelSelection, permissionRules],
+    [refreshThreads, selectThread, modeId, modelSelection, permissionRules, agentSelection],
   );
 
   const patchThread = useCallback(
@@ -1080,12 +1181,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     }
     if (adoptedThreadRef.current === activeThreadId || !providersLoaded) return;
     const thread = threads.find((item) => item.id === activeThreadId);
-    if (!thread) return;
+    if (!thread || agents.length === 0) return;
     adoptedThreadRef.current = activeThreadId;
     const metadata = thread.metadata;
     if (metadata.modeId !== undefined) setModeIdState(parseModeId(metadata.modeId));
     if (metadata.permissionRules !== undefined) {
       setPermissionRulesState(parsePermissionRules(metadata.permissionRules));
+    }
+    if (metadata.agentProfileId) {
+      const profile = agents.find((item) => item.id === metadata.agentProfileId);
+      if (profile) setAgentSelectionState(profile);
     }
     const snapshot = metadata.modelSelectionByMode?.[parseModeId(metadata.modeId)];
     // 供应商可能已被删掉:形态还在但模型不可用时保持当前选择,避免选择器变空
@@ -1097,7 +1202,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         reasoningEffort: snapshot.reasoningEffort as ReasoningEffort | "off",
       });
     }
-  }, [activeThreadId, threads, providers, providersLoaded]);
+  }, [activeThreadId, agents, threads, providers, providersLoaded]);
 
   // 官方 Memory.cloneThread(POST /work/threads/:id/clone)
   // messageIds 使用官方 messageFilter 精确选择要复制的历史行。
@@ -1187,6 +1292,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       catalogStatus,
       modelSelection,
       setModelSelection,
+      agents,
+      agentSelection,
+      setAgentSelection,
+      refreshAgents,
       modeId,
       setModeId,
       permissionRules,
@@ -1207,6 +1316,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setLibraryOpen,
       skillOpen,
       setSkillOpen,
+      agentOpen,
+      setAgentOpen,
       pendingPrompt,
       setPendingPrompt,
       pendingLibraryFiles,
@@ -1253,6 +1364,10 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       catalogStatus,
       modelSelection,
       setModelSelection,
+      agents,
+      agentSelection,
+      setAgentSelection,
+      refreshAgents,
       modeId,
       setModeId,
       permissionRules,
@@ -1269,6 +1384,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       agentBusy,
       libraryOpen,
       skillOpen,
+      agentOpen,
       pendingPrompt,
       setPendingPrompt,
       pendingLibraryFiles,

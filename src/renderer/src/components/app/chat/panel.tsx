@@ -8,6 +8,9 @@ import { toast } from "sonner";
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { Queue } from "@/components/ai-elements/queue";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
+import { BlurFade } from "@/components/ui/blur-fade";
+import { DotPattern } from "@/components/ui/dot-pattern";
 import {
   Empty,
   EmptyDescription,
@@ -15,6 +18,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { MagicCard } from "@/components/ui/magic-card";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
 import {
@@ -25,7 +29,9 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { SparklesText } from "@/components/ui/sparkles-text";
 import { Spinner } from "@/components/ui/spinner";
+import { WordRotate } from "@/components/ui/word-rotate";
 import { toastError } from "@/lib/errors";
 import {
   buildReasoningRequest,
@@ -83,6 +89,7 @@ export function ChatPanel() {
     renameThread,
     providers,
     modelSelection,
+    agentSelection,
     searchSelection,
     cloneThread,
     refreshThreads,
@@ -209,6 +216,7 @@ export function ChatPanel() {
       audio: selectedCapabilities?.audio === true,
     },
     skillNames: selectedSkillNamesRef.current,
+    agentProfileId: agentSelection.id,
   });
 
   const { getThreadChat, retainActive } = useThreadChats(user.id, (threadId) =>
@@ -853,6 +861,7 @@ export function ChatPanel() {
                     }
                   : {}),
                 ...(searchSelection ? { webSearch: searchSelection } : {}),
+                agentProfileId: agentSelection.id,
                 metadata: {
                   skillNames: message.skills ?? [],
                   fileReferences: message.fileReferences ?? [],
@@ -982,7 +991,13 @@ export function ChatPanel() {
               fileReferences: request.fileReferences ?? [],
             },
           },
-          { body: { sessionAction: "steer", sessionScope: "workbench" } },
+          {
+            body: {
+              agentProfileId: agentSelection.id,
+              sessionAction: "steer",
+              sessionScope: "workbench",
+            },
+          },
         );
       })()
         .catch(() => {
@@ -994,7 +1009,7 @@ export function ChatPanel() {
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [getThreadChat],
+    [agentSelection.id, getThreadChat, searchSelection, selectedProvider, modelSelection, user.id],
   );
 
   const sendingQueuedRequest = React.useRef(false);
@@ -1153,22 +1168,74 @@ export function ChatPanel() {
         {messages.length === 0 &&
         !isBusy &&
         (!activeThread || activeThread.metadata.draft === true) ? (
-          // 新会话:问候语 + 输入区整体垂直居中
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-8 px-4 pb-16">
-            <Empty className="flex-none">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <MessageCircleDashedIcon />
-                </EmptyMedia>
-                <EmptyTitle>开始新对话</EmptyTitle>
-                <EmptyDescription>
+          // 新会话: Magic UI 点阵背景 + 粒子光效 + 快捷灵感卡片 + 居中输入区
+          <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-4 pb-12 overflow-hidden">
+            <DotPattern
+              className="opacity-40 [mask-image:radial-gradient(ellipse_at_center,white,transparent_75%)]"
+            />
+            <BlurFade delay={0.05} inView>
+              <div className="flex flex-col items-center text-center gap-2">
+                <div className="flex items-center gap-2">
+                  <SparklesText
+                    text="Mastra AI 智能工作台"
+                    className="text-xl md:text-2xl font-bold tracking-tight"
+                  />
+                </div>
+                <AnimatedShinyText className="text-xs text-muted-foreground max-w-md">
                   {activeThread
-                    ? `继续「${activeThread.title}」`
-                    : "发送消息开始与 MastraWork 对话"}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-            <div className="w-full">{promptArea}</div>
+                    ? `继续对话「${activeThread.title}」或选择快捷卡片探索`
+                    : "全功能多 Agent 协作工作台 · 支持工具链调用、本地工作区与知识库管理"}
+                </AnimatedShinyText>
+              </div>
+            </BlurFade>
+
+            {/* 4 张快捷提示卡片 (基于 MagicCard 鼠标探照灯流光) */}
+            <BlurFade delay={0.12} inView className="w-full max-w-2xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {[
+                  {
+                    title: "🔍 分析当前工作区架构",
+                    desc: "深度扫描项目目录结构，梳理核心依赖与模块分层关系",
+                    prompt: "请详细分析当前工作区目录架构与核心模块关系，给出分层设计总结。",
+                  },
+                  {
+                    title: "⚡ 编排多 Agent 协作工作流",
+                    desc: "构建具备子智能体派发、状态监听与自动汇总的流水线",
+                    prompt: "请帮我规划并设计一个多 Agent 协作的工作流，明确各自职责分工。",
+                  },
+                  {
+                    title: "🧪 生成自动化测试与类型",
+                    desc: "基于核心函数与业务逻辑自动补充严苛的 TypeScript 契约",
+                    prompt: "请分析核心代码并编写全套单元测试用例与边界异常处理。",
+                  },
+                  {
+                    title: "📚 检索与总结知识库文档",
+                    desc: "提炼核心知识库与 MCP 工具文档，生成可执行的最佳实践",
+                    prompt: "请结合当前知识库与工具规范，总结并输出完整的开发指南。",
+                  },
+                ].map((starter, idx) => (
+                  <MagicCard
+                    key={idx}
+                    gradientSize={160}
+                    gradientFrom="var(--primary)"
+                    gradientTo="var(--accent)"
+                    onClick={() => {
+                      handleSubmit({ text: starter.prompt, files: [] });
+                    }}
+                    className="p-3 cursor-pointer hover:border-primary/50 transition-colors bg-card/60 backdrop-blur-xs flex flex-col justify-between gap-1"
+                  >
+                    <span className="text-xs font-semibold text-foreground truncate">
+                      {starter.title}
+                    </span>
+                    <p className="text-[11px] text-muted-foreground line-clamp-2 leading-relaxed">
+                      {starter.desc}
+                    </p>
+                  </MagicCard>
+                ))}
+              </div>
+            </BlurFade>
+
+            <div className="w-full relative z-10">{promptArea}</div>
           </div>
         ) : (
           <>
@@ -1209,7 +1276,19 @@ export function ChatPanel() {
                         </MessageAvatar>
                         <MessageContent>
                           <MessageHeader className="px-0">MastraWork</MessageHeader>
-                          <Shimmer className="text-sm">思考中...</Shimmer>
+                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
+                            <Spinner className="size-3.5" />
+                            <WordRotate
+                              words={[
+                                "正在深入推理中...",
+                                "正在解析指令与上下文...",
+                                "正在检索工具库与工作区...",
+                                "正在调度智能体组织回复...",
+                              ]}
+                              duration={2200}
+                              className="text-xs text-primary"
+                            />
+                          </div>
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>

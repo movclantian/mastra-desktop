@@ -43,12 +43,10 @@ function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | nul
 /** 右侧工作区面板自身的最小宽度 */
 const WORKSPACE_MIN_WIDTH = 340;
 /**
- * 聊天区的宽度下限 —— 只表达「窄到这个程度就没有阅读与输入价值了」,
- * 与底部工具栏放不放得下**无关**:那排控件由 flex-wrap 自行换行兜底
- * (见 chat/components/prompt-input.tsx 的 PromptInputFooter),所以这里
- * 不需要跟着控件的增删、改名、换语言去调,不是需要维护的魔数。
+ * 输入区左右内距之外,聊天区自己还要留的水平留白(promptArea 外层的 px-4)。
+ * 聊天区下限 = 输入区实测最小边界 + 这一项 —— 没有别的常量参与。
  */
-const CHAT_MIN_WIDTH = 320;
+const CHAT_HORIZONTAL_PADDING = 32;
 
 function AppShell() {
   const {
@@ -63,6 +61,7 @@ function AppShell() {
     terminalPanelOpen,
     setTerminalPanelOpen,
     openBrowserUrl,
+    promptMinWidth,
   } = useWorkbench();
   const [librarySettingsOpen, setLibrarySettingsOpen] = React.useState(false);
   const [workspaceWidth, setWorkspaceWidth] = React.useState(560);
@@ -76,6 +75,13 @@ function AppShell() {
    * 只有实际宽度会被挤压让位;空间回来时按这个值长回去,而不是停在被压扁的状态。
    */
   const preferredWorkspaceWidthRef = React.useRef(560);
+  /**
+   * 聊天区能接受的最窄宽度,完全由输入区实测的最小边界推出(见 workbench 的
+   * promptMinWidth)。测到之前为 0,即不施加约束 —— 不拿任何猜测值去限制布局。
+   */
+  const chatMinWidth = promptMinWidth > 0 ? promptMinWidth + CHAT_HORIZONTAL_PADDING : 0;
+  const chatMinWidthRef = React.useRef(chatMinWidth);
+  chatMinWidthRef.current = chatMinWidth;
 
   React.useEffect(() => {
     if (!libraryOpen) setLibrarySettingsOpen(false);
@@ -135,11 +141,24 @@ function AppShell() {
     const chatArea = chatAreaRef.current;
     if (!chatArea) return;
     const observer = new ResizeObserver(() => {
-      const slack = chatArea.clientWidth - CHAT_MIN_WIDTH;
+      // 走 ref 读实测下限:effect 只挂一次,而这个值会随输入区内容变化
+      const minWidth = chatMinWidthRef.current;
+      if (minWidth <= 0) return;
+      const slack = chatArea.clientWidth - minWidth;
       setWorkspaceWidth((current) => {
         const preferred = preferredWorkspaceWidthRef.current;
         return Math.max(WORKSPACE_MIN_WIDTH, Math.min(preferred, current + slack));
       });
+
+      // 窗口能缩到多窄同样由这个实测值决定,而不是写死的 minWidth。
+      // 外围占用(sidebar + 边框)按实测算 —— 都从 DOM 读,所以 sidebar 一折叠
+      // 聊天区就变宽、本回调重新触发,窗口下限跟着收紧,无需额外监听。
+      const panel = chatArea.nextElementSibling;
+      const panelWidth = panel instanceof HTMLElement ? panel.offsetWidth : 0;
+      const chrome = window.innerWidth - chatArea.clientWidth - panelWidth;
+      // 面板开着才为它保留下限;关着(宽度 0)就不占额度
+      const reserve = panelWidth > 0 ? WORKSPACE_MIN_WIDTH : 0;
+      window.api?.setMinimumWidth(minWidth + chrome + reserve);
     });
     observer.observe(chatArea);
     return () => observer.disconnect();
@@ -156,9 +175,12 @@ function AppShell() {
       const startWidth = workspaceWidth;
       // 上限按**聊天区当前实际宽度**推,不用 window.innerWidth 估:左侧 sidebar 可
       // 折叠,窗口宽度里有多少归聊天区并不固定。面板每多占 1px 聊天区就少 1px,
-      // 所以最多长到聊天区剩 CHAT_MIN_WIDTH 为止。
+      // 所以最多长到聊天区剩 chatMinWidth(输入区实测边界)为止。
       const chatWidth = chatAreaRef.current?.clientWidth ?? window.innerWidth - startWidth;
-      const maxWidth = Math.max(WORKSPACE_MIN_WIDTH, startWidth + chatWidth - CHAT_MIN_WIDTH);
+      const maxWidth =
+        chatMinWidth > 0
+          ? Math.max(WORKSPACE_MIN_WIDTH, startWidth + chatWidth - chatMinWidth)
+          : Number.POSITIVE_INFINITY;
 
       const onPointerMove = (e: PointerEvent) => {
         const deltaX = startX - e.clientX;
@@ -177,7 +199,7 @@ function AppShell() {
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [workspaceWidth],
+    [chatMinWidth, workspaceWidth],
   );
 
   // 终端垂直拖拽拉伸

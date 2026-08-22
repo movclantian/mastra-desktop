@@ -631,6 +631,21 @@ function bootstrap(): void {
     // IPC test
     ipcMain.on("ping", () => console.log("pong"));
 
+    // 窗口最小宽度由渲染进程实测的布局下限决定(见 App.tsx 的 chatMinWidth)——
+    // 写死一个数必然要么挡住用户缩窗口、要么挡不住布局被压坏。高度下限保持不变。
+    ipcMain.on("set-minimum-width", (_event, width: number) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (!Number.isFinite(width) || width <= 0) return;
+      const target = Math.ceil(width);
+      const [currentMinWidth, currentMinHeight] = mainWindow.getMinimumSize();
+      if (currentMinWidth === target) return;
+      mainWindow.setMinimumSize(target, currentMinHeight);
+      // 收紧下限时窗口自己不会跟着缩,但放宽下限时 Electron 也不会自动撑大窗口,
+      // 于是可能出现「窗口比下限还窄」的状态,这里补一次。
+      const [width_, height_] = mainWindow.getSize();
+      if (width_ < target) mainWindow.setSize(target, height_);
+    });
+
     // 打开存储目录(Electron 官方 shell.openPath)
     ipcMain.handle("open-directory", (_event, directory: string) => shell.openPath(directory));
 

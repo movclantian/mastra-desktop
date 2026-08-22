@@ -3,6 +3,8 @@
  * 子代理与 OM 模型覆盖(draft 标记见 createThreadRoute)。
  */
 export type ThreadMetadata = {
+  /** 当前线程使用的 Agent 或 Agent 团队 profile。缺省为 mastra-work-agent。 */
+  agentProfileId?: string;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;

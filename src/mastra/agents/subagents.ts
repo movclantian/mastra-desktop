@@ -3,7 +3,11 @@
  * 写进上下文,这里在 model 回调里读取并解析(见 chat / session 路由)。
  */
 import { Agent } from "@mastra/core/agent";
-import { REQUEST_MODEL_CONTEXT_KEY, resolveRequestModel } from "../models";
+import {
+  REQUEST_MODEL_CONTEXT_KEY,
+  resolveDefaultModelId,
+  resolveRequestModel,
+} from "../models";
 
 export const SUBAGENT_MODELS_CONTEXT_KEY = "mastra-work:subagent-models";
 
@@ -20,6 +24,8 @@ const explorerAgent = new Agent({
   model: async ({ requestContext }) => {
     const model = await resolveRequestModel(requestContext.get(REQUEST_MODEL_CONTEXT_KEY));
     if (model) return model;
+    const defaultModel = await resolveDefaultModelId();
+    if (defaultModel) return defaultModel;
     throw new Error("Explorer 子 Agent 未能解析到可用模型,请在设置中配置供应商");
   },
 });
@@ -37,6 +43,8 @@ const reviewerAgent = new Agent({
   model: async ({ requestContext }) => {
     const model = await resolveRequestModel(requestContext.get(REQUEST_MODEL_CONTEXT_KEY));
     if (model) return model;
+    const defaultModel = await resolveDefaultModelId();
+    if (defaultModel) return defaultModel;
     throw new Error("Reviewer 子 Agent 未能解析到可用模型,请在设置中配置供应商");
   },
 });
