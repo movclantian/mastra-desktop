@@ -367,6 +367,9 @@ interface WorkbenchValue {
   setLibraryOpen: (open: boolean) => void;
   skillOpen: boolean;
   setSkillOpen: (open: boolean) => void;
+  /** 技能示例写入新会话输入框的一次性文本。 */
+  pendingPrompt: string | null;
+  setPendingPrompt: (prompt: string | null) => void;
   pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
   queueLibraryFiles: (files: Array<FileUIPart & { byteSize?: number }>) => void;
   clearPendingLibraryFiles: () => void;
@@ -524,6 +527,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [workspacePanelOpen, setWorkspacePanelOpen] = useState(false);
   const [panelTabs, setPanelTabs] = useState<LocalPanelTab[]>(() => [INITIAL_FILES_TAB]);
   const [activePanelTab, setActivePanelTab] = useState<ActivePanelTab>({
@@ -1164,6 +1168,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setLibraryOpen,
       skillOpen,
       setSkillOpen,
+      pendingPrompt,
+      setPendingPrompt,
       pendingLibraryFiles,
       queueLibraryFiles,
       clearPendingLibraryFiles,
@@ -1219,6 +1225,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       agentBusy,
       libraryOpen,
       skillOpen,
+      pendingPrompt,
+      setPendingPrompt,
       pendingLibraryFiles,
       queueLibraryFiles,
       clearPendingLibraryFiles,

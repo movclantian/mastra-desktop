@@ -74,7 +74,12 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
-import type { CompressResult, MessageFileReference, QueuedRequest } from "../types";
+import {
+  referenceBadgeClass,
+  type CompressResult,
+  type MessageFileReference,
+  type QueuedRequest,
+} from "../types";
 import { ChatApprovalSelector } from "./approval-selector";
 import { ChatContextUsage } from "./context-usage";
 import { ChatModeSelector } from "./mode-selector";
@@ -91,7 +96,8 @@ function PromptInputActions() {
   const attachments = usePromptInputAttachments();
 
   return (
-    <PromptInputTools>
+    // shrink-0:这三个控件都不接受被压变形(基类带的 min-w-0 会允许收缩)
+    <PromptInputTools className="shrink-0">
       {/* 附件 → 审批模式 → 联网检索,依次排在整个输入区的左侧 */}
       <Tooltip>
         <TooltipTrigger
@@ -274,11 +280,11 @@ function SkillAwareTextarea({
           <Command shouldFilter={false}>
             <CommandList className="max-h-64">
               {command === "skill" ? (
-                <CommandGroup heading="技能与指令">
-                  {visibleSkills.length === 0 ? (
-                    <CommandEmpty>暂无技能</CommandEmpty>
-                  ) : (
-                    visibleSkills.map((skill) => (
+                visibleSkills.length === 0 ? (
+                  <CommandEmpty>暂无匹配的技能</CommandEmpty>
+                ) : (
+                  <CommandGroup heading="技能与指令">
+                    {visibleSkills.map((skill) => (
                       <CommandItem
                         key={skill.name}
                         onSelect={() => selectSkill(skill)}
@@ -292,15 +298,15 @@ function SkillAwareTextarea({
                           </span>
                         </span>
                       </CommandItem>
-                    ))
-                  )}
-                </CommandGroup>
+                    ))}
+                  </CommandGroup>
+                )
               ) : (
-                <CommandGroup heading="对话文件">
-                  {visibleFiles.length === 0 ? (
-                    <CommandEmpty>暂无资料</CommandEmpty>
-                  ) : (
-                    visibleFiles.map((file) => (
+                visibleFiles.length === 0 ? (
+                  <CommandEmpty>暂无匹配的资料</CommandEmpty>
+                ) : (
+                  <CommandGroup heading="对话文件">
+                    {visibleFiles.map((file) => (
                       <CommandItem
                         key={file.id}
                         onSelect={() => selectFile(file)}
@@ -314,11 +320,13 @@ function SkillAwareTextarea({
                           </span>
                         </span>
                       </CommandItem>
-                    ))
-                  )}
-                </CommandGroup>
+                    ))}
+                  </CommandGroup>
+                )
               )}
-              <CommandSeparator />
+              {(command === "skill" ? visibleSkills.length : visibleFiles.length) > 0 ? (
+                <CommandSeparator />
+              ) : null}
             </CommandList>
           </Command>
         </div>
@@ -336,14 +344,15 @@ function SelectedSkillBadges({
 }) {
   if (skills.length === 0) return null;
   return (
-    <PromptInputHeader className="gap-1.5 bg-muted/40 px-2 pt-2 pb-1">
+    <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
       {skills.map((skill) => (
         <Badge
-          className="gap-1 border-primary/30 bg-primary/10 text-primary"
+          className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
           key={skill}
           variant="outline"
         >
-          <SparklesIcon className="size-3" />/{skill}
+          <SparklesIcon className="size-3" />
+          {skill}
           <button
             aria-label={`移除技能 ${skill}`}
             className="rounded-sm hover:bg-primary/15"
@@ -354,7 +363,7 @@ function SelectedSkillBadges({
           </button>
         </Badge>
       ))}
-    </PromptInputHeader>
+    </div>
   );
 }
 
@@ -367,15 +376,15 @@ function SelectedFileReferenceBadges({
 }) {
   if (files.length === 0) return null;
   return (
-    <PromptInputHeader className="gap-1.5 bg-muted/40 px-2 pt-2 pb-1">
+    <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
       {files.map((file) => (
         <Badge
-          className="max-w-full gap-1 border-primary/30 bg-primary/10 text-primary"
+          className={`max-w-full gap-1 ${referenceBadgeClass("file", `${file.id}:${file.url}`)}`}
           key={file.url}
           variant="outline"
         >
           <FileIcon className="size-3 shrink-0" />
-          <span className="max-w-52 truncate">@{file.filename}</span>
+          <span className="max-w-52 truncate">{file.filename}</span>
           <button
             aria-label={`移除文件引用 ${file.filename}`}
             className="rounded-sm hover:bg-primary/15"
@@ -386,7 +395,7 @@ function SelectedFileReferenceBadges({
           </button>
         </Badge>
       ))}
-    </PromptInputHeader>
+    </div>
   );
 }
 
@@ -588,11 +597,21 @@ export function ChatPromptInput({
   attachmentCapabilities?: { vision: boolean; audio: boolean };
 }) {
   const controller = usePromptInputController();
-  const { pendingLibraryFiles, clearPendingLibraryFiles } = useWorkbench();
+  const {
+    pendingLibraryFiles,
+    clearPendingLibraryFiles,
+    pendingPrompt,
+    setPendingPrompt,
+  } = useWorkbench();
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<
     MessageFileReference[]
   >([]);
+  React.useEffect(() => {
+    if (!pendingPrompt || !controller.ready) return;
+    controller.textInput.setInput(pendingPrompt);
+    setPendingPrompt(null);
+  }, [controller.ready, controller.textInput, pendingPrompt, setPendingPrompt]);
   const estimateAttachmentTokens = React.useCallback((file: PromptInputFileDescriptor) => {
     const mediaType = file.type.toLowerCase();
     if (mediaType.startsWith("image/")) return Math.max(1_024, Math.ceil(file.size / 1_024));
@@ -695,16 +714,16 @@ export function ChatPromptInput({
         }
       >
         <PromptInputAttachments />
-        <SelectedSkillBadges skills={selectedSkills} onChange={setSelectedSkills} />
-        <SelectedFileReferenceBadges
-          files={selectedFileReferences}
-          onRemove={(file) => {
-            const attachment = controller.attachments.files.find((item) => item.url === file.url);
-            if (attachment) controller.attachments.remove(attachment.id);
-            setSelectedFileReferences((current) => current.filter((item) => item.url !== file.url));
-          }}
-        />
         <PromptInputBody>
+          <SelectedSkillBadges skills={selectedSkills} onChange={setSelectedSkills} />
+          <SelectedFileReferenceBadges
+            files={selectedFileReferences}
+            onRemove={(file) => {
+              const attachment = controller.attachments.files.find((item) => item.url === file.url);
+              if (attachment) controller.attachments.remove(attachment.id);
+              setSelectedFileReferences((current) => current.filter((item) => item.url !== file.url));
+            }}
+          />
           <SkillAwareTextarea
             onChangeFileReferences={setSelectedFileReferences}
             onChangeSkills={setSelectedSkills}
@@ -717,9 +736,13 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        <PromptInputFooter>
+        {/* gap-3 保证左右两组永不视觉粘连;overflow-x-auto 是最后一道兜底 ——
+            窗口本身被拉到连 CHAT_MIN_WIDTH 都放不下时(见 App.tsx 的拖拽上限与
+            窗口收窄钳制),这排控件横向滚动而不是被压扁或被祖先的 overflow-hidden
+            裁掉。两侧都 shrink-0,所以任何宽度下控件尺寸都不变。 */}
+        <PromptInputFooter className="flex-nowrap gap-3 overflow-x-auto">
           <PromptInputActions />
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <ChatContextUsage
               usage={usage}
               estimatedUsedTokens={estimatedUsedTokens}

@@ -10,6 +10,7 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  color-scheme: light;
   --sidebar-width: 16rem;
   --sidebar-width-icon: 3rem;
 
@@ -45,6 +46,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -143,6 +145,8 @@
 @layer base {
   * {
     border-color: var(--color-border);
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent) transparent;
   }
   html,
   body,
@@ -153,5 +157,28 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     overflow: hidden;
+  }
+
+  /* Chromium / Windows 全局优雅滚动条适配 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, var(--muted-foreground) 25%, transparent);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, var(--muted-foreground) 50%, transparent);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
 }

@@ -217,9 +217,22 @@ export function ChatPanel() {
   const placeholderChat = usePlaceholderChat();
   const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
 
+  // throttle 必填。AI SDK 默认不节流(throttle: undefined),于是每个 chunk 都经
+  // useSyncExternalStore 独立通知一次 —— 那是同步车道(SyncLane),每次都要走完
+  // 一整轮 render + commit。React 在每次 commit 收尾时若发现同步车道上还有活,
+  // 就把嵌套更新计数 +1,累到 50 直接抛 "Maximum update depth exceeded"。
+  //
+  // 模型逐 token 吐字时 chunk 间有真实间隔,计数每轮都清零,所以纯文本对话看不出问题;
+  // 工具调用结束的那一刻不一样 —— 服务端在本机(零网络延迟)会把工具结果整块加上紧随
+  // 其后的续写文本一次性 flush 出来,几十个 chunk 落在同一批微任务里被读出,连续几十次
+  // 同步 commit 之间没有任何空隙,计数一路撞上限。异常在 chunk 处理栈里抛出,于是表现为
+  // useChat 的 onError:「本轮生成失败」+ 流式中断。
+  //
+  // 50ms(20fps)对流式文字已足够顺滑,同时把这条对话树的重渲染次数压到原来的几十分之一。
   const { messages, setMessages, status, stop } = useChat({
     chat: activeChat,
     resume: Boolean(activeThreadId),
+    throttle: 50,
   });
 
   // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器

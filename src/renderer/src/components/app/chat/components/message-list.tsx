@@ -54,6 +54,7 @@ import {
   getPlanDraft,
   type MessageBranchRecord,
   type MessageFileReference,
+  referenceBadgeClass,
 } from "../types";
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
@@ -125,12 +126,15 @@ function MessageFileReferenceBadges({ references }: { references: MessageFileRef
     <div className="flex max-w-full flex-wrap justify-end gap-1">
       {references.map((reference) => (
         <Badge
-          className="max-w-full gap-1 border-primary/30 bg-primary/10 text-primary"
+          className={`max-w-full gap-1 ${referenceBadgeClass(
+            "file",
+            `${reference.id}:${reference.url}`,
+          )}`}
           key={`${reference.id}:${reference.url}`}
           variant="outline"
         >
           <FileTextIcon className="size-3 shrink-0" />
-          <span className="max-w-60 truncate">@{reference.filename}</span>
+          <span className="max-w-60 truncate">{reference.filename}</span>
         </Badge>
       ))}
     </div>
@@ -394,11 +398,12 @@ export const MessageItem = React.memo(function MessageItem({
                           <div className="flex max-w-full flex-wrap justify-end gap-1">
                             {versionSkills.map((skill) => (
                               <Badge
-                                className="gap-1 border-primary/30 bg-primary/10 text-primary"
+                                className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
                                 key={skill}
                                 variant="outline"
                               >
-                                <SparklesIcon className="size-3" />/{skill}
+                                <SparklesIcon className="size-3" />
+                                {skill}
                               </Badge>
                             ))}
                           </div>
@@ -446,11 +451,12 @@ export const MessageItem = React.memo(function MessageItem({
                   <div className="flex max-w-full flex-wrap justify-end gap-1">
                     {skillNames.map((skill) => (
                       <Badge
-                        className="gap-1 border-primary/30 bg-primary/10 text-primary"
+                        className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
                         key={skill}
                         variant="outline"
                       >
-                        <SparklesIcon className="size-3" />/{skill}
+                        <SparklesIcon className="size-3" />
+                        {skill}
                       </Badge>
                     ))}
                   </div>

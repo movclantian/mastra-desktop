@@ -33,22 +33,37 @@ function browserState(threadId: string) {
   }));
 }
 
-async function ensureBrowserTab(threadId: string): Promise<void> {
+/** 线程浏览器的首页:首次就绪与新开标签都落在这里 */
+const BROWSER_HOME_URL = "https://www.bing.com";
+
+/**
+ * 确保线程浏览器就绪,且有一个**已导航**的标签。返回 true 表示本次刚完成首次导航
+ * (调用方据此判断还要不要再开标签 / 再导航一次)。
+ *
+ * 不能只数标签个数:ensureReady() 会为线程建好 Playwright context 和它的初始页,
+ * 而那个初始页是 about:blank —— 个数因此永远不为 0,首页导航被整个跳过,面板里
+ * 就留下一个空白页。空白页不算"已有标签",直接复用它完成导航(goto 作用于当前
+ * 活动页,所以不会多出一个标签)。
+ */
+async function ensureBrowserTab(
+  threadId: string,
+  url: string = BROWSER_HOME_URL,
+): Promise<boolean> {
   // AgentBrowser 的 thread scope 由 current thread 决定;先显式创建该线程
   // 的 Playwright 会话,再读取状态。仅调用 goto() 会把启动失败伪装成“无标签”。
   workBrowser.setCurrentThread(threadId);
   await workBrowser.ensureReady();
   const state = await workBrowser.getBrowserState(threadId);
-  if (!state || state.tabs.length === 0) {
-    const result = await workBrowser.goto({ url: "https://www.bing.com" }, threadId);
-    if (!("success" in result) || result.success !== true) {
-      throw new Error(
-        "message" in result && typeof result.message === "string"
-          ? result.message
-          : "Browser tab could not be created",
-      );
-    }
+  if (state?.tabs.some((tab) => tab.url && tab.url !== "about:blank")) return false;
+  const result = await workBrowser.goto({ url }, threadId);
+  if (!("success" in result) || result.success !== true) {
+    throw new Error(
+      "message" in result && typeof result.message === "string"
+        ? result.message
+        : "Browser tab could not be created",
+    );
   }
+  return true;
 }
 
 export const browserStateRoute = registerApiRoute("/work/threads/:threadId/browser", {
@@ -137,8 +152,9 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     if (!input) throw workError("VALIDATION_FAILED", { text: "url is required" });
     const url = /^[a-z][a-z\d+.-]*:/i.test(input) ? input : `https://${input}`;
     try {
-      await ensureBrowserTab(threadId);
-      const result = await workBrowser.goto({ url }, threadId);
+      // 首次就绪时直接落到目标地址,省掉一次多余的首页往返
+      const navigated = await ensureBrowserTab(threadId, url);
+      const result = navigated ? { success: true } : await workBrowser.goto({ url }, threadId);
       if (!("success" in result) || result.success !== true) return c.json(result, 400);
       return c.json({ ...result, state: await browserState(threadId) });
     } catch (error) {
@@ -175,10 +191,19 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
         case "reload":
           result = await workBrowser.evaluate({ script: "location.reload()" }, threadId);
           break;
-        case "new-tab":
-          await ensureBrowserTab(threadId);
-          result = await workBrowser.tabs({ action: "new", url: body.url }, threadId);
+        case "new-tab": {
+          // 浏览器尚未就绪时,首次导航已经把那个空白初始页变成了目标页面,
+          // 此时再 tabs({action:"new"}) 只会凭空多出一个标签。
+          // 未指定 url 也要落在首页 —— tabs() 收到 undefined 会开出 about:blank。
+          const navigated = await ensureBrowserTab(threadId, body.url);
+          result = navigated
+            ? { success: true }
+            : await workBrowser.tabs(
+                { action: "new", url: body.url ?? BROWSER_HOME_URL },
+                threadId,
+              );
           break;
+        }
         case "switch-tab":
         case "close-tab":
           if (!Number.isInteger(body.index))

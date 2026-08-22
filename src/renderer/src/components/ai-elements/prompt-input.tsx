@@ -174,6 +174,8 @@ export interface TextInputContext {
 export interface PromptInputControllerProps {
   textInput: TextInputContext;
   attachments: AttachmentsContext;
+  /** Draft persistence has finished loading for the active persistence key. */
+  ready: boolean;
   /** INTERNAL: Allows PromptInput to register its file textInput + "open" callback */
   __registerFileInput: (ref: RefObject<HTMLInputElement | null>, open: () => void) => void;
 }
@@ -265,6 +267,7 @@ export const PromptInputProvider = ({
 
   // ----- attachments state (global when wrapped)
   const [attachmentFiles, setAttachmentFiles] = useState<PromptAttachment[]>([]);
+  const [ready, setReady] = useState(!persistenceKey || typeof indexedDB === "undefined");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // oxlint-disable-next-line eslint(no-empty-function)
   const openRef = useRef<() => void>(() => {});
@@ -297,6 +300,7 @@ export const PromptInputProvider = ({
       );
     }
     loadedPersistenceKeyRef.current = undefined;
+    setReady(false);
     setTextInput(initialTextInput);
     setAttachmentFiles((current) => {
       for (const file of current) if (file.url.startsWith("blob:")) URL.revokeObjectURL(file.url);
@@ -304,6 +308,7 @@ export const PromptInputProvider = ({
     });
     if (!persistenceKey || typeof indexedDB === "undefined") {
       loadedPersistenceKeyRef.current = persistenceKey;
+      setReady(true);
       return;
     }
     void withPromptDraftStore<PersistedPromptDraft | undefined>("readonly", (store) =>
@@ -333,6 +338,7 @@ export const PromptInputProvider = ({
       .finally(() => {
         if (!cancelled && loadRevision === draftRevisionRef.current) {
           loadedPersistenceKeyRef.current = persistenceKey;
+          setReady(true);
         }
       });
     return () => {
@@ -487,13 +493,14 @@ export const PromptInputProvider = ({
     () => ({
       __registerFileInput,
       attachments,
+      ready,
       textInput: {
         clear: clearInput,
         setInput: setTextInput,
         value: textInput,
       },
     }),
-    [textInput, clearInput, attachments, __registerFileInput],
+    [textInput, clearInput, attachments, __registerFileInput, ready],
   );
 
   return (
@@ -1160,7 +1167,7 @@ export const PromptInput = ({
         type="file"
       />
       <form className={cn("w-full", className)} onSubmit={handleSubmit} ref={formRef} {...props}>
-        <InputGroup className="overflow-hidden">{children}</InputGroup>
+        <InputGroup className="overflow-visible">{children}</InputGroup>
       </form>
     </>
   );

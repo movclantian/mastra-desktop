@@ -39,7 +39,7 @@
     "@electron-toolkit/preload": "3.0.2",
     "@electron-toolkit/utils": "4.0.0",
     "@fastify/busboy": "^3.2.2",
-    "@iconify-json/vscode-icons": "^1.2.74",
+    "@iconify-json/material-icon-theme": "^1.2.70",
     "@libsql/client": "0.17.4",
     "@mastra/agent-browser": "^0.5.1",
     "@mastra/ai-sdk": "1.9.1",

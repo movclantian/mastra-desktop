@@ -1,5 +1,6 @@
 import {
   ArrowLeftIcon,
+  ArrowUpRightIcon,
   CheckIcon,
   ChevronRightIcon,
   FolderOpenIcon,
@@ -18,6 +19,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { McpDialog, type McpFormServer } from "@/components/app/integrations";
+import { MessageResponse } from "@/components/ai-elements/message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,19 +40,25 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
+import { useWorkbench } from "@/lib/workbench";
 
 interface SkillMetadata {
   name: string;
   path: string;
   description: string;
   metadata?: Record<string, unknown>;
-  origin?: "builtin" | "marketplace" | "installed";
+  origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
   marketplaceId?: string;
   marketplaceName?: string;
   sourcePath?: string;
   branch?: string;
+  skillsShSource?: string;
+  skillsShSlug?: string;
+  installs?: number;
+  sourceUrl?: string;
 }
 
 interface SkillDetail extends SkillMetadata {
@@ -90,10 +98,12 @@ function skillCategory(skill: SkillMetadata) {
 
 function skillSourceLabel(skill?: SkillMetadata) {
   if (skill?.origin === "builtin") return "Mastra 内置";
+  if (skill?.origin === "skills-sh") return "skills.sh";
   return skill?.marketplaceName || "个人技能";
 }
 
 export function SkillHub() {
+  const { setPendingPrompt, setSkillOpen } = useWorkbench();
   const [section, setSection] = React.useState<Section>("public");
   const [query, setQuery] = React.useState("");
   const [skills, setSkills] = React.useState<SkillMetadata[]>([]);
@@ -126,9 +136,14 @@ export function SkillHub() {
       const response = await fetch(
         `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}`,
       );
-      const payload = (await response.json()) as { skills?: SkillMetadata[]; error?: string };
+      const payload = (await response.json()) as {
+        skills?: SkillMetadata[];
+        error?: string;
+        skillsShError?: string;
+      };
       if (!response.ok) throw apiError(payload, "技能市场暂时不可用");
       setRegistrySkills(payload.skills ?? []);
+      if (payload.skillsShError) toast.error(`skills.sh 暂时不可用: ${payload.skillsShError}`);
     } catch (error) {
       setRegistrySkills([]);
       toastError(error, "技能市场暂时不可用");
@@ -197,7 +212,13 @@ export function SkillHub() {
         ? fetch(
             `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(selectedSkill.marketplaceId)}/skill?path=${encodeURIComponent(selectedSkill.sourcePath)}`,
           )
-        : selectedSkill.origin === "builtin"
+        : selectedSkill.origin === "skills-sh" &&
+            selectedSkill.skillsShSource &&
+            selectedSkill.skillsShSlug
+          ? fetch(
+              `${MASTRA_SERVER_URL}/work/skills/skills-sh/skill?source=${encodeURIComponent(selectedSkill.skillsShSource)}&slug=${encodeURIComponent(selectedSkill.skillsShSlug)}`,
+            )
+          : selectedSkill.origin === "builtin"
           ? fetch(
               `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(selectedSkill.sourcePath || selectedSkill.name)}`,
             )
@@ -302,19 +323,26 @@ export function SkillHub() {
     setInstalling(skill.name);
     try {
       const sourceName = skill.sourcePath || skill.path.split(/[\\/]/).at(-1) || skill.name;
-      const response = skill.origin === "marketplace" && skill.marketplaceId
-        ? await fetch(
-            `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
-            {
+      const response =
+        skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug
+          ? await fetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/install`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(skill),
-            },
-          )
-        : await fetch(
-            `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(sourceName)}/install`,
-            { method: "POST" },
-          );
+              body: JSON.stringify({ source: skill.skillsShSource, slug: skill.skillsShSlug }),
+            })
+          : skill.origin === "marketplace" && skill.marketplaceId
+            ? await fetch(
+                `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
+                {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(skill),
+                },
+              )
+            : await fetch(
+                `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(sourceName)}/install`,
+                { method: "POST" },
+              );
       const payload = (await response.json()) as { skill?: SkillMetadata; error?: string };
       if (!response.ok || !payload.skill) throw apiError(payload, "安装技能失败");
       await loadInstalled();
@@ -370,6 +398,10 @@ export function SkillHub() {
         }}
         onInstall={() => void installBuiltin(selectedSkill)}
         onRemove={() => void removeSkill()}
+        onUsePrompt={(prompt) => {
+          setPendingPrompt(`${selectedSkill.name} ${prompt}`);
+          setSkillOpen(false);
+        }}
         installing={installing === selectedSkill.name}
       />
     );
@@ -497,7 +529,8 @@ export function SkillHub() {
                 <StoreIcon className="size-3.5" />
                 <span>技能来源</span>
                 <Badge variant="outline">Mastra 内置</Badge>
-                <span>来自 @mastra/editor 本地技能包；已添加的 GitHub 市场也会显示在这里。</span>
+                <Badge variant="outline">skills.sh</Badge>
+                <span>内置技能和 skills.sh 社区技能默认可用；已添加的 GitHub 市场也会显示在这里。</span>
               </div>
               {loading || (registryLoading && registrySkills.length === 0) ? (
                 <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
@@ -728,6 +761,7 @@ function SkillDetailPage({
   onBack,
   onInstall,
   onRemove,
+  onUsePrompt,
 }: {
   detail: SkillDetail | null;
   detailError: string | null;
@@ -737,7 +771,13 @@ function SkillDetailPage({
   onBack: () => void;
   onInstall: () => void;
   onRemove: () => void;
+  onUsePrompt: (prompt: string) => void;
 }) {
+  const examplePrompts = [
+    "把我的笔记整理成一份排版好的文档",
+    "把这份 PDF 里的表格提取成电子表格",
+    "用这份 CSV 做一份带图表的工作簿",
+  ];
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
       <ScrollArea className="min-h-0 flex-1">
@@ -777,26 +817,45 @@ function SkillDetailPage({
                   )}
                 </div>
               </header>
-              <section className="mt-10 border-y bg-muted/20 py-5 sm:py-6">
-                <div className="mx-auto grid max-w-3xl gap-3 px-1">
-                  <p className="text-xs font-medium text-muted-foreground">使用示例</p>
-                  {[
-                    "把我的笔记整理成一份排版好的文档",
-                    "把这份 PDF 里的表格提取成电子表格",
-                    "用这份 CSV 做一份带图表的工作簿",
-                  ].map((prompt) => (
-                    <div
-                      className="flex min-w-0 items-center gap-3 border-b py-2.5 text-sm last:border-b-0"
-                      key={prompt}
-                    >
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-background text-base">
-                        {skillIcon(detail)}
-                      </span>
-                      <span className="min-w-0 flex-1 break-words text-foreground">
-                        {detail.name} {prompt}
-                      </span>
-                    </div>
-                  ))}
+              <section className="mt-10 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
+                <div className="grid min-w-0 gap-3">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground">使用示例</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      选择一个示例，将它填入新会话输入框后再按需修改。
+                    </p>
+                  </div>
+                  <div className="grid gap-2">
+                    {examplePrompts.map((prompt) => (
+                      <div
+                        className="flex min-w-0 items-center gap-3 rounded-lg border bg-background px-3 py-2.5 text-sm transition-colors hover:border-foreground/30 hover:bg-accent focus-within:ring-2 focus-within:ring-ring/50"
+                        key={prompt}
+                      >
+                        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-base">
+                          {skillIcon(detail)}
+                        </span>
+                        <span className="min-w-0 flex-1 break-words text-foreground">
+                          {detail.name} {prompt}
+                        </span>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                aria-label={`将示例填入新会话: ${prompt}`}
+                                className="shrink-0"
+                                onClick={() => onUsePrompt(prompt)}
+                                size="icon-sm"
+                                variant="ghost"
+                              />
+                            }
+                          >
+                            <ArrowUpRightIcon />
+                          </TooltipTrigger>
+                          <TooltipContent>填入新会话</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </section>
               <section className="mt-10">
@@ -825,11 +884,13 @@ function SkillDetailPage({
                   )}
                 </div>
               </section>
-              <section className="mt-10 max-w-3xl">
+              <section className="mt-10 w-full min-w-0">
                 <h2 className="text-xl font-semibold">技能说明</h2>
-                <pre className="mt-4 whitespace-pre-wrap break-words rounded-xl border bg-muted/30 p-4 font-sans text-sm leading-relaxed">
-                  {detail.instructions}
-                </pre>
+                <div className="mt-4 min-w-0 rounded-xl border bg-muted/30 p-4">
+                  <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
+                    {detail.instructions}
+                  </MessageResponse>
+                </div>
               </section>
             </>
           ) : detailLoading ? (

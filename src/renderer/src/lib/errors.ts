@@ -169,7 +169,8 @@ export function describeError(payload: WorkErrorPayload | unknown): DescribedErr
  */
 export function toastError(error: unknown, context?: string): DescribedError {
   const described = describeError(error);
-  const title = context ? `${context}：${described.title}` : described.title;
+  const title =
+    context && context !== described.title ? `${context}：${described.title}` : described.title;
   const lines = [title];
   if (described.hint) lines.push(described.hint);
   if (described.detail) lines.push(described.detail);

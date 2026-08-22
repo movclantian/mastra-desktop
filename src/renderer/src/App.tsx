@@ -40,6 +40,17 @@ function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | nul
   }
 }
 
+/** 右侧工作区面板自身的最小宽度 */
+const WORKSPACE_MIN_WIDTH = 340;
+/**
+ * 聊天区的宽度下限。底部工具栏是一排固定 7 个控件(左:附件/审批/检索,
+ * 右:上下文用量/模式/模型/发送),它们都不该被压变形,所以边界必须守在
+ * **控制宽度的这一侧** —— 面板能拖多窄由这里决定。指望在工具栏子元素上加
+ * min-width 把父容器"撑住"是无效的:面板宽度由下面的 pointermove 直接写死,
+ * 且这条祖先链上全是 overflow-hidden,撑出去的部分只会被裁掉而非产生滚动条。
+ */
+const CHAT_MIN_WIDTH = 640;
+
 function AppShell() {
   const {
     threads,
@@ -59,10 +70,25 @@ function AppShell() {
   const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
   const [terminalHeight, setTerminalHeight] = React.useState(280);
   const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
+  /** 聊天区容器:拖拽上限与窗口收窄都按它的实际宽度算 */
+  const chatAreaRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     if (!libraryOpen) setLibrarySettingsOpen(false);
   }, [libraryOpen]);
+
+  // 窗口被拉窄同样会挤压聊天区,面板宽度得跟着让位 —— 否则守住了拖拽这一路,
+  // 换个入口照样能把工具栏压变形。
+  React.useEffect(() => {
+    const clampToWindow = () => {
+      const chatWidth = chatAreaRef.current?.clientWidth ?? 0;
+      const overflow = CHAT_MIN_WIDTH - chatWidth;
+      if (overflow <= 0) return;
+      setWorkspaceWidth((current) => Math.max(WORKSPACE_MIN_WIDTH, current - overflow));
+    };
+    window.addEventListener("resize", clampToWindow);
+    return () => window.removeEventListener("resize", clampToWindow);
+  }, []);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
@@ -73,11 +99,17 @@ function AppShell() {
       setIsDraggingWorkspace(true);
       const startX = event.clientX;
       const startWidth = workspaceWidth;
+      // 上限按**聊天区当前实际宽度**推,不用 window.innerWidth 估:左侧 sidebar 可
+      // 折叠,窗口宽度里有多少归聊天区并不固定。面板每多占 1px 聊天区就少 1px,
+      // 所以最多长到聊天区剩 CHAT_MIN_WIDTH 为止。
+      const chatWidth = chatAreaRef.current?.clientWidth ?? window.innerWidth - startWidth;
+      const maxWidth = Math.max(WORKSPACE_MIN_WIDTH, startWidth + chatWidth - CHAT_MIN_WIDTH);
 
       const onPointerMove = (e: PointerEvent) => {
         const deltaX = startX - e.clientX;
-        const newWidth = Math.max(340, Math.min(window.innerWidth * 0.7, startWidth + deltaX));
-        setWorkspaceWidth(newWidth);
+        setWorkspaceWidth(
+          Math.max(WORKSPACE_MIN_WIDTH, Math.min(maxWidth, startWidth + deltaX)),
+        );
       };
 
       const onPointerUp = () => {
@@ -160,7 +192,7 @@ function AppShell() {
       <SidebarInset className="overflow-hidden border shadow-sm">
         <div className="flex size-full min-h-0 min-w-0 overflow-hidden bg-background">
           {/* 左侧主体(聊天 / 技能 / 资料库 / 终端) */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden" ref={chatAreaRef}>
             <PanelHeader className="relative z-10 h-12 shrink-0 px-4">
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 <SidebarTrigger className="-ml-1" />

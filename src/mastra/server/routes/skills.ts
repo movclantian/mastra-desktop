@@ -11,9 +11,13 @@ import { workError } from "../../errors";
 import {
   getMarketplaceSkillDetail,
   getSkillMarketplaces,
+  getSkillsShSkillDetail,
   installMarketplaceSkill,
+  installSkillsShSkill,
+  listSkillsShSkills,
   listMarketplaceSkills,
   type MarketplaceSkill,
+  type SkillsShSkill,
   normalizeMarketplace,
   parseSkillMarkdown,
   saveSkillMarketplaces,
@@ -80,7 +84,6 @@ async function readLocalSkill(directory: string) {
 async function unpackSkillArchive(
   buffer: Buffer,
   filename: string,
-  agent: { getSkill(path: string): Promise<unknown> },
 ) {
   const archive = new AdmZip(buffer);
   const entries = archive.getEntries();
@@ -116,9 +119,7 @@ async function unpackSkillArchive(
         await writeFile(target, entry.getData());
       }
     }
-    const skill = await agent.getSkill(targetRoot);
-    if (!skill) throw new Error("解压后未发现有效的 SKILL.md");
-    return skill;
+    return await readLocalSkill(targetRoot);
   } catch (error) {
     await rm(targetRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -165,6 +166,13 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
             .map((marketplace) => listMarketplaceSkills(marketplace, query).catch(() => [])),
         )
       ).flat();
+      let skillsSh: SkillsShSkill[] = [];
+      let skillsShError: string | undefined;
+      try {
+        skillsSh = await listSkillsShSkills(query);
+      } catch (error) {
+        skillsShError = error instanceof Error ? error.message : "skills.sh 暂时不可用";
+      }
       const skills = [
         ...builtinSkills
           .filter((skill): skill is NonNullable<typeof skill> => Boolean(skill))
@@ -175,6 +183,17 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
             sourcePath: basename(skill.path),
           })),
         ...externalSkills.map((skill) => ({ ...skill, origin: "marketplace" as const })),
+        ...skillsSh.map((skill) => ({
+          ...skill,
+          path: `skills-sh:${skill.source}/${skill.slug}`,
+          description: skill.description || "来自 skills.sh 的社区技能",
+          origin: "skills-sh" as const,
+          marketplaceName: "skills.sh",
+          sourcePath: skill.slug,
+          skillsShSource: skill.source,
+          skillsShSlug: skill.slug,
+          sourceUrl: skill.url || `https://skills.sh/${skill.source}/${skill.slug}`,
+        })),
       ];
       return c.json({
         skills: skills.filter(
@@ -183,6 +202,7 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
             skill.name.toLocaleLowerCase().includes(query) ||
             skill.description.toLocaleLowerCase().includes(query),
         ),
+        ...(skillsShError ? { skillsShError } : {}),
       });
     } catch (error) {
       throw workError("SKILL_READ_FAILED", {
@@ -243,6 +263,33 @@ export const marketplaceSkillRoute = registerApiRoute("/work/skills/marketplaces
   },
 });
 
+export const skillsShSkillRoute = registerApiRoute("/work/skills/skills-sh/skill", {
+  method: "GET",
+  handler: async (c) => {
+    try {
+      const source = c.req.query("source");
+      const slug = c.req.query("slug");
+      if (!source || !slug) {
+        throw workError("VALIDATION_FAILED", { text: "缺少 skills.sh 技能标识" });
+      }
+      return c.json({
+        skill: {
+          ...(await getSkillsShSkillDetail(source, slug)),
+          origin: "skills-sh",
+          marketplaceName: "skills.sh",
+          skillsShSource: source,
+          skillsShSlug: slug,
+        },
+      });
+    } catch (error) {
+      return c.json(
+        { error: error instanceof Error ? error.message : "读取 skills.sh 技能详情失败" },
+        404,
+      );
+    }
+  },
+});
+
 export const saveSkillMarketplaceRoute = registerApiRoute("/work/skills/marketplaces", {
   method: "POST",
   handler: async (c) => {
@@ -290,8 +337,7 @@ export const installMarketplaceSkillRoute = registerApiRoute(
           throw workError("VALIDATION_FAILED", { text: "技能市场条目无效" });
         }
         const root = await installMarketplaceSkill(payload as MarketplaceSkill);
-        const skill = await c.get("mastra").getAgent("mastraWorkAgent").getSkill(root);
-        if (!skill) throw workError("SKILL_INSTALL_FAILED", { text: "安装后未发现技能" });
+        const skill = await readLocalSkill(root);
         return c.json({ skill }, 201);
       } catch (error) {
         throw workError("SKILL_INSTALL_FAILED", {
@@ -320,13 +366,34 @@ export const installBuiltinSkillRoute = registerApiRoute("/work/skills/registry/
     if (alreadyInstalled) throw workError("SKILL_ALREADY_INSTALLED");
     try {
       await cp(source, targetRoot, { recursive: true, errorOnExist: true, force: false });
-      const skill = await c.get("mastra").getAgent("mastraWorkAgent").getSkill(targetRoot);
-      if (!skill) throw new Error("安装后未发现有效技能");
+      const skill = await readLocalSkill(targetRoot);
       return c.json({ skill }, 201);
     } catch (error) {
       await rm(targetRoot, { recursive: true, force: true }).catch(() => undefined);
       throw workError("SKILL_INSTALL_FAILED", {
         text: error instanceof Error ? error.message : "安装技能失败",
+        cause: error,
+      });
+    }
+  },
+});
+
+export const installSkillsShSkillRoute = registerApiRoute("/work/skills/skills-sh/install", {
+  method: "POST",
+  handler: async (c) => {
+    try {
+      const payload = (await c.req.json()) as { source?: unknown; slug?: unknown };
+      if (typeof payload.source !== "string" || typeof payload.slug !== "string") {
+        throw workError("VALIDATION_FAILED", { text: "skills.sh 技能标识无效" });
+      }
+      const root = await installSkillsShSkill(payload.source, payload.slug);
+      return c.json({ skill: await readLocalSkill(root) }, 201);
+    } catch (error) {
+      if (error instanceof Error && error.message === "该技能已经安装") {
+        throw workError("SKILL_ALREADY_INSTALLED", { cause: error });
+      }
+      throw workError("SKILL_INSTALL_FAILED", {
+        text: error instanceof Error ? error.message : "安装 skills.sh 技能失败",
         cause: error,
       });
     }
@@ -343,11 +410,9 @@ export const uploadSkillRoute = registerApiRoute("/work/skills", {
     if (value.size > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
 
     try {
-      const agent = c.get("mastra").getAgent("mastraWorkAgent");
       const skill = await unpackSkillArchive(
         Buffer.from(await value.arrayBuffer()),
         value.name,
-        agent,
       );
       if (!skill) throw new Error("解压后未发现有效的 SKILL.md");
       return c.json({ skill }, 201);
@@ -397,7 +462,6 @@ export const importSkillRoute = registerApiRoute("/work/skills/import", {
       const skill = await unpackSkillArchive(
         buffer,
         filename.endsWith(".zip") ? filename : `${filename}.zip`,
-        c.get("mastra").getAgent("mastraWorkAgent"),
       );
       return c.json({ skill }, 201);
     } catch (error) {
