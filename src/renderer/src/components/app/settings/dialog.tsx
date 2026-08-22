@@ -2,6 +2,7 @@ import {
   BrainIcon,
   DatabaseIcon,
   FolderCogIcon,
+  PaletteIcon,
   ServerIcon,
   ShieldCheckIcon,
   WrenchIcon,
@@ -32,19 +33,17 @@ import {
   MemorySection,
   ProvidersSection,
   StorageSection,
+  ThemeSection,
   ToolsSection,
   WorkspaceSection,
 } from "./sections";
 
-// 布局照搬 .vscode/1.txt(shadcn 官方 Settings Dialog):
-// Dialog 内嵌 SidebarProvider + Sidebar(collapsible="none") 左侧导航,
-// 右侧 main = Breadcrumb header + 滚动内容区。
-
 // ---------------------------------------------------------------------------
-// 设置弹窗:照搬 .vscode/1.txt 官方布局
+// 设置弹窗:照搬官方 Settings Dialog 布局
 // ---------------------------------------------------------------------------
 
 const SECTIONS = [
+  { id: "themes", label: "外观主题", icon: PaletteIcon },
   { id: "providers", label: "模型供应商", icon: ServerIcon },
   { id: "memory", label: "记忆", icon: BrainIcon },
   { id: "tools", label: "工具", icon: WrenchIcon },
@@ -56,13 +55,13 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function SettingsDialog() {
-  const { settingsOpen, setSettingsOpen } = useWorkbench();
-  const [section, setSection] = React.useState<SectionId>("providers");
+  const { settingsOpen, setSettingsOpen, settingsSection, setSettingsSection } = useWorkbench();
+  const section = (SECTIONS.some((s) => s.id === settingsSection) ? settingsSection : "themes") as SectionId;
   const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
 
   return (
     <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-      <DialogContent className="flex h-[min(560px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 flex-col overflow-hidden p-0 md:max-w-[700px] lg:max-w-[800px]">
+      <DialogContent className="flex h-[min(620px,calc(100dvh-2rem))] max-h-[calc(100dvh-2rem)] min-w-0 flex-col overflow-hidden p-0 md:max-w-[800px] lg:max-w-[920px]">
         <DialogTitle className="sr-only">设置</DialogTitle>
         <DialogDescription className="sr-only">自定义 MastraWork 设置。</DialogDescription>
         {/* 必须保持横向子项 stretch:main 才能继承受限的 Dialog 高度并形成滚动区。 */}
@@ -85,7 +84,7 @@ export function SettingsDialog() {
                       <SidebarMenuItem key={s.id}>
                         <SidebarMenuButton
                           isActive={section === s.id}
-                          onClick={() => setSection(s.id)}
+                          onClick={() => setSettingsSection(s.id)}
                         >
                           <s.icon />
                           <span>{s.label}</span>
@@ -98,7 +97,7 @@ export function SettingsDialog() {
             </SidebarContent>
           </Sidebar>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            <header className="flex h-10 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
+            <header className="flex h-10 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12 border-b">
               <div className="flex items-center gap-2 px-4">
                 <Breadcrumb>
                   <BreadcrumbList>
@@ -113,20 +112,27 @@ export function SettingsDialog() {
                 </Breadcrumb>
               </div>
             </header>
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex min-w-0 flex-col">
-                {section === "providers" ? <ProvidersSection /> : null}
-                {section !== "providers" ? (
-                  <div className="flex min-w-0 flex-col gap-2 p-2 pt-1">
-                    {section === "memory" ? <MemorySection /> : null}
-                    {section === "tools" ? <ToolsSection /> : null}
-                    {section === "guardrails" ? <GuardrailsSection /> : null}
-                    {section === "workspace" ? <WorkspaceSection /> : null}
-                    {section === "storage" ? <StorageSection /> : null}
-                  </div>
-                ) : null}
+
+            {section === "themes" ? (
+              <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+                <ThemeSection />
               </div>
-            </ScrollArea>
+            ) : (
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="flex min-w-0 flex-col">
+                  {section === "providers" ? <ProvidersSection /> : null}
+                  {section !== "providers" ? (
+                    <div className="flex min-w-0 flex-col gap-2 p-2 pt-1">
+                      {section === "memory" ? <MemorySection /> : null}
+                      {section === "tools" ? <ToolsSection /> : null}
+                      {section === "guardrails" ? <GuardrailsSection /> : null}
+                      {section === "workspace" ? <WorkspaceSection /> : null}
+                      {section === "storage" ? <StorageSection /> : null}
+                    </div>
+                  ) : null}
+                </div>
+              </ScrollArea>
+            )}
           </main>
         </SidebarProvider>
       </DialogContent>

@@ -130,10 +130,6 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
   });
 
   const validate = () => {
-    if (!form.name.trim()) {
-      toast.error("请输入连接名称");
-      return false;
-    }
     if (form.transport === "http" && !form.url?.trim()) {
       toast.error("请输入 MCP URL");
       return false;
@@ -211,7 +207,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
               <div>
                 <h3 className="text-sm font-medium">基本信息</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  给这个连接一个容易识别的名称，唯一 ID 会自动生成。
+                  名称可以留空，保存时会根据地址或命令自动生成。
                 </p>
               </div>
               <div className="grid gap-4">
@@ -220,8 +216,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                   label="连接名称"
                   value={form.name}
                   onChange={(value) => update({ name: value })}
-                  placeholder="例如 GitHub"
-                  required
+                  placeholder="可选，例如 GitHub"
                 />
               </div>
             </section>
@@ -358,7 +353,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
             <Button disabled={testing || saving} onClick={() => onOpenChange(false)} variant="ghost">
               取消
             </Button>
-            <Button disabled={saving || testing || !form.name.trim()} onClick={() => void save()}>
+            <Button disabled={saving || testing} onClick={() => void save()}>
               {saving ? <LoaderCircleIcon className="animate-spin" /> : null}
               {saving ? "保存中…" : "保存 MCP"}
             </Button>

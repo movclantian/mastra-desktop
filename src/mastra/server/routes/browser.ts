@@ -36,6 +36,11 @@ function browserState(threadId: string) {
 /** 线程浏览器的首页:首次就绪与新开标签都落在这里 */
 const BROWSER_HOME_URL = "https://www.bing.com";
 
+// 首次打开线程时,浏览器 SSE 与标签操作可能同时触发 ensureReady + goto。
+// Playwright 对同一个 Page 的并发导航会主动取消其中一次并返回 ERR_ABORTED;
+// 按线程串行化这段初始化,避免把正常的重复初始化误报成操作失败。
+const browserInitPromises = new Map<string, Promise<boolean>>();
+
 /**
  * 确保线程浏览器就绪,且有一个**已导航**的标签。返回 true 表示本次刚完成首次导航
  * (调用方据此判断还要不要再开标签 / 再导航一次)。
@@ -45,7 +50,7 @@ const BROWSER_HOME_URL = "https://www.bing.com";
  * 就留下一个空白页。空白页不算"已有标签",直接复用它完成导航(goto 作用于当前
  * 活动页,所以不会多出一个标签)。
  */
-async function ensureBrowserTab(
+async function ensureBrowserTabOnce(
   threadId: string,
   url: string = BROWSER_HOME_URL,
 ): Promise<boolean> {
@@ -64,6 +69,28 @@ async function ensureBrowserTab(
     );
   }
   return true;
+}
+
+async function ensureBrowserTab(
+  threadId: string,
+  url: string = BROWSER_HOME_URL,
+): Promise<boolean> {
+  const pending = browserInitPromises.get(threadId);
+  if (pending) {
+    await pending;
+    const state = await workBrowser.getBrowserState(threadId);
+    return !state?.tabs.some((tab) => tab.url && tab.url !== "about:blank");
+  }
+
+  const initialization = ensureBrowserTabOnce(threadId, url);
+  browserInitPromises.set(threadId, initialization);
+  try {
+    return await initialization;
+  } finally {
+    if (browserInitPromises.get(threadId) === initialization) {
+      browserInitPromises.delete(threadId);
+    }
+  }
 }
 
 export const browserStateRoute = registerApiRoute("/work/threads/:threadId/browser", {

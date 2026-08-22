@@ -1,11 +1,15 @@
 import {
   ArchiveIcon,
+  CheckIcon,
+  ChevronRightIcon,
   ChevronsUpDown,
   LaptopIcon,
   LibraryBigIcon,
   MoonIcon,
+  PaletteIcon,
   SearchIcon,
   Settings2Icon,
+  SlidersHorizontalIcon,
   SparklesIcon,
   SquarePenIcon,
   SunMediumIcon,
@@ -15,6 +19,11 @@ import * as React from "react";
 import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +59,9 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -64,7 +76,7 @@ import {
 } from "./components";
 
 // 结构参考:
-// - 第一组(无 label)直接操作:新建任务
+// - 第一组(无 label)直接操作:新建任务 / 技能套件 / 资料库 / 主题风格(可折叠二级子菜单)
 // - 第二组「任务列表」:components/thread-list.tsx 提供(直接线程平铺 + 显式绑定目录
 //   可折叠文件夹 + 工作区文件树懒加载)
 
@@ -92,8 +104,8 @@ function SidebarHeaderBrand() {
 // 参考 docs/examples/base/sidebar-footer.tsx / sidebar-demo.tsx 的 NavUser
 function NavUser() {
   const { isMobile } = useSidebar();
-  const { user, setSettingsOpen } = useWorkbench();
-  const { theme, setTheme } = useTheme();
+  const { user, openSettings } = useWorkbench();
+  const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
 
   return (
     <SidebarMenu>
@@ -141,16 +153,51 @@ function NavUser() {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              {/* 主题子菜单:官方 mode-toggle 的菜单形态(浅色/深色/跟随系统) */}
+              {/* 主题风格切换子菜单 */}
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <PaletteIcon className="text-muted-foreground" />
+                  <span>主题风格</span>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-48">
+                  <DropdownMenuRadioGroup
+                    value={activePresetId}
+                    onValueChange={(val) => setPreset(val)}
+                  >
+                    {presets.map((p) => {
+                      const colors = isDark ? p.dark : p.light;
+                      return (
+                        <DropdownMenuRadioItem key={p.id} value={p.id} className="gap-2">
+                          <span
+                            className="size-2.5 rounded-full border shrink-0"
+                            style={{
+                              backgroundColor: colors.primary,
+                              borderColor: colors.border,
+                            }}
+                          />
+                          <span className="truncate">{p.name}</span>
+                        </DropdownMenuRadioItem>
+                      );
+                    })}
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => openSettings("themes")}>
+                    <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
+                    <span>主题参数调优…</span>
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+
+              {/* 色彩模式子菜单 */}
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <SunMediumIcon className="text-muted-foreground" />
-                  <span>主题</span>
+                  <span>色彩模式</span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-40">
                   <DropdownMenuRadioGroup
-                    value={theme}
-                    onValueChange={(value) => setTheme(value as "light" | "dark" | "system")}
+                    value={mode}
+                    onValueChange={(value) => setMode(value as "light" | "dark" | "system")}
                   >
                     <DropdownMenuRadioItem value="light">
                       <SunMediumIcon className="text-muted-foreground" />
@@ -167,9 +214,10 @@ function NavUser() {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
-              <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+
+              <DropdownMenuItem onClick={() => openSettings("providers")}>
                 <Settings2Icon />
-                设置
+                系统设置
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -189,7 +237,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     setLibraryOpen,
     skillOpen,
     setSkillOpen,
+    openSettings,
   } = useWorkbench();
+
   const [renaming, setRenaming] = React.useState<WorkThread | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -198,8 +248,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const activeThreads = threads.filter((t) => !t.metadata?.archivedAt);
   const archivedThreads = sortThreads(threads.filter((t) => Boolean(t.metadata?.archivedAt)));
 
-  // 显式绑定且已开始工作的线程按目录归组;草稿线程始终平铺,即使旧状态
-  // 曾经提前写入过 workspacePath,也不能让空会话占据目录归属。
+  // 显式绑定且已开始工作的线程按目录归组;草稿线程始终平铺
   const directThreads: WorkThread[] = [];
   const groupsByPath = new Map<string, WorkThread[]>();
   for (const thread of activeThreads) {
@@ -243,7 +292,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarHeaderBrand />
       </SidebarHeader>
       <SidebarContent>
-        {/* 第一组:直接操作,无 GroupLabel */}
+        {/* 第一组:直接操作与系统核心功能 */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>

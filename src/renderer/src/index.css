@@ -182,3 +182,63 @@
     background: transparent;
   }
 }
+
+/* 动态边框宽度与粗野主义硬阴影适配 */
+.border,
+.border-t,
+.border-b,
+.border-l,
+.border-r {
+  border-width: var(--theme-border-width, 1px);
+}
+
+.border-0 {
+  border-width: 0px !important;
+}
+.border-t-0 {
+  border-top-width: 0px !important;
+}
+.border-b-0 {
+  border-bottom-width: 0px !important;
+}
+.border-l-0 {
+  border-left-width: 0px !important;
+}
+.border-r-0 {
+  border-right-width: 0px !important;
+}
+
+/* 粗野主义阴影与按压质感 */
+[data-theme-style="boldkit"] .shadow-sm,
+[data-theme-style="neobrutalism"] .shadow-sm,
+[data-theme-style="retroui"] .shadow-sm,
+[data-theme-style="saaskit"] .shadow-sm {
+  box-shadow: var(--theme-shadow-hard, 3px 3px 0px var(--border));
+}
+
+[data-theme-style="boldkit"] .shadow-md,
+[data-theme-style="neobrutalism"] .shadow-md,
+[data-theme-style="retroui"] .shadow-md,
+[data-theme-style="saaskit"] .shadow-md {
+  box-shadow: var(--theme-shadow-hard, 4px 4px 0px var(--border));
+}
+
+[data-theme-style="boldkit"] button:active:not(:disabled),
+[data-theme-style="neobrutalism"] button:active:not(:disabled),
+[data-theme-style="retroui"] button:active:not(:disabled) {
+  transform: translate(1px, 1px);
+}
+
+/* 确保输入框与 PromptInput 在全主题与粗野模式下拥有清晰扎实的线条与实体阴影 */
+[data-slot="input-group"] {
+  border-width: var(--theme-border-width, 1px);
+  border-color: var(--border);
+}
+
+[data-theme-style="boldkit"] [data-slot="input-group"],
+[data-theme-style="neobrutalism"] [data-slot="input-group"],
+[data-theme-style="retroui"] [data-slot="input-group"],
+[data-theme-style="saaskit"] [data-slot="input-group"] {
+  box-shadow: var(--theme-shadow-hard, 3px 3px 0px var(--border));
+}
+

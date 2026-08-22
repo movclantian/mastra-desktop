@@ -43,13 +43,12 @@ function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | nul
 /** 右侧工作区面板自身的最小宽度 */
 const WORKSPACE_MIN_WIDTH = 340;
 /**
- * 聊天区的宽度下限。底部工具栏是一排固定 7 个控件(左:附件/审批/检索,
- * 右:上下文用量/模式/模型/发送),它们都不该被压变形,所以边界必须守在
- * **控制宽度的这一侧** —— 面板能拖多窄由这里决定。指望在工具栏子元素上加
- * min-width 把父容器"撑住"是无效的:面板宽度由下面的 pointermove 直接写死,
- * 且这条祖先链上全是 overflow-hidden,撑出去的部分只会被裁掉而非产生滚动条。
+ * 聊天区的宽度下限 —— 只表达「窄到这个程度就没有阅读与输入价值了」,
+ * 与底部工具栏放不放得下**无关**:那排控件由 flex-wrap 自行换行兜底
+ * (见 chat/components/prompt-input.tsx 的 PromptInputFooter),所以这里
+ * 不需要跟着控件的增删、改名、换语言去调,不是需要维护的魔数。
  */
-const CHAT_MIN_WIDTH = 640;
+const CHAT_MIN_WIDTH = 320;
 
 function AppShell() {
   const {
@@ -70,24 +69,39 @@ function AppShell() {
   const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
   const [terminalHeight, setTerminalHeight] = React.useState(280);
   const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
-  /** 聊天区容器:拖拽上限与窗口收窄都按它的实际宽度算 */
+  /** 聊天区容器:面板的伸缩余量按它的实际宽度算 */
   const chatAreaRef = React.useRef<HTMLDivElement>(null);
+  /**
+   * 用户拖出来的**意图**宽度,与当前受约束的实际宽度分开记。
+   * 只有实际宽度会被挤压让位;空间回来时按这个值长回去,而不是停在被压扁的状态。
+   */
+  const preferredWorkspaceWidthRef = React.useRef(560);
 
   React.useEffect(() => {
     if (!libraryOpen) setLibrarySettingsOpen(false);
   }, [libraryOpen]);
 
-  // 窗口被拉窄同样会挤压聊天区,面板宽度得跟着让位 —— 否则守住了拖拽这一路,
-  // 换个入口照样能把工具栏压变形。
+  // 聊天区被挤窄的来源不止一个:窗口缩放、sidebar 展开/收起、面板显隐……
+  // 逐个监听事件必然漏(sidebar 折叠压根不发 window.resize),所以直接观察聊天区
+  // 自身尺寸 —— 任何来源的空间变化都收敛到这一处,面板双向跟随:
+  // 富余为负就让位,富余转正就长回意图宽度为止。
+  //
+  // 收敛性:让位后聊天区变宽、富余趋零;长回去后聊天区变窄、富余同样趋零;
+  // 稳定点是 min(意图宽度, 能容纳的最大值)。到达后 setWorkspaceWidth 拿到同一个
+  // 数值,React 直接 bail out,不会形成观察-写回的回路。拖拽期间意图宽度与实际
+  // 宽度同步更新,算出的目标恒等于当前值,所以也不会和拖拽打架。
   React.useEffect(() => {
-    const clampToWindow = () => {
-      const chatWidth = chatAreaRef.current?.clientWidth ?? 0;
-      const overflow = CHAT_MIN_WIDTH - chatWidth;
-      if (overflow <= 0) return;
-      setWorkspaceWidth((current) => Math.max(WORKSPACE_MIN_WIDTH, current - overflow));
-    };
-    window.addEventListener("resize", clampToWindow);
-    return () => window.removeEventListener("resize", clampToWindow);
+    const chatArea = chatAreaRef.current;
+    if (!chatArea) return;
+    const observer = new ResizeObserver(() => {
+      const slack = chatArea.clientWidth - CHAT_MIN_WIDTH;
+      setWorkspaceWidth((current) => {
+        const preferred = preferredWorkspaceWidthRef.current;
+        return Math.max(WORKSPACE_MIN_WIDTH, Math.min(preferred, current + slack));
+      });
+    });
+    observer.observe(chatArea);
+    return () => observer.disconnect();
   }, []);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -107,9 +121,10 @@ function AppShell() {
 
       const onPointerMove = (e: PointerEvent) => {
         const deltaX = startX - e.clientX;
-        setWorkspaceWidth(
-          Math.max(WORKSPACE_MIN_WIDTH, Math.min(maxWidth, startWidth + deltaX)),
-        );
+        const next = Math.max(WORKSPACE_MIN_WIDTH, Math.min(maxWidth, startWidth + deltaX));
+        // 拖拽就是在表达意图,两者同步推进
+        preferredWorkspaceWidthRef.current = next;
+        setWorkspaceWidth(next);
       };
 
       const onPointerUp = () => {
@@ -193,7 +208,7 @@ function AppShell() {
         <div className="flex size-full min-h-0 min-w-0 overflow-hidden bg-background">
           {/* 左侧主体(聊天 / 技能 / 资料库 / 终端) */}
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden" ref={chatAreaRef}>
-            <PanelHeader className="relative z-10 h-12 shrink-0 px-4">
+            <PanelHeader className="relative z-10 px-4">
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 <SidebarTrigger className="-ml-1" />
                 <Separator orientation="vertical" className="mx-1 h-4" />

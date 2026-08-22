@@ -9,12 +9,12 @@ import { cn } from "@/lib/utils";
  * 避免各处自行拼 border-b / border-t 造成风格漂移。
  */
 
-/** 面板顶栏:统一高度 h-10、px-3,底色分层 */
+/** 面板顶栏:统一高度 h-12、px-3,底色分层与清晰描边 */
 export function PanelHeader({ className, ...props }: React.ComponentProps<"header">) {
   return (
     <header
       data-slot="panel-header"
-      className={cn("bg-muted/50 flex h-10 shrink-0 items-center gap-2 px-3", className)}
+      className={cn("bg-muted/40 border-b border-border flex h-12 shrink-0 items-center gap-2 px-3", className)}
       {...props}
     />
   );
@@ -34,13 +34,13 @@ export function PanelSurface({ className, ...props }: React.ComponentProps<"sect
   );
 }
 
-/** 面板底栏:状态条/快捷操作,统一 h-7、小号文本 */
+/** 面板底栏:状态条/快捷操作,统一 h-7、小号文本与顶边描边 */
 export function PanelFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="panel-footer"
       className={cn(
-        "bg-muted/40 text-muted-foreground mt-auto flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]",
+        "bg-muted/40 border-t border-border text-muted-foreground mt-auto flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]",
         className,
       )}
       {...props}

@@ -70,7 +70,7 @@ export function PromptInputGlow({
   status: ChatRuntimeStatus;
   children: React.ReactNode;
 }) {
-  const { theme } = useTheme();
+  const { isDark, resolvedGeometry } = useTheme();
   const [config, setConfig] = React.useState<BeamConfig>(rollBeamConfig);
   const [active, setActive] = React.useState(false);
   const busyRef = React.useRef(false);
@@ -96,14 +96,13 @@ export function PromptInputGlow({
     <BorderBeam
       active={active}
       brightness={BEAM_BRIGHTNESS}
-      // 输入框 rounded-lg(8px);显式传入可跳过组件对第一子元素圆角的探测
-      borderRadius={8}
+      borderRadius={resolvedGeometry.radius}
       colorVariant={config.colorVariant}
       hueRange={BEAM_HUE_RANGE}
       saturation={BEAM_SATURATION}
       size={config.size}
       strength={config.strength}
-      theme={theme === "system" ? "auto" : theme}
+      theme={isDark ? "dark" : "light"}
       // 1) 组件默认 overflow:hidden 会裁掉 SkillAwareTextarea 渲染在输入框
       //    上方的 / 与 @ 命令下拉浮层;效果层自带 clip-path 自裁剪,放开安全
       // 2) --beam-*-opacity 放大各效果层透明度,让颜色更鲜亮

@@ -128,7 +128,7 @@ function PromptInputAttachments() {
   if (attachments.files.length === 0) return null;
 
   return (
-    <PromptInputHeader className="bg-muted/40 px-2 pt-2 pb-1">
+    <PromptInputHeader className="bg-muted/40 px-2 pt-2 pb-1 border-b border-border">
       {/* 横向滚动胶囊(inline variant),超出输入框宽度时左右滚动 */}
       <ScrollArea className="w-full">
         <Attachments className="w-max gap-1.5 pb-1" variant="inline">
@@ -736,13 +736,14 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* gap-3 保证左右两组永不视觉粘连;overflow-x-auto 是最后一道兜底 ——
-            窗口本身被拉到连 CHAT_MIN_WIDTH 都放不下时(见 App.tsx 的拖拽上限与
-            窗口收窄钳制),这排控件横向滚动而不是被压扁或被祖先的 overflow-hidden
-            裁掉。两侧都 shrink-0,所以任何宽度下控件尺寸都不变。 */}
-        <PromptInputFooter className="flex-nowrap gap-3 overflow-x-auto">
+        {/* 两组控件各自 shrink-0(尺寸恒定不变形),中间那段空白由右组的 ml-auto
+            吸收 —— 它就是唯一的弹性部分,宽度一变化,被伸缩的只有它。
+            空白见底之后 flex-wrap 接手:右组整体换到第二行,依旧靠右。
+            这样任何宽度下都不会溢出容器、不会被祖先的 overflow-hidden 裁掉、
+            也不需要横向滚动条,而且最小宽度由内容自然决定,没有魔数。 */}
+        <PromptInputFooter className="flex-wrap gap-3 border-t border-border/70 px-2.5 pt-2 pb-2">
           <PromptInputActions />
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             <ChatContextUsage
               usage={usage}
               estimatedUsedTokens={estimatedUsedTokens}

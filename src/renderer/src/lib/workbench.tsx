@@ -360,6 +360,9 @@ interface WorkbenchValue {
   // 设置弹窗
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  settingsSection: string;
+  setSettingsSection: (section: string) => void;
+  openSettings: (section?: string) => void;
   /** Agent 是否有任务进行中(流式生成/等待响应);chat panel 同步,设置页消费 */
   agentBusy: boolean;
   setAgentBusy: (busy: boolean) => void;
@@ -524,6 +527,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [catalog, setCatalog] = useState<CatalogProvider[]>([]);
   const [catalogStatus, setCatalogStatus] = useState<"loading" | "ready" | "error">("loading");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("themes");
+  const openSettings = useCallback((section?: string) => {
+    if (section) setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
   const [agentBusy, setAgentBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
@@ -1162,6 +1170,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshToolsConfig,
       settingsOpen,
       setSettingsOpen,
+      settingsSection,
+      setSettingsSection,
+      openSettings,
       agentBusy,
       setAgentBusy,
       libraryOpen,
@@ -1222,6 +1233,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       toolsConfig,
       refreshToolsConfig,
       settingsOpen,
+      settingsSection,
+      setSettingsSection,
+      openSettings,
       agentBusy,
       libraryOpen,
       skillOpen,
