@@ -1,87 +1,171 @@
-import { AnimatePresence, motion } from "motion/react";
-import * as React from "react";
+"use client";
+
+import { AnimatePresence, type MotionProps, motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
+
 import { cn } from "@/lib/utils";
 
-const alphabets =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+~|}{[]:;?><,./-=";
+type CharacterSet = string[] | readonly string[];
 
-export interface HyperTextProps {
-  text: string;
-  duration?: number;
-  framerProps?: any;
+interface HyperTextProps extends Omit<MotionProps, "children"> {
+  /** The text content to be animated */
+  children?: React.ReactNode;
+  /** Optional text prop alias for children */
+  text?: string;
+  /** Optional className for styling */
   className?: string;
+  /** Duration of the animation in milliseconds */
+  duration?: number;
+  /** Delay before animation starts in milliseconds */
+  delay?: number;
+  /** Component to render as - defaults to div */
+  as?: MotionElementType;
+  /** Whether to start animation when element comes into view */
+  startOnView?: boolean;
+  /** Whether to trigger animation on hover */
   animateOnHover?: boolean;
+  /** Custom character set for scramble effect. Defaults to uppercase alphabet */
+  characterSet?: CharacterSet;
 }
 
-export function HyperText({
-  text,
-  duration = 800,
-  framerProps = {
-    initial: { opacity: 0, y: -10 },
-    animate: { opacity: 1, y: 0 },
-    exit: { opacity: 0, y: 3 },
-  },
-  className,
-  animateOnHover = true,
-}: HyperTextProps) {
-  const [displayText, setDisplayText] = React.useState(text.split(""));
-  const [trigger, setTrigger] = React.useState(false);
-  const interations = React.useRef(0);
-  const isFirstRender = React.useRef(true);
+const motionElements = {
+  article: motion.article,
+  aside: motion.aside,
+  div: motion.div,
+  form: motion.form,
+  header: motion.header,
+  main: motion.main,
+  nav: motion.nav,
+  p: motion.p,
+  section: motion.section,
+  span: motion.span,
+} as const;
 
-  const triggerAnimation = () => {
-    interations.current = 0;
-    setTrigger(true);
+type MotionElementType = keyof typeof motionElements;
+
+type HyperTextMotionComponent = (typeof motionElements)[MotionElementType];
+
+const DEFAULT_CHARACTER_SET = Object.freeze(
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),
+) as readonly string[];
+
+const getRandomInt = (max: number): number => Math.floor(Math.random() * max);
+
+export function HyperText({
+  children,
+  text,
+  className,
+  duration = 800,
+  delay = 0,
+  as: Component = "div",
+  startOnView = false,
+  animateOnHover = true,
+  characterSet = DEFAULT_CHARACTER_SET,
+  ...props
+}: HyperTextProps) {
+  const MotionComponent = motionElements[Component] as HyperTextMotionComponent;
+  const resolvedText =
+    typeof children === "string" ? children : (text ?? (children != null ? String(children) : ""));
+
+  const [displayText, setDisplayText] = useState<string[]>(() => resolvedText.split(""));
+  const [isAnimating, setIsAnimating] = useState(false);
+  const iterationCount = useRef(0);
+  const elementRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setDisplayText(resolvedText.split(""));
+  }, [resolvedText]);
+
+  const handleAnimationTrigger = () => {
+    if (animateOnHover && !isAnimating && resolvedText.length > 0) {
+      iterationCount.current = 0;
+      setIsAnimating(true);
+    }
   };
 
-  React.useEffect(() => {
-    const interval = setInterval(
-      () => {
-        if (!trigger) {
-          clearInterval(interval);
-          return;
-        }
-        if (interations.current < text.length) {
-          setDisplayText((t) =>
-            t.map((l, i) =>
-              l === " "
-                ? " "
-                : i <= interations.current
-                  ? text[i]
-                  : alphabets[Math.floor(Math.random() * alphabets.length)],
-            ),
-          );
-          interations.current = interations.current + 0.1;
-        } else {
-          setTrigger(false);
-          clearInterval(interval);
+  // Handle animation start based on view or delay
+  useEffect(() => {
+    if (!startOnView) {
+      const startTimeout = setTimeout(() => {
+        if (resolvedText.length > 0) setIsAnimating(true);
+      }, delay);
+      return () => clearTimeout(startTimeout);
+    }
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setTimeout(() => {
+            if (resolvedText.length > 0) setIsAnimating(true);
+          }, delay);
+          observer.disconnect();
         }
       },
-      duration / (text.length * 10),
+      { threshold: 0.1, rootMargin: "-30% 0px -30% 0px" },
     );
-    // Clean up interval on unmount
-    return () => clearInterval(interval);
-  }, [text, duration, trigger]);
 
-  React.useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      triggerAnimation();
+    if (elementRef.current) {
+      observer.observe(elementRef.current);
     }
-  }, []);
+
+    return () => observer.disconnect();
+  }, [delay, startOnView, resolvedText]);
+
+  // Handle scramble animation
+  useEffect(() => {
+    let animationFrameId: number | null = null;
+
+    if (isAnimating && resolvedText.length > 0) {
+      const startTime = performance.now();
+      const maxIterations = resolvedText.length;
+
+      const animate = (currentTime: number) => {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        iterationCount.current = progress * maxIterations;
+
+        setDisplayText((currentText) =>
+          currentText.map((letter, index) =>
+            letter === " "
+              ? letter
+              : index <= iterationCount.current
+                ? (resolvedText[index] ?? "")
+                : characterSet[getRandomInt(characterSet.length)],
+          ),
+        );
+
+        if (progress < 1) {
+          animationFrameId = requestAnimationFrame(animate);
+        } else {
+          setIsAnimating(false);
+        }
+      };
+
+      animationFrameId = requestAnimationFrame(animate);
+    }
+
+    return () => {
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [resolvedText, duration, isAnimating, characterSet]);
 
   return (
-    <div
-      className="flex scale-100 cursor-default overflow-hidden py-1 select-none"
-      onMouseEnter={animateOnHover ? triggerAnimation : undefined}
+    <MotionComponent
+      ref={elementRef as any}
+      className={cn("overflow-hidden py-2 text-4xl font-bold", className)}
+      onMouseEnter={handleAnimationTrigger}
+      {...props}
     >
-      <AnimatePresence mode="wait">
-        {displayText.map((letter, i) => (
-          <motion.span key={i} className={cn("font-mono", className)} {...framerProps}>
-            {letter}
+      <AnimatePresence>
+        {displayText.map((letter, index) => (
+          <motion.span key={index} className={cn("font-mono", letter === " " ? "w-3" : "")}>
+            {letter.toUpperCase()}
           </motion.span>
         ))}
       </AnimatePresence>
-    </div>
+    </MotionComponent>
   );
 }

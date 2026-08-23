@@ -12,7 +12,7 @@ import {
 import * as React from "react";
 import useMeasure from "react-use-measure";
 
-import { type UseIsInViewOptions, useIsInView } from "@/hooks/use-is-in-view";
+import { type UseIsInViewOptions, useIsInView } from "src/renderer/src/hooks/use-is-in-view";
 
 type SlidingNumberRollerProps = {
   prevValue: number;
@@ -21,8 +21,6 @@ type SlidingNumberRollerProps = {
   transition: SpringOptions;
   delay?: number;
 };
-
-const DIGITS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 function SlidingNumberRoller({
   prevValue,
@@ -203,7 +201,6 @@ function SlidingNumber({
       return () => unsubscribe();
     } else {
       setEffectiveNumber(initiallyStable ? initialNumeric : !isInView ? 0 : initialNumeric);
-      return undefined;
     }
   }, [
     hasAnimated,

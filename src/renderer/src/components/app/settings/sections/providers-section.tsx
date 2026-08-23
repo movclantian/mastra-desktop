@@ -13,6 +13,7 @@ import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
@@ -694,13 +695,14 @@ export function ProvidersSection() {
             还没有供应商,点击「添加」开始。
           </p>
         ) : (
-          providers.map((provider) => (
-            <ProviderItem
-              key={provider.id}
-              provider={provider}
-              registry={registry}
-              onEdit={() => setEditingProvider(provider)}
-            />
+          providers.map((provider, index) => (
+            <BlurFade delay={0.04 * index} duration={0.2} blur="3px" key={provider.id}>
+              <ProviderItem
+                provider={provider}
+                registry={registry}
+                onEdit={() => setEditingProvider(provider)}
+              />
+            </BlurFade>
           ))
         )}
       </div>

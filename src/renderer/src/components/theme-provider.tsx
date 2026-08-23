@@ -13,20 +13,19 @@ interface ThemeProviderProps {
   children: React.ReactNode;
   defaultTheme?: ThemeMode;
   defaultPreset?: string;
-  storageKey?: string;
 }
 
-const STORAGE_MODE_KEY = "vite-ui-theme-mode";
-const STORAGE_PRESET_KEY = "vite-ui-theme-preset";
-const STORAGE_CUSTOMIZATIONS_KEY = "vite-ui-theme-customizations";
+// 与 workbench / App 里的偏好统一走 mastra-work: 前缀。原先的 vite-ui-theme-*
+// 是 shadcn 模板遗留的名字,与项目其余 localStorage 键名不成体系。
+const STORAGE_MODE_KEY = "mastra-work:theme-mode";
+const STORAGE_PRESET_KEY = "mastra-work:theme-preset";
+const STORAGE_CUSTOMIZATIONS_KEY = "mastra-work:theme-customizations";
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-function getInitialMode(defaultTheme: ThemeMode, storageKey?: string): ThemeMode {
+function getInitialMode(defaultTheme: ThemeMode): ThemeMode {
   try {
-    const saved =
-      (localStorage.getItem(STORAGE_MODE_KEY) as ThemeMode) ||
-      (storageKey ? (localStorage.getItem(storageKey) as ThemeMode) : null);
+    const saved = localStorage.getItem(STORAGE_MODE_KEY) as ThemeMode;
     if (saved === "light" || saved === "dark" || saved === "system") {
       return saved;
     }
@@ -64,9 +63,8 @@ export function ThemeProvider({
   children,
   defaultTheme = "light",
   defaultPreset = "default",
-  storageKey,
 }: ThemeProviderProps) {
-  const [mode, setModeState] = useState<ThemeMode>(() => getInitialMode(defaultTheme, storageKey));
+  const [mode, setModeState] = useState<ThemeMode>(() => getInitialMode(defaultTheme));
   const [activePresetId, setActivePresetIdState] = useState<string>(() =>
     getInitialPreset(defaultPreset),
   );
@@ -188,18 +186,14 @@ export function ThemeProvider({
     root.style.letterSpacing = resolvedTypography.letterSpacing;
   }, [isDark, activePreset, resolvedColors, resolvedGeometry, resolvedTypography]);
 
-  const setMode = useCallback(
-    (newMode: ThemeMode) => {
-      try {
-        localStorage.setItem(STORAGE_MODE_KEY, newMode);
-        if (storageKey) localStorage.setItem(storageKey, newMode);
-      } catch {
-        // ignore
-      }
-      setModeState(newMode);
-    },
-    [storageKey],
-  );
+  const setMode = useCallback((newMode: ThemeMode) => {
+    try {
+      localStorage.setItem(STORAGE_MODE_KEY, newMode);
+    } catch {
+      // ignore
+    }
+    setModeState(newMode);
+  }, []);
 
   const setPreset = useCallback((presetId: string) => {
     try {

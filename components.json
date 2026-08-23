@@ -18,5 +18,9 @@
     "lib": "src/renderer/src/lib",
     "hooks": "src/renderer/src/hooks"
   },
-  "iconLibrary": "lucide"
+  "iconLibrary": "lucide",
+  "registries": {
+    "@magicui": "https://magicui.design/r/{name}",
+    "@animate-ui": "https://animate-ui.com/r/{name}.json"
+  }
 }

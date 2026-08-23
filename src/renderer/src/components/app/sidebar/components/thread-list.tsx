@@ -26,6 +26,7 @@ import { toast } from "sonner";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
 import { FileTypeIcon, FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
 import { openPathInApp } from "@/components/ai-elements/open-in-chat";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -97,8 +98,7 @@ function ThreadContextMenuItems({
     cloneThread,
   } = useWorkbench();
   const [generating, setGenerating] = React.useState(false);
-  const workspacePath =
-    thread.metadata.workspaceExplicit === true ? thread.metadata.workspacePath : undefined;
+  const workspacePath = thread.metadata.workspacePath;
 
   const handleGenerateTitle = async () => {
     setGenerating(true);
@@ -249,8 +249,7 @@ function ThreadActionMenu({
   const { isMobile } = useSidebar();
   const { archiveThread, deleteThread, generateThreadTitle, pinThread } = useWorkbench();
   const [generating, setGenerating] = React.useState(false);
-  const workspacePath =
-    thread.metadata.workspaceExplicit === true ? thread.metadata.workspacePath : undefined;
+  const workspacePath = thread.metadata.workspacePath;
 
   const handleGenerateTitle = async () => {
     setGenerating(true);
@@ -357,33 +356,39 @@ export function DirectThreadItem({
 }) {
   const { activeThreadId, setActiveThreadId } = useWorkbench();
   return (
-    <SidebarMenuItem>
-      <ContextMenu>
-        <ContextMenuTrigger className="w-full">
-          <SidebarMenuButton
-            isActive={thread.id === activeThreadId}
-            onClick={() => setActiveThreadId(thread.id)}
-            tooltip={thread.title}
-          >
-            <MessageCircleIcon />
-            <span>{thread.title}</span>
-          </SidebarMenuButton>
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-52">
-          <ThreadContextMenuItems
-            thread={thread}
-            onOpenFileManager={onOpenFileManager}
-            onRename={onRename}
-          />
-        </ContextMenuContent>
-      </ContextMenu>
-      {thread.metadata.pinned ? (
-        <SidebarMenuBadge>
-          <PinIcon className="size-3" />
-        </SidebarMenuBadge>
-      ) : null}
-      <ThreadActionMenu thread={thread} onOpenFileManager={onOpenFileManager} onRename={onRename} />
-    </SidebarMenuItem>
+    <BlurFade duration={0.2} blur="3px">
+      <SidebarMenuItem>
+        <ContextMenu>
+          <ContextMenuTrigger className="w-full">
+            <SidebarMenuButton
+              isActive={thread.id === activeThreadId}
+              onClick={() => setActiveThreadId(thread.id)}
+              tooltip={thread.title}
+            >
+              <MessageCircleIcon />
+              <span>{thread.title}</span>
+            </SidebarMenuButton>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-52">
+            <ThreadContextMenuItems
+              thread={thread}
+              onOpenFileManager={onOpenFileManager}
+              onRename={onRename}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
+        {thread.metadata.pinned ? (
+          <SidebarMenuBadge>
+            <PinIcon className="size-3" />
+          </SidebarMenuBadge>
+        ) : null}
+        <ThreadActionMenu
+          thread={thread}
+          onOpenFileManager={onOpenFileManager}
+          onRename={onRename}
+        />
+      </SidebarMenuItem>
+    </BlurFade>
   );
 }
 

@@ -41,10 +41,10 @@ export type ThreadMetadata = {
   /**
    * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
    * - 显式绑定:用户在 promptInput 选择器选定的本地目录
-   * - 隐式绑定:<threadsRoot>/<threadId>/(仅 Agent 工作目录,sidebar 不展示文件树)
+   * - 隐式绑定:<threadsRoot>/<threadId>/(线程专属默认目录,用户同样可浏览)
    */
   workspacePath?: string;
-  /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录 */
+  /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录(两者都可浏览) */
   workspaceExplicit?: boolean;
   /** 手动压缩上下文完成时间(真压缩:折叠消息已删除并替换为摘要消息) */
   compactedAt?: string | null;

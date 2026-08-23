@@ -2,7 +2,7 @@
  * 技能市场(docs/en/docs/skills.mdx):GitHub 仓库形式的技能来源,
  * 配置存 app_config(key = "skill-marketplaces"),安装 = 检出 SKILL.md 目录。
  */
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from "../storage";
 
@@ -12,11 +12,48 @@ export function categorizeSkillResources(resources: string[]) {
   const assets: string[] = [];
 
   const scriptExts = new Set([
-    ".py", ".sh", ".bash", ".js", ".ts", ".mjs", ".cjs", ".ps1", ".bat", ".cmd", ".rb", ".go", ".rs", ".lua", ".php",
+    ".py",
+    ".sh",
+    ".bash",
+    ".js",
+    ".ts",
+    ".mjs",
+    ".cjs",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".rb",
+    ".go",
+    ".rs",
+    ".lua",
+    ".php",
   ]);
-  const docExts = new Set([".md", ".txt", ".pdf", ".rst", ".doc", ".docx", ".html", ".htm", ".markdown"]);
+  const docExts = new Set([
+    ".md",
+    ".txt",
+    ".pdf",
+    ".rst",
+    ".doc",
+    ".docx",
+    ".html",
+    ".htm",
+    ".markdown",
+  ]);
   const assetExts = new Set([
-    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".xml", ".css",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".svg",
+    ".gif",
+    ".webp",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".csv",
+    ".tsv",
+    ".xml",
+    ".css",
   ]);
 
   for (const item of resources) {
@@ -111,12 +148,62 @@ export interface SkillsShSkillDetail extends SkillsShSkill {
 
 const MARKETPLACES_KEY = "skill-marketplaces";
 const DEFAULT_BRANCH = "main";
-const SKILLS_SH_CACHE_TTL = 10 * 60 * 1000;
+/**
+ * skills.sh 列表缓存有效期。
+ *
+ * 取 24 小时:社区技能目录不是高频变动的数据,而这份列表要打一次远端往返,
+ * 短 TTL 只是在反复付延迟。代价是新技能上架当天可能看不到 —— 所以技能中心的
+ * 刷新按钮走 force 路径直接穿透缓存(见 listSkillsShSkills 的 force 参数)。
+ */
+const SKILLS_SH_CACHE_TTL = 24 * 60 * 60 * 1000;
 const SKILLS_SH_MAX_RETRIES = 3;
 const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
 const skillsShCache = new Map<string, { expiresAt: number; skills: SkillsShSkill[] }>();
 const skillsShInFlight = new Map<string, Promise<SkillsShSkill[]>>();
+
+/**
+ * skills.sh 无查询列表的磁盘副本。
+ *
+ * 内存缓存只活一个进程,重启后首屏又要等一次网络往返 —— 渲染进程曾为此把整份列表
+ * 塞进 localStorage,但那是几百 KB 的远端数据,localStorage 只有 5MB 且写入同步阻塞
+ * 主线程,超限还会静默失败。远端数据的缓存本就该留在取数的那一侧,所以落到
+ * data/cache/ 下的普通文件:大小无实际上限、异步读写、和 observability 同级。
+ *
+ * 只缓存 "__all__"(无查询)这一条:它是首屏唯一需要的,带 query 的结果留在内存即可。
+ */
+const SKILLS_SH_CACHE_KEY = "__all__";
+const SKILLS_SH_CACHE_FILE = join(PROJECT_ROOT, "data", "cache", "skills-sh.json");
+
+async function readSkillsShDiskCache(): Promise<void> {
+  try {
+    const raw = await readFile(SKILLS_SH_CACHE_FILE, "utf-8");
+    const parsed = JSON.parse(raw) as { expiresAt?: number; skills?: SkillsShSkill[] };
+    if (!Array.isArray(parsed.skills) || typeof parsed.expiresAt !== "number") return;
+    // 过期的副本仍然装载:下面的 stale-while-revalidate 会在网络失败时用它兜底,
+    // 比让用户对着空列表干等强。
+    skillsShCache.set(SKILLS_SH_CACHE_KEY, {
+      expiresAt: parsed.expiresAt,
+      skills: parsed.skills,
+    });
+  } catch {
+    // 首次运行没有这个文件,或内容损坏 —— 都按「无缓存」处理
+  }
+}
+/** 进程内只装载一次;listSkillsShSkills 首次调用时等它完成 */
+const skillsShDiskCacheReady = readSkillsShDiskCache();
+
+async function writeSkillsShDiskCache(entry: {
+  expiresAt: number;
+  skills: SkillsShSkill[];
+}): Promise<void> {
+  try {
+    await mkdir(dirname(SKILLS_SH_CACHE_FILE), { recursive: true });
+    await writeFile(SKILLS_SH_CACHE_FILE, JSON.stringify(entry), "utf-8");
+  } catch {
+    // 磁盘不可写时退化为纯内存缓存,不影响功能
+  }
+}
 
 function slug(value: string): string {
   return value
@@ -387,18 +474,29 @@ async function listSkillsShPublicSkills(query: string): Promise<SkillsShSkill[]>
   return skills;
 }
 
-export async function listSkillsShSkills(query = ""): Promise<SkillsShSkill[]> {
+/**
+ * skills.sh 技能列表。默认走缓存(内存 → 磁盘副本 → 远端)。
+ *
+ * force = true 时跳过命中判断直接重新拉取,用于用户主动点刷新 —— 24 小时的 TTL
+ * 需要这条逃生通道。注意仍然保留旧 entry:拉取失败时用它兜底,不能因为一次
+ * 手动刷新失败就把已有列表清空。in-flight 请求照旧复用,那本来就是新鲜数据。
+ */
+export async function listSkillsShSkills(query = "", force = false): Promise<SkillsShSkill[]> {
+  await skillsShDiskCacheReady;
   const normalizedQuery = query.trim();
-  const cacheKey = normalizedQuery.toLocaleLowerCase() || "__all__";
+  const cacheKey = normalizedQuery.toLocaleLowerCase() || SKILLS_SH_CACHE_KEY;
   const cached = skillsShCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.skills;
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.skills;
 
   const pending = skillsShInFlight.get(cacheKey);
   if (pending) return pending;
 
   const request = listSkillsShPublicSkills(normalizedQuery)
     .then((skills) => {
-      skillsShCache.set(cacheKey, { expiresAt: Date.now() + SKILLS_SH_CACHE_TTL, skills });
+      const entry = { expiresAt: Date.now() + SKILLS_SH_CACHE_TTL, skills };
+      skillsShCache.set(cacheKey, entry);
+      // 只有无查询的那份值得落盘 —— 它是重启后首屏要用的
+      if (cacheKey === SKILLS_SH_CACHE_KEY) void writeSkillsShDiskCache(entry);
       return skills;
     })
     .catch((error) => {

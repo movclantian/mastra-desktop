@@ -7,7 +7,6 @@ import {
   ChevronRightIcon,
   CopyIcon,
   FileCodeIcon,
-  FileTextIcon,
   FolderOpenIcon,
   LoaderCircleIcon,
   PencilIcon,
@@ -27,6 +26,7 @@ import { toast } from "sonner";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { McpDialog, type McpFormServer } from "@/components/app/integrations";
 import { Badge } from "@/components/ui/badge";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -58,8 +58,6 @@ import {
   PaginationContent,
   PaginationEllipsis,
   PaginationItem,
-  PaginationNext,
-  PaginationPrevious,
 } from "@/components/ui/pagination";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -98,44 +96,25 @@ function skillIcon(skill: SkillMetadata, index = 0) {
   return typeof icon === "string" && icon.length > 0 ? icon : ICONS[index % ICONS.length];
 }
 
-function skillCategory(skill: SkillMetadata) {
-  const category = skill.metadata?.category;
-  return typeof category === "string" && category.trim() ? category : "开发者工具";
-}
-
 function skillSourceLabel(skill?: SkillMetadata) {
   if (skill?.origin === "builtin") return "Mastra 内置";
   if (skill?.origin === "skills-sh") return "skills.sh";
   return skill?.marketplaceName || "个人技能";
 }
 
-const SKILLS_REGISTRY_CACHE_KEY = "mastra_skills_registry_cache";
-const SKILLS_INSTALLED_CACHE_KEY = "mastra_skills_installed_cache";
-const SKILLS_MCP_CACHE_KEY = "mastra_skills_mcp_cache";
-const SKILLS_MARKETPLACES_CACHE_KEY = "mastra_skills_marketplaces_cache";
-
+/**
+ * 会话内存快照:让二次打开技能中心是 0ms,首次仍走请求。
+ *
+ * 这里刻意**不**再往 localStorage 落一份。技能列表是远端/本地文件系统的数据,整份能到
+ * 几百 KB,而 localStorage 只有 5MB 且 setItem 同步阻塞主线程,超限只会静默失败 ——
+ * 缓存白做还拖慢 UI。跨重启的首屏由服务端负责:skills.sh 那份远端列表落在
+ * data/cache/skills-sh.json(见 src/mastra/skills/marketplaces.ts),其余三项本就是
+ * 本地数据,服务端直接读,一次请求几十毫秒,不值得在前端再镜像一份真相。
+ */
 let memRegistrySkills: SkillMetadata[] = [];
 let memInstalledSkills: SkillMetadata[] = [];
 let memMcpServers: McpSummary[] = [];
 let memMarketplaces: SkillMarketplace[] = [];
-
-function loadStorageCache<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function saveStorageCache(key: string, data: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(data));
-  } catch {
-    // 忽略 localStorage 容量限制异常
-  }
-}
 
 type SourceFilter = "all" | "builtin" | "skills-sh" | "marketplace";
 const PAGE_SIZE = 24;
@@ -155,31 +134,11 @@ export function SkillHub() {
   const [page, setPage] = React.useState(1);
   const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
-  // SWR 缓存:优先从内存与本地缓存加载,实现 0ms 瞬间打开,后台静默刷新
-  const [skills, setSkills] = React.useState<SkillMetadata[]>(() => {
-    if (memInstalledSkills.length > 0) return memInstalledSkills;
-    const cached = loadStorageCache<SkillMetadata[]>(SKILLS_INSTALLED_CACHE_KEY, []);
-    memInstalledSkills = cached;
-    return cached;
-  });
-  const [registrySkills, setRegistrySkills] = React.useState<SkillMetadata[]>(() => {
-    if (memRegistrySkills.length > 0) return memRegistrySkills;
-    const cached = loadStorageCache<SkillMetadata[]>(SKILLS_REGISTRY_CACHE_KEY, []);
-    memRegistrySkills = cached;
-    return cached;
-  });
-  const [mcpServers, setMcpServers] = React.useState<McpSummary[]>(() => {
-    if (memMcpServers.length > 0) return memMcpServers;
-    const cached = loadStorageCache<McpSummary[]>(SKILLS_MCP_CACHE_KEY, []);
-    memMcpServers = cached;
-    return cached;
-  });
-  const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>(() => {
-    if (memMarketplaces.length > 0) return memMarketplaces;
-    const cached = loadStorageCache<SkillMarketplace[]>(SKILLS_MARKETPLACES_CACHE_KEY, []);
-    memMarketplaces = cached;
-    return cached;
-  });
+  // SWR:先用会话内存里的上一次结果渲染,挂载后无条件后台刷新
+  const [skills, setSkills] = React.useState<SkillMetadata[]>(memInstalledSkills);
+  const [registrySkills, setRegistrySkills] = React.useState<SkillMetadata[]>(memRegistrySkills);
+  const [mcpServers, setMcpServers] = React.useState<McpSummary[]>(memMcpServers);
+  const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>(memMarketplaces);
 
   const [detail, setDetail] = React.useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
@@ -203,15 +162,20 @@ export function SkillHub() {
     if (!response.ok) throw apiError(payload, "读取已安装技能失败");
     const nextSkills = payload.skills ?? [];
     memInstalledSkills = nextSkills;
-    saveStorageCache(SKILLS_INSTALLED_CACHE_KEY, nextSkills);
     setSkills(nextSkills);
   }, []);
 
-  const loadRegistry = React.useCallback(async (search: string) => {
+  /**
+   * force = true 时让服务端穿透 skills.sh 的 24 小时缓存重新拉取。
+   * 只有用户主动点刷新才传 —— 自动加载走缓存,否则缓存就没有意义了。
+   */
+  const loadRegistry = React.useCallback(async (search: string, force = false) => {
     if (memRegistrySkills.length === 0) setRegistryLoading(true);
     try {
       const response = await fetch(
-        `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}`,
+        `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}${
+          force ? "&refresh=1" : ""
+        }`,
       );
       const payload = (await response.json()) as {
         skills?: SkillMetadata[];
@@ -222,7 +186,6 @@ export function SkillHub() {
       const nextSkills = payload.skills ?? [];
       if (!search) {
         memRegistrySkills = nextSkills;
-        saveStorageCache(SKILLS_REGISTRY_CACHE_KEY, nextSkills);
       }
       setRegistrySkills(nextSkills);
       if (payload.skillsShError) toast.error(`skills.sh 暂时不可用: ${payload.skillsShError}`);
@@ -240,7 +203,6 @@ export function SkillHub() {
     if (!response.ok) throw apiError(payload, "读取 MCP 失败");
     const nextMcp = payload.servers ?? [];
     memMcpServers = nextMcp;
-    saveStorageCache(SKILLS_MCP_CACHE_KEY, nextMcp);
     setMcpServers(nextMcp);
   }, []);
 
@@ -253,7 +215,6 @@ export function SkillHub() {
     if (!response.ok) throw apiError(payload, "读取技能市场失败");
     const nextMarketplaces = payload.marketplaces ?? [];
     memMarketplaces = nextMarketplaces;
-    saveStorageCache(SKILLS_MARKETPLACES_CACHE_KEY, nextMarketplaces);
     setMarketplaces(nextMarketplaces);
   }, []);
 
@@ -268,8 +229,9 @@ export function SkillHub() {
     }
   }, [loadInstalled, loadMarketplaces, loadMcp]);
 
+  // 刷新按钮:强制重新拉取,不吃 skills.sh 的缓存
   const refreshAll = React.useCallback(async () => {
-    await Promise.all([refresh(), loadRegistry(query)]);
+    await Promise.all([refresh(), loadRegistry(query, true)]);
   }, [loadRegistry, query, refresh]);
 
   React.useEffect(() => {
@@ -285,7 +247,7 @@ export function SkillHub() {
   // 切换搜索词或来源时，重置为第 1 页
   React.useEffect(() => {
     setPage(1);
-  }, [query, sourceFilter]);
+  }, []);
 
   React.useEffect(() => {
     if (!activeSkill) {
@@ -299,9 +261,7 @@ export function SkillHub() {
     setDetailError(null);
     setDetailLoading(true);
     const detailRequest =
-      activeSkill.origin === "marketplace" &&
-      activeSkill.marketplaceId &&
-      activeSkill.sourcePath
+      activeSkill.origin === "marketplace" && activeSkill.marketplaceId && activeSkill.sourcePath
         ? fetch(
             `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(activeSkill.marketplaceId)}/skill?path=${encodeURIComponent(activeSkill.sourcePath)}`,
           )
@@ -388,7 +348,7 @@ export function SkillHub() {
       if (!response.ok || !payload.skill) throw apiError(payload, "添加技能失败");
       await loadInstalled();
       setSection("personal");
-      setSelectedSkill(payload.skill);
+      setActiveSkill(payload.skill);
       setAddSkillOpen(false);
       toast.success(`技能「${payload.skill.name}」已添加`);
     } catch (error) {
@@ -411,7 +371,7 @@ export function SkillHub() {
       if (!response.ok || !payload.skill) throw apiError(payload, "导入技能失败");
       await loadInstalled();
       setSection("personal");
-      setSelectedSkill(payload.skill);
+      setActiveSkill(payload.skill);
       setAddSkillOpen(false);
       toast.success(`技能「${payload.skill.name}」已导入`);
     } catch (error) {
@@ -459,16 +419,16 @@ export function SkillHub() {
   };
 
   const removeSkill = async () => {
-    if (!selectedSkill || !window.confirm(`确定删除技能「${selectedSkill.name}」吗？`)) return;
+    if (!activeSkill || !window.confirm(`确定删除技能「${activeSkill.name}」吗？`)) return;
     const response = await fetch(
-      `${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(selectedSkill.name)}`,
+      `${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(activeSkill.name)}`,
       { method: "DELETE" },
     );
     if (!response.ok) {
       toast.error("删除技能失败");
       return;
     }
-    setSelectedSkill(null);
+    setActiveSkill(null);
     setDetail(null);
     await loadInstalled();
     toast.success("技能已删除");
@@ -487,24 +447,24 @@ export function SkillHub() {
     toast.success("MCP 已移除");
   };
 
-  if (selectedSkill) {
+  if (activeSkill) {
     return (
       <SkillDetailPage
         detail={detail}
         detailError={detailError}
         detailLoading={detailLoading}
-        installed={skills.some((skill) => skill.name === selectedSkill.name)}
+        installed={skills.some((skill) => skill.name === activeSkill.name)}
         onBack={() => {
-          setSelectedSkill(null);
+          setActiveSkill(null);
           setDetail(null);
         }}
-        onInstall={() => void installBuiltin(selectedSkill)}
+        onInstall={() => void installBuiltin(activeSkill)}
         onRemove={() => void removeSkill()}
         onUsePrompt={(prompt) => {
-          setPendingPrompt(`${selectedSkill.name} ${prompt}`);
+          setPendingPrompt(`${activeSkill.name} ${prompt}`);
           setSkillOpen(false);
         }}
-        installing={installing === selectedSkill.name}
+        installing={installing === activeSkill.name}
       />
     );
   }
@@ -522,12 +482,16 @@ export function SkillHub() {
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button
-                aria-label="刷新"
+                aria-label="立即刷新"
+                disabled={loading || registryLoading}
                 onClick={() => void refreshAll()}
                 size="icon"
+                title="立即刷新:穿透缓存重新拉取技能市场"
                 variant="outline"
               >
-                <RefreshCwIcon />
+                <RefreshCwIcon
+                  className={loading || registryLoading ? "animate-spin" : undefined}
+                />
               </Button>
               <Button
                 aria-label="管理技能市场"
@@ -581,7 +545,7 @@ export function SkillHub() {
                     className="group flex size-14 shrink-0 items-center justify-center rounded-xl border bg-card text-2xl transition-colors hover:bg-accent cursor-pointer"
                     key={skill.name}
                     onClick={() => {
-                      setSelectedSkill(skill);
+                      setActiveSkill(skill);
                     }}
                     title={skill.name}
                     type="button"
@@ -620,7 +584,7 @@ export function SkillHub() {
           {section === "mcp" ? (
             <McpSection mcpServers={mcpServers} onDelete={(server) => void removeMcp(server)} />
           ) : section === "personal" ? (
-            <InstalledSection skills={visibleInstalled} onSelect={setSelectedSkill} />
+            <InstalledSection skills={visibleInstalled} onSelect={setActiveSkill} />
           ) : (
             <div className="mt-6">
               {/* 技能来源筛选标签 */}
@@ -680,7 +644,7 @@ export function SkillHub() {
                         installed={isInstalled}
                         installing={installing === skill.name}
                         onInstall={(s) => void installBuiltin(s)}
-                        onSelect={setSelectedSkill}
+                        onSelect={setActiveSkill}
                       />
                     );
                   })}
@@ -891,55 +855,57 @@ function InstalledSection({
       <Separator className="mt-4" />
       <div className="grid gap-x-12 md:grid-cols-2">
         {skills.map((skill, index) => (
-          <ContextMenu key={skill.name}>
-            <ContextMenuTrigger className="w-full block">
-              <button
-                className="flex w-full min-w-0 items-center gap-3 rounded-lg py-3 text-left transition-colors hover:bg-muted/40"
-                onClick={() => onSelect(skill)}
-                type="button"
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl">
-                  {skillIcon(skill, index)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{skill.name}</span>
-                  <span className="mt-1 block truncate text-sm text-muted-foreground">
-                    {skill.description || "未提供描述"}
-                  </span>
-                </span>
-                <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground" />
-              </button>
-            </ContextMenuTrigger>
-            <ContextMenuContent className="w-48">
-              <ContextMenuGroup>
-                <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
-                <ContextMenuItem onClick={() => onSelect(skill)}>
-                  <SparklesIcon className="text-muted-foreground" />
-                  <span>查看技能详情</span>
-                </ContextMenuItem>
-                <ContextMenuItem
-                  onClick={() => {
-                    void navigator.clipboard.writeText(skill.name);
-                    toast.success("已复制技能名称");
-                  }}
+          <BlurFade delay={0.03 * index} duration={0.2} blur="3px" key={skill.name}>
+            <ContextMenu>
+              <ContextMenuTrigger className="w-full block">
+                <button
+                  className="flex w-full min-w-0 items-center gap-3 rounded-lg py-3 text-left transition-colors hover:bg-muted/40"
+                  onClick={() => onSelect(skill)}
+                  type="button"
                 >
-                  <CopyIcon className="text-muted-foreground" />
-                  <span>复制技能名称</span>
-                </ContextMenuItem>
-                {skill.path ? (
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl">
+                    {skillIcon(skill, index)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{skill.name}</span>
+                    <span className="mt-1 block truncate text-sm text-muted-foreground">
+                      {skill.description || "未提供描述"}
+                    </span>
+                  </span>
+                  <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground" />
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-48">
+                <ContextMenuGroup>
+                  <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
+                  <ContextMenuItem onClick={() => onSelect(skill)}>
+                    <SparklesIcon className="text-muted-foreground" />
+                    <span>查看技能详情</span>
+                  </ContextMenuItem>
                   <ContextMenuItem
                     onClick={() => {
-                      void navigator.clipboard.writeText(skill.path);
-                      toast.success("已复制技能路径");
+                      void navigator.clipboard.writeText(skill.name);
+                      toast.success("已复制技能名称");
                     }}
                   >
                     <CopyIcon className="text-muted-foreground" />
-                    <span>复制技能路径</span>
+                    <span>复制技能名称</span>
                   </ContextMenuItem>
-                ) : null}
-              </ContextMenuGroup>
-            </ContextMenuContent>
-          </ContextMenu>
+                  {skill.path ? (
+                    <ContextMenuItem
+                      onClick={() => {
+                        void navigator.clipboard.writeText(skill.path);
+                        toast.success("已复制技能路径");
+                      }}
+                    >
+                      <CopyIcon className="text-muted-foreground" />
+                      <span>复制技能路径</span>
+                    </ContextMenuItem>
+                  ) : null}
+                </ContextMenuGroup>
+              </ContextMenuContent>
+            </ContextMenu>
+          </BlurFade>
         ))}
         {skills.length === 0 && <EmptyState label="还没有个人技能" icon={<SparklesIcon />} />}
       </div>
@@ -1123,7 +1089,10 @@ function SkillDetailPage({
                       <span className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="block truncate font-medium text-foreground">{item}</span>
-                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-blue-600 dark:text-blue-400">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 h-4 font-normal text-blue-600 dark:text-blue-400"
+                          >
                             参考文档
                           </Badge>
                         </div>
@@ -1141,7 +1110,10 @@ function SkillDetailPage({
                       <span className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="block truncate font-medium text-foreground">{item}</span>
-                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400"
+                          >
                             执行脚本
                           </Badge>
                         </div>
@@ -1159,7 +1131,10 @@ function SkillDetailPage({
                       <span className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="block truncate font-medium text-foreground">{item}</span>
-                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-amber-600 dark:text-amber-400">
+                          <Badge
+                            variant="outline"
+                            className="text-[10px] px-1.5 py-0 h-4 font-normal text-amber-600 dark:text-amber-400"
+                          >
                             资源模版
                           </Badge>
                         </div>
@@ -1169,11 +1144,13 @@ function SkillDetailPage({
                       </span>
                     </div>
                   ))}
-                  {detail.references.length + detail.scripts.length + detail.assets.length === 0 && (
+                  {detail.references.length + detail.scripts.length + detail.assets.length ===
+                    0 && (
                     <div className="py-6 text-sm text-muted-foreground">
                       <p className="font-medium text-foreground/80">此技能为纯指令型技能</p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        由 <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code> 中的系统提示词与执行规则全权驱动，无需额外附带脚本或资源文件。
+                        由 <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code>{" "}
+                        中的系统提示词与执行规则全权驱动，无需额外附带脚本或资源文件。
                       </p>
                     </div>
                   )}

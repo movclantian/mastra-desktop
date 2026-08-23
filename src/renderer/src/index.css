@@ -43,6 +43,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
 }
 
 .dark {
@@ -75,6 +80,11 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --color-1: oklch(66.2% 0.225 25.9);
+  --color-2: oklch(60.4% 0.26 302);
+  --color-3: oklch(69.6% 0.165 251);
+  --color-4: oklch(80.2% 0.134 225);
+  --color-5: oklch(90.7% 0.231 133);
 }
 
 @theme inline {
@@ -136,6 +146,154 @@
   --animate-pulse: pulse var(--duration, 2s) ease-out infinite;
   --animate-gradient: gradient 8s linear infinite;
   --animate-rainbow: rainbow var(--duration, 2s) infinite linear;
+  --animate-meteor: meteor 5s linear infinite;
+  --animate-shiny-text: shiny-text 8s infinite;
+  --animate-blink-cursor: blink-cursor 1.2s step-end infinite;
+  --animate-pulse-ripple: pulse-ripple var(--duration) cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  --color-color-5: var(--color-5);
+  --color-color-4: var(--color-4);
+  --color-color-3: var(--color-3);
+  --color-color-2: var(--color-2);
+  --color-color-1: var(--color-1);
+  @keyframes shine {
+    0% {
+      background-position: 0% 0%;
+    }
+    50% {
+      background-position: 100% 100%;
+    }
+    to {
+      background-position: 0% 0%;
+    }
+  }
+  @keyframes background-position-spin {
+    0% {
+      background-position: top center;
+    }
+    100% {
+      background-position: bottom center;
+    }
+  }
+  @keyframes meteor {
+    0% {
+      transform: rotate(var(--angle)) translateX(0);
+      opacity: 1;
+    }
+    70% {
+      opacity: 1;
+    }
+    100% {
+      transform: rotate(var(--angle)) translateX(-500px);
+      opacity: 0;
+    }
+  }
+  @keyframes shiny-text {
+    0%,
+    90%,
+    100% {
+      background-position: calc(-100% - var(--shiny-width)) 0;
+    }
+    30%,
+    60% {
+      background-position: calc(100% + var(--shiny-width)) 0;
+    }
+  }
+  @keyframes gradient {
+    to {
+      background-position: var(--bg-size, 300%) 0;
+    }
+  }
+  @keyframes blink-cursor {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+  @keyframes shimmer-slide {
+    to {
+      transform: translate(calc(100cqw - 100%), 0);
+    }
+  }
+  @keyframes spin-around {
+    0% {
+      transform: translateZ(0) rotate(0);
+    }
+    15%,
+    35% {
+      transform: translateZ(0) rotate(90deg);
+    }
+    65%,
+    85% {
+      transform: translateZ(0) rotate(270deg);
+    }
+    100% {
+      transform: translateZ(0) rotate(360deg);
+    }
+  }
+  @keyframes rainbow {
+    0% {
+      background-position: 0%;
+    }
+    100% {
+      background-position: 200%;
+    }
+  }
+  @keyframes pulse {
+    0%,
+    100% {
+      boxshadow: 0 0 0 0 var(--pulse-color, oklch(from var(--bg) l c h / 0.5));
+    }
+    50% {
+      boxshadow: 0 0 0 var(--distance) var(--pulse-color, oklch(from var(--bg) l c h / 0.5));
+    }
+  }
+  @keyframes pulse-ripple {
+    0% {
+      boxshadow: 0 0 0 0 oklch(from var(--pulse-color, var(--bg)) l c h / 1);
+    }
+    100% {
+      boxshadow: 0 0 0 var(--distance) oklch(from var(--pulse-color, var(--bg)) l c h / 0);
+    }
+  }
+  @keyframes ripple {
+    0%,
+    100% {
+      transform: translate(-50%, -50%) scale(1);
+    }
+    50% {
+      transform: translate(-50%, -50%) scale(0.9);
+    }
+  }
+  @keyframes orbit {
+    0% {
+      transform: rotate(calc(var(--angle) * 1deg)) translateY(calc(var(--radius) * 1px))
+        rotate(calc(var(--angle) * -1deg));
+    }
+    100% {
+      transform: rotate(calc(var(--angle) * 1deg + 360deg)) translateY(calc(var(--radius) * 1px))
+        rotate(calc((var(--angle) * -1deg) - 360deg));
+    }
+  }
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(calc(-100% - var(--gap)));
+    }
+  }
+  @keyframes marquee-vertical {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(calc(-100% - var(--gap)));
+    }
+  }
 }
 
 @keyframes shimmer {
@@ -273,47 +431,6 @@
   }
 }
 
-/* Magic UI AnimatedThemeToggler View Transitions API */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-
-::view-transition-old(root) {
-  z-index: 1;
-}
-
-::view-transition-new(root) {
-  z-index: 9999;
-}
-
-/* Magic UI Smooth Cursor: 隐藏系统默认光标，输入区域保留 I-beam 文本光标 */
-.smooth-cursor-active,
-.smooth-cursor-active * {
-  cursor: none !important;
-}
-
-.smooth-cursor-active input,
-.smooth-cursor-active textarea,
-.smooth-cursor-active [contenteditable="true"] {
-  cursor: text !important;
-}
-
-/* shimmer 文字渐变扫光(背景裁切为文字形状,主题变量随明暗自动切换) */
-.shimmer {
-  background: linear-gradient(
-    90deg,
-    color-mix(in oklab, var(--muted-foreground) 40%, transparent) 0%,
-    var(--muted-foreground) 50%,
-    color-mix(in oklab, var(--muted-foreground) 40%, transparent) 100%
-  );
-  background-size: 200% 100%;
-  animation: var(--animate-shimmer);
-  background-clip: text;
-  color: transparent;
-}
-
 @layer base {
   * {
     border-color: var(--color-border);
@@ -403,19 +520,19 @@
 }
 
 .border-0 {
-  border-width: 0px !important;
+  border-width: 0px;
 }
 .border-t-0 {
-  border-top-width: 0px !important;
+  border-top-width: 0px;
 }
 .border-b-0 {
-  border-bottom-width: 0px !important;
+  border-bottom-width: 0px;
 }
 .border-l-0 {
-  border-left-width: 0px !important;
+  border-left-width: 0px;
 }
 .border-r-0 {
-  border-right-width: 0px !important;
+  border-right-width: 0px;
 }
 
 /* 粗野主义硬阴影与质感适配 */
@@ -812,7 +929,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="8bitcn"] [data-slot="dialog-content"],
 [data-theme-style="8bitcn"] [data-slot="popover-content"],
 [data-theme-style="8bitcn"] [data-slot="input-group"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 2px solid #000000;
   box-shadow: 3px 3px 0px #000000;
   image-rendering: pixelated;
@@ -827,7 +944,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 }
 
 [data-theme-style="8bitcn"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 2px solid #000000;
   box-shadow: 3px 3px 0px #000000;
   font-family: var(--theme-font-sans);
@@ -848,7 +965,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="pixelact"] [data-slot="dialog-content"],
 [data-theme-style="pixelact"] [data-slot="popover-content"],
 [data-theme-style="pixelact"] [data-slot="input-group"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 2px solid var(--border);
   box-shadow: 2px 2px 0px var(--border);
   image-rendering: pixelated;
@@ -856,7 +973,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 [data-theme-style="pixelact"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 2px solid var(--border);
   box-shadow: 2px 2px 0px var(--border);
   font-family: var(--theme-font-sans);
@@ -945,7 +1062,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 }
 
 [data-theme-style="8bitcn"] [data-slot="badge"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 1.5px solid #000000;
   box-shadow: 2px 2px 0px #000000;
   font-family: var(--theme-font-sans);
@@ -954,7 +1071,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 }
 
 [data-theme-style="pixelact"] [data-slot="badge"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border: 1.5px solid var(--border);
   box-shadow: 1.5px 1.5px 0px var(--border);
   font-family: var(--theme-font-sans);
@@ -1020,7 +1137,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="neobrutalism"] [data-slot="switch"],
 [data-theme-style="8bitcn"] [data-slot="switch"],
 [data-theme-style="pixelact"] [data-slot="switch"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border-width: 2px;
   border-color: var(--border);
   box-shadow: 2px 2px 0px var(--border);
@@ -1047,7 +1164,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="neobrutalism"] [data-slot="tabs-trigger"][data-state="active"],
 [data-theme-style="8bitcn"] [data-slot="tabs-trigger"][data-state="active"],
 [data-theme-style="pixelact"] [data-slot="tabs-trigger"][data-state="active"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
   border-width: 2px;
   border-color: var(--border);
   box-shadow: 2px 2px 0px var(--border);
@@ -1291,7 +1408,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="pixelact"] [data-slot="progress"],
 [data-theme-style="pixelact"] [data-slot="checkbox"],
 [data-theme-style="pixelact"] [data-slot="radio-group-item"] {
-  border-radius: 0px !important;
+  border-radius: 0px;
 }
 
 /* 5.2 黏土/玻璃家族统一容器层 (pouf / glasscn / einui / sabraman)
@@ -1923,4 +2040,49 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(
   to {
     transform: translate3d(2%, -1.5%, 0) scale(1.06);
   }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* Magic UI Smooth Cursor: 全局无死角隐藏系统原生光标，杜绝双指针冲突 */
+html.smooth-cursor-mode,
+html.smooth-cursor-mode *,
+html.smooth-cursor-mode body,
+html.smooth-cursor-mode button,
+html.smooth-cursor-mode a,
+html.smooth-cursor-mode [role="button"],
+html.smooth-cursor-mode [role="tab"],
+html.smooth-cursor-mode [role="menuitem"],
+html.smooth-cursor-mode [role="checkbox"],
+html.smooth-cursor-mode [role="switch"],
+html.smooth-cursor-mode [role="option"],
+html.smooth-cursor-mode select,
+html.smooth-cursor-mode label,
+html.smooth-cursor-mode summary,
+html.smooth-cursor-mode [data-panel-resize-handle-id],
+html.smooth-cursor-mode [data-slot="button"],
+html.smooth-cursor-mode .cursor-pointer,
+html.smooth-cursor-mode .cursor-col-resize,
+html.smooth-cursor-mode .cursor-row-resize,
+html.smooth-cursor-mode .cursor-not-allowed,
+html.smooth-cursor-mode .cursor-grab,
+html.smooth-cursor-mode .cursor-grabbing {
+  cursor: none !important;
+}
+
+/* 仅在纯文本编辑区(Input/Textarea/富文本/代码编辑器)内保留高精度原生 I-beam 文本光标 */
+html.smooth-cursor-mode
+input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not(
+  [type="radio"]
+):not([type="range"]):not([type="file"]),
+html.smooth-cursor-mode textarea,
+html.smooth-cursor-mode [contenteditable="true"],
+html.smooth-cursor-mode .monaco-editor,
+html.smooth-cursor-mode .monaco-editor *,
+html.smooth-cursor-mode .cm-content,
+html.smooth-cursor-mode .cm-content * {
+  cursor: text !important;
 }

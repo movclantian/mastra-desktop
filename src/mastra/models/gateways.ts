@@ -11,7 +11,7 @@ import {
   type ProviderConfig as GatewayProviderConfig,
   MastraModelGateway,
 } from "@mastra/core/llm";
-import { createGatewayModel, type GatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
+import { createGatewayModel, inferGatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
 import {
   getProvidersConfig,
   routerPrefix,
@@ -79,7 +79,8 @@ export class WorkbenchGateway extends MastraModelGateway {
     const provider = await this.findProvider(args.providerId);
     const baseUrl = provider?.baseUrl;
     if (!baseUrl) {
-      const protocol = inferProtocol(args.providerId);
+      // 未知 registry 的宿主回退仍按 OpenAI 处理;具体映射集中在 create-model.ts。
+      const protocol = inferGatewayProtocol(args.providerId) ?? "openai";
       return createGatewayModel({
         modelId: args.modelId,
         apiKey: args.apiKey,
@@ -95,11 +96,4 @@ export class WorkbenchGateway extends MastraModelGateway {
       useResponses: provider?.useResponses,
     });
   }
-}
-
-/** 内置供应商按 registryId 推断协议家族 */
-function inferProtocol(providerId: string): GatewayProtocol {
-  if (providerId === "anthropic") return "anthropic";
-  if (providerId === "google" || providerId === "gemini") return "gemini";
-  return "openai";
 }

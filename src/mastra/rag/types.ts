@@ -79,17 +79,22 @@ export interface LibrarySettings {
 export type LibrarySettingsUpdate = Partial<LibrarySettings>;
 
 export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
+  // chunkSize/chunkOverlap/topK/minScore 为项目自定(官方 chunk.mdx 默认 maxSize=4000, overlap=50;retrieval 示例 topK=10)。
   chunkSize: 1200,
   chunkOverlap: 160,
   chunkStrategy: "recursive",
   topK: 8,
   minScore: 0.15,
   graphRag: false,
+  // 以下三项为 GraphRAG 官方默认值,见 docs/en/reference/rag/graph-rag.mdx:
+  //   threshold defaultValue='0.7'、randomWalkSteps defaultValue='100'、restartProb defaultValue='0.15'。
   graphThreshold: 0.7,
   graphRandomWalkSteps: 100,
   graphRestartProb: 0.15,
   rerank: false,
   rerankScorer: "model",
+  // 以下三项为 rerank() 官方默认权重,见 docs/en/reference/rag/rerank.mdx:
+  //   semantic default='0.4'、vector default='0.4'、position default='0.2'。
   rerankSemanticWeight: 0.4,
   rerankVectorWeight: 0.4,
   rerankPositionWeight: 0.2,

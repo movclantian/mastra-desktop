@@ -6,7 +6,6 @@ import {
   PanelRightOpenIcon,
   PlusIcon,
   Settings2Icon,
-  Trash2Icon,
 } from "lucide-react";
 import * as React from "react";
 
@@ -17,6 +16,7 @@ import { PanelHeader } from "@/components/app/primitives";
 import { SettingsDialog } from "@/components/app/settings";
 import { AppSidebar } from "@/components/app/sidebar";
 import { SkillHub } from "@/components/app/skills";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -445,16 +445,22 @@ function AppShell() {
 
             <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
               {agentOpen ? (
-                <AgentHub />
+                <BlurFade key="agent-hub" duration={0.2} blur="3px" className="size-full">
+                  <AgentHub />
+                </BlurFade>
               ) : skillOpen ? (
-                <SkillHub />
+                <BlurFade key="skill-hub" duration={0.2} blur="3px" className="size-full">
+                  <SkillHub />
+                </BlurFade>
               ) : libraryOpen ? (
-                <React.Suspense fallback={<PanelFallback />}>
-                  <KnowledgeLibrary
-                    settingsOpen={librarySettingsOpen}
-                    onSettingsOpenChange={setLibrarySettingsOpen}
-                  />
-                </React.Suspense>
+                <BlurFade key="library-hub" duration={0.2} blur="3px" className="size-full">
+                  <React.Suspense fallback={<PanelFallback />}>
+                    <KnowledgeLibrary
+                      settingsOpen={librarySettingsOpen}
+                      onSettingsOpenChange={setLibrarySettingsOpen}
+                    />
+                  </React.Suspense>
+                </BlurFade>
               ) : (
                 <div className="flex size-full min-h-0 flex-col overflow-hidden">
                   <div className="min-h-0 flex-1 overflow-hidden">

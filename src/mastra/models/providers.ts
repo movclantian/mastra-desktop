@@ -8,7 +8,12 @@
  */
 import { type GatewayLanguageModel, ModelRouterEmbeddingModel } from "@mastra/core/llm";
 import { getAppConfig, setAppConfig } from "../storage";
-import { createGatewayModel, type GatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
+import {
+  createGatewayModel,
+  type GatewayProtocol,
+  inferGatewayProtocol,
+  WORKBENCH_GATEWAY_ID,
+} from "./create-model";
 
 /** 请求级模型覆盖:chat 路由写入,Agent / 子 Agent 的 model 回调读取 */
 export const REQUEST_MODEL_CONTEXT_KEY = "mastra-work:request-model";
@@ -276,13 +281,7 @@ export async function resolveDefaultLanguageModel(): Promise<GatewayLanguageMode
   if (!modelId) return undefined;
   const protocol =
     provider.protocol ??
-    (provider.registryId === "anthropic"
-      ? "anthropic"
-      : provider.registryId === "google" || provider.registryId === "gemini"
-        ? "gemini"
-        : provider.registryId === "openai"
-          ? "openai"
-          : undefined);
+    (provider.registryId ? inferGatewayProtocol(provider.registryId) : undefined);
   if (!protocol) return undefined;
   return createGatewayModel({
     modelId,

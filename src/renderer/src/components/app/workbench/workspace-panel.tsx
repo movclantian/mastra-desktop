@@ -11,9 +11,13 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   BotIcon,
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  Code2Icon,
   CopyIcon,
   ExternalLinkIcon,
   FileCode2Icon,
+  FileDiffIcon,
   FilePlus2Icon,
   FolderPlusIcon,
   FolderTreeIcon,
@@ -41,6 +45,8 @@ import {
 } from "@/components/ai-elements/web-preview";
 import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
+import { CodeComparison } from "@/components/ui/code-comparison";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -74,7 +80,12 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
-import { reportWorkbenchState, type TreeEntry, useWorkbench } from "@/lib/workbench";
+import {
+  reportWorkbenchState,
+  type TreeEntry,
+  useWorkbench,
+  type WorkspaceFileChange,
+} from "@/lib/workbench";
 import { TerminalSession } from "./terminal-panel";
 
 const NEW_BROWSER_TAB_URL = "https://www.bing.com";
@@ -605,27 +616,18 @@ function FilesWorkspace({ active }: { active: boolean }) {
     requestTerminalCommand({ filePath: file.path });
   }, [activeThreadId, dirty, file, requestTerminalCommand, saveFile, saving]);
 
-  if (activeThread?.metadata.workspaceExplicit !== true) {
-    const hasImplicitWorkspace = Boolean(activeThread?.metadata.workspacePath);
+  if (!activeThread?.metadata.workspacePath) {
     return (
       <Empty className="h-full">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <FolderTreeIcon />
           </EmptyMedia>
-          <EmptyTitle>
-            {!activeThread
-              ? "尚未选择会话"
-              : hasImplicitWorkspace
-                ? "当前为 Agent 默认工作区"
-                : "未绑定可浏览工作区"}
-          </EmptyTitle>
+          <EmptyTitle>{!activeThread ? "尚未选择会话" : "未绑定工作区"}</EmptyTitle>
           <EmptyDescription>
             {!activeThread
               ? "选择或创建一个会话后,这里会显示它的工作区。"
-              : hasImplicitWorkspace
-                ? "当前会话使用默认工作目录,因此不展示可浏览文件树。"
-                : "发送首条消息前,在输入框上方选择一个本地目录即可浏览和编辑文件。"}
+              : "发送首条消息后,这里会显示该会话绑定的工作区。"}
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -804,6 +806,198 @@ function FilesWorkspace({ active }: { active: boolean }) {
         </aside>
       </ResizablePanel>
     </ResizablePanelGroup>
+  );
+}
+
+const CHANGE_LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  css: "css",
+  html: "html",
+  js: "javascript",
+  jsx: "javascript",
+  json: "json",
+  md: "markdown",
+  mdx: "markdown",
+  py: "python",
+  ts: "typescript",
+  tsx: "typescript",
+};
+
+function changeLanguage(path: string): string {
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  return CHANGE_LANGUAGE_BY_EXTENSION[extension] ?? "text";
+}
+
+function changeLabel(change: WorkspaceFileChange): string {
+  if (change.kind === "created") return "新增";
+  if (change.kind === "deleted") return "删除";
+  return "修改";
+}
+
+function CodeChangeRow({
+  change,
+  open,
+  onOpenChange,
+}: {
+  change: WorkspaceFileChange;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const ChangeIcon =
+    change.kind === "created" ? CheckCircle2Icon : change.kind === "deleted" ? XIcon : FileDiffIcon;
+  const before = change.before ?? "";
+  const after = change.after ?? "";
+  const timestamp = new Date(change.createdAt);
+  return (
+    <Collapsible
+      className="group/collapsible rounded-md border bg-background"
+      onOpenChange={onOpenChange}
+      open={open}
+    >
+      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/40">
+        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-open/collapsible:rotate-180" />
+        <ChangeIcon
+          className={cn(
+            "size-3.5 shrink-0",
+            change.kind === "created"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : change.kind === "deleted"
+                ? "text-red-600 dark:text-red-400"
+                : "text-amber-600 dark:text-amber-400",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={change.path}>
+          {change.path}
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{changeLabel(change)}</span>
+        <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={change.createdAt}>
+          {Number.isNaN(timestamp.getTime())
+            ? ""
+            : timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </time>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t p-2">
+        <CodeComparison
+          afterCode={after}
+          beforeCode={before}
+          filename={change.path}
+          language={changeLanguage(change.path)}
+        />
+        <div className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-muted-foreground">
+          <Code2Icon className="size-3" />
+          <span>{change.toolName.replace(/^mastra_workspace_/, "")}</span>
+          {change.toolCallId ? (
+            <span className="truncate font-mono">{change.toolCallId}</span>
+          ) : null}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function CodeChangesWorkspace({ active }: { active: boolean }) {
+  const { activeThreadId, fetchThreadChanges } = useWorkbench();
+  const [changes, setChanges] = React.useState<WorkspaceFileChange[]>([]);
+  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const [loading, setLoading] = React.useState(false);
+  const refreshRequestRef = React.useRef(0);
+
+  const refresh = React.useCallback(async () => {
+    const requestId = ++refreshRequestRef.current;
+    if (!activeThreadId) {
+      setChanges([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const next = await fetchThreadChanges(activeThreadId);
+      if (requestId !== refreshRequestRef.current) return;
+      setChanges((current) => {
+        const unchanged =
+          current.length === next.length &&
+          current.every((item, index) => item.id === next[index]?.id);
+        return unchanged ? current : next;
+      });
+      setExpanded((current) => {
+        const valid = new Set(next.map((item) => item.id));
+        const kept = new Set([...current].filter((id) => valid.has(id)));
+        if (kept.size === 0 && next.length > 0) kept.add(next[next.length - 1].id);
+        return kept;
+      });
+    } finally {
+      if (requestId === refreshRequestRef.current) setLoading(false);
+    }
+  }, [activeThreadId, fetchThreadChanges]);
+
+  React.useEffect(() => {
+    if (!active) return;
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 2000);
+    return () => window.clearInterval(timer);
+  }, [active, refresh]);
+
+  const orderedChanges = React.useMemo(() => [...changes].reverse(), [changes]);
+  return (
+    <div className="flex size-full min-h-0 flex-col bg-muted/10">
+      <PanelHeader className="h-10 shrink-0 justify-between border-b bg-muted/30 px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileDiffIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="text-xs font-medium">代码更改</span>
+          <span className="text-[10px] text-muted-foreground">{changes.length} 条记录</span>
+        </div>
+        <Button
+          aria-label="刷新代码更改"
+          className="size-7"
+          onClick={() => void refresh()}
+          size="icon"
+          title="刷新代码更改"
+          variant="ghost"
+        >
+          <RefreshCwIcon className={cn("size-3.5", loading && "animate-spin")} />
+        </Button>
+      </PanelHeader>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-2 p-3">
+          {!activeThreadId ? (
+            <Empty className="py-12 text-muted-foreground">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <FileDiffIcon />
+                </EmptyMedia>
+                <EmptyTitle>选择一个会话</EmptyTitle>
+                <EmptyDescription>当前会话的文件更改会显示在这里</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : orderedChanges.length === 0 ? (
+            <Empty className="py-12 text-muted-foreground">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Code2Icon />
+                </EmptyMedia>
+                <EmptyTitle>还没有代码更改</EmptyTitle>
+                <EmptyDescription>Agent 或编辑器保存文件后，历史记录会出现在这里</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            orderedChanges.map((change) => (
+              <CodeChangeRow
+                change={change}
+                key={change.id}
+                onOpenChange={(open) => {
+                  setExpanded((current) => {
+                    const next = new Set(current);
+                    if (open) next.add(change.id);
+                    else next.delete(change.id);
+                    return next;
+                  });
+                }}
+                open={expanded.has(change.id)}
+              />
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -1316,7 +1510,7 @@ export default function WorkspacePanel() {
   return (
     <PanelSurface>
       <PanelHeader className="gap-1 bg-muted/40 px-1">
-        {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端),
+        {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端 / 代码更改),
             后半是由服务端 state.tabs 派生的浏览器页面。支持横向滚轮与横向滚动条。 */}
         <div
           className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
@@ -1348,8 +1542,10 @@ export default function WorkspacePanel() {
                     >
                       {tab.kind === "files" ? (
                         <FolderTreeIcon className="size-3.5 shrink-0" />
-                      ) : (
+                      ) : tab.kind === "terminal" ? (
                         <TerminalIcon className="size-3.5 shrink-0" />
+                      ) : (
+                        <FileDiffIcon className="size-3.5 shrink-0" />
                       )}
                       <span className="truncate">{tab.title}</span>
                     </button>
@@ -1388,6 +1584,10 @@ export default function WorkspacePanel() {
                             <ContextMenuItem onClick={() => addPanelTab("terminal")}>
                               <TerminalIcon className="text-muted-foreground" />
                               <span>终端</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem onClick={() => addPanelTab("changes")}>
+                              <FileDiffIcon className="text-muted-foreground" />
+                              <span>代码更改</span>
                             </ContextMenuItem>
                             <ContextMenuItem
                               onClick={() => {
@@ -1493,6 +1693,10 @@ export default function WorkspacePanel() {
                 <FolderTreeIcon />
                 新建文件树
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => addPanelTab("changes")}>
+                <FileDiffIcon />
+                代码更改
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1518,6 +1722,8 @@ export default function WorkspacePanel() {
             <div className={cn("size-full", selected ? "block" : "hidden")} key={tab.id}>
               {tab.kind === "files" ? (
                 <FilesWorkspace active={selected} />
+              ) : tab.kind === "changes" ? (
+                <CodeChangesWorkspace active={selected} />
               ) : (
                 <div className="size-full px-3 py-2">
                   <TerminalSession active={selected} />
@@ -1534,20 +1740,20 @@ export default function WorkspacePanel() {
             <div className="w-full max-w-sm space-y-6">
               <div className="text-sm font-normal text-muted-foreground">从这里开始</div>
               <div className="space-y-1">
-                {/* 1. 任务摘要 */}
+                {/* 1. 文件浏览器 */}
                 <button
                   type="button"
                   onClick={() => {
                     addPanelTab("files");
                   }}
-                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
                 >
-                  <ListTodoIcon className="size-4 shrink-0 text-foreground" />
+                  <FolderTreeIcon className="size-4 shrink-0 text-foreground" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-medium text-foreground">任务摘要</span>
+                      <span className="text-xs font-medium text-foreground">文件浏览器</span>
                       <span className="text-xs text-muted-foreground truncate">
-                        查看任务执行进展、产物汇总及关联信息
+                        浏览及管理工作区目录与代码文件
                       </span>
                     </div>
                   </div>
@@ -1587,6 +1793,25 @@ export default function WorkspacePanel() {
                     <div className="flex items-baseline gap-2">
                       <span className="text-xs font-medium text-foreground">终端</span>
                       <span className="text-xs text-muted-foreground truncate">运行命令及脚本</span>
+                    </div>
+                  </div>
+                </button>
+
+                {/* 4. 代码更改 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    addPanelTab("changes");
+                  }}
+                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <FileDiffIcon className="size-4 shrink-0 text-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-xs font-medium text-foreground">代码更改</span>
+                      <span className="truncate text-xs text-muted-foreground">
+                        查看本会话线程的文件更改历史
+                      </span>
                     </div>
                   </div>
                 </button>

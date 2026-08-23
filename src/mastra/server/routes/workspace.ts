@@ -14,6 +14,7 @@ import {
   saveWorkspaceConfig,
   type WorkspaceUserConfig,
 } from "../../workspace";
+import { listWorkspaceChanges, recordWorkspaceChange } from "../../workspace/changes";
 import { getWorkMemory } from "./threads";
 import { getOwnedThread, isTrustedLocalRequest } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
@@ -43,8 +44,23 @@ export const recentWorkspacesRoute = registerApiRoute("/work/workspace/recent", 
   },
 });
 
+// GET /work/threads/:threadId/changes?resourceId=<id> — Agent/editor 文件变更历史
+export const threadChangesRoute = registerApiRoute("/work/threads/:threadId/changes", {
+  method: "GET",
+  handler: async (c) => {
+    if (!isTrustedLocalRequest(c))
+      throw workError("VALIDATION_FAILED", { text: "Untrusted origin" });
+    const threadId = c.req.param("threadId");
+    const resourceId = c.req.query("resourceId");
+    if (!threadId || !resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
+    const memory = await getWorkMemory();
+    if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
+    return c.json({ changes: await listWorkspaceChanges(threadId) });
+  },
+});
+
 // GET /work/threads/:threadId/tree?path=<相对路径> — 线程工作区文件树(单层按需拉取)
-// 仅显式绑定的线程可浏览(隐式目录是 Agent 内部工作区,sidebar 不展示)
+// 显式目录和隐式默认目录都属于线程工作区,均可由用户浏览。
 type TreeEntry = { hidden: boolean; name: string; path: string; type: "file" | "dir" };
 
 const MAX_EDITABLE_FILE_BYTES = 2 * 1024 * 1024;
@@ -57,7 +73,7 @@ async function ownedWorkspace(c: ContextWithMastra) {
   const memory = await getWorkMemory();
   const thread = await getOwnedThread(memory, threadId, resourceId);
   const metadata = thread?.metadata as ThreadMetadata | undefined;
-  if (!metadata?.workspacePath || metadata.workspaceExplicit !== true) return null;
+  if (!metadata?.workspacePath) return null;
   try {
     return { root: await realpath(resolve(metadata.workspacePath)), threadId };
   } catch {
@@ -156,6 +172,15 @@ export const createThreadTreeEntryRoute = registerApiRoute("/work/threads/:threa
       throw workError("VALIDATION_FAILED", { text: "Could not create workspace entry" });
     }
 
+    if (type === "file") {
+      await recordWorkspaceChange({
+        threadId: workspace.threadId,
+        path: relativePath,
+        before: null,
+        after: "",
+        toolName: "workspace.create_file",
+      }).catch(() => undefined);
+    }
     return c.json({ ok: true, entry: { name: basename(target), path: relativePath, type } }, 201);
   },
 });
@@ -209,11 +234,19 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
     if (Buffer.byteLength(body.content, "utf8") > MAX_EDITABLE_FILE_BYTES) {
       throw workError("WORKSPACE_FILE_TOO_LARGE");
     }
+    const previousContent = await readFile(target, "utf8").catch(() => null);
     try {
       const fileInfo = await stat(target);
       if (!fileInfo.isFile()) throw workError("WORKSPACE_FILE_NOT_EDITABLE");
       await writeFile(target, body.content, "utf8");
       const updated = await stat(target);
+      await recordWorkspaceChange({
+        threadId: workspace.threadId,
+        path: relativePath,
+        before: previousContent,
+        after: body.content,
+        toolName: "workspace.editor_save",
+      }).catch(() => undefined);
       return c.json({ ok: true, size: updated.size, modifiedAt: updated.mtime.toISOString() });
     } catch {
       throw workError("WORKSPACE_FILE_SAVE_FAILED");

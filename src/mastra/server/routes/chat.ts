@@ -60,6 +60,8 @@ import {
   implicitThreadWorkspacePath,
   isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
+  WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
+  WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../../workspace";
 import { generateThreadTitleHelper, getWorkMemory } from "./threads";
 import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
@@ -398,7 +400,7 @@ async function prepareThreadSession(options: {
       patch.workspaceExplicit = true;
       await addRecentWorkspace(requested);
     } else {
-      // 隐式绑定:仅作为 Agent 工作目录,sidebar 不展示文件树
+      // 隐式绑定:使用线程专属默认目录,同样作为用户可浏览的工作区
       const implicitPath = implicitThreadWorkspacePath(options.threadId);
       ensureDirectory(implicitPath);
       workspacePath = implicitPath;
@@ -594,6 +596,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         profile = await getAgentProfile(session.agentProfileId);
         if (session.workspacePath) {
           requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, session.workspacePath);
+        }
+        requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, body.memory.thread);
+        if (body.memory.resource) {
+          requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, body.memory.resource);
         }
         requestContext.set(MODE_ID_CONTEXT_KEY, session.modeId);
         if (session.permissionRules !== undefined) {

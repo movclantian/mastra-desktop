@@ -49,7 +49,7 @@ export interface ThreadMetadata {
   agentProfileId?: string;
   /** 线程绑定的工作区目录(绝对路径,首条消息时由服务端锁定) */
   workspacePath?: string;
-  /** true = 用户显式选定的目录(可浏览文件树);false/缺省 = 隐式默认目录 */
+  /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录(两者都可浏览) */
   workspaceExplicit?: boolean;
   /** 会话模式(plan/build/review);缺省视为默认模式 */
   modeId?: string;
@@ -113,6 +113,19 @@ export interface TreeEntry {
   name: string;
   path: string;
   type: "file" | "dir";
+}
+
+export type WorkspaceChangeKind = "created" | "modified" | "deleted";
+
+export interface WorkspaceFileChange {
+  id: string;
+  path: string;
+  kind: WorkspaceChangeKind;
+  before: string | null;
+  after: string | null;
+  toolName: string;
+  toolCallId?: string;
+  createdAt: string;
 }
 
 /** 取路径最后一段作为目录显示名(POSIX/Windows 通用) */
@@ -212,22 +225,22 @@ export interface PendingJump {
 }
 
 /** 右侧面板可承载的模块类型。browser 页面由服务端浏览器状态派生,其余是前端实例。 */
-export type PanelTabKind = "files" | "terminal" | "browser" | "welcome";
+export type PanelTabKind = "files" | "terminal" | "changes" | "browser" | "welcome";
 
 /**
- * 前端拥有的右侧标签实例(文件树 / 终端各可多开)。
+ * 前端拥有的右侧标签实例(文件树 / 终端 / 代码更改各可多开)。
  * 浏览器页面标签不在这里 —— 它们直接映射服务端的 state.tabs,按 index 寻址。
  */
 export interface LocalPanelTab {
   id: string;
-  kind: "files" | "terminal";
+  kind: "files" | "terminal" | "changes";
   title: string;
 }
 
 /** 当前激活的右侧标签。浏览器用 index 而非 id:Mastra 的 tabs API 只按下标寻址。 */
 export type ActivePanelTab =
   | { kind: "welcome"; id?: string }
-  | { kind: "files" | "terminal"; id: string }
+  | { kind: "files" | "terminal" | "changes"; id: string }
   | { kind: "browser"; index: number };
 
 /**
@@ -398,8 +411,9 @@ interface WorkbenchValue {
   // 近期显式绑定的工作区目录(promptInput 选择器数据源)
   recentWorkspaces: RecentWorkspace[];
   refreshRecentWorkspaces: () => Promise<void>;
-  // 线程工作区文件树(仅显式绑定线程;单层按需拉取)
+  // 线程工作区文件树(显式和隐式绑定线程均可访问;单层按需拉取)
   fetchTreeEntries: (threadId: string, path?: string) => Promise<TreeEntry[]>;
+  fetchThreadChanges: (threadId: string) => Promise<WorkspaceFileChange[]>;
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
   // 搜索结果跳转(chat-panel 消费后清除)
@@ -459,12 +473,12 @@ interface WorkbenchValue {
   // 线程级工作面板(Minke right/bottom tabs 对应的应用状态)
   workspacePanelOpen: boolean;
   setWorkspacePanelOpen: (open: boolean) => void;
-  /** 右侧面板里前端拥有的标签实例(文件树 / 终端);浏览器页面由面板自己派生渲染 */
+  /** 右侧面板里前端拥有的标签实例(文件树 / 终端 / 代码更改);浏览器页面由面板自己派生渲染 */
   panelTabs: LocalPanelTab[];
   activePanelTab: ActivePanelTab;
   activatePanelTab: (tab: ActivePanelTab) => void;
   /** 新建一个本地标签并激活它,返回新标签 id */
-  addPanelTab: (kind: "files" | "terminal") => string;
+  addPanelTab: (kind: "files" | "terminal" | "changes") => string;
   closePanelTab: (id: string) => void;
   /** 打开面板并聚焦该类型的第一个标签(browser 聚焦当前活动页) */
   openWorkspacePanel: (kind?: PanelTabKind) => void;
@@ -639,7 +653,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     id: "welcome",
   });
   /** 标签标题的序号来源:第一个文件树叫「文件」,之后是「文件 2」「终端 1」… */
-  const panelTabCountsRef = useRef({ files: 0, terminal: 0 });
+  const panelTabCountsRef = useRef({ files: 0, terminal: 0, changes: 0 });
   /** 两个面板的终端会话都登记在这里,聚合后上报 terminal state lane */
   const terminalSessionsRef = useRef(new Map<string, TerminalSessionInfo>());
   const [terminalSessionsVersion, setTerminalSessionsVersion] = useState(0);
@@ -887,11 +901,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     setWorkspacePanelOpen(true);
   }, []);
 
-  const addPanelTab = useCallback((kind: "files" | "terminal") => {
+  const addPanelTab = useCallback((kind: "files" | "terminal" | "changes") => {
     const id = nanoid();
     const counts = panelTabCountsRef.current;
     counts[kind] += 1;
-    const label = kind === "files" ? "文件" : "终端";
+    const label = kind === "files" ? "文件" : kind === "terminal" ? "终端" : "代码更改";
     setPanelTabs((current) => [
       ...current,
       { id, kind, title: counts[kind] > 1 ? `${label} ${counts[kind]}` : label },
@@ -948,7 +962,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       const id = nanoid();
       const counts = panelTabCountsRef.current;
       counts[kind] += 1;
-      const label = kind === "files" ? "文件" : "终端";
+      const label = kind === "files" ? "文件" : kind === "terminal" ? "终端" : "代码更改";
       setActivePanelTab({ kind, id });
       return [
         ...current,
@@ -1314,13 +1328,26 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     void refreshRecentWorkspaces();
   }, [refreshRecentWorkspaces]);
 
-  // 线程工作区文件树(单层按需拉取;仅显式绑定线程有权限)
+  // 线程工作区文件树(单层按需拉取;线程只要有 workspacePath 即可访问)
   const fetchTreeEntries = useCallback(async (threadId: string, path?: string) => {
     const query = `?resourceId=${encodeURIComponent(user.id)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
     const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/tree${query}`);
     if (!response.ok) return [];
     const { entries } = (await response.json()) as { entries: TreeEntry[] };
     return entries;
+  }, []);
+
+  const fetchThreadChanges = useCallback(async (threadId: string) => {
+    try {
+      const response = await fetch(
+        `${MASTRA_SERVER_URL}/work/threads/${threadId}/changes?resourceId=${encodeURIComponent(user.id)}`,
+      );
+      if (!response.ok) return [];
+      const payload = (await response.json()) as { changes?: WorkspaceFileChange[] };
+      return Array.isArray(payload.changes) ? payload.changes : [];
+    } catch {
+      return [];
+    }
   }, []);
 
   const value = useMemo<WorkbenchValue>(
@@ -1340,6 +1367,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       recentWorkspaces,
       refreshRecentWorkspaces,
       fetchTreeEntries,
+      fetchThreadChanges,
       activeThreadId,
       setActiveThreadId: selectThread,
       pendingJump,
@@ -1416,6 +1444,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       recentWorkspaces,
       refreshRecentWorkspaces,
       fetchTreeEntries,
+      fetchThreadChanges,
       activeThreadId,
       selectThread,
       pendingJump,
@@ -1464,6 +1493,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       requestTerminalCommand,
       browserRequest,
       openBrowserUrl,
+      activeSkill,
     ],
   );
 

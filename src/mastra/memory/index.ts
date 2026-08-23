@@ -164,10 +164,13 @@ const DEFAULT_WORKING_MEMORY_SCHEMA = `{
 
 const DEFAULT_CONFIG: MemoryUserConfig = {
   embeddingModel: "small",
+  // lastMessages:20 为项目自定(官方 memory-class.mdx 默认 10)。
   lastMessages: 20,
   readOnly: false,
   semanticRecall: false,
+  // semanticRecallTopK:4 为官方默认值(memory-class.mdx: "Default topK is 4")。
   semanticRecallTopK: 4,
+  // messageRange before/after 为项目自定(官方默认 {before:1, after:1})。
   semanticRecallMessageRangeBefore: 2,
   semanticRecallMessageRangeAfter: 2,
   semanticRecallScope: "thread",
@@ -194,8 +197,10 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   // 0 = 不显式指定,由前端按模型上下文窗口自动派生后写入(25%,8K~250K)
   omMessageTokens: 0,
   omMaxTokensPerBatch: 0,
+  // omTemperature:0.3 为官方默认值(observational-memory.mdx: observation.modelSettings.temperature defaultValue='0.3')。
   omTemperature: 0.3,
   omMaxOutputTokens: 0,
+  // omBufferTokens:0.2 为官方默认值(observational-memory.mdx: bufferTokens defaultValue='0.2')。
   omBufferTokens: 0.2,
   omBufferEnabled: true,
   omObservationTokens: 0,

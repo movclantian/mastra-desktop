@@ -3,13 +3,11 @@ import {
   CopyIcon,
   FlameIcon,
   LaptopIcon,
-  MoonIcon,
   PaletteIcon,
   PanelLeftIcon,
   RotateCcwIcon,
   SearchIcon,
   SparklesIcon,
-  SunMediumIcon,
   TypeIcon,
   Wand2Icon,
   ZapIcon,
@@ -1032,7 +1030,9 @@ export function ThemeSection() {
                       Rainbow 彩虹流光
                     </RainbowButton>
 
-                    <InteractiveHoverButton text="探索工作流" className="text-xs py-1.5 px-4 h-8" />
+                    <InteractiveHoverButton className="text-xs py-1.5 px-4 h-8">
+                      探索工作流
+                    </InteractiveHoverButton>
 
                     <PulsatingButton duration="2s" className="text-xs py-1.5 px-3.5 h-8">
                       <FlameIcon className="size-3.5 mr-1" />

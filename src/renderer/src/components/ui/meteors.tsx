@@ -1,31 +1,58 @@
+"use client";
+
+import type React from "react";
+import { useEffect, useState } from "react";
+
 import { cn } from "@/lib/utils";
 
-export interface MeteorsProps {
+interface MeteorsProps {
   number?: number;
+  minDelay?: number;
+  maxDelay?: number;
+  minDuration?: number;
+  maxDuration?: number;
+  angle?: number;
   className?: string;
 }
 
-export function Meteors({ number = 20, className }: MeteorsProps) {
-  const meteors = new Array(number).fill(true);
+export const Meteors = ({
+  number = 20,
+  minDelay = 0.2,
+  maxDelay = 1.2,
+  minDuration = 2,
+  maxDuration = 10,
+  angle = 215,
+  className,
+}: MeteorsProps) => {
+  const [meteorStyles, setMeteorStyles] = useState<Array<React.CSSProperties>>([]);
+
+  useEffect(() => {
+    const styles = [...new Array(number)].map(() => ({
+      "--angle": `${-angle}deg`,
+      top: "-5%",
+      left: `calc(0% + ${Math.floor(Math.random() * window.innerWidth)}px)`,
+      animationDelay: `${Math.random() * (maxDelay - minDelay) + minDelay}s`,
+      animationDuration: `${Math.floor(Math.random() * (maxDuration - minDuration) + minDuration)}s`,
+    }));
+    setMeteorStyles(styles);
+  }, [number, minDelay, maxDelay, minDuration, maxDuration, angle]);
 
   return (
     <>
-      {meteors.map((_, idx) => (
+      {[...meteorStyles].map((style, idx) => (
+        // Meteor Head
         <span
-          key={`meteor-${idx}`}
+          key={idx}
+          style={{ ...style }}
           className={cn(
-            "animate-meteor-effect absolute top-1/2 left-1/2 size-0.5 rotate-[215deg] rounded-[9999px] bg-slate-400 shadow-[0_0_0_1px_#ffffff10]",
-            "before:absolute before:top-1/2 before:h-px before:w-[50px] before:-translate-y-[50%] before:bg-linear-to-r before:from-slate-400 before:to-transparent before:content-['']",
+            "animate-meteor pointer-events-none absolute size-0.5 rotate-(--angle) rounded-full bg-zinc-500 shadow-[0_0_0_1px_#ffffff10]",
             className,
           )}
-          style={{
-            top: 0,
-            left: `${Math.floor(Math.random() * (400 - -400) + -400)}px`,
-            animationDelay: `${Math.random() * (0.8 - 0.2) + 0.2}s`,
-            animationDuration: `${Math.floor(Math.random() * (10 - 2) + 2)}s`,
-          }}
-        />
+        >
+          {/* Meteor Tail */}
+          <div className="pointer-events-none absolute top-1/2 -z-10 h-px w-12.5 -translate-y-1/2 bg-linear-to-r from-zinc-500 to-transparent" />
+        </span>
       ))}
     </>
   );
-}
+};

@@ -1,12 +1,13 @@
 import { motion } from "motion/react";
-import * as React from "react";
+import { type RefObject, useEffect, useId, useState } from "react";
+
 import { cn } from "@/lib/utils";
 
 export interface AnimatedBeamProps {
   className?: string;
-  containerRef: React.RefObject<HTMLElement | null>;
-  fromRef: React.RefObject<HTMLElement | null>;
-  toRef: React.RefObject<HTMLElement | null>;
+  containerRef: RefObject<HTMLElement | null>; // Container ref
+  fromRef: RefObject<HTMLElement | null>;
+  toRef: RefObject<HTMLElement | null>;
   curvature?: number;
   reverse?: boolean;
   pathColor?: string;
@@ -16,68 +17,92 @@ export interface AnimatedBeamProps {
   gradientStopColor?: string;
   delay?: number;
   duration?: number;
+  repeat?: number;
+  repeatDelay?: number;
   startXOffset?: number;
   startYOffset?: number;
   endXOffset?: number;
   endYOffset?: number;
 }
 
-export function AnimatedBeam({
+export const AnimatedBeam: React.FC<AnimatedBeamProps> = ({
   className,
   containerRef,
   fromRef,
   toRef,
   curvature = 0,
-  reverse = false,
-  duration = Math.random() * 3 + 4,
+  reverse = false, // Include the reverse prop
+  duration = 5,
   delay = 0,
-  pathColor = "currentColor",
+  pathColor = "gray",
   pathWidth = 2,
   pathOpacity = 0.2,
-  gradientStartColor = "var(--primary)",
-  gradientStopColor = "var(--accent)",
+  gradientStartColor = "#ffaa40",
+  gradientStopColor = "#9c40ff",
+  repeat = Infinity,
+  repeatDelay = 0,
   startXOffset = 0,
   startYOffset = 0,
   endXOffset = 0,
   endYOffset = 0,
-}: AnimatedBeamProps) {
-  const id = React.useId();
-  const [pathD, setPathD] = React.useState("");
-  const [svgDimensions, setSvgDimensions] = React.useState({ width: 0, height: 0 });
+}) => {
+  const id = useId();
+  const [pathD, setPathD] = useState("");
+  const [svgDimensions, setSvgDimensions] = useState({ width: 0, height: 0 });
 
-  // Calculate the path between "from" and "to" elements
-  React.useEffect(() => {
+  // Calculate the gradient coordinates based on the reverse prop
+  const gradientCoordinates = reverse
+    ? {
+        x1: ["90%", "-10%"],
+        x2: ["100%", "0%"],
+        y1: ["0%", "0%"],
+        y2: ["0%", "0%"],
+      }
+    : {
+        x1: ["10%", "110%"],
+        x2: ["0%", "100%"],
+        y1: ["0%", "0%"],
+        y2: ["0%", "0%"],
+      };
+
+  useEffect(() => {
     const updatePath = () => {
-      if (!containerRef.current || !fromRef.current || !toRef.current) return;
+      if (containerRef.current && fromRef.current && toRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect();
+        const rectA = fromRef.current.getBoundingClientRect();
+        const rectB = toRef.current.getBoundingClientRect();
 
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const fromRect = fromRef.current.getBoundingClientRect();
-      const toRect = toRef.current.getBoundingClientRect();
+        const svgWidth = containerRect.width;
+        const svgHeight = containerRect.height;
+        setSvgDimensions({ width: svgWidth, height: svgHeight });
 
-      const svgWidth = containerRect.width;
-      const svgHeight = containerRect.height;
-      setSvgDimensions({ width: svgWidth, height: svgHeight });
+        const startX = rectA.left - containerRect.left + rectA.width / 2 + startXOffset;
+        const startY = rectA.top - containerRect.top + rectA.height / 2 + startYOffset;
+        const endX = rectB.left - containerRect.left + rectB.width / 2 + endXOffset;
+        const endY = rectB.top - containerRect.top + rectB.height / 2 + endYOffset;
 
-      const startX = fromRect.left - containerRect.left + fromRect.width / 2 + startXOffset;
-      const startY = fromRect.top - containerRect.top + fromRect.height / 2 + startYOffset;
-      const endX = toRect.left - containerRect.left + toRect.width / 2 + endXOffset;
-      const endY = toRect.top - containerRect.top + toRect.height / 2 + endYOffset;
-
-      const controlY = startY - curvature;
-      const d = `M ${startX},${startY} Q ${(startX + endX) / 2},${controlY} ${endX},${endY}`;
-      setPathD(d);
+        const controlY = startY - curvature;
+        const d = `M ${startX},${startY} Q ${(startX + endX) / 2},${controlY} ${endX},${endY}`;
+        setPathD(d);
+      }
     };
 
-    const resizeObserver = new ResizeObserver(updatePath);
+    // Initialize ResizeObserver
+    const resizeObserver = new ResizeObserver(() => {
+      updatePath();
+    });
+
+    // Observe the container element
     if (containerRef.current) {
       resizeObserver.observe(containerRef.current);
     }
+
+    // Call the updatePath initially to set the initial path
     updatePath();
 
-    window.addEventListener("resize", updatePath);
+    // Clean up the observer on component unmount
     return () => {
       resizeObserver.disconnect();
-      window.removeEventListener("resize", updatePath);
     };
   }, [containerRef, fromRef, toRef, curvature, startXOffset, startYOffset, endXOffset, endYOffset]);
 
@@ -99,8 +124,8 @@ export function AnimatedBeam({
       />
       <path
         d={pathD}
-        stroke={`url(#${id})`}
         strokeWidth={pathWidth}
+        stroke={`url(#${id})`}
         strokeOpacity="1"
         strokeLinecap="round"
       />
@@ -108,7 +133,7 @@ export function AnimatedBeam({
         <motion.linearGradient
           className="transform-gpu"
           id={id}
-          gradientUnits="userSpaceOnUse"
+          gradientUnits={"userSpaceOnUse"}
           initial={{
             x1: "0%",
             x2: "0%",
@@ -116,25 +141,25 @@ export function AnimatedBeam({
             y2: "0%",
           }}
           animate={{
-            x1: reverse ? ["90%", "-10%"] : ["-10%", "90%"],
-            x2: reverse ? ["100%", "0%"] : ["0%", "100%"],
-            y1: ["0%", "0%"],
-            y2: ["0%", "0%"],
+            x1: gradientCoordinates.x1,
+            x2: gradientCoordinates.x2,
+            y1: gradientCoordinates.y1,
+            y2: gradientCoordinates.y2,
           }}
           transition={{
             delay,
             duration,
-            ease: [0.16, 1, 0.3, 1],
-            repeat: Number.POSITIVE_INFINITY,
-            repeatDelay: 0,
+            ease: [0.16, 1, 0.3, 1], // https://easings.net/#easeOutExpo
+            repeat,
+            repeatDelay,
           }}
         >
-          <stop stopColor={gradientStartColor} stopOpacity="0" />
-          <stop stopColor={gradientStartColor} />
-          <stop offset="32.5%" stopColor={gradientStopColor} />
-          <stop offset="100%" stopColor={gradientStopColor} stopOpacity="0" />
+          <stop stopColor={gradientStartColor} stopOpacity="0"></stop>
+          <stop stopColor={gradientStartColor}></stop>
+          <stop offset="32.5%" stopColor={gradientStopColor}></stop>
+          <stop offset="100%" stopColor={gradientStopColor} stopOpacity="0"></stop>
         </motion.linearGradient>
       </defs>
     </svg>
   );
-}
+};

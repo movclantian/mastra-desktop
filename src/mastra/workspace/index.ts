@@ -2,8 +2,8 @@
  * 每线程工作区模块:Harness session 概念的目录侧实现。
  * - 每条线程会话绑定一个工作目录(Harness session 的 workspace)
  * - 显式绑定:用户在 promptInput 选择器中选定本地目录(发送首条消息后锁定)
- * - 隐式绑定:未选择时默认 <threadsRoot>/<threadId>/(仅 Agent 工作目录,
- *   sidebar 不展示文件树,线程列表正常平铺)
+ * - 隐式绑定:未选择时默认 <threadsRoot>/<threadId>/(线程专属默认工作区,
+ *   用户同样可以浏览和编辑)
  * - Workspace 实例按路径缓存(BM25 索引等初始化昂贵,不可每请求重建)
  * 设置面板「工作区」标签页写入数据库 app_config 表(key = "workspace"),保存后实时生效。
  * 官方文档:
@@ -22,6 +22,13 @@ import {
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
 import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from "../storage";
+import { createWorkspaceChangeHooks, deleteWorkspaceChanges } from "./changes";
+
+export {
+  WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
+  WORKSPACE_THREAD_ID_CONTEXT_KEY,
+} from "./changes";
+
 // LSP 可选依赖显式导入:@mastra/core 的 LSP 客户端用 createRequire 动态
 // require 这两个包(见 node_modules/@mastra/core/dist/workspace-*.js 的
 // loadLSPDependencies);此处静态导入保证它们被安装且位于解析路径上,
@@ -346,14 +353,15 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
   // 用户配置了也强制回落 none,避免 LocalSandbox 启动失败(按创建时配置计算)。
   const effectiveIsolation = process.platform === "win32" ? ("none" as const) : config.isolation;
 
+  const filesystem = new LocalFilesystem({
+    basePath: workspacePath,
+    ...(config.allowedPaths.length ? { allowedPaths: config.allowedPaths } : {}),
+    ...(config.readOnly ? { readOnly: true } : {}),
+  });
   const workspace = new Workspace({
     id: `mastra-work:${workspacePath}`,
     name: "MastraWork Workspace",
-    filesystem: new LocalFilesystem({
-      basePath: workspacePath,
-      ...(config.allowedPaths.length ? { allowedPaths: config.allowedPaths } : {}),
-      ...(config.readOnly ? { readOnly: true } : {}),
-    }),
+    filesystem,
     ...(config.sandboxEnabled
       ? {
           sandbox: new LocalSandbox({
@@ -393,7 +401,14 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
           },
         }
       : {}),
-    ...(Object.keys(config.tools).length ? { tools: config.tools as WorkspaceToolsConfig } : {}),
+    ...(Object.keys(config.tools).length
+      ? {
+          tools: {
+            ...(config.tools as WorkspaceToolsConfig),
+            hooks: createWorkspaceChangeHooks(filesystem),
+          } as WorkspaceToolsConfig,
+        }
+      : { tools: { hooks: createWorkspaceChangeHooks(filesystem) } as WorkspaceToolsConfig }),
     ...(config.skillsPaths.length ? { skills: config.skillsPaths } : {}),
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
   });
@@ -437,4 +452,5 @@ export async function deleteThreadWorkspace(threadId: string, metadata?: unknown
       await rm(meta.workspacePath, { recursive: true, force: true }).catch(() => undefined);
     }
   }
+  await deleteWorkspaceChanges(threadId);
 }

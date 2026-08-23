@@ -46,6 +46,9 @@ function resolveBundledChromium(): string | undefined {
  * 参数与 /work/threads/:id/browser/screencast 路由保持一致。
  */
 export const workBrowser = new AgentBrowser({
+  // 以下三项为官方默认值,见 docs/en/reference/browser/agent-browser.mdx:
+  //   headless defaultValue='true'、viewport defaultValue='{width:1280,height:720}'、
+  //   timeout defaultValue='30000'。
   headless: true,
   executablePath: resolveBundledChromium(),
   scope: "thread",
@@ -53,6 +56,7 @@ export const workBrowser = new AgentBrowser({
   timeout: 30_000,
   screencast: {
     format: "jpeg",
+    // quality 官方示例(docs/en/docs/browser.mdx)用 80,此处取 78 略低以减小 screencast 带宽。
     quality: 78,
     maxWidth: 1280,
     maxHeight: 720,

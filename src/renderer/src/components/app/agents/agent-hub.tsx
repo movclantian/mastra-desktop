@@ -12,9 +12,9 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import {
-  Card,
   CardContent,
   CardDescription,
   CardFooter,
@@ -40,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { MagicCard } from "@/components/ui/magic-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -563,98 +564,100 @@ function AgentCard({
   };
 
   return (
-    <ContextMenu>
-      <ContextMenuTrigger className="flex min-h-52 flex-col">
-        <Card className="flex min-h-52 flex-col h-full">
-          <CardHeader className="pb-2">
-            <div className="flex items-start gap-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
-                <Icon className="size-5" />
+    <BlurFade duration={0.25} blur="4px" className="h-full">
+      <ContextMenu>
+        <ContextMenuTrigger className="flex min-h-52 flex-col h-full">
+          <MagicCard className="flex min-h-52 flex-col h-full shadow-xs">
+            <CardHeader className="pb-2">
+              <div className="flex items-start gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
+                  <Icon className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
+                  <CardDescription className="truncate">
+                    {profile.profession || (profile.type === "team" ? "Agent 团队" : "Agent")}
+                  </CardDescription>
+                </div>
               </div>
-              <div className="min-w-0">
-                <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
-                <CardDescription className="truncate">
-                  {profile.profession || (profile.type === "team" ? "Agent 团队" : "Agent")}
-                </CardDescription>
+            </CardHeader>
+            <CardContent className="min-h-0 flex-1">
+              <p className="line-clamp-3 text-sm text-muted-foreground">
+                {profile.description || profile.instructions}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-1">
+                {profile.tags.slice(0, 4).map((tag) => (
+                  <Badge key={tag} variant="secondary" className="text-[10px]">
+                    {tag}
+                  </Badge>
+                ))}
+                {profile.type === "team" ? (
+                  <Badge variant="outline" className="text-[10px]">
+                    {profile.members.length} 位成员
+                  </Badge>
+                ) : null}
               </div>
-            </div>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1">
-            <p className="line-clamp-3 text-sm text-muted-foreground">
-              {profile.description || profile.instructions}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-1">
-              {profile.tags.slice(0, 4).map((tag) => (
-                <Badge key={tag} variant="secondary" className="text-[10px]">
-                  {tag}
-                </Badge>
-              ))}
-              {profile.type === "team" ? (
-                <Badge variant="outline" className="text-[10px]">
-                  {profile.members.length} 位成员
-                </Badge>
+            </CardContent>
+            <CardFooter className="gap-1.5">
+              <Button size="sm" className="flex-1" onClick={onUse}>
+                使用
+              </Button>
+              {!isDefault ? (
+                <>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="编辑"
+                    aria-label="编辑"
+                    onClick={onEdit}
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    title="删除"
+                    aria-label="删除"
+                    onClick={onDelete}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </>
               ) : null}
-            </div>
-          </CardContent>
-          <CardFooter className="gap-1.5">
-            <Button size="sm" className="flex-1" onClick={onUse}>
-              使用
-            </Button>
-            {!isDefault ? (
-              <>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  title="编辑"
-                  aria-label="编辑"
-                  onClick={onEdit}
-                >
-                  <PencilIcon />
-                </Button>
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  title="删除"
-                  aria-label="删除"
-                  onClick={onDelete}
-                >
-                  <Trash2Icon />
-                </Button>
-              </>
-            ) : null}
-          </CardFooter>
-        </Card>
-      </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        <ContextMenuGroup>
-          <ContextMenuLabel className="truncate max-w-44">{profile.displayName}</ContextMenuLabel>
-          <ContextMenuItem onClick={onUse}>
-            <Icon className="text-muted-foreground" />
-            <span>立即使用此专家</span>
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleCopyInfo}>
-            <CopyIcon className="text-muted-foreground" />
-            <span>复制专家名称</span>
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        {!isDefault ? (
-          <>
-            <ContextMenuSeparator />
-            <ContextMenuGroup>
-              <ContextMenuItem onClick={onEdit}>
-                <PencilIcon className="text-muted-foreground" />
-                <span>编辑配置</span>
-                <ContextMenuShortcut>F2</ContextMenuShortcut>
-              </ContextMenuItem>
-              <ContextMenuItem variant="destructive" onClick={onDelete}>
-                <Trash2Icon className="text-muted-foreground" />
-                <span>删除专家</span>
-                <ContextMenuShortcut>⌫</ContextMenuShortcut>
-              </ContextMenuItem>
-            </ContextMenuGroup>
-          </>
-        ) : null}
-      </ContextMenuContent>
-    </ContextMenu>
+            </CardFooter>
+          </MagicCard>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-48">
+          <ContextMenuGroup>
+            <ContextMenuLabel className="truncate max-w-44">{profile.displayName}</ContextMenuLabel>
+            <ContextMenuItem onClick={onUse}>
+              <Icon className="text-muted-foreground" />
+              <span>立即使用此专家</span>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleCopyInfo}>
+              <CopyIcon className="text-muted-foreground" />
+              <span>复制专家名称</span>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          {!isDefault ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuGroup>
+                <ContextMenuItem onClick={onEdit}>
+                  <PencilIcon className="text-muted-foreground" />
+                  <span>编辑配置</span>
+                  <ContextMenuShortcut>F2</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem variant="destructive" onClick={onDelete}>
+                  <Trash2Icon className="text-muted-foreground" />
+                  <span>删除专家</span>
+                  <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                </ContextMenuItem>
+              </ContextMenuGroup>
+            </>
+          ) : null}
+        </ContextMenuContent>
+      </ContextMenu>
+    </BlurFade>
   );
 }

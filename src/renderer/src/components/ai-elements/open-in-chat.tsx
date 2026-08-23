@@ -575,6 +575,9 @@ export async function openPathInApp(appId: string, targetPath: string, appName: 
   }
 }
 
+/** 首选 IDE 偏好。与项目其余 localStorage 键名统一走 mastra-work: 前缀 */
+const PREFERRED_IDE_KEY = "mastra-work:preferred-ide";
+
 /**
  * OpenInIde: 动态检测并列出用户操作系统中真正已安装的各类本地 IDE 与系统工具
  */
@@ -615,7 +618,7 @@ export function OpenInIde({ className }: { className?: string }) {
 
   const [preferredId, setPreferredId] = React.useState<string>(() => {
     try {
-      return localStorage.getItem("mastra:preferred_ide") || "trae";
+      return localStorage.getItem(PREFERRED_IDE_KEY) || "trae";
     } catch {
       return "trae";
     }
@@ -670,7 +673,7 @@ export function OpenInIde({ className }: { className?: string }) {
           }
           const fallback = mapped[0]?.id || "terminal";
           try {
-            localStorage.setItem("mastra:preferred_ide", fallback);
+            localStorage.setItem(PREFERRED_IDE_KEY, fallback);
           } catch {
             // ignore
           }
@@ -709,7 +712,7 @@ export function OpenInIde({ className }: { className?: string }) {
     }
     setPreferredId(ide.id);
     try {
-      localStorage.setItem("mastra:preferred_ide", ide.id);
+      localStorage.setItem(PREFERRED_IDE_KEY, ide.id);
     } catch {
       // 忽略
     }

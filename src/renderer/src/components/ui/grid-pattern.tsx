@@ -1,7 +1,8 @@
-import * as React from "react";
+import { useId } from "react";
+
 import { cn } from "@/lib/utils";
 
-export interface GridPatternProps extends React.SVGProps<SVGSVGElement> {
+interface GridPatternProps extends React.SVGProps<SVGSVGElement> {
   width?: number;
   height?: number;
   x?: number;
@@ -9,7 +10,7 @@ export interface GridPatternProps extends React.SVGProps<SVGSVGElement> {
   squares?: Array<[x: number, y: number]>;
   strokeDasharray?: string;
   className?: string;
-  maxOpacity?: number;
+  [key: string]: unknown;
 }
 
 export function GridPattern({
@@ -20,16 +21,15 @@ export function GridPattern({
   strokeDasharray = "0",
   squares,
   className,
-  maxOpacity = 0.5,
   ...props
 }: GridPatternProps) {
-  const id = React.useId();
+  const id = useId();
 
   return (
     <svg
       aria-hidden="true"
       className={cn(
-        "pointer-events-none absolute inset-0 size-full fill-gray-400/30 stroke-gray-400/30 mask-[radial-gradient(white,transparent_80%)]",
+        "pointer-events-none absolute inset-0 h-full w-full fill-gray-400/30 stroke-gray-400/30",
         className,
       )}
       {...props}
@@ -42,17 +42,14 @@ export function GridPattern({
       <rect width="100%" height="100%" strokeWidth={0} fill={`url(#${id})`} />
       {squares && (
         <svg x={x} y={y} className="overflow-visible">
-          {squares.map(([sqX, sqY], idx) => (
+          {squares.map(([x, y]) => (
             <rect
               strokeWidth="0"
-              key={`${sqX}-${sqY}-${idx}`}
+              key={`${x}-${y}`}
               width={width - 1}
               height={height - 1}
-              x={sqX * width + 1}
-              y={sqY * height + 1}
-              fill="currentColor"
-              className="transition duration-500 hover:opacity-80"
-              style={{ opacity: maxOpacity }}
+              x={x * width + 1}
+              y={y * height + 1}
             />
           ))}
         </svg>

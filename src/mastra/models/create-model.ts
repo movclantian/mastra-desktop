@@ -23,6 +23,21 @@ export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export const WORKBENCH_GATEWAY_ID = "mastra-work";
 
+/** Mastra registry provider id 到实际 API 协议的唯一映射。 */
+export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
+  switch (registryId) {
+    case "anthropic":
+      return "anthropic";
+    case "google":
+    case "gemini":
+      return "gemini";
+    case "openai":
+      return "openai";
+    default:
+      return undefined;
+  }
+}
+
 export function createGatewayModel(options: {
   modelId: string;
   apiKey: string;

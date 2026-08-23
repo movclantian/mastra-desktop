@@ -166,6 +166,9 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
       const root = builtinSkillsDirectory();
       const entries = await readdir(root, { withFileTypes: true });
       const query = (c.req.query("query") ?? "").trim().toLocaleLowerCase();
+      // refresh=1:用户点了刷新,穿透 skills.sh 的 24 小时缓存重新拉取。
+      // 内置技能读本地目录、市场技能直连 GitHub,两者本来就没有缓存要绕。
+      const forceRefresh = c.req.query("refresh") === "1";
       const builtinSkills = await Promise.all(
         entries
           .filter((entry) => entry.isDirectory())
@@ -185,7 +188,7 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
         const timeoutPromise = new Promise<SkillsShSkill[]>((_, reject) =>
           setTimeout(() => reject(new Error("skills.sh 响应超时")), 5000),
         );
-        skillsSh = await Promise.race([listSkillsShSkills(query), timeoutPromise]);
+        skillsSh = await Promise.race([listSkillsShSkills(query, forceRefresh), timeoutPromise]);
       } catch (error) {
         skillsShError = error instanceof Error ? error.message : "skills.sh 暂时不可用";
       }

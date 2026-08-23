@@ -22,6 +22,15 @@ import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
  * 资料库附件输入处理器 (docs/en/docs/agents/processors.mdx):
  * 在请求到达模型之前,把消息里指向资料库的稳定 URL 解析为真实内容。
  */
+/** 未显式传入预算时的默认附件 token 上限。 */
+const DEFAULT_ATTACHMENT_TOKEN_BUDGET = 32_000;
+/** token → 字符换算系数(OpenAI 经验值,1 token ≈ 3 字符,非精确)。 */
+const CHARS_PER_TOKEN_APPROX = 3;
+/** 图片/音频附件的 token 估算:每 N 字节计 1 token,且不低于该下限。 */
+const IMAGE_BYTES_PER_TOKEN = 1_024;
+const AUDIO_BYTES_PER_TOKEN = 512;
+const MIN_MEDIA_ATTACHMENT_TOKENS = 1_024;
+
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
   async processLLMRequest({ prompt, requestContext }) {
@@ -31,7 +40,8 @@ export const libraryAttachmentProcessor: InputProcessor = {
     const capabilities = requestContext?.get(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY) as
       | { vision?: boolean; audio?: boolean }
       | undefined;
-    let remainingTokens = typeof tokenBudget === "number" ? Math.max(0, tokenBudget) : 32_000;
+    let remainingTokens =
+      typeof tokenBudget === "number" ? Math.max(0, tokenBudget) : DEFAULT_ATTACHMENT_TOKEN_BUDGET;
     let changed = false;
     const resolvedPrompt = [...prompt];
     for (let messageIndex = prompt.length - 1; messageIndex >= 0; messageIndex -= 1) {

@@ -32,6 +32,7 @@ import {
   AttachmentTrigger,
 } from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
+import { BlurFade } from "@/components/ui/blur-fade";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
@@ -331,386 +332,202 @@ export const MessageItem = React.memo(function MessageItem({
   if (isUser) {
     return (
       <MessageScrollerItem messageId={message.id} scrollAnchor>
-        <Message align="end">
-          <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-            <UserAvatar userId={userId} />
-          </MessageAvatar>
-          <MessageContent className="items-end">
-            {editing ? (
-              <div
-                className="flex max-w-full self-end flex-col items-end gap-2"
-                style={{ width: editWidth ? `${editWidth}px` : "min(100%, 42rem)" }}
-              >
-                <Textarea
-                  autoFocus
-                  className="min-h-20 w-full resize-y"
-                  onChange={(event) => setEditText(event.target.value)}
-                  value={editText}
-                />
-                <div className="flex justify-end gap-1">
-                  <Button
-                    aria-label="取消编辑"
-                    onClick={() => {
-                      setEditText(text);
-                      setEditing(false);
-                    }}
-                    size="icon-xs"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <XIcon />
-                  </Button>
-                  <Button
-                    aria-label="保存编辑"
-                    disabled={!editText.trim()}
-                    onClick={() => {
-                      onEdit(message.id, editText.trim());
-                      setEditing(false);
-                    }}
-                    size="icon-xs"
-                    type="button"
-                  >
-                    <CheckIcon />
-                  </Button>
-                </div>
-              </div>
-            ) : branchVersions.length > 1 ? (
-              <MessageBranch
-                className="group/actions w-fit max-w-full justify-items-end"
-                defaultBranch={activeBranchIndex}
-                onBranchChange={(index) =>
-                  onBranchChange?.(
-                    branch?.rootId ?? message.id,
-                    branchVersions[index]?.id ?? branch?.currentVersionId ?? "",
-                  )
-                }
-              >
-                <MessageBranchContent>
-                  {branchVersions.map((item, versionIndex) => {
-                    const versionMessage = item.message;
-                    const versionText = versionMessage.parts
-                      .filter((part) => part.type === "text")
-                      .map((part) => part.text)
-                      .join("\n");
-                    const versionSkills = Array.isArray(versionMessage.metadata?.skillNames)
-                      ? versionMessage.metadata.skillNames.filter(
-                          (value): value is string => typeof value === "string" && value.length > 0,
-                        )
-                      : [];
-                    const versionFiles = versionMessage.parts.filter(
-                      (part) => part.type === "file",
-                    );
-                    const versionFileReferences = getMessageFileReferences(versionMessage);
-                    return (
-                      <React.Fragment key={item.id}>
-                        {versionSkills.length > 0 ? (
-                          <div className="flex max-w-full flex-wrap justify-end gap-1">
-                            {versionSkills.map((skill) => (
-                              <Badge
-                                className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
-                                key={skill}
-                                variant="outline"
-                              >
-                                <SparklesIcon className="size-3" />
-                                {skill}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : null}
-                        <MessageFileReferenceBadges references={versionFileReferences} />
-                        <MessageAttachments
-                          align="end"
-                          files={versionFiles}
-                          messageId={versionMessage.id}
-                        />
-                        {versionText ? (
-                          <ContextMenu>
-                            <ContextMenuTrigger className="max-w-full">
-                              <Bubble
-                                className="max-w-full"
-                                ref={versionIndex === activeBranchIndex ? bubbleRef : undefined}
-                              >
-                                <BubbleContent>{versionText}</BubbleContent>
-                              </Bubble>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent className="w-48">
-                              <ContextMenuGroup>
-                                <ContextMenuItem onClick={() => handleCopy()}>
-                                  <CopyIcon className="text-muted-foreground" />
-                                  <span>复制内容</span>
-                                  <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-                                </ContextMenuItem>
-                                <ContextMenuItem onClick={startEditing}>
-                                  <PencilIcon className="text-muted-foreground" />
-                                  <span>编辑消息</span>
-                                </ContextMenuItem>
-                              </ContextMenuGroup>
-                              <ContextMenuSeparator />
-                              <ContextMenuGroup>
-                                <ContextMenuItem
-                                  onClick={() => onCloneMessage(versionMessage.id, messageIndex)}
-                                >
-                                  <MessageSquarePlusIcon className="text-muted-foreground" />
-                                  <span>克隆此消息</span>
-                                </ContextMenuItem>
-                                <ContextMenuItem onClick={() => onClone(messageIndex)}>
-                                  <GitForkIcon className="text-muted-foreground" />
-                                  <span>从此处克隆线程</span>
-                                </ContextMenuItem>
-                              </ContextMenuGroup>
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        ) : null}
-                      </React.Fragment>
-                    );
-                  })}
-                </MessageBranchContent>
-                <MessageFooter className={bubbleActionFooterClassName}>
-                  <MessageBranchSelector>
-                    <MessageBranchPrevious />
-                    <MessageBranchPage />
-                    <MessageBranchNext />
-                  </MessageBranchSelector>
-                  <Button
-                    aria-label="编辑消息"
-                    onClick={startEditing}
-                    size="icon-xs"
-                    title="编辑"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <PencilIcon />
-                  </Button>
-                </MessageFooter>
-              </MessageBranch>
-            ) : (
-              <div className="group/actions flex w-fit max-w-full flex-col items-end gap-0.5">
-                <MessageFileReferenceBadges references={fileReferences} />
-                {skillNames.length > 0 ? (
-                  <div className="flex max-w-full flex-wrap justify-end gap-1">
-                    {skillNames.map((skill) => (
-                      <Badge
-                        className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
-                        key={skill}
-                        variant="outline"
-                      >
-                        <SparklesIcon className="size-3" />
-                        {skill}
-                      </Badge>
-                    ))}
+        <BlurFade duration={0.2} blur="3px">
+          <Message align="end">
+            <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
+              <UserAvatar userId={userId} />
+            </MessageAvatar>
+            <MessageContent className="items-end">
+              {editing ? (
+                <div
+                  className="flex max-w-full self-end flex-col items-end gap-2"
+                  style={{ width: editWidth ? `${editWidth}px` : "min(100%, 42rem)" }}
+                >
+                  <Textarea
+                    autoFocus
+                    className="min-h-20 w-full resize-y"
+                    onChange={(event) => setEditText(event.target.value)}
+                    value={editText}
+                  />
+                  <div className="flex justify-end gap-1">
+                    <Button
+                      aria-label="取消编辑"
+                      onClick={() => {
+                        setEditText(text);
+                        setEditing(false);
+                      }}
+                      size="icon-xs"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <XIcon />
+                    </Button>
+                    <Button
+                      aria-label="保存编辑"
+                      disabled={!editText.trim()}
+                      onClick={() => {
+                        onEdit(message.id, editText.trim());
+                        setEditing(false);
+                      }}
+                      size="icon-xs"
+                      type="button"
+                    >
+                      <CheckIcon />
+                    </Button>
                   </div>
-                ) : null}
-                <MessageAttachments align="end" files={files} messageId={message.id} />
-                {text ? (
-                  <ContextMenu>
-                    <ContextMenuTrigger className="max-w-full">
-                      <Bubble className="max-w-full" ref={bubbleRef}>
-                        <BubbleContent>{text}</BubbleContent>
-                      </Bubble>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent className="w-48">
-                      <ContextMenuGroup>
-                        <ContextMenuItem onClick={() => handleCopy()}>
-                          <CopyIcon className="text-muted-foreground" />
-                          <span>复制内容</span>
-                          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-                        </ContextMenuItem>
-                        <ContextMenuItem onClick={startEditing}>
-                          <PencilIcon className="text-muted-foreground" />
-                          <span>编辑消息</span>
-                        </ContextMenuItem>
-                      </ContextMenuGroup>
-                      <ContextMenuSeparator />
-                      <ContextMenuGroup>
-                        <ContextMenuItem onClick={() => onCloneMessage(message.id, messageIndex)}>
-                          <MessageSquarePlusIcon className="text-muted-foreground" />
-                          <span>克隆此消息</span>
-                        </ContextMenuItem>
-                        <ContextMenuItem onClick={() => onClone(messageIndex)}>
-                          <GitForkIcon className="text-muted-foreground" />
-                          <span>从此处克隆线程</span>
-                        </ContextMenuItem>
-                      </ContextMenuGroup>
-                    </ContextMenuContent>
-                  </ContextMenu>
-                ) : null}
-                <MessageFooter className={bubbleActionFooterClassName}>
-                  <Button
-                    aria-label="编辑消息"
-                    onClick={startEditing}
-                    size="icon-xs"
-                    title="编辑"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <PencilIcon />
-                  </Button>
-                </MessageFooter>
-              </div>
-            )}
-          </MessageContent>
-        </Message>
-      </MessageScrollerItem>
-    );
-  }
-
-  // 助手消息:ghost Bubble + MessageResponse(无框 markdown,message-markdown.tsx 模式)
-  return (
-    <MessageScrollerItem messageId={message.id}>
-      <Message>
-        {/* translate-y-0 覆盖官方 footer 触发的 -translate-y-8:
-            官方设计 Avatar 底对齐时靠它避开 footer 行;我们顶部对齐(self-start)
-            后上移会把旧消息(带 footer)的 Avatar 移出气泡顶部导致不显示 */}
-        <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-          <AssistantAvatar />
-        </MessageAvatar>
-        <MessageContent>
-          {/* px-0 固定间距:官方默认 px-3,仅当消息内出现 ghost Bubble(正文到达)才变
-              px-0,会导致流式初期头像与名称间距先宽后窄的跳动;助手消息恒为无框样式 */}
-          <MessageHeader className="px-0">MastraWork</MessageHeader>
-          <MessageAttachments files={files} messageId={message.id} />
-          {/* 流式起步阶段(尚无任何文本/推理/工具 part)立即显示思考占位,
-              避免头像+名称出现后空白一段,再突然弹出"思考"卡片 */}
-          {isStreaming && assistantSegments.length === 0 ? <Shimmer>思考中…</Shimmer> : null}
-          <CitationProvider entries={citationEntries}>
-            {assistantSwitchableVersions.length >= 2 ? (
-              <MessageBranch
-                defaultBranch={assistantActiveBranchIndex}
-                onBranchChange={(index) =>
-                  onBranchChange?.(
-                    branch?.rootId ?? message.id,
-                    assistantSwitchableVersions[index]?.id ?? branch?.currentVersionId ?? "",
-                  )
-                }
-              >
-                <MessageBranchContent>
-                  {assistantSwitchableVersions.map((item) => (
-                    <React.Fragment key={item.id}>
-                      {getAssistantSegments(item.message.parts, item.message.id).map((segment) =>
-                        segment.type === "trace" ? (
-                          <AssistantTrace
-                            key={segment.key}
-                            isStreaming={false}
-                            parts={segment.parts}
-                          />
-                        ) : segment.type === "interaction" ? (
-                          <AgentInteractionHistory
-                            interaction={segment.interaction}
-                            key={segment.key}
-                          />
-                        ) : (
-                          <ContextMenu key={segment.key}>
-                            <ContextMenuTrigger className="w-full">
-                              <Bubble variant="ghost">
-                                <BubbleContent>
-                                  <MessageResponse
-                                    components={CITATION_MARKDOWN_COMPONENTS}
-                                    rehypePlugins={CITATION_REHYPE_PLUGINS}
-                                  >
-                                    {segment.text}
-                                  </MessageResponse>
-                                </BubbleContent>
-                              </Bubble>
-                            </ContextMenuTrigger>
-                            <ContextMenuContent className="w-48">
-                              <ContextMenuGroup>
-                                <ContextMenuItem onClick={() => handleCopy()}>
-                                  <CopyIcon className="text-muted-foreground" />
-                                  <span>复制回答内容</span>
-                                  <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-                                </ContextMenuItem>
-                                <ContextMenuItem onClick={() => onRetry(message.id)}>
-                                  <RefreshCcwIcon className="text-muted-foreground" />
-                                  <span>重新生成</span>
-                                  <ContextMenuShortcut>⌘R</ContextMenuShortcut>
-                                </ContextMenuItem>
-                              </ContextMenuGroup>
-                              <ContextMenuSeparator />
-                              <ContextMenuGroup>
-                                <ContextMenuItem
-                                  onClick={() => onCloneMessage(message.id, messageIndex)}
+                </div>
+              ) : branchVersions.length > 1 ? (
+                <MessageBranch
+                  className="group/actions w-fit max-w-full justify-items-end"
+                  defaultBranch={activeBranchIndex}
+                  onBranchChange={(index) =>
+                    onBranchChange?.(
+                      branch?.rootId ?? message.id,
+                      branchVersions[index]?.id ?? branch?.currentVersionId ?? "",
+                    )
+                  }
+                >
+                  <MessageBranchContent>
+                    {branchVersions.map((item, versionIndex) => {
+                      const versionMessage = item.message;
+                      const versionText = versionMessage.parts
+                        .filter((part) => part.type === "text")
+                        .map((part) => part.text)
+                        .join("\n");
+                      const versionSkills = Array.isArray(versionMessage.metadata?.skillNames)
+                        ? versionMessage.metadata.skillNames.filter(
+                            (value): value is string =>
+                              typeof value === "string" && value.length > 0,
+                          )
+                        : [];
+                      const versionFiles = versionMessage.parts.filter(
+                        (part) => part.type === "file",
+                      );
+                      const versionFileReferences = getMessageFileReferences(versionMessage);
+                      return (
+                        <React.Fragment key={item.id}>
+                          {versionSkills.length > 0 ? (
+                            <div className="flex max-w-full flex-wrap justify-end gap-1">
+                              {versionSkills.map((skill) => (
+                                <Badge
+                                  className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
+                                  key={skill}
+                                  variant="outline"
                                 >
-                                  <MessageSquarePlusIcon className="text-muted-foreground" />
-                                  <span>克隆此轮对话</span>
-                                </ContextMenuItem>
-                                <ContextMenuItem onClick={() => onClone(messageIndex)}>
-                                  <GitForkIcon className="text-muted-foreground" />
-                                  <span>从此处克隆线程</span>
-                                </ContextMenuItem>
-                              </ContextMenuGroup>
-                            </ContextMenuContent>
-                          </ContextMenu>
-                        ),
-                      )}
-                    </React.Fragment>
-                  ))}
-                </MessageBranchContent>
-                <MessageFooter className={actionFooterClassName}>
-                  <MessageBranchSelector>
-                    <MessageBranchPrevious />
-                    <MessageBranchPage />
-                    <MessageBranchNext />
-                  </MessageBranchSelector>
-                  {assistantActionButtons}
-                </MessageFooter>
-              </MessageBranch>
-            ) : null}
-            {assistantSwitchableVersions.length < 2
-              ? assistantSegments.map((segment) =>
-                  segment.type === "trace" ? (
-                    <AssistantTrace
-                      key={segment.key}
-                      isStreaming={isStreaming}
-                      parts={segment.parts}
-                    />
-                  ) : segment.type === "interaction" ? (
-                    <AgentInteractionHistory
-                      interaction={
-                        segment.interaction.toolName === "submit_plan"
-                          ? {
-                              ...segment.interaction,
-                              plan: getPlanDraft(
-                                [message],
-                                asString(segment.interaction.suspendPayload?.path),
-                              ),
-                            }
-                          : segment.interaction
-                      }
-                      key={segment.key}
-                    />
-                  ) : (
-                    <ContextMenu key={segment.key}>
-                      <ContextMenuTrigger className="w-full">
-                        <Bubble variant="ghost">
-                          <BubbleContent>
-                            {/* 脚注引用换成 InlineCitation 悬浮卡;相邻角标合并;定义区隐藏 */}
-                            <MessageResponse
-                              components={CITATION_MARKDOWN_COMPONENTS}
-                              rehypePlugins={CITATION_REHYPE_PLUGINS}
-                            >
-                              {withResolvedFootnotes(segment.text, citationEntries)}
-                            </MessageResponse>
-                          </BubbleContent>
+                                  <SparklesIcon className="size-3" />
+                                  {skill}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : null}
+                          <MessageFileReferenceBadges references={versionFileReferences} />
+                          <MessageAttachments
+                            align="end"
+                            files={versionFiles}
+                            messageId={versionMessage.id}
+                          />
+                          {versionText ? (
+                            <ContextMenu>
+                              <ContextMenuTrigger className="max-w-full">
+                                <Bubble
+                                  className="max-w-full"
+                                  ref={versionIndex === activeBranchIndex ? bubbleRef : undefined}
+                                >
+                                  <BubbleContent>{versionText}</BubbleContent>
+                                </Bubble>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent className="w-48">
+                                <ContextMenuGroup>
+                                  <ContextMenuItem onClick={() => handleCopy()}>
+                                    <CopyIcon className="text-muted-foreground" />
+                                    <span>复制内容</span>
+                                    <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                                  </ContextMenuItem>
+                                  <ContextMenuItem onClick={startEditing}>
+                                    <PencilIcon className="text-muted-foreground" />
+                                    <span>编辑消息</span>
+                                  </ContextMenuItem>
+                                </ContextMenuGroup>
+                                <ContextMenuSeparator />
+                                <ContextMenuGroup>
+                                  <ContextMenuItem
+                                    onClick={() => onCloneMessage(versionMessage.id, messageIndex)}
+                                  >
+                                    <MessageSquarePlusIcon className="text-muted-foreground" />
+                                    <span>克隆此消息</span>
+                                  </ContextMenuItem>
+                                  <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                                    <GitForkIcon className="text-muted-foreground" />
+                                    <span>从此处克隆线程</span>
+                                  </ContextMenuItem>
+                                </ContextMenuGroup>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          ) : null}
+                        </React.Fragment>
+                      );
+                    })}
+                  </MessageBranchContent>
+                  <MessageFooter className={bubbleActionFooterClassName}>
+                    <MessageBranchSelector>
+                      <MessageBranchPrevious />
+                      <MessageBranchPage />
+                      <MessageBranchNext />
+                    </MessageBranchSelector>
+                    <Button
+                      aria-label="编辑消息"
+                      onClick={startEditing}
+                      size="icon-xs"
+                      title="编辑"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <PencilIcon />
+                    </Button>
+                  </MessageFooter>
+                </MessageBranch>
+              ) : (
+                <div className="group/actions flex w-fit max-w-full flex-col items-end gap-0.5">
+                  <MessageFileReferenceBadges references={fileReferences} />
+                  {skillNames.length > 0 ? (
+                    <div className="flex max-w-full flex-wrap justify-end gap-1">
+                      {skillNames.map((skill) => (
+                        <Badge
+                          className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
+                          key={skill}
+                          variant="outline"
+                        >
+                          <SparklesIcon className="size-3" />
+                          {skill}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : null}
+                  <MessageAttachments align="end" files={files} messageId={message.id} />
+                  {text ? (
+                    <ContextMenu>
+                      <ContextMenuTrigger className="max-w-full">
+                        <Bubble className="max-w-full" ref={bubbleRef}>
+                          <BubbleContent>{text}</BubbleContent>
                         </Bubble>
                       </ContextMenuTrigger>
                       <ContextMenuContent className="w-48">
                         <ContextMenuGroup>
                           <ContextMenuItem onClick={() => handleCopy()}>
                             <CopyIcon className="text-muted-foreground" />
-                            <span>复制回答内容</span>
+                            <span>复制内容</span>
                             <ContextMenuShortcut>⌘C</ContextMenuShortcut>
                           </ContextMenuItem>
-                          <ContextMenuItem onClick={() => onRetry(message.id)}>
-                            <RefreshCcwIcon className="text-muted-foreground" />
-                            <span>重新生成</span>
-                            <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                          <ContextMenuItem onClick={startEditing}>
+                            <PencilIcon className="text-muted-foreground" />
+                            <span>编辑消息</span>
                           </ContextMenuItem>
                         </ContextMenuGroup>
                         <ContextMenuSeparator />
                         <ContextMenuGroup>
                           <ContextMenuItem onClick={() => onCloneMessage(message.id, messageIndex)}>
                             <MessageSquarePlusIcon className="text-muted-foreground" />
-                            <span>克隆此轮对话</span>
+                            <span>克隆此消息</span>
                           </ContextMenuItem>
                           <ContextMenuItem onClick={() => onClone(messageIndex)}>
                             <GitForkIcon className="text-muted-foreground" />
@@ -719,19 +536,210 @@ export const MessageItem = React.memo(function MessageItem({
                         </ContextMenuGroup>
                       </ContextMenuContent>
                     </ContextMenu>
-                  ),
-                )
-              : null}
-          </CitationProvider>
-          {/* 操作栏与分支选择器保持同一行,且只在悬停/键盘聚焦时出现;
+                  ) : null}
+                  <MessageFooter className={bubbleActionFooterClassName}>
+                    <Button
+                      aria-label="编辑消息"
+                      onClick={startEditing}
+                      size="icon-xs"
+                      title="编辑"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <PencilIcon />
+                    </Button>
+                  </MessageFooter>
+                </div>
+              )}
+            </MessageContent>
+          </Message>
+        </BlurFade>
+      </MessageScrollerItem>
+    );
+  }
+
+  // 助手消息:ghost Bubble + MessageResponse(无框 markdown,message-markdown.tsx 模式)
+  return (
+    <MessageScrollerItem messageId={message.id}>
+      <BlurFade duration={0.2} blur="3px">
+        <Message>
+          {/* translate-y-0 覆盖官方 footer 触发的 -translate-y-8:
+            官方设计 Avatar 底对齐时靠它避开 footer 行;我们顶部对齐(self-start)
+            后上移会把旧消息(带 footer)的 Avatar 移出气泡顶部导致不显示 */}
+          <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
+            <AssistantAvatar />
+          </MessageAvatar>
+          <MessageContent>
+            {/* px-0 固定间距:官方默认 px-3,仅当消息内出现 ghost Bubble(正文到达)才变
+              px-0,会导致流式初期头像与名称间距先宽后窄的跳动;助手消息恒为无框样式 */}
+            <MessageHeader className="px-0">MastraWork</MessageHeader>
+            <MessageAttachments files={files} messageId={message.id} />
+            {/* 流式起步阶段(尚无任何文本/推理/工具 part)立即显示思考占位,
+              避免头像+名称出现后空白一段,再突然弹出"思考"卡片 */}
+            {isStreaming && assistantSegments.length === 0 ? <Shimmer>思考中…</Shimmer> : null}
+            <CitationProvider entries={citationEntries}>
+              {assistantSwitchableVersions.length >= 2 ? (
+                <MessageBranch
+                  defaultBranch={assistantActiveBranchIndex}
+                  onBranchChange={(index) =>
+                    onBranchChange?.(
+                      branch?.rootId ?? message.id,
+                      assistantSwitchableVersions[index]?.id ?? branch?.currentVersionId ?? "",
+                    )
+                  }
+                >
+                  <MessageBranchContent>
+                    {assistantSwitchableVersions.map((item) => (
+                      <React.Fragment key={item.id}>
+                        {getAssistantSegments(item.message.parts, item.message.id).map((segment) =>
+                          segment.type === "trace" ? (
+                            <AssistantTrace
+                              key={segment.key}
+                              isStreaming={false}
+                              parts={segment.parts}
+                            />
+                          ) : segment.type === "interaction" ? (
+                            <AgentInteractionHistory
+                              interaction={segment.interaction}
+                              key={segment.key}
+                            />
+                          ) : (
+                            <ContextMenu key={segment.key}>
+                              <ContextMenuTrigger className="w-full">
+                                <Bubble variant="ghost">
+                                  <BubbleContent>
+                                    <MessageResponse
+                                      components={CITATION_MARKDOWN_COMPONENTS}
+                                      rehypePlugins={CITATION_REHYPE_PLUGINS}
+                                    >
+                                      {segment.text}
+                                    </MessageResponse>
+                                  </BubbleContent>
+                                </Bubble>
+                              </ContextMenuTrigger>
+                              <ContextMenuContent className="w-48">
+                                <ContextMenuGroup>
+                                  <ContextMenuItem onClick={() => handleCopy()}>
+                                    <CopyIcon className="text-muted-foreground" />
+                                    <span>复制回答内容</span>
+                                    <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                                  </ContextMenuItem>
+                                  <ContextMenuItem onClick={() => onRetry(message.id)}>
+                                    <RefreshCcwIcon className="text-muted-foreground" />
+                                    <span>重新生成</span>
+                                    <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                                  </ContextMenuItem>
+                                </ContextMenuGroup>
+                                <ContextMenuSeparator />
+                                <ContextMenuGroup>
+                                  <ContextMenuItem
+                                    onClick={() => onCloneMessage(message.id, messageIndex)}
+                                  >
+                                    <MessageSquarePlusIcon className="text-muted-foreground" />
+                                    <span>克隆此轮对话</span>
+                                  </ContextMenuItem>
+                                  <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                                    <GitForkIcon className="text-muted-foreground" />
+                                    <span>从此处克隆线程</span>
+                                  </ContextMenuItem>
+                                </ContextMenuGroup>
+                              </ContextMenuContent>
+                            </ContextMenu>
+                          ),
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </MessageBranchContent>
+                  <MessageFooter className={actionFooterClassName}>
+                    <MessageBranchSelector>
+                      <MessageBranchPrevious />
+                      <MessageBranchPage />
+                      <MessageBranchNext />
+                    </MessageBranchSelector>
+                    {assistantActionButtons}
+                  </MessageFooter>
+                </MessageBranch>
+              ) : null}
+              {assistantSwitchableVersions.length < 2
+                ? assistantSegments.map((segment) =>
+                    segment.type === "trace" ? (
+                      <AssistantTrace
+                        key={segment.key}
+                        isStreaming={isStreaming}
+                        parts={segment.parts}
+                      />
+                    ) : segment.type === "interaction" ? (
+                      <AgentInteractionHistory
+                        interaction={
+                          segment.interaction.toolName === "submit_plan"
+                            ? {
+                                ...segment.interaction,
+                                plan: getPlanDraft(
+                                  [message],
+                                  asString(segment.interaction.suspendPayload?.path),
+                                ),
+                              }
+                            : segment.interaction
+                        }
+                        key={segment.key}
+                      />
+                    ) : (
+                      <ContextMenu key={segment.key}>
+                        <ContextMenuTrigger className="w-full">
+                          <Bubble variant="ghost">
+                            <BubbleContent>
+                              {/* 脚注引用换成 InlineCitation 悬浮卡;相邻角标合并;定义区隐藏 */}
+                              <MessageResponse
+                                components={CITATION_MARKDOWN_COMPONENTS}
+                                rehypePlugins={CITATION_REHYPE_PLUGINS}
+                              >
+                                {withResolvedFootnotes(segment.text, citationEntries)}
+                              </MessageResponse>
+                            </BubbleContent>
+                          </Bubble>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent className="w-48">
+                          <ContextMenuGroup>
+                            <ContextMenuItem onClick={() => handleCopy()}>
+                              <CopyIcon className="text-muted-foreground" />
+                              <span>复制回答内容</span>
+                              <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                            </ContextMenuItem>
+                            <ContextMenuItem onClick={() => onRetry(message.id)}>
+                              <RefreshCcwIcon className="text-muted-foreground" />
+                              <span>重新生成</span>
+                              <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                            </ContextMenuItem>
+                          </ContextMenuGroup>
+                          <ContextMenuSeparator />
+                          <ContextMenuGroup>
+                            <ContextMenuItem
+                              onClick={() => onCloneMessage(message.id, messageIndex)}
+                            >
+                              <MessageSquarePlusIcon className="text-muted-foreground" />
+                              <span>克隆此轮对话</span>
+                            </ContextMenuItem>
+                            <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                              <GitForkIcon className="text-muted-foreground" />
+                              <span>从此处克隆线程</span>
+                            </ContextMenuItem>
+                          </ContextMenuGroup>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    ),
+                  )
+                : null}
+            </CitationProvider>
+            {/* 操作栏与分支选择器保持同一行,且只在悬停/键盘聚焦时出现;
               分支模式下操作栏在 MessageBranch 的 footer 里,这里只渲染无分支态。 */}
-          {!isStreaming && assistantSwitchableVersions.length < 2 ? (
-            <MessageFooter className={actionFooterClassName}>
-              {assistantActionButtons}
-            </MessageFooter>
-          ) : null}
-        </MessageContent>
-      </Message>
+            {!isStreaming && assistantSwitchableVersions.length < 2 ? (
+              <MessageFooter className={actionFooterClassName}>
+                {assistantActionButtons}
+              </MessageFooter>
+            ) : null}
+          </MessageContent>
+        </Message>
+      </BlurFade>
     </MessageScrollerItem>
   );
 });

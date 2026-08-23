@@ -238,7 +238,10 @@ const MODERATION_CATEGORIES = [
   "violence/graphic",
 ];
 
-/** PIIDetector 默认检测类型 */
+/**
+ * PIIDetector 默认检测类型。官方默认集未导出;url 与 uuid 是工作台额外覆盖的
+ * 两类敏感标识,因此这里不是对官方私有常量的无意漂移。
+ */
 const PII_TYPES = [
   "email",
   "phone",

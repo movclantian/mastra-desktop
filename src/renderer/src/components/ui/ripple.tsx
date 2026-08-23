@@ -1,11 +1,11 @@
-import * as React from "react";
+import React, { type ComponentPropsWithoutRef, type CSSProperties } from "react";
+
 import { cn } from "@/lib/utils";
 
-export interface RippleProps {
+interface RippleProps extends ComponentPropsWithoutRef<"div"> {
   mainCircleSize?: number;
   mainCircleOpacity?: number;
   numCircles?: number;
-  className?: string;
 }
 
 export const Ripple = React.memo(function Ripple({
@@ -13,38 +13,40 @@ export const Ripple = React.memo(function Ripple({
   mainCircleOpacity = 0.24,
   numCircles = 8,
   className,
+  ...props
 }: RippleProps) {
   return (
     <div
       className={cn(
-        "pointer-events-none absolute inset-0 select-none [mask-image:linear-gradient(to_bottom,white,transparent)]",
+        "pointer-events-none absolute inset-0 mask-[linear-gradient(to_bottom,white,transparent)] select-none",
         className,
       )}
+      {...props}
     >
       {Array.from({ length: numCircles }, (_, i) => {
         const size = mainCircleSize + i * 70;
         const opacity = mainCircleOpacity - i * 0.03;
         const animationDelay = `${i * 0.06}s`;
-        const borderStyle = i === numCircles - 1 ? "dashed" : "solid";
-        const borderOpacity = 5 + i * 5;
+        const borderStyle = "solid";
 
         return (
           <div
-            key={`ripple-circle-${i}`}
-            className={cn(
-              "animate-ripple absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border bg-foreground/5 shadow-xl",
-              `[--i:${i}]`,
-            )}
+            key={i}
+            className={`animate-ripple bg-foreground/25 absolute rounded-full border shadow-xl`}
             style={
               {
+                "--i": i,
                 width: `${size}px`,
                 height: `${size}px`,
                 opacity,
                 animationDelay,
                 borderStyle,
                 borderWidth: "1px",
-                borderColor: `rgba(var(--primary-rgb, 100, 100, 100), ${borderOpacity / 100})`,
-              } as React.CSSProperties
+                borderColor: `var(--foreground)`,
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%) scale(1)",
+              } as CSSProperties
             }
           />
         );

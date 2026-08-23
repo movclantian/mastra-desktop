@@ -1,7 +1,9 @@
 /**
  * 会话策略(模式 + 工具审批)的渲染层常量与规则助手。
  *
- * 与服务端一一对应,改任一侧都要同步另一侧:
+ * 服务端类型真相来自 @mastra/core/agent-controller;渲染进程不能依赖服务端 Agent
+ * 模块,所以这里只保留 UI 运行时需要的协议镜像与文案,不是第二份服务端类型定义。
+ * 改动类别或策略时仍要同步服务端解析逻辑:
  * - 模式 → src/mastra/agents/modes.ts
  * - 类别 / 策略 / 规则形状 → src/mastra/agents/permissions.ts
  *

@@ -1,3 +1,8 @@
+import type {
+  PermissionPolicy,
+  PermissionRules,
+  ToolCategory,
+} from "@mastra/core/agent-controller";
 import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace";
 
 /**
@@ -18,19 +23,28 @@ import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace"
  */
 
 // ---------------------------------------------------------------------------
-// 官方枚举与规则形状
+// 官方枚举与规则形状由 @mastra/core/agent-controller 提供。这里只保留
+// 运行时校验所需的键集合;TypeScript 类型不在本地重复定义。
 // ---------------------------------------------------------------------------
 
-export const TOOL_CATEGORIES = ["read", "edit", "execute", "mcp", "other"] as const;
-export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
+const DEFAULT_CATEGORY_POLICIES = {
+  read: "allow",
+  edit: "ask",
+  execute: "ask",
+  mcp: "ask",
+  other: "ask",
+} satisfies Record<ToolCategory, PermissionPolicy>;
 
-export const PERMISSION_POLICIES = ["allow", "ask", "deny"] as const;
-export type PermissionPolicy = (typeof PERMISSION_POLICIES)[number];
+const PERMISSION_POLICY_KEYS = {
+  allow: true,
+  ask: true,
+  deny: true,
+} satisfies Record<PermissionPolicy, true>;
 
-export interface PermissionRules {
-  categories: Partial<Record<ToolCategory, PermissionPolicy>>;
-  tools: Partial<Record<string, PermissionPolicy>>;
-}
+export const TOOL_CATEGORIES = Object.keys(DEFAULT_CATEGORY_POLICIES) as ToolCategory[];
+export const PERMISSION_POLICIES = Object.keys(PERMISSION_POLICY_KEYS) as PermissionPolicy[];
+
+export type { PermissionPolicy, PermissionRules, ToolCategory };
 
 /** chat 路由 → Agent defaultOptions 传递本线程生效规则的 RequestContext key */
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
@@ -42,7 +56,7 @@ export const SESSION_GRANTS_CONTEXT_KEY = "mastra-work:session-grants";
  * 让「默认行为」在代码里可读,而不是依赖框架兜底。
  */
 export const DEFAULT_PERMISSION_RULES: PermissionRules = {
-  categories: { read: "allow", edit: "ask", execute: "ask", mcp: "ask", other: "ask" },
+  categories: { ...DEFAULT_CATEGORY_POLICIES },
   tools: {},
 };
 

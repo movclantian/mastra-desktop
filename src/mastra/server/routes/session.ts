@@ -47,7 +47,11 @@ import {
   parseWebSearchSelection,
   WEB_SEARCH_CONTEXT_KEY,
 } from "../../tools";
-import { WORKSPACE_PATH_CONTEXT_KEY } from "../../workspace";
+import {
+  WORKSPACE_PATH_CONTEXT_KEY,
+  WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
+  WORKSPACE_THREAD_ID_CONTEXT_KEY,
+} from "../../workspace";
 import { getOwnedThread, getWorkMemory, type OwnedThread } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
 
@@ -110,6 +114,8 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   const mode = resolveMode(metadata.modeId);
   session.setMode(mode.id);
   const requestContext = c.get("requestContext");
+  requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
+  requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
   requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   requestContext.set(PERMISSION_RULES_CONTEXT_KEY, metadata.permissionRules);
