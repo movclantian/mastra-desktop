@@ -3,13 +3,14 @@
  * 注意:Mastra 保留 /api 前缀给内置路由,自定义路由统一使用 /work/*。
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
-import { browserRoutes } from "./browser";
+
 import {
   agentProfilesRoute,
   assistAgentProfileRoute,
   deleteAgentProfileRoute,
   saveAgentProfileRoute,
 } from "./agents";
+import { browserRoutes } from "./browser";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -65,16 +66,16 @@ import {
   saveSkillMarketplaceRoute,
   skillMarketplacesRoute,
   skillRoute,
-  skillsShSkillRoute,
   skillsRoute,
+  skillsShSkillRoute,
   uploadSkillRoute,
 } from "./skills";
 import { storageInfoRoute } from "./storage";
 import { threadRoutes } from "./threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import {
-  detectedIdesRoute,
   createThreadTreeEntryRoute,
+  detectedIdesRoute,
   openInAppRoute,
   recentWorkspacesRoute,
   saveThreadFileRoute,

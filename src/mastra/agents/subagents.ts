@@ -3,11 +3,7 @@
  * 写进上下文,这里在 model 回调里读取并解析(见 chat / session 路由)。
  */
 import { Agent } from "@mastra/core/agent";
-import {
-  REQUEST_MODEL_CONTEXT_KEY,
-  resolveDefaultModelId,
-  resolveRequestModel,
-} from "../models";
+import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultModelId, resolveRequestModel } from "../models";
 
 export const SUBAGENT_MODELS_CONTEXT_KEY = "mastra-work:subagent-models";
 

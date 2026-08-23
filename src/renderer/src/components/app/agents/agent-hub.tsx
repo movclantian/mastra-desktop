@@ -1,5 +1,6 @@
 import {
   BotIcon,
+  CopyIcon,
   LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
@@ -21,6 +22,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -33,7 +44,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
-import { DEFAULT_AGENT_PROFILE, type AgentProfile, useWorkbench } from "@/lib/workbench";
+import { type AgentProfile, DEFAULT_AGENT_PROFILE, useWorkbench } from "@/lib/workbench";
 
 type HubTab = "all" | "agent" | "team" | "mine";
 type DraftField =
@@ -376,9 +387,9 @@ export function AgentHub() {
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
-            <div className="grid gap-2">
-              <span className="text-sm font-medium">创建类型</span>
-              <div className="flex gap-2" role="group" aria-label="创建类型">
+            <fieldset className="grid gap-2 border-0 p-0">
+              <legend className="text-sm font-medium">创建类型</legend>
+              <div className="flex gap-2">
                 {(["agent", "team"] as const).map((type) => (
                   <Button
                     key={type}
@@ -392,17 +403,18 @@ export function AgentHub() {
                   </Button>
                 ))}
               </div>
-            </div>
-            <label className="grid gap-2 text-sm font-medium">
-              你想让它负责什么?
+            </fieldset>
+            <div className="grid gap-2 text-sm font-medium">
+              <label htmlFor="agent-assist-description">你想让它负责什么?</label>
               <Textarea
+                id="agent-assist-description"
                 autoFocus
                 className="min-h-36 resize-y"
                 value={assistDescription}
                 onChange={(event) => setAssistDescription(event.target.value)}
                 placeholder="例如: 审查 React 项目的性能和安全问题,输出按优先级排序的修改建议。"
               />
-            </label>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssistOpen(false)} disabled={assisting}>
@@ -438,42 +450,46 @@ export function AgentHub() {
           <ScrollArea className="min-h-0 flex-1 pr-3">
             <div className="grid gap-4 py-2">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5 text-sm font-medium">
-                  名称
+                <div className="grid gap-1.5 text-sm font-medium">
+                  <label htmlFor="agent-display-name">名称</label>
                   <Input
+                    id="agent-display-name"
                     value={draft.displayName}
                     onChange={(event) => updateDraft("displayName", event.target.value)}
                   />
-                </label>
-                <label className="grid gap-1.5 text-sm font-medium">
-                  定位
+                </div>
+                <div className="grid gap-1.5 text-sm font-medium">
+                  <label htmlFor="agent-profession">定位</label>
                   <Input
+                    id="agent-profession"
                     value={draft.profession}
                     onChange={(event) => updateDraft("profession", event.target.value)}
                   />
-                </label>
+                </div>
               </div>
-              <label className="grid gap-1.5 text-sm font-medium">
-                简介
+              <div className="grid gap-1.5 text-sm font-medium">
+                <label htmlFor="agent-description">简介</label>
                 <Textarea
+                  id="agent-description"
                   className="min-h-20 resize-y"
                   value={draft.description}
                   onChange={(event) => updateDraft("description", event.target.value)}
                 />
-              </label>
-              <label className="grid gap-1.5 text-sm font-medium">
-                工作指令
+              </div>
+              <div className="grid gap-1.5 text-sm font-medium">
+                <label htmlFor="agent-instructions">工作指令</label>
                 <Textarea
+                  id="agent-instructions"
                   className="min-h-32 resize-y"
                   value={draft.instructions}
                   onChange={(event) => updateDraft("instructions", event.target.value)}
                 />
-              </label>
+              </div>
               {draft.type === "team" ? (
                 <>
-                  <div className="grid gap-2 text-sm font-medium">
-                    执行策略
-                    <div className="flex flex-wrap gap-2" role="group" aria-label="执行策略">
+                  <fieldset className="grid gap-2 border-0 p-0 text-sm font-medium">
+                    <legend>执行策略</legend>
+                    <div className="flex flex-wrap gap-2">
                       {(["supervisor", "sequence", "parallel"] as const).map((strategy) => (
                         <Button
                           key={strategy}
@@ -494,10 +510,11 @@ export function AgentHub() {
                     <span className="text-xs font-normal text-muted-foreground">
                       保存后会注册为 Mastra dynamic workflow,成员顺序来自下方列表。
                     </span>
-                  </div>
-                  <label className="grid gap-1.5 text-sm font-medium">
-                    团队成员
+                  </fieldset>
+                  <div className="grid gap-1.5 text-sm font-medium">
+                    <label htmlFor="agent-team-members">团队成员</label>
                     <Textarea
+                      id="agent-team-members"
                       className="min-h-28 resize-y"
                       placeholder="每行一位: 姓名 | 专业职责 | 成员指令 | 技能ID(可选) | 工具名(可选)"
                       value={draft.memberText}
@@ -506,7 +523,7 @@ export function AgentHub() {
                     <span className="text-xs font-normal text-muted-foreground">
                       每位成员都会注册为独立 Mastra Agent,并按上方策略执行。
                     </span>
-                  </label>
+                  </div>
                 </>
               ) : null}
             </div>
@@ -538,59 +555,106 @@ function AgentCard({
   onDelete: () => void;
 }) {
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+
+  const handleCopyInfo = () => {
+    void navigator.clipboard.writeText(profile.displayName);
+    toast.success("已复制专家名称");
+  };
+
   return (
-    <Card className="flex min-h-52 flex-col">
-      <CardHeader className="pb-2">
-        <div className="flex items-start gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
-            <Icon className="size-5" />
-          </div>
-          <div className="min-w-0">
-            <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
-            <CardDescription className="truncate">
-              {profile.profession || (profile.type === "team" ? "Agent 团队" : "Agent")}
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1">
-        <p className="line-clamp-3 text-sm text-muted-foreground">
-          {profile.description || profile.instructions}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-1">
-          {profile.tags.slice(0, 4).map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-[10px]">
-              {tag}
-            </Badge>
-          ))}
-          {profile.type === "team" ? (
-            <Badge variant="outline" className="text-[10px]">
-              {profile.members.length} 位成员
-            </Badge>
-          ) : null}
-        </div>
-      </CardContent>
-      <CardFooter className="gap-1.5">
-        <Button size="sm" className="flex-1" onClick={onUse}>
-          使用
-        </Button>
-        {profile.id !== DEFAULT_AGENT_PROFILE.id ? (
+    <ContextMenu>
+      <ContextMenuTrigger className="flex min-h-52 flex-col">
+        <Card className="flex min-h-52 flex-col h-full">
+          <CardHeader className="pb-2">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
+                <Icon className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
+                <CardDescription className="truncate">
+                  {profile.profession || (profile.type === "team" ? "Agent 团队" : "Agent")}
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="min-h-0 flex-1">
+            <p className="line-clamp-3 text-sm text-muted-foreground">
+              {profile.description || profile.instructions}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-1">
+              {profile.tags.slice(0, 4).map((tag) => (
+                <Badge key={tag} variant="secondary" className="text-[10px]">
+                  {tag}
+                </Badge>
+              ))}
+              {profile.type === "team" ? (
+                <Badge variant="outline" className="text-[10px]">
+                  {profile.members.length} 位成员
+                </Badge>
+              ) : null}
+            </div>
+          </CardContent>
+          <CardFooter className="gap-1.5">
+            <Button size="sm" className="flex-1" onClick={onUse}>
+              使用
+            </Button>
+            {!isDefault ? (
+              <>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  title="编辑"
+                  aria-label="编辑"
+                  onClick={onEdit}
+                >
+                  <PencilIcon />
+                </Button>
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  title="删除"
+                  aria-label="删除"
+                  onClick={onDelete}
+                >
+                  <Trash2Icon />
+                </Button>
+              </>
+            ) : null}
+          </CardFooter>
+        </Card>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        <ContextMenuGroup>
+          <ContextMenuLabel className="truncate max-w-44">{profile.displayName}</ContextMenuLabel>
+          <ContextMenuItem onClick={onUse}>
+            <Icon className="text-muted-foreground" />
+            <span>立即使用此专家</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleCopyInfo}>
+            <CopyIcon className="text-muted-foreground" />
+            <span>复制专家名称</span>
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        {!isDefault ? (
           <>
-            <Button size="icon-sm" variant="ghost" title="编辑" aria-label="编辑" onClick={onEdit}>
-              <PencilIcon />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              title="删除"
-              aria-label="删除"
-              onClick={onDelete}
-            >
-              <Trash2Icon />
-            </Button>
+            <ContextMenuSeparator />
+            <ContextMenuGroup>
+              <ContextMenuItem onClick={onEdit}>
+                <PencilIcon className="text-muted-foreground" />
+                <span>编辑配置</span>
+                <ContextMenuShortcut>F2</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem variant="destructive" onClick={onDelete}>
+                <Trash2Icon className="text-muted-foreground" />
+                <span>删除专家</span>
+                <ContextMenuShortcut>⌫</ContextMenuShortcut>
+              </ContextMenuItem>
+            </ContextMenuGroup>
           </>
         ) : null}
-      </CardFooter>
-    </Card>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

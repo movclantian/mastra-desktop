@@ -19,6 +19,21 @@ import { useTheme } from "@/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -63,6 +78,7 @@ import {
   ThreadFolder,
   ThreadListSkeleton,
   ThreadSearchDialog,
+  ThreadWorkspaceTree,
   WorkspaceGroup,
 } from "./components";
 
@@ -230,15 +246,28 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     setSkillOpen,
     agentOpen,
     setAgentOpen,
+    openSettings,
   } = useWorkbench();
+  const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
 
   const [renaming, setRenaming] = React.useState<WorkThread | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [fileManagerThreadId, setFileManagerThreadId] = React.useState<string | null>(null);
 
   // metadata 经后端归一化为对象,这里仍用可选链兜底:null 会炸掉整个 UI
   const activeThreads = threads.filter((t) => !t.metadata?.archivedAt);
   const archivedThreads = sortThreads(threads.filter((t) => Boolean(t.metadata?.archivedAt)));
+  const fileManagerThread = fileManagerThreadId
+    ? threads.find((thread) => thread.id === fileManagerThreadId)
+    : undefined;
+
+  const openFileManager = (threadId: string) => {
+    setFileManagerThreadId(threadId);
+    setLibraryOpen(false);
+    setSkillOpen(false);
+    setAgentOpen(false);
+  };
 
   // 显式绑定且已开始工作的线程按目录归组;草稿线程始终平铺
   const directThreads: WorkThread[] = [];
@@ -283,118 +312,270 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarHeader>
         <SidebarHeaderBrand />
       </SidebarHeader>
-      <SidebarContent>
-        {/* 第一组:直接操作与系统核心功能 */}
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="新建任务"
-                  onClick={() => {
-                    setLibraryOpen(false);
-                    setSkillOpen(false);
-                    setAgentOpen(false);
-                    void createThread();
-                  }}
-                >
-                  <SquarePenIcon />
-                  <span>新建任务</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  isActive={skillOpen}
-                  onClick={() => {
-                    setLibraryOpen(false);
-                    setAgentOpen(false);
-                    setSkillOpen(true);
-                  }}
-                  tooltip="技能套件"
-                >
-                  <SparklesIcon />
-                  <span>技能套件</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="资料库"
-                  isActive={libraryOpen}
-                  onClick={() => {
-                    setSkillOpen(false);
-                    setAgentOpen(false);
-                    setLibraryOpen(true);
-                  }}
-                >
-                  <LibraryBigIcon />
-                  <span>资料库</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  tooltip="专家"
-                  isActive={agentOpen}
-                  onClick={() => {
-                    setLibraryOpen(false);
-                    setSkillOpen(false);
-                    setAgentOpen(true);
-                  }}
-                >
-                  <BotIcon />
-                  <span>专家</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+      <ContextMenu>
+        <ContextMenuTrigger className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <SidebarContent className="h-full">
+            {/* 第一组:直接操作与系统核心功能 */}
+            <SidebarGroup>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="新建任务"
+                      onClick={() => {
+                        setFileManagerThreadId(null);
+                        setLibraryOpen(false);
+                        setSkillOpen(false);
+                        setAgentOpen(false);
+                        void createThread();
+                      }}
+                    >
+                      <SquarePenIcon />
+                      <span>新建任务</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={skillOpen}
+                      onClick={() => {
+                        setFileManagerThreadId(null);
+                        setLibraryOpen(false);
+                        setAgentOpen(false);
+                        setSkillOpen(true);
+                      }}
+                      tooltip="技能套件"
+                    >
+                      <SparklesIcon />
+                      <span>技能套件</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="资料库"
+                      isActive={libraryOpen}
+                      onClick={() => {
+                        setFileManagerThreadId(null);
+                        setSkillOpen(false);
+                        setAgentOpen(false);
+                        setLibraryOpen(true);
+                      }}
+                    >
+                      <LibraryBigIcon />
+                      <span>资料库</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="专家"
+                      isActive={agentOpen}
+                      onClick={() => {
+                        setFileManagerThreadId(null);
+                        setLibraryOpen(false);
+                        setSkillOpen(false);
+                        setAgentOpen(true);
+                      }}
+                    >
+                      <BotIcon />
+                      <span>专家</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
 
-        {/* 第二组:任务列表 */}
-        <SidebarGroup>
-          {/* 官方 sidebar-group-action.tsx 模式:label 右侧操作(检索线程消息) */}
-          <SidebarGroupLabel>
-            任务列表
-            <SidebarGroupAction
-              title="检索线程消息"
-              onClick={() => setSearchOpen(true)}
-              aria-label="检索线程消息"
-            >
-              <SearchIcon />
-              <span className="sr-only">检索线程消息</span>
-            </SidebarGroupAction>
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            {threadsLoading ? (
-              <ThreadListSkeleton />
+            {/* 第二组:任务列表或当前线程的文件管理 */}
+            {fileManagerThread ? (
+              <SidebarGroup className="min-h-0 flex-1">
+                <SidebarGroupContent className="min-h-0 h-full">
+                  <ThreadWorkspaceTree
+                    threadId={fileManagerThread.id}
+                    onBack={() => setFileManagerThreadId(null)}
+                  />
+                </SidebarGroupContent>
+              </SidebarGroup>
             ) : (
-              <SidebarMenu>
-                {/* 直接线程(未显式绑定目录) */}
-                {sortThreads(directThreads).map((thread) => (
-                  <DirectThreadItem key={thread.id} thread={thread} onRename={openRename} />
-                ))}
-                {/* 显式绑定目录 = 可折叠文件夹(会话 + 文件树) */}
-                {workspaceGroups.map((group) => (
-                  <WorkspaceGroup
-                    key={group.path}
-                    path={group.path}
-                    threads={group.threads}
-                    onRename={openRename}
-                  />
-                ))}
-                {/* 已归档:默认收起的文件夹 */}
-                {archivedThreads.length > 0 ? (
-                  <ThreadFolder
-                    name="已归档"
-                    icon={ArchiveIcon}
-                    threads={archivedThreads}
-                    defaultOpen={false}
-                    onRename={openRename}
-                  />
-                ) : null}
-              </SidebarMenu>
+              <SidebarGroup>
+                {/* 官方 sidebar-group-action.tsx 模式:label 右侧操作(检索线程消息) */}
+                <SidebarGroupLabel>
+                  任务列表
+                  <SidebarGroupAction
+                    title="检索线程消息"
+                    onClick={() => setSearchOpen(true)}
+                    aria-label="检索线程消息"
+                  >
+                    <SearchIcon />
+                    <span className="sr-only">检索线程消息</span>
+                  </SidebarGroupAction>
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  {threadsLoading ? (
+                    <ThreadListSkeleton />
+                  ) : (
+                    <SidebarMenu>
+                      {/* 直接线程(未显式绑定目录) */}
+                      {sortThreads(directThreads).map((thread) => (
+                        <DirectThreadItem
+                          key={thread.id}
+                          thread={thread}
+                          onOpenFileManager={openFileManager}
+                          onRename={openRename}
+                        />
+                      ))}
+                      {/* 显式绑定目录 = 可折叠文件夹(会话 + 文件树) */}
+                      {workspaceGroups.map((group) => (
+                        <WorkspaceGroup
+                          key={group.path}
+                          path={group.path}
+                          threads={group.threads}
+                          onOpenFileManager={openFileManager}
+                          onRename={openRename}
+                        />
+                      ))}
+                      {/* 已归档:默认收起的文件夹 */}
+                      {archivedThreads.length > 0 ? (
+                        <ThreadFolder
+                          name="已归档"
+                          icon={ArchiveIcon}
+                          threads={archivedThreads}
+                          defaultOpen={false}
+                          onOpenFileManager={openFileManager}
+                          onRename={openRename}
+                        />
+                      ) : null}
+                    </SidebarMenu>
+                  )}
+                </SidebarGroupContent>
+              </SidebarGroup>
             )}
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+          </SidebarContent>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-52">
+          <ContextMenuGroup>
+            <ContextMenuLabel>快捷操作</ContextMenuLabel>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
+                setLibraryOpen(false);
+                setSkillOpen(false);
+                setAgentOpen(false);
+                void createThread();
+              }}
+            >
+              <SquarePenIcon className="text-muted-foreground" />
+              <span>新建任务</span>
+              <ContextMenuShortcut>⌘N</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setSearchOpen(true)}>
+              <SearchIcon className="text-muted-foreground" />
+              <span>检索消息</span>
+              <ContextMenuShortcut>⌘F</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuLabel>模块导航</ContextMenuLabel>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
+                setLibraryOpen(false);
+                setAgentOpen(false);
+                setSkillOpen(true);
+              }}
+            >
+              <SparklesIcon className="text-muted-foreground" />
+              <span>技能套件</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
+                setSkillOpen(false);
+                setAgentOpen(false);
+                setLibraryOpen(true);
+              }}
+            >
+              <LibraryBigIcon className="text-muted-foreground" />
+              <span>资料库</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
+                setLibraryOpen(false);
+                setSkillOpen(false);
+                setAgentOpen(true);
+              }}
+            >
+              <BotIcon className="text-muted-foreground" />
+              <span>专家</span>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <PaletteIcon className="text-muted-foreground" />
+                <span>主题风格</span>
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent className="w-48">
+                <ContextMenuRadioGroup
+                  value={activePresetId}
+                  onValueChange={(val) => setPreset(val)}
+                >
+                  {presets.map((p) => {
+                    const colors = isDark ? p.dark : p.light;
+                    return (
+                      <ContextMenuRadioItem key={p.id} value={p.id} className="gap-2">
+                        <span
+                          className="size-2.5 rounded-full border shrink-0"
+                          style={{
+                            backgroundColor: colors.primary,
+                            borderColor: colors.border,
+                          }}
+                        />
+                        <span className="truncate">{p.name}</span>
+                      </ContextMenuRadioItem>
+                    );
+                  })}
+                </ContextMenuRadioGroup>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => openSettings("themes")}>
+                  <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
+                  <span>主题参数调优…</span>
+                </ContextMenuItem>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuSub>
+              <ContextMenuSubTrigger>
+                <SunMediumIcon className="text-muted-foreground" />
+                <span>色彩模式</span>
+              </ContextMenuSubTrigger>
+              <ContextMenuSubContent className="w-40">
+                <ContextMenuRadioGroup
+                  value={mode}
+                  onValueChange={(val) => setMode(val as "light" | "dark" | "system")}
+                >
+                  <ContextMenuRadioItem value="light">
+                    <SunMediumIcon className="text-muted-foreground" />
+                    浅色
+                  </ContextMenuRadioItem>
+                  <ContextMenuRadioItem value="dark">
+                    <MoonIcon className="text-muted-foreground" />
+                    深色
+                  </ContextMenuRadioItem>
+                  <ContextMenuRadioItem value="system">
+                    <LaptopIcon className="text-muted-foreground" />
+                    跟随系统
+                  </ContextMenuRadioItem>
+                </ContextMenuRadioGroup>
+              </ContextMenuSubContent>
+            </ContextMenuSub>
+            <ContextMenuItem onClick={() => openSettings("providers")}>
+              <Settings2Icon className="text-muted-foreground" />
+              <span>系统设置</span>
+              <ContextMenuShortcut>⌘,</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
       <SidebarFooter>
         <NavUser />
       </SidebarFooter>

@@ -32,6 +32,16 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -456,39 +466,92 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
   const renderAssetRow = (asset: LibraryAsset, depth = 0, keyPrefix = "asset") => {
     return (
       <SidebarMenuItem key={`${keyPrefix}-${asset.id}`}>
-        <SidebarMenuButton
-          isActive={selectedId === asset.id}
-          onClick={() => setSelectedId(asset.id)}
-          tooltip={asset.filename}
-          className="h-auto py-1.5"
-          style={{ paddingLeft: directoryOpen ? `${8 + depth * 12}px` : undefined }}
-        >
-          <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
-          <span className="min-w-0 flex-1 group-data-[collapsible=icon]/sidebar:hidden">
-            <span className="block truncate text-sm">{asset.filename}</span>
-            <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-              <span>{formatBytes(asset.byteSize)}</span>
-              <span>·</span>
-              <span className="truncate">
-                {statusLabel(asset.status)}
-                {(asset.status === "error" || asset.status === "indexing") && asset.indexStage
-                  ? ` · ${indexStageLabel(asset.indexStage)}`
-                  : ""}
-                {asset.status === "error" && asset.indexAttempt > 0
-                  ? ` · 第 ${asset.indexAttempt} 次`
-                  : ""}
+        <ContextMenu>
+          <ContextMenuTrigger className="w-full block">
+            <SidebarMenuButton
+              isActive={selectedId === asset.id}
+              onClick={() => setSelectedId(asset.id)}
+              tooltip={asset.filename}
+              className="h-auto py-1.5 w-full"
+              style={{ paddingLeft: directoryOpen ? `${8 + depth * 12}px` : undefined }}
+            >
+              <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
+              <span className="min-w-0 flex-1 group-data-[collapsible=icon]/sidebar:hidden">
+                <span className="block truncate text-sm">{asset.filename}</span>
+                <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  <span>{formatBytes(asset.byteSize)}</span>
+                  <span>·</span>
+                  <span className="truncate">
+                    {statusLabel(asset.status)}
+                    {(asset.status === "error" || asset.status === "indexing") && asset.indexStage
+                      ? ` · ${indexStageLabel(asset.indexStage)}`
+                      : ""}
+                    {asset.status === "error" && asset.indexAttempt > 0
+                      ? ` · 第 ${asset.indexAttempt} 次`
+                      : ""}
+                  </span>
+                </span>
+                {asset.status === "error" && asset.indexError ? (
+                  <span
+                    className="mt-0.5 block truncate text-[11px] text-destructive"
+                    title={asset.indexError}
+                  >
+                    {asset.indexError}
+                  </span>
+                ) : null}
               </span>
-            </span>
-            {asset.status === "error" && asset.indexError ? (
-              <span
-                className="mt-0.5 block truncate text-[11px] text-destructive"
-                title={asset.indexError}
+            </SidebarMenuButton>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-52">
+            <ContextMenuGroup>
+              <ContextMenuLabel className="truncate max-w-48">{asset.filename}</ContextMenuLabel>
+              <ContextMenuItem onClick={() => void referenceInNewThread(asset)}>
+                <ExternalLinkIcon className="text-muted-foreground" />
+                <span>在新会话中引用</span>
+              </ContextMenuItem>
+              {asset.status === "error" || asset.status === "unsupported" ? (
+                <ContextMenuItem
+                  disabled={reindexingIds.has(asset.id)}
+                  onClick={() => void reindexOne(asset)}
+                >
+                  <RefreshCwIcon
+                    className={cn(
+                      "text-muted-foreground",
+                      reindexingIds.has(asset.id) && "animate-spin",
+                    )}
+                  />
+                  <span>重新索引</span>
+                </ContextMenuItem>
+              ) : null}
+              <ContextMenuItem
+                onClick={() => openRename({ kind: "asset", id: asset.id, name: asset.filename })}
               >
-                {asset.indexError}
-              </span>
-            ) : null}
-          </span>
-        </SidebarMenuButton>
+                <PencilIcon className="text-muted-foreground" />
+                <span>重命名</span>
+                <ContextMenuShortcut>F2</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem
+                render={
+                  <a
+                    download={asset.filename}
+                    href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
+                  />
+                }
+              >
+                <DownloadIcon className="text-muted-foreground" />
+                <span>下载原文件</span>
+              </ContextMenuItem>
+            </ContextMenuGroup>
+            <ContextMenuSeparator />
+            <ContextMenuGroup>
+              <ContextMenuItem variant="destructive" onClick={() => void removeAsset(asset)}>
+                <Trash2Icon className="text-muted-foreground" />
+                <span>删除文件</span>
+                <ContextMenuShortcut>⌫</ContextMenuShortcut>
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </ContextMenuContent>
+        </ContextMenu>
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -749,20 +812,94 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                                   )}
                                 />
                               </Button>
-                              <SidebarMenuButton
-                                isActive={folderId === entry.folder.id}
-                                onClick={() => setFolderId(entry.folder.id)}
-                                tooltip={entry.folder.name}
-                                className="min-w-0 flex-1"
-                              >
-                                <FolderTypeIcon
-                                  name={entry.folder.name}
-                                  open={!collapsedFolderIds.has(entry.folder.id)}
-                                />
-                                <span className="truncate group-data-[collapsible=icon]/sidebar:hidden">
-                                  {entry.folder.name}
-                                </span>
-                              </SidebarMenuButton>
+                              <ContextMenu>
+                                <ContextMenuTrigger className="min-w-0 flex-1">
+                                  <SidebarMenuButton
+                                    isActive={folderId === entry.folder.id}
+                                    onClick={() => setFolderId(entry.folder.id)}
+                                    tooltip={entry.folder.name}
+                                    className="w-full"
+                                  >
+                                    <FolderTypeIcon
+                                      name={entry.folder.name}
+                                      open={!collapsedFolderIds.has(entry.folder.id)}
+                                    />
+                                    <span className="truncate group-data-[collapsible=icon]/sidebar:hidden">
+                                      {entry.folder.name}
+                                    </span>
+                                  </SidebarMenuButton>
+                                </ContextMenuTrigger>
+                                <ContextMenuContent className="w-52">
+                                  <ContextMenuGroup>
+                                    <ContextMenuLabel className="truncate max-w-48">
+                                      {entry.folder.name}
+                                    </ContextMenuLabel>
+                                    <ContextMenuItem
+                                      disabled={uploading}
+                                      onClick={() =>
+                                        openUpload({ folderId: entry.folder.id, threadId: null })
+                                      }
+                                    >
+                                      <UploadIcon className="text-muted-foreground" />
+                                      <span>上传文件到此文件夹</span>
+                                    </ContextMenuItem>
+                                    <ContextMenuItem
+                                      disabled={uploading}
+                                      onClick={() =>
+                                        createBlankFile("document", {
+                                          folderId: entry.folder.id,
+                                          threadId: null,
+                                        })
+                                      }
+                                    >
+                                      <FileTextIcon className="text-muted-foreground" />
+                                      <span>新建文档（Markdown）</span>
+                                    </ContextMenuItem>
+                                    <ContextMenuItem
+                                      disabled={uploading}
+                                      onClick={() =>
+                                        createBlankFile("spreadsheet", {
+                                          folderId: entry.folder.id,
+                                          threadId: null,
+                                        })
+                                      }
+                                    >
+                                      <FileSpreadsheetIcon className="text-muted-foreground" />
+                                      <span>新建表格（CSV）</span>
+                                    </ContextMenuItem>
+                                    <ContextMenuItem
+                                      onClick={() => openCreateFolder(entry.folder.id)}
+                                    >
+                                      <FolderPlusIcon className="text-muted-foreground" />
+                                      <span>新建子文件夹</span>
+                                    </ContextMenuItem>
+                                  </ContextMenuGroup>
+                                  <ContextMenuSeparator />
+                                  <ContextMenuGroup>
+                                    <ContextMenuItem
+                                      onClick={() =>
+                                        openRename({
+                                          kind: "folder",
+                                          id: entry.folder.id,
+                                          name: entry.folder.name,
+                                        })
+                                      }
+                                    >
+                                      <FolderPenIcon className="text-muted-foreground" />
+                                      <span>重命名</span>
+                                      <ContextMenuShortcut>F2</ContextMenuShortcut>
+                                    </ContextMenuItem>
+                                    <ContextMenuItem
+                                      variant="destructive"
+                                      onClick={() => void removeFolder(entry.folder)}
+                                    >
+                                      <Trash2Icon className="text-muted-foreground" />
+                                      <span>删除文件夹</span>
+                                      <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                                    </ContextMenuItem>
+                                  </ContextMenuGroup>
+                                </ContextMenuContent>
+                              </ContextMenu>
                             </div>
                             <DropdownMenu>
                               <DropdownMenuTrigger

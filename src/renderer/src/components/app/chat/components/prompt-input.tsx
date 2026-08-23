@@ -74,10 +74,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
 import {
-  referenceBadgeClass,
   type CompressResult,
   type MessageFileReference,
   type QueuedRequest,
+  referenceBadgeClass,
 } from "../types";
 import { ChatAgentSelector } from "./agent-selector";
 import { ChatContextUsage } from "./context-usage";
@@ -401,6 +401,7 @@ function SkillAwareTextarea({
 
   return (
     <>
+      {/* biome-ignore lint/a11y/useSemanticElements: The inline contenteditable editor needs textbox semantics. */}
       <div
         aria-label="消息输入"
         aria-multiline="true"
@@ -414,6 +415,7 @@ function SkillAwareTextarea({
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
         ref={editorRef}
+        tabIndex={0}
         role="textbox"
         suppressContentEditableWarning
       />
@@ -443,28 +445,26 @@ function SkillAwareTextarea({
                     ))}
                   </CommandGroup>
                 )
+              ) : visibleFiles.length === 0 ? (
+                <CommandEmpty>暂无匹配的资料</CommandEmpty>
               ) : (
-                visibleFiles.length === 0 ? (
-                  <CommandEmpty>暂无匹配的资料</CommandEmpty>
-                ) : (
-                  <CommandGroup heading="对话文件">
-                    {visibleFiles.map((file) => (
-                      <CommandItem
-                        key={file.id}
-                        onSelect={() => selectFile(file)}
-                        value={file.filename}
-                      >
-                        <FileIcon className="size-4 shrink-0 text-primary" />
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">@{file.filename}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {file.mediaType || "文件"}
-                          </span>
+                <CommandGroup heading="对话文件">
+                  {visibleFiles.map((file) => (
+                    <CommandItem
+                      key={file.id}
+                      onSelect={() => selectFile(file)}
+                      value={file.filename}
+                    >
+                      <FileIcon className="size-4 shrink-0 text-primary" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">@{file.filename}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {file.mediaType || "文件"}
                         </span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
               )}
               {(command === "skill" ? visibleSkills.length : visibleFiles.length) > 0 ? (
                 <CommandSeparator />
@@ -890,7 +890,9 @@ export function ChatPromptInput({
             onRemove={(file) => {
               const attachment = controller.attachments.files.find((item) => item.url === file.url);
               if (attachment) controller.attachments.remove(attachment.id);
-              setSelectedFileReferences((current) => current.filter((item) => item.url !== file.url));
+              setSelectedFileReferences((current) =>
+                current.filter((item) => item.url !== file.url),
+              );
             }}
           />
           <SkillAwareTextarea
@@ -931,11 +933,7 @@ export function ChatPromptInput({
             </div>
             <ChatModeSelector />
             <ChatModelSelector />
-            <PromptInputSubmit
-              className="shrink-0"
-              onStop={() => void onStop()}
-              status={status}
-            />
+            <PromptInputSubmit className="shrink-0" onStop={() => void onStop()} status={status} />
           </div>
         </PromptInputFooter>
       </PromptInput>

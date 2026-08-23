@@ -1,23 +1,26 @@
 import {
+  ArrowLeftIcon,
   PanelBottomCloseIcon,
   PanelBottomOpenIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
   PlusIcon,
   Settings2Icon,
+  Trash2Icon,
 } from "lucide-react";
 import * as React from "react";
 
 import { OpenInIde } from "@/components/ai-elements/open-in-chat";
+import { AgentHub } from "@/components/app/agents";
 import { ChatPanel } from "@/components/app/chat";
 import { PanelHeader } from "@/components/app/primitives";
 import { SettingsDialog } from "@/components/app/settings";
 import { AppSidebar } from "@/components/app/sidebar";
 import { SkillHub } from "@/components/app/skills";
-import { AgentHub } from "@/components/app/agents";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SmoothCursor } from "@/components/ui/smooth-cursor";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -49,13 +52,44 @@ function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | nul
   }
 }
 
-/** 右侧工作区面板自身的最小宽度 */
+/**
+ * 右侧工作区面板的可用性下限。
+ *
+ * 这个数**不能**像 chatMinWidth 那样实测:面板顶层的标签栏是 min-w-0 + overflow-x-auto,
+ * min-content 就是 0,量出来只剩右侧几个图标按钮的宽度(≈120px)—— 技术上不溢出,
+ * 但浏览器视图与文件树在那个宽度下已经没有使用价值。所以它是产品判断,
+ * 性质等同 VS Code 侧边栏的 minSize,不是待消除的魔数。
+ *
+ * 三处用到:面板的默认宽度(最保守的那一端)、拖拽的下界,以及窗口撑不大时
+ * 「面板放不下就让位」的判据。
+ */
 const WORKSPACE_MIN_WIDTH = 340;
 /**
  * 输入区左右内距之外,聊天区自己还要留的水平留白(promptArea 外层的 px-4)。
  * 聊天区下限 = 输入区实测最小边界 + 这一项 —— 没有别的常量参与。
  */
 const CHAT_HORIZONTAL_PADDING = 32;
+/** 终端抽屉的默认高度。和 WORKSPACE_MIN_WIDTH 一样是产品判断,不是可实测量 */
+const TERMINAL_DEFAULT_HEIGHT = 280;
+const WORKSPACE_WIDTH_KEY = "mastra-work:workspace-width";
+const TERMINAL_HEIGHT_KEY = "mastra-work:terminal-height";
+
+/**
+ * 用户拖出来的面板尺寸,持久化到 localStorage —— 与 workbench 里那批偏好同一套约定
+ * (mastra-work: 前缀、读不出来就退回默认值)。
+ *
+ * 存的是**意图**而不是当前渲染值,所以不会把某次空间不足时的夹取结果记成偏好。
+ */
+function usePersistentSize(key: string, fallback: number) {
+  const [value, setValue] = React.useState(() => {
+    const stored = Number.parseFloat(localStorage.getItem(key) ?? "");
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+  });
+  React.useEffect(() => {
+    localStorage.setItem(key, String(value));
+  }, [key, value]);
+  return [value, setValue] as const;
+}
 
 function AppShell() {
   const {
@@ -65,6 +99,8 @@ function AppShell() {
     libraryOpen,
     setLibraryOpen,
     skillOpen,
+    activeSkill,
+    setActiveSkill,
     agentOpen,
     setAgentOpen,
     workspacePanelOpen,
@@ -79,10 +115,19 @@ function AppShell() {
    * 用户拖出来的**意图**宽度。它只在拖拽时改变,不会被空间不足反向改写 ——
    * 真正渲染的是下面夹过的 workspaceWidth。这样空间回来时面板自动回到意图宽度,
    * 不会停在被压扁的状态,也不需要额外记一份"原始值"。
+   *
+   * 初值取下限:窗口最小宽度里含着这个数(见下面的 setMinimumWidth),所以初值越大,
+   * 首次打开面板就把用户的窗口撑得越多。默认该是干扰最小的那一端,想要更宽自己拖。
    */
-  const [preferredWorkspaceWidth, setPreferredWorkspaceWidth] = React.useState(560);
+  const [preferredWorkspaceWidth, setPreferredWorkspaceWidth] = usePersistentSize(
+    WORKSPACE_WIDTH_KEY,
+    WORKSPACE_MIN_WIDTH,
+  );
   const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
-  const [terminalHeight, setTerminalHeight] = React.useState(280);
+  const [terminalHeight, setTerminalHeight] = usePersistentSize(
+    TERMINAL_HEIGHT_KEY,
+    TERMINAL_DEFAULT_HEIGHT,
+  );
   const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
   /** 聊天区 + 右侧面板共同占据的那一行容器,是分配宽度的总额 */
   const shellRef = React.useRef<HTMLDivElement>(null);
@@ -93,22 +138,42 @@ function AppShell() {
    */
   const chatMinWidth = promptMinWidth > 0 ? promptMinWidth + CHAT_HORIZONTAL_PADDING : 0;
   /**
-   * 面板允许的最大宽度 = 总额 - 聊天区下限。
+   * 面板能分到的宽度预算 = 总额 - 聊天区下限。
    *
    * 这两个值都与面板当前宽度无关,所以可以在渲染期直接算出来、把宽度夹住,
    * 而不是先渲染成超宽再由 ResizeObserver 事后收回 —— 后者会实打实地挤压一帧,
    * 叠上 200ms 的宽度过渡就是肉眼可见的「先压瘪再弹回」。
    *
+   * 这里**不**用面板自己的下限兜底:两个下限只能有一个是硬的,而聊天区那个才是
+   * 不可侵犯的。让面板坚持它的 WORKSPACE_MIN_WIDTH,结果只会是 promptInput 被压坏 ——
+   * 预算不够时的正确反应是面板让位,而不是硬挤。
+   *
    * 硬边界另有 aside 上那条等价的 CSS max-width 兜着(同帧生效、不滞后);
-   * 这个 JS 版本负责拖拽夹取、内层宽度和自动收起的判据。
+   * 这个 JS 版本负责拖拽夹取和内层宽度。
    */
-  const maxWorkspaceWidth =
-    shellWidth > 0 && chatMinWidth > 0
-      ? Math.max(WORKSPACE_MIN_WIDTH, shellWidth - chatMinWidth)
-      : Number.POSITIVE_INFINITY;
-  /** 真正用于渲染与拖拽计算的宽度:意图宽度被总额夹过之后的结果 */
-  const workspaceWidth = Math.min(preferredWorkspaceWidth, maxWorkspaceWidth);
-  const showWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen && !agentOpen;
+  const workspaceBudget =
+    shellWidth > 0 && chatMinWidth > 0 ? shellWidth - chatMinWidth : Number.POSITIVE_INFINITY;
+  /**
+   * 真正用于渲染与拖拽计算的宽度:意图宽度被预算夹过之后的结果。
+   * 下界只是防出负数(预算可能小于 0) —— 面板真被渲染出来时预算已 ≥ 下限,夹不到。
+   */
+  const workspaceWidth = Math.max(
+    WORKSPACE_MIN_WIDTH,
+    Math.min(preferredWorkspaceWidth, workspaceBudget),
+  );
+  /** 用户的意图。按钮状态、以及窗口最小宽度要替面板留多少额度,都只看这个 */
+  const wantsWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen && !agentOpen;
+  /**
+   * 实际是否渲染面板:预算连面板自己的下限都到不了就干脆不渲染,整块让给聊天区。
+   *
+   * 这是渲染期的派生值而不是 effect,所以既没有「先打开、再由 effect 检查该不该关」
+   * 的竞态,也不存在 effect 依赖不再变化、挤压被永久固化的死角。
+   *
+   * 刻意不把 workspacePanelOpen 改回 false —— 意图与实际分离,和
+   * preferredWorkspaceWidth / workspaceWidth 是同一个套路:窗口一放大、sidebar 一收起,
+   * 面板自己就回来了,不用用户再点一次。
+   */
+  const showWorkspace = wantsWorkspace && workspaceBudget >= WORKSPACE_MIN_WIDTH;
 
   React.useEffect(() => {
     if (!libraryOpen) setLibrarySettingsOpen(false);
@@ -172,31 +237,27 @@ function AppShell() {
     return () => observer.disconnect();
   }, []);
 
-  // 窗口能缩到多窄同样由实测下限决定,而不是写死的 minWidth。
-  // 外围占用(sidebar + 窗口边框)= 窗口宽度 - 这一行的总额,都是实测值;
-  // 面板开着才为它保留自己的下限,关着就不占额度 —— 于是折叠 sidebar、
-  // 关掉面板都会让窗口能缩得更小。
+  // 窗口宽度同样由实测下限决定,而不是写死的 minWidth。
+  // 外围占用(sidebar + 窗口边框)= 窗口宽度 - 这一行的总额,都是实测值。
+  //
+  // 关键:面板开着时,额度里留的是它**当前的宽度**,而不是它的可用性下限。于是
+  // 「面板以期望宽度展开所需的宽度」既是窗口要长到的目标、也是窗口的最小宽度 ——
+  // 窗口去适应内容,而不是把内容压进窗口。这几件事因此自动自洽,不需要额外分支:
+  //   · 点开面板 → 窗口不够就正好长到那个宽度,不多也不少
+  //   · 面板开着 → 窗口再也缩不到会挤压面板的程度
+  //   · 拖窄面板 → 额度跟着降,窗口立刻又能缩了
+  //   · 拖宽面板 → 已被 workspaceBudget 夹在总额内,算出的额度最多等于当前窗口宽,
+  //     所以永远不会反向把窗口撑大;拖到底时额度正好等于窗口宽,窗口就地被钉住
+  //   · 展开 sidebar → chrome 变大 → 窗口跟着长,面板与聊天区都保持原宽
+  //
+  // 这里必须看**意图**(wantsWorkspace)而不是实际渲染:用 showWorkspace 会死锁 ——
+  // 空间不足 → 不渲染 → 不留额度 → 窗口不被撑大 → 永远不足。
   React.useEffect(() => {
     if (chatMinWidth <= 0 || shellWidth <= 0) return;
     const chrome = window.innerWidth - shellWidth;
-    const reserve = showWorkspace ? WORKSPACE_MIN_WIDTH : 0;
-    window.api?.setMinimumWidth(chatMinWidth + chrome + reserve);
-  }, [chatMinWidth, shellWidth, showWorkspace]);
-
-  // 总额连「聊天区下限 + 面板自己的下限」都装不下时(典型场景:展开 sidebar,或把
-  // 窗口缩到很小),继续留着面板只会把两边一起压坏 —— 此时把整块让给聊天区、
-  // 收起面板。折叠 sidebar 或放大窗口后再手动打开即可。
-  //
-  // 「刚打开」那一轮要跳过:上一个 effect 刚通过 IPC 请求撑大窗口,而那是异步的,
-  // 此刻 shellWidth 还是旧的小值,不跳过就会出现「点开面板立刻自己关掉」。
-  // 窗口撑大后 shellWidth 变化会让本 effect 再跑一次,该收的仍然会收。
-  const wasShowingWorkspaceRef = React.useRef(showWorkspace);
-  React.useEffect(() => {
-    const justOpened = showWorkspace && !wasShowingWorkspaceRef.current;
-    wasShowingWorkspaceRef.current = showWorkspace;
-    if (justOpened || !showWorkspace || chatMinWidth <= 0 || shellWidth <= 0) return;
-    if (shellWidth - chatMinWidth < WORKSPACE_MIN_WIDTH) setWorkspacePanelOpen(false);
-  }, [chatMinWidth, setWorkspacePanelOpen, shellWidth, showWorkspace]);
+    const reserve = wantsWorkspace ? preferredWorkspaceWidth : 0;
+    window.api?.setMinimumWidth?.(chatMinWidth + chrome + reserve);
+  }, [chatMinWidth, preferredWorkspaceWidth, shellWidth, wantsWorkspace]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
@@ -210,11 +271,11 @@ function AppShell() {
 
       const onPointerMove = (e: PointerEvent) => {
         const deltaX = startX - e.clientX;
-        // 上限直接用渲染期那个 maxWorkspaceWidth:拖拽与渲染共用同一条边界,
+        // 上限直接用渲染期那个 workspaceBudget:拖拽与渲染共用同一条边界,
         // 所以拖到底的位置正好是「弹性空白刚被消费完」,不会先超出再被夹回来。
         // 存的是夹过的值 —— 拖到上限就记上限,空间变大后也不擅自替用户变宽。
         setPreferredWorkspaceWidth(
-          Math.max(WORKSPACE_MIN_WIDTH, Math.min(maxWorkspaceWidth, startWidth + deltaX)),
+          Math.max(WORKSPACE_MIN_WIDTH, Math.min(workspaceBudget, startWidth + deltaX)),
         );
       };
 
@@ -227,7 +288,7 @@ function AppShell() {
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [maxWorkspaceWidth, workspaceWidth],
+    [setPreferredWorkspaceWidth, workspaceBudget, workspaceWidth],
   );
 
   // 终端垂直拖拽拉伸
@@ -253,7 +314,7 @@ function AppShell() {
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerUp);
     },
-    [terminalHeight],
+    [setTerminalHeight, terminalHeight],
   );
 
   React.useEffect(() => {
@@ -263,7 +324,8 @@ function AppShell() {
       if (!anchor || anchor.hasAttribute("download")) return;
       event.preventDefault();
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        void window.api.openExternal(anchor.href);
+        if (window.api?.openExternal) void window.api.openExternal(anchor.href);
+        else window.open(anchor.href, "_blank", "noopener,noreferrer");
       } else {
         openBrowserUrl(anchor.href);
       }
@@ -273,7 +335,8 @@ function AppShell() {
       const anchor = httpLinkFromTarget(event.target);
       if (!anchor || anchor.hasAttribute("download")) return;
       event.preventDefault();
-      void window.api.openExternal(anchor.href);
+      if (window.api?.openExternal) void window.api.openExternal(anchor.href);
+      else window.open(anchor.href, "_blank", "noopener,noreferrer");
     };
     document.addEventListener("click", routeClick, true);
     document.addEventListener("auxclick", routeAuxClick, true);
@@ -287,10 +350,10 @@ function AppShell() {
   const title = agentOpen
     ? "专家"
     : skillOpen
-    ? "技能套件"
-    : libraryOpen
-      ? "资料库"
-      : (activeThread?.title ?? "MastraWork");
+      ? "技能套件"
+      : libraryOpen
+        ? "资料库"
+        : (activeThread?.title ?? "MastraWork");
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
@@ -307,8 +370,27 @@ function AppShell() {
             <PanelHeader className="relative z-10 px-4">
               <div className="flex items-center gap-1.5 min-w-0 flex-1">
                 <SidebarTrigger className="-ml-1" />
-                <Separator orientation="vertical" className="mx-1 h-4" />
-                <p className="truncate text-sm font-medium">{title}</p>
+                {skillOpen && activeSkill ? (
+                  <>
+                    <Separator orientation="vertical" className="mx-1 h-4" />
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActiveSkill(null)}
+                      className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground cursor-pointer"
+                    >
+                      <ArrowLeftIcon className="size-3.5" />
+                      返回插件市场
+                    </Button>
+                    <Separator orientation="vertical" className="mx-1 h-4" />
+                    <p className="truncate text-sm font-medium">{activeSkill.name}</p>
+                  </>
+                ) : (
+                  <>
+                    <Separator orientation="vertical" className="mx-1 h-4" />
+                    <p className="truncate text-sm font-medium">{title}</p>
+                  </>
+                )}
               </div>
               {!skillOpen && !libraryOpen && !agentOpen ? (
                 <>
@@ -425,11 +507,11 @@ function AppShell() {
               // 硬边界交给浏览器在布局期算,与 shell 宽度同帧生效。
               // 下面那条 ResizeObserver → setState → 渲染 的链路天生滞后一帧,
               // 而 sidebar 展开是 200ms 里连续变窄(≈21px/帧),那一帧就足以把聊天区
-              // 压过下限、让标签抖一下。100% 即 shell 宽度,算式与 maxWorkspaceWidth 逐项对应。
-              maxWidth:
-                chatMinWidth > 0
-                  ? `max(${WORKSPACE_MIN_WIDTH}px, calc(100% - ${chatMinWidth}px))`
-                  : undefined,
+              // 压过下限、让标签抖一下。100% 即 shell 宽度,算式与 workspaceBudget 逐项对应。
+              //
+              // 这里不给面板留下限:滞后帧里宁可让面板临时更窄,也不能压聊天区。
+              // 稳态下 showWorkspace 已经保证了预算 ≥ WORKSPACE_MIN_WIDTH。
+              maxWidth: chatMinWidth > 0 ? `calc(100% - ${chatMinWidth}px)` : undefined,
             }}
             className={cn(
               "relative flex h-full min-h-0 flex-col border-l bg-background overflow-hidden shrink-0",
@@ -474,6 +556,7 @@ export default function App(): React.JSX.Element {
     <WorkbenchProvider>
       <TooltipProvider>
         <AppShell />
+        <SmoothCursor />
         <Toaster position="bottom-right" />
       </TooltipProvider>
     </WorkbenchProvider>

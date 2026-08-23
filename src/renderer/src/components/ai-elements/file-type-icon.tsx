@@ -233,7 +233,13 @@ export function MaterialIcon({
   ...props
 }: { name: string; className?: string } & SVGProps<SVGSVGElement>) {
   const source = iconSource(name) ?? iconSource("document");
-  if (!source) return <FileCode2Icon className={cn("size-4 shrink-0 text-muted-foreground", className)} {...props} />;
+  if (!source)
+    return (
+      <FileCode2Icon
+        className={cn("size-4 shrink-0 text-muted-foreground", className)}
+        {...props}
+      />
+    );
   const width = source.width ?? icons.width ?? 24;
   const height = source.height ?? icons.height ?? 24;
   return (

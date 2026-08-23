@@ -105,61 +105,73 @@ export function ApprovalMenuItems({
   return (
     <>
       {APPROVAL_PRESETS.map((preset) => (
-        <DropdownMenuItem className="items-start gap-2" key={preset.id} onClick={() => void setPermissionRules(preset.rules)}>
-          <span className="flex min-w-0 flex-col gap-0.5"><span className="flex items-center gap-1.5">{preset.label}{activePreset === preset.id ? <CheckIcon className="ml-auto size-3.5" /> : null}</span><Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">{preset.description}</Badge></span>
+        <DropdownMenuItem
+          className="items-start gap-2"
+          key={preset.id}
+          onClick={() => void setPermissionRules(preset.rules)}
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="flex items-center gap-1.5">
+              {preset.label}
+              {activePreset === preset.id ? <CheckIcon className="ml-auto size-3.5" /> : null}
+            </span>
+            <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
+              {preset.description}
+            </Badge>
+          </span>
         </DropdownMenuItem>
       ))}
       <DropdownMenuSeparator />
       <DropdownMenuLabel>按类别微调</DropdownMenuLabel>
       {TOOL_CATEGORIES.map((category) => {
-          const meta = CATEGORY_META[category];
-          const locked = lockedCategories.includes(category);
-          const policy: PermissionPolicy = locked
-            ? "deny"
-            : (permissionRules.categories[category] ?? "ask");
-          return (
-            <DropdownMenuSub key={category}>
-              <DropdownMenuSubTrigger>
-                <span className="truncate">{meta.label}</span>
-                <Badge className="ml-auto h-4 shrink-0 px-1.5 text-[10px]" variant="secondary">
-                  {locked ? "模式锁定" : POLICY_META[policy].label}
-                </Badge>
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-56">
-                <DropdownMenuGroup>
+        const meta = CATEGORY_META[category];
+        const locked = lockedCategories.includes(category);
+        const policy: PermissionPolicy = locked
+          ? "deny"
+          : (permissionRules.categories[category] ?? "ask");
+        return (
+          <DropdownMenuSub key={category}>
+            <DropdownMenuSubTrigger>
+              <span className="truncate">{meta.label}</span>
+              <Badge className="ml-auto h-4 shrink-0 px-1.5 text-[10px]" variant="secondary">
+                {locked ? "模式锁定" : POLICY_META[policy].label}
+              </Badge>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-56">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="whitespace-normal text-xs font-normal text-muted-foreground">
+                  {meta.description}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {locked ? (
                   <DropdownMenuLabel className="whitespace-normal text-xs font-normal text-muted-foreground">
-                    {meta.description}
+                    「{WORK_MODE_META[modeId].label}」模式强制拒绝这一类,换模式后才能调整。
                   </DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {locked ? (
-                    <DropdownMenuLabel className="whitespace-normal text-xs font-normal text-muted-foreground">
-                      「{WORK_MODE_META[modeId].label}」模式强制拒绝这一类,换模式后才能调整。
-                    </DropdownMenuLabel>
-                  ) : (
-                    <DropdownMenuRadioGroup
-                      onValueChange={(next) =>
-                        void setPermissionRules(
-                          withCategoryPolicy(permissionRules, category, next as PermissionPolicy),
-                        )
-                      }
-                      value={policy}
-                    >
-                      {PERMISSION_POLICIES.map((candidate) => (
-                        <DropdownMenuRadioItem key={candidate} value={candidate}>
-                          <span className="flex min-w-0 flex-col">
-                            <span>{POLICY_META[candidate].label}</span>
-                            <span className="truncate text-[10px] text-muted-foreground">
-                              {POLICY_META[candidate].description}
-                            </span>
+                ) : (
+                  <DropdownMenuRadioGroup
+                    onValueChange={(next) =>
+                      void setPermissionRules(
+                        withCategoryPolicy(permissionRules, category, next as PermissionPolicy),
+                      )
+                    }
+                    value={policy}
+                  >
+                    {PERMISSION_POLICIES.map((candidate) => (
+                      <DropdownMenuRadioItem key={candidate} value={candidate}>
+                        <span className="flex min-w-0 flex-col">
+                          <span>{POLICY_META[candidate].label}</span>
+                          <span className="truncate text-[10px] text-muted-foreground">
+                            {POLICY_META[candidate].description}
                           </span>
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  )}
-                </DropdownMenuGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          );
+                        </span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                )}
+              </DropdownMenuGroup>
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        );
       })}
     </>
   );

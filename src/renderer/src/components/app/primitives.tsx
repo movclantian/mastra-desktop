@@ -14,7 +14,10 @@ export function PanelHeader({ className, ...props }: React.ComponentProps<"heade
   return (
     <header
       data-slot="panel-header"
-      className={cn("bg-muted/40 border-b border-border flex h-12 shrink-0 items-center gap-2 px-3", className)}
+      className={cn(
+        "bg-muted/40 border-b border-border flex h-12 shrink-0 items-center gap-2 px-3",
+        className,
+      )}
       {...props}
     />
   );

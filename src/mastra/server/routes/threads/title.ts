@@ -25,7 +25,7 @@ export async function generateThreadTitleHelper(options: {
 
   // 非强制模式下，如果标题已被用户显式修改且不是草稿/默认标题，则跳过
   if (!options.force && thread.title !== "New Chat" && !thread.metadata?.draft) {
-    return thread.title;
+    return thread.title ?? "New Chat";
   }
 
   let textContent = options.userMessage?.trim();
@@ -45,12 +45,12 @@ export async function generateThreadTitleHelper(options: {
     }
   }
 
-  if (!textContent) return thread.title;
+  if (!textContent) return thread.title ?? "New Chat";
 
   let generatedTitle = "";
 
   try {
-    let modelInstance: LanguageModel | undefined = undefined;
+    let modelInstance: LanguageModel | undefined;
     if (options.model !== undefined) {
       const resolved = await resolveRequestModel(options.model);
       if (resolved && typeof resolved === "object" && "doGenerate" in resolved) {
@@ -112,30 +112,27 @@ export async function generateThreadTitleHelper(options: {
 }
 
 // POST /work/threads/:threadId/generate-title
-export const generateThreadTitleRoute = registerApiRoute(
-  "/work/threads/:threadId/generate-title",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const threadId = c.req.param("threadId");
-      const body = (await c.req.json()) as {
-        resourceId?: string;
-        model?: unknown;
-        force?: boolean;
-      };
-      if (!body.resourceId) {
-        throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
-      }
-      const title = await generateThreadTitleHelper({
-        threadId,
-        resourceId: body.resourceId,
-        model: body.model,
-        force: body.force ?? true,
-      });
-      if (!title) {
-        throw workError("THREAD_NOT_FOUND");
-      }
-      return c.json({ title });
-    },
+export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadId/generate-title", {
+  method: "POST",
+  handler: async (c) => {
+    const threadId = c.req.param("threadId");
+    const body = (await c.req.json()) as {
+      resourceId?: string;
+      model?: unknown;
+      force?: boolean;
+    };
+    if (!body.resourceId) {
+      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
+    }
+    const title = await generateThreadTitleHelper({
+      threadId,
+      resourceId: body.resourceId,
+      model: body.model,
+      force: body.force ?? true,
+    });
+    if (!title) {
+      throw workError("THREAD_NOT_FOUND");
+    }
+    return c.json({ title });
   },
-);
+});

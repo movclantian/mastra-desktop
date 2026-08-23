@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import * as React from "react";
+import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 export interface AnimatedChevronProps {

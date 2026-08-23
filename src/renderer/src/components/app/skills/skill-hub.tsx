@@ -1,8 +1,13 @@
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
+  BookOpenIcon,
   CheckIcon,
+  ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
+  FileCodeIcon,
+  FileTextIcon,
   FolderOpenIcon,
   LoaderCircleIcon,
   PencilIcon,
@@ -13,15 +18,25 @@ import {
   Settings2Icon,
   SparklesIcon,
   StoreIcon,
+  TerminalIcon,
   Trash2Icon,
   UploadIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { McpDialog, type McpFormServer } from "@/components/app/integrations";
 import { MessageResponse } from "@/components/ai-elements/message";
+import { McpDialog, type McpFormServer } from "@/components/app/integrations";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   Dialog,
   DialogContent,
@@ -38,28 +53,20 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { MagicCard } from "@/components/ui/magic-card";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
-import { useWorkbench } from "@/lib/workbench";
-
-interface SkillMetadata {
-  name: string;
-  path: string;
-  description: string;
-  metadata?: Record<string, unknown>;
-  origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
-  marketplaceId?: string;
-  marketplaceName?: string;
-  sourcePath?: string;
-  branch?: string;
-  skillsShSource?: string;
-  skillsShSlug?: string;
-  installs?: number;
-  sourceUrl?: string;
-}
+import { type SkillMetadata, useWorkbench } from "@/lib/workbench";
 
 interface SkillDetail extends SkillMetadata {
   instructions: string;
@@ -130,10 +137,23 @@ function saveStorageCache(key: string, data: unknown) {
   }
 }
 
+type SourceFilter = "all" | "builtin" | "skills-sh" | "marketplace";
+const PAGE_SIZE = 24;
+
+function getPaginationRange(current: number, total: number): (number | string)[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 4) return [1, 2, 3, 4, 5, "...", total];
+  if (current >= total - 3) return [1, "...", total - 4, total - 3, total - 2, total - 1, total];
+  return [1, "...", current - 1, current, current + 1, "...", total];
+}
+
 export function SkillHub() {
-  const { setPendingPrompt, setSkillOpen } = useWorkbench();
+  const { setPendingPrompt, setSkillOpen, activeSkill, setActiveSkill } = useWorkbench();
   const [section, setSection] = React.useState<Section>("public");
   const [query, setQuery] = React.useState("");
+  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
+  const [page, setPage] = React.useState(1);
+  const scrollAreaRef = React.useRef<HTMLDivElement>(null);
 
   // SWR 缓存:优先从内存与本地缓存加载,实现 0ms 瞬间打开,后台静默刷新
   const [skills, setSkills] = React.useState<SkillMetadata[]>(() => {
@@ -161,7 +181,6 @@ export function SkillHub() {
     return cached;
   });
 
-  const [selectedSkill, setSelectedSkill] = React.useState<SkillMetadata | null>(null);
   const [detail, setDetail] = React.useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = React.useState(false);
   const [detailError, setDetailError] = React.useState<string | null>(null);
@@ -263,8 +282,13 @@ export function SkillHub() {
     return () => window.clearTimeout(timer);
   }, [loadRegistry, query, section]);
 
+  // 切换搜索词或来源时，重置为第 1 页
   React.useEffect(() => {
-    if (!selectedSkill) {
+    setPage(1);
+  }, [query, sourceFilter]);
+
+  React.useEffect(() => {
+    if (!activeSkill) {
       setDetail(null);
       setDetailLoading(false);
       setDetailError(null);
@@ -275,29 +299,27 @@ export function SkillHub() {
     setDetailError(null);
     setDetailLoading(true);
     const detailRequest =
-      selectedSkill.origin === "marketplace" &&
-      selectedSkill.marketplaceId &&
-      selectedSkill.sourcePath
+      activeSkill.origin === "marketplace" &&
+      activeSkill.marketplaceId &&
+      activeSkill.sourcePath
         ? fetch(
-            `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(selectedSkill.marketplaceId)}/skill?path=${encodeURIComponent(selectedSkill.sourcePath)}`,
+            `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(activeSkill.marketplaceId)}/skill?path=${encodeURIComponent(activeSkill.sourcePath)}`,
           )
-        : selectedSkill.origin === "skills-sh" &&
-            selectedSkill.skillsShSource &&
-            selectedSkill.skillsShSlug
+        : activeSkill.origin === "skills-sh" &&
+            activeSkill.skillsShSource &&
+            activeSkill.skillsShSlug
           ? fetch(
-              `${MASTRA_SERVER_URL}/work/skills/skills-sh/skill?source=${encodeURIComponent(selectedSkill.skillsShSource)}&slug=${encodeURIComponent(selectedSkill.skillsShSlug)}`,
+              `${MASTRA_SERVER_URL}/work/skills/skills-sh/skill?source=${encodeURIComponent(activeSkill.skillsShSource)}&slug=${encodeURIComponent(activeSkill.skillsShSlug)}`,
             )
-          : selectedSkill.origin === "builtin"
-          ? fetch(
-              `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(selectedSkill.sourcePath || selectedSkill.name)}`,
-            )
-          : fetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(selectedSkill.name)}`);
+          : activeSkill.origin === "builtin"
+            ? fetch(
+                `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(activeSkill.sourcePath || activeSkill.name)}`,
+              )
+            : fetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(activeSkill.name)}`);
     void detailRequest
       .then(async (response) => {
         const payload = (await response.json()) as { skill?: SkillDetail; error?: string };
-        if (!response.ok || !payload.skill) {
-          throw new Error(payload.error || "读取技能详情失败");
-        }
+        if (!response.ok || !payload.skill) throw apiError(payload, "读取技能详情失败");
         if (!cancelled) setDetail(payload.skill);
       })
       .catch((error) => {
@@ -310,15 +332,8 @@ export function SkillHub() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSkill]);
+  }, [activeSkill]);
 
-  const visibleRegistry = React.useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return registrySkills.filter(
-      (skill) =>
-        !needle || `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(needle),
-    );
-  }, [query, registrySkills]);
   const visibleInstalled = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return skills.filter(
@@ -326,16 +341,34 @@ export function SkillHub() {
         !needle || `${skill.name} ${skill.description}`.toLocaleLowerCase().includes(needle),
     );
   }, [query, skills]);
-  const groupedRegistry = React.useMemo(() => {
-    const groups = new Map<string, { category: string; skills: SkillMetadata[] }>();
-    for (const skill of visibleRegistry) {
-      const category = skillCategory(skill);
-      const key = `${skillSourceLabel(skill)}:${category}`;
-      const current = groups.get(key);
-      groups.set(key, { category, skills: [...(current?.skills ?? []), skill] });
-    }
-    return [...groups.values()];
-  }, [visibleRegistry]);
+
+  const filteredRegistry = React.useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return registrySkills.filter((skill) => {
+      if (sourceFilter === "builtin" && skill.origin !== "builtin") return false;
+      if (sourceFilter === "skills-sh" && skill.origin !== "skills-sh") return false;
+      if (sourceFilter === "marketplace" && skill.origin !== "marketplace") return false;
+      if (needle && !`${skill.name} ${skill.description}`.toLocaleLowerCase().includes(needle)) {
+        return false;
+      }
+      return true;
+    });
+  }, [query, registrySkills, sourceFilter]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRegistry.length / PAGE_SIZE));
+  const currentSkills = React.useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredRegistry.slice(start, start + PAGE_SIZE);
+  }, [filteredRegistry, page]);
+
+  const sourceCounts = React.useMemo(() => {
+    return {
+      all: registrySkills.length,
+      builtin: registrySkills.filter((s) => s.origin === "builtin").length,
+      skillsSh: registrySkills.filter((s) => s.origin === "skills-sh").length,
+      marketplace: registrySkills.filter((s) => s.origin === "marketplace").length,
+    };
+  }, [registrySkills]);
 
   const uploadSkill = async (file: File | undefined) => {
     if (!file) return;
@@ -391,32 +424,32 @@ export function SkillHub() {
   const installBuiltin = async (skill: SkillMetadata) => {
     setInstalling(skill.name);
     try {
-      const sourceName = skill.sourcePath || skill.path.split(/[\\/]/).at(-1) || skill.name;
       const response =
-        skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug
-          ? await fetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/install`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ source: skill.skillsShSource, slug: skill.skillsShSlug }),
-            })
-          : skill.origin === "marketplace" && skill.marketplaceId
-            ? await fetch(
-                `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify(skill),
-                },
-              )
+        skill.origin === "marketplace" && skill.marketplaceId && skill.sourcePath
+          ? await fetch(
+              `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path: skill.sourcePath }),
+              },
+            )
+          : skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug
+            ? await fetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/install`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  source: skill.skillsShSource,
+                  slug: skill.skillsShSlug,
+                }),
+              })
             : await fetch(
-                `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(sourceName)}/install`,
+                `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(skill.sourcePath || skill.name)}/install`,
                 { method: "POST" },
               );
       const payload = (await response.json()) as { skill?: SkillMetadata; error?: string };
       if (!response.ok || !payload.skill) throw apiError(payload, "安装技能失败");
       await loadInstalled();
-      setSelectedSkill(payload.skill);
-      setSection("personal");
       toast.success(`技能「${payload.skill.name}」已安装`);
     } catch (error) {
       toastError(error, "安装技能失败");
@@ -478,7 +511,7 @@ export function SkillHub() {
 
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="min-h-0 flex-1" ref={scrollAreaRef}>
         <main className="mx-auto w-full max-w-6xl px-5 py-8">
           <header className="flex items-start justify-between gap-4">
             <div>
@@ -531,7 +564,7 @@ export function SkillHub() {
             <Input
               className="h-12 rounded-xl pl-12 text-base"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索插件"
+              placeholder="搜索插件或技能名称..."
               value={query}
             />
           </div>
@@ -545,16 +578,15 @@ export function SkillHub() {
               <div className="flex gap-3 pb-3">
                 {skills.map((skill, index) => (
                   <button
-                    className="group flex size-14 shrink-0 items-center justify-center rounded-xl border bg-card text-2xl transition-colors hover:bg-accent"
+                    className="group flex size-14 shrink-0 items-center justify-center rounded-xl border bg-card text-2xl transition-colors hover:bg-accent cursor-pointer"
                     key={skill.name}
                     onClick={() => {
                       setSelectedSkill(skill);
-                      setSection("personal");
                     }}
                     title={skill.name}
                     type="button"
                   >
-                    {skillIcon(skill, index)}
+                    <span>{skillIcon(skill, index)}</span>
                   </button>
                 ))}
                 {skills.length === 0 && (
@@ -586,41 +618,133 @@ export function SkillHub() {
             </Button>
           </div>
           {section === "mcp" ? (
-            <McpSection
-              mcpServers={mcpServers}
-              onDelete={(server) => void removeMcp(server)}
-            />
+            <McpSection mcpServers={mcpServers} onDelete={(server) => void removeMcp(server)} />
           ) : section === "personal" ? (
             <InstalledSection skills={visibleInstalled} onSelect={setSelectedSkill} />
           ) : (
-            <div className="mt-8">
-              <div className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                <StoreIcon className="size-3.5" />
-                <span>技能来源</span>
-                <Badge variant="outline">Mastra 内置</Badge>
-                <Badge variant="outline">skills.sh</Badge>
-                <span>内置技能和 skills.sh 社区技能默认可用；已添加的 GitHub 市场也会显示在这里。</span>
+            <div className="mt-6">
+              {/* 技能来源筛选标签 */}
+              <div className="flex flex-wrap items-center gap-2 pb-4">
+                <Button
+                  size="sm"
+                  variant={sourceFilter === "all" ? "secondary" : "outline"}
+                  onClick={() => setSourceFilter("all")}
+                  className="rounded-full text-xs h-8"
+                >
+                  全部 ({sourceCounts.all})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={sourceFilter === "builtin" ? "secondary" : "outline"}
+                  onClick={() => setSourceFilter("builtin")}
+                  className="rounded-full text-xs h-8"
+                >
+                  Mastra 内置 ({sourceCounts.builtin})
+                </Button>
+                <Button
+                  size="sm"
+                  variant={sourceFilter === "skills-sh" ? "secondary" : "outline"}
+                  onClick={() => setSourceFilter("skills-sh")}
+                  className="rounded-full text-xs h-8"
+                >
+                  skills.sh 社区 ({sourceCounts.skillsSh})
+                </Button>
+                {sourceCounts.marketplace > 0 ? (
+                  <Button
+                    size="sm"
+                    variant={sourceFilter === "marketplace" ? "secondary" : "outline"}
+                    onClick={() => setSourceFilter("marketplace")}
+                    className="rounded-full text-xs h-8"
+                  >
+                    GitHub 市场 ({sourceCounts.marketplace})
+                  </Button>
+                ) : null}
               </div>
+
               {loading || (registryLoading && registrySkills.length === 0) ? (
                 <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
                   <LoaderCircleIcon className="animate-spin" />
                   正在读取 Mastra 技能市场…
                 </div>
-              ) : groupedRegistry.length === 0 ? (
+              ) : currentSkills.length === 0 ? (
                 <EmptyState label="技能市场暂时没有匹配结果" icon={<StoreIcon />} />
               ) : (
-                groupedRegistry.map(({ category, skills: categorySkills }) => (
-                  <SkillCategory
-                    key={`${skillSourceLabel(categorySkills[0])}:${category}`}
-                    category={category}
-                    installing={installing}
-                    installed={skills}
-                    onInstall={(skill) => void installBuiltin(skill)}
-                    onSelect={setSelectedSkill}
-                    skills={categorySkills}
-                  />
-                ))
+                <div className="grid gap-3.5 md:grid-cols-2">
+                  {currentSkills.map((skill, index) => {
+                    const isInstalled = skills.some((item) => item.name === skill.name);
+                    return (
+                      <SkillCard
+                        key={skill.path || skill.name}
+                        skill={skill}
+                        index={(page - 1) * PAGE_SIZE + index}
+                        installed={isInstalled}
+                        installing={installing === skill.name}
+                        onInstall={(s) => void installBuiltin(s)}
+                        onSelect={setSelectedSkill}
+                      />
+                    );
+                  })}
+                </div>
               )}
+
+              {/* 分页控制栏 */}
+              {totalPages > 1 ? (
+                <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-5">
+                  <span className="text-xs text-muted-foreground">
+                    共 {filteredRegistry.length} 个技能 · 第 {page} / {totalPages} 页
+                  </span>
+                  <Pagination className="mx-0 w-auto">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={page <= 1}
+                          onClick={() => {
+                            setPage((p) => Math.max(1, p - 1));
+                          }}
+                          className="gap-1 pl-2.5"
+                        >
+                          <ChevronLeftIcon className="size-4" />
+                          <span>上一页</span>
+                        </Button>
+                      </PaginationItem>
+
+                      {getPaginationRange(page, totalPages).map((item, idx) => (
+                        <PaginationItem key={typeof item === "number" ? item : `ellipsis-${idx}`}>
+                          {item === "..." ? (
+                            <PaginationEllipsis />
+                          ) : (
+                            <Button
+                              variant={page === item ? "outline" : "ghost"}
+                              size="icon"
+                              className="size-8 text-xs"
+                              onClick={() => setPage(Number(item))}
+                            >
+                              {item}
+                            </Button>
+                          )}
+                        </PaginationItem>
+                      ))}
+
+                      <PaginationItem>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={page >= totalPages}
+                          onClick={() => {
+                            setPage((p) => Math.min(totalPages, p + 1));
+                          }}
+                          className="gap-1 pr-2.5"
+                        >
+                          <span>下一页</span>
+                          <ChevronRightIcon className="size-4" />
+                        </Button>
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
+              ) : null}
             </div>
           )}
         </main>
@@ -644,89 +768,112 @@ export function SkillHub() {
   );
 }
 
-function SkillCategory({
-  category,
-  skills,
+interface SkillCardProps {
+  skill: SkillMetadata;
+  index: number;
+  installed: boolean;
+  installing: boolean;
+  onInstall: (skill: SkillMetadata) => void;
+  onSelect: (skill: SkillMetadata) => void;
+}
+
+const SkillCard = React.memo(function SkillCard({
+  skill,
+  index,
   installed,
   installing,
   onInstall,
   onSelect,
-}: {
-  category: string;
-  skills: SkillMetadata[];
-  installed: SkillMetadata[];
-  installing: string | null;
-  onInstall: (skill: SkillMetadata) => void;
-  onSelect: (skill: SkillMetadata) => void;
-}) {
+}: SkillCardProps) {
   return (
-    <section className="mt-4">
-      <div className="flex items-center justify-between">
-        <div className="flex min-w-0 items-center gap-2">
-          <h2 className="text-xl font-semibold">{category}</h2>
-          <Badge variant="outline">{skillSourceLabel(skills[0])}</Badge>
-        </div>
-        <span className="text-xs text-muted-foreground">{skills.length} 个技能</span>
-      </div>
-      <Separator className="mt-4" />
-      <div className="mt-2 grid gap-3 md:grid-cols-2">
-        {skills.map((skill, index) => {
-          const isInstalled = installed.some((item) => item.name === skill.name);
-          return (
-            <MagicCard
-              key={skill.name}
-              gradientSize={160}
-              gradientFrom="var(--primary)"
-              gradientTo="var(--accent)"
-              className="flex min-w-0 items-center justify-between gap-3 rounded-xl border bg-card/60 p-3 transition-colors hover:border-primary/40"
-            >
-              <button
-                aria-label={`查看技能 ${skill.name}`}
-                className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
-                onClick={() => onSelect(skill)}
-                type="button"
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl">
-                  {skillIcon(skill, index)}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate font-medium text-foreground">{skill.name}</span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                    {skill.description || "未提供描述"}
-                  </span>
-                </span>
-              </button>
-              {isInstalled ? (
-                <Badge variant="secondary" className="shrink-0">
-                  <CheckIcon className="size-3 mr-1" />
-                  已安装
-                </Badge>
-              ) : (
-                <Button
-                  disabled={installing === skill.name}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onInstall(skill);
-                  }}
-                  size="sm"
+    <ContextMenu>
+      <ContextMenuTrigger className="block h-full">
+        <MagicCard
+          gradientSize={160}
+          gradientFrom="var(--primary)"
+          gradientTo="var(--accent)"
+          className="flex min-w-0 items-center justify-between gap-3 rounded-xl border bg-card/60 p-3.5 transition-all hover:border-primary/40 h-full shadow-xs"
+        >
+          <button
+            aria-label={`查看技能 ${skill.name}`}
+            className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
+            onClick={() => onSelect(skill)}
+            type="button"
+          >
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl shadow-2xs">
+              {skillIcon(skill, index)}
+            </span>
+            <span className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="block truncate font-medium text-foreground">{skill.name}</span>
+                <Badge
                   variant="outline"
-                  className="shrink-0 h-7 text-xs"
+                  className="text-[10px] px-1.5 py-0 h-4 font-normal text-muted-foreground shrink-0"
                 >
-                  {installing === skill.name ? (
-                    <LoaderCircleIcon className="animate-spin size-3.5" />
-                  ) : (
-                    <PlusIcon className="size-3.5" />
-                  )}
-                  安装
-                </Button>
+                  {skillSourceLabel(skill)}
+                </Badge>
+              </div>
+              <span className="mt-1 block truncate text-xs text-muted-foreground">
+                {skill.description || "未提供描述"}
+              </span>
+            </span>
+          </button>
+          {installed ? (
+            <Badge variant="secondary" className="shrink-0">
+              <CheckIcon className="size-3 mr-1" />
+              已安装
+            </Badge>
+          ) : (
+            <Button
+              disabled={installing}
+              onClick={(event) => {
+                event.stopPropagation();
+                onInstall(skill);
+              }}
+              size="sm"
+              variant="outline"
+              className="shrink-0 h-7 text-xs"
+            >
+              {installing ? (
+                <LoaderCircleIcon className="animate-spin size-3.5" />
+              ) : (
+                <PlusIcon className="size-3.5" />
               )}
-            </MagicCard>
-          );
-        })}
-      </div>
-    </section>
+              安装
+            </Button>
+          )}
+        </MagicCard>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        <ContextMenuGroup>
+          <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
+          <ContextMenuItem onClick={() => onSelect(skill)}>
+            <SparklesIcon className="text-muted-foreground" />
+            <span>查看技能详情</span>
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => {
+              void navigator.clipboard.writeText(skill.name);
+              toast.success("已复制技能名称");
+            }}
+          >
+            <CopyIcon className="text-muted-foreground" />
+            <span>复制技能名称</span>
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          {!installed ? (
+            <ContextMenuItem onClick={() => onInstall(skill)}>
+              <PlusIcon className="text-muted-foreground" />
+              <span>安装此技能</span>
+            </ContextMenuItem>
+          ) : null}
+        </ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
   );
-}
+});
 
 function InstalledSection({
   skills,
@@ -744,23 +891,55 @@ function InstalledSection({
       <Separator className="mt-4" />
       <div className="grid gap-x-12 md:grid-cols-2">
         {skills.map((skill, index) => (
-          <button
-            className="flex min-w-0 items-center gap-3 rounded-lg py-3 text-left transition-colors hover:bg-muted/40"
-            key={skill.name}
-            onClick={() => onSelect(skill)}
-            type="button"
-          >
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl">
-              {skillIcon(skill, index)}
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate font-medium">{skill.name}</span>
-              <span className="mt-1 block truncate text-sm text-muted-foreground">
-                {skill.description || "未提供描述"}
-              </span>
-            </span>
-            <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground" />
-          </button>
+          <ContextMenu key={skill.name}>
+            <ContextMenuTrigger className="w-full block">
+              <button
+                className="flex w-full min-w-0 items-center gap-3 rounded-lg py-3 text-left transition-colors hover:bg-muted/40"
+                onClick={() => onSelect(skill)}
+                type="button"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl">
+                  {skillIcon(skill, index)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{skill.name}</span>
+                  <span className="mt-1 block truncate text-sm text-muted-foreground">
+                    {skill.description || "未提供描述"}
+                  </span>
+                </span>
+                <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground" />
+              </button>
+            </ContextMenuTrigger>
+            <ContextMenuContent className="w-48">
+              <ContextMenuGroup>
+                <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
+                <ContextMenuItem onClick={() => onSelect(skill)}>
+                  <SparklesIcon className="text-muted-foreground" />
+                  <span>查看技能详情</span>
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() => {
+                    void navigator.clipboard.writeText(skill.name);
+                    toast.success("已复制技能名称");
+                  }}
+                >
+                  <CopyIcon className="text-muted-foreground" />
+                  <span>复制技能名称</span>
+                </ContextMenuItem>
+                {skill.path ? (
+                  <ContextMenuItem
+                    onClick={() => {
+                      void navigator.clipboard.writeText(skill.path);
+                      toast.success("已复制技能路径");
+                    }}
+                  >
+                    <CopyIcon className="text-muted-foreground" />
+                    <span>复制技能路径</span>
+                  </ContextMenuItem>
+                ) : null}
+              </ContextMenuGroup>
+            </ContextMenuContent>
+          </ContextMenu>
         ))}
         {skills.length === 0 && <EmptyState label="还没有个人技能" icon={<SparklesIcon />} />}
       </div>
@@ -787,10 +966,7 @@ function McpSection({
       <Separator className="mt-4" />
       <div className="grid gap-3 py-4 md:grid-cols-2">
         {mcpServers.map((server) => (
-          <div
-            className="flex items-center gap-3 rounded-xl border p-4"
-            key={server.id}
-          >
+          <div className="flex items-center gap-3 rounded-xl border p-4" key={server.id}>
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-primary">
                 <PlugZapIcon />
@@ -939,22 +1115,67 @@ function SkillDetailPage({
                 </h2>
                 <Separator className="mt-4" />
                 <div className="divide-y">
-                  {[...detail.references, ...detail.scripts, ...detail.assets].map((item) => (
-                    <div className="flex items-center gap-3 py-4" key={item}>
-                      <span className="flex size-9 items-center justify-center rounded-lg bg-muted">
-                        <SparklesIcon className="size-4" />
+                  {detail.references.map((item) => (
+                    <div className="flex items-center gap-3 py-3.5" key={`ref-${item}`}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                        <BookOpenIcon className="size-4" />
                       </span>
-                      <span className="min-w-0">
-                        <span className="block truncate font-medium">{item}</span>
-                        <span className="mt-1 block truncate text-sm text-muted-foreground">
-                          该技能附带的参考资料、脚本或资源文件
+                      <span className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="block truncate font-medium text-foreground">{item}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-blue-600 dark:text-blue-400">
+                            参考文档
+                          </Badge>
+                        </div>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          技能执行时引用的领域知识、规范说明或 API 参考手册
                         </span>
                       </span>
                     </div>
                   ))}
-                  {detail.references.length + detail.scripts.length + detail.assets.length ===
-                    0 && (
-                    <p className="py-5 text-sm text-muted-foreground">此技能没有额外资源文件。</p>
+                  {detail.scripts.map((item) => (
+                    <div className="flex items-center gap-3 py-3.5" key={`script-${item}`}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                        <TerminalIcon className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="block truncate font-medium text-foreground">{item}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400">
+                            执行脚本
+                          </Badge>
+                        </div>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          供 Agent 调用的可执行自动化脚本或分析程序
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  {detail.assets.map((item) => (
+                    <div className="flex items-center gap-3 py-3.5" key={`asset-${item}`}>
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+                        <FileCodeIcon className="size-4" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="block truncate font-medium text-foreground">{item}</span>
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 font-normal text-amber-600 dark:text-amber-400">
+                            资源模版
+                          </Badge>
+                        </div>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          模版代码、样式文件、静态数据或媒体资源
+                        </span>
+                      </span>
+                    </div>
+                  ))}
+                  {detail.references.length + detail.scripts.length + detail.assets.length === 0 && (
+                    <div className="py-6 text-sm text-muted-foreground">
+                      <p className="font-medium text-foreground/80">此技能为纯指令型技能</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        由 <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code> 中的系统提示词与执行规则全权驱动，无需额外附带脚本或资源文件。
+                      </p>
+                    </div>
                   )}
                 </div>
               </section>

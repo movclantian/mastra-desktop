@@ -287,6 +287,16 @@ export function ChatPanel() {
     void refreshThreads();
   }, [activeThread?.metadata.workspacePath, activeThreadId, messages.length, refreshThreads]);
 
+  // 首轮会话流式完成时（状态由 streaming 变为 ready）：立即刷新线程列表，实时呈现服务端智能起名的标题
+  const previousStatusRef = React.useRef(status);
+  React.useEffect(() => {
+    const wasStreaming = previousStatusRef.current === "streaming";
+    previousStatusRef.current = status;
+    if (wasStreaming && status === "ready" && activeThreadId) {
+      void refreshThreads();
+    }
+  }, [activeThreadId, refreshThreads, status]);
+
   // 从服务端拉取历史消息并重建消息流(线程切换 / 压缩后刷新共用)。
   //
   // setMessages 恒定写「当前」Chat(useChat 里它闭包的是一个永久稳定的 ref),
@@ -899,15 +909,19 @@ export function ChatPanel() {
 
     // 无激活线程时,先创建线程再发送
     if (!activeThreadId) {
-      const thread = await createThread(text.slice(0, 30) || "New Chat");
+      const initialTitle = text.replace(/^[#\-\s*]+/, "").slice(0, 24) || "New Chat";
+      const thread = await createThread(initialTitle);
       if (!thread) {
         toast.error("创建会话失败,请确认 Mastra 服务已启动");
         return;
       }
       // 立即更新 ref:sendMessage 读到的是最新 threadId,不等 re-render
       activeThreadIdRef.current = thread.id;
-      // 首条消息用线程标题
-      if (text) void renameThread(thread.id, text.slice(0, 30));
+      if (text) void renameThread(thread.id, initialTitle);
+    } else if (text && (activeThread?.title === "New Chat" || activeThread?.metadata.draft)) {
+      // 已有草稿线程发送首条消息：T=0 即刻赋予首句确定性标题，避免等待 LLM
+      const initialTitle = text.replace(/^[#\-\s*]+/, "").slice(0, 24) || "新任务";
+      void renameThread(activeThread.id, initialTitle);
     }
 
     const targetThreadId = activeThreadIdRef.current;
@@ -1009,7 +1023,7 @@ export function ChatPanel() {
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [agentSelection.id, getThreadChat, searchSelection, selectedProvider, modelSelection, user.id],
+    [agentSelection.id, getThreadChat],
   );
 
   const sendingQueuedRequest = React.useRef(false);
@@ -1170,9 +1184,7 @@ export function ChatPanel() {
         (!activeThread || activeThread.metadata.draft === true) ? (
           // 新会话: Magic UI 点阵背景 + 粒子光效 + 快捷灵感卡片 + 居中输入区
           <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-4 pb-12 overflow-hidden">
-            <DotPattern
-              className="opacity-40 [mask-image:radial-gradient(ellipse_at_center,white,transparent_75%)]"
-            />
+            <DotPattern className="opacity-40 [mask-image:radial-gradient(ellipse_at_center,white,transparent_75%)]" />
             <BlurFade delay={0.05} inView>
               <div className="flex flex-col items-center text-center gap-2">
                 <div className="flex items-center gap-2">
@@ -1213,9 +1225,9 @@ export function ChatPanel() {
                     desc: "提炼核心知识库与 MCP 工具文档，生成可执行的最佳实践",
                     prompt: "请结合当前知识库与工具规范，总结并输出完整的开发指南。",
                   },
-                ].map((starter, idx) => (
+                ].map((starter) => (
                   <MagicCard
-                    key={idx}
+                    key={starter.title}
                     gradientSize={160}
                     gradientFrom="var(--primary)"
                     gradientTo="var(--accent)"

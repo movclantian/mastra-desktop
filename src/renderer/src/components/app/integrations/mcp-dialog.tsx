@@ -339,7 +339,9 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                 onCheckedChange={(checked) => update({ requireToolApproval: checked })}
               >
                 <span className="font-medium">调用工具前要求批准</span>
-                <span className="text-xs text-muted-foreground">推荐开启，避免工具被意外调用。</span>
+                <span className="text-xs text-muted-foreground">
+                  推荐开启，避免工具被意外调用。
+                </span>
               </CheckField>
             </section>
           </div>
@@ -350,7 +352,11 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
             {testing ? "测试中…" : "测试连接"}
           </Button>
           <div className="flex items-center gap-2">
-            <Button disabled={testing || saving} onClick={() => onOpenChange(false)} variant="ghost">
+            <Button
+              disabled={testing || saving}
+              onClick={() => onOpenChange(false)}
+              variant="ghost"
+            >
               取消
             </Button>
             <Button disabled={saving || testing} onClick={() => void save()}>

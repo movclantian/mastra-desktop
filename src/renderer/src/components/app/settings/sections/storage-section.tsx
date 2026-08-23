@@ -46,20 +46,22 @@ export function StorageSection() {
   const migrate = async (directory: string, prev: string | undefined) => {
     setMigrating(true);
     try {
-      await window.api.migrateStorage(directory);
+      if (window.api?.migrateStorage) await window.api.migrateStorage(directory);
       toast.success(`存储位置已迁移至 ${directory}`, {
         ...(prev
           ? {
               action: {
                 label: "撤回",
                 onClick: () => {
-                  void window.api
-                    .migrateStorage(prev)
-                    .then(() => {
-                      toast.success("已撤回存储位置更改");
-                      loadInfo();
-                    })
-                    .catch(() => toast.error("撤回失败,请重试"));
+                  if (window.api?.migrateStorage) {
+                    void window.api
+                      .migrateStorage(prev)
+                      .then(() => {
+                        toast.success("已撤回存储位置更改");
+                        loadInfo();
+                      })
+                      .catch(() => toast.error("撤回失败,请重试"));
+                  }
                 },
               },
             }
@@ -77,7 +79,7 @@ export function StorageSection() {
   const pickDirectory = async () => {
     setPicking(true);
     try {
-      const dir = await window.api.pickDirectory();
+      const dir = await window.api?.pickDirectory?.();
       if (dir && dir !== info?.directory) {
         if (agentBusy) {
           setPendingDir(dir);
@@ -104,11 +106,11 @@ export function StorageSection() {
   }, [loadInfo]);
 
   const openDirectory = () => {
-    if (info) void window.api.openDirectory(info.directory);
+    if (info && window.api?.openDirectory) void window.api.openDirectory(info.directory);
   };
 
   const resetApp = () => {
-    void window.api.resetAppData();
+    if (window.api?.resetAppData) void window.api.resetAppData();
   };
 
   return (

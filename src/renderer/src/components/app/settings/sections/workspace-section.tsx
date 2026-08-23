@@ -111,7 +111,7 @@ export function DirectoryPickerField({
   const pick = async () => {
     setPicking(true);
     try {
-      const dir = await window.api.pickDirectory();
+      const dir = await window.api?.pickDirectory?.();
       if (dir) onChange(dir);
     } finally {
       setPicking(false);
@@ -174,7 +174,7 @@ export function DirectoryList({
   const add = async () => {
     setPicking(true);
     try {
-      const dir = await window.api.pickDirectory();
+      const dir = await window.api?.pickDirectory?.();
       if (dir && !value.includes(dir)) onChange([...value, dir]);
     } finally {
       setPicking(false);

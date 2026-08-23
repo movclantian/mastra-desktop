@@ -1,9 +1,9 @@
-import { Agent, type SubAgent } from "@mastra/core/agent";
-import type { Mastra } from "@mastra/core/mastra";
-import type { AnyWorkflow, DynamicWorkflowGraph } from "@mastra/core/workflows";
 import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Agent, SubAgent } from "@mastra/core/agent";
+import type { Mastra } from "@mastra/core/mastra";
+import type { AnyWorkflow, DynamicWorkflowGraph } from "@mastra/core/workflows";
 import { getAppConfig, setAppConfig } from "../storage";
 import { getManagedSkillsDirectory } from "../workspace";
 
@@ -319,9 +319,13 @@ interface ProfileRuntime {
   removeAgent: (keyOrId: string) => boolean;
   addDynamicWorkflow: (definition: DynamicWorkflowGraph) => Promise<void>;
   removeWorkflow: (keyOrId: string) => boolean;
-  getStorage?: () => {
-    getStore: (name: "workflowDefinitions") => Promise<{ delete: (id: string) => Promise<void> } | undefined>;
-  } | undefined;
+  getStorage?: () =>
+    | {
+        getStore: (
+          name: "workflowDefinitions",
+        ) => Promise<{ delete: (id: string) => Promise<void> } | undefined>;
+      }
+    | undefined;
 }
 
 let profileRuntime: ProfileRuntime | undefined;
@@ -331,6 +335,14 @@ let syncQueue = Promise.resolve();
 
 function workflowId(profileId: string): string {
   return `agent-team-${profileId}`;
+}
+
+function workflowInputTemplate(): string {
+  return String.raw`\${initData.request}`;
+}
+
+function workflowStepResultTemplate(stepId: string): string {
+  return String.raw`\${stepResults.${stepId}.text}`;
 }
 
 function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undefined {
@@ -348,7 +360,7 @@ function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undef
     {
       type: "mapping",
       id: "workflow-input",
-      mapConfig: JSON.stringify({ prompt: { template: "${initData.request}" } }),
+      mapConfig: JSON.stringify({ prompt: { template: workflowInputTemplate() } }),
     },
   ];
   if (profile.workflow.strategy === "parallel") {
@@ -369,7 +381,7 @@ function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undef
           id: `${step.id}-input`,
           mapConfig: JSON.stringify({
             prompt: {
-              template: `${step.prompt ?? "继续处理这个任务"}: ${"${initData.request}"}\\n\\n上一步结果: ${"${stepResults." + steps[index - 1].id + ".text}"}`,
+              template: `${step.prompt ?? "继续处理这个任务"}: ${workflowInputTemplate()}\\n\\n上一步结果: ${workflowStepResultTemplate(steps[index - 1].id)}`,
             },
           }),
         });
@@ -389,7 +401,7 @@ function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undef
       id: "synthesis-input",
       mapConfig: JSON.stringify({
         prompt: {
-          template: `请汇总以下团队结果并给出最终答复。原始请求: ${"${initData.request}"}\\n\\n团队结果: ${"${stepResults." + lastStep + ".text}"}`,
+          template: `请汇总以下团队结果并给出最终答复。原始请求: ${workflowInputTemplate()}\\n\\n团队结果: ${workflowStepResultTemplate(lastStep)}`,
         },
       }),
     });

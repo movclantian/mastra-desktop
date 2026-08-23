@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import * as React from "react";
+import type * as React from "react";
 import { cn } from "@/lib/utils";
 
 export interface AnimatedTabItem {
@@ -47,7 +47,9 @@ export function AnimatedTabs({
             onClick={() => onChange(tab.id)}
             className={cn(
               "relative flex cursor-pointer items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors z-10 select-none",
-              isActive ? "text-foreground font-semibold" : "text-muted-foreground hover:text-foreground",
+              isActive
+                ? "text-foreground font-semibold"
+                : "text-muted-foreground hover:text-foreground",
               tab.disabled && "cursor-not-allowed opacity-50",
             )}
           >

@@ -619,6 +619,25 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           liveSession.setMode(session.modeId);
         }
       }
+
+      // 并发异步起名：在主流式开启的同刻即在后台并发提炼标题，确保流式进行中标题已落库就绪
+      if (body.memory?.resource) {
+        const latestUserMsg = [...body.messages].reverse().find((m) => m.role === "user");
+        const latestUserText = latestUserMsg?.parts
+          .filter((p) => p.type === "text")
+          .map((p) => ("text" in p ? p.text : ""))
+          .join(" ")
+          .trim();
+        if (latestUserText) {
+          void generateThreadTitleHelper({
+            threadId: body.memory.thread,
+            resourceId: body.memory.resource,
+            userMessage: latestUserText,
+            model: rawModel,
+            force: false,
+          }).catch(() => undefined);
+        }
+      }
     }
     if (body.memory?.resource) {
       let librarySources: LibraryCitationSource[] = [];

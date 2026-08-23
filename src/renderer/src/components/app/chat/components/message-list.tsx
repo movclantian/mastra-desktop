@@ -35,6 +35,15 @@ import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
   Message,
   MessageAvatar,
   MessageContent,
@@ -415,12 +424,42 @@ export const MessageItem = React.memo(function MessageItem({
                           messageId={versionMessage.id}
                         />
                         {versionText ? (
-                          <Bubble
-                            className="max-w-full"
-                            ref={versionIndex === activeBranchIndex ? bubbleRef : undefined}
-                          >
-                            <BubbleContent>{versionText}</BubbleContent>
-                          </Bubble>
+                          <ContextMenu>
+                            <ContextMenuTrigger className="max-w-full">
+                              <Bubble
+                                className="max-w-full"
+                                ref={versionIndex === activeBranchIndex ? bubbleRef : undefined}
+                              >
+                                <BubbleContent>{versionText}</BubbleContent>
+                              </Bubble>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="w-48">
+                              <ContextMenuGroup>
+                                <ContextMenuItem onClick={() => handleCopy()}>
+                                  <CopyIcon className="text-muted-foreground" />
+                                  <span>复制内容</span>
+                                  <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={startEditing}>
+                                  <PencilIcon className="text-muted-foreground" />
+                                  <span>编辑消息</span>
+                                </ContextMenuItem>
+                              </ContextMenuGroup>
+                              <ContextMenuSeparator />
+                              <ContextMenuGroup>
+                                <ContextMenuItem
+                                  onClick={() => onCloneMessage(versionMessage.id, messageIndex)}
+                                >
+                                  <MessageSquarePlusIcon className="text-muted-foreground" />
+                                  <span>克隆此消息</span>
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                                  <GitForkIcon className="text-muted-foreground" />
+                                  <span>从此处克隆线程</span>
+                                </ContextMenuItem>
+                              </ContextMenuGroup>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         ) : null}
                       </React.Fragment>
                     );
@@ -463,9 +502,37 @@ export const MessageItem = React.memo(function MessageItem({
                 ) : null}
                 <MessageAttachments align="end" files={files} messageId={message.id} />
                 {text ? (
-                  <Bubble className="max-w-full" ref={bubbleRef}>
-                    <BubbleContent>{text}</BubbleContent>
-                  </Bubble>
+                  <ContextMenu>
+                    <ContextMenuTrigger className="max-w-full">
+                      <Bubble className="max-w-full" ref={bubbleRef}>
+                        <BubbleContent>{text}</BubbleContent>
+                      </Bubble>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-48">
+                      <ContextMenuGroup>
+                        <ContextMenuItem onClick={() => handleCopy()}>
+                          <CopyIcon className="text-muted-foreground" />
+                          <span>复制内容</span>
+                          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                        </ContextMenuItem>
+                        <ContextMenuItem onClick={startEditing}>
+                          <PencilIcon className="text-muted-foreground" />
+                          <span>编辑消息</span>
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                      <ContextMenuSeparator />
+                      <ContextMenuGroup>
+                        <ContextMenuItem onClick={() => onCloneMessage(message.id, messageIndex)}>
+                          <MessageSquarePlusIcon className="text-muted-foreground" />
+                          <span>克隆此消息</span>
+                        </ContextMenuItem>
+                        <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                          <GitForkIcon className="text-muted-foreground" />
+                          <span>从此处克隆线程</span>
+                        </ContextMenuItem>
+                      </ContextMenuGroup>
+                    </ContextMenuContent>
+                  </ContextMenu>
                 ) : null}
                 <MessageFooter className={bubbleActionFooterClassName}>
                   <Button
@@ -532,16 +599,47 @@ export const MessageItem = React.memo(function MessageItem({
                             key={segment.key}
                           />
                         ) : (
-                          <Bubble key={segment.key} variant="ghost">
-                            <BubbleContent>
-                              <MessageResponse
-                                components={CITATION_MARKDOWN_COMPONENTS}
-                                rehypePlugins={CITATION_REHYPE_PLUGINS}
-                              >
-                                {segment.text}
-                              </MessageResponse>
-                            </BubbleContent>
-                          </Bubble>
+                          <ContextMenu key={segment.key}>
+                            <ContextMenuTrigger className="w-full">
+                              <Bubble variant="ghost">
+                                <BubbleContent>
+                                  <MessageResponse
+                                    components={CITATION_MARKDOWN_COMPONENTS}
+                                    rehypePlugins={CITATION_REHYPE_PLUGINS}
+                                  >
+                                    {segment.text}
+                                  </MessageResponse>
+                                </BubbleContent>
+                              </Bubble>
+                            </ContextMenuTrigger>
+                            <ContextMenuContent className="w-48">
+                              <ContextMenuGroup>
+                                <ContextMenuItem onClick={() => handleCopy()}>
+                                  <CopyIcon className="text-muted-foreground" />
+                                  <span>复制回答内容</span>
+                                  <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => onRetry(message.id)}>
+                                  <RefreshCcwIcon className="text-muted-foreground" />
+                                  <span>重新生成</span>
+                                  <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                                </ContextMenuItem>
+                              </ContextMenuGroup>
+                              <ContextMenuSeparator />
+                              <ContextMenuGroup>
+                                <ContextMenuItem
+                                  onClick={() => onCloneMessage(message.id, messageIndex)}
+                                >
+                                  <MessageSquarePlusIcon className="text-muted-foreground" />
+                                  <span>克隆此轮对话</span>
+                                </ContextMenuItem>
+                                <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                                  <GitForkIcon className="text-muted-foreground" />
+                                  <span>从此处克隆线程</span>
+                                </ContextMenuItem>
+                              </ContextMenuGroup>
+                            </ContextMenuContent>
+                          </ContextMenu>
                         ),
                       )}
                     </React.Fragment>
@@ -581,17 +679,46 @@ export const MessageItem = React.memo(function MessageItem({
                       key={segment.key}
                     />
                   ) : (
-                    <Bubble key={segment.key} variant="ghost">
-                      <BubbleContent>
-                        {/* 脚注引用换成 InlineCitation 悬浮卡;相邻角标合并;定义区隐藏 */}
-                        <MessageResponse
-                          components={CITATION_MARKDOWN_COMPONENTS}
-                          rehypePlugins={CITATION_REHYPE_PLUGINS}
-                        >
-                          {withResolvedFootnotes(segment.text, citationEntries)}
-                        </MessageResponse>
-                      </BubbleContent>
-                    </Bubble>
+                    <ContextMenu key={segment.key}>
+                      <ContextMenuTrigger className="w-full">
+                        <Bubble variant="ghost">
+                          <BubbleContent>
+                            {/* 脚注引用换成 InlineCitation 悬浮卡;相邻角标合并;定义区隐藏 */}
+                            <MessageResponse
+                              components={CITATION_MARKDOWN_COMPONENTS}
+                              rehypePlugins={CITATION_REHYPE_PLUGINS}
+                            >
+                              {withResolvedFootnotes(segment.text, citationEntries)}
+                            </MessageResponse>
+                          </BubbleContent>
+                        </Bubble>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-48">
+                        <ContextMenuGroup>
+                          <ContextMenuItem onClick={() => handleCopy()}>
+                            <CopyIcon className="text-muted-foreground" />
+                            <span>复制回答内容</span>
+                            <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => onRetry(message.id)}>
+                            <RefreshCcwIcon className="text-muted-foreground" />
+                            <span>重新生成</span>
+                            <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                          </ContextMenuItem>
+                        </ContextMenuGroup>
+                        <ContextMenuSeparator />
+                        <ContextMenuGroup>
+                          <ContextMenuItem onClick={() => onCloneMessage(message.id, messageIndex)}>
+                            <MessageSquarePlusIcon className="text-muted-foreground" />
+                            <span>克隆此轮对话</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => onClone(messageIndex)}>
+                            <GitForkIcon className="text-muted-foreground" />
+                            <span>从此处克隆线程</span>
+                          </ContextMenuItem>
+                        </ContextMenuGroup>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   ),
                 )
               : null}

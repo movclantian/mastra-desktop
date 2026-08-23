@@ -6,9 +6,9 @@
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
 import { Agent, type DelegationConfig, type ToolsInput } from "@mastra/core/agent";
-import type { AnyWorkflow } from "@mastra/core/workflows";
 import { TaskSignalProvider } from "@mastra/core/signals";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
+import type { AnyWorkflow } from "@mastra/core/workflows";
 import { notificationInboxTool, setDefaultWorkAgent, workWebhookSignals } from "../harness";
 import { getMemory } from "../memory";
 import {
@@ -41,6 +41,17 @@ import {
 } from "../workspace";
 import { workBrowser } from "./browser";
 import {
+  AGENT_PROFILE_CONTEXT_KEY,
+  type AgentMemberDefinition,
+  type AgentProfile,
+  DEFAULT_AGENT_PROFILE_ID,
+  getAgentProfile,
+  getRegisteredProfileWorkflow,
+  resolveManagedSkillPaths,
+  resolveProfileMembers,
+  setProfileAgentFactories,
+} from "./custom";
+import {
   buildGuardrailErrorProcessors,
   buildGuardrailInputProcessors,
   buildGuardrailOutputProcessors,
@@ -66,17 +77,6 @@ import {
   workbenchStateProcessor,
 } from "./processors";
 import { workSubagents } from "./subagents";
-import {
-  AGENT_PROFILE_CONTEXT_KEY,
-  DEFAULT_AGENT_PROFILE_ID,
-  type AgentMemberDefinition,
-  type AgentProfile,
-  getAgentProfile,
-  resolveManagedSkillPaths,
-  resolveProfileMembers,
-  getRegisteredProfileWorkflow,
-  setProfileAgentFactories,
-} from "./custom";
 
 export { workBrowser } from "./browser";
 
@@ -290,7 +290,7 @@ function createWorkAgent(fixedProfile?: AgentProfile, member?: AgentMemberDefini
       };
     },
     workflows: async (): Promise<Record<string, AnyWorkflow>> => {
-      if (!fixedProfile || fixedProfile.type !== "team") return {};
+      if (fixedProfile?.type !== "team") return {};
       const workflow = getRegisteredProfileWorkflow(fixedProfile.id);
       return workflow ? { teamWorkflow: workflow } : {};
     },

@@ -255,7 +255,10 @@ function ToolGroup({ tools }: { tools: ToolPart[] }) {
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
             <WrenchIcon className="size-4" />
             <p className="flex-1 text-left text-sm">工具调用 · {tools.length} 步</p>
-            <AnimatedChevron open={false} className="size-4 group-data-[state=open]:rotate-180 transition-transform duration-200" />
+            <AnimatedChevron
+              open={false}
+              className="size-4 group-data-[state=open]:rotate-180 transition-transform duration-200"
+            />
           </div>
         </TaskTrigger>
         <TaskContent>

@@ -2,6 +2,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XtermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
+  ClipboardPasteIcon,
+  EraserIcon,
   LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -14,6 +16,16 @@ import * as React from "react";
 import { toast } from "sonner";
 import { PanelHeader, PanelSurface } from "@/components/app/primitives";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { toastError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { reportWorkbenchNotification, type TerminalRequest, useWorkbench } from "@/lib/workbench";
@@ -389,6 +401,30 @@ export default function TerminalPanel() {
     });
   };
 
+  const handlePasteToTerminal = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text && activeTab?.sessionId) {
+        terminalApi?.write({ data: text, sessionId: activeTab.sessionId });
+      }
+    } catch {
+      toast.error("无法读取剪贴板内容");
+    }
+  };
+
+  const handleClearTerminal = () => {
+    if (activeTab?.sessionId) {
+      // Clear line / clear screen ANSI
+      terminalApi?.write({ data: "\u000c", sessionId: activeTab.sessionId });
+    }
+  };
+
+  const handleInterrupt = () => {
+    if (activeTab?.sessionId) {
+      terminalApi?.write({ data: "\u0003", sessionId: activeTab.sessionId });
+    }
+  };
+
   return (
     <PanelSurface className="border-t">
       <PanelHeader className="gap-2 px-3">
@@ -406,13 +442,49 @@ export default function TerminalPanel() {
               )}
               key={tab.id}
             >
-              <button
-                className="max-w-36 truncate px-2"
-                onClick={() => setActiveTabId(tab.id)}
-                type="button"
-              >
-                {tab.title}
-              </button>
+              <ContextMenu>
+                <ContextMenuTrigger>
+                  <button
+                    className="max-w-36 truncate px-2"
+                    onClick={() => setActiveTabId(tab.id)}
+                    type="button"
+                  >
+                    {tab.title}
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuGroup>
+                    <ContextMenuLabel className="truncate max-w-44">{tab.title}</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => closeTab(tab.id)}>
+                      <XIcon className="text-muted-foreground" />
+                      <span>关闭终端</span>
+                      <ContextMenuShortcut>Ctrl+Shift+W</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        for (const other of tabs) {
+                          if (other.id !== tab.id) closeTab(other.id);
+                        }
+                      }}
+                    >
+                      <span>关闭其他终端</span>
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                  <ContextMenuSeparator />
+                  <ContextMenuGroup>
+                    <ContextMenuItem onClick={addTab}>
+                      <PlusIcon className="text-muted-foreground" />
+                      <span>新建终端</span>
+                      <ContextMenuShortcut>Ctrl+Shift+`</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem onClick={handleInterrupt}>
+                      <SquareIcon className="text-muted-foreground" />
+                      <span>中断当前进程</span>
+                      <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                </ContextMenuContent>
+              </ContextMenu>
               <button
                 aria-label={`关闭${tab.title}`}
                 className="mr-1 rounded p-0.5 opacity-60 hover:bg-background hover:opacity-100"
@@ -447,12 +519,7 @@ export default function TerminalPanel() {
             <Button
               aria-label="中断当前进程"
               className="size-7"
-              onClick={() => {
-                if (activeTab.sessionId) {
-                  // ETX(Ctrl-C):用转义写法而不是裸控制字符,免得被编辑器或格式化吞掉
-                  terminalApi?.write({ data: "\u0003", sessionId: activeTab.sessionId });
-                }
-              }}
+              onClick={handleInterrupt}
               size="icon"
               title="中断当前进程"
               variant="ghost"
@@ -473,24 +540,52 @@ export default function TerminalPanel() {
         </div>
       </PanelHeader>
       {/* 所有会话常驻,靠 hidden 切换:xterm 卸载会丢 scrollback,PTY 也会被关掉 */}
-      <div className="min-h-0 flex-1 overflow-hidden bg-background px-3 py-2">
-        {tabs.map((tab) => (
-          <div
-            className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")}
-            key={tab.id}
-          >
-            <TerminalSession
-              active={tab.id === activeTabId}
-              onStateChange={(next) => updateTab(tab.id, next)}
-              request={tab.id === activeTabId ? terminalRequest : null}
-            />
+      <ContextMenu>
+        <ContextMenuTrigger className="min-h-0 flex-1 overflow-hidden bg-background px-3 py-2 block">
+          <div className="size-full">
+            {tabs.map((tab) => (
+              <div
+                className={cn("size-full", tab.id === activeTabId ? "block" : "hidden")}
+                key={tab.id}
+              >
+                <TerminalSession
+                  active={tab.id === activeTabId}
+                  onStateChange={(next) => updateTab(tab.id, next)}
+                  request={tab.id === activeTabId ? terminalRequest : null}
+                />
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-      {/* <PanelFooter className="gap-1 px-3 text-[11px]">
-        <TerminalIcon className="size-3" />
-        <span>真实系统终端</span>
-      </PanelFooter> */}
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-52">
+          <ContextMenuGroup>
+            <ContextMenuLabel>终端操作</ContextMenuLabel>
+            <ContextMenuItem onClick={handlePasteToTerminal}>
+              <ClipboardPasteIcon className="text-muted-foreground" />
+              <span>粘贴到终端</span>
+              <ContextMenuShortcut>Ctrl+V</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleClearTerminal}>
+              <EraserIcon className="text-muted-foreground" />
+              <span>清屏</span>
+              <ContextMenuShortcut>Ctrl+L</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleInterrupt}>
+              <SquareIcon className="text-muted-foreground" />
+              <span>中断进程 (SIGINT)</span>
+              <ContextMenuShortcut>Ctrl+C</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuItem onClick={addTab}>
+              <PlusIcon className="text-muted-foreground" />
+              <span>新建终端标签</span>
+              <ContextMenuShortcut>Ctrl+Shift+`</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
     </PanelSurface>
   );
 }

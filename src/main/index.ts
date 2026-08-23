@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { app, BrowserWindow, dialog, ipcMain, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
 import {
   parseTerminalCreateRequest,
@@ -668,7 +668,15 @@ const IDE_REGISTRY: IdeCandidate[] = [
     commands: ["cursor", "cursor.cmd"],
     windowsPaths: [
       join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "Cursor.exe"),
-      join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "resources", "app", "bin", "cursor.cmd"),
+      join(
+        process.env.LOCALAPPDATA || "",
+        "Programs",
+        "cursor",
+        "resources",
+        "app",
+        "bin",
+        "cursor.cmd",
+      ),
     ],
     macPaths: ["/Applications/Cursor.app"],
   },
@@ -687,7 +695,13 @@ const IDE_REGISTRY: IdeCandidate[] = [
     name: "VS Code Insiders",
     commands: ["code-insiders", "code-insiders.cmd"],
     windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code Insiders", "bin", "code-insiders.cmd"),
+      join(
+        process.env.LOCALAPPDATA || "",
+        "Programs",
+        "Microsoft VS Code Insiders",
+        "bin",
+        "code-insiders.cmd",
+      ),
     ],
     macPaths: ["/Applications/Visual Studio Code - Insiders.app"],
   },
@@ -719,9 +733,7 @@ const IDE_REGISTRY: IdeCandidate[] = [
     id: "positron",
     name: "Positron",
     commands: ["positron", "positron.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "Positron", "Positron.exe"),
-    ],
+    windowsPaths: [join(process.env.LOCALAPPDATA || "", "Programs", "Positron", "Positron.exe")],
     macPaths: ["/Applications/Positron.app"],
   },
 ];
@@ -760,8 +772,8 @@ async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIdeInf
         process.platform === "win32"
           ? candidate.windowsPaths
           : process.platform === "darwin"
-          ? candidate.macPaths
-          : candidate.linuxPaths;
+            ? candidate.macPaths
+            : candidate.linuxPaths;
 
       if (isPathAvailable(platformPaths)) {
         results.push({
@@ -830,19 +842,35 @@ function bootstrap(): void {
     // IPC test
     ipcMain.on("ping", () => console.log("pong"));
 
-    // 窗口最小宽度由渲染进程实测的布局下限决定(见 App.tsx 的 chatMinWidth)——
+    // 窗口最小宽度由渲染进程实测的布局需求决定(见 App.tsx 的 chatMinWidth)——
     // 写死一个数必然要么挡住用户缩窗口、要么挡不住布局被压坏。高度下限保持不变。
+    //
+    // 传进来的已经含「面板开着时它当前的宽度」,所以这一个值同时充当两个角色:
+    // 窗口能缩到的最窄宽度,以及面板展不开时窗口该长到的宽度 —— 不多也不少。
+    //
+    // 它是**内容区**宽度(渲染进程用 window.innerWidth 度量),而 setMinimumSize 与
+    // getBounds 走的是外框,Win11 上两者差十几像素 —— 所以这里换算一次再用。
     ipcMain.on("set-minimum-width", (_event, width: number) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       if (!Number.isFinite(width) || width <= 0) return;
-      const target = Math.ceil(width);
+      const bounds = mainWindow.getBounds();
+      const frame = Math.max(0, mainWindow.getSize()[0] - mainWindow.getContentSize()[0]);
+      const target = Math.ceil(width) + frame;
       const [currentMinWidth, currentMinHeight] = mainWindow.getMinimumSize();
-      if (currentMinWidth === target) return;
-      mainWindow.setMinimumSize(target, currentMinHeight);
-      // 收紧下限时窗口自己不会跟着缩,但放宽下限时 Electron 也不会自动撑大窗口,
-      // 于是可能出现「窗口比下限还窄」的状态,这里补一次。
-      const [width_, height_] = mainWindow.getSize();
-      if (width_ < target) mainWindow.setSize(target, height_);
+      // 拖拽面板时渲染进程每帧都会发一次,同值就别进 native 了
+      if (currentMinWidth !== target) mainWindow.setMinimumSize(target, currentMinHeight);
+
+      // 放宽下限时 Electron 不会自动撑大窗口,于是会出现「窗口比下限还窄」——
+      // 补上这一次,就是「面板展不开时把窗口长到刚好够」的全部实现。
+      if (bounds.width >= target) return;
+      // 最大化/全屏时窗口已是最宽,加宽只会打断这个状态
+      if (mainWindow.isMaximized() || mainWindow.isFullScreen()) return;
+      const { workArea } = screen.getDisplayMatching(bounds);
+      const nextWidth = Math.min(target, workArea.width);
+      if (nextWidth <= bounds.width) return;
+      // 优先原地向右伸展;右侧空间不够就向左挪,始终留在工作区内
+      const x = Math.max(workArea.x, Math.min(bounds.x, workArea.x + workArea.width - nextWidth));
+      mainWindow.setBounds({ ...bounds, width: nextWidth, x });
     });
 
     // 打开存储目录(Electron 官方 shell.openPath)
@@ -852,69 +880,69 @@ function bootstrap(): void {
     ipcMain.handle("detect-ides", async () => detectInstalledIdes());
 
     // 在本地外部 IDE 或系统工具中打开工作区目录
-    ipcMain.handle(
-      "open-in-app",
-      async (_event, payload: { app: string; targetPath: string }) => {
-        const { app: appName, targetPath } = payload || {};
-        if (!targetPath) return { ok: false, error: "未指定工作区路径" };
+    ipcMain.handle("open-in-app", async (_event, payload: { app: string; targetPath: string }) => {
+      const { app: appName, targetPath } = payload || {};
+      if (!targetPath) return { ok: false, error: "未指定工作区路径" };
 
-        try {
-          if (appName === "explorer") {
-            await shell.openPath(targetPath);
-            return { ok: true };
-          }
+      try {
+        if (appName === "explorer") {
+          await shell.openPath(targetPath);
+          return { ok: true };
+        }
 
-          if (appName === "terminal") {
-            if (process.platform === "win32") {
-              const child = spawn("cmd.exe", ["/c", "start", "wt.exe", "-d", targetPath], {
+        if (appName === "terminal") {
+          if (process.platform === "win32") {
+            const child = spawn("cmd.exe", ["/c", "start", "wt.exe", "-d", targetPath], {
+              detached: true,
+              stdio: "ignore",
+              shell: true,
+            });
+            child.on("error", () => {
+              spawn("cmd.exe", ["/c", "start", "cmd.exe", "/K", `cd /d "${targetPath}"`], {
                 detached: true,
                 stdio: "ignore",
                 shell: true,
               });
-              child.on("error", () => {
-                spawn("cmd.exe", ["/c", "start", "cmd.exe", "/K", `cd /d "${targetPath}"`], {
-                  detached: true,
-                  stdio: "ignore",
-                  shell: true,
-                });
-              });
-            } else if (process.platform === "darwin") {
-              spawn("open", ["-a", "Terminal", targetPath], { detached: true, stdio: "ignore" });
-            } else {
-              spawn("x-terminal-emulator", [], { cwd: targetPath, detached: true, stdio: "ignore" });
-            }
-            return { ok: true };
+            });
+          } else if (process.platform === "darwin") {
+            spawn("open", ["-a", "Terminal", targetPath], { detached: true, stdio: "ignore" });
+          } else {
+            spawn("x-terminal-emulator", [], { cwd: targetPath, detached: true, stdio: "ignore" });
           }
-
-          // IDE 映射表
-          const ideCommands: Record<string, string[]> = {
-            trae: ["trae", "trae.cmd"],
-            vscode: ["code", "code.cmd"],
-            antigravity: ["antigravity", "antigravity.cmd", "agy", "agy.cmd"],
-            cursor: ["cursor", "cursor.cmd"],
-            windsurf: ["windsurf", "windsurf.cmd"],
-            "vscode-insiders": ["code-insiders", "code-insiders.cmd"],
-            webstorm: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
-            idea: ["idea", "idea64.exe", "idea.cmd"],
-            pycharm: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
-            sublime: ["subl", "sublime_text"],
-            positron: ["positron", "positron.cmd"],
-          };
-
-          const candidates = ideCommands[appName] || [appName];
-          const cmd = candidates[0];
-          const child = spawn(cmd, [targetPath], {
-            detached: true,
-            stdio: "ignore",
-            shell: true,
-          });
-          child.unref();
           return { ok: true };
-        } catch (error: any) {
-          return { ok: false, error: error?.message || "启动应用失败" };
         }
-      },
-    );
+
+        // IDE 映射表
+        const ideCommands: Record<string, string[]> = {
+          trae: ["trae", "trae.cmd"],
+          vscode: ["code", "code.cmd"],
+          antigravity: ["antigravity", "antigravity.cmd", "agy", "agy.cmd"],
+          cursor: ["cursor", "cursor.cmd"],
+          windsurf: ["windsurf", "windsurf.cmd"],
+          "vscode-insiders": ["code-insiders", "code-insiders.cmd"],
+          webstorm: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
+          idea: ["idea", "idea64.exe", "idea.cmd"],
+          pycharm: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
+          sublime: ["subl", "sublime_text"],
+          positron: ["positron", "positron.cmd"],
+        };
+
+        const candidates = ideCommands[appName] || [appName];
+        const cmd = candidates[0];
+        const child = spawn(cmd, [targetPath], {
+          detached: true,
+          stdio: "ignore",
+          shell: true,
+        });
+        child.unref();
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : "启动应用失败",
+        };
+      }
+    });
 
     ipcMain.handle("open-external", async (_event, value: string) => {
       let url: URL;

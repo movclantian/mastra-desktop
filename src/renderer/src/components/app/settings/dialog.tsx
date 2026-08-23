@@ -7,7 +7,7 @@ import {
   ShieldCheckIcon,
   WrenchIcon,
 } from "lucide-react";
-import * as React from "react";
+import type * as React from "react";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -56,7 +56,9 @@ type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function SettingsDialog() {
   const { settingsOpen, setSettingsOpen, settingsSection, setSettingsSection } = useWorkbench();
-  const section = (SECTIONS.some((s) => s.id === settingsSection) ? settingsSection : "themes") as SectionId;
+  const section = (
+    SECTIONS.some((s) => s.id === settingsSection) ? settingsSection : "themes"
+  ) as SectionId;
   const current = SECTIONS.find((s) => s.id === section) ?? SECTIONS[0];
 
   return (
@@ -75,7 +77,10 @@ export function SettingsDialog() {
             } as React.CSSProperties
           }
         >
-          <Sidebar collapsible="none" className="hidden w-40 shrink-0 border-r border-border bg-sidebar md:flex">
+          <Sidebar
+            collapsible="none"
+            className="hidden w-40 shrink-0 border-r border-border bg-sidebar md:flex"
+          >
             <div className="flex h-10 shrink-0 items-center border-b border-border px-3">
               <span className="text-xs font-medium text-muted-foreground">应用设置</span>
             </div>

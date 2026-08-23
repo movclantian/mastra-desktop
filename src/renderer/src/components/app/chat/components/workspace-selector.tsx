@@ -34,7 +34,7 @@ export function ChatWorkspaceSelector({
   const { recentWorkspaces, refreshRecentWorkspaces } = useWorkbench();
 
   const pickDirectory = async () => {
-    const dir = await window.api.pickDirectory();
+    const dir = await window.api?.pickDirectory?.();
     if (dir) onChange(dir);
   };
 
@@ -61,7 +61,10 @@ export function ChatWorkspaceSelector({
           </span>
           <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
+        <DropdownMenuContent
+          align="start"
+          className="w-max min-w-64 max-w-[min(calc(100vw-2rem),28rem)]"
+        >
           <DropdownMenuGroup>
             <DropdownMenuLabel>工作区目录(发送首条消息后锁定)</DropdownMenuLabel>
             {value ? (

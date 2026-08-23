@@ -17,11 +17,15 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { useTheme } from "@/components/theme-provider";
-import { AnimatedChevron } from "@/components/ui/animated-icon";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import { AnimatedGradientText } from "@/components/ui/animated-gradient-text";
+import { AnimatedChevron } from "@/components/ui/animated-icon";
 import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 import { AnimatedTabs } from "@/components/ui/animated-tabs";
+import {
+  AnimatedThemeToggler,
+  type AnimatedThemeTogglerVariant,
+} from "@/components/ui/animated-theme-toggler";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,8 +43,8 @@ import { Ripple } from "@/components/ui/ripple";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ShimmerButton } from "@/components/ui/shimmer-button";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
-import { SlidingNumber } from "@/components/ui/sliding-number";
 import { Slider } from "@/components/ui/slider";
+import { SlidingNumber } from "@/components/ui/sliding-number";
 import { SparklesText } from "@/components/ui/sparkles-text";
 import { THEME_INSPIRATIONS } from "@/lib/theme/presets";
 import type { ThemeColorTokens } from "@/lib/theme/types";
@@ -150,6 +154,7 @@ export function ThemeSection() {
   const [animateCounter, setAnimateCounter] = React.useState(1420);
   const [activeAnimateTab, setActiveAnimateTab] = React.useState("tab-1");
   const [animateCollapseOpen, setAnimateCollapseOpen] = React.useState(true);
+  const [togglerVariant, setTogglerVariant] = React.useState<AnimatedThemeTogglerVariant>("circle");
 
   const filteredPresets = React.useMemo(() => {
     return presets.filter((p) => {
@@ -374,25 +379,12 @@ export function ThemeSection() {
               <span className="text-[11px] font-medium text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
                 色彩模式
               </span>
-              <div className="flex items-center gap-0.5 group-data-[collapsible=icon]/sidebar:mx-auto">
-                <Button
-                  size="icon-xs"
-                  variant={mode === "light" ? "default" : "ghost"}
-                  onClick={() => setMode("light")}
-                  title="浅色模式"
-                  className="size-6"
-                >
-                  <SunMediumIcon className="size-3.5" />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant={mode === "dark" ? "default" : "ghost"}
-                  onClick={() => setMode("dark")}
-                  title="深色模式"
-                  className="size-6"
-                >
-                  <MoonIcon className="size-3.5" />
-                </Button>
+              <div className="flex items-center gap-1 group-data-[collapsible=icon]/sidebar:mx-auto">
+                <AnimatedThemeToggler
+                  variant={togglerVariant}
+                  className="size-6 rounded-md p-1 border-transparent hover:border-sidebar-border"
+                  title="使用 Magic UI 视口流光切换深浅色"
+                />
                 <Button
                   size="icon-xs"
                   variant={mode === "system" ? "default" : "ghost"}
@@ -990,7 +982,7 @@ export function ThemeSection() {
                     <span>Magic UI 动效与特效交互展台</span>
                   </div>
                   <Badge variant="secondary" className="text-xs font-mono">
-                    14 官方动效组件实时联动
+                    16 官方动效组件实时联动
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
@@ -1046,6 +1038,44 @@ export function ThemeSection() {
                       <FlameIcon className="size-3.5 mr-1" />
                       呼吸脉冲
                     </PulsatingButton>
+                  </div>
+
+                  {/* Animated Theme Toggler 视口转场形态选择 */}
+                  <div className="mt-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-t pt-2.5">
+                    <div className="flex items-center gap-2">
+                      <AnimatedThemeToggler
+                        variant={togglerVariant}
+                        showLabel
+                        className="h-8 shadow-xs"
+                      />
+                      <span className="text-xs text-muted-foreground font-mono">
+                        Shape: {togglerVariant}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      {(
+                        [
+                          "circle",
+                          "star",
+                          "diamond",
+                          "triangle",
+                          "hexagon",
+                          "square",
+                          "rectangle",
+                        ] as AnimatedThemeTogglerVariant[]
+                      ).map((shape) => (
+                        <Button
+                          key={shape}
+                          size="xs"
+                          variant={togglerVariant === shape ? "default" : "outline"}
+                          className="h-6 text-[10px] px-1.5 capitalize font-mono"
+                          onClick={() => setTogglerVariant(shape)}
+                        >
+                          {shape}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
@@ -1162,9 +1192,7 @@ export function ThemeSection() {
                         size="xs"
                         variant="secondary"
                         className="h-6 text-[11px] px-2"
-                        onClick={() =>
-                          setAnimateCounter(Math.floor(Math.random() * 9000) + 1000)
-                        }
+                        onClick={() => setAnimateCounter(Math.floor(Math.random() * 9000) + 1000)}
                       >
                         随机数值
                       </Button>
@@ -1174,10 +1202,7 @@ export function ThemeSection() {
                     <div className="flex flex-col">
                       <span className="text-xs text-muted-foreground">当前会话 Token 消耗</span>
                       <div className="flex items-baseline gap-1 text-xl font-bold font-mono text-primary">
-                        <SlidingNumber
-                          number={animateCounter}
-                          thousandSeparator=","
-                        />
+                        <SlidingNumber number={animateCounter} thousandSeparator="," />
                         <span className="text-xs font-normal text-muted-foreground">tokens</span>
                       </div>
                     </div>
@@ -1205,9 +1230,21 @@ export function ThemeSection() {
                       activeTab={activeAnimateTab}
                       onChange={setActiveAnimateTab}
                       tabs={[
-                        { id: "tab-1", label: "智能体流水线", icon: <SparklesIcon className="size-3.5" /> },
-                        { id: "tab-2", label: "工具调用轨迹", icon: <ZapIcon className="size-3.5" /> },
-                        { id: "tab-3", label: "知识库向量", icon: <TypeIcon className="size-3.5" /> },
+                        {
+                          id: "tab-1",
+                          label: "智能体流水线",
+                          icon: <SparklesIcon className="size-3.5" />,
+                        },
+                        {
+                          id: "tab-2",
+                          label: "工具调用轨迹",
+                          icon: <ZapIcon className="size-3.5" />,
+                        },
+                        {
+                          id: "tab-3",
+                          label: "知识库向量",
+                          icon: <TypeIcon className="size-3.5" />,
+                        },
                       ]}
                     />
                     <Badge variant="outline" className="font-mono text-xs">

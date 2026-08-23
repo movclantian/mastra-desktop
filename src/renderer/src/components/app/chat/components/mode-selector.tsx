@@ -14,7 +14,12 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { matchApprovalPreset, WORK_MODE_IDS, WORK_MODE_META, type WorkModeId } from "@/lib/session-policy";
+import {
+  matchApprovalPreset,
+  WORK_MODE_IDS,
+  WORK_MODE_META,
+  type WorkModeId,
+} from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
 import { ApprovalMenuItems } from "./approval-selector";
 
@@ -65,15 +70,24 @@ export function ChatModeSelector() {
                 <DropdownMenuSubTrigger className="items-start gap-2 py-2">
                   <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="flex items-center gap-1.5">{meta.label}{id === modeId ? <CheckIcon className="ml-auto size-3.5" /> : null}</span>
-                    <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">{meta.description}</span>
-                    <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">{meta.hint}</Badge>
+                    <span className="flex items-center gap-1.5">
+                      {meta.label}
+                      {id === modeId ? <CheckIcon className="ml-auto size-3.5" /> : null}
+                    </span>
+                    <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">
+                      {meta.description}
+                    </span>
+                    <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
+                      {meta.hint}
+                    </Badge>
                   </span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-72">
                   <DropdownMenuGroup>
                     <DropdownMenuLabel>模式与工具审批</DropdownMenuLabel>
-                    <DropdownMenuItem onClick={() => void setModeId(id)}>切换到{meta.label}</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void setModeId(id)}>
+                      切换到{meta.label}
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <ApprovalMenuItems
                       activePreset={matchApprovalPreset(permissionRules)}

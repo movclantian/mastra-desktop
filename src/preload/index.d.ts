@@ -20,8 +20,11 @@ declare global {
       migrateStorage: (directory: string) => Promise<boolean>;
       resetAppData: () => Promise<boolean>;
       /**
-       * 设置窗口最小宽度。值来自渲染进程实测的布局下限(输入区最小边界 + 外围占用),
-       * 所以窗口能缩到多窄由布局自己说话,不写死常量。
+       * 设置窗口最小宽度。传入的是**内容区**宽度,由渲染进程实测得出:
+       * 输入区最小边界 + 外围占用 + (面板开着时)面板当前宽度。
+       *
+       * 所以它同时也是「面板展不开时窗口该长到多宽」的目标 —— 窗口去适应内容,
+       * 而不是把内容压进窗口。窗口能缩到多窄由布局自己说话,不写死常量。
        */
       setMinimumWidth: (width: number) => void;
       terminal: {

@@ -9,17 +9,18 @@ import { registerApiRoute } from "@mastra/core/server";
 import AdmZip from "adm-zip";
 import { workError } from "../../errors";
 import {
+  categorizeSkillResources,
   getMarketplaceSkillDetail,
   getSkillMarketplaces,
   getSkillsShSkillDetail,
   installMarketplaceSkill,
   installSkillsShSkill,
-  listSkillsShSkills,
   listMarketplaceSkills,
+  listSkillsShSkills,
   type MarketplaceSkill,
-  type SkillsShSkill,
   normalizeMarketplace,
   parseSkillMarkdown,
+  type SkillsShSkill,
   saveSkillMarketplaces,
 } from "../../skills/marketplaces";
 import { getManagedSkillsDirectory } from "../../workspace";
@@ -60,31 +61,43 @@ function skillDirectoryName(filename: string, skillDirectory: string): string {
   return normalized || `uploaded-${Date.now()}`;
 }
 
+async function getDirectoryRelativeFiles(dir: string, base = dir): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const results: string[] = [];
+    for (const entry of entries) {
+      const fullPath = resolve(dir, entry.name);
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (entry.isDirectory()) {
+        const subFiles = await getDirectoryRelativeFiles(fullPath, base);
+        results.push(...subFiles);
+      } else if (entry.isFile()) {
+        const rel = relative(base, fullPath).replaceAll("\\", "/");
+        if (rel.toUpperCase() !== "SKILL.MD") results.push(rel);
+      }
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 async function readLocalSkill(directory: string) {
   const content = await readFile(resolve(directory, "SKILL.md"), "utf8");
   const parsed = parseSkillMarkdown(content, basename(directory));
-  const entries = await readdir(directory, { withFileTypes: true });
-  const list = async (name: string) => {
-    const child = entries.find((entry) => entry.isDirectory() && entry.name === name);
-    if (!child) return [];
-    return (await readdir(resolve(directory, name), { withFileTypes: true })).map(
-      (entry) => entry.name,
-    );
-  };
+  const relativeFiles = await getDirectoryRelativeFiles(directory);
+  const { references, scripts, assets } = categorizeSkillResources(relativeFiles);
   return {
     ...parsed,
     path: directory,
     instructions: content.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim(),
-    references: await list("references"),
-    scripts: await list("scripts"),
-    assets: await list("assets"),
+    references,
+    scripts,
+    assets,
   };
 }
 
-async function unpackSkillArchive(
-  buffer: Buffer,
-  filename: string,
-) {
+async function unpackSkillArchive(buffer: Buffer, filename: string) {
   const archive = new AdmZip(buffer);
   const entries = archive.getEntries();
   if (entries.length === 0 || entries.length > MAX_SKILL_ENTRIES) {
@@ -169,7 +182,10 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
       let skillsSh: SkillsShSkill[] = [];
       let skillsShError: string | undefined;
       try {
-        skillsSh = await listSkillsShSkills(query);
+        const timeoutPromise = new Promise<SkillsShSkill[]>((_, reject) =>
+          setTimeout(() => reject(new Error("skills.sh 响应超时")), 5000),
+        );
+        skillsSh = await Promise.race([listSkillsShSkills(query), timeoutPromise]);
       } catch (error) {
         skillsShError = error instanceof Error ? error.message : "skills.sh 暂时不可用";
       }
@@ -410,10 +426,7 @@ export const uploadSkillRoute = registerApiRoute("/work/skills", {
     if (value.size > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
 
     try {
-      const skill = await unpackSkillArchive(
-        Buffer.from(await value.arrayBuffer()),
-        value.name,
-      );
+      const skill = await unpackSkillArchive(Buffer.from(await value.arrayBuffer()), value.name);
       if (!skill) throw new Error("解压后未发现有效的 SKILL.md");
       return c.json({ skill }, 201);
     } catch (error) {

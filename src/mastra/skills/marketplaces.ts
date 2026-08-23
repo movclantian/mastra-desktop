@@ -3,8 +3,66 @@
  * 配置存 app_config(key = "skill-marketplaces"),安装 = 检出 SKILL.md 目录。
  */
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from "../storage";
+
+export function categorizeSkillResources(resources: string[]) {
+  const references: string[] = [];
+  const scripts: string[] = [];
+  const assets: string[] = [];
+
+  const scriptExts = new Set([
+    ".py", ".sh", ".bash", ".js", ".ts", ".mjs", ".cjs", ".ps1", ".bat", ".cmd", ".rb", ".go", ".rs", ".lua", ".php",
+  ]);
+  const docExts = new Set([".md", ".txt", ".pdf", ".rst", ".doc", ".docx", ".html", ".htm", ".markdown"]);
+  const assetExts = new Set([
+    ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".json", ".yaml", ".yml", ".toml", ".csv", ".tsv", ".xml", ".css",
+  ]);
+
+  for (const item of resources) {
+    const normalized = item.replaceAll("\\", "/").replace(/^\/+/, "");
+    if (!normalized || normalized.toUpperCase() === "SKILL.MD") continue;
+    const lower = normalized.toLowerCase();
+    const ext = extname(lower);
+
+    if (
+      lower.startsWith("references/") ||
+      lower.startsWith("docs/") ||
+      lower.startsWith("reference/") ||
+      lower.startsWith("doc/")
+    ) {
+      references.push(normalized);
+    } else if (
+      lower.startsWith("scripts/") ||
+      lower.startsWith("script/") ||
+      lower.startsWith("bin/") ||
+      lower.startsWith("tools/") ||
+      scriptExts.has(ext)
+    ) {
+      scripts.push(normalized);
+    } else if (
+      lower.startsWith("assets/") ||
+      lower.startsWith("asset/") ||
+      lower.startsWith("images/") ||
+      lower.startsWith("image/") ||
+      lower.startsWith("templates/") ||
+      lower.startsWith("template/") ||
+      assetExts.has(ext)
+    ) {
+      assets.push(normalized);
+    } else if (docExts.has(ext)) {
+      references.push(normalized);
+    } else {
+      assets.push(normalized);
+    }
+  }
+
+  return {
+    references: Array.from(new Set(references)),
+    scripts: Array.from(new Set(scripts)),
+    assets: Array.from(new Set(assets)),
+  };
+}
 
 interface SkillMarketplace {
   id: string;
@@ -55,7 +113,6 @@ const MARKETPLACES_KEY = "skill-marketplaces";
 const DEFAULT_BRANCH = "main";
 const SKILLS_SH_CACHE_TTL = 10 * 60 * 1000;
 const SKILLS_SH_MAX_RETRIES = 3;
-const SKILLS_SH_PAGE_CONCURRENCY = 3;
 const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
 const skillsShCache = new Map<string, { expiresAt: number; skills: SkillsShSkill[] }>();
@@ -273,9 +330,7 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
     const normalizedSlug = normalizeSkillsShCoordinate(slugValue, "skill");
     const installs = Number(raw.installs);
     const sourceType =
-      raw.sourceType === "well-known" || !normalizedSource.includes("/")
-        ? "well-known"
-        : "github";
+      raw.sourceType === "well-known" || !normalizedSource.includes("/") ? "well-known" : "github";
     return {
       id:
         typeof raw.id === "string" && raw.id.trim()
@@ -316,25 +371,20 @@ async function listSkillsShPublicSkills(query: string): Promise<SkillsShSkill[]>
       .filter((skill): skill is SkillsShSkill => Boolean(skill));
   }
 
-  const first = await skillsShPublicJson<SkillsShPublicPage>(
-    "https://skills.sh/api/skills/all-time/0",
-  );
-  const pages = Math.max(1, Math.ceil((Number(first.total) || first.skills.length) / 200));
-  const entries = [first.skills];
-  for (let start = 1; start < pages; start += SKILLS_SH_PAGE_CONCURRENCY) {
-    const batch = await Promise.all(
-      Array.from({ length: Math.min(SKILLS_SH_PAGE_CONCURRENCY, pages - start) }, (_, offset) =>
-        skillsShPublicJson<SkillsShPublicPage>(
-          `https://skills.sh/api/skills/all-time/${start + offset}`,
-        ),
+  // 并发拉取 skills.sh 全时榜前 4 页（共约 800 个精选技能），保证丰富深度的分页体验，同时配合内存缓存零卡顿
+  const pagesToFetch = [0, 1, 2, 3];
+  const pages = await Promise.all(
+    pagesToFetch.map((p) =>
+      skillsShPublicJson<SkillsShPublicPage>(`https://skills.sh/api/skills/all-time/${p}`).catch(
+        () => ({ skills: [] }),
       ),
-    );
-    entries.push(...batch.map((page) => page.skills));
-  }
-  return entries
-    .flat()
+    ),
+  );
+  const skills = pages
+    .flatMap((p) => p.skills ?? [])
     .map(normalizeSkillsShEntry)
     .filter((skill): skill is SkillsShSkill => Boolean(skill));
+  return skills;
 }
 
 export async function listSkillsShSkills(query = ""): Promise<SkillsShSkill[]> {
@@ -408,22 +458,17 @@ function parseSkillsShSnapshot(
   const resources = files
     .filter((file) => file.path !== skillFile.path && (!prefix || file.path.startsWith(prefix)))
     .map((file) => file.path.slice(prefix.length))
-    .filter(Boolean);
+    .filter((file) => Boolean(file) && basename(file).toUpperCase() !== "SKILL.MD");
   const parsed = parseSkillMarkdown(skillFile.contents, basename(parent || slugValue));
+  const { references, scripts, assets } = categorizeSkillResources(resources);
   return {
     ...base,
     hash: typeof raw.hash === "string" ? raw.hash : undefined,
     files,
     instructions: skillFile.contents.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim(),
-    references: resources
-      .filter((item) => item.startsWith("references/"))
-      .map((item) => item.slice("references/".length)),
-    scripts: resources
-      .filter((item) => item.startsWith("scripts/"))
-      .map((item) => item.slice("scripts/".length)),
-    assets: resources
-      .filter((item) => item.startsWith("assets/"))
-      .map((item) => item.slice("assets/".length)),
+    references,
+    scripts,
+    assets,
     sourceUrl: skillsShSourceUrl(source, slugValue),
     ...parsed,
   };
@@ -523,11 +568,7 @@ export async function installSkillsShSkill(source: string, slugValue: string): P
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skillName)) {
     throw new Error(`技能名称无效：${skillName}`);
   }
-  const root = join(
-    getStorageDirectory() || PROJECT_ROOT,
-    "skills",
-    skillName,
-  );
+  const root = join(getStorageDirectory() || PROJECT_ROOT, "skills", skillName);
   if (
     await access(root).then(
       () => true,
@@ -630,20 +671,15 @@ export async function getMarketplaceSkillDetail(marketplaceId: string, sourcePat
         item.type === "blob" && item.path.startsWith(prefix) && item.path !== normalizedSourcePath,
     )
     .map((item) => item.path.slice(prefix.length))
-    .filter(Boolean);
+    .filter((file) => Boolean(file) && basename(file).toUpperCase() !== "SKILL.MD");
+  const { references, scripts, assets } = categorizeSkillResources(resources);
   return {
     ...parsed,
     path: `marketplace:${marketplace.id}:${normalizedSourcePath}`,
     instructions: raw.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim(),
-    references: resources
-      .filter((item) => item.startsWith("references/"))
-      .map((item) => item.slice("references/".length)),
-    scripts: resources
-      .filter((item) => item.startsWith("scripts/"))
-      .map((item) => item.slice("scripts/".length)),
-    assets: resources
-      .filter((item) => item.startsWith("assets/"))
-      .map((item) => item.slice("assets/".length)),
+    references,
+    scripts,
+    assets,
     marketplaceId: marketplace.id,
     marketplaceName: marketplace.name,
     sourceUrl: marketplace.url,

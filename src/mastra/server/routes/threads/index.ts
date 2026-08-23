@@ -27,8 +27,8 @@ import {
   listThreadsRoute,
   updateThreadRoute,
 } from "./threads";
+import { generateThreadTitleRoute } from "./title";
 import { getWorkingMemoryRoute, updateWorkingMemoryRoute } from "./working-memory";
-import { generateThreadTitleRoute, generateThreadTitleHelper } from "./title";
 
 export const threadRoutes = [
   listThreadsRoute,

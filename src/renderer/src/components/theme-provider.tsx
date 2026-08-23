@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { THEME_PRESETS } from "@/lib/theme/presets";
 import type {
   ThemeColorTokens,
@@ -66,9 +66,7 @@ export function ThemeProvider({
   defaultPreset = "default",
   storageKey,
 }: ThemeProviderProps) {
-  const [mode, setModeState] = useState<ThemeMode>(() =>
-    getInitialMode(defaultTheme, storageKey),
-  );
+  const [mode, setModeState] = useState<ThemeMode>(() => getInitialMode(defaultTheme, storageKey));
   const [activePresetId, setActivePresetIdState] = useState<string>(() =>
     getInitialPreset(defaultPreset),
   );
@@ -103,9 +101,7 @@ export function ThemeProvider({
   // 计算当前最终生效的色彩 Tokens
   const resolvedColors: ThemeColorTokens = useMemo(() => {
     const baseColors = isDark ? activePreset.dark : activePreset.light;
-    const customColors = isDark
-      ? activeCustomization.darkColors
-      : activeCustomization.lightColors;
+    const customColors = isDark ? activeCustomization.darkColors : activeCustomization.lightColors;
     return {
       ...baseColors,
       ...(customColors || {}),
@@ -192,57 +188,63 @@ export function ThemeProvider({
     root.style.letterSpacing = resolvedTypography.letterSpacing;
   }, [isDark, activePreset, resolvedColors, resolvedGeometry, resolvedTypography]);
 
-  const setMode = (newMode: ThemeMode) => {
-    try {
-      localStorage.setItem(STORAGE_MODE_KEY, newMode);
-      if (storageKey) localStorage.setItem(storageKey, newMode);
-    } catch {
-      // ignore
-    }
-    setModeState(newMode);
-  };
+  const setMode = useCallback(
+    (newMode: ThemeMode) => {
+      try {
+        localStorage.setItem(STORAGE_MODE_KEY, newMode);
+        if (storageKey) localStorage.setItem(storageKey, newMode);
+      } catch {
+        // ignore
+      }
+      setModeState(newMode);
+    },
+    [storageKey],
+  );
 
-  const setPreset = (presetId: string) => {
+  const setPreset = useCallback((presetId: string) => {
     try {
       localStorage.setItem(STORAGE_PRESET_KEY, presetId);
     } catch {
       // ignore
     }
     setActivePresetIdState(presetId);
-  };
+  }, []);
 
-  const updateActiveCustomization = (partial: Partial<ThemeCustomization>) => {
-    setCustomizations((prev) => {
-      const current = prev[activePresetId] || {};
-      const updated: ThemeCustomization = {
-        lightColors: {
-          ...(current.lightColors || {}),
-          ...(partial.lightColors || {}),
-        },
-        darkColors: {
-          ...(current.darkColors || {}),
-          ...(partial.darkColors || {}),
-        },
-        geometry: {
-          ...(current.geometry || {}),
-          ...(partial.geometry || {}),
-        },
-        typography: {
-          ...(current.typography || {}),
-          ...(partial.typography || {}),
-        },
-      };
-      const next = { ...prev, [activePresetId]: updated };
-      try {
-        localStorage.setItem(STORAGE_CUSTOMIZATIONS_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  };
+  const updateActiveCustomization = useCallback(
+    (partial: Partial<ThemeCustomization>) => {
+      setCustomizations((prev) => {
+        const current = prev[activePresetId] || {};
+        const updated: ThemeCustomization = {
+          lightColors: {
+            ...(current.lightColors || {}),
+            ...(partial.lightColors || {}),
+          },
+          darkColors: {
+            ...(current.darkColors || {}),
+            ...(partial.darkColors || {}),
+          },
+          geometry: {
+            ...(current.geometry || {}),
+            ...(partial.geometry || {}),
+          },
+          typography: {
+            ...(current.typography || {}),
+            ...(partial.typography || {}),
+          },
+        };
+        const next = { ...prev, [activePresetId]: updated };
+        try {
+          localStorage.setItem(STORAGE_CUSTOMIZATIONS_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+        return next;
+      });
+    },
+    [activePresetId],
+  );
 
-  const resetActiveCustomization = () => {
+  const resetActiveCustomization = useCallback(() => {
     setCustomizations((prev) => {
       const next = { ...prev };
       delete next[activePresetId];
@@ -253,7 +255,7 @@ export function ThemeProvider({
       }
       return next;
     });
-  };
+  }, [activePresetId]);
 
   const value: ThemeContextValue = useMemo(
     () => ({
@@ -284,6 +286,10 @@ export function ThemeProvider({
       resolvedGeometry,
       resolvedTypography,
       isDark,
+      setMode,
+      setPreset,
+      updateActiveCustomization,
+      resetActiveCustomization,
     ],
   );
 

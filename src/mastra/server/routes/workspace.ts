@@ -10,7 +10,6 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { workError } from "../../errors";
 import {
   getWorkspaceConfig,
-  implicitThreadWorkspacePath,
   listRecentWorkspaces,
   saveWorkspaceConfig,
   type WorkspaceUserConfig,
@@ -58,11 +57,9 @@ async function ownedWorkspace(c: ContextWithMastra) {
   const memory = await getWorkMemory();
   const thread = await getOwnedThread(memory, threadId, resourceId);
   const metadata = thread?.metadata as ThreadMetadata | undefined;
-  const wsPath = metadata?.workspacePath || implicitThreadWorkspacePath(threadId);
-  if (!wsPath) return null;
+  if (!metadata?.workspacePath || metadata.workspaceExplicit !== true) return null;
   try {
-    await mkdir(wsPath, { recursive: true });
-    return { root: await realpath(resolve(wsPath)), threadId };
+    return { root: await realpath(resolve(metadata.workspacePath)), threadId };
   } catch {
     return null;
   }
@@ -279,8 +276,10 @@ export const openInAppRoute = registerApiRoute("/work/workspace/open-in", {
         child.unref();
       }
       return c.json({ ok: true });
-    } catch (err: any) {
-      throw workError("VALIDATION_FAILED", { text: err?.message || "启动应用失败" });
+    } catch (err) {
+      throw workError("VALIDATION_FAILED", {
+        text: err instanceof Error ? err.message : "启动应用失败",
+      });
     }
   },
 });

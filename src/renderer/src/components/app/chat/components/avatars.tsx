@@ -21,6 +21,19 @@ function loadCachedHeadUrl(cacheKey: string): string | null {
 
 const headUrlMemory = new Map<string, string>();
 const headUrlPromises = new Map<string, Promise<string | null>>();
+/** 已因图片加载失败重取过一次的键 —— 坏 URL 不该把请求拖成无限循环 */
+const headUrlRetried = new Set<string>();
+
+/** 丢弃某个键上已记住的 URL,下次挂载会重新向 API 取一张 */
+function forgetHeadUrl(cacheKey: string) {
+  try {
+    localStorage.removeItem(cacheKey);
+  } catch {
+    /* 存储不可用时无需清理 */
+  }
+  headUrlMemory.delete(cacheKey);
+  headUrlPromises.delete(cacheKey);
+}
 
 function fetchRandomHeadUrl(cacheKey: string): Promise<string | null> {
   let promise = headUrlPromises.get(cacheKey);
@@ -70,7 +83,21 @@ const RandomHeadAvatar = React.memo(function RandomHeadAvatar({
 
   return (
     <Avatar>
-      {headUrl ? <AvatarImage alt={alt} src={headUrl} /> : null}
+      {headUrl ? (
+        <AvatarImage
+          alt={alt}
+          onError={() => {
+            // 记住的 URL 指向第三方 CDN,它不保证长期有效。图挂了就丢掉这条记录
+            // 重取一张,否则一次 404 会把这个键永久钉在 fallback 图标上。
+            // 只重取一次:新取的还是坏图就安静退回 fallback,不做无限重试。
+            if (headUrlRetried.has(cacheKey)) return;
+            headUrlRetried.add(cacheKey);
+            forgetHeadUrl(cacheKey);
+            setHeadUrl(null);
+          }}
+          src={headUrl}
+        />
+      ) : null}
       <AvatarFallback className={fallbackClassName}>{fallback}</AvatarFallback>
     </Avatar>
   );

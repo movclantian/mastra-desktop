@@ -42,10 +42,7 @@ function Digit({
 
   return (
     <span className="relative inline-block h-[1em] w-[0.6em] overflow-hidden leading-none tabular-nums">
-      <motion.span
-        style={{ y }}
-        className="absolute top-0 left-0 flex flex-col font-mono"
-      >
+      <motion.span style={{ y }} className="absolute top-0 left-0 flex flex-col font-mono">
         {Array.from({ length: 10 }, (_, i) => (
           <span key={i} className="flex h-[1em] items-center justify-center">
             {i}
@@ -75,28 +72,16 @@ export function SlidingNumber({
   const intDigits = intPartPadded.split("").map(Number);
 
   return (
-    <span
-      className={cn(
-        "inline-flex items-center font-mono tabular-nums",
-        className,
-      )}
-    >
+    <span className={cn("inline-flex items-center font-mono tabular-nums", className)}>
       {isNegative && <span>-</span>}
       {intDigits.map((digit, idx) => {
         const placeFromRight = intDigits.length - 1 - idx;
         const place = 10 ** placeFromRight;
-        const showThousand =
-          thousandSeparator &&
-          placeFromRight > 0 &&
-          placeFromRight % 3 === 0;
+        const showThousand = thousandSeparator && placeFromRight > 0 && placeFromRight % 3 === 0;
 
         return (
           <React.Fragment key={`int-${idx}-${placeFromRight}`}>
-            <Digit
-              place={place}
-              value={digit}
-              transition={transition}
-            />
+            <Digit place={place} value={digit} transition={transition} />
             {showThousand && <span>{thousandSeparator}</span>}
           </React.Fragment>
         );
@@ -105,12 +90,7 @@ export function SlidingNumber({
         <>
           <span>{decimalSeparator}</span>
           {decPart.split("").map((digit, idx) => (
-            <Digit
-              key={`dec-${idx}`}
-              place={1}
-              value={Number(digit)}
-              transition={transition}
-            />
+            <Digit key={`dec-${idx}`} place={1} value={Number(digit)} transition={transition} />
           ))}
         </>
       )}

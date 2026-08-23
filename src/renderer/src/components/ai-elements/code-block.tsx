@@ -1,6 +1,4 @@
-"use client";
-
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, Code2Icon, CopyIcon } from "lucide-react";
 import type { ComponentProps, CSSProperties, HTMLAttributes } from "react";
 import {
   createContext,
@@ -15,6 +13,17 @@ import {
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki";
 import { createHighlighter } from "shiki";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   Select,
   SelectContent,
@@ -406,19 +415,59 @@ export const CodeBlockContent = ({
 export const CodeBlock = ({
   code,
   language,
-  showLineNumbers = false,
+  showLineNumbers: initialShowLineNumbers = false,
   className,
   children,
   ...props
 }: CodeBlockProps) => {
+  const [showLineNumbers, setShowLineNumbers] = useState(initialShowLineNumbers);
   const contextValue = useMemo(() => ({ code }), [code]);
+
+  const handleCopyCode = () => {
+    void navigator.clipboard.writeText(code);
+  };
+
+  const handleCopyMarkdown = () => {
+    const formatted = `\`\`\`${language}\n${code}\n\`\`\``;
+    void navigator.clipboard.writeText(formatted);
+  };
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
-      <CodeBlockContainer className={className} language={language} {...props}>
-        {children}
-        <CodeBlockContent code={code} language={language} showLineNumbers={showLineNumbers} />
-      </CodeBlockContainer>
+      <ContextMenu>
+        <ContextMenuTrigger className="w-full block">
+          <CodeBlockContainer className={className} language={language} {...props}>
+            {children}
+            <CodeBlockContent code={code} language={language} showLineNumbers={showLineNumbers} />
+          </CodeBlockContainer>
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-52">
+          <ContextMenuGroup>
+            <ContextMenuLabel className="uppercase text-[10px] tracking-wider text-muted-foreground">
+              {language || "代码块"}
+            </ContextMenuLabel>
+            <ContextMenuItem onClick={handleCopyCode}>
+              <CopyIcon className="text-muted-foreground" />
+              <span>复制代码内容</span>
+              <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={handleCopyMarkdown}>
+              <Code2Icon className="text-muted-foreground" />
+              <span>复制为 Markdown</span>
+              <ContextMenuShortcut>⇧⌘C</ContextMenuShortcut>
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuCheckboxItem
+              checked={showLineNumbers}
+              onCheckedChange={(checked) => setShowLineNumbers(Boolean(checked))}
+            >
+              显示行号
+            </ContextMenuCheckboxItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
     </CodeBlockContext.Provider>
   );
 };

@@ -2,10 +2,10 @@ import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
 import { mastraWorkAgent } from "../../agents";
 import {
+  type AgentProfile,
   deleteAgentProfile,
   listAgentProfiles,
   upsertAgentProfile,
-  type AgentProfile,
 } from "../../agents/custom";
 
 function errorText(error: unknown): string {

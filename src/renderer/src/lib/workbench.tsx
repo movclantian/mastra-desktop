@@ -91,6 +91,22 @@ export interface RecentWorkspace {
   lastUsedAt: string;
 }
 
+export interface SkillMetadata {
+  name: string;
+  path: string;
+  description: string;
+  metadata?: Record<string, unknown>;
+  origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
+  marketplaceId?: string;
+  marketplaceName?: string;
+  sourcePath?: string;
+  branch?: string;
+  skillsShSource?: string;
+  skillsShSlug?: string;
+  installs?: number;
+  sourceUrl?: string;
+}
+
 /** GET /work/threads/:id/tree:文件树单层条目 */
 export interface TreeEntry {
   hidden?: boolean;
@@ -430,6 +446,8 @@ interface WorkbenchValue {
   setLibraryOpen: (open: boolean) => void;
   skillOpen: boolean;
   setSkillOpen: (open: boolean) => void;
+  activeSkill: SkillMetadata | null;
+  setActiveSkill: (skill: SkillMetadata | null) => void;
   agentOpen: boolean;
   setAgentOpen: (open: boolean) => void;
   /** 技能示例写入新会话输入框的一次性文本。 */
@@ -609,6 +627,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [agentBusy, setAgentBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
+  const [activeSkill, setActiveSkill] = useState<SkillMetadata | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   /** 输入区实测的最小边界(见 WorkbenchValue.promptMinWidth);0 = 尚未测到 */
@@ -656,7 +675,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [permissionRules]);
   useEffect(() => {
     if (activeThreadId) {
-      localStorage.setItem(ACTIVE_THREAD_KEY, activeThreadId);
+      // 必须 stringify:读取走的是 readJson(JSON.parse),写裸字符串会让
+      // parse 抛异常并静默退回 null —— 上次打开的线程就永远恢复不了。
+      localStorage.setItem(ACTIVE_THREAD_KEY, JSON.stringify(activeThreadId));
     } else {
       localStorage.removeItem(ACTIVE_THREAD_KEY);
     }
@@ -795,7 +816,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         },
       );
     },
-    [activeThreadId, threads, user.id],
+    [activeThreadId, threads],
   );
 
   const selectThread = useCallback((id: string | null) => {
@@ -1094,6 +1115,29 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       }),
     [patchThread],
   );
+
+  const generateThreadTitle = useCallback(
+    async (threadId: string) => {
+      try {
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(threadId)}/generate-title`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ resourceId: user.id, force: true }),
+          },
+        );
+        if (!response.ok) return null;
+        const { title } = (await response.json()) as { title: string };
+        await refreshThreads();
+        return title;
+      } catch {
+        return null;
+      }
+    },
+    [refreshThreads],
+  );
+
   const pinThread = useCallback(
     (threadId: string, pinned: boolean) => patchThread(threadId, { metadata: { pinned } }),
     [patchThread],
@@ -1287,6 +1331,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshThreads,
       createThread,
       renameThread,
+      generateThreadTitle,
       deleteThread,
       pinThread,
       archiveThread,
@@ -1329,6 +1374,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       setLibraryOpen,
       skillOpen,
       setSkillOpen,
+      activeSkill,
+      setActiveSkill,
       agentOpen,
       setAgentOpen,
       pendingPrompt,
@@ -1360,6 +1407,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshThreads,
       createThread,
       renameThread,
+      generateThreadTitle,
       deleteThread,
       pinThread,
       archiveThread,
@@ -1392,14 +1440,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshToolsConfig,
       settingsOpen,
       settingsSection,
-      setSettingsSection,
       openSettings,
       agentBusy,
       libraryOpen,
       skillOpen,
       agentOpen,
       pendingPrompt,
-      setPendingPrompt,
       pendingLibraryFiles,
       queueLibraryFiles,
       clearPendingLibraryFiles,

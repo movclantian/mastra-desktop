@@ -407,76 +407,78 @@ export function ProviderItem({
     >
       <section className="w-full">
         {/* 头部:名称 + 操作(禁用 / 编辑 / 展开 / 删除) */}
-        <div className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-2 truncate text-sm font-medium">
-            {provider.name}
-            {provider.disabled ? <Badge variant="secondary">已禁用</Badge> : null}
-          </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {provider.registryId
-              ? `内置 · ${provider.registryId}`
-              : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={toggleDisabled}
-            aria-label={provider.disabled ? "启用供应商" : "禁用供应商"}
-          >
-            <BanIcon />
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="编辑">
-            <PencilIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void handleExpand()}
-            aria-label="展开模型列表"
-          >
-            <ChevronDownIcon
-              className={expanded ? "rotate-180 transition-transform" : "transition-transform"}
-            />
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={removeProvider} aria-label="删除供应商">
-            <Trash2Icon />
-          </Button>
-        </div>
-      </div>
-
-      {/* 模型列表:搜索过滤 + 无结果时可添加自定义模型 ID + 每行连接测试 */}
-      <Collapsible open={expanded}>
-        <CollapsibleContent>
-          <div className="border-t border-border/60 bg-muted/20">
-            {loadingModels ? (
-              <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-                <Spinner className="size-4" />
-                正在拉取模型列表...
-              </div>
-            ) : models ? (
-              <ModelListSection
-                models={models}
-                onRefresh={() => void refreshModels()}
-                provider={provider}
-                refreshing={refreshing}
-              />
-            ) : (
-              <div className="flex items-center justify-center py-4">
-                <Button variant="outline" size="sm" onClick={() => void handleExpand()}>
-                  <RefreshCwIcon />
-                  拉取模型列表
-                </Button>
-              </div>
-            )}
+        <div
+          className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}
+        >
+          <div className="min-w-0 flex-1">
+            <p className="flex items-center gap-2 truncate text-sm font-medium">
+              {provider.name}
+              {provider.disabled ? <Badge variant="secondary">已禁用</Badge> : null}
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {provider.registryId
+                ? `内置 · ${provider.registryId}`
+                : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`}
+            </p>
           </div>
-        </CollapsibleContent>
-      </Collapsible>
-    </section>
-  </MagicCard>
-);
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={toggleDisabled}
+              aria-label={provider.disabled ? "启用供应商" : "禁用供应商"}
+            >
+              <BanIcon />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={onEdit} aria-label="编辑">
+              <PencilIcon />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void handleExpand()}
+              aria-label="展开模型列表"
+            >
+              <ChevronDownIcon
+                className={expanded ? "rotate-180 transition-transform" : "transition-transform"}
+              />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={removeProvider} aria-label="删除供应商">
+              <Trash2Icon />
+            </Button>
+          </div>
+        </div>
+
+        {/* 模型列表:搜索过滤 + 无结果时可添加自定义模型 ID + 每行连接测试 */}
+        <Collapsible open={expanded}>
+          <CollapsibleContent>
+            <div className="border-t border-border/60 bg-muted/20">
+              {loadingModels ? (
+                <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
+                  <Spinner className="size-4" />
+                  正在拉取模型列表...
+                </div>
+              ) : models ? (
+                <ModelListSection
+                  models={models}
+                  onRefresh={() => void refreshModels()}
+                  provider={provider}
+                  refreshing={refreshing}
+                />
+              ) : (
+                <div className="flex items-center justify-center py-4">
+                  <Button variant="outline" size="sm" onClick={() => void handleExpand()}>
+                    <RefreshCwIcon />
+                    拉取模型列表
+                  </Button>
+                </div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      </section>
+    </MagicCard>
+  );
 }
 
 /** 模型列表区块:模糊搜索 / 无结果添加自定义 ID / 每行连接测试 / 手动刷新 */
@@ -670,10 +672,7 @@ export function ProvidersSection() {
         <p className="text-sm text-muted-foreground">
           预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。
         </p>
-        <ShimmerButton
-          className="h-8 px-3 text-xs shadow-xs"
-          onClick={() => setAddOpen(true)}
-        >
+        <ShimmerButton className="h-8 px-3 text-xs shadow-xs" onClick={() => setAddOpen(true)}>
           <PlusIcon className="size-3.5 mr-1" />
           添加供应商
         </ShimmerButton>
