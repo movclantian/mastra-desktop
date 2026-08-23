@@ -10,7 +10,8 @@ export default defineConfig({
     resolve: {
       alias: {
         '@': resolve('src/renderer/src')
-      }
+      },
+      dedupe: ['@codemirror/state', '@codemirror/view', 'codemirror']
     },
     plugins: [react(), tailwindcss()]
   }

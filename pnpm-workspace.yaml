@@ -12,6 +12,8 @@ shamefullyHoist: true
 # 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
 overrides:
   shiki: ^4.4.3
+  # CodeMirror extensions use instanceof checks; all language packages must share one state runtime.
+  '@codemirror/state': 6.7.1
   # app-builder-lib@26.15.3 发布时 package.json 漏改了依赖范围(仍是 ^3.0.0),
   # 但代码已按 @electron/get v5 写(用 v5 才有的 ElectronDownloadCacheMode);
   # pnpm 严格按 ^3 解析到 3.0.0(无该枚举)导致打包时

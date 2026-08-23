@@ -688,10 +688,14 @@ export function ChatPanel() {
   );
 
   const [resumingKeys, setResumingKeys] = React.useState<Set<string>>(new Set());
+  const resumingKeysRef = React.useRef(new Set<string>());
 
   const handleResumeInteraction = React.useCallback(
     async (interaction: AgentInteraction, resumeData: unknown) => {
-      if (!activeThreadId || resumingKeys.has(interaction.key)) return;
+      if (!activeThreadId || resumingKeysRef.current.has(interaction.key)) return;
+      // State updates are asynchronous and cannot be used as a same-tick mutex.
+      // The ref closes the gap between two rapid approval clicks or duplicate UI events.
+      resumingKeysRef.current.add(interaction.key);
       setResumingKeys((current) => new Set(current).add(interaction.key));
       // 过期预检:审批可能已被另一个窗口处理、或该 run 已自行结束。
       // 挂起快照是存储支撑的(不是内存态),所以「不在列表里」= 这次交互已经落定,
@@ -743,6 +747,7 @@ export function ChatPanel() {
         });
         toast.error("无法继续 Agent 工具调用,请重试");
       } finally {
+        resumingKeysRef.current.delete(interaction.key);
         setResumingKeys((current) => {
           const next = new Set(current);
           next.delete(interaction.key);
@@ -756,7 +761,6 @@ export function ChatPanel() {
       getThreadChat,
       refreshThreadSettings,
       reloadMessages,
-      resumingKeys,
     ],
   );
 

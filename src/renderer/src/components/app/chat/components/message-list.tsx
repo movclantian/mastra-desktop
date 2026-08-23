@@ -44,6 +44,7 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import {
   Message,
   MessageAvatar,
@@ -53,6 +54,7 @@ import {
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
+import { MASTRA_SERVER_URL } from "@/lib/providers";
 import {
   buildCitationEntries,
   createCitationRehypePlugins,
@@ -100,33 +102,63 @@ function MessageAttachments({
     <AttachmentGroup className={align === "end" ? "max-w-full justify-end" : "max-w-full"}>
       {files.map((file, index) => {
         const id = `${messageId}-file-${index}`;
-        const isImage = file.mediaType?.startsWith("image/") ?? false;
-        const title = file.filename ?? "未命名附件";
-        return (
-          <Attachment key={id} size="sm" className="max-w-[min(100%,18rem)]">
-            <AttachmentMedia variant={isImage ? "image" : "icon"}>
-              {isImage ? <img src={file.url} alt={title} /> : <FileTextIcon aria-hidden="true" />}
-            </AttachmentMedia>
-            <AttachmentContent>
-              <AttachmentTitle>{title}</AttachmentTitle>
-              <AttachmentDescription>{file.mediaType || "文件"}</AttachmentDescription>
-            </AttachmentContent>
-            {file.url ? (
-              <AttachmentTrigger
-                render={
-                  <a
-                    href={file.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`打开 ${title}`}
-                  />
-                }
-              />
-            ) : null}
-          </Attachment>
-        );
+        return <MessageAttachment key={id} file={file} />;
       })}
     </AttachmentGroup>
+  );
+}
+
+function MessageAttachment({ file }: { file: FileUIPart }) {
+  const isImage = file.mediaType?.startsWith("image/") ?? false;
+  const title = file.filename ?? "未命名附件";
+  const [resolvedUrl, setResolvedUrl] = React.useState(file.url);
+
+  React.useEffect(() => {
+    let disposed = false;
+    let objectUrl: string | undefined;
+    setResolvedUrl(file.url);
+    let isMastraResource = false;
+    try {
+      isMastraResource =
+        new URL(file.url, window.location.href).origin === new URL(MASTRA_SERVER_URL).origin;
+    } catch {
+      // Data/blob URLs and malformed external values stay on their original URL.
+    }
+    if (!isMastraResource) return () => undefined;
+    void fetch(file.url)
+      .then((response) => {
+        if (!response.ok) throw new Error("附件加载失败");
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (disposed) URL.revokeObjectURL(objectUrl);
+        else setResolvedUrl(objectUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file.url]);
+
+  return (
+    <Attachment size="sm" className="max-w-[min(100%,18rem)]">
+      <AttachmentMedia variant={isImage ? "image" : "icon"}>
+        {isImage ? <img src={resolvedUrl} alt={title} /> : <FileTextIcon aria-hidden="true" />}
+      </AttachmentMedia>
+      <AttachmentContent>
+        <AttachmentTitle>{title}</AttachmentTitle>
+        <AttachmentDescription>{file.mediaType || "文件"}</AttachmentDescription>
+      </AttachmentContent>
+      {resolvedUrl ? (
+        <AttachmentTrigger
+          render={
+            <a href={resolvedUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${title}`} />
+          }
+        />
+      ) : null}
+    </Attachment>
   );
 }
 
@@ -574,9 +606,12 @@ export const MessageItem = React.memo(function MessageItem({
               px-0,会导致流式初期头像与名称间距先宽后窄的跳动;助手消息恒为无框样式 */}
             <MessageHeader className="px-0">MastraWork</MessageHeader>
             <MessageAttachments files={files} messageId={message.id} />
-            {/* 流式起步阶段(尚无任何文本/推理/工具 part)立即显示思考占位,
-              避免头像+名称出现后空白一段,再突然弹出"思考"卡片 */}
-            {isStreaming && assistantSegments.length === 0 ? <Shimmer>思考中…</Shimmer> : null}
+            {isStreaming && assistantSegments.length === 0 ? (
+              <div className="flex items-center gap-2.5 py-1 text-xs text-muted-foreground">
+                <DotmSquare3 size={16} dotSize={2} colorPreset="solid-theme" />
+                <Shimmer>正在深度思考与规划…</Shimmer>
+              </div>
+            ) : null}
             <CitationProvider entries={citationEntries}>
               {assistantSwitchableVersions.length >= 2 ? (
                 <MessageBranch

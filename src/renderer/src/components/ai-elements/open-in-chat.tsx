@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
+import { useAuth } from "@/lib/auth";
 import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
@@ -583,6 +584,10 @@ const PREFERRED_IDE_KEY = "mastra-work:preferred-ide";
  */
 export function OpenInIde({ className }: { className?: string }) {
   const { threads, activeThreadId } = useWorkbench();
+  const { user } = useAuth();
+  const preferredIdeKey = user
+    ? `${PREFERRED_IDE_KEY}:${encodeURIComponent(user.id)}`
+    : `${PREFERRED_IDE_KEY}:anonymous`;
   const [open, setOpen] = React.useState(false);
   const [detectedIdes, setDetectedIdes] = React.useState<LocalIdeItem[]>([
     { id: "trae", name: "TraeCode CN", command: "trae", category: "ide", icon: IDE_ICON_MAP.trae },
@@ -618,7 +623,7 @@ export function OpenInIde({ className }: { className?: string }) {
 
   const [preferredId, setPreferredId] = React.useState<string>(() => {
     try {
-      return localStorage.getItem(PREFERRED_IDE_KEY) || "trae";
+      return localStorage.getItem(preferredIdeKey) || "trae";
     } catch {
       return "trae";
     }
@@ -673,7 +678,7 @@ export function OpenInIde({ className }: { className?: string }) {
           }
           const fallback = mapped[0]?.id || "terminal";
           try {
-            localStorage.setItem(PREFERRED_IDE_KEY, fallback);
+            localStorage.setItem(preferredIdeKey, fallback);
           } catch {
             // ignore
           }
@@ -687,7 +692,7 @@ export function OpenInIde({ className }: { className?: string }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [preferredIdeKey]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
 
@@ -712,7 +717,7 @@ export function OpenInIde({ className }: { className?: string }) {
     }
     setPreferredId(ide.id);
     try {
-      localStorage.setItem(PREFERRED_IDE_KEY, ide.id);
+      localStorage.setItem(preferredIdeKey, ide.id);
     } catch {
       // 忽略
     }

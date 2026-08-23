@@ -24,7 +24,7 @@ import {
   type ToolSet,
   type UIMessage,
 } from "ai";
-import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { mastraWorkAgent, SKILL_NAMES_CONTEXT_KEY } from "../../agents";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
@@ -45,7 +45,6 @@ import {
   LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RERANK_MODEL_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
-  LIBRARY_SEARCH_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
   searchLibrary,
 } from "../../rag";
@@ -54,6 +53,7 @@ import {
   parseWebSearchSelection,
   WEB_SEARCH_CONTEXT_KEY,
 } from "../../tools";
+import { recordUsageEvent } from "../../usage";
 import {
   addRecentWorkspace,
   ensureDirectory,
@@ -65,6 +65,7 @@ import {
 } from "../../workspace";
 import { generateThreadTitleHelper, getWorkMemory } from "./threads";
 import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
+import { getOwnedThread } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
 
 /** 消息 metadata:用量 + 用户显式引用,前端据此显示上下文与强调徽章 */
@@ -317,6 +318,7 @@ async function persistLatestUsage(
   usage: LanguageModelUsage | undefined,
   userMessageText?: string,
   model?: unknown,
+  latencyMs = 0,
 ) {
   if (!threadId) return;
   const memory = await getWorkMemory();
@@ -346,6 +348,22 @@ async function persistLatestUsage(
     // draft 一经产生真实消息往来即失效(新会话线程 = 无任何历史消息)
     metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
   });
+  if (resourceId) {
+    const usageModel =
+      typeof model === "string"
+        ? model
+        : model && typeof model === "object" && "id" in model && typeof model.id === "string"
+          ? model.id
+          : undefined;
+    await recordUsageEvent({
+      resourceId,
+      threadId,
+      model: usageModel,
+      inputTokens: usage?.inputTokens ?? 0,
+      outputTokens: usage?.outputTokens ?? 0,
+      latencyMs,
+    });
+  }
 }
 
 /**
@@ -474,6 +492,7 @@ function isPlanApproval(resumeData: unknown): boolean {
 export const workChatRoute = registerApiRoute("/chat/:agentId", {
   method: "POST",
   handler: async (c) => {
+    const requestStartedAt = Date.now();
     // chatRoute() is the convenience wrapper around this same adapter. We keep
     // the lower-level handler here because the workbench must prepare request
     // context and transform UI data chunks per thread before returning the
@@ -494,6 +513,21 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       agentProfileId?: string;
       [key: string]: unknown;
     };
+    const authenticatedUser = (c.get as (key: string) => unknown)("user") as
+      | { id?: unknown }
+      | undefined;
+    const authenticatedResourceId =
+      typeof authenticatedUser?.id === "string" ? authenticatedUser.id : undefined;
+    if (!authenticatedResourceId) throw workError("AUTH_REQUIRED");
+    if (!body.memory?.thread) {
+      throw workError("VALIDATION_FAILED", { text: "memory.thread is required" });
+    }
+    body.memory.resource = authenticatedResourceId;
+    if (
+      !(await getOwnedThread(await getWorkMemory(), body.memory.thread, authenticatedResourceId))
+    ) {
+      throw workError("THREAD_NOT_FOUND");
+    }
     const branchOperation = await prepareMessageBranchOperation({
       memory: await getWorkMemory(),
       threadId: body.memory?.thread,
@@ -571,15 +605,17 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     // 用独立 structuring 模型,主 Agent 的工具调用与文本回答不受影响
     // (structured-output.mdx),@mastra/ai-sdk 会把最终对象以
     // data-structured-output 事件推给前端渲染引用卡片(handle-chat-stream.mdx)。
+    // 模型家族(Mastra registry id):自定义 baseUrl 网关一律得到 undefined,
+    // 所以 'openai' 只会是官方 OpenAI —— 供应商专属参数据此判断能不能发。
+    const modelFamily =
+      rawModel !== undefined ? requestModelFamily(rawModel) : await defaultModelFamily();
     const webSearch = parseWebSearchSelection(rawWebSearch);
     if (webSearch) {
       requestContext.set(WEB_SEARCH_CONTEXT_KEY, webSearch);
       // provider 原生检索(webSearchTool)只支持 OpenAI/Anthropic/Google/xAI,
       // 家族推断不出来时注入会让整个 run 抛 MastraError,故把家族一并传给
       // Agent 的动态 tools 由它决定是否注入。
-      const family =
-        rawModel !== undefined ? requestModelFamily(rawModel) : await defaultModelFamily();
-      if (family) requestContext.set(MODEL_FAMILY_CONTEXT_KEY, family);
+      if (modelFamily) requestContext.set(MODEL_FAMILY_CONTEXT_KEY, modelFamily);
     }
     // 线程会话状态:工作区目录、会话模式、审批规则、模型快照一次读写(见 prepareThreadSession)。
     // 模式与规则经 RequestContext 交给 Agent 的动态 instructions / tools / defaultOptions;
@@ -620,7 +656,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             resourceId: body.memory.resource,
             scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
             threadId: body.memory.thread,
-            agent: mastra.getAgentById(session.agentProfileId),
+            agent: mastraWorkAgent,
           });
           liveSession.setMode(session.modeId);
         }
@@ -645,6 +681,13 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         }
       }
     }
+    // 检索到的资料库片段以「本轮专属的对话消息」下发(AgentExecutionOptions.context,
+    // docs/en/docs/memory/overview.mdx:排在历史与 recall 之后、用户新消息之前,且不写入记忆)。
+    // 刻意不再拼进 instructions:Anthropic 渲染序是 tools → system → messages,
+    // system 每轮变一次,整段消息历史的前缀缓存就全部失效。
+    // 类型取自 AgentExecutionOptions 而不是 ai 的 ModelMessage:@mastra/core 内置了自己
+    // 那份 ai-sdk 类型副本(assistant 分支的 part 联合不同),直接用 ai 的会判为不兼容。
+    let libraryContext: NonNullable<AgentExecutionOptions["context"]> = [];
     if (body.memory?.resource) {
       let librarySources: LibraryCitationSource[] = [];
       const latestUser = [...body.messages].reverse().find((message) => message.role === "user");
@@ -679,17 +722,21 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             snippet: hit.text.slice(0, 280),
             score: hit.score,
           }));
-          requestContext.set(
-            LIBRARY_SEARCH_CONTEXT_KEY,
-            `${hits
-              .map((hit) => `[${hit.filename || "资料库文件"}] [^${hit.citationId}]\n${hit.text}`)
-              .join("\n\n---\n\n")}\n\n${librarySources
-              .map(
-                (source) =>
-                  `[^${source.id}]: [${source.filename}](${source.url}) — ${source.snippet}`,
-              )
-              .join("\n")}`,
-          );
+          // <library-context> 标签与用法约定写在 BASE_INSTRUCTIONS 里(与 <state> 同一套语义),
+          // 这样规则常驻 system 而数据留在对话尾部。
+          libraryContext = [
+            {
+              role: "user",
+              content: `<library-context>\n${hits
+                .map((hit) => `[${hit.filename || "资料库文件"}] [^${hit.citationId}]\n${hit.text}`)
+                .join("\n\n---\n\n")}\n\n${librarySources
+                .map(
+                  (source) =>
+                    `[^${source.id}]: [${source.filename}](${source.url}) — ${source.snippet}`,
+                )
+                .join("\n")}\n</library-context>`,
+            },
+          ];
           requestContext.set("libraryCitationSources", librarySources);
         }
       }
@@ -701,6 +748,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       agentId: profile.id,
       version: "v7" as const,
       sendReasoning: true,
+      // params 里没有 context 字段,本轮资料库片段只能走 defaultOptions(AgentExecutionOptions)
+      ...(libraryContext.length > 0 ? { defaultOptions: { context: libraryContext } } : {}),
       messageMetadata: ({ part }: { part: TextStreamPart<ToolSet> }) =>
         part.type === "finish" ? { usage: part.totalUsage } : undefined,
     };
@@ -712,22 +761,25 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       typeof bodyRest.providerOptions === "object" && bodyRest.providerOptions !== null
         ? (bodyRest.providerOptions as Record<string, unknown>)
         : {};
+    // prompt_cache_key:OpenAI 靠它把同一会话的请求路由到同一台缓存机器 —— 前缀一致
+    // 还不够,得落在同一台上才谈得上命中。线程 id 天然「同会话稳定、跨会话不同」。
+    // 只发给官方 OpenAI:自定义 OpenAI 协议网关未必接受这个参数,严格实现会直接 400,
+    // 而它们的缓存路由本就由自己决定,发过去也没有收益。
+    const openaiProviderOptions = {
+      ...((rawProviderOptions.openai as Record<string, unknown> | undefined) ?? {}),
+      ...(reasoningSummary ? { reasoningSummary: "auto" } : {}),
+      ...(modelFamily === "openai" && body.memory?.thread
+        ? { promptCacheKey: body.memory.thread }
+        : {}),
+    };
     const params = {
       ...bodyRest,
       ...(model !== undefined ? { model } : {}),
       ...(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools !== undefined
         ? { activeTools: resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools }
         : {}),
-      ...(reasoningSummary
-        ? {
-            providerOptions: {
-              ...rawProviderOptions,
-              openai: {
-                ...((rawProviderOptions.openai as Record<string, unknown> | undefined) ?? {}),
-                reasoningSummary: "auto",
-              },
-            },
-          }
+      ...(Object.keys(openaiProviderOptions).length > 0
+        ? { providerOptions: { ...rawProviderOptions, openai: openaiProviderOptions } }
         : {}),
       messages: body.messages,
       requestContext,
@@ -755,10 +807,16 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           resourceId: body.memory.resource,
           scope: sessionScope,
           threadId: body.memory.thread,
-          agent: mastra.getAgentById(profile.id),
+          agent: mastraWorkAgent,
         })
         .setExecutionDefaults(sessionExecutionOptions);
     }
+    // 资料库片段只属于当前这一轮,所以交给 sendMessage/steer 而不写进 setExecutionDefaults ——
+    // 会话默认值会被后续自动唤醒的 run 复用,那时旧检索结果已经是纯噪音。
+    const turnExecutionOptions =
+      sessionExecutionOptions && libraryContext.length > 0
+        ? ({ ...sessionExecutionOptions, context: libraryContext } satisfies AgentExecutionOptions)
+        : sessionExecutionOptions;
     const librarySources = requestContext.get("libraryCitationSources") as
       | LibraryCitationSource[]
       | undefined;
@@ -777,7 +835,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             body.memory?.resource,
             usage,
             firstUserText,
-            rawModel,
+            model ?? rawModel,
+            Date.now() - requestStartedAt,
           );
           await persistMessageBranchOperation({
             memory: await getWorkMemory(),
@@ -802,7 +861,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: body.memory.resource,
         scope: sessionScope,
         threadId: body.memory.thread,
-        agent: mastra.getAgentById(profile.id),
+        agent: mastraWorkAgent,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const signal = await session.steer(
@@ -812,7 +871,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             ? { metadata: latestUser.metadata as Record<string, unknown> }
             : {}),
         },
-        sessionExecutionOptions,
+        turnExecutionOptions,
       );
       const accepted = await signal.accepted;
       if (accepted.action !== "wake") {
@@ -847,11 +906,11 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: sessionMemory.resource,
         scope: sessionScope,
         threadId: sessionMemory.thread,
-        agent: mastra.getAgentById(profile.id),
+        agent: mastraWorkAgent,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const subscription = await session.subscribe(sessionMemory.thread);
-      const signal = session.sendMessage(input, sessionExecutionOptions);
+      const signal = session.sendMessage(input, turnExecutionOptions);
       const accepted = await signal.accepted;
       if (!("runId" in accepted) || accepted.action === "blocked") {
         session.releaseSubscription(subscription);

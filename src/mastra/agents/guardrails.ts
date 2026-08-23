@@ -50,7 +50,7 @@ import {
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
-import { getAppConfig, setAppConfig } from "../storage";
+import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
 import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
@@ -396,11 +396,20 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
 
 /** 读取护栏配置(app_config 表 key="guardrails";无记录或损坏时回落默认值) */
 export async function getGuardrailsConfig(): Promise<GuardrailsUserConfig> {
+  const scope = getResourceScope() ?? "__system__";
+  const cached = guardrailsConfigByScope.get(scope);
+  if (cached) return cached;
   const raw = await getAppConfig(GUARDRAILS_CONFIG_KEY);
-  if (!raw) return DEFAULT_CONFIG;
+  if (!raw) {
+    guardrailsConfigByScope.set(scope, DEFAULT_CONFIG);
+    return DEFAULT_CONFIG;
+  }
   try {
-    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as GuardrailsUserConfig;
+    const next = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as GuardrailsUserConfig;
+    guardrailsConfigByScope.set(scope, next);
+    return next;
   } catch {
+    guardrailsConfigByScope.set(scope, DEFAULT_CONFIG);
     return DEFAULT_CONFIG;
   }
 }
@@ -408,16 +417,29 @@ export async function getGuardrailsConfig(): Promise<GuardrailsUserConfig> {
 /** 写入护栏配置并实时生效:替换运行时配置 + 置空全部处理器缓存 */
 export async function saveGuardrailsConfig(next: GuardrailsUserConfig): Promise<void> {
   await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(next, null, 2));
-  config = { ...DEFAULT_CONFIG, ...next };
+  guardrailsConfigByScope.set(scopeKey(), { ...DEFAULT_CONFIG, ...next });
   invalidateCache();
 }
 
-// 运行时配置为模块级可变状态:顶层 await 在服务启动时读库(同 memory / workspace 模块)
-let config = await getGuardrailsConfig();
+const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
+
+function scopeKey(): string {
+  return getResourceScope() ?? "__system__";
+}
+
+function currentConfig(): GuardrailsUserConfig {
+  return guardrailsConfigByScope.get(scopeKey()) ?? DEFAULT_CONFIG;
+}
+
+const config = new Proxy(DEFAULT_CONFIG, {
+  get(_target, property: string | symbol) {
+    return currentConfig()[property as keyof GuardrailsUserConfig];
+  },
+}) as GuardrailsUserConfig;
 
 /** 当前配置(chat 路由与 Agent 的 defaultOptions 读它决定 maxProcessorRetries) */
 export function getGuardrailsRuntimeConfig(): GuardrailsUserConfig {
-  return config;
+  return currentConfig();
 }
 
 // ---------------------------------------------------------------------------
@@ -429,19 +451,39 @@ export function getGuardrailsRuntimeConfig(): GuardrailsUserConfig {
 // SkillSearch 依赖每线程 Workspace 实例,单独按工作区路径缓存。
 // ---------------------------------------------------------------------------
 
-let cachedInput: InputProcessorOrWorkflow[] | null = null;
-let cachedOutput: OutputProcessorOrWorkflow[] | null = null;
-let cachedError: ErrorProcessorOrWorkflow[] | null = null;
-const skillSearchCache = new Map<string, SkillSearchProcessor>();
-/** 响应缓存后端:必须跨请求存活,否则每次都是 miss */
-let responseCacheBackend: InMemoryServerCache | null = null;
+interface GuardrailRuntime {
+  cachedInput: InputProcessorOrWorkflow[] | null;
+  cachedOutput: OutputProcessorOrWorkflow[] | null;
+  cachedError: ErrorProcessorOrWorkflow[] | null;
+  skillSearchCache: Map<string, SkillSearchProcessor>;
+  responseCacheBackend: InMemoryServerCache | null;
+}
+
+const runtimeByScope = new Map<string, GuardrailRuntime>();
+
+function getRuntime(): GuardrailRuntime {
+  const key = scopeKey();
+  let runtime = runtimeByScope.get(key);
+  if (!runtime) {
+    runtime = {
+      cachedInput: null,
+      cachedOutput: null,
+      cachedError: null,
+      skillSearchCache: new Map(),
+      responseCacheBackend: null,
+    };
+    runtimeByScope.set(key, runtime);
+  }
+  return runtime;
+}
 
 function invalidateCache(): void {
-  cachedInput = null;
-  cachedOutput = null;
-  cachedError = null;
-  skillSearchCache.clear();
-  responseCacheBackend = null;
+  const runtime = getRuntime();
+  runtime.cachedInput = null;
+  runtime.cachedOutput = null;
+  runtime.cachedError = null;
+  runtime.skillSearchCache.clear();
+  runtime.responseCacheBackend = null;
 }
 
 /**
@@ -674,10 +716,11 @@ async function buildInput(): Promise<InputProcessorOrWorkflow[]> {
   if (config.providerCompat) processors.push(new ProviderHistoryCompat());
 
   if (config.responseCache) {
-    responseCacheBackend ??= new InMemoryServerCache();
+    const runtime = getRuntime();
+    runtime.responseCacheBackend ??= new InMemoryServerCache();
     processors.push(
       new ResponseCache({
-        cache: responseCacheBackend,
+        cache: runtime.responseCacheBackend,
         ttl: config.responseCacheTtl,
         agentId: "mastra-work-agent",
         ...(config.responseCacheScopeMode === "none"
@@ -774,30 +817,33 @@ function buildError(): ErrorProcessorOrWorkflow[] {
 export async function buildGuardrailInputProcessors(
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
-  cachedInput ??= await buildInput();
-  if (!config.skillSearch || !isWorkspaceEnabled()) return cachedInput;
+  const runtime = getRuntime();
+  runtime.cachedInput ??= await buildInput();
+  if (!config.skillSearch || !isWorkspaceEnabled()) return runtime.cachedInput;
   const workspacePath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
-  if (typeof workspacePath !== "string" || !workspacePath) return cachedInput;
-  let skillSearch = skillSearchCache.get(workspacePath);
+  if (typeof workspacePath !== "string" || !workspacePath) return runtime.cachedInput;
+  let skillSearch = runtime.skillSearchCache.get(workspacePath);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({
       workspace: getThreadWorkspace(workspacePath),
       search: { topK: config.skillSearchTopK, minScore: config.skillSearchMinScore },
       ttl: config.skillSearchTtl,
     });
-    skillSearchCache.set(workspacePath, skillSearch);
+    runtime.skillSearchCache.set(workspacePath, skillSearch);
   }
-  return [...cachedInput, skillSearch];
+  return [...runtime.cachedInput, skillSearch];
 }
 
 export async function buildGuardrailOutputProcessors(): Promise<OutputProcessorOrWorkflow[]> {
-  cachedOutput ??= await buildOutput();
-  return cachedOutput;
+  const runtime = getRuntime();
+  runtime.cachedOutput ??= await buildOutput();
+  return runtime.cachedOutput;
 }
 
 export function buildGuardrailErrorProcessors(): ErrorProcessorOrWorkflow[] {
-  cachedError ??= buildError();
-  return cachedError;
+  const runtime = getRuntime();
+  runtime.cachedError ??= buildError();
+  return runtime.cachedError;
 }
 
 /**

@@ -157,7 +157,7 @@ export function ChatSearchSelector() {
                                     <Badge className="w-fit px-1.5 text-[10px]" variant="outline">
                                       {SEARCH_DEPTH_META[depth].label}
                                     </Badge>
-                                    <span className="truncate text-[10px] text-muted-foreground">
+                                    <span className="whitespace-normal break-words text-[10px] text-muted-foreground">
                                       {SEARCH_DEPTH_META[depth].description}
                                     </span>
                                   </span>

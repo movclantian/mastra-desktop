@@ -11,6 +11,7 @@
  */
 import { cloneCompactedEditRoute, cloneThreadRoute, threadClonesRoute } from "./clone";
 import { summarizeThreadRoute } from "./compact";
+import { inlineCompletionRoute, inlineEditRoute } from "./inline-edit";
 import {
   deleteMessagesRoute,
   searchMessagesRoute,
@@ -48,6 +49,8 @@ export const threadRoutes = [
   summarizeThreadRoute,
   searchMessagesRoute,
   generateThreadTitleRoute,
+  inlineEditRoute,
+  inlineCompletionRoute,
 ];
 
 export { getWorkMemory } from "./shared";

@@ -28,6 +28,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DotPattern } from "@/components/ui/dot-pattern";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
+import { Dotm3x3_11 } from "@/components/ui/dotm-3x3-11";
+import { DotmCircular4 } from "@/components/ui/dotm-circular-4";
+import { DotmCircular5 } from "@/components/ui/dotm-circular-5";
+import { DotmHex1 } from "@/components/ui/dotm-hex-1";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
+import { DotmSquare10 } from "@/components/ui/dotm-square-10";
+import { DotmSquare18 } from "@/components/ui/dotm-square-18";
+import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
 import { HyperText } from "@/components/ui/hyper-text";
 import { Input } from "@/components/ui/input";
 import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
@@ -77,7 +87,9 @@ function ColorField({ label, description, value, onChange, recommendedSwatches }
       <div className="flex items-center justify-between gap-2">
         <div className="flex flex-col min-w-0">
           <span className="text-xs font-semibold text-foreground">{label}</span>
-          <span className="text-[11px] text-muted-foreground truncate">{description}</span>
+          <span className="whitespace-normal break-words text-[11px] text-muted-foreground">
+            {description}
+          </span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <label
@@ -380,6 +392,8 @@ export function ThemeSection() {
               <div className="flex items-center gap-1 group-data-[collapsible=icon]/sidebar:mx-auto">
                 <AnimatedThemeToggler
                   variant={togglerVariant}
+                  theme={isDark ? "dark" : "light"}
+                  onThemeChange={setMode}
                   className="size-6 rounded-md p-1 border-transparent hover:border-sidebar-border"
                   title="使用 Magic UI 视口流光切换深浅色"
                 />
@@ -839,7 +853,7 @@ export function ThemeSection() {
                     </div>
                     <div className="flex flex-col">
                       <span className="text-xs font-semibold">{insp.name}</span>
-                      <span className="text-[10px] text-muted-foreground truncate">
+                      <span className="whitespace-normal break-words text-[10px] text-muted-foreground">
                         {insp.description}
                       </span>
                     </div>
@@ -1046,6 +1060,8 @@ export function ThemeSection() {
                       <AnimatedThemeToggler
                         variant={togglerVariant}
                         showLabel
+                        theme={isDark ? "dark" : "light"}
+                        onThemeChange={setMode}
                         className="h-8 shadow-xs"
                       />
                       <span className="text-xs text-muted-foreground font-mono">
@@ -1277,6 +1293,114 @@ export function ThemeSection() {
                       <p>• [Agent-03] 物理弹簧阻尼高度动态自适应展开无闪烁。</p>
                     </div>
                   </AnimatedCollapsible>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ------------------------------------------------------------- */}
+            {/* 模块 6: Dot Matrix 极客点阵微动效矩阵 (Dot Matrix Loaders) */}
+            {/* ------------------------------------------------------------- */}
+            <Card className="border shadow-xs overflow-hidden">
+              <CardHeader className="pb-3 pt-4 px-4">
+                <CardTitle className="text-sm font-semibold flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ZapIcon className="size-4 text-primary" />
+                    <span>Dot Matrix 极客点阵微动效矩阵</span>
+                  </div>
+                  <Badge variant="outline" className="text-xs font-mono">
+                    55+ CSS Dot Loaders
+                  </Badge>
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  纯 CSS / React 驱动的高性能 LED
+                  点阵动效，实时响应主题色与暗色模式，广泛应用于侧边栏线程工作状态、AI
+                  深度思考中与工具执行轨迹。
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 px-4 pb-4">
+                {/* 1. 微型 3x3 九宫格系列 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    微型 3×3 矩阵系列 (适合侧栏线程状态、状态栏、Badge 徽标)
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div className="flex items-center gap-2.5 p-2 rounded-md border bg-background/80">
+                      <Dotm3x3_1 size={18} dotSize={2.5} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">Square Spiral</span>
+                        <span className="text-[10px] text-muted-foreground">3×3 螺旋流转</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5 p-2 rounded-md border bg-background/80">
+                      <Dotm3x3_6 size={18} dotSize={2.5} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">Core Echo</span>
+                        <span className="text-[10px] text-muted-foreground">3×3 核心涟漪</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2.5 p-2 rounded-md border bg-background/80">
+                      <Dotm3x3_11 size={18} dotSize={2.5} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">Glyph Pulse</span>
+                        <span className="text-[10px] text-muted-foreground">3×3 符文脉冲</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. 5x5 标准方形与 CRT 扫描系列 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    标准 5×5 矩阵系列 (适合 AI 思考中、代码执行沙箱)
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="flex items-center gap-3 p-2.5 rounded-md border bg-background/80">
+                      <DotmSquare3 size={24} dotSize={2.8} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">Core Spiral</span>
+                        <span className="text-[10px] text-muted-foreground">5×5 核心旋涡</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-2.5 rounded-md border bg-background/80">
+                      <DotmSquare10 size={24} dotSize={2.8} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">CRT Glide</span>
+                        <span className="text-[10px] text-muted-foreground">CRT 电子束扫描</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3 p-2.5 rounded-md border bg-background/80">
+                      <DotmSquare18 size={24} dotSize={2.8} colorPreset="solid-theme" />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-medium">Sound Bars</span>
+                        <span className="text-[10px] text-muted-foreground">音频等化均衡器</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. 圆形全息与蜂巢多边形系列 */}
+                <div className="flex flex-col gap-2 rounded-lg border bg-muted/20 p-3">
+                  <span className="text-xs font-medium text-foreground">
+                    全息圆形 / 三角 / 蜂巢系列 (适合 Agent 专属头像框、联网检索雷达)
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
+                      <DotmCircular4 size={28} dotSize={2.5} colorPreset="solid-theme" />
+                      <span className="text-[11px] font-medium text-center">Radar Arc 雷达</span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
+                      <DotmCircular5 size={28} dotSize={2.5} colorPreset="solid-theme" />
+                      <span className="text-[11px] font-medium text-center">Nova Wheel 新星</span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
+                      <DotmHex1 size={28} dotSize={2.5} colorPreset="solid-theme" />
+                      <span className="text-[11px] font-medium text-center">Hex Orbit 蜂巢</span>
+                    </div>
+                    <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
+                      <DotmTriangle2 size={28} dotSize={2.5} colorPreset="solid-theme" />
+                      <span className="text-[11px] font-medium text-center">Altitude 三角波</span>
+                    </div>
+                  </div>
                 </div>
               </CardContent>
             </Card>

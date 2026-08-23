@@ -12,6 +12,7 @@ import { searchLibrary } from "./retrieval/search";
 import { getLibrarySettings } from "./settings";
 import {
   LIBRARY_GRAPH_SEARCH_TOOL_ID,
+  LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_VECTOR_SEARCH_TOOL_ID,
   VALID_CHUNK_STRATEGIES,
 } from "./types";
@@ -36,7 +37,8 @@ export const libraryVectorSearchTool = createTool({
     ),
   }),
   execute: async ({ query, threadId }, context) => {
-    const resourceId = (context?.requestContext?.get("resourceId") as string) || "workbench";
+    const resourceId =
+      (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
     const results = await searchLibrary(resourceId, query, threadId, undefined, false);
     return { results };
   },
@@ -62,7 +64,8 @@ export const libraryGraphSearchTool = createTool({
     ),
   }),
   execute: async ({ query, threadId }, context) => {
-    const resourceId = (context?.requestContext?.get("resourceId") as string) || "workbench";
+    const resourceId =
+      (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
     const results = await searchLibrary(resourceId, query, threadId, undefined, true);
     return { results };
   },

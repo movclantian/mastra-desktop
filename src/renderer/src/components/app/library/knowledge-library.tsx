@@ -93,6 +93,26 @@ import {
 
 const LibraryFilePreview = React.lazy(() => import("./components/file-preview"));
 
+async function downloadLibraryAsset(
+  event: React.MouseEvent<HTMLAnchorElement>,
+  url: string,
+  filename: string,
+): Promise<void> {
+  event.preventDefault();
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error("文件下载失败");
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+  } catch {
+    toast.error("文件下载失败");
+  }
+}
+
 type LibraryView = "documents" | "session" | "search";
 
 type LibraryTreeEntry =
@@ -535,6 +555,13 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                   <a
                     download={asset.filename}
                     href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
+                    onClick={(event) =>
+                      void downloadLibraryAsset(
+                        event,
+                        `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
+                        asset.filename,
+                      )
+                    }
                   />
                 }
               >
@@ -589,6 +616,13 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                 <a
                   download={asset.filename}
                   href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
+                  onClick={(event) =>
+                    void downloadLibraryAsset(
+                      event,
+                      `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
+                      asset.filename,
+                    )
+                  }
                 />
               }
             >
@@ -1055,6 +1089,13 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                 className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                 download={selected.filename}
                 href={`${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`}
+                onClick={(event) =>
+                  void downloadLibraryAsset(
+                    event,
+                    `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(selected.id)}/content?resourceId=${encodeURIComponent(user.id)}`,
+                    selected.filename,
+                  )
+                }
                 title="下载文件"
               >
                 <DownloadIcon className="size-4" />

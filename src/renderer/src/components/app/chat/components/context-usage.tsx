@@ -8,6 +8,7 @@ import {
   ContextContentFooter,
   ContextContentHeader,
   ContextTrigger,
+  type ContextUsageBreakdown,
 } from "@/components/ai-elements/context";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,6 +25,29 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatModelContextWindow, getModelContextWindow } from "@/lib/providers";
 import { useWorkbench } from "@/lib/workbench";
 import type { CompressResult } from "../types";
+
+function estimateContextBreakdown(
+  usedTokens: number,
+  estimatedConversationTokens: number | undefined,
+): ContextUsageBreakdown {
+  const total = Math.max(0, Math.round(usedTokens));
+  const conversation =
+    estimatedConversationTokens && estimatedConversationTokens > 0
+      ? Math.min(total, Math.round(estimatedConversationTokens))
+      : total;
+  const overhead = Math.max(0, total - conversation);
+  const systemPrompt = Math.round(overhead * 0.4);
+  const toolsAndSubagents = Math.round(overhead * 0.3);
+  const mcp = Math.round(overhead * 0.2);
+  const skills = Math.max(0, overhead - systemPrompt - toolsAndSubagents - mcp);
+  return {
+    "system-prompt": systemPrompt,
+    "tools-and-subagents": toolsAndSubagents,
+    conversation,
+    mcp,
+    skills,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 上下文用量(docs/aielements/context.tsx):展示当前会话 token 消耗,
@@ -88,12 +112,14 @@ export function ChatContextUsage({
   if (!maxTokens) {
     return <ContextUnavailable catalogStatus={catalogStatus} />;
   }
+  const breakdown = estimateContextBreakdown(usedTokens, estimatedUsedTokens);
   return (
     <>
       <Context
         usedTokens={usedTokens}
         maxTokens={maxTokens}
         usage={usage}
+        breakdown={breakdown}
         modelId={
           selectedProvider.registryId
             ? `${selectedProvider.registryId}:${modelSelection.modelId}`

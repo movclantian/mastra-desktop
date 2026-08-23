@@ -7,7 +7,7 @@
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import { type MastraMCPServerDefinition, MCPClient } from "@mastra/mcp";
-import { getAppConfig, setAppConfig } from "../storage";
+import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
 
 type McpTransport = "http" | "stdio";
 
@@ -40,9 +40,23 @@ interface McpServerSummary extends Omit<McpServerConfig, "headers" | "env"> {
 const MCP_CONFIG_KEY = "mcp";
 const EMPTY_CONFIG: McpConfig = { servers: [] };
 
-let cachedHash = "";
-let cachedClient: MCPClient | null = null;
-let cachedTools: ToolsInput = {};
+interface McpRuntime {
+  cachedHash: string;
+  cachedClient: MCPClient | null;
+  cachedTools: ToolsInput;
+}
+
+const runtimeByScope = new Map<string, McpRuntime>();
+
+function getRuntime(): McpRuntime {
+  const key = getResourceScope() ?? "__system__";
+  let runtime = runtimeByScope.get(key);
+  if (!runtime) {
+    runtime = { cachedHash: "", cachedClient: null, cachedTools: {} };
+    runtimeByScope.set(key, runtime);
+  }
+  return runtime;
+}
 
 function cleanRecord(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -120,7 +134,11 @@ export async function saveMcpConfig(config: McpConfig): Promise<void> {
   if (new Set(servers.map((server) => server.id)).size !== servers.length)
     throw new Error("MCP ID 不能重复");
   await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2));
-  cachedHash = "";
+  const runtime = getRuntime();
+  await runtime.cachedClient?.disconnect().catch(() => undefined);
+  runtime.cachedHash = "";
+  runtime.cachedClient = null;
+  runtime.cachedTools = {};
 }
 
 export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {
@@ -178,22 +196,23 @@ export async function testMcpServer(server: McpServerConfig) {
 
 export async function getConfiguredMcpTools(): Promise<ToolsInput> {
   const config = await getMcpConfig();
+  const runtime = getRuntime();
   const enabled = config.servers.filter((server) => server.enabled);
   const hash = JSON.stringify(enabled);
-  if (hash === cachedHash) return cachedTools;
-  if (cachedClient) await cachedClient.disconnect().catch(() => undefined);
-  cachedClient = null;
-  cachedTools = {};
-  cachedHash = hash;
-  if (enabled.length === 0) return cachedTools;
+  if (hash === runtime.cachedHash) return runtime.cachedTools;
+  if (runtime.cachedClient) await runtime.cachedClient.disconnect().catch(() => undefined);
+  runtime.cachedClient = null;
+  runtime.cachedTools = {};
+  runtime.cachedHash = hash;
+  if (enabled.length === 0) return runtime.cachedTools;
   try {
-    cachedClient = await createClient(enabled);
-    const { toolsets } = await cachedClient.listToolsetsWithErrors();
-    cachedTools = Object.assign({}, ...Object.values(toolsets));
+    runtime.cachedClient = await createClient(enabled);
+    const { toolsets } = await runtime.cachedClient.listToolsetsWithErrors();
+    runtime.cachedTools = Object.assign({}, ...Object.values(toolsets));
   } catch {
-    await cachedClient?.disconnect().catch(() => undefined);
-    cachedClient = null;
-    cachedTools = {};
+    await runtime.cachedClient?.disconnect().catch(() => undefined);
+    runtime.cachedClient = null;
+    runtime.cachedTools = {};
   }
-  return cachedTools;
+  return runtime.cachedTools;
 }

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./components/dotmatrix-loader.css";
 
 /*
  * shadcn/ui Tailwind v4 官方暗色模式结构:
@@ -2070,7 +2071,7 @@ html.smooth-cursor-mode .cursor-row-resize,
 html.smooth-cursor-mode .cursor-not-allowed,
 html.smooth-cursor-mode .cursor-grab,
 html.smooth-cursor-mode .cursor-grabbing {
-  cursor: none !important;
+  cursor: none;
 }
 
 /* 仅在纯文本编辑区(Input/Textarea/富文本/代码编辑器)内保留高精度原生 I-beam 文本光标 */
@@ -2084,5 +2085,5 @@ html.smooth-cursor-mode .monaco-editor,
 html.smooth-cursor-mode .monaco-editor *,
 html.smooth-cursor-mode .cm-content,
 html.smooth-cursor-mode .cm-content * {
-  cursor: text !important;
+  cursor: text;
 }

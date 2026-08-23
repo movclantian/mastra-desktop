@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useAuth } from "./auth";
 import {
   type CatalogProvider,
   loadModelCatalog,
@@ -364,6 +365,10 @@ const ACTIVE_THREAD_KEY = "mastra-work:active-thread";
 const MODE_KEY = "mastra-work:mode";
 const PERMISSION_RULES_KEY = "mastra-work:permission-rules";
 
+function userStorageKey(key: string, userId: string): string {
+  return `${key}:${encodeURIComponent(userId)}`;
+}
+
 function readJson<T>(key: string, fallback: T): T {
   const raw = localStorage.getItem(key);
   if (!raw) return fallback;
@@ -383,12 +388,6 @@ export interface TerminalSessionInfo {
   /** 命令结束的时刻,用于在多个会话里挑出「最近结束的那条命令」 */
   settledAt?: number;
 }
-
-const DEFAULT_USER: WorkUser = {
-  id: "user-local",
-  name: "Local User",
-  email: "local@mastra-work.app",
-};
 
 interface WorkbenchValue {
   // 用户(单机应用,恒为本地常量)
@@ -550,7 +549,7 @@ export function reportWorkbenchState(
   patch: WorkbenchStatePatch,
 ): void {
   if (!threadId) return;
-  const key = `${threadId}:${Object.keys(patch).join(",")}`;
+  const key = `${resourceId}:${threadId}:${Object.keys(patch).join(",")}`;
   const pending = pendingStateReports.get(key);
   if (pending) clearTimeout(pending);
   pendingStateReports.set(
@@ -600,7 +599,9 @@ export function reportWorkbenchNotification(
 const WorkbenchContext = createContext<WorkbenchValue | null>(null);
 
 export function WorkbenchProvider({ children }: { children: ReactNode }) {
-  const user = DEFAULT_USER;
+  const { user: authenticatedUser } = useAuth();
+  if (!authenticatedUser) throw new Error("Workbench requires an authenticated user");
+  const user: WorkUser = authenticatedUser;
   // 供应商与选定模型存服务端(app_config key="providers"):Studio 的模型选择器与
   // Agent 的默认模型都要读到它,而 Studio 跑在 Mastra 进程里、读不到 localStorage。
   const [providers, setProvidersState] = useState<ProviderConfig[]>([]);
@@ -610,14 +611,16 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   /** 服务端配置是否已到位 —— 到位前不回写,避免用空配置覆盖数据库 */
   const [providersLoaded, setProvidersLoaded] = useState(false);
   const [searchSelection, setSearchSelectionState] = useState<SearchSelection | null>(() =>
-    readJson<SearchSelection | null>(SEARCH_SELECTION_KEY, null),
+    readJson<SearchSelection | null>(userStorageKey(SEARCH_SELECTION_KEY, user.id), null),
   );
   // 模式与审批规则:会话级状态(与官方 Session 同位),切线程时被线程自己的记录覆盖
   const [modeId, setModeIdState] = useState<WorkModeId>(() =>
-    parseModeId(readJson<string>(MODE_KEY, DEFAULT_MODE_ID)),
+    parseModeId(readJson<string>(userStorageKey(MODE_KEY, user.id), DEFAULT_MODE_ID)),
   );
   const [permissionRules, setPermissionRulesState] = useState<PermissionRules>(() =>
-    parsePermissionRules(readJson<unknown>(PERMISSION_RULES_KEY, DEFAULT_PERMISSION_RULES)),
+    parsePermissionRules(
+      readJson<unknown>(userStorageKey(PERMISSION_RULES_KEY, user.id), DEFAULT_PERMISSION_RULES),
+    ),
   );
   /** 已采纳过线程设置的线程 id:每条线程只在切入时采纳一次,后续刷新不覆盖用户改动 */
   const adoptedThreadRef = useRef<string | null>(null);
@@ -625,7 +628,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [threads, setThreads] = useState<WorkThread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(() =>
-    readJson<string | null>(ACTIVE_THREAD_KEY, null),
+    readJson<string | null>(userStorageKey(ACTIVE_THREAD_KEY, user.id), null),
   );
   const activeThreadResolvedRef = useRef(false);
   const createThreadRequestRef = useRef<Promise<WorkThread | null> | null>(null);
@@ -668,8 +671,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   >([]);
 
   useEffect(() => {
-    localStorage.setItem(SEARCH_SELECTION_KEY, JSON.stringify(searchSelection));
-  }, [searchSelection]);
+    localStorage.setItem(
+      userStorageKey(SEARCH_SELECTION_KEY, user.id),
+      JSON.stringify(searchSelection),
+    );
+  }, [searchSelection, user.id]);
   // 面板可见性 → workbench state lane:让模型知道用户此刻的注意力在哪
   useEffect(() => {
     reportWorkbenchState(activeThreadId, user.id, {
@@ -680,22 +686,33 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         libraryOpen,
       },
     });
-  }, [activeThreadId, activePanelTab.kind, libraryOpen, terminalPanelOpen, workspacePanelOpen]);
+  }, [
+    activeThreadId,
+    activePanelTab.kind,
+    libraryOpen,
+    terminalPanelOpen,
+    workspacePanelOpen,
+    user.id,
+  ]);
   useEffect(() => {
-    localStorage.setItem(MODE_KEY, JSON.stringify(modeId));
-  }, [modeId]);
+    localStorage.setItem(userStorageKey(MODE_KEY, user.id), JSON.stringify(modeId));
+  }, [modeId, user.id]);
   useEffect(() => {
-    localStorage.setItem(PERMISSION_RULES_KEY, JSON.stringify(permissionRules));
-  }, [permissionRules]);
+    localStorage.setItem(
+      userStorageKey(PERMISSION_RULES_KEY, user.id),
+      JSON.stringify(permissionRules),
+    );
+  }, [permissionRules, user.id]);
   useEffect(() => {
+    const key = userStorageKey(ACTIVE_THREAD_KEY, user.id);
     if (activeThreadId) {
       // 必须 stringify:读取走的是 readJson(JSON.parse),写裸字符串会让
       // parse 抛异常并静默退回 null —— 上次打开的线程就永远恢复不了。
-      localStorage.setItem(ACTIVE_THREAD_KEY, JSON.stringify(activeThreadId));
+      localStorage.setItem(key, JSON.stringify(activeThreadId));
     } else {
-      localStorage.removeItem(ACTIVE_THREAD_KEY);
+      localStorage.removeItem(key);
     }
-  }, [activeThreadId]);
+  }, [activeThreadId, user.id]);
 
   // models.dev 目录:服务端缓存 1 小时 + 会话内存缓存,未命中静默拉取
   useEffect(() => {
@@ -804,7 +821,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         },
       ).catch(() => undefined);
     },
-    [activeThreadId, modeId, threads],
+    [activeThreadId, modeId, threads, user.id],
   );
 
   const setSearchSelection = useCallback((selection: SearchSelection | null) => {
@@ -830,7 +847,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         },
       );
     },
-    [activeThreadId, threads],
+    [activeThreadId, threads, user.id],
   );
 
   const selectThread = useCallback((id: string | null) => {
@@ -894,7 +911,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         ...(settled?.lastExitCode === undefined ? {} : { lastExitCode: settled.lastExitCode }),
       },
     });
-  }, [activeThreadId, terminalSessionsVersion]);
+  }, [activeThreadId, terminalSessionsVersion, user.id]);
 
   const activatePanelTab = useCallback((tab: ActivePanelTab) => {
     setActivePanelTab((active) => (isSamePanelTab(active, tab) ? active : tab));
@@ -1048,7 +1065,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     } finally {
       setThreadsLoading(false);
     }
-  }, []);
+  }, [user.id]);
 
   useEffect(() => {
     void refreshThreads();
@@ -1106,7 +1123,15 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       );
       return request;
     },
-    [refreshThreads, selectThread, modeId, modelSelection, permissionRules, agentSelection],
+    [
+      refreshThreads,
+      selectThread,
+      modeId,
+      modelSelection,
+      permissionRules,
+      agentSelection,
+      user.id,
+    ],
   );
 
   const patchThread = useCallback(
@@ -1118,7 +1143,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       });
       await refreshThreads();
     },
-    [refreshThreads],
+    [refreshThreads, user.id],
   );
 
   const renameThread = useCallback(
@@ -1149,7 +1174,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         return null;
       }
     },
-    [refreshThreads],
+    [refreshThreads, user.id],
   );
 
   const pinThread = useCallback(
@@ -1173,7 +1198,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       if (activeThreadId === threadId) selectThread(null);
       await refreshThreads();
     },
-    [activeThreadId, refreshThreads, selectThread],
+    [activeThreadId, refreshThreads, selectThread, user.id],
   );
 
   /**
@@ -1205,7 +1230,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         );
       }
     },
-    [activeThreadId, providers, threads],
+    [activeThreadId, providers, threads, user.id],
   );
 
   /** 覆盖工具审批规则(审批模式菜单与审批面板的「始终允许此类」共用) */
@@ -1224,7 +1249,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         await refreshThreads();
       }
     },
-    [activeThreadId, refreshThreads],
+    [activeThreadId, refreshThreads, user.id],
   );
 
   /**
@@ -1297,18 +1322,21 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
         return null;
       }
     },
-    [refreshThreads, selectThread],
+    [refreshThreads, selectThread, user.id],
   );
 
   // 官方 Memory.recall 跨线程检索(GET /work/memory/search)
-  const searchMessages = useCallback(async (query: string) => {
-    const response = await fetch(
-      `${MASTRA_SERVER_URL}/work/memory/search?q=${encodeURIComponent(query)}&resourceId=${encodeURIComponent(user.id)}`,
-    );
-    if (!response.ok) throw new Error(String(response.status));
-    const { hits } = (await response.json()) as { hits: MessageSearchHit[] };
-    return hits;
-  }, []);
+  const searchMessages = useCallback(
+    async (query: string) => {
+      const response = await fetch(
+        `${MASTRA_SERVER_URL}/work/memory/search?q=${encodeURIComponent(query)}&resourceId=${encodeURIComponent(user.id)}`,
+      );
+      if (!response.ok) throw new Error(String(response.status));
+      const { hits } = (await response.json()) as { hits: MessageSearchHit[] };
+      return hits;
+    },
+    [user.id],
+  );
 
   // ---- 工作区目录(每线程绑定,见 ThreadMetadata.workspacePath) ----
 
@@ -1329,26 +1357,32 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, [refreshRecentWorkspaces]);
 
   // 线程工作区文件树(单层按需拉取;线程只要有 workspacePath 即可访问)
-  const fetchTreeEntries = useCallback(async (threadId: string, path?: string) => {
-    const query = `?resourceId=${encodeURIComponent(user.id)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
-    const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/tree${query}`);
-    if (!response.ok) return [];
-    const { entries } = (await response.json()) as { entries: TreeEntry[] };
-    return entries;
-  }, []);
-
-  const fetchThreadChanges = useCallback(async (threadId: string) => {
-    try {
-      const response = await fetch(
-        `${MASTRA_SERVER_URL}/work/threads/${threadId}/changes?resourceId=${encodeURIComponent(user.id)}`,
-      );
+  const fetchTreeEntries = useCallback(
+    async (threadId: string, path?: string) => {
+      const query = `?resourceId=${encodeURIComponent(user.id)}${path ? `&path=${encodeURIComponent(path)}` : ""}`;
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/threads/${threadId}/tree${query}`);
       if (!response.ok) return [];
-      const payload = (await response.json()) as { changes?: WorkspaceFileChange[] };
-      return Array.isArray(payload.changes) ? payload.changes : [];
-    } catch {
-      return [];
-    }
-  }, []);
+      const { entries } = (await response.json()) as { entries: TreeEntry[] };
+      return entries;
+    },
+    [user.id],
+  );
+
+  const fetchThreadChanges = useCallback(
+    async (threadId: string) => {
+      try {
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${threadId}/changes?resourceId=${encodeURIComponent(user.id)}`,
+        );
+        if (!response.ok) return [];
+        const payload = (await response.json()) as { changes?: WorkspaceFileChange[] };
+        return Array.isArray(payload.changes) ? payload.changes : [];
+      } catch {
+        return [];
+      }
+    },
+    [user.id],
+  );
 
   const value = useMemo<WorkbenchValue>(
     () => ({
@@ -1494,6 +1528,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       browserRequest,
       openBrowserUrl,
       activeSkill,
+      user,
     ],
   );
 

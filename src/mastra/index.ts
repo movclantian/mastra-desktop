@@ -17,16 +17,19 @@ import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
-import { initializeAgentProfiles } from "./agents/custom";
-import { getConfiguredProcessorRegistry } from "./agents/guardrails";
+import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
 import {
   agentsMdProcessor,
   editorStateProcessor,
   libraryAttachmentProcessor,
+  promptCacheProcessor,
   terminalStateProcessor,
   workbenchStateProcessor,
 } from "./agents/processors";
+import { type AuthUser, workAuth } from "./auth";
+import { getMcpConfig } from "./connections/mcp";
 import { WorkApiError } from "./errors";
+import { getMemoryConfig } from "./memory";
 import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
 import {
   ensureLibrarySchema,
@@ -36,8 +39,8 @@ import {
 } from "./rag";
 import { workChatRoute, workRoutes } from "./server/routes";
 import { requestShutdown } from "./server/routes/shutdown";
-import { appStorage } from "./storage";
-import { getThreadsRoot, getThreadWorkspace } from "./workspace";
+import { appStorage, runWithResourceScope } from "./storage";
+import { getThreadsRoot, getThreadWorkspace, getWorkspaceConfig } from "./workspace";
 
 // ---------------------------------------------------------------------------
 // 出站请求走代理(Node 原生 fetch 不读代理设置)。
@@ -70,9 +73,9 @@ if (httpProxy || httpsProxy) {
   }
 }
 
-const WORKBENCH_RESOURCE_ID = "user-local";
 const STUDIO_WORKSPACE_ID = "mastra-workspace";
 
+await getGuardrailsConfig();
 const configuredProcessorRegistry = await getConfiguredProcessorRegistry();
 const processorRegistry = {
   "library-attachments": libraryAttachmentProcessor,
@@ -95,9 +98,75 @@ export const mastra = new Mastra({
   editor: new MastraEditor(),
   workspace: getThreadWorkspace(getThreadsRoot()),
   server: {
+    auth: workAuth,
     middleware: async (c, next) => {
-      c.get("requestContext").set(MASTRA_RESOURCE_ID_KEY, WORKBENCH_RESOURCE_ID);
-      await next();
+      const user = c.get("user") as AuthUser | undefined;
+      if (!user) {
+        const publicAuthRoute =
+          c.req.path === "/work/auth/login" || c.req.path === "/work/auth/register";
+        if (
+          !publicAuthRoute &&
+          (c.req.path === "/chat" ||
+            c.req.path.startsWith("/chat/") ||
+            c.req.path === "/work" ||
+            c.req.path.startsWith("/work/"))
+        ) {
+          return c.json({ error: "Authentication required" }, 401);
+        }
+        await next();
+        return;
+      }
+
+      // The authenticated principal is the only tenant authority. Reject
+      // client-supplied ids before any route can query storage with them.
+      const queryResource = c.req.query("resourceId");
+      if (queryResource && queryResource !== user.id) {
+        return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
+      }
+      if (["POST", "PUT", "PATCH"].includes(c.req.method)) {
+        const contentType = c.req.header("content-type") ?? "";
+        if (contentType.includes("application/json")) {
+          try {
+            const body = (await c.req.raw.clone().json()) as Record<string, unknown>;
+            const bodyResource =
+              typeof body.resourceId === "string"
+                ? body.resourceId
+                : body.memory && typeof body.memory === "object"
+                  ? (body.memory as Record<string, unknown>).resource
+                  : undefined;
+            if (typeof bodyResource === "string" && bodyResource !== user.id) {
+              return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
+            }
+          } catch {
+            // Route-level JSON validation returns the canonical error response.
+          }
+        } else if (contentType.includes("multipart/form-data")) {
+          try {
+            const form = await c.req.raw.clone().formData();
+            const formResource = form.get("resourceId");
+            if (typeof formResource === "string" && formResource !== user.id) {
+              return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
+            }
+          } catch {
+            // Route-level multipart validation returns the canonical error response.
+          }
+        }
+      }
+
+      const requestContext = c.get("requestContext");
+      requestContext.set("user", user);
+      requestContext.set("userId", user.id);
+      requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
+      await runWithResourceScope(user.id, async () => {
+        await Promise.all([
+          getWorkspaceConfig(),
+          getMemoryConfig(),
+          getGuardrailsConfig(),
+          getMcpConfig(),
+          getLibrarySettings(),
+        ]);
+        await next();
+      });
     },
     // 全局错误出站(docs/en/reference/configuration.mdx「server.onError」):
     // 路由只 throw workError(...),状态码与响应形状在这里统一决定。
@@ -150,11 +219,6 @@ export const mastra = new Mastra({
   }),
 });
 
-// 用户保存的 Agent/Team 在启动时注册为真正的 Mastra agents，并把 Team
-// workflow 作为 dynamic workflow 持久化和恢复。默认 Agent 仍由上面的静态
-// registry 提供，避免 profile storage 读取失败时工作台无法启动。
-await initializeAgentProfiles(mastra);
-
 // Studio 的 /workspaces 页面读取 editor workspace domain 而非运行时注册表
 // (docs/en/docs/studio/editor.mdx)。把线程工作区快照持久化一次,
 // 确保桌面 Agent 与 Studio 看到的是同一工作区。
@@ -194,6 +258,8 @@ mastra.addProcessorConfiguration(agentsMdProcessor as Processor, mastraWorkAgent
 for (const processor of configuredProcessorRegistry.input) {
   mastra.addProcessorConfiguration(processor as Processor, mastraWorkAgent.id, "input");
 }
+// 与 Agent 的 inputProcessors 同序:缓存断点登记在 guardrails 之后
+mastra.addProcessorConfiguration(promptCacheProcessor as Processor, mastraWorkAgent.id, "input");
 for (const processor of configuredProcessorRegistry.output) {
   mastra.addProcessorConfiguration(processor as Processor, mastraWorkAgent.id, "output");
 }
@@ -201,7 +267,7 @@ for (const processor of configuredProcessorRegistry.output) {
 // 进程重启后恢复上次中断的索引任务
 void (async () => {
   await ensureLibrarySchema();
-  await recoverInterruptedLibraryIndexes(await getLibrarySettings());
+  await recoverInterruptedLibraryIndexes();
 })().catch(() => undefined);
 
 // ---------------------------------------------------------------------------

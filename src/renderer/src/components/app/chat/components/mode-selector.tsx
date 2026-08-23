@@ -58,7 +58,7 @@ export function ChatModeSelector() {
         <ActiveIcon className="text-primary" />
         <span className="max-w-20 truncate text-xs">{WORK_MODE_META[modeId].label}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-max max-w-[min(90vw,32rem)]">
+      <DropdownMenuContent align="start" className="w-72 max-w-[min(90vw,26rem)]">
         <DropdownMenuGroup>
           <DropdownMenuLabel>会话模式</DropdownMenuLabel>
           <DropdownMenuSeparator />
@@ -91,9 +91,6 @@ export function ChatModeSelector() {
                     <DropdownMenuSeparator />
                     <ApprovalMenuItems
                       activePreset={matchApprovalPreset(permissionRules)}
-                      lockedCategories={meta.deniedCategories}
-                      modeId={id}
-                      permissionRules={permissionRules}
                       setPermissionRules={setPermissionRules}
                     />
                   </DropdownMenuGroup>

@@ -119,7 +119,7 @@ export function DirectoryPickerField({
   };
   return (
     <div className="flex items-center gap-2">
-      <p className="min-w-0 flex-1 truncate rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
+      <p className="min-w-0 flex-1 break-all rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
         {value || "点击右侧按钮选择目录"}
       </p>
       <Button variant="outline" size="sm" disabled={picking} onClick={() => void pick()}>
@@ -193,7 +193,7 @@ export function DirectoryList({
         <div className="space-y-2 pb-2">
           {value.map((dir) => (
             <div key={dir} className="flex items-center gap-2">
-              <p className="min-w-0 flex-1 truncate rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
+              <p className="min-w-0 flex-1 break-all rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
                 {dir}
               </p>
               <Button
@@ -754,7 +754,7 @@ export function WorkspaceSection() {
                   key={toolName}
                   className="flex min-w-0 items-center justify-between gap-3 rounded-md border p-2"
                 >
-                  <span className="min-w-0 truncate text-sm" title={toolName}>
+                  <span className="min-w-0 break-words text-sm" title={toolName}>
                     {label}
                   </span>
                   <div className="flex shrink-0 items-center gap-2">

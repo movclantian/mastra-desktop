@@ -42,6 +42,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -354,7 +355,9 @@ export function DirectThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId } = useWorkbench();
+  const { activeThreadId, setActiveThreadId, agentBusy } = useWorkbench();
+  const isWorking = thread.id === activeThreadId && agentBusy;
+
   return (
     <BlurFade duration={0.2} blur="3px">
       <SidebarMenuItem>
@@ -366,7 +369,15 @@ export function DirectThreadItem({
               tooltip={thread.title}
             >
               <MessageCircleIcon />
-              <span>{thread.title}</span>
+              <span className="truncate">{thread.title}</span>
+              {isWorking ? (
+                <span
+                  className="ml-auto flex items-center pr-1 text-primary"
+                  title="Agent 正在工作中…"
+                >
+                  <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
+                </span>
+              ) : null}
             </SidebarMenuButton>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-52">
@@ -402,7 +413,9 @@ function WorkspaceThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId } = useWorkbench();
+  const { activeThreadId, setActiveThreadId, agentBusy } = useWorkbench();
+  const isWorking = thread.id === activeThreadId && agentBusy;
+
   return (
     <SidebarMenuSubItem>
       <ContextMenu>
@@ -412,7 +425,15 @@ function WorkspaceThreadItem({
             onClick={() => setActiveThreadId(thread.id)}
           >
             <MessageCircleIcon />
-            <span>{thread.title}</span>
+            <span className="truncate">{thread.title}</span>
+            {isWorking ? (
+              <span
+                className="ml-auto flex items-center pr-1 text-primary"
+                title="Agent 正在工作中…"
+              >
+                <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
+              </span>
+            ) : null}
           </SidebarMenuSubButton>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-52">

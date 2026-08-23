@@ -11,7 +11,7 @@ import type { MastraModelOutput } from "@mastra/core/stream";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
-import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import { mastraWorkAgent, SKILL_NAMES_CONTEXT_KEY } from "../../agents";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import {
@@ -41,6 +41,7 @@ import {
   resolveRequestModel,
   usesOpenAIResponses,
 } from "../../models";
+import { LIBRARY_RESOURCE_CONTEXT_KEY } from "../../rag";
 import { appStorage } from "../../storage";
 import {
   MODEL_FAMILY_CONTEXT_KEY,
@@ -109,13 +110,14 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     resourceId,
     scope,
     threadId,
-    agent: c.get("mastra").getAgentById(profile.id),
+    agent: mastraWorkAgent,
   });
   const mode = resolveMode(metadata.modeId);
   session.setMode(mode.id);
   const requestContext = c.get("requestContext");
   requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
+  requestContext.set(LIBRARY_RESOURCE_CONTEXT_KEY, resourceId);
   requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   requestContext.set(PERMISSION_RULES_CONTEXT_KEY, metadata.permissionRules);
@@ -156,7 +158,7 @@ async function sessionExecutionOptions(
       : ((result.thread.metadata as ThreadMetadata | undefined)?.agentProfileId ?? undefined),
   );
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  result.session.setAgent(c.get("mastra").getAgentById(profile.id));
+  result.session.setAgent(mastraWorkAgent);
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(
@@ -204,16 +206,14 @@ async function sessionExecutionOptions(
   };
 }
 
-async function persistentDisplayState(c: ContextWithMastra, result: SessionRouteResult) {
+async function persistentDisplayState(_c: ContextWithMastra, result: SessionRouteResult) {
   const displayState = result.session.getDisplayState();
   const threadState = await appStorage.getStore("threadState");
   const tasks = await threadState?.getState<TaskItem[]>({
     threadId: result.threadId,
     type: TASK_STATE_TYPE,
   });
-  const metadata = (result.thread.metadata ?? {}) as ThreadMetadata;
-  const profile = await getAgentProfile(metadata.agentProfileId);
-  const agent = c.get("mastra").getAgentById(profile.id);
+  const agent = mastraWorkAgent;
   const { runs } = await agent.listSuspendedRuns({
     threadId: result.threadId,
     resourceId: result.resourceId,
@@ -639,7 +639,9 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
           details: { issues: parsed.error.issues },
         });
       }
-      return c.json({ state: mergeWorkbenchState(result.threadId, parsed.data) });
+      return c.json({
+        state: mergeWorkbenchState(result.resourceId, result.threadId, parsed.data),
+      });
     },
   },
 );

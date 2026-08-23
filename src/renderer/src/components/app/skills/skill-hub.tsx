@@ -768,8 +768,10 @@ const SkillCard = React.memo(function SkillCard({
               {skillIcon(skill, index)}
             </span>
             <span className="min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="block truncate font-medium text-foreground">{skill.name}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="break-words font-medium text-foreground" title={skill.name}>
+                  {skill.name}
+                </span>
                 <Badge
                   variant="outline"
                   className="text-[10px] px-1.5 py-0 h-4 font-normal text-muted-foreground shrink-0"
@@ -777,7 +779,7 @@ const SkillCard = React.memo(function SkillCard({
                   {skillSourceLabel(skill)}
                 </Badge>
               </div>
-              <span className="mt-1 block truncate text-xs text-muted-foreground">
+              <span className="mt-1 block whitespace-normal break-words text-xs text-muted-foreground">
                 {skill.description || "未提供描述"}
               </span>
             </span>
@@ -810,7 +812,9 @@ const SkillCard = React.memo(function SkillCard({
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuGroup>
-          <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
+          <ContextMenuLabel className="max-w-44 whitespace-normal break-words" title={skill.name}>
+            {skill.name}
+          </ContextMenuLabel>
           <ContextMenuItem onClick={() => onSelect(skill)}>
             <SparklesIcon className="text-muted-foreground" />
             <span>查看技能详情</span>
@@ -867,8 +871,10 @@ function InstalledSection({
                     {skillIcon(skill, index)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{skill.name}</span>
-                    <span className="mt-1 block truncate text-sm text-muted-foreground">
+                    <span className="block break-words font-medium" title={skill.name}>
+                      {skill.name}
+                    </span>
+                    <span className="mt-1 block whitespace-normal break-words text-sm text-muted-foreground">
                       {skill.description || "未提供描述"}
                     </span>
                   </span>
@@ -877,7 +883,12 @@ function InstalledSection({
               </ContextMenuTrigger>
               <ContextMenuContent className="w-48">
                 <ContextMenuGroup>
-                  <ContextMenuLabel className="truncate max-w-44">{skill.name}</ContextMenuLabel>
+                  <ContextMenuLabel
+                    className="max-w-44 whitespace-normal break-words"
+                    title={skill.name}
+                  >
+                    {skill.name}
+                  </ContextMenuLabel>
                   <ContextMenuItem onClick={() => onSelect(skill)}>
                     <SparklesIcon className="text-muted-foreground" />
                     <span>查看技能详情</span>
@@ -938,8 +949,17 @@ function McpSection({
                 <PlugZapIcon />
               </span>
               <span className="min-w-0">
-                <span className="block truncate font-medium">{server.name}</span>
-                <span className="mt-1 block truncate text-sm text-muted-foreground">
+                <span className="block break-words font-medium" title={server.name}>
+                  {server.name}
+                </span>
+                <span
+                  className="mt-1 block break-all text-sm text-muted-foreground"
+                  title={
+                    server.transport === "http"
+                      ? server.url
+                      : `${server.command} ${server.args?.join(" ")}`
+                  }
+                >
                   {server.transport === "http"
                     ? server.url
                     : `${server.command} ${server.args?.join(" ")}`}
@@ -1087,8 +1107,13 @@ function SkillDetailPage({
                         <BookOpenIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="block truncate font-medium text-foreground">{item}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            title={item}
+                          >
+                            {item}
+                          </span>
                           <Badge
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-blue-600 dark:text-blue-400"
@@ -1096,7 +1121,7 @@ function SkillDetailPage({
                             参考文档
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
                           技能执行时引用的领域知识、规范说明或 API 参考手册
                         </span>
                       </span>
@@ -1108,8 +1133,13 @@ function SkillDetailPage({
                         <TerminalIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="block truncate font-medium text-foreground">{item}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            title={item}
+                          >
+                            {item}
+                          </span>
                           <Badge
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400"
@@ -1117,7 +1147,7 @@ function SkillDetailPage({
                             执行脚本
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
                           供 Agent 调用的可执行自动化脚本或分析程序
                         </span>
                       </span>
@@ -1129,8 +1159,13 @@ function SkillDetailPage({
                         <FileCodeIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="block truncate font-medium text-foreground">{item}</span>
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            title={item}
+                          >
+                            {item}
+                          </span>
                           <Badge
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-amber-600 dark:text-amber-400"
@@ -1138,7 +1173,7 @@ function SkillDetailPage({
                             资源模版
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
                           模版代码、样式文件、静态数据或媒体资源
                         </span>
                       </span>
@@ -1308,8 +1343,13 @@ function MarketplacesDialog({
             <div className="flex items-center gap-3 rounded-lg border p-3" key={marketplace.id}>
               <StoreIcon className="size-4 shrink-0 text-primary" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{marketplace.name}</p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="break-words text-sm font-medium" title={marketplace.name}>
+                  {marketplace.name}
+                </p>
+                <p
+                  className="break-all text-xs text-muted-foreground"
+                  title={`${marketplace.url} · ${marketplace.branch}`}
+                >
                   {marketplace.url} · {marketplace.branch}
                 </p>
               </div>

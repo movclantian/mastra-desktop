@@ -1,7 +1,9 @@
 import {
+  BarChart3Icon,
   BrainIcon,
   DatabaseIcon,
   FolderCogIcon,
+  LogOutIcon,
   PaletteIcon,
   ServerIcon,
   ShieldCheckIcon,
@@ -15,6 +17,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -27,6 +30,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
+import { useAuth } from "@/lib/auth";
 import { useWorkbench } from "@/lib/workbench";
 import {
   GuardrailsSection,
@@ -35,6 +39,7 @@ import {
   StorageSection,
   ThemeSection,
   ToolsSection,
+  UsageSection,
   WorkspaceSection,
 } from "./sections";
 
@@ -50,12 +55,14 @@ const SECTIONS = [
   { id: "guardrails", label: "护栏", icon: ShieldCheckIcon },
   { id: "workspace", label: "工作区", icon: FolderCogIcon },
   { id: "storage", label: "存储", icon: DatabaseIcon },
+  { id: "usage", label: "用量统计", icon: BarChart3Icon },
 ] as const;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function SettingsDialog() {
   const { settingsOpen, setSettingsOpen, settingsSection, setSettingsSection } = useWorkbench();
+  const { user, signOut } = useAuth();
   const section = (
     SECTIONS.some((s) => s.id === settingsSection) ? settingsSection : "themes"
   ) as SectionId;
@@ -118,6 +125,26 @@ export function SettingsDialog() {
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="max-w-40 truncate text-xs text-muted-foreground"
+                  title={user?.email}
+                >
+                  {user?.name}
+                </span>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  title="退出登录"
+                  aria-label="退出登录"
+                  onClick={() => {
+                    signOut();
+                    setSettingsOpen(false);
+                  }}
+                >
+                  <LogOutIcon />
+                </Button>
+              </div>
             </header>
 
             {section === "themes" ? (
@@ -135,6 +162,7 @@ export function SettingsDialog() {
                       {section === "guardrails" ? <GuardrailsSection /> : null}
                       {section === "workspace" ? <WorkspaceSection /> : null}
                       {section === "storage" ? <StorageSection /> : null}
+                      {section === "usage" ? <UsageSection /> : null}
                     </div>
                   ) : null}
                 </div>

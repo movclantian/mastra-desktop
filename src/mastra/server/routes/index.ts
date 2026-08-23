@@ -10,6 +10,7 @@ import {
   deleteAgentProfileRoute,
   saveAgentProfileRoute,
 } from "./agents";
+import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { browserRoutes } from "./browser";
 import {
   guardrailsConfigRoute,
@@ -73,6 +74,7 @@ import {
 import { storageInfoRoute } from "./storage";
 import { threadRoutes } from "./threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
+import { usageSummaryRoute } from "./usage";
 import {
   createThreadTreeEntryRoute,
   detectedIdesRoute,
@@ -82,11 +84,16 @@ import {
   saveWorkspaceConfigRoute,
   threadChangesRoute,
   threadFileRoute,
+  threadRawFileRoute,
   threadTreeRoute,
   workspaceConfigRoute,
 } from "./workspace";
 
 export const workRoutes = [
+  authLoginRoute,
+  authRegisterRoute,
+  authLogoutRoute,
+  authMeRoute,
   detectedIdesRoute,
   openInAppRoute,
   agentProfilesRoute,
@@ -138,9 +145,11 @@ export const workRoutes = [
   threadTreeRoute,
   createThreadTreeEntryRoute,
   threadFileRoute,
+  threadRawFileRoute,
   saveThreadFileRoute,
   toolsConfigRoute,
   saveToolsConfigRoute,
+  usageSummaryRoute,
   skillsRoute,
   builtinSkillsRoute,
   builtinSkillRoute,

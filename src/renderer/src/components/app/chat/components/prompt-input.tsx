@@ -96,7 +96,7 @@ function PromptInputActions() {
 
   return (
     // 基类自带 min-w-0,整组可随容器收缩;收缩只发生在各按钮的文字标签上
-    // (审批/检索的 span 都是 truncate),按钮尺寸与图标不受影响。
+    // (审批/检索的按钮标签可能 truncate),按钮尺寸与图标不受影响。
     <PromptInputTools>
       {/* 附件 → Agent / Agent 团队 → 联网检索,依次排在整个输入区的左侧 */}
       <Tooltip>
@@ -437,7 +437,7 @@ function SkillAwareTextarea({
                         <SparklesIcon className="size-4 shrink-0 text-primary" />
                         <span className="min-w-0">
                           <span className="block truncate font-medium">/{skill.name}</span>
-                          <span className="block truncate text-xs text-muted-foreground">
+                          <span className="block whitespace-normal break-words text-xs text-muted-foreground">
                             {skill.description}
                           </span>
                         </span>
@@ -458,7 +458,7 @@ function SkillAwareTextarea({
                       <FileIcon className="size-4 shrink-0 text-primary" />
                       <span className="min-w-0">
                         <span className="block truncate font-medium">@{file.filename}</span>
-                        <span className="block truncate text-xs text-muted-foreground">
+                        <span className="block whitespace-normal break-words text-xs text-muted-foreground">
                           {file.mediaType || "文件"}
                         </span>
                       </span>

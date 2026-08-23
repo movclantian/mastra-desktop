@@ -27,7 +27,13 @@ import {
   resolveDefaultModelId,
   WORKBENCH_GATEWAY_ID,
 } from "../models";
-import { appStorage, getAppConfig, getStorageUrl, setAppConfig } from "../storage";
+import {
+  appStorage,
+  getAppConfig,
+  getResourceScope,
+  getStorageUrl,
+  setAppConfig,
+} from "../storage";
 
 const MEMORY_CONFIG_KEY = "memory";
 
@@ -238,21 +244,40 @@ const configuredEmbeddingModel = {
     abortSignal?: AbortSignal;
     headers?: Record<string, string>;
   }) {
-    const selected = await resolveConfiguredEmbeddingModelForUse(config.embeddingModel);
+    const selected = await resolveConfiguredEmbeddingModelForUse(currentConfig().embeddingModel);
     if (!selected) {
-      throw new Error(`记忆嵌入模型 ${config.embeddingModel} 未配置或不可用`);
+      throw new Error(`记忆嵌入模型 ${currentConfig().embeddingModel} 未配置或不可用`);
     }
     return selected.doEmbed(args);
   },
 };
 
 /** 读取记忆配置(app_config 表 key="memory";无记录或损坏时回落默认值) */
+const memoryConfigByScope = new Map<string, MemoryUserConfig>();
+
+function memoryScopeKey(): string {
+  return getResourceScope() ?? "__system__";
+}
+
+function currentConfig(): MemoryUserConfig {
+  return memoryConfigByScope.get(memoryScopeKey()) ?? DEFAULT_CONFIG;
+}
+
 export async function getMemoryConfig(): Promise<MemoryUserConfig> {
+  const scope = memoryScopeKey();
+  const cached = memoryConfigByScope.get(scope);
+  if (cached) return cached;
   const raw = await getAppConfig(MEMORY_CONFIG_KEY);
-  if (!raw) return DEFAULT_CONFIG;
+  if (!raw) {
+    memoryConfigByScope.set(scope, DEFAULT_CONFIG);
+    return DEFAULT_CONFIG;
+  }
   try {
-    return normalizeMemoryConfig(JSON.parse(raw) as Partial<MemoryUserConfig>);
+    const next = normalizeMemoryConfig(JSON.parse(raw) as Partial<MemoryUserConfig>);
+    memoryConfigByScope.set(scope, next);
+    return next;
   } catch {
+    memoryConfigByScope.set(scope, DEFAULT_CONFIG);
     return DEFAULT_CONFIG;
   }
 }
@@ -261,9 +286,10 @@ export async function getMemoryConfig(): Promise<MemoryUserConfig> {
 export async function saveMemoryConfig(next: MemoryUserConfig): Promise<void> {
   const normalized = normalizeMemoryConfig(next);
   await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2));
-  config = normalized;
-  cachedMemory = null;
-  memoryByOmModels.clear();
+  memoryConfigByScope.set(memoryScopeKey(), normalized);
+  const runtime = getMemoryRuntime();
+  runtime.cachedMemory = null;
+  runtime.memoryByOmModels.clear();
 }
 
 function finite(value: unknown, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
@@ -400,6 +426,7 @@ function dedupeExtractors(
  * list; preserve configuration order and remove duplicate names globally.
  */
 export function getConfiguredMemoryExtractors(): Extractor[] {
+  const config = currentConfig();
   const seen = new Set<string>();
   const extractors: Extractor[] = [];
   for (const item of config.omExtractors) {
@@ -414,13 +441,22 @@ export function getConfiguredMemoryExtractors(): Extractor[] {
   return extractors;
 }
 
-// 运行时配置为模块级可变状态:顶层 await 在服务启动时从数据库读取
-// (输出为 ESM,.mastra/output/index.mjs,顶层 await 合法);保存配置时原地替换。
-let config = await getMemoryConfig();
+interface MemoryRuntime {
+  cachedMemory: Memory | null;
+  memoryByOmModels: Map<string, Memory>;
+}
 
-// Memory 实例按配置缓存:saveMemoryConfig 置空后,下一次 getMemory() 按新配置重建
-let cachedMemory: Memory | null = null;
-const memoryByOmModels = new Map<string, Memory>();
+const memoryRuntimeByScope = new Map<string, MemoryRuntime>();
+
+function getMemoryRuntime(): MemoryRuntime {
+  const scope = memoryScopeKey();
+  let runtime = memoryRuntimeByScope.get(scope);
+  if (!runtime) {
+    runtime = { cachedMemory: null, memoryByOmModels: new Map() };
+    memoryRuntimeByScope.set(scope, runtime);
+  }
+  return runtime;
+}
 
 export const OM_MODELS_CONTEXT_KEY = "mastra-work:om-models";
 
@@ -438,6 +474,7 @@ export function getMemory(options?: {
   requestContext?: RequestContext;
   memoryScope?: "thread" | "resource";
 }): Memory {
+  const runtime = getMemoryRuntime();
   const selection = options?.requestContext?.get(OM_MODELS_CONTEXT_KEY) as
     | OmModelSelection
     | undefined;
@@ -449,18 +486,18 @@ export function getMemory(options?: {
       reflectorModelId ?? null,
       options?.memoryScope ?? null,
     ]);
-    const existing = memoryByOmModels.get(key);
+    const existing = runtime.memoryByOmModels.get(key);
     if (existing) return existing;
     const memory = buildMemory({
       observerModelId,
       reflectorModelId,
       memoryScope: options?.memoryScope,
     });
-    memoryByOmModels.set(key, memory);
+    runtime.memoryByOmModels.set(key, memory);
     return memory;
   }
-  if (!cachedMemory) cachedMemory = buildMemory();
-  return cachedMemory;
+  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory();
+  return runtime.cachedMemory;
 }
 
 function workbenchModelId(modelId: string): `${string}/${string}` {
@@ -470,6 +507,7 @@ function workbenchModelId(modelId: string): `${string}/${string}` {
 }
 
 function buildMemory(overrides: OmModelSelection = {}): Memory {
+  const config = currentConfig();
   // 官方约束:顶层 model 与 observation.model/reflection.model 互斥 ——
   // 任一子模型配置时只传子模型,否则传顶层(或全部省略 = 跟随当前模型)。
   const omObserverModel = overrides.observerModelId?.trim() || config.omObserverModel.trim();
@@ -527,7 +565,11 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
           }
         : {}),
       // working-memory.mdx:template(replace 语义)与 schema(merge 语义)二选一;
-      // schema 文本损坏时回落 template,服务不因此起不来
+      // schema 文本损坏时回落 template,服务不因此起不来。
+      // useStateSignals:working memory 默认折进 system message,agent 每改一次就把整段
+      // 前缀缓存打掉;改走 state signal 后它作为追加消息下发(带 cacheKey 去重与快照
+      // 重注入),system prompt 保持稳定 —— 存储与工具形态不变,工具名变成 setWorkingMemory
+      // (working-memory.mdx「Opt in to state signals」)。
       ...(config.workingMemory
         ? {
             workingMemory:
@@ -535,17 +577,19 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
                 ? (() => {
                     const schema = parseWorkingMemorySchema(config.workingMemorySchema);
                     return schema
-                      ? { enabled: true, scope: workingMemoryScope, schema }
+                      ? { enabled: true, scope: workingMemoryScope, schema, useStateSignals: true }
                       : {
                           enabled: true,
                           scope: workingMemoryScope,
                           template: config.workingMemoryTemplate,
+                          useStateSignals: true,
                         };
                   })()
                 : {
                     enabled: true,
                     scope: workingMemoryScope,
                     template: config.workingMemoryTemplate,
+                    useStateSignals: true,
                   },
           }
         : {}),
@@ -575,6 +619,12 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
                 ? {}
                 : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
               scope: observationalMemoryScope,
+              // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
+              // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
+              // 把前缀砸掉。本 App 允许同线程中途换模型(见 agents/index.ts 的动态 model),
+              // 换模型时缓存必然失效 —— activateOnProviderChange 让压缩正好搭这趟车。
+              activateAfterIdle: "auto" as const,
+              activateOnProviderChange: true,
               ...(config.omTemporalMarkers ? { temporalMarkers: true } : {}),
               // retrieval:布尔之外的 { vector, scope } 形态(retrieval 默认 scope = resource)
               ...(config.omRetrieval

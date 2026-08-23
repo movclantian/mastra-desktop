@@ -468,13 +468,17 @@ export class WorkSession {
 class WorkSessionHost {
   private readonly sessions = new Map<string, WorkSession>();
 
+  private sessionKey(resourceId: string, scope?: string): string {
+    return JSON.stringify([resourceId, scope ?? SESSION_SCOPE_DEFAULT]);
+  }
+
   getOrCreate(options: {
     resourceId: string;
     scope?: string;
     threadId: string;
     agent?: Agent;
   }): WorkSession {
-    const key = `${options.resourceId}:${options.scope ?? SESSION_SCOPE_DEFAULT}`;
+    const key = this.sessionKey(options.resourceId, options.scope);
     const existing = this.sessions.get(key);
     if (existing) {
       existing.setThreadId(options.threadId);
@@ -492,8 +496,8 @@ class WorkSessionHost {
     return session;
   }
 
-  get(sessionId: string): WorkSession | undefined {
-    return this.sessions.get(sessionId);
+  get(resourceId: string, scope?: string): WorkSession | undefined {
+    return this.sessions.get(this.sessionKey(resourceId, scope));
   }
 
   delete(sessionId: string): boolean {

@@ -11,7 +11,6 @@
     "prefix": ""
   },
   "aliases": {
-    "@": "src/renderer/src",
     "components": "src/renderer/src/components",
     "utils": "src/renderer/src/lib/utils",
     "ui": "src/renderer/src/components/ui",
@@ -21,6 +20,7 @@
   "iconLibrary": "lucide",
   "registries": {
     "@magicui": "https://magicui.design/r/{name}",
-    "@animate-ui": "https://animate-ui.com/r/{name}.json"
+    "@animate-ui": "https://animate-ui.com/r/{name}.json",
+    "@dotmatrix": "https://dotmatrix.zzzzshawn.cloud/r/{name}.json"
   }
 }

@@ -412,11 +412,18 @@ export function ProviderItem({
           className={`flex items-center gap-2 px-4 py-3 ${provider.disabled ? "opacity-60" : ""}`}
         >
           <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-2 truncate text-sm font-medium">
+            <p className="flex flex-wrap items-center gap-2 break-words text-sm font-medium">
               {provider.name}
               {provider.disabled ? <Badge variant="secondary">已禁用</Badge> : null}
             </p>
-            <p className="truncate text-xs text-muted-foreground">
+            <p
+              className="break-all text-xs text-muted-foreground"
+              title={
+                provider.registryId
+                  ? `内置 · ${provider.registryId}`
+                  : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`
+              }
+            >
               {provider.registryId
                 ? `内置 · ${provider.registryId}`
                 : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`}
@@ -598,7 +605,9 @@ export function ModelListSection({
             return (
               <div key={model.id} className="flex items-center gap-3 px-4 py-2.5">
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm">{displayName}</p>
+                  <p className="break-words text-sm" title={displayName}>
+                    {displayName}
+                  </p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                     <CapabilityBadges caps={caps} />
                     {model.embedding ? (

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useAuth } from "@/lib/auth";
 import { THEME_PRESETS } from "@/lib/theme/presets";
 import type {
   ThemeColorTokens,
@@ -21,11 +22,15 @@ const STORAGE_MODE_KEY = "mastra-work:theme-mode";
 const STORAGE_PRESET_KEY = "mastra-work:theme-preset";
 const STORAGE_CUSTOMIZATIONS_KEY = "mastra-work:theme-customizations";
 
+function userStorageKey(key: string, userId: string): string {
+  return `${key}:${encodeURIComponent(userId)}`;
+}
+
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-function getInitialMode(defaultTheme: ThemeMode): ThemeMode {
+function getInitialMode(defaultTheme: ThemeMode, storageKey: string): ThemeMode {
   try {
-    const saved = localStorage.getItem(STORAGE_MODE_KEY) as ThemeMode;
+    const saved = localStorage.getItem(storageKey) as ThemeMode;
     if (saved === "light" || saved === "dark" || saved === "system") {
       return saved;
     }
@@ -35,9 +40,9 @@ function getInitialMode(defaultTheme: ThemeMode): ThemeMode {
   return defaultTheme;
 }
 
-function getInitialPreset(defaultPreset: string): string {
+function getInitialPreset(defaultPreset: string, storageKey: string): string {
   try {
-    const saved = localStorage.getItem(STORAGE_PRESET_KEY);
+    const saved = localStorage.getItem(storageKey);
     if (saved && THEME_PRESETS.some((p) => p.id === saved)) {
       return saved;
     }
@@ -47,9 +52,9 @@ function getInitialPreset(defaultPreset: string): string {
   return defaultPreset;
 }
 
-function getInitialCustomizations(): Record<string, ThemeCustomization> {
+function getInitialCustomizations(storageKey: string): Record<string, ThemeCustomization> {
   try {
-    const saved = localStorage.getItem(STORAGE_CUSTOMIZATIONS_KEY);
+    const saved = localStorage.getItem(storageKey);
     if (saved) {
       return JSON.parse(saved) as Record<string, ThemeCustomization>;
     }
@@ -64,12 +69,16 @@ export function ThemeProvider({
   defaultTheme = "light",
   defaultPreset = "default",
 }: ThemeProviderProps) {
-  const [mode, setModeState] = useState<ThemeMode>(() => getInitialMode(defaultTheme));
+  const { user } = useAuth();
+  const modeKey = userStorageKey(STORAGE_MODE_KEY, user?.id ?? "anonymous");
+  const presetKey = userStorageKey(STORAGE_PRESET_KEY, user?.id ?? "anonymous");
+  const customizationsKey = userStorageKey(STORAGE_CUSTOMIZATIONS_KEY, user?.id ?? "anonymous");
+  const [mode, setModeState] = useState<ThemeMode>(() => getInitialMode(defaultTheme, modeKey));
   const [activePresetId, setActivePresetIdState] = useState<string>(() =>
-    getInitialPreset(defaultPreset),
+    getInitialPreset(defaultPreset, presetKey),
   );
   const [customizations, setCustomizations] = useState<Record<string, ThemeCustomization>>(() =>
-    getInitialCustomizations(),
+    getInitialCustomizations(customizationsKey),
   );
 
   const [systemIsDark, setSystemIsDark] = useState<boolean>(() => {
@@ -186,23 +195,29 @@ export function ThemeProvider({
     root.style.letterSpacing = resolvedTypography.letterSpacing;
   }, [isDark, activePreset, resolvedColors, resolvedGeometry, resolvedTypography]);
 
-  const setMode = useCallback((newMode: ThemeMode) => {
-    try {
-      localStorage.setItem(STORAGE_MODE_KEY, newMode);
-    } catch {
-      // ignore
-    }
-    setModeState(newMode);
-  }, []);
+  const setMode = useCallback(
+    (newMode: ThemeMode) => {
+      try {
+        localStorage.setItem(modeKey, newMode);
+      } catch {
+        // ignore
+      }
+      setModeState(newMode);
+    },
+    [modeKey],
+  );
 
-  const setPreset = useCallback((presetId: string) => {
-    try {
-      localStorage.setItem(STORAGE_PRESET_KEY, presetId);
-    } catch {
-      // ignore
-    }
-    setActivePresetIdState(presetId);
-  }, []);
+  const setPreset = useCallback(
+    (presetId: string) => {
+      try {
+        localStorage.setItem(presetKey, presetId);
+      } catch {
+        // ignore
+      }
+      setActivePresetIdState(presetId);
+    },
+    [presetKey],
+  );
 
   const updateActiveCustomization = useCallback(
     (partial: Partial<ThemeCustomization>) => {
@@ -228,14 +243,14 @@ export function ThemeProvider({
         };
         const next = { ...prev, [activePresetId]: updated };
         try {
-          localStorage.setItem(STORAGE_CUSTOMIZATIONS_KEY, JSON.stringify(next));
+          localStorage.setItem(customizationsKey, JSON.stringify(next));
         } catch {
           // ignore
         }
         return next;
       });
     },
-    [activePresetId],
+    [activePresetId, customizationsKey],
   );
 
   const resetActiveCustomization = useCallback(() => {
@@ -243,13 +258,13 @@ export function ThemeProvider({
       const next = { ...prev };
       delete next[activePresetId];
       try {
-        localStorage.setItem(STORAGE_CUSTOMIZATIONS_KEY, JSON.stringify(next));
+        localStorage.setItem(customizationsKey, JSON.stringify(next));
       } catch {
         // ignore
       }
       return next;
     });
-  }, [activePresetId]);
+  }, [activePresetId, customizationsKey]);
 
   const value: ThemeContextValue = useMemo(
     () => ({

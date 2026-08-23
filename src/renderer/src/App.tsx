@@ -80,19 +80,23 @@ const TERMINAL_HEIGHT_KEY = "mastra-work:terminal-height";
  *
  * 存的是**意图**而不是当前渲染值,所以不会把某次空间不足时的夹取结果记成偏好。
  */
-function usePersistentSize(key: string, fallback: number) {
+function usePersistentSize(key: string, fallback: number, userId: string) {
+  const storageKey = `${key}:${encodeURIComponent(userId)}`;
   const [value, setValue] = React.useState(() => {
-    const stored = Number.parseFloat(localStorage.getItem(key) ?? "");
-    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+    // 只校验「正数」:Infinity 是合法取值,面板用它表达「占满可用空间」(见下面的
+    // preferredWorkspaceWidth)。parseFloat 能原样读回 String(Infinity)。
+    const stored = Number.parseFloat(localStorage.getItem(storageKey) ?? "");
+    return stored > 0 ? stored : fallback;
   });
   React.useEffect(() => {
-    localStorage.setItem(key, String(value));
-  }, [key, value]);
+    localStorage.setItem(storageKey, String(value));
+  }, [storageKey, value]);
   return [value, setValue] as const;
 }
 
 function AppShell() {
   const {
+    user,
     threads,
     activeThreadId,
     createThread,
@@ -118,15 +122,21 @@ function AppShell() {
    *
    * 初值取下限:窗口最小宽度里含着这个数(见下面的 setMinimumWidth),所以初值越大,
    * 首次打开面板就把用户的窗口撑得越多。默认该是干扰最小的那一端,想要更宽自己拖。
+   *
+   * 特例 Infinity = 「占满可用空间」。拖到预算尽头时存的是这个而不是当时的像素值:
+   * 绝对值会经 setMinimumWidth 变成窗口硬下限,一次拖到底就把窗口永久钉宽;存意图
+   * 则窗口能缩、面板跟着缩,窗口变宽面板自己占回去。下面的 Math.min 天然消化它。
    */
   const [preferredWorkspaceWidth, setPreferredWorkspaceWidth] = usePersistentSize(
     WORKSPACE_WIDTH_KEY,
     WORKSPACE_MIN_WIDTH,
+    user.id,
   );
   const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
   const [terminalHeight, setTerminalHeight] = usePersistentSize(
     TERMINAL_HEIGHT_KEY,
     TERMINAL_DEFAULT_HEIGHT,
+    user.id,
   );
   const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
   /** 聊天区 + 右侧面板共同占据的那一行容器,是分配宽度的总额 */
@@ -156,11 +166,14 @@ function AppShell() {
   /**
    * 真正用于渲染与拖拽计算的宽度:意图宽度被预算夹过之后的结果。
    * 下界只是防出负数(预算可能小于 0) —— 面板真被渲染出来时预算已 ≥ 下限,夹不到。
+   *
+   * 两端都可能是 Infinity(意图占满、且还没测到 shell 宽度),那一帧先按下限渲染;
+   * ResizeObserver 报出宽度后就换成真实预算,只影响首帧。
    */
-  const workspaceWidth = Math.max(
-    WORKSPACE_MIN_WIDTH,
-    Math.min(preferredWorkspaceWidth, workspaceBudget),
-  );
+  const budgetedWorkspaceWidth = Math.min(preferredWorkspaceWidth, workspaceBudget);
+  const workspaceWidth = Number.isFinite(budgetedWorkspaceWidth)
+    ? Math.max(WORKSPACE_MIN_WIDTH, budgetedWorkspaceWidth)
+    : WORKSPACE_MIN_WIDTH;
   /** 用户的意图。按钮状态、以及窗口最小宽度要替面板留多少额度,都只看这个 */
   const wantsWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen && !agentOpen;
   /**
@@ -255,7 +268,13 @@ function AppShell() {
   React.useEffect(() => {
     if (chatMinWidth <= 0 || shellWidth <= 0) return;
     const chrome = window.innerWidth - shellWidth;
-    const reserve = wantsWorkspace ? preferredWorkspaceWidth : 0;
+    // 「占满」只保面板的下限额度:它表达的是「有多少用多少」,不是「把窗口给我撑到这么宽」。
+    // 拖出来的具体数值才代表后者 —— 那时窗口该被撑到刚好放得下,不多也不少。
+    const reserve = wantsWorkspace
+      ? Number.isFinite(preferredWorkspaceWidth)
+        ? preferredWorkspaceWidth
+        : WORKSPACE_MIN_WIDTH
+      : 0;
     window.api?.setMinimumWidth?.(chatMinWidth + chrome + reserve);
   }, [chatMinWidth, preferredWorkspaceWidth, shellWidth, wantsWorkspace]);
 
@@ -271,11 +290,15 @@ function AppShell() {
 
       const onPointerMove = (e: PointerEvent) => {
         const deltaX = startX - e.clientX;
+        const next = startWidth + deltaX;
         // 上限直接用渲染期那个 workspaceBudget:拖拽与渲染共用同一条边界,
         // 所以拖到底的位置正好是「弹性空白刚被消费完」,不会先超出再被夹回来。
-        // 存的是夹过的值 —— 拖到上限就记上限,空间变大后也不擅自替用户变宽。
+        //
+        // 拖到底存 Infinity(占满)而不是当时的像素值:那个数值会变成窗口硬下限,
+        // 一次拖到底就把窗口钉宽、再也缩不回去。往回拖一点就自动退回具体数值。
+        // 预算未测到时 workspaceBudget 是 Infinity,next 永远够不着,不会误判成占满。
         setPreferredWorkspaceWidth(
-          Math.max(WORKSPACE_MIN_WIDTH, Math.min(workspaceBudget, startWidth + deltaX)),
+          next >= workspaceBudget ? Number.POSITIVE_INFINITY : Math.max(WORKSPACE_MIN_WIDTH, next),
         );
       };
 

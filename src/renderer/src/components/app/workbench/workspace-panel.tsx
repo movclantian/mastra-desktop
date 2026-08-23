@@ -1,12 +1,28 @@
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { javascript } from "@codemirror/lang-javascript";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { python } from "@codemirror/lang-python";
+import {
+  archivePlugin,
+  audioPlugin,
+  fallbackPlugin,
+  imagePlugin,
+  officePlugin,
+  pdfPlugin,
+  textPlugin,
+  videoPlugin,
+} from "@open-file-viewer/core";
+import "@open-file-viewer/core/style.css";
+import {
+  autocompletion,
+  type CompletionContext,
+  type CompletionResult,
+} from "@codemirror/autocomplete";
+import { jsonParseLinter } from "@codemirror/lang-json";
+import { syntaxTree } from "@codemirror/language";
+import { type Diagnostic, linter, lintGutter } from "@codemirror/lint";
+import { search, selectNextOccurrence, selectSelectionMatches } from "@codemirror/search";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
-import { basicSetup } from "codemirror";
+import { FileViewer } from "@open-file-viewer/react";
+import { langs } from "@uiw/codemirror-extensions-langs";
+import CodeMirror from "@uiw/react-codemirror";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -16,26 +32,34 @@ import {
   Code2Icon,
   CopyIcon,
   ExternalLinkIcon,
+  EyeIcon,
   FileCode2Icon,
   FileDiffIcon,
   FilePlus2Icon,
   FolderPlusIcon,
   FolderTreeIcon,
   Globe2Icon,
-  ListTodoIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
+  PencilLineIcon,
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
+  SparklesIcon,
   SquareIcon,
   TerminalIcon,
   XIcon,
 } from "lucide-react";
+import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
 import { toast } from "sonner";
-import { FileTree, FileTreeFile, FileTreeFolder } from "@/components/ai-elements/file-tree";
+import {
+  FileTree,
+  FileTreeActions,
+  FileTreeFile,
+  FileTreeFolder,
+} from "@/components/ai-elements/file-tree";
 import { FileTypeIcon, FolderTypeIcon } from "@/components/ai-elements/file-type-icon";
 import {
   WebPreview,
@@ -81,6 +105,7 @@ import { toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 import {
+  type ModelSelection,
   reportWorkbenchState,
   type TreeEntry,
   useWorkbench,
@@ -90,20 +115,155 @@ import { TerminalSession } from "./terminal-panel";
 
 const NEW_BROWSER_TAB_URL = "https://www.bing.com";
 
+const BINARY_ONLY_PREVIEWABLE_EXTS = new Set([
+  "pdf",
+  "docx",
+  "doc",
+  "xlsx",
+  "xls",
+  "pptx",
+  "ppt",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "mp3",
+  "wav",
+  "ogg",
+  "mp4",
+  "webm",
+  "zip",
+  "tar",
+  "gz",
+]);
+
+const fileViewerPlugins = [
+  imagePlugin(),
+  textPlugin(),
+  pdfPlugin({ workerSrc: pdfWorkerSrc }),
+  officePlugin({ pdf: { workerSrc: pdfWorkerSrc } }),
+  audioPlugin(),
+  videoPlugin(),
+  archivePlugin(),
+  fallbackPlugin(),
+];
+
+function getFileExtension(filename: string) {
+  return filename.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function isBinaryPreviewable(filename: string) {
+  return BINARY_ONLY_PREVIEWABLE_EXTS.has(getFileExtension(filename));
+}
+
+function WorkspaceFilePreview({
+  filePath,
+  fileName,
+  url,
+  content,
+  isDraft,
+  mimeType,
+}: {
+  filePath: string;
+  fileName: string;
+  url?: string;
+  content?: string;
+  isDraft?: boolean;
+  mimeType?: string;
+}) {
+  const blobUrl = React.useMemo(() => {
+    if (!isDraft || content === undefined) return null;
+    const ext = getFileExtension(fileName);
+    const type =
+      mimeType ||
+      (ext === "html" || ext === "htm"
+        ? "text/html;charset=utf-8"
+        : ext === "svg"
+          ? "image/svg+xml"
+          : ext === "md" || ext === "markdown" || ext === "mdx"
+            ? "text/markdown;charset=utf-8"
+            : ext === "json"
+              ? "application/json;charset=utf-8"
+              : ext === "csv"
+                ? "text/csv;charset=utf-8"
+                : "text/plain;charset=utf-8");
+    return URL.createObjectURL(new Blob([content], { type }));
+  }, [content, fileName, isDraft, mimeType]);
+
+  React.useEffect(() => {
+    return () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+    };
+  }, [blobUrl]);
+
+  const source = blobUrl || url;
+  if (!source) {
+    return (
+      <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+        无法获取文件预览源
+      </div>
+    );
+  }
+
+  return (
+    <div className="size-full overflow-hidden bg-background">
+      <FileViewer
+        key={`${filePath}-${isDraft ? "draft" : "raw"}`}
+        className="size-full"
+        file={source}
+        fileName={fileName}
+        mimeType={mimeType}
+        width="100%"
+        height="100%"
+        fit="contain"
+        fallback="inline"
+        locale="zh-CN"
+        plugins={fileViewerPlugins}
+        toolbar={{
+          zoom: true,
+          rotate: true,
+          download: true,
+          fullscreen: true,
+          print: true,
+          search: true,
+        }}
+      />
+    </div>
+  );
+}
+
 function editorExtension(path: string) {
   const lower = path.toLowerCase();
-  if (/\.(?:ts|tsx|js|jsx|mjs|cjs|mts|cts)$/.test(lower)) {
-    return javascript({
-      jsx: /x$/.test(lower),
-      typescript: /\.(?:ts|tsx|mts|cts)$/.test(lower),
-    });
-  }
-  if (/\.py$/.test(lower)) return python();
-  if (/\.(?:json|jsonc)$/.test(lower)) return json();
-  if (/\.(?:md|mdx)$/.test(lower)) return markdown();
-  if (/\.(?:html|htm)$/.test(lower)) return html();
-  if (/\.css$/.test(lower)) return css();
+  if (/\.(?:tsx)$/.test(lower)) return langs.tsx();
+  if (/\.(?:ts|mts|cts)$/.test(lower)) return langs.ts();
+  if (/\.(?:jsx)$/.test(lower)) return langs.jsx();
+  if (/\.(?:js|mjs|cjs)$/.test(lower)) return langs.js();
+  if (/\.py$/.test(lower)) return langs.python();
+  if (/\.(?:json|jsonc)$/.test(lower)) return langs.json();
+  if (/\.(?:md|mdx)$/.test(lower)) return langs.markdown();
+  if (/\.(?:html|htm)$/.test(lower)) return langs.html();
+  if (/\.css$/.test(lower)) return langs.css();
   return [];
+}
+
+function syntaxLinter(view: EditorView): Diagnostic[] {
+  const diagnostics: Diagnostic[] = [];
+  syntaxTree(view.state)
+    .cursor()
+    .iterate((node) => {
+      if (!node.type.isError) return;
+      diagnostics.push({
+        from: node.from,
+        message: "语法错误",
+        severity: "error",
+        source: "CodeMirror",
+        to: Math.max(node.to, node.from + 1),
+      });
+    });
+  return diagnostics;
 }
 
 function CodeEditor({
@@ -111,83 +271,430 @@ function CodeEditor({
   value,
   onChange,
   onSave,
+  activeThreadId,
+  modelSelection,
+  resourceId,
 }: {
   path: string;
   value: string;
   onChange: (value: string) => void;
   onSave: () => void;
+  activeThreadId: string | null;
+  modelSelection: ModelSelection | null;
+  resourceId: string;
 }) {
-  const hostRef = React.useRef<HTMLDivElement>(null);
-  const viewRef = React.useRef<EditorView | null>(null);
   const onChangeRef = React.useRef(onChange);
   const onSaveRef = React.useRef(onSave);
+  const activeThreadIdRef = React.useRef(activeThreadId);
+  const modelSelectionRef = React.useRef(modelSelection);
+  const pathRef = React.useRef(path);
+  const resourceIdRef = React.useRef(resourceId);
+  const editorRef = React.useRef<EditorView | null>(null);
+  const wrapperRef = React.useRef<HTMLDivElement | null>(null);
+  const abortRef = React.useRef<AbortController | null>(null);
+  const [selection, setSelection] = React.useState<{
+    from: number;
+    to: number;
+    text: string;
+    top: number;
+    left: number;
+  }>();
+  const [instruction, setInstruction] = React.useState("");
+  const [promptOpen, setPromptOpen] = React.useState(false);
+  const [includeContext, setIncludeContext] = React.useState(true);
+  const [aiBusy, setAiBusy] = React.useState(false);
+
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
-
-  // CodeMirror is initialized once per file path; the following effect applies later value changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Recreating the editor on every value change loses focus and selection.
-  React.useLayoutEffect(() => {
-    if (!hostRef.current) return;
-    const view = new EditorView({
-      parent: hostRef.current,
-      state: EditorState.create({
-        doc: value,
-        extensions: [
-          basicSetup,
-          editorExtension(path),
-          EditorState.tabSize.of(2),
-          EditorView.lineWrapping,
-          keymap.of([
-            {
-              key: "Mod-s",
-              preventDefault: true,
-              run: () => {
-                onSaveRef.current();
-                return true;
-              },
-            },
-          ]),
-          EditorView.updateListener.of((update) => {
-            if (update.docChanged) onChangeRef.current(update.state.doc.toString());
-          }),
-          EditorView.theme({
-            "&": {
-              height: "100%",
-              backgroundColor: "transparent",
-              fontSize: "13px",
-            },
-            ".cm-scroller": {
-              overflow: "auto",
-              fontFamily: "var(--font-mono)",
-            },
-            ".cm-gutters": {
-              backgroundColor: "transparent",
-              borderRight: "1px solid var(--border)",
-            },
-            ".cm-activeLine, .cm-activeLineGutter": {
-              backgroundColor: "color-mix(in oklab, var(--muted) 55%, transparent)",
-            },
-            ".cm-content": { caretColor: "var(--foreground)" },
-          }),
-        ],
-      }),
-    });
-    viewRef.current = view;
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
-  }, [path]);
+  activeThreadIdRef.current = activeThreadId;
+  modelSelectionRef.current = modelSelection;
+  pathRef.current = path;
+  resourceIdRef.current = resourceId;
 
   React.useEffect(() => {
-    const view = viewRef.current;
-    if (!view || view.state.doc.toString() === value) return;
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: value },
-    });
-  }, [value]);
+    return () => abortRef.current?.abort();
+  }, []);
 
-  return <div className="size-full overflow-hidden" ref={hostRef} />;
+  const handleEditorUpdate = React.useCallback(
+    (viewUpdate: import("@codemirror/view").ViewUpdate) => {
+      const range = viewUpdate.state.selection.main;
+      if (range.empty) {
+        setSelection(undefined);
+        setPromptOpen(false);
+        return;
+      }
+
+      const wrapper = wrapperRef.current;
+      const coords = viewUpdate.view.coordsAtPos(range.from);
+      if (!wrapper || !coords) return;
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const nextSelection = {
+        from: range.from,
+        to: range.to,
+        text: viewUpdate.state.sliceDoc(range.from, range.to),
+        top: Math.min(
+          Math.max(coords.bottom - wrapperRect.top + 8, 8),
+          Math.max(8, wrapperRect.height - 44),
+        ),
+        left: Math.min(
+          Math.max(coords.left - wrapperRect.left, 8),
+          Math.max(8, wrapperRect.width - 340),
+        ),
+      };
+      setSelection((current) =>
+        current &&
+        current.from === nextSelection.from &&
+        current.to === nextSelection.to &&
+        current.text === nextSelection.text &&
+        Math.abs(current.top - nextSelection.top) < 1 &&
+        Math.abs(current.left - nextSelection.left) < 1
+          ? current
+          : nextSelection,
+      );
+    },
+    [],
+  );
+
+  const aiCompletionSource = React.useCallback(
+    async (context: CompletionContext): Promise<CompletionResult | null> => {
+      if (!context.explicit || !activeThreadIdRef.current) return null;
+      const mainSelection = context.state.selection.main;
+      if (!mainSelection.empty) return null;
+
+      const position = context.pos;
+      const token = context.matchBefore(/[\w$-]*/);
+      const from = token?.from ?? position;
+      const documentText = context.state.doc.toString();
+      const controller = new AbortController();
+      context.addEventListener("abort", () => controller.abort(), { onDocChange: true });
+      let response: Response;
+      try {
+        response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(activeThreadIdRef.current)}/inline-completion?resourceId=${encodeURIComponent(resourceIdRef.current)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              path: pathRef.current,
+              language: getFileExtension(pathRef.current),
+              prefix: documentText.slice(from, position),
+              beforeContext: documentText.slice(Math.max(0, position - 4_000), position),
+              afterContext: documentText.slice(
+                position,
+                Math.min(documentText.length, position + 2_000),
+              ),
+              modelSelection: modelSelectionRef.current
+                ? {
+                    providerId: modelSelectionRef.current.providerId,
+                    modelId: modelSelectionRef.current.modelId,
+                  }
+                : undefined,
+            }),
+          },
+        );
+      } catch {
+        return null;
+      }
+      if (context.aborted) return null;
+      if (!response.ok) return null;
+      const payload = (await response.json().catch(() => null)) as { text?: unknown } | null;
+      if (typeof payload?.text !== "string" || !payload.text.trim()) return null;
+      const text = payload.text;
+      const firstLine = text.split(/\r?\n/, 1)[0].trim();
+      return {
+        from,
+        options: [
+          {
+            apply: text,
+            detail: modelSelectionRef.current?.modelName ?? "当前模型",
+            label: `AI ${firstLine.slice(0, 72) || "补全"}`,
+            type: "text",
+          },
+        ],
+        validFor: /^[\w$-]*$/,
+      };
+    },
+    [],
+  );
+
+  const runInlineEdit = React.useCallback(
+    async (requestedInstruction?: string) => {
+      const current = editorRef.current;
+      const currentSelection = selection;
+      const threadId = activeThreadIdRef.current;
+      if (!current || !currentSelection || !threadId || aiBusy) return;
+
+      const documentText = current.state.doc.toString();
+      const selectedText = current.state.sliceDoc(currentSelection.from, currentSelection.to);
+      if (
+        !selectedText ||
+        selectedText !== currentSelection.text ||
+        current.state.selection.main.from !== currentSelection.from ||
+        current.state.selection.main.to !== currentSelection.to
+      ) {
+        toast.error("选区已变化,请重新选择代码");
+        return;
+      }
+
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      setAiBusy(true);
+      try {
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(threadId)}/inline-edit?resourceId=${encodeURIComponent(resourceIdRef.current)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              path: pathRef.current,
+              language: getFileExtension(pathRef.current),
+              selectedText,
+              beforeContext: includeContext
+                ? documentText.slice(
+                    Math.max(0, currentSelection.from - 2_000),
+                    currentSelection.from,
+                  )
+                : "",
+              afterContext: includeContext
+                ? documentText.slice(
+                    currentSelection.to,
+                    Math.min(documentText.length, currentSelection.to + 2_000),
+                  )
+                : "",
+              instruction:
+                requestedInstruction?.trim() ||
+                instruction.trim() ||
+                "改进这段代码,保持原有行为、接口和外部可观察结果不变。",
+              modelSelection: modelSelectionRef.current
+                ? {
+                    providerId: modelSelectionRef.current.providerId,
+                    modelId: modelSelectionRef.current.modelId,
+                  }
+                : undefined,
+            }),
+          },
+        );
+        const payload = (await response.json().catch(() => null)) as {
+          text?: unknown;
+          error?: unknown;
+        } | null;
+        if (!response.ok) {
+          throw new Error(typeof payload?.error === "string" ? payload.error : "内联修改请求失败");
+        }
+        if (typeof payload?.text !== "string" || !payload.text.trim()) {
+          throw new Error("模型没有返回可替换的代码");
+        }
+
+        const replacement = payload.text;
+        const latestDocument = current.state.doc.toString();
+        const latestSelection = current.state.selection.main;
+        if (
+          latestDocument.slice(currentSelection.from, currentSelection.to) !== selectedText ||
+          latestSelection.from !== currentSelection.from ||
+          latestSelection.to !== currentSelection.to
+        ) {
+          throw new Error("选区已变化,未应用模型结果");
+        }
+        current.dispatch({
+          changes: { from: currentSelection.from, to: currentSelection.to, insert: replacement },
+          selection: {
+            anchor: currentSelection.from,
+            head: currentSelection.from + replacement.length,
+          },
+        });
+        setInstruction("");
+        setPromptOpen(false);
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          toastError(error, "内联修改失败");
+        }
+      } finally {
+        if (abortRef.current === controller) abortRef.current = null;
+        setAiBusy(false);
+      }
+    },
+    [aiBusy, includeContext, instruction, selection],
+  );
+
+  const modelLabel = modelSelection?.modelName || "当前模型";
+  const reasoningLabel =
+    modelSelection && modelSelection.reasoningEffort !== "off"
+      ? ` · ${modelSelection.reasoningEffort}`
+      : "";
+
+  const extensions = React.useMemo(
+    () => [
+      editorExtension(path),
+      EditorState.tabSize.of(2),
+      EditorView.lineWrapping,
+      autocompletion({
+        activateOnTyping: false,
+        maxRenderedOptions: 6,
+        override: [aiCompletionSource],
+      }),
+      search({ top: true }),
+      ...(getFileExtension(path) === "json"
+        ? [linter(jsonParseLinter(), { delay: 350 }), lintGutter()]
+        : [linter(syntaxLinter, { delay: 500 }), lintGutter()]),
+      keymap.of([
+        {
+          key: "Mod-s",
+          preventDefault: true,
+          run: () => {
+            onSaveRef.current();
+            return true;
+          },
+        },
+        {
+          key: "Mod-d",
+          run: (view) => selectNextOccurrence({ state: view.state, dispatch: view.dispatch }),
+        },
+        {
+          key: "Mod-Shift-l",
+          run: (view) => selectSelectionMatches({ state: view.state, dispatch: view.dispatch }),
+        },
+      ]),
+      EditorView.theme({
+        "&": {
+          height: "100%",
+          backgroundColor: "transparent",
+          fontSize: "13px",
+        },
+        ".cm-scroller": {
+          overflow: "auto",
+          fontFamily: "var(--font-mono)",
+        },
+        ".cm-gutters": {
+          backgroundColor: "transparent",
+          borderRight: "1px solid var(--border)",
+        },
+        ".cm-activeLine, .cm-activeLineGutter": {
+          backgroundColor: "color-mix(in oklab, var(--muted) 55%, transparent)",
+        },
+        ".cm-content": { caretColor: "var(--foreground)" },
+      }),
+    ],
+    [aiCompletionSource, path],
+  );
+
+  return (
+    <div className="relative size-full" ref={wrapperRef}>
+      <CodeMirror
+        basicSetup
+        className="size-full overflow-hidden"
+        extensions={extensions}
+        onChange={(nextValue) => onChangeRef.current(nextValue)}
+        onCreateEditor={(view) => {
+          editorRef.current = view;
+        }}
+        onUpdate={handleEditorUpdate}
+        spellCheck={false}
+        theme="none"
+        value={value}
+      />
+      {selection ? (
+        <div
+          aria-label="代码选区快捷操作"
+          className="absolute z-20 flex max-w-[min(32rem,calc(100%-1rem))] items-center gap-1 overflow-hidden rounded-md border bg-popover/95 p-1 text-xs shadow-md backdrop-blur"
+          onMouseDown={(event) => event.stopPropagation()}
+          role="toolbar"
+          style={{ left: selection.left, top: selection.top }}
+        >
+          <Button
+            aria-label={includeContext ? "关闭周边代码上下文" : "附带周边代码上下文"}
+            className={cn("size-6", includeContext && "bg-muted text-foreground")}
+            onClick={() => setIncludeContext((current) => !current)}
+            size="icon-xs"
+            title={includeContext ? "关闭周边代码上下文" : "附带周边代码上下文"}
+            variant="ghost"
+          >
+            <PlusIcon />
+          </Button>
+          {promptOpen ? (
+            <form
+              className="flex min-w-0 flex-1 items-center gap-1"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runInlineEdit(instruction);
+              }}
+            >
+              <Input
+                autoFocus
+                className="h-6 min-w-20 flex-1 border-0 bg-transparent px-1.5 py-0 text-xs shadow-none focus-visible:ring-1"
+                onChange={(event) => setInstruction(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setPromptOpen(false);
+                  }
+                }}
+                placeholder="描述要如何修改..."
+                value={instruction}
+              />
+              <Button
+                aria-label="提交内联修改"
+                disabled={aiBusy || !activeThreadId}
+                size="icon-xs"
+                title="提交内联修改"
+                type="submit"
+                variant="ghost"
+              >
+                {aiBusy ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}
+              </Button>
+            </form>
+          ) : (
+            <Button
+              aria-label="输入内联修改要求"
+              disabled={aiBusy}
+              onClick={() => setPromptOpen(true)}
+              size="icon-xs"
+              title="输入内联修改要求"
+              variant="ghost"
+            >
+              <PencilLineIcon />
+            </Button>
+          )}
+          <Button
+            aria-label="使用 AI 修改选中内容"
+            disabled={aiBusy || !activeThreadId}
+            onClick={() => void runInlineEdit()}
+            size="icon-xs"
+            title={activeThreadId ? "使用当前线程和模型修改选中内容" : "请先选择会话"}
+            variant="ghost"
+          >
+            {aiBusy ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}
+          </Button>
+          <span
+            className="max-w-36 truncate border-l px-1.5 text-[10px] text-muted-foreground"
+            title={`${modelLabel}${reasoningLabel}`}
+          >
+            {modelLabel}
+            {reasoningLabel}
+          </span>
+          <Button
+            aria-label="关闭内联编辑工具条"
+            onClick={() => {
+              const current = editorRef.current;
+              if (current) {
+                const position = current.state.selection.main.to;
+                current.dispatch({ selection: { anchor: position } });
+              }
+              setSelection(undefined);
+              setPromptOpen(false);
+            }}
+            size="icon-xs"
+            title="关闭"
+            variant="ghost"
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 const RUNNABLE_FILE = /\.(?:[cm]?js|[cm]?ts|py|ps1|sh)$/i;
@@ -256,7 +763,7 @@ function TreeRows({
 }: {
   entries: TreeEntry[];
   childrenByPath: Record<string, TreeEntry[]>;
-  onSelectFile?: (path: string) => void;
+  onSelectFile?: (path: string, initialMode?: "edit" | "preview") => void;
   onCreateInDirectory?: (path: string, kind: "file" | "dir") => void;
   creating?: { parent: string; kind: "file" | "dir" };
   createName?: string;
@@ -343,19 +850,42 @@ function TreeRows({
       <ContextMenu key={entry.path}>
         <ContextMenuTrigger className="w-full block">
           <FileTreeFile
-            className={cn(entry.hidden && "opacity-65")}
+            className={cn(entry.hidden && "opacity-65", "group/file")}
             icon={<FileTypeIcon name={entry.name} />}
             name={entry.name}
             path={entry.path}
-          />
+          >
+            <FileTypeIcon name={entry.name} />
+            <span className="truncate flex-1 min-w-0">{entry.name}</span>
+            <FileTreeActions className="opacity-0 group-hover/file:opacity-100 transition-opacity">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="size-5 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                title="直接预览"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectFile?.(entry.path, "preview");
+                }}
+              >
+                <EyeIcon className="size-3" />
+              </Button>
+            </FileTreeActions>
+          </FileTreeFile>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
           <ContextMenuGroup>
             <ContextMenuLabel className="truncate max-w-44">{entry.name}</ContextMenuLabel>
-            <ContextMenuItem onClick={() => onSelectFile?.(entry.path)}>
-              <FileCode2Icon className="text-muted-foreground" />
-              <span>在编辑器打开</span>
+            <ContextMenuItem onClick={() => onSelectFile?.(entry.path, "preview")}>
+              <EyeIcon className="text-muted-foreground" />
+              <span>直接预览</span>
             </ContextMenuItem>
+            {!isBinaryPreviewable(entry.name) ? (
+              <ContextMenuItem onClick={() => onSelectFile?.(entry.path, "edit")}>
+                <FileCode2Icon className="text-muted-foreground" />
+                <span>在编辑器打开</span>
+              </ContextMenuItem>
+            ) : null}
             {RUNNABLE_FILE.test(entry.path) ? (
               <ContextMenuItem onClick={() => onRunFile?.(entry.path)}>
                 <PlayIcon className="text-muted-foreground" />
@@ -393,6 +923,19 @@ function TreeRows({
   );
 }
 
+type WorkspaceFilePayload = {
+  path: string;
+  name: string;
+  content: string;
+  size: number;
+  isBinary?: boolean;
+};
+
+type OpenWorkspaceFile = WorkspaceFilePayload & {
+  draft: string;
+  viewMode: "edit" | "preview";
+};
+
 /**
  * 文件树 + 编辑器。可多开 —— 每个标签一个独立实例,各自持有展开态与打开的文件。
  *
@@ -400,27 +943,35 @@ function TreeRows({
  * lane 上互相覆盖,模型看到的「当前打开的文件」会在几个标签之间来回跳。
  */
 function FilesWorkspace({ active }: { active: boolean }) {
-  const { activeThreadId, fetchTreeEntries, requestTerminalCommand, threads, user } =
-    useWorkbench();
+  const {
+    activeThreadId,
+    fetchTreeEntries,
+    modelSelection,
+    requestTerminalCommand,
+    threads,
+    user,
+  } = useWorkbench();
   const activeThread = threads.find((thread) => thread.id === activeThreadId);
   const [entries, setEntries] = React.useState<TreeEntry[]>([]);
   const [childrenByPath, setChildrenByPath] = React.useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = React.useState(() => new Set<string>());
   const [selectedPath, setSelectedPath] = React.useState<string>();
-  const [file, setFile] = React.useState<{
-    path: string;
-    name: string;
-    content: string;
-    size: number;
-  }>();
-  const [draft, setDraft] = React.useState("");
-  const [loading, setLoading] = React.useState(false);
+  const [openFiles, setOpenFiles] = React.useState<OpenWorkspaceFile[]>([]);
+  const [activeFilePath, setActiveFilePath] = React.useState<string>();
+  const [loadingPaths, setLoadingPaths] = React.useState<Set<string>>(new Set());
   const [treeLoading, setTreeLoading] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
+  const [savingPaths, setSavingPaths] = React.useState<Set<string>>(new Set());
   const [createKind, setCreateKind] = React.useState<"file" | "dir">();
   const [createName, setCreateName] = React.useState("");
   const loadedPathsRef = React.useRef(new Set<string>());
-  const dirty = file ? draft !== file.content : false;
+  const treeRefreshRequestRef = React.useRef(0);
+  const openFilesRef = React.useRef(openFiles);
+  const activeFile = openFiles.find((item) => item.path === activeFilePath);
+  const dirty = activeFile ? activeFile.draft !== activeFile.content : false;
+
+  React.useEffect(() => {
+    openFilesRef.current = openFiles;
+  }, [openFiles]);
 
   const allEntries = React.useMemo(
     () => [entries, ...Object.values(childrenByPath)].flat(),
@@ -429,6 +980,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
 
   const refreshTree = React.useCallback(async () => {
     if (!activeThreadId) return;
+    const requestId = ++treeRefreshRequestRef.current;
     setTreeLoading(true);
     loadedPathsRef.current = new Set();
     setEntries([]);
@@ -436,16 +988,17 @@ function FilesWorkspace({ active }: { active: boolean }) {
     setExpanded(new Set());
     setSelectedPath(undefined);
     try {
-      setEntries(await fetchTreeEntries(activeThreadId));
+      const nextEntries = await fetchTreeEntries(activeThreadId);
+      if (requestId === treeRefreshRequestRef.current) setEntries(nextEntries);
     } finally {
-      setTreeLoading(false);
+      if (requestId === treeRefreshRequestRef.current) setTreeLoading(false);
     }
   }, [activeThreadId, fetchTreeEntries]);
 
   React.useEffect(() => {
     setSelectedPath(undefined);
-    setFile(undefined);
-    setDraft("");
+    setOpenFiles([]);
+    setActiveFilePath(undefined);
     void refreshTree();
   }, [refreshTree]);
 
@@ -459,7 +1012,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
         ...(activeThread?.metadata.workspacePath
           ? { workspacePath: activeThread.metadata.workspacePath }
           : {}),
-        ...(file?.path ? { openPath: file.path, dirty } : {}),
+        ...(activeFile?.path ? { openPath: activeFile.path, dirty } : {}),
         ...(selectedPath ? { selectedPath } : {}),
       },
     });
@@ -468,7 +1021,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
     activeThread?.metadata.workspacePath,
     activeThreadId,
     dirty,
-    file?.path,
+    activeFile?.path,
     selectedPath,
     user.id,
   ]);
@@ -492,8 +1045,51 @@ function FilesWorkspace({ active }: { active: boolean }) {
     [loadDirectory],
   );
 
+  // Agent tools, terminals, and external editors can change the workspace without
+  // going through this component. Refresh only the root and currently expanded
+  // directories so the tree stays current without collapsing the user's view.
+  const refreshVisibleTree = React.useCallback(async () => {
+    if (!active || !activeThreadId || document.hidden) return;
+    const requestId = treeRefreshRequestRef.current;
+    const paths = ["", ...expanded];
+    try {
+      const visibleEntries = await Promise.all(
+        paths.map(
+          async (path) =>
+            [path, await fetchTreeEntries(activeThreadId, path || undefined)] as const,
+        ),
+      );
+      if (requestId !== treeRefreshRequestRef.current) return;
+      const rootEntries = visibleEntries.find(([path]) => path === "")?.[1];
+      if (rootEntries) setEntries(rootEntries);
+      setChildrenByPath((current) => {
+        const next = { ...current };
+        for (const [path, nextEntries] of visibleEntries) {
+          if (path) next[path] = nextEntries;
+        }
+        return next;
+      });
+    } catch {
+      // Keep the last known tree when a transient filesystem request fails.
+    }
+  }, [active, activeThreadId, expanded, fetchTreeEntries]);
+
+  React.useEffect(() => {
+    if (!active || !activeThreadId) return;
+    const refresh = () => void refreshVisibleTree();
+    const timer = window.setInterval(refresh, 1000);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [active, activeThreadId, refreshVisibleTree]);
+
   const selectFile = React.useCallback(
-    (path: string) => {
+    (path: string, initialMode?: "edit" | "preview") => {
       const selectedEntry = allEntries.find((entry) => entry.path === path);
       setSelectedPath(path);
       if (selectedEntry?.type === "dir") {
@@ -501,29 +1097,52 @@ function FilesWorkspace({ active }: { active: boolean }) {
         loadDirectory(path);
         return;
       }
-      if (dirty && !window.confirm("当前文件有未保存更改，是否放弃并打开其他文件？")) return;
       if (!activeThreadId) return;
-      setLoading(true);
+
+      const openFile = openFilesRef.current.find((item) => item.path === path);
+      if (loadingPaths.has(path)) return;
+      if (openFile) {
+        setActiveFilePath(path);
+        setOpenFiles((current) =>
+          current.map((item) =>
+            item.path === path && initialMode ? { ...item, viewMode: initialMode } : item,
+          ),
+        );
+        return;
+      }
+
+      setLoadingPaths((current) => new Set(current).add(path));
       fetch(
         `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/file?resourceId=${encodeURIComponent(user.id)}&path=${encodeURIComponent(path)}`,
       )
         .then(async (response) => {
-          const payload = (await response.json()) as {
+          const payload = (await response.json()) as WorkspaceFilePayload & {
             error?: string;
-            path: string;
-            name: string;
-            content: string;
-            size: number;
           };
           if (!response.ok) throw new Error(payload.error || "文件读取失败");
-          setFile(payload);
-          setDraft(payload.content);
+          const mode = payload.isBinary ? "preview" : (initialMode ?? "edit");
+          setOpenFiles((current) => [
+            ...current,
+            { ...payload, draft: payload.content, viewMode: mode },
+          ]);
+          setActiveFilePath(payload.path);
         })
         .catch((error) => toastError(error, "文件读取失败"))
-        .finally(() => setLoading(false));
+        .finally(() => {
+          setLoadingPaths((current) => {
+            const next = new Set(current);
+            next.delete(path);
+            return next;
+          });
+        });
     },
-    [activeThreadId, allEntries, dirty, loadDirectory, user.id],
+    [activeThreadId, allEntries, loadDirectory, loadingPaths, user.id],
   );
+
+  const rawFileUrl = React.useMemo(() => {
+    if (!activeThreadId || !activeFile?.path) return undefined;
+    return `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/raw?resourceId=${encodeURIComponent(user.id)}&path=${encodeURIComponent(activeFile.path)}`;
+  }, [activeFile?.path, activeThreadId, user.id]);
 
   const createDirectory = React.useMemo(() => {
     if (!selectedPath) return "";
@@ -585,36 +1204,85 @@ function FilesWorkspace({ active }: { active: boolean }) {
     user.id,
   ]);
 
-  const saveFile = React.useCallback(async (): Promise<boolean> => {
-    if (!activeThreadId || !file || !dirty || saving) return false;
-    setSaving(true);
-    try {
-      const response = await fetch(
-        `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/file?resourceId=${encodeURIComponent(user.id)}&path=${encodeURIComponent(file.path)}`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: draft }),
-        },
-      );
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "保存失败");
-      setFile((current) => (current ? { ...current, content: draft } : current));
-      toast.success(`已保存 ${file.name}`);
-      return true;
-    } catch (error) {
-      toastError(error, "保存失败");
-      return false;
-    } finally {
-      setSaving(false);
-    }
-  }, [activeThreadId, dirty, draft, file, saving, user.id]);
+  const saveFile = React.useCallback(
+    async (requestedPath = activeFilePath): Promise<boolean> => {
+      const fileToSave = openFilesRef.current.find((item) => item.path === requestedPath);
+      if (
+        !activeThreadId ||
+        !fileToSave ||
+        fileToSave.draft === fileToSave.content ||
+        savingPaths.has(fileToSave.path)
+      ) {
+        return false;
+      }
+      const filePath = fileToSave.path;
+      const fileDraft = fileToSave.draft;
+      setSavingPaths((current) => new Set(current).add(filePath));
+      try {
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${activeThreadId}/file?resourceId=${encodeURIComponent(user.id)}&path=${encodeURIComponent(filePath)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: fileDraft }),
+          },
+        );
+        const payload = (await response.json()) as { error?: string };
+        if (!response.ok) throw new Error(payload.error || "保存失败");
+        setOpenFiles((current) =>
+          current.map((item) => (item.path === filePath ? { ...item, content: fileDraft } : item)),
+        );
+        toast.success(`已保存 ${fileToSave.name}`);
+        return true;
+      } catch (error) {
+        toastError(error, "保存失败");
+        return false;
+      } finally {
+        setSavingPaths((current) => {
+          const next = new Set(current);
+          next.delete(filePath);
+          return next;
+        });
+      }
+    },
+    [activeFilePath, activeThreadId, savingPaths, user.id],
+  );
 
   const runFile = React.useCallback(async () => {
-    if (!file || saving || !activeThreadId) return;
-    if (dirty && !(await saveFile())) return;
-    requestTerminalCommand({ filePath: file.path });
-  }, [activeThreadId, dirty, file, requestTerminalCommand, saveFile, saving]);
+    if (!activeFile || savingPaths.has(activeFile.path) || !activeThreadId) return;
+    if (dirty && !(await saveFile(activeFile.path))) return;
+    requestTerminalCommand({ filePath: activeFile.path });
+  }, [activeFile, activeThreadId, dirty, requestTerminalCommand, saveFile, savingPaths]);
+
+  const closeFile = React.useCallback(
+    (path: string) => {
+      const closing = openFilesRef.current.find((item) => item.path === path);
+      if (
+        closing &&
+        closing.draft !== closing.content &&
+        !window.confirm("当前文件有未保存更改，确定关闭吗？")
+      ) {
+        return;
+      }
+      setOpenFiles((current) => {
+        const index = current.findIndex((item) => item.path === path);
+        const next = current.filter((item) => item.path !== path);
+        if (path === activeFilePath) {
+          const nextPath = next[Math.max(0, index - 1)]?.path;
+          setActiveFilePath(nextPath);
+          setSelectedPath(nextPath);
+        }
+        return next;
+      });
+    },
+    [activeFilePath],
+  );
+
+  const updateFile = React.useCallback((path: string, update: Partial<OpenWorkspaceFile>) => {
+    setOpenFiles((current) =>
+      current.map((item) => (item.path === path ? { ...item, ...update } : item)),
+    );
+  }, []);
 
   if (!activeThread?.metadata.workspacePath) {
     return (
@@ -639,19 +1307,21 @@ function FilesWorkspace({ active }: { active: boolean }) {
       <ResizablePanel defaultSize="72%" minSize="42%">
         <PanelSurface>
           <PanelHeader className="gap-2 px-3">
-            {file ? (
-              <FileTypeIcon name={file.name} />
+            {activeFile ? (
+              <FileTypeIcon name={activeFile.name} />
             ) : (
               <FileCode2Icon className="size-4 text-muted-foreground" />
             )}
-            <span className="min-w-0 flex-1 truncate text-xs font-medium" title={file?.path}>
-              {file?.path ?? "未打开文件"}
+            <span className="min-w-0 flex-1 truncate text-xs font-medium" title={activeFile?.path}>
+              {activeFile?.path ?? "未打开文件"}
             </span>
-            {dirty ? <span className="size-2 rounded-full bg-amber-500" title="未保存" /> : null}
-            {file && RUNNABLE_FILE.test(file.path) ? (
+            {dirty ? (
+              <span className="size-2 shrink-0 rounded-full bg-amber-500" title="未保存" />
+            ) : null}
+            {activeFile && RUNNABLE_FILE.test(activeFile.path) ? (
               <Button
                 aria-label="运行当前文件"
-                disabled={saving}
+                disabled={savingPaths.has(activeFile.path)}
                 onClick={() => void runFile()}
                 size="icon-sm"
                 title={dirty ? "保存并运行当前文件" : "运行当前文件"}
@@ -660,30 +1330,144 @@ function FilesWorkspace({ active }: { active: boolean }) {
                 <PlayIcon />
               </Button>
             ) : null}
-            <Button
-              aria-label="保存文件"
-              disabled={!dirty || saving}
-              onClick={() => void saveFile()}
-              size="icon-sm"
-              title="保存文件 (Ctrl+S)"
-              variant="ghost"
-            >
-              {saving ? <LoaderCircleIcon className="animate-spin" /> : <SaveIcon />}
-            </Button>
+            {activeFile?.viewMode === "edit" && !activeFile.isBinary ? (
+              <Button
+                aria-label="保存文件"
+                disabled={!dirty || savingPaths.has(activeFile.path)}
+                onClick={() => void saveFile()}
+                size="icon-sm"
+                title="保存文件 (Ctrl+S)"
+                variant="ghost"
+              >
+                {savingPaths.has(activeFile.path) ? (
+                  <LoaderCircleIcon className="animate-spin" />
+                ) : (
+                  <SaveIcon />
+                )}
+              </Button>
+            ) : null}
+
+            {/* 编辑 / 预览 切换模式按钮组 */}
+            {activeFile ? (
+              <div className="flex items-center rounded-md border bg-muted/40 p-0.5">
+                <Button
+                  aria-label="编辑代码"
+                  className={cn(
+                    "h-6 gap-1 px-2 text-[11px] font-normal cursor-pointer",
+                    activeFile.viewMode === "edit" && !activeFile.isBinary
+                      ? "bg-background shadow-xs text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  disabled={activeFile.isBinary}
+                  onClick={() => updateFile(activeFile.path, { viewMode: "edit" })}
+                  size="sm"
+                  variant="ghost"
+                  title={activeFile.isBinary ? "二进制文件不支持文本编辑" : "编辑源码"}
+                >
+                  <Code2Icon className="size-3.5" />
+                  编辑
+                </Button>
+                <Button
+                  aria-label="预览文件"
+                  className={cn(
+                    "h-6 gap-1 px-2 text-[11px] font-normal cursor-pointer",
+                    activeFile.viewMode === "preview" || activeFile.isBinary
+                      ? "bg-background shadow-xs text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => updateFile(activeFile.path, { viewMode: "preview" })}
+                  size="sm"
+                  variant="ghost"
+                  title="文件预览"
+                >
+                  <EyeIcon className="size-3.5" />
+                  预览
+                </Button>
+              </div>
+            ) : null}
           </PanelHeader>
+          <ScrollArea className="shrink-0 border-b bg-muted/20">
+            <div className="flex min-w-max items-center gap-1 px-2 py-1">
+              {openFiles.map((item) => (
+                <div className="group relative flex h-7 shrink-0 items-center" key={item.path}>
+                  <button
+                    className={cn(
+                      "flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md px-2 pr-7 text-xs",
+                      item.path === activeFilePath
+                        ? "bg-background font-medium text-foreground shadow-xs"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                    onClick={() => {
+                      setActiveFilePath(item.path);
+                      setSelectedPath(item.path);
+                    }}
+                    title={item.path}
+                    type="button"
+                  >
+                    <FileTypeIcon name={item.name} />
+                    <span className="truncate">{item.name}</span>
+                    {item.draft !== item.content ? (
+                      <span className="size-1.5 rounded-full bg-amber-500" />
+                    ) : null}
+                  </button>
+                  <button
+                    aria-label={`关闭${item.name}`}
+                    className="absolute right-1 rounded p-0.5 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"
+                    onClick={() => closeFile(item.path)}
+                    type="button"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
           <div className="min-h-0 flex-1 overflow-hidden">
-            {loading ? (
+            {loadingPaths.size > 0 && !activeFile ? (
               <div className="flex size-full items-center justify-center text-muted-foreground">
                 <LoaderCircleIcon className="size-5 animate-spin" />
               </div>
-            ) : file ? (
-              <CodeEditor
-                key={file.path}
-                onChange={setDraft}
-                onSave={() => void saveFile()}
-                path={file.path}
-                value={draft}
-              />
+            ) : activeFile ? (
+              <div className="relative size-full">
+                {openFiles
+                  .filter((item) => !item.isBinary)
+                  .map((item) => (
+                    <div
+                      className={cn(
+                        "absolute inset-0",
+                        item.path === activeFilePath && item.viewMode === "edit" && !item.isBinary
+                          ? "visible"
+                          : "invisible pointer-events-none",
+                      )}
+                      aria-hidden={
+                        item.path !== activeFilePath || item.viewMode !== "edit" || item.isBinary
+                      }
+                      key={item.path}
+                    >
+                      <CodeEditor
+                        activeThreadId={activeThreadId}
+                        modelSelection={modelSelection}
+                        onChange={(value) => updateFile(item.path, { draft: value })}
+                        onSave={() => void saveFile(item.path)}
+                        path={item.path}
+                        resourceId={user.id}
+                        value={item.draft}
+                      />
+                    </div>
+                  ))}
+                {activeFile.viewMode === "preview" || activeFile.isBinary ? (
+                  <div className="absolute inset-0">
+                    <WorkspaceFilePreview
+                      filePath={activeFile.path}
+                      fileName={activeFile.name}
+                      url={rawFileUrl}
+                      content={activeFile.draft}
+                      isDraft={dirty}
+                    />
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <Empty className="h-full">
                 <EmptyHeader>
@@ -833,6 +1617,24 @@ function changeLabel(change: WorkspaceFileChange): string {
   return "修改";
 }
 
+interface WorkspaceChangeGroup {
+  path: string;
+  changes: WorkspaceFileChange[];
+}
+
+function groupWorkspaceChanges(changes: WorkspaceFileChange[]): WorkspaceChangeGroup[] {
+  const groups = new Map<string, WorkspaceChangeGroup>();
+  for (const change of changes) {
+    const group = groups.get(change.path);
+    if (group) {
+      group.changes.push(change);
+    } else {
+      groups.set(change.path, { path: change.path, changes: [change] });
+    }
+  }
+  return [...groups.values()];
+}
+
 function CodeChangeRow({
   change,
   open,
@@ -853,7 +1655,7 @@ function CodeChangeRow({
       onOpenChange={onOpenChange}
       open={open}
     >
-      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/40">
+      <CollapsibleTrigger className="group sticky top-0 z-10 flex w-full min-w-0 items-center gap-2 border-b bg-background/95 px-2.5 py-2 text-left shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 hover:bg-muted/80">
         <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-open/collapsible:rotate-180" />
         <ChangeIcon
           className={cn(
@@ -865,10 +1667,12 @@ function CodeChangeRow({
                 : "text-amber-600 dark:text-amber-400",
           )}
         />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={change.path}>
-          {change.path}
+        <span className="min-w-0 flex-1 truncate text-xs">
+          <span className="font-medium">{changeLabel(change)}</span>
+          <span className="ml-2 font-mono text-muted-foreground">
+            {change.toolName.replace(/^mastra_workspace_/, "")}
+          </span>
         </span>
-        <span className="shrink-0 text-[10px] text-muted-foreground">{changeLabel(change)}</span>
         <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={change.createdAt}>
           {Number.isNaN(timestamp.getTime())
             ? ""
@@ -894,10 +1698,72 @@ function CodeChangeRow({
   );
 }
 
+function CodeChangeGroup({
+  group,
+  open,
+  onOpenChange,
+  expandedChanges,
+  onChangeOpen,
+}: {
+  group: WorkspaceChangeGroup;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expandedChanges: Set<string>;
+  onChangeOpen: (changeId: string, open: boolean) => void;
+}) {
+  const latest = group.changes[0];
+  const LatestIcon =
+    latest.kind === "created" ? CheckCircle2Icon : latest.kind === "deleted" ? XIcon : FileDiffIcon;
+  const latestTimestamp = new Date(latest.createdAt);
+  return (
+    <Collapsible
+      className="rounded-md border bg-background"
+      onOpenChange={onOpenChange}
+      open={open}
+    >
+      <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 px-2.5 py-2 text-left hover:bg-muted/40">
+        <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform group-data-open/collapsible:rotate-180" />
+        <LatestIcon
+          className={cn(
+            "size-3.5 shrink-0",
+            latest.kind === "created"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : latest.kind === "deleted"
+                ? "text-red-600 dark:text-red-400"
+                : "text-amber-600 dark:text-amber-400",
+          )}
+        />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs" title={group.path}>
+          {group.path}
+        </span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {group.changes.length} 次变更
+        </span>
+        <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={latest.createdAt}>
+          {Number.isNaN(latestTimestamp.getTime())
+            ? ""
+            : latestTimestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </time>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-2 border-t p-2">
+        {group.changes.map((change) => (
+          <CodeChangeRow
+            change={change}
+            key={change.id}
+            onOpenChange={(nextOpen) => onChangeOpen(change.id, nextOpen)}
+            open={expandedChanges.has(change.id)}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function CodeChangesWorkspace({ active }: { active: boolean }) {
   const { activeThreadId, fetchThreadChanges } = useWorkbench();
   const [changes, setChanges] = React.useState<WorkspaceFileChange[]>([]);
-  const [expanded, setExpanded] = React.useState<Set<string>>(new Set());
+  const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
+  const [expandedChanges, setExpandedChanges] = React.useState<Set<string>>(new Set());
   const [loading, setLoading] = React.useState(false);
   const refreshRequestRef = React.useRef(0);
 
@@ -918,7 +1784,13 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
           current.every((item, index) => item.id === next[index]?.id);
         return unchanged ? current : next;
       });
-      setExpanded((current) => {
+      setExpandedFiles((current) => {
+        const valid = new Set(next.map((item) => item.path));
+        const kept = new Set([...current].filter((path) => valid.has(path)));
+        if (kept.size === 0 && next.length > 0) kept.add(next[next.length - 1].path);
+        return kept;
+      });
+      setExpandedChanges((current) => {
         const valid = new Set(next.map((item) => item.id));
         const kept = new Set([...current].filter((id) => valid.has(id)));
         if (kept.size === 0 && next.length > 0) kept.add(next[next.length - 1].id);
@@ -932,18 +1804,21 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
   React.useEffect(() => {
     if (!active) return;
     void refresh();
-    const timer = window.setInterval(() => void refresh(), 2000);
+    const timer = window.setInterval(() => void refresh(), 1000);
     return () => window.clearInterval(timer);
   }, [active, refresh]);
 
   const orderedChanges = React.useMemo(() => [...changes].reverse(), [changes]);
+  const changeGroups = React.useMemo(() => groupWorkspaceChanges(orderedChanges), [orderedChanges]);
   return (
     <div className="flex size-full min-h-0 flex-col bg-muted/10">
       <PanelHeader className="h-10 shrink-0 justify-between border-b bg-muted/30 px-3">
         <div className="flex min-w-0 items-center gap-2">
           <FileDiffIcon className="size-4 shrink-0 text-muted-foreground" />
           <span className="text-xs font-medium">代码更改</span>
-          <span className="text-[10px] text-muted-foreground">{changes.length} 条记录</span>
+          <span className="text-[10px] text-muted-foreground">
+            {changeGroups.length} 个文件 · {changes.length} 条记录
+          </span>
         </div>
         <Button
           aria-label="刷新代码更改"
@@ -979,19 +1854,28 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
               </EmptyHeader>
             </Empty>
           ) : (
-            orderedChanges.map((change) => (
-              <CodeChangeRow
-                change={change}
-                key={change.id}
-                onOpenChange={(open) => {
-                  setExpanded((current) => {
+            changeGroups.map((group) => (
+              <CodeChangeGroup
+                expandedChanges={expandedChanges}
+                group={group}
+                key={group.path}
+                onChangeOpen={(changeId, open) => {
+                  setExpandedChanges((current) => {
                     const next = new Set(current);
-                    if (open) next.add(change.id);
-                    else next.delete(change.id);
+                    if (open) next.add(changeId);
+                    else next.delete(changeId);
                     return next;
                   });
                 }}
-                open={expanded.has(change.id)}
+                onOpenChange={(open) => {
+                  setExpandedFiles((current) => {
+                    const next = new Set(current);
+                    if (open) next.add(group.path);
+                    else next.delete(group.path);
+                    return next;
+                  });
+                }}
+                open={expandedFiles.has(group.path)}
               />
             ))
           )}
@@ -1073,23 +1957,55 @@ function useBrowserSession() {
     // 切到文件标签时断开视频流:标签栏只需要 refreshState 的轮询就够了
     if (!viewActive || !stateUrl || !state.active) return;
     setFrameState("connecting");
-    const source = new EventSource(browserUrl("/screencast"));
-    source.addEventListener("frame", (event) => {
-      setFrame(JSON.parse((event as MessageEvent<string>).data) as typeof frame);
-      setFrameState("connected");
+    const controller = new AbortController();
+    let disposed = false;
+    void (async () => {
+      const response = await fetch(browserUrl("/screencast"), { signal: controller.signal });
+      if (!response.ok || !response.body) throw new Error("浏览器画面连接失败");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (!disposed) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const eventName = block.match(/^event:\s*(.+)$/m)?.[1]?.trim() ?? "message";
+            const data = block
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).trimStart())
+              .join("\n");
+            if (eventName === "frame") {
+              setFrame(JSON.parse(data) as typeof frame);
+              setFrameState("connected");
+            } else if (eventName === "url") {
+              const payload = JSON.parse(data) as { url?: string };
+              if (typeof payload.url === "string") {
+                setState((current) => ({ ...current, currentUrl: payload.url ?? null }));
+              }
+            } else if (eventName === "stop") {
+              return;
+            } else if (eventName === "error") {
+              throw new Error("浏览器画面流发生错误");
+            }
+            boundary = buffer.indexOf("\n\n");
+          }
+          if (done) return;
+        }
+      } finally {
+        reader.releaseLock();
+      }
+    })().catch(() => {
+      if (!disposed) setFrameState("error");
     });
-    source.addEventListener("url", (event) => {
-      const { url } = JSON.parse((event as MessageEvent<string>).data) as {
-        url: string;
-      };
-      setState((current) => ({ ...current, currentUrl: url }));
-    });
-    source.addEventListener("stop", () => source.close());
-    source.addEventListener("error", () => {
-      setFrameState("error");
-      source.close();
-    });
-    return () => source.close();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
   }, [browserUrl, screencastAttempt, viewActive, state.active, stateUrl]);
 
   const retryFrame = React.useCallback(() => {

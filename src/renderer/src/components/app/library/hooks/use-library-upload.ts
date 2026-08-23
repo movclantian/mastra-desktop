@@ -1,5 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
+import { getAuthToken } from "@/lib/auth";
 import { apiError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import type { LibraryAsset, LibraryUploadSession } from "../types";
@@ -54,15 +55,14 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
       const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
       let completedBatchBytes = 0;
       for (const file of files) {
-        const resumeKey = [
-          "mastra-work:library-upload",
+        const resumeKey = `mastra-work:library-upload:${JSON.stringify([
           resourceId,
           file.name,
           file.size,
           file.lastModified,
           target.folderId ?? "",
           target.threadId ?? "",
-        ].join(":");
+        ])}`;
         const response = await fetch(`${MASTRA_SERVER_URL}/work/library/uploads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -105,6 +105,8 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
             );
             activeUploadXhrRef.current = xhr;
             xhr.setRequestHeader("Content-Type", "application/octet-stream");
+            const token = getAuthToken();
+            if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
             xhr.upload.onprogress = (event) => {
               const inFlight = event.lengthComputable ? event.loaded : 0;
               setUploadProgress(

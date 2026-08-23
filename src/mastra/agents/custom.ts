@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { Agent, SubAgent } from "@mastra/core/agent";
-import type { Mastra } from "@mastra/core/mastra";
-import type { AnyWorkflow, DynamicWorkflowGraph } from "@mastra/core/workflows";
-import { getAppConfig, setAppConfig } from "../storage";
+import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
+import { z } from "zod";
+import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
 import { getManagedSkillsDirectory } from "../workspace";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
@@ -179,7 +179,7 @@ function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined 
   if (steps.length === 0) return undefined;
   const strategy =
     raw.strategy === "sequence" || raw.strategy === "parallel" ? raw.strategy : "supervisor";
-  return { strategy, steps, synthesis: true };
+  return { strategy, steps, synthesis: raw.synthesis !== false };
 }
 
 export async function listAgentProfiles(): Promise<AgentProfile[]> {
@@ -242,20 +242,13 @@ export async function upsertAgentProfile(input: Partial<AgentProfile>): Promise<
     existing?.createdAt ?? now,
   );
   await saveProfiles([...current.filter((item) => item.id !== profile.id), profile]);
-  try {
-    await syncAgentProfile(profile);
-  } catch (error) {
-    await saveProfiles(current);
-    if (existing) await syncAgentProfile(existing);
-    throw error;
-  }
   return profile;
 }
 
 export async function deleteAgentProfile(id: string): Promise<void> {
   if (id === DEFAULT_AGENT_PROFILE_ID) throw new Error("默认 Agent 不可删除");
   await saveProfiles((await listAgentProfiles()).filter((profile) => profile.id !== id));
-  await unsyncAgentProfile(id);
+  memberCache.delete(scopedProfileKey(id));
 }
 
 type ProfileAgentFactory = (profile: AgentProfile) => Agent;
@@ -274,18 +267,23 @@ export function setProfileAgentFactories(factories: {
 
 const memberCache = new Map<string, { updatedAt: string; agents: Record<string, SubAgent> }>();
 
+function scopedProfileKey(id: string): string {
+  return JSON.stringify([getResourceScope() ?? "__system__", id]);
+}
+
 export async function resolveProfileMembers(
   profile: AgentProfile,
 ): Promise<Record<string, SubAgent>> {
   if (profile.type !== "team") return {};
-  const cached = memberCache.get(profile.id);
+  const key = scopedProfileKey(profile.id);
+  const cached = memberCache.get(key);
   if (cached?.updatedAt === profile.updatedAt) return cached.agents;
   if (!memberAgentFactory) throw new Error("Profile Agent factory is not initialized");
   const agents: Record<string, SubAgent> = {};
   for (const member of profile.members) {
     agents[member.id] = memberAgentFactory(profile, member);
   }
-  memberCache.set(profile.id, { updatedAt: profile.updatedAt, agents });
+  memberCache.set(key, { updatedAt: profile.updatedAt, agents });
   return agents;
 }
 
@@ -314,38 +312,24 @@ export async function resolveManagedSkillPaths(names: string[]): Promise<string[
   return paths;
 }
 
-interface ProfileRuntime {
-  addAgent: (agent: Agent, key?: string) => void;
-  removeAgent: (keyOrId: string) => boolean;
-  addDynamicWorkflow: (definition: DynamicWorkflowGraph) => Promise<void>;
-  removeWorkflow: (keyOrId: string) => boolean;
-  getStorage?: () =>
-    | {
-        getStore: (
-          name: "workflowDefinitions",
-        ) => Promise<{ delete: (id: string) => Promise<void> } | undefined>;
-      }
-    | undefined;
+/** Read an explicitly activated managed skill from the current resource scope. */
+export async function loadManagedSkill(
+  name: string,
+): Promise<{ name: string; instructions: string } | undefined> {
+  const [directory] = await resolveManagedSkillPaths([name]);
+  if (!directory) return undefined;
+  const content = await readFile(join(directory, "SKILL.md"), "utf8");
+  const metadataName = /^---\s*[\s\S]*?\bname:\s*["']?([^\r\n"']+)/m.exec(content)?.[1]?.trim();
+  return {
+    name: metadataName || basename(directory),
+    instructions: content.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim(),
+  };
 }
 
-let profileRuntime: ProfileRuntime | undefined;
-const registeredProfiles = new Map<string, { memberKeys: string[]; workflowId?: string }>();
-const registeredWorkflows = new Map<string, AnyWorkflow>();
-let syncQueue = Promise.resolve();
-
-function workflowId(profileId: string): string {
-  return `agent-team-${profileId}`;
-}
-
-function workflowInputTemplate(): string {
-  return String.raw`\${initData.request}`;
-}
-
-function workflowStepResultTemplate(stepId: string): string {
-  return String.raw`\${stepResults.${stepId}.text}`;
-}
-
-function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undefined {
+/** Build a team workflow from the authenticated user's profile without global registration. */
+export async function buildProfileWorkflow(
+  profile: AgentProfile,
+): Promise<{ workflow: AnyWorkflow } | undefined> {
   if (
     profile.type !== "team" ||
     !profile.workflow ||
@@ -356,149 +340,93 @@ function workflowForProfile(profile: AgentProfile): DynamicWorkflowGraph | undef
   const memberIds = new Set(profile.members.map((member) => member.id));
   const steps = profile.workflow.steps.filter((step) => memberIds.has(step.memberId));
   if (steps.length === 0) return undefined;
-  const graph: DynamicWorkflowGraph["graph"] = [
-    {
-      type: "mapping",
-      id: "workflow-input",
-      mapConfig: JSON.stringify({ prompt: { template: workflowInputTemplate() } }),
-    },
-  ];
+
+  const members = await resolveProfileMembers(profile);
+  const agentSteps = steps.map((step) => {
+    const member = members[step.memberId];
+    if (!member) return undefined;
+    return cloneStep(createStep(member), { id: step.id });
+  });
+  const resolvedAgentSteps = agentSteps.filter((step): step is NonNullable<typeof step> =>
+    Boolean(step),
+  );
+  if (resolvedAgentSteps.length !== steps.length) return undefined;
+  if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
+
+  const workflow = createWorkflow({
+    id: `agent-team-${profile.id}`,
+    description: `${profile.displayName} 的可执行协作流程`,
+    inputSchema: z.object({ request: z.string() }),
+    outputSchema: z.object({ text: z.string() }),
+  });
+  let flow: AnyWorkflow = workflow.map(
+    async ({ inputData }: { inputData: { request: string } }) => ({ prompt: inputData.request }),
+    { id: "workflow-input" },
+  );
+
   if (profile.workflow.strategy === "parallel") {
-    graph.push({
-      type: "parallel",
-      steps: steps.map((step) => ({
-        type: "agent",
-        id: step.id,
-        agentId: `${profile.id}--${step.memberId}`,
-        ...(step.prompt ? { description: step.prompt } : {}),
-      })),
-    });
+    flow = flow.parallel(resolvedAgentSteps);
+    if (profile.workflow.synthesis) {
+      flow = flow.map(
+        async ({
+          inputData,
+          getInitData,
+        }: {
+          inputData: Record<string, { text: string }>;
+          getInitData: () => { request: string };
+        }) => ({
+          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${Object.values(
+            inputData,
+          )
+            .map((result) => result.text)
+            .join("\n\n")}`,
+        }),
+        { id: "synthesis-input" },
+      );
+      flow = flow.then(cloneStep(createStep(profileAgentFactory(profile)), { id: "synthesis" }));
+    } else {
+      flow = flow.map(
+        async ({ inputData }: { inputData: Record<string, { text: string }> }) => ({
+          text: Object.values(inputData)
+            .map((result) => result.text)
+            .join("\n\n"),
+        }),
+        { id: "parallel-result" },
+      );
+    }
   } else {
     steps.forEach((step, index) => {
       if (index > 0) {
-        graph.push({
-          type: "mapping",
-          id: `${step.id}-input`,
-          mapConfig: JSON.stringify({
-            prompt: {
-              template: `${step.prompt ?? "继续处理这个任务"}: ${workflowInputTemplate()}\\n\\n上一步结果: ${workflowStepResultTemplate(steps[index - 1].id)}`,
-            },
+        flow = flow.map(
+          async ({
+            inputData,
+            getInitData,
+          }: {
+            inputData: { text: string };
+            getInitData: () => { request: string };
+          }) => ({
+            prompt: `${step.prompt ?? "继续处理这个任务"}: ${getInitData().request}\n\n上一步结果: ${inputData.text}`,
           }),
-        });
+          { id: `${step.id}-input` },
+        );
       }
-      graph.push({
-        type: "agent",
-        id: step.id,
-        agentId: `${profile.id}--${step.memberId}`,
-        ...(step.prompt ? { description: step.prompt } : {}),
-      });
+      flow = flow.then(resolvedAgentSteps[index]);
     });
-  }
-  const lastStep = steps.at(-1)?.id;
-  if (lastStep) {
-    graph.push({
-      type: "mapping",
-      id: "synthesis-input",
-      mapConfig: JSON.stringify({
-        prompt: {
-          template: `请汇总以下团队结果并给出最终答复。原始请求: ${workflowInputTemplate()}\\n\\n团队结果: ${workflowStepResultTemplate(lastStep)}`,
-        },
-      }),
-    });
-    graph.push({ type: "agent", id: "synthesis", agentId: profile.id });
-  }
-  return {
-    id: workflowId(profile.id),
-    description: `${profile.displayName} 的可执行协作流程`,
-    inputSchema: {
-      type: "object",
-      properties: { request: { type: "string" } },
-      required: ["request"],
-    },
-    outputSchema: {
-      type: "object",
-      properties: { text: { type: "string" } },
-      required: ["text"],
-    },
-    metadata: { profileId: profile.id, strategy: profile.workflow.strategy },
-    graph,
-  };
-}
-
-async function syncAgentProfileNow(profile: AgentProfile): Promise<void> {
-  if (!profileRuntime || !profileAgentFactory) return;
-  const previous = registeredProfiles.get(profile.id);
-  if (previous) {
-    profileRuntime.removeAgent(profile.id);
-    for (const key of previous.memberKeys) profileRuntime.removeAgent(key);
-    if (previous.workflowId) profileRuntime.removeWorkflow(previous.workflowId);
-    if (previous.workflowId && profileRuntime.getStorage) {
-      const definitions = await profileRuntime.getStorage()?.getStore("workflowDefinitions");
-      await definitions?.delete(previous.workflowId);
-    }
-    registeredWorkflows.delete(profile.id);
-  }
-  const members = await resolveProfileMembers(profile);
-  const memberKeys: string[] = [];
-  for (const [memberId, member] of Object.entries(members)) {
-    const key = `${profile.id}--${memberId}`;
-    profileRuntime.addAgent(member as Agent, key);
-    memberKeys.push(key);
-  }
-  profileRuntime.addAgent(profileAgentFactory(profile), profile.id);
-  const definition = workflowForProfile(profile);
-  if (definition) await profileRuntime.addDynamicWorkflow(definition);
-  if (definition) {
-    const workflow = (
-      profileRuntime as ProfileRuntime & { getWorkflow?: (id: string) => AnyWorkflow }
-    ).getWorkflow?.(definition.id);
-    if (workflow) registeredWorkflows.set(profile.id, workflow);
-  }
-  registeredProfiles.set(profile.id, {
-    memberKeys,
-    ...(definition ? { workflowId: definition.id } : {}),
-  });
-}
-
-export function getRegisteredProfileWorkflow(profileId: string): AnyWorkflow | undefined {
-  return registeredWorkflows.get(profileId);
-}
-
-export function syncAgentProfile(profile: AgentProfile): Promise<void> {
-  syncQueue = syncQueue.catch(() => undefined).then(() => syncAgentProfileNow(profile));
-  return syncQueue;
-}
-
-export function unsyncAgentProfile(id: string): Promise<void> {
-  syncQueue = syncQueue
-    .catch(() => undefined)
-    .then(async () => {
-      const previous = registeredProfiles.get(id);
-      if (!profileRuntime || !previous) return;
-      profileRuntime.removeAgent(id);
-      for (const key of previous.memberKeys) profileRuntime.removeAgent(key);
-      if (previous.workflowId) profileRuntime.removeWorkflow(previous.workflowId);
-      if (previous.workflowId && profileRuntime.getStorage) {
-        const definitions = await profileRuntime.getStorage()?.getStore("workflowDefinitions");
-        await definitions?.delete(previous.workflowId);
-      }
-      registeredWorkflows.delete(id);
-      registeredProfiles.delete(id);
-      memberCache.delete(id);
-    });
-  return syncQueue;
-}
-
-export async function initializeAgentProfiles(mastra: Mastra): Promise<void> {
-  profileRuntime = mastra;
-  for (const profile of await listAgentProfiles()) {
-    if (profile.id === DEFAULT_AGENT_PROFILE_ID) continue;
-    try {
-      await syncAgentProfileNow(profile);
-    } catch (error) {
-      console.warn(
-        `[Mastra] Failed to register custom Agent "${profile.id}": ${error instanceof Error ? error.message : String(error)}`,
+    if (profile.workflow.synthesis) {
+      flow = flow.map(
+        async ({
+          inputData,
+          getInitData,
+        }: {
+          inputData: { text: string };
+          getInitData: () => { request: string };
+        }) => ({
+          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${inputData.text}`,
+        }),
+        { id: "synthesis-input" },
       );
+      flow = flow.then(cloneStep(createStep(profileAgentFactory(profile)), { id: "synthesis" }));
     }
   }
+  return { workflow: flow.commit() as AnyWorkflow };
 }

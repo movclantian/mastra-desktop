@@ -75,6 +75,11 @@ export function useThreadChats(
             // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
             // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
             reconnectAttemptsRef.current.delete(threadId);
+            const reconnectTimer = reconnectTimersRef.current.get(threadId);
+            if (reconnectTimer !== undefined) {
+              window.clearTimeout(reconnectTimer);
+              reconnectTimersRef.current.delete(threadId);
+            }
             const payload: Record<string, unknown> = {
               ...buildRequestBodyRef.current(threadId),
               responseMessageId: generatedMessageIdsRef.current.get(threadId),
@@ -112,6 +117,8 @@ export function useThreadChats(
           }
 
           const delay = attempt * 800;
+          const previousTimer = reconnectTimersRef.current.get(threadId);
+          if (previousTimer !== undefined) window.clearTimeout(previousTimer);
           const timer = window.setTimeout(() => {
             reconnectTimersRef.current.delete(threadId);
             void chat

@@ -34,7 +34,7 @@ import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elemen
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
 import { AnimatedChevron } from "@/components/ui/animated-icon";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { Spinner } from "@/components/ui/spinner";
+import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
 import { getTraceStepStatus, type TracePart } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -133,11 +133,11 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
       <TaskItem className="flex items-start gap-2">
         <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
           {active ? (
-            <Spinner className="size-3.5" />
+            <Dotm3x3_6 size={13} dotSize={2} colorPreset="solid-theme" />
           ) : failed ? (
             <XIcon className="size-3.5 text-destructive" />
           ) : (
-            <CheckIcon className="size-3.5" />
+            <CheckIcon className="size-3.5 text-emerald-500" />
           )}
         </span>
         {hasDetails ? (
@@ -310,7 +310,9 @@ export function AssistantTrace({
     if (part.type === "reasoning") {
       flushTools();
       items.push({
-        key: part.id ?? `reasoning-${index}`,
+        // Provider reasoning ids are not guaranteed to be unique within one message.
+        // Keep the source index in the React key so repeated ids cannot merge steps.
+        key: `reasoning-${index}-${part.id ?? "part"}`,
         node: <ReasoningStepItem isStreaming={isStreaming} part={part} />,
       });
       return;

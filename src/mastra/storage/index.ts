@@ -5,6 +5,7 @@
  * 默认域走 LibSQL(与 Studio 共享 src/mastra/public/mastra.db),
  * observability 域走 DuckDB(OLAP 指标,docs/en/docs/observability/metrics/overview.mdx)。
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
@@ -121,6 +122,22 @@ export function getLibsqlClient(): Promise<Client> {
 const APP_CONFIG_TABLE = "app_config";
 let appConfigTableReady: Promise<void> | undefined;
 
+/** Request-scoped tenant boundary used by all app configuration helpers. */
+const resourceScope = new AsyncLocalStorage<string>();
+
+export function runWithResourceScope<T>(resourceId: string, callback: () => T): T {
+  return resourceScope.run(resourceId, callback);
+}
+
+export function getResourceScope(): string | undefined {
+  return resourceScope.getStore();
+}
+
+function scopedConfigKey(key: string): string {
+  const resourceId = getResourceScope();
+  return resourceId ? JSON.stringify([resourceId, key]) : key;
+}
+
 function ensureAppConfigTable(): Promise<void> {
   appConfigTableReady ??= getLibsqlClient().then(async (client) => {
     await client.execute(
@@ -135,7 +152,7 @@ export async function getAppConfig(key: string): Promise<string | null> {
   await ensureAppConfigTable();
   const result = await (await getLibsqlClient()).execute({
     sql: `SELECT value FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
-    args: [key],
+    args: [scopedConfigKey(key)],
   });
   const value = result.rows[0]?.value;
   return typeof value === "string" ? value : null;
@@ -147,6 +164,6 @@ export async function setAppConfig(key: string, value: string): Promise<void> {
   await (await getLibsqlClient()).execute({
     sql: `INSERT INTO ${APP_CONFIG_TABLE} (key, value) VALUES (?, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    args: [key, value],
+    args: [scopedConfigKey(key), value],
   });
 }

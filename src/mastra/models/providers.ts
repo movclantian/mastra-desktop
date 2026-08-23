@@ -7,7 +7,7 @@
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
 import { type GatewayLanguageModel, ModelRouterEmbeddingModel } from "@mastra/core/llm";
-import { getAppConfig, setAppConfig } from "../storage";
+import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
 import {
   createGatewayModel,
   type GatewayProtocol,
@@ -57,25 +57,32 @@ interface ProvidersUserConfig {
 const PROVIDERS_CONFIG_KEY = "providers";
 
 const DEFAULT_PROVIDERS_CONFIG: ProvidersUserConfig = { providers: [], modelSelection: null };
-let providersConfigCache: ProvidersUserConfig | null = null;
+const providersConfigCache = new Map<string, ProvidersUserConfig>();
+
+function providerScopeKey(): string {
+  return getResourceScope() ?? "__system__";
+}
 
 export async function getProvidersConfig(): Promise<ProvidersUserConfig> {
-  if (providersConfigCache) return providersConfigCache;
+  const scope = providerScopeKey();
+  const cached = providersConfigCache.get(scope);
+  if (cached) return cached;
   const raw = await getAppConfig(PROVIDERS_CONFIG_KEY);
   if (!raw) {
-    providersConfigCache = DEFAULT_PROVIDERS_CONFIG;
-    return providersConfigCache;
+    providersConfigCache.set(scope, DEFAULT_PROVIDERS_CONFIG);
+    return DEFAULT_PROVIDERS_CONFIG;
   }
   try {
     const parsed = JSON.parse(raw) as Partial<ProvidersUserConfig>;
-    providersConfigCache = {
+    const config = {
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
       modelSelection: parsed.modelSelection ?? null,
     };
-    return providersConfigCache;
+    providersConfigCache.set(scope, config);
+    return config;
   } catch {
-    providersConfigCache = DEFAULT_PROVIDERS_CONFIG;
-    return providersConfigCache;
+    providersConfigCache.set(scope, DEFAULT_PROVIDERS_CONFIG);
+    return DEFAULT_PROVIDERS_CONFIG;
   }
 }
 
@@ -91,7 +98,7 @@ export async function saveProvidersConfig(config: Partial<ProvidersUserConfig>):
       config.modelSelection !== undefined ? config.modelSelection : current.modelSelection,
   };
   await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2));
-  providersConfigCache = next;
+  providersConfigCache.set(providerScopeKey(), next);
 }
 
 /**
@@ -100,12 +107,14 @@ export async function saveProvidersConfig(config: Partial<ProvidersUserConfig>):
  */
 function getConfiguredEmbeddingModel(reference: string): ModelRouterEmbeddingModel | undefined {
   const separator = reference.indexOf("/");
-  if (separator <= 0 || !providersConfigCache) return undefined;
+  if (separator <= 0) return undefined;
   const providerId = reference.slice(0, separator);
   const modelId = reference.slice(separator + 1);
-  const provider = providersConfigCache.providers.find(
-    (candidate) => candidate.id === providerId || routerPrefix(candidate) === providerId,
-  );
+  const provider = providersConfigCache
+    .get(providerScopeKey())
+    ?.providers.find(
+      (candidate) => candidate.id === providerId || routerPrefix(candidate) === providerId,
+    );
   if (!provider || provider.disabled || !provider.apiKey || !modelId) return undefined;
   const enabledModel = provider.enabledModels.find((model) => model.id === modelId);
   if (!enabledModel?.embedding) return undefined;

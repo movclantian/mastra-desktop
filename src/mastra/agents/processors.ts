@@ -4,6 +4,7 @@
  * - editor / terminal / workbench 三条 state lane(computeStateSignal,
  *   docs/en/docs/harness/signals.mdx「State signals」)
  * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
+ * - promptCacheProcessor:Anthropic 前缀缓存断点(必须挂在处理器链末尾)
  */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
@@ -68,9 +69,15 @@ export const libraryAttachmentProcessor: InputProcessor = {
           continue;
         }
         if (context.text) {
-          const availableCharacters = Math.max(0, Math.floor(remainingTokens * 3));
+          const availableCharacters = Math.max(
+            0,
+            Math.floor(remainingTokens * CHARS_PER_TOKEN_APPROX),
+          );
           const availableText = context.text.slice(0, availableCharacters);
-          remainingTokens = Math.max(0, remainingTokens - Math.ceil(availableText.length / 3));
+          remainingTokens = Math.max(
+            0,
+            remainingTokens - Math.ceil(availableText.length / CHARS_PER_TOKEN_APPROX),
+          );
           content.push({
             type: "text" as const,
             text: availableText
@@ -84,8 +91,14 @@ export const libraryAttachmentProcessor: InputProcessor = {
             ? capabilities?.vision === true
             : context.asset.mediaType.startsWith("audio/") && capabilities?.audio === true;
           const estimatedTokens = context.asset.mediaType.startsWith("image/")
-            ? Math.max(1_024, Math.ceil(context.asset.byteSize / 1_024))
-            : Math.max(1_024, Math.ceil(context.asset.byteSize / 512));
+            ? Math.max(
+                MIN_MEDIA_ATTACHMENT_TOKENS,
+                Math.ceil(context.asset.byteSize / IMAGE_BYTES_PER_TOKEN),
+              )
+            : Math.max(
+                MIN_MEDIA_ATTACHMENT_TOKENS,
+                Math.ceil(context.asset.byteSize / AUDIO_BYTES_PER_TOKEN),
+              );
           if (supported && estimatedTokens <= remainingTokens) {
             remainingTokens -= estimatedTokens;
             content.push({
@@ -159,14 +172,23 @@ type StateLaneValue<K extends StateLaneId> = NonNullable<WorkbenchState[K]>;
 
 const workbenchStateByThread = new Map<string, WorkbenchState>();
 
-export function mergeWorkbenchState(threadId: string, patch: WorkbenchState): WorkbenchState {
-  const next = { ...(workbenchStateByThread.get(threadId) ?? {}), ...patch };
-  workbenchStateByThread.set(threadId, next);
+function workbenchStateKey(resourceId: string, threadId: string): string {
+  return JSON.stringify([resourceId, threadId]);
+}
+
+export function mergeWorkbenchState(
+  resourceId: string,
+  threadId: string,
+  patch: WorkbenchState,
+): WorkbenchState {
+  const key = workbenchStateKey(resourceId, threadId);
+  const next = { ...(workbenchStateByThread.get(key) ?? {}), ...patch };
+  workbenchStateByThread.set(key, next);
   return next;
 }
 
-function readWorkbenchState(threadId: string): WorkbenchState | undefined {
-  return workbenchStateByThread.get(threadId);
+function readWorkbenchState(resourceId: string, threadId: string): WorkbenchState | undefined {
+  return workbenchStateByThread.get(workbenchStateKey(resourceId, threadId));
 }
 
 function stateSignalValue<K extends StateLaneId>(
@@ -218,7 +240,7 @@ function createStateLaneProcessor<K extends StateLaneId>(options: {
     id: `${options.stateId}-state`,
     stateId: options.stateId,
     computeStateSignal(args) {
-      const value = readWorkbenchState(args.threadId)?.[options.stateId] as
+      const value = readWorkbenchState(args.resourceId, args.threadId)?.[options.stateId] as
         | StateLaneValue<K>
         | undefined;
       if (!value) return;
@@ -419,5 +441,70 @@ export const agentsMdProcessor: InputProcessor = {
       });
     }
     return messageList;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// 前缀缓存断点 (docs/en/reference/processors/processor-interface.mdx 的 processLLMRequest)
+// ---------------------------------------------------------------------------
+
+/**
+ * Anthropic 是三家供应商里唯一需要**显式**声明缓存边界的:OpenAI 与 Gemini 只要前缀
+ * 逐字节一致就自动命中,Anthropic 要在内容块上打 cache_control 断点。
+ *
+ * 渲染顺序是 tools → system → messages,按稳定性分三段(上限 4 个,还留一个余量):
+ * 1. **第一条** system 消息 —— Mastra 的 getAllSystemMessages() 是
+ *    [...untagged, ...tagged],Agent 的 instructions 数组在前、memory(OM 观察 /
+ *    working memory)在后,所以第一条就是最稳定的 BASE_INSTRUCTIONS。工具定义排在
+ *    它前面,一并进这段前缀:换模式改了后面的 mode/skills 文案、OM 折叠了观察,
+ *    这一段仍然命中。
+ * 2. **最后一条** system 消息 —— 兜住 mode / 技能 / OM 那些易变的 system 段。
+ * 3. prompt 的最后一条消息 —— agentic loop 每步都在尾部追加,本步写入、下一步命中。
+ *
+ * 多打断点不会多付写入费:命中的前缀算 read(0.1x)并顺带刷新 TTL,写入只发生在
+ * 「最后一次命中之后到最末断点」这一段 —— 断点只是把命中边界切得更细。
+ *
+ * 上限 4 个由 @ai-sdk/anthropic 的 CacheControlValidator 兜底(超出只警告不报错)。
+ *
+ * 必须注册在 inputProcessors 的**最后**:guardrails 里的 ProviderHistoryCompat 等同样在
+ * processLLMRequest 改写 prompt,晚改写的一方会覆盖早先挂上的 providerOptions。
+ */
+function providerNamespace(model: { provider?: string }): string {
+  // 与 @ai-sdk/anthropic 的 providerOptionsName 同一套规则:取第一个点之前的部分
+  // ('anthropic.messages' → 'anthropic'),供应商包正是按这个键读 providerOptions。
+  const provider = typeof model.provider === "string" ? model.provider : "";
+  const dotIndex = provider.indexOf(".");
+  return dotIndex === -1 ? provider : provider.slice(0, dotIndex);
+}
+
+export const promptCacheProcessor: InputProcessor = {
+  id: "prompt-cache-breakpoints",
+  processLLMRequest({ model, prompt }) {
+    if (providerNamespace(model) !== "anthropic") return;
+    if (prompt.length === 0) return;
+
+    // Set 去重:只有一条 system 消息、或整个 prompt 只有 system 时索引会重合
+    const breakpoints = new Set<number>([prompt.length - 1]);
+    const firstSystemIndex = prompt.findIndex((message) => message.role === "system");
+    if (firstSystemIndex >= 0) {
+      breakpoints.add(firstSystemIndex);
+      breakpoints.add(prompt.findLastIndex((message) => message.role === "system"));
+    }
+
+    const next = [...prompt];
+    for (const index of breakpoints) {
+      const message = next[index];
+      next[index] = {
+        ...message,
+        providerOptions: {
+          ...message.providerOptions,
+          anthropic: {
+            ...message.providerOptions?.anthropic,
+            cacheControl: { type: "ephemeral" },
+          },
+        },
+      };
+    }
+    return { prompt: next };
   },
 };

@@ -984,6 +984,7 @@ function bootstrap(): void {
       let oldDir = "";
       try {
         const resp = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
+          headers: { "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN },
           signal: AbortSignal.timeout(2_000),
         });
         if (resp.ok) {
@@ -1028,6 +1029,7 @@ function bootstrap(): void {
       let dataDir = "";
       try {
         const resp = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
+          headers: { "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN },
           signal: AbortSignal.timeout(2_000),
         });
         if (resp.ok) {

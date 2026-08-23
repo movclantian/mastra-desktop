@@ -26,10 +26,17 @@ const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-type ContextUsageColor = "teal" | "amber" | "violet";
+type ContextUsageColor = "teal" | "amber" | "violet" | "sky" | "rose";
+
+type ContextUsageMetricId =
+  | "system-prompt"
+  | "tools-and-subagents"
+  | "conversation"
+  | "mcp"
+  | "skills";
 
 interface ContextUsageMetric {
-  id: "input" | "output" | "reasoning";
+  id: ContextUsageMetricId;
   label: string;
   tokens: number;
   color: ContextUsageColor;
@@ -37,9 +44,13 @@ interface ContextUsageMetric {
 
 const CONTEXT_USAGE_COLOR_CLASSES: Record<ContextUsageColor, string> = {
   amber: "bg-amber-400",
+  rose: "bg-rose-400",
+  sky: "bg-sky-500",
   teal: "bg-teal-500",
   violet: "bg-violet-500",
 };
+
+export type ContextUsageBreakdown = Partial<Record<ContextUsageMetricId, number>>;
 
 type ModelId = string;
 
@@ -48,6 +59,7 @@ interface ContextSchema {
   maxTokens: number;
   usage?: LanguageModelUsage;
   modelId?: ModelId;
+  breakdown?: ContextUsageBreakdown;
 }
 
 const ContextContext = createContext<ContextSchema | null>(null);
@@ -71,30 +83,69 @@ const formatUsagePercent = (percent: number) => PERCENT_FORMATTER.format(percent
 
 const formatCompactTokens = (tokens: number) => COMPACT_NUMBER_FORMATTER.format(tokens);
 
-const getContextUsageMetrics = (usage?: LanguageModelUsage): ContextUsageMetric[] => {
-  if (!usage) return [];
+/**
+ * AI SDK v7 的 usage.inputTokens 是「含缓存」的总量,inputTokenDetails 才是分项
+ * (noCache / cacheRead / cacheWrite)。展示与计费都必须拆开:缓存命中约 0.1x 输入价,
+ * 缓存写入约 1.25x —— 混在一起既看不出命中率,也会把账算错。
+ */
+const splitInputTokens = (usage?: LanguageModelUsage) => {
+  const total = Math.max(0, usage?.inputTokens ?? 0);
+  const cacheRead = Math.max(0, Math.min(total, usage?.inputTokenDetails?.cacheReadTokens ?? 0));
+  const cacheWrite = Math.max(
+    0,
+    Math.min(total - cacheRead, usage?.inputTokenDetails?.cacheWriteTokens ?? 0),
+  );
+  const noCache = Math.max(
+    0,
+    usage?.inputTokenDetails?.noCacheTokens ?? total - cacheRead - cacheWrite,
+  );
+  return { cacheRead, cacheWrite, noCache, total };
+};
 
-  const outputTokens = Math.max(0, usage.outputTokens ?? 0);
-  const reasoningTokens = Math.min(outputTokens, usage.outputTokenDetails?.reasoningTokens ?? 0);
+const getContextUsageMetrics = (
+  usedTokens: number,
+  breakdown?: ContextUsageBreakdown,
+): ContextUsageMetric[] => {
+  const total = Number.isFinite(usedTokens) ? Math.max(0, usedTokens) : 0;
+  const raw = {
+    systemPrompt: Math.max(0, breakdown?.["system-prompt"] ?? 0),
+    toolsAndSubagents: Math.max(0, breakdown?.["tools-and-subagents"] ?? 0),
+    conversation: Math.max(0, breakdown?.conversation ?? 0),
+    mcp: Math.max(0, breakdown?.mcp ?? 0),
+    skills: Math.max(0, breakdown?.skills ?? 0),
+  };
+  const specified = Object.values(raw).reduce((sum, tokens) => sum + tokens, 0);
+  // Aggregate provider usage can leave a remainder; keep it visible in the
+  // conversation segment so the colored bar always represents the total.
+  raw.conversation += Math.max(0, total - specified);
 
   return [
-    { color: "teal", id: "input", label: "输入", tokens: usage.inputTokens ?? 0 },
+    { color: "teal", id: "system-prompt", label: "系统提示词", tokens: raw.systemPrompt },
     {
       color: "amber",
-      id: "output",
-      label: "输出",
-      tokens: outputTokens - reasoningTokens,
+      id: "tools-and-subagents",
+      label: "工具及子智能体",
+      tokens: raw.toolsAndSubagents,
     },
-    { color: "violet", id: "reasoning", label: "思考", tokens: reasoningTokens },
+    { color: "violet", id: "conversation", label: "对话消息", tokens: raw.conversation },
+    { color: "sky", id: "mcp", label: "MCP", tokens: raw.mcp },
+    { color: "rose", id: "skills", label: "技能", tokens: raw.skills },
   ];
 };
 
 export type ContextProps = ComponentProps<typeof HoverCard> & ContextSchema;
 
-export const Context = ({ usedTokens, maxTokens, usage, modelId, ...props }: ContextProps) => {
+export const Context = ({
+  usedTokens,
+  maxTokens,
+  usage,
+  modelId,
+  breakdown,
+  ...props
+}: ContextProps) => {
   const contextValue = useMemo(
-    () => ({ maxTokens, modelId, usage, usedTokens }),
-    [maxTokens, modelId, usage, usedTokens],
+    () => ({ breakdown, maxTokens, modelId, usage, usedTokens }),
+    [breakdown, maxTokens, modelId, usage, usedTokens],
   );
 
   return (
@@ -181,9 +232,11 @@ export const ContextContentHeader = ({
   className,
   ...props
 }: ContextContentHeaderProps) => {
-  const { usage, usedTokens, maxTokens } = useContextValue();
-  const metrics = getContextUsageMetrics(usage);
+  const { usage, usedTokens, maxTokens, breakdown } = useContextValue();
+  const metrics = getContextUsageMetrics(usedTokens, breakdown);
   const percentNumber = getUsagePercent(usedTokens, maxTokens);
+  const input = splitInputTokens(usage);
+  const cachePercent = formatUsagePercent(getUsagePercent(input.cacheRead, input.total));
 
   return (
     <div className={cn("w-full space-y-2.5 p-3", className)} {...props}>
@@ -200,6 +253,8 @@ export const ContextContentHeader = ({
               <span>{formatCompactTokens(usedTokens)}</span>
               <span>/</span>
               <span>{formatCompactTokens(maxTokens)}</span>
+              <span aria-hidden="true">·</span>
+              <span>缓存比 {cachePercent}</span>
             </p>
           </div>
           <div
@@ -242,10 +297,8 @@ export const ContextContentBody = ({ children, className, ...props }: ContextCon
 export type ContextContentBreakdownProps = ComponentProps<"div">;
 
 export const ContextContentBreakdown = ({ className, ...props }: ContextContentBreakdownProps) => {
-  const { usage, maxTokens } = useContextValue();
-  const metrics = getContextUsageMetrics(usage);
-
-  if (metrics.length === 0) return null;
+  const { usedTokens, maxTokens, breakdown } = useContextValue();
+  const metrics = getContextUsageMetrics(usedTokens, breakdown);
 
   return (
     <div className={cn("w-full space-y-2.5", className)} role="list" {...props}>
@@ -286,19 +339,33 @@ export const ContextContentFooter = ({
   ...props
 }: ContextContentFooterProps) => {
   const { modelId, usage } = useContextValue();
-  const costUSD = modelId
+  const input = splitInputTokens(usage);
+  // tokenlens 的 totalUSD = input + output + cacheRead + cacheWrite,所以 input 必须传
+  // 「未缓存」部分,否则命中的 token 会被按全价重复计一次。
+  const cost = modelId
     ? getUsage({
         modelId,
         usage: {
-          input: usage?.inputTokens ?? 0,
+          cacheReads: input.cacheRead,
+          cacheWrites: input.cacheWrite,
+          input: input.noCache,
           output: usage?.outputTokens ?? 0,
         },
-      }).costUSD?.totalUSD
+      }).costUSD
     : undefined;
+  // 模型目录里没有缓存单价时 cacheRead/WriteUSD 为空,这些 token 不能凭空免费 —— 退回输入价。
+  const unpricedCacheTokens =
+    (cost?.cacheReadUSD === undefined ? input.cacheRead : 0) +
+    (cost?.cacheWriteUSD === undefined ? input.cacheWrite : 0);
+  const unpricedUSD =
+    modelId && unpricedCacheTokens > 0
+      ? (getUsage({ modelId, usage: { input: unpricedCacheTokens, output: 0 } }).costUSD
+          ?.inputUSD ?? 0)
+      : 0;
   const totalCost = new Intl.NumberFormat("en-US", {
     currency: "USD",
     style: "currency",
-  }).format(costUSD ?? 0);
+  }).format((cost?.totalUSD ?? 0) + unpricedUSD);
 
   return (
     <div

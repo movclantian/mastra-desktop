@@ -128,7 +128,7 @@ export function StorageSection() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <p className="min-w-0 flex-1 truncate rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
+            <p className="min-w-0 flex-1 break-all rounded-md border px-2.5 py-2 font-mono text-xs text-muted-foreground">
               {user.id}
             </p>
             <Button

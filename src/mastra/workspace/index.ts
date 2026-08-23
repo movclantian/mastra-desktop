@@ -18,10 +18,18 @@ import { join, resolve } from "node:path";
 import {
   LocalFilesystem,
   LocalSandbox,
+  type ToolConfigWithArgsContext,
   Workspace,
+  type WorkspaceToolConfig,
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
-import { getAppConfig, getStorageDirectory, PROJECT_ROOT, setAppConfig } from "../storage";
+import {
+  getAppConfig,
+  getResourceScope,
+  getStorageDirectory,
+  PROJECT_ROOT,
+  setAppConfig,
+} from "../storage";
 import { createWorkspaceChangeHooks, deleteWorkspaceChanges } from "./changes";
 
 export {
@@ -46,6 +54,20 @@ export const WORKSPACE_PATH_CONTEXT_KEY = "mastra-work:workspace-path";
 
 /** 默认线程工作区根:<存储目录>/workspace/threads(绝对路径,规避 cwd 漂移) */
 const DEFAULT_THREADS_ROOT = join(getStorageDirectory() || PROJECT_ROOT, "workspace", "threads");
+
+function scopeKey(): string {
+  return getResourceScope() ?? "__system__";
+}
+
+function scopePathSegment(): string {
+  return getResourceScope() ? encodeURIComponent(getResourceScope() as string) : "system";
+}
+
+function defaultThreadsRoot(): string {
+  return getResourceScope()
+    ? join(DEFAULT_THREADS_ROOT, "users", scopePathSegment())
+    : DEFAULT_THREADS_ROOT;
+}
 
 export interface WorkspaceUserConfig {
   /** 工作区总开关:关闭时不向 Agent 注入任何 workspace 工具 */
@@ -110,6 +132,56 @@ interface WorkspaceToolsUserConfig {
   [toolName: string]: boolean | number | WorkspaceToolRule | undefined;
 }
 
+const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
+const PERMISSION_CATEGORIES = ["read", "edit", "execute", "mcp", "other"] as const;
+
+/**
+ * The agent-level approval callback cannot override a Workspace tool's own
+ * `requireApproval: true` flag.  Workspace supports dynamic approval values,
+ * so the cached instance can still honor the current request's allow-all
+ * policy without baking one session's permissions into the cache.
+ */
+function isSessionFullyAllowed(requestContext: Record<string, unknown>): boolean {
+  const value = requestContext[PERMISSION_RULES_CONTEXT_KEY];
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const rules = value as {
+    categories?: Record<string, unknown>;
+    tools?: Record<string, unknown>;
+  };
+  return (
+    PERMISSION_CATEGORIES.every((category) => rules.categories?.[category] === "allow") &&
+    Object.values(rules.tools ?? {}).every((policy) => policy === "allow")
+  );
+}
+
+function wrapWorkspaceApproval(
+  value: WorkspaceToolConfig["requireApproval"],
+): WorkspaceToolConfig["requireApproval"] {
+  if (value === undefined) return undefined;
+  return async (context: ToolConfigWithArgsContext) => {
+    if (isSessionFullyAllowed(context.requestContext)) return false;
+    return typeof value === "function" ? value(context) : value;
+  };
+}
+
+function getWorkspaceToolsConfig(): WorkspaceToolsConfig {
+  const source = getRuntime().config.tools as WorkspaceToolsConfig;
+  const output = { ...source } as Record<string, unknown>;
+  if (source.requireApproval !== undefined) {
+    output.requireApproval = wrapWorkspaceApproval(source.requireApproval);
+  }
+  for (const [toolName, rawRule] of Object.entries(source)) {
+    if (typeof rawRule !== "object" || rawRule === null || Array.isArray(rawRule)) continue;
+    const rule = rawRule as WorkspaceToolConfig;
+    if (rule.requireApproval === undefined) continue;
+    output[toolName] = {
+      ...rule,
+      requireApproval: wrapWorkspaceApproval(rule.requireApproval),
+    } satisfies WorkspaceToolConfig;
+  }
+  return output as WorkspaceToolsConfig;
+}
+
 const DEFAULT_CONFIG: WorkspaceUserConfig = {
   enabled: true,
   threadsRoot: DEFAULT_THREADS_ROOT,
@@ -141,14 +213,26 @@ const DEFAULT_CONFIG: WorkspaceUserConfig = {
   autoIndexPaths: [],
 };
 
+function defaultWorkspaceConfig(): WorkspaceUserConfig {
+  return { ...DEFAULT_CONFIG, threadsRoot: defaultThreadsRoot() };
+}
+
 /** 读取工作区配置(app_config 表 key="workspace";无记录或损坏时回落默认值) */
 export async function getWorkspaceConfig(): Promise<WorkspaceUserConfig> {
   const raw = await getAppConfig(WORKSPACE_CONFIG_KEY);
-  if (!raw) return DEFAULT_CONFIG;
+  if (!raw) {
+    const next = defaultWorkspaceConfig();
+    getRuntime().config = next;
+    return next;
+  }
   try {
-    return normalizeWorkspaceConfig(JSON.parse(raw) as Partial<WorkspaceUserConfig>);
+    const next = normalizeWorkspaceConfig(JSON.parse(raw) as Partial<WorkspaceUserConfig>);
+    getRuntime().config = next;
+    return next;
   } catch {
-    return DEFAULT_CONFIG;
+    const next = defaultWorkspaceConfig();
+    getRuntime().config = next;
+    return next;
   }
 }
 
@@ -156,9 +240,10 @@ export async function getWorkspaceConfig(): Promise<WorkspaceUserConfig> {
 export async function saveWorkspaceConfig(next: WorkspaceUserConfig): Promise<void> {
   const normalized = normalizeWorkspaceConfig(next);
   await setAppConfig(WORKSPACE_CONFIG_KEY, JSON.stringify(normalized, null, 2));
-  config = normalized;
-  const previous = [...workspaceCache.values()];
-  workspaceCache.clear();
+  const runtime = getRuntime();
+  runtime.config = normalized;
+  const previous = [...runtime.cache.values()];
+  runtime.cache.clear();
   await Promise.allSettled(
     previous.map((workspace) => Promise.resolve().then(() => workspace.destroy())),
   );
@@ -218,16 +303,15 @@ function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
 }
 
 function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): WorkspaceUserConfig {
-  const merged = { ...DEFAULT_CONFIG, ...input };
+  const defaults = defaultWorkspaceConfig();
+  const merged = { ...defaults, ...input };
   const rawEnv = merged.sandboxEnv;
   return {
-    ...DEFAULT_CONFIG,
+    ...defaults,
     ...merged,
     enabled: merged.enabled !== false,
     threadsRoot:
-      typeof merged.threadsRoot === "string"
-        ? merged.threadsRoot.trim()
-        : DEFAULT_CONFIG.threadsRoot,
+      typeof merged.threadsRoot === "string" ? merged.threadsRoot.trim() : defaults.threadsRoot,
     allowedPaths: cleanStrings(merged.allowedPaths),
     readOnly: merged.readOnly === true,
     sandboxEnabled: merged.sandboxEnabled === true,
@@ -306,23 +390,36 @@ export async function addRecentWorkspace(path: string): Promise<void> {
   await setAppConfig(RECENT_WORKSPACES_KEY, JSON.stringify(next, null, 2));
 }
 
-// 运行时配置为模块级可变状态:顶层 await 在服务启动时从数据库读取(同 memory 模块),
-// 保存配置时原地替换 —— 所有读取函数实时反映新值,无需重启。
-let config = await getWorkspaceConfig();
+interface WorkspaceRuntime {
+  config: WorkspaceUserConfig;
+  cache: Map<string, Workspace>;
+}
+
+const runtimeByScope = new Map<string, WorkspaceRuntime>();
+
+function getRuntime(): WorkspaceRuntime {
+  const key = scopeKey();
+  let runtime = runtimeByScope.get(key);
+  if (!runtime) {
+    runtime = { config: defaultWorkspaceConfig(), cache: new Map() };
+    runtimeByScope.set(key, runtime);
+  }
+  return runtime;
+}
 
 /** 工作区总开关(Agent 动态 workspace 函数先查再解析,避免禁用时建目录) */
 export function isWorkspaceEnabled(): boolean {
-  return config.enabled;
+  return getRuntime().config.enabled;
 }
 
 /** 线程工作区根目录(隐式绑定的父目录) */
 export function getThreadsRoot(): string {
-  return config.threadsRoot;
+  return getRuntime().config.threadsRoot;
 }
 
 /** 线程的隐式工作区目录(仅路径计算;实际创建发生在首条消息绑定时) */
 export function implicitThreadWorkspacePath(threadId: string): string {
-  return join(config.threadsRoot, threadId);
+  return join(getThreadsRoot(), threadId);
 }
 
 /** 确保目录存在(隐式绑定首次落盘) */
@@ -332,21 +429,24 @@ export function ensureDirectory(path: string): void {
 
 /** 全局技能目录:上传一次后可被所有线程的 Agent 发现。 */
 export function getManagedSkillsDirectory(): string {
-  ensureDirectory(MANAGED_SKILLS_DIRECTORY);
-  return MANAGED_SKILLS_DIRECTORY;
+  const directory = getResourceScope()
+    ? join(MANAGED_SKILLS_DIRECTORY, "users", scopePathSegment())
+    : MANAGED_SKILLS_DIRECTORY;
+  ensureDirectory(directory);
+  return directory;
 }
 
 // Workspace 实例按路径缓存:BM25 索引 / LSP 客户端初始化昂贵,
 // 同一线程多次请求必须复用同一实例(workspace-class.mdx 单实例语义)。
-const workspaceCache = new Map<string, Workspace>();
-
 /**
  * 获取(或创建并缓存)指定目录的 Workspace 实例。
  * Agent 的动态 workspace 函数按 requestContext 里的线程工作区路径调用;
  * 每个实例的 filesystem/sandbox 都 contained 在该目录内。
  */
 export function getThreadWorkspace(workspacePath: string): Workspace {
-  const cached = workspaceCache.get(workspacePath);
+  const runtime = getRuntime();
+  const config = runtime.config;
+  const cached = runtime.cache.get(workspacePath);
   if (cached) return cached;
 
   // Windows 无受支持的原生隔离后端(seatbelt=macOS / bwrap=Linux),
@@ -404,7 +504,7 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
     ...(Object.keys(config.tools).length
       ? {
           tools: {
-            ...(config.tools as WorkspaceToolsConfig),
+            ...getWorkspaceToolsConfig(),
             hooks: createWorkspaceChangeHooks(filesystem),
           } as WorkspaceToolsConfig,
         }
@@ -412,7 +512,7 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
     ...(config.skillsPaths.length ? { skills: config.skillsPaths } : {}),
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
   });
-  workspaceCache.set(workspacePath, workspace);
+  runtime.cache.set(workspacePath, workspace);
   return workspace;
 }
 
@@ -424,11 +524,12 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
 export async function deleteThreadWorkspace(threadId: string, metadata?: unknown): Promise<void> {
   const meta = metadata as { workspacePath?: string; workspaceExplicit?: boolean } | undefined;
   const implicitPath = implicitThreadWorkspacePath(threadId);
+  const runtime = getRuntime();
 
   // 1. 销毁并清除隐式工作区的 Workspace 实例及物理目录
-  const implicitCached = workspaceCache.get(implicitPath);
+  const implicitCached = runtime.cache.get(implicitPath);
   if (implicitCached) {
-    workspaceCache.delete(implicitPath);
+    runtime.cache.delete(implicitPath);
     await Promise.resolve()
       .then(() => implicitCached.destroy())
       .catch(() => undefined);
@@ -437,9 +538,9 @@ export async function deleteThreadWorkspace(threadId: string, metadata?: unknown
 
   // 2. 若 metadata 指向了自定义路径:
   if (meta?.workspacePath) {
-    const explicitCached = workspaceCache.get(meta.workspacePath);
+    const explicitCached = runtime.cache.get(meta.workspacePath);
     if (explicitCached) {
-      workspaceCache.delete(meta.workspacePath);
+      runtime.cache.delete(meta.workspacePath);
       await Promise.resolve()
         .then(() => explicitCached.destroy())
         .catch(() => undefined);
@@ -447,7 +548,7 @@ export async function deleteThreadWorkspace(threadId: string, metadata?: unknown
     // 如果该路径非用户外部显式选中的项目(例如位于 threadsRoot 内部),亦物理清理
     if (
       !meta.workspaceExplicit &&
-      resolve(meta.workspacePath).startsWith(resolve(config.threadsRoot))
+      resolve(meta.workspacePath).startsWith(resolve(runtime.config.threadsRoot))
     ) {
       await rm(meta.workspacePath, { recursive: true, force: true }).catch(() => undefined);
     }

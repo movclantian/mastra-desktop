@@ -52,6 +52,30 @@ export const WORK_ERRORS = {
     status: 400,
     text: "请求参数无效",
   },
+  AUTH_REQUIRED: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 401,
+    text: "需要登录",
+  },
+  AUTH_INVALID_CREDENTIALS: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 401,
+    text: "邮箱或密码错误",
+  },
+  AUTH_EMAIL_EXISTS: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "该邮箱已经注册",
+  },
+  AUTH_VALIDATION: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 400,
+    text: "注册信息无效",
+  },
 
   // ---- 线程与记忆(server/routes/threads)-------------------------------
   THREAD_NOT_FOUND: {

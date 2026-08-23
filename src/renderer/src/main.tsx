@@ -6,15 +6,20 @@ import "@/lib/theme/fonts";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@/components/theme-provider";
+import { AuthProvider, installAuthenticatedFetch } from "@/lib/auth";
 import App from "./App";
+
+installAuthenticatedFetch();
 
 const rootElement = document.getElementById("root");
 if (rootElement) {
   createRoot(rootElement).render(
     <StrictMode>
-      <ThemeProvider defaultTheme="light">
-        <App />
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider defaultTheme="light">
+          <App />
+        </ThemeProvider>
+      </AuthProvider>
     </StrictMode>,
   );
 }

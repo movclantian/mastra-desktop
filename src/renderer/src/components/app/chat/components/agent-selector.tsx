@@ -111,7 +111,7 @@ function ProfileItem({
           <span className="truncate">{profile.displayName}</span>
           {selected === profile.id ? <CheckIcon className="ml-auto size-3.5" /> : null}
         </span>
-        <span className="block truncate text-[11px] text-muted-foreground">
+        <span className="block whitespace-normal break-words text-[11px] text-muted-foreground">
           {profile.profession || profile.description}
         </span>
       </span>

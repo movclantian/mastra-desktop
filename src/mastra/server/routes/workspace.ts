@@ -185,6 +185,82 @@ export const createThreadTreeEntryRoute = registerApiRoute("/work/threads/:threa
   },
 });
 
+const MIME_TYPES: Record<string, string> = {
+  // Documents
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  doc: "application/msword",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ppt: "application/vnd.ms-powerpoint",
+  // Text / Code
+  md: "text/markdown; charset=utf-8",
+  markdown: "text/markdown; charset=utf-8",
+  txt: "text/plain; charset=utf-8",
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  js: "application/javascript; charset=utf-8",
+  ts: "application/typescript; charset=utf-8",
+  jsx: "text/javascript; charset=utf-8",
+  tsx: "text/typescript; charset=utf-8",
+  json: "application/json; charset=utf-8",
+  xml: "application/xml; charset=utf-8",
+  yaml: "text/yaml; charset=utf-8",
+  yml: "text/yaml; charset=utf-8",
+  csv: "text/csv; charset=utf-8",
+  svg: "image/svg+xml",
+  // Images
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  // Media
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  ogg: "audio/ogg",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  // Archives
+  zip: "application/zip",
+  tar: "application/x-tar",
+  gz: "application/gzip",
+};
+
+export function getMimeType(filePath: string): string {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  return MIME_TYPES[ext] || "application/octet-stream";
+}
+
+// GET /work/threads/:threadId/raw?path=<相对路径> — 读取原始文件流（供预览与下载）
+export const threadRawFileRoute = registerApiRoute("/work/threads/:threadId/raw", {
+  method: "GET",
+  handler: async (c) => {
+    const workspace = await ownedWorkspace(c);
+    if (!workspace) throw workError("WORKSPACE_NOT_BROWSABLE");
+    const relativePath = c.req.query("path");
+    const target = await containedExistingPath(workspace.root, relativePath);
+    if (!target || !relativePath) throw workError("WORKSPACE_PATH_INVALID");
+    try {
+      const fileInfo = await stat(target);
+      if (!fileInfo.isFile()) throw workError("WORKSPACE_FILE_NOT_EDITABLE");
+      const buffer = await readFile(target);
+      const mediaType = getMimeType(target);
+      return c.body(buffer as never, 200, {
+        "Content-Type": mediaType,
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(basename(target))}`,
+        "Cache-Control": "no-cache",
+      });
+    } catch {
+      throw workError("WORKSPACE_FILE_NOT_FOUND");
+    }
+  },
+});
+
 // GET /work/threads/:threadId/file?path=<相对路径> — 编辑器读取 UTF-8 文本
 export const threadFileRoute = registerApiRoute("/work/threads/:threadId/file", {
   method: "GET",
@@ -201,13 +277,12 @@ export const threadFileRoute = registerApiRoute("/work/threads/:threadId/file", 
         throw workError("WORKSPACE_FILE_TOO_LARGE", { details: { size: fileInfo.size } });
       }
       const content = await readFile(target);
-      if (content.includes(0)) {
-        throw workError("WORKSPACE_FILE_BINARY", { details: { size: fileInfo.size } });
-      }
+      const isBinary = content.includes(0);
       return c.json({
         path: relativePath,
         name: basename(target),
-        content: content.toString("utf8"),
+        content: isBinary ? "" : content.toString("utf8"),
+        isBinary,
         size: fileInfo.size,
         modifiedAt: fileInfo.mtime.toISOString(),
       });

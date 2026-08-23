@@ -30,7 +30,6 @@ export const LIBRARY_GRAPH_SEARCH_TOOL_ID = "library_graph_search";
 // RequestContext 键(chat 路由写入,库内工具 / Agent 处理器读取)
 export const LIBRARY_RESOURCE_CONTEXT_KEY = "libraryResourceId";
 export const LIBRARY_THREAD_CONTEXT_KEY = "libraryThreadId";
-export const LIBRARY_SEARCH_CONTEXT_KEY = "librarySearchContext";
 export const LIBRARY_ORIGIN_CONTEXT_KEY = "libraryOrigin";
 export const LIBRARY_RERANK_MODEL_CONTEXT_KEY = "libraryRerankModel";
 export const LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY = "libraryAttachmentTokenBudget";

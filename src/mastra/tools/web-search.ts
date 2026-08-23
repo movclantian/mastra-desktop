@@ -120,6 +120,11 @@ const ANYSEARCH_DOMAINS = [
 
 const MAX_RESULT_CONTENT = 2_000;
 
+/** AnySearch 单次检索 / 子域查询超时(毫秒)。 */
+const _ANYSEARCH_SEARCH_TIMEOUT_MS = 30_000;
+/** AnySearch 批量检索 / 整页抓取超时(毫秒)——这两类调用耗时显著高于单次检索。 */
+const _ANYSEARCH_BATCH_TIMEOUT_MS = 60_000;
+
 function anysearchError(status: number, message: string): Error {
   if (status === 401) {
     return new Error(
