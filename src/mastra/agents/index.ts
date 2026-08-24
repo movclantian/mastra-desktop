@@ -2,7 +2,7 @@
  * 主工作 Agent(docs/en/docs/agents/overview.mdx)。
  * instructions / model / memory / workspace / tools 全部以函数形式配置,按
  * RequestContext 逐请求解析 —— 模式(plan/build/review)、权限规则、联网检索、
- * 工作区绑定都是线程级状态,经 context 传入(见 server/routes/chat.ts)。
+ * 工作区绑定都是线程级状态,经 context 传入(见 routes/chat.ts)。
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
 import {
@@ -162,7 +162,8 @@ When a <notification-summary pending="N"> signal appears, the full records are w
 /**
  * 子代理委派配置(docs/en/docs/subagents.mdx):
  * 透传最近 14 条相关上下文,保留最近工具证据并过滤敏感消息;
- * 单轮委派上限 8 次、每次至多 6 步,空结果显式回填,防止把"无发现"当成证据。
+ * 子 Agent 的工具和执行步数由子 Agent 自身配置决定,空结果显式回填,
+ * 防止把"无发现"当成证据。
  */
 const SENSITIVE_KEY_PATTERN =
   /^(?:api[_ -]?key|password|secret|authorization|access[_ -]?token|refresh[_ -]?token|bearer)$/i;
@@ -265,12 +266,7 @@ const WORK_DELEGATION: DelegationConfig = {
     if (selectedModels !== undefined) {
       context.requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, selectedModels);
     }
-    return context.iteration > 8
-      ? {
-          proceed: false,
-          rejectionReason: "Delegation limit reached; synthesize the available evidence.",
-        }
-      : { proceed: true, modifiedMaxSteps: 6 };
+    return { proceed: true };
   },
   onDelegationComplete: (context) => {
     if (!context.success) {
@@ -433,23 +429,24 @@ function createWorkAgent(
     errorProcessors: async () => buildGuardrailErrorProcessors(),
     signals: [new TaskSignalProvider(), workWebhookSignals, workPollingSignals],
     agents: async ({ requestContext }) => {
-      if (member) return {};
       const profile =
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
         ));
       if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
+      const members = await resolveProfileMembers(
+        profile,
+        resourceScope ?? resourceScopeFromRequestContext(requestContext),
+      );
       return {
         ...workSubagents,
-        ...(await resolveProfileMembers(
-          profile,
-          resourceScope ?? resourceScopeFromRequestContext(requestContext),
-        )),
+        ...Object.fromEntries(
+          Object.entries(members).filter(([memberId]) => memberId !== member?.id),
+        ),
       };
     },
     workflows: async ({ requestContext }): Promise<Record<string, AnyWorkflow>> => {
-      if (member) return {};
       const profile =
         fixedProfile ??
         (await getAgentProfile(
@@ -462,15 +459,16 @@ function createWorkAgent(
       return workflowResult ? { teamWorkflow: workflowResult.workflow } : {};
     },
     browser: workBrowser,
-    backgroundTasks: member
-      ? { disabled: true }
-      : {
-          tools: {
-            "agent-explorer": { enabled: true, timeoutMs: 900_000 },
-            "agent-reviewer": { enabled: true, timeoutMs: 900_000 },
-          },
-          waitTimeoutMs: 900_000,
-        },
+    backgroundTasks: {
+      tools: Object.fromEntries(
+        [
+          "explorer",
+          "reviewer",
+          ...(fixedProfile?.type === "team" ? fixedProfile.members.map(({ id }) => id) : []),
+        ].map((agentName) => [agentName, { enabled: true, timeoutMs: 900_000 }]),
+      ),
+      waitTimeoutMs: 900_000,
+    },
     workspace: async ({ requestContext }) => {
       if (!isWorkspaceEnabled()) return undefined;
       const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
@@ -507,12 +505,7 @@ function createWorkAgent(
             ),
           )
         : approvalSafeTools;
-      const scopedTools = member?.tools.length
-        ? Object.fromEntries(
-            Object.entries(visibleTools).filter(([name]) => member.tools.includes(name)),
-          )
-        : visibleTools;
-      return withoutDeniedTools(scopedTools, rules);
+      return withoutDeniedTools(visibleTools, rules);
     },
     defaultOptions: async ({ requestContext }) => {
       const { rules } = resolveSessionPolicy(
@@ -522,32 +515,14 @@ function createWorkAgent(
       );
       const retries = getGuardrailsRuntimeConfig().maxProcessorRetries;
       const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
-      const modelRetries = { maxRetries: 4 };
-      const iterationControls = member
-        ? {}
-        : {
-            onIterationComplete: async ({ iteration }: { iteration: number }) =>
-              iteration >= 8
-                ? {
-                    continue: false,
-                    feedback:
-                      "已达到本轮工作循环上限。请基于现有证据给出结论,不要继续委派新的子任务。",
-                  }
-                : undefined,
-          };
-      if (member) return { ...processorRetries, ...modelRetries };
       if (isFullyAllowed(rules)) {
         return {
           ...processorRetries,
-          ...modelRetries,
-          ...iterationControls,
           delegation: WORK_DELEGATION,
         };
       }
       return {
         ...processorRetries,
-        ...modelRetries,
-        ...iterationControls,
         delegation: WORK_DELEGATION,
         requireToolApproval: ({ toolName }: { toolName: string }) =>
           isToolApprovalRequired(rules, toolName),

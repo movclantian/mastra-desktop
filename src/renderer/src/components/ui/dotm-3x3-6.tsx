@@ -1,8 +1,11 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { DotAnimationResolver, DotMatrixCommonProps } from "@/lib/dotmatrix-core";
-import { createDotm3x3Component } from "@/lib/dotmatrix-core";
+import type {
+  DotAnimationResolver,
+  DotMatrixCommonProps,
+} from "@/components/visual/dotmatrix/core";
+import { createDotm3x3Component } from "@/components/visual/dotmatrix/core";
 
 export type Dotm3x3_6Props = DotMatrixCommonProps;
 

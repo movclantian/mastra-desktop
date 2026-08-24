@@ -19,7 +19,6 @@ import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
-import { workSubagents } from "./agents/subagents";
 import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
 import {
   agentsMdProcessor,
@@ -29,9 +28,10 @@ import {
   terminalStateProcessor,
   workbenchStateProcessor,
 } from "./agents/processors";
+import { workSubagents } from "./agents/subagents";
 import { type AuthUser, workAuth } from "./auth";
 import { getMcpConfig } from "./connections/mcp";
-import { WorkApiError } from "./errors";
+import { WorkApiError, workError } from "./errors";
 import { getMemoryConfig } from "./memory";
 import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
 import {
@@ -40,8 +40,8 @@ import {
   onLibraryIndexSettled,
   recoverInterruptedLibraryIndexes,
 } from "./rag";
-import { workChatRoute, workRoutes } from "./server/routes";
-import { requestShutdown } from "./server/routes/shutdown";
+import { workChatRoute, workRoutes } from "./routes";
+import { requestShutdown } from "./routes/shutdown";
 import { appStorage, runWithResourceScope } from "./storage";
 import { getThreadsRoot, getThreadWorkspace, getWorkspaceConfig } from "./workspace";
 
@@ -138,6 +138,9 @@ export const mastra = new Mastra({
   server: {
     auth: workAuth,
     middleware: async (c, next) => {
+      const isWorkRoute = c.req.path.startsWith("/work/");
+      const isPublicWorkRoute =
+        c.req.path === "/work/auth/login" || c.req.path === "/work/auth/register";
       const requestContext = c.get("requestContext");
       let user = requestContext?.get("user") as AuthUser | undefined;
       if (!user) {
@@ -145,10 +148,13 @@ export const mastra = new Mastra({
           user = (await workAuth.authenticateToken("", c.req.raw)) ?? undefined;
           if (user) requestContext?.set("user", user);
         } catch {
-          // Route-level auth returns the canonical 401 response when lookup fails.
+          // Treat failed token lookup as anonymous; protected work routes reject below.
         }
       }
       if (!user) {
+        if (isWorkRoute && !isPublicWorkRoute) {
+          throw workError("AUTH_REQUIRED");
+        }
         await next();
         return;
       }
@@ -159,24 +165,24 @@ export const mastra = new Mastra({
       if (queryResource && queryResource !== user.id) {
         return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
       }
-      if (["POST", "PUT", "PATCH"].includes(c.req.method)) {
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
         const contentType = c.req.header("content-type") ?? "";
-        if (contentType.includes("application/json")) {
+        if (!contentType.includes("multipart/form-data")) {
           try {
             const body = (await c.req.raw.clone().json()) as Record<string, unknown>;
-            const bodyResource =
-              typeof body.resourceId === "string"
-                ? body.resourceId
-                : body.memory && typeof body.memory === "object"
-                  ? (body.memory as Record<string, unknown>).resource
-                  : undefined;
-            if (typeof bodyResource === "string" && bodyResource !== user.id) {
+            const bodyResources = [
+              body.resourceId,
+              body.memory && typeof body.memory === "object"
+                ? (body.memory as Record<string, unknown>).resource
+                : undefined,
+            ].filter((value) => value !== undefined);
+            if (bodyResources.some((value) => typeof value !== "string" || value !== user.id)) {
               return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
             }
           } catch {
             // Route-level JSON validation returns the canonical error response.
           }
-        } else if (contentType.includes("multipart/form-data")) {
+        } else {
           try {
             const form = await c.req.raw.clone().formData();
             const formResource = form.get("resourceId");

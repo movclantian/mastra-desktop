@@ -56,7 +56,6 @@ export interface AgentMemberDefinition {
   instructions: string;
   model?: { providerId: string; modelId: string };
   skills: string[];
-  tools: string[];
   memoryScope: "thread" | "resource";
 }
 
@@ -146,11 +145,6 @@ function normalizeProfile(
                 ? item.skills.filter(
                     (skill): skill is string =>
                       typeof skill === "string" && skill.trim().length > 0,
-                  )
-                : [],
-              tools: Array.isArray(item.tools)
-                ? item.tools.filter(
-                    (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
                   )
                 : [],
               memoryScope: item.memoryScope === "resource" ? "resource" : "thread",
@@ -320,10 +314,7 @@ export async function upsertAgentProfile(input: Partial<AgentProfile>): Promise<
   const existing = current.find((profile) => profile.id === input.id);
   const previousUpdatedAt = existing ? Date.parse(existing.updatedAt) : Number.NaN;
   const now = new Date(
-    Math.max(
-      Date.now(),
-      Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : 0,
-    ),
+    Math.max(Date.now(), Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : 0),
   ).toISOString();
   const teamWorkflow =
     input.type === "team" && !input.workflow
@@ -390,11 +381,7 @@ export async function resolveProfileMembers(
   if (!memberAgentFactory) throw new Error("Profile Agent factory is not initialized");
   const agents: Record<string, Agent> = {};
   for (const member of profile.members) {
-    agents[member.id] = memberAgentFactory(
-      profile,
-      member,
-      resourceScope ?? getResourceScope(),
-    );
+    agents[member.id] = memberAgentFactory(profile, member, resourceScope ?? getResourceScope());
   }
   memberCache.set(key, { updatedAt: profile.updatedAt, agents });
   return agents;
@@ -424,9 +411,7 @@ export function profileMemberAgentRegistryKey(
   memberId: string,
   resourceScope?: string,
 ): string {
-  return `${profileAgentRegistryKey(profile, resourceScope)}-member-${registrationToken(
-    memberId,
-  )}`;
+  return `${profileAgentRegistryKey(profile, resourceScope)}-member-${registrationToken(memberId)}`;
 }
 
 export function profileAgentRuntimeId(
@@ -730,10 +715,9 @@ export async function buildProfileWorkflow(
         }),
         { id: "synthesis-input" },
       );
-      const synthesis = cloneStep(
-        createStep(profileAgentFactory(profile, resourceScope)),
-        { id: "synthesis" },
-      );
+      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
+        id: "synthesis",
+      });
       flow = flow.then(synthesis);
     } else {
       flow = flow.map(
@@ -872,10 +856,9 @@ export async function buildProfileWorkflow(
         }),
         { id: "synthesis-input" },
       );
-      const synthesis = cloneStep(
-        createStep(profileAgentFactory(profile, resourceScope)),
-        { id: "synthesis" },
-      );
+      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
+        id: "synthesis",
+      });
       flow = flow.then(synthesis);
     }
   } else {
@@ -918,10 +901,9 @@ export async function buildProfileWorkflow(
         }),
         { id: "synthesis-input" },
       );
-      const synthesis = cloneStep(
-        createStep(profileAgentFactory(profile, resourceScope)),
-        { id: "synthesis" },
-      );
+      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
+        id: "synthesis",
+      });
       flow = flow.then(synthesis);
     }
   }

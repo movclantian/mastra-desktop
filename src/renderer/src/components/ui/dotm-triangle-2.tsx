@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { DotMatrixCommonProps } from "@/lib/dotmatrix-core";
+import type { DotMatrixCommonProps } from "@/components/visual/dotmatrix/core";
 import {
   cx,
   dmxBloomHaloSpreadClass,
@@ -11,12 +11,12 @@ import {
   resolveDmxColorTokens,
   styleOpacity,
   stylePx,
-} from "@/lib/dotmatrix-core";
+} from "@/components/visual/dotmatrix/core";
 import {
   useDotMatrixPhases,
   usePrefersReducedMotion,
   useSteppedCycle,
-} from "@/lib/dotmatrix-hooks";
+} from "@/components/visual/dotmatrix/hooks";
 
 export type DotmTriangle2Props = DotMatrixCommonProps;
 

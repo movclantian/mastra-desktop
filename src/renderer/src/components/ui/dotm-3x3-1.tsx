@@ -1,14 +1,17 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { DotAnimationResolver, DotMatrixCommonProps } from "@/lib/dotmatrix-core";
+import type {
+  DotAnimationResolver,
+  DotMatrixCommonProps,
+} from "@/components/visual/dotmatrix/core";
 import {
   DotMatrix3Base,
   spiralInward3NormFromIndex,
   spiralInward3OrderValue,
   wave3PathOpacityFromNorm,
-} from "@/lib/dotmatrix-core";
-import { useDotMatrixPhases, usePrefersReducedMotion } from "@/lib/dotmatrix-hooks";
+} from "@/components/visual/dotmatrix/core";
+import { useDotMatrixPhases, usePrefersReducedMotion } from "@/components/visual/dotmatrix/hooks";
 
 export type Dotm3x3_1Props = DotMatrixCommonProps;
 

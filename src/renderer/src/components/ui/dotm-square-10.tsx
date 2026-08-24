@@ -1,13 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import type { DotAnimationResolver, DotMatrixCommonProps } from "@/lib/dotmatrix-core";
-import { DotMatrixBase, MATRIX_SIZE } from "@/lib/dotmatrix-core";
+import type {
+  DotAnimationResolver,
+  DotMatrixCommonProps,
+} from "@/components/visual/dotmatrix/core";
+import { DotMatrixBase, MATRIX_SIZE } from "@/components/visual/dotmatrix/core";
 import {
   useDotMatrixPhases,
   usePrefersReducedMotion,
   useSteppedCycle,
-} from "@/lib/dotmatrix-hooks";
+} from "@/components/visual/dotmatrix/hooks";
 
 export type DotmSquare10Props = DotMatrixCommonProps;
 

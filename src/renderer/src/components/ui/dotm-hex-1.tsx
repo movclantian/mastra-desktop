@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import type { DotMatrixCommonProps } from "@/lib/dotmatrix-core";
+import type { DotMatrixCommonProps } from "@/components/visual/dotmatrix/core";
 import {
   cx,
   dmxBloomRootActive,
@@ -11,8 +11,12 @@ import {
   resolveDmxColorTokens,
   styleOpacity,
   stylePx,
-} from "@/lib/dotmatrix-core";
-import { useCyclePhase, useDotMatrixPhases, usePrefersReducedMotion } from "@/lib/dotmatrix-hooks";
+} from "@/components/visual/dotmatrix/core";
+import {
+  useCyclePhase,
+  useDotMatrixPhases,
+  usePrefersReducedMotion,
+} from "@/components/visual/dotmatrix/hooks";
 
 export type DotmHex1Props = DotMatrixCommonProps;
 

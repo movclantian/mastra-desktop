@@ -34,6 +34,7 @@ import { extractText } from "./extract";
 let vectorPromise: Promise<LibSQLVector> | undefined;
 const vectorIndexPromises = new Map<string, Promise<void>>();
 const indexingPromises = new Map<string, Promise<void>>();
+const LIBRARY_PROVIDER_INDEX_VERSION = 2;
 
 export async function getVector(): Promise<LibSQLVector> {
   if (!vectorPromise) {
@@ -53,22 +54,48 @@ export async function embeddingModelFor(settings: LibrarySettings) {
   return settings.embeddingModel === "base" ? fastembed.base : fastembed.small;
 }
 
-export function libraryIndexName(settings: LibrarySettings): string {
+export function libraryIndexName(settings: LibrarySettings, dimension?: number): string {
   if (settings.embeddingModel.includes("/")) {
+    if (!dimension || !Number.isInteger(dimension) || dimension <= 0) {
+      throw new Error(`嵌入模型 ${settings.embeddingModel} 未提供有效维度`);
+    }
     const safeModel = settings.embeddingModel.replace(/[^a-zA-Z0-9_]+/g, "_");
-    return `library_vectors_provider_${safeModel.slice(0, 38)}`;
+    return `library_vectors_provider_v${LIBRARY_PROVIDER_INDEX_VERSION}_${safeModel.slice(0, 38)}_${dimension}`;
   }
   return settings.embeddingModel === "base" ? LIBRARY_INDEX_NAMES.base : LIBRARY_INDEX_NAMES.small;
 }
 
-function embeddingDimensions(settings: LibrarySettings): number {
-  if (settings.embeddingModel === "base") return 768;
-  if (settings.embeddingModel === "small") return 384;
-  return 1536;
+export function observedEmbeddingDimension(
+  settings: LibrarySettings,
+  embeddings: readonly number[][],
+): number {
+  const dimensions = new Set(embeddings.map((embedding) => embedding.length));
+  if (dimensions.size !== 1 || dimensions.has(0)) {
+    throw new Error(
+      `嵌入模型 ${settings.embeddingModel} 返回了不一致的维度: ${[...dimensions].join(", ") || "空结果"}`,
+    );
+  }
+  const dimension = [...dimensions][0];
+  const expectedDimension =
+    settings.embeddingModel === "base"
+      ? 768
+      : settings.embeddingModel === "small"
+        ? 384
+        : undefined;
+  if (expectedDimension && dimension !== expectedDimension) {
+    throw new Error(
+      `嵌入模型 ${settings.embeddingModel} 维度不匹配: 预期 ${expectedDimension},实际 ${dimension}`,
+    );
+  }
+  return dimension;
 }
 
-async function ensureVectorIndex(vector: LibSQLVector, settings: LibrarySettings): Promise<string> {
-  const indexName = libraryIndexName(settings);
+async function ensureVectorIndex(
+  vector: LibSQLVector,
+  settings: LibrarySettings,
+  dimension: number,
+): Promise<string> {
+  const indexName = libraryIndexName(settings, dimension);
   const pending = vectorIndexPromises.get(indexName);
   if (pending) {
     await pending;
@@ -79,7 +106,7 @@ async function ensureVectorIndex(vector: LibSQLVector, settings: LibrarySettings
     if (!indexes.includes(indexName)) {
       await vector.createIndex({
         indexName,
-        dimension: embeddingDimensions(settings),
+        dimension,
         metric: "cosine",
       });
     }
@@ -205,7 +232,6 @@ function queueAssetIndex(
         try {
           await ensureLibrarySchema();
           const vector = await getVector();
-          const indexName = await ensureVectorIndex(vector, settings);
           const embeddingModel = await embeddingModelFor(settings);
           const doc = MDocument.fromText(extractedText);
           await updateLibraryIndexRunStage(run.id, "chunk");
@@ -236,6 +262,8 @@ function queueAssetIndex(
             model: embeddingModel,
             values: chunkTexts,
           });
+          const dimension = observedEmbeddingDimension(settings, embeddings);
+          const indexName = await ensureVectorIndex(vector, settings, dimension);
 
           stage = "vector";
           await updateLibraryIndexRunStage(run.id, "vector");

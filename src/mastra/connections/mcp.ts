@@ -7,6 +7,7 @@
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import {
+  getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
   MCPClient,
   MCPOAuthClientProvider,
@@ -57,7 +58,8 @@ interface McpRuntime {
   cachedHash: string;
   cachedClient: MCPClient | null;
   cachedTools: ToolsInput;
-  pendingAuthorizationUrl?: string;
+  authorizationUrlPromise?: Promise<string>;
+  resolveAuthorizationUrl?: (url: string) => void;
   authentication?: Promise<void>;
 }
 
@@ -203,10 +205,11 @@ class AppOAuthStorage implements OAuthStorage {
 function oauthProvider(server: McpServerConfig): MCPOAuthClientProvider | undefined {
   if (server.transport !== "http" || !server.oauth?.enabled) return undefined;
   const redirectUrl = server.oauth.redirectUrl ?? "http://127.0.0.1:4112/oauth/callback";
+  const redirectUris = getCallbackUrlCandidates(redirectUrl).map((url) => url.toString());
   return new MCPOAuthClientProvider({
     redirectUrl,
     clientMetadata: {
-      redirect_uris: [redirectUrl],
+      redirect_uris: redirectUris,
       client_name: server.oauth.clientName ?? "MastraWork",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -222,7 +225,7 @@ function oauthProvider(server: McpServerConfig): MCPOAuthClientProvider | undefi
       : {}),
     storage: new AppOAuthStorage(`mcp:oauth:${server.id}`),
     onRedirectToAuthorization: async (url) => {
-      getRuntime().pendingAuthorizationUrl = url.toString();
+      getRuntime().resolveAuthorizationUrl?.(url.toString());
     },
   });
 }
@@ -316,17 +319,26 @@ export async function authenticateMcpServer(
     runtime.cachedClient = await createClient(enabled);
     runtime.cachedHash = hash;
   }
-  runtime.pendingAuthorizationUrl = undefined;
-  runtime.authentication ??= runtime.cachedClient.authenticate(serverId).finally(() => {
-    runtime.authentication = undefined;
-    runtime.cachedHash = "";
-    runtime.cachedTools = {};
-  });
-  for (let index = 0; index < 50 && !runtime.pendingAuthorizationUrl; index += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
+  if (!runtime.authentication) {
+    runtime.authorizationUrlPromise = new Promise<string>((resolve) => {
+      runtime.resolveAuthorizationUrl = resolve;
+    });
+    runtime.authentication = runtime.cachedClient.authenticate(serverId).finally(() => {
+      runtime.authentication = undefined;
+      runtime.authorizationUrlPromise = undefined;
+      runtime.resolveAuthorizationUrl = undefined;
+      runtime.cachedHash = "";
+      runtime.cachedTools = {};
+    });
   }
-  if (runtime.pendingAuthorizationUrl)
-    return { authorizationUrl: runtime.pendingAuthorizationUrl, authenticated: false };
-  await runtime.authentication;
-  return { authenticated: true };
+  const authentication = runtime.authentication;
+  const authorizationUrlPromise = runtime.authorizationUrlPromise;
+  if (!authentication || !authorizationUrlPromise) throw new Error("MCP OAuth 状态无效");
+  return await Promise.race([
+    authorizationUrlPromise.then((authorizationUrl) => ({
+      authorizationUrl,
+      authenticated: false,
+    })),
+    authentication.then(() => ({ authenticated: true })),
+  ]);
 }

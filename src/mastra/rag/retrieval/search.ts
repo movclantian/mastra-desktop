@@ -7,7 +7,12 @@ import type { MastraLanguageModel } from "@mastra/core/agent";
 import { GraphRAG, MastraAgentRelevanceScorer, rerank, rerankWithScorer } from "@mastra/rag";
 import { embed } from "ai";
 import { resolveDefaultLanguageModel } from "../../models";
-import { embeddingModelFor, getVector, libraryIndexName } from "../document/indexing";
+import {
+  embeddingModelFor,
+  getVector,
+  libraryIndexName,
+  observedEmbeddingDimension,
+} from "../document/indexing";
 import { getLibrarySettings } from "../settings";
 import { ensureLibrarySchema, withClient } from "../storage/db";
 
@@ -21,12 +26,13 @@ export async function searchLibrary(
   await ensureLibrarySchema();
   const settings = await getLibrarySettings();
   const vector = await getVector();
-  const indexName = libraryIndexName(settings);
   const embeddingModel = await embeddingModelFor(settings);
+  const { embedding } = await embed({ model: embeddingModel, value: query });
+  const dimension = observedEmbeddingDimension(settings, [embedding]);
+  const indexName = libraryIndexName(settings, dimension);
   const graphRag = graphRagOverride ?? settings.graphRag;
   const indexes = await vector.listIndexes();
   if (!indexes.includes(indexName)) return [];
-  const { embedding } = await embed({ model: embeddingModel, value: query });
   const results = await vector.query({
     indexName,
     queryVector: embedding,
@@ -75,8 +81,6 @@ export async function searchLibrary(
     }
   }
   if (graphRag && allowed.length > 0) {
-    const dimension =
-      settings.embeddingModel === "base" ? 768 : settings.embeddingModel === "small" ? 384 : 1536;
     const graph = new GraphRAG(dimension, settings.graphThreshold);
     const chunks = allowed.map((item) => ({
       text: String(item.metadata?.text ?? ""),

@@ -1,10 +1,10 @@
 /**
  * 会话模式(plan → build → review),叠加在 Agent 请求上下文上实现。
- * 模式指令按官方 buildAgentMessageStreamOptions 的拼接语义
- * (`[agentInstructions, modeInstructions].join("\n")`)追加在 Agent
- * instructions 之后;工具收回不用单独机制 —— 模式经 deniedCategories 把
- * 权限类别压成 deny,与 permissions.ts 的用户规则走同一套执行点
- * (自注入工具不注入、工作区工具经 beforeToolCall 拒绝)。
+ * 模式指令作为系统消息追加在 Agent 的 shared instructions 之后
+ * (官方 Agent 的 instructions 是系统消息数组,可静态或按请求解析,
+ * 见 docs/en/reference/agents/agent.mdx);工具收回不用单独机制 ——
+ * 模式经 deniedCategories 把权限类别压成 deny,与 permissions.ts 的
+ * 用户规则走同一套执行点(自注入工具不注入、工作区工具经 beforeToolCall 拒绝)。
  */
 import type { ToolsInput } from "@mastra/core/agent";
 import { type PermissionRules, type ToolCategory, withCategoryPolicy } from "./permissions";

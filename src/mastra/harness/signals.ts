@@ -112,10 +112,7 @@ function publicSubscription(subscription: SignalSubscription): SignalSubscriptio
 }
 
 export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
-  private hydrated = false;
-
   async hydrate(): Promise<void> {
-    if (this.hydrated) return;
     const subscriptions = await readSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY);
     for (const subscription of subscriptions) {
       super.subscribeThread(
@@ -124,7 +121,11 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
         subscription.metadata,
       );
     }
-    this.hydrated = true;
+  }
+
+  async start(): Promise<void> {
+    await this.hydrate();
+    await super.start?.();
   }
 
   async subscribePersistent(
@@ -132,7 +133,6 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
     externalResourceId: string,
     metadata?: Record<string, unknown>,
   ) {
-    await this.hydrate();
     const subscription = super.subscribeThread(target, externalResourceId, metadata);
     await mutateSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY, (subscriptions) => [
       ...subscriptions.filter(
@@ -151,7 +151,6 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
     target: SignalProviderTarget,
     externalResourceId: string,
   ): Promise<boolean> {
-    await this.hydrate();
     const removed = super.unsubscribeThread(target, externalResourceId);
     await mutateSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY, (subscriptions) =>
       subscriptions.filter(
@@ -166,14 +165,12 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
   }
 
   async listPersistent(resourceId: string): Promise<SignalSubscription[]> {
-    await this.hydrate();
     return (await readSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY))
       .filter((item) => item.providerId === this.id && item.resourceId === resourceId)
       .map(fromPersisted);
   }
 
   async handleWebhookPersistent(request: Parameters<WebhookSignalProvider["handleWebhook"]>[0]) {
-    await this.hydrate();
     return this.handleWebhook(request);
   }
 
@@ -188,11 +185,9 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
   readonly id = "mastra-polling-signals" as const;
   readonly name = "Mastra Polling Signals";
   readonly pollInterval = 30_000;
-  private hydrated = false;
   private fingerprints = new Map<string, string>();
 
   async hydrate(): Promise<void> {
-    if (this.hydrated) return;
     const subscriptions = await readSubscriptions(POLLING_SUBSCRIPTIONS_KEY);
     for (const subscription of subscriptions) {
       super.subscribe(
@@ -201,7 +196,11 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
         subscription.metadata,
       );
     }
-    this.hydrated = true;
+  }
+
+  async start(): Promise<void> {
+    await this.hydrate();
+    await super.start?.();
   }
 
   async subscribePersistent(
@@ -211,7 +210,6 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
   ): Promise<SignalSubscription> {
     const url = new URL(metadata.url);
     if (!/^https?:$/.test(url.protocol)) throw new Error("Polling source must use HTTP or HTTPS");
-    await this.hydrate();
     const subscription = super.subscribe(target, externalResourceId, metadata);
     await mutateSubscriptions(POLLING_SUBSCRIPTIONS_KEY, (subscriptions) => [
       ...subscriptions.filter(
@@ -230,7 +228,6 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
     target: SignalProviderTarget,
     externalResourceId: string,
   ): Promise<boolean> {
-    await this.hydrate();
     const removed = super.unsubscribe(target, externalResourceId);
     await mutateSubscriptions(POLLING_SUBSCRIPTIONS_KEY, (subscriptions) =>
       subscriptions.filter(
@@ -245,14 +242,12 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
   }
 
   async listPersistent(resourceId: string): Promise<SignalSubscription[]> {
-    await this.hydrate();
     return (await readSubscriptions(POLLING_SUBSCRIPTIONS_KEY))
       .filter((item) => item.providerId === this.id && item.resourceId === resourceId)
       .map(fromPersisted);
   }
 
   async poll(subscriptions: SignalSubscription[]): Promise<void> {
-    await this.hydrate();
     await Promise.all(
       subscriptions.map(async (subscription) => {
         const metadata = subscription.metadata as Partial<PollingSubscriptionMetadata>;
@@ -298,6 +293,7 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
 export const workWebhookSignals = new PersistentWebhookSignalProvider({
   id: "mastra-work-webhooks",
   name: "Mastra Work Webhooks",
+  // Uses the default extractor: webhook payloads must provide resource or externalResourceId.
 });
 export const workPollingSignals = new PersistentPollingSignalProvider();
 

@@ -77,7 +77,7 @@ export const WORK_ERRORS = {
     text: "注册信息无效",
   },
 
-  // ---- 线程与记忆(server/routes/threads)-------------------------------
+  // ---- 线程与记忆(routes/threads)---------------------------------------
   THREAD_NOT_FOUND: {
     domain: ErrorDomain.MASTRA_MEMORY,
     category: ErrorCategory.USER,
@@ -109,7 +109,7 @@ export const WORK_ERRORS = {
     text: "workingMemory is required",
   },
 
-  // ---- 会话运行时(server/routes/session,harness agent-controller)------
+  // ---- 会话运行时(routes/session,harness agent-controller)-------------
   SESSION_INPUT_REQUIRED: {
     domain: ErrorDomain.AGENT,
     category: ErrorCategory.USER,
@@ -191,7 +191,7 @@ export const WORK_ERRORS = {
     text: "模型能力目录不可用",
   },
 
-  // ---- 资料库(server/routes/library + rag/)----------------------------
+  // ---- 资料库(routes/library + rag/)-----------------------------------
   LIBRARY_ASSET_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,
     category: ErrorCategory.USER,
@@ -223,7 +223,7 @@ export const WORK_ERRORS = {
     text: "上传失败",
   },
 
-  // ---- 工作区(server/routes/workspace + workspace/)--------------------
+  // ---- 工作区(routes/workspace + workspace/)----------------------------
   WORKSPACE_NOT_BROWSABLE: {
     domain: ErrorDomain.STORAGE,
     category: ErrorCategory.USER,
@@ -279,7 +279,7 @@ export const WORK_ERRORS = {
     text: "Workspace is read-only",
   },
 
-  // ---- 技能(server/routes/skills + skills/)----------------------------
+  // ---- 技能(routes/skills + skills/)-----------------------------------
   SKILL_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,
     category: ErrorCategory.USER,
@@ -355,7 +355,7 @@ export const WORK_ERRORS = {
     text: "MCP 服务连接失败",
   },
 
-  // ---- 浏览器(server/routes/browser)-----------------------------------
+  // ---- 浏览器(routes/browser)------------------------------------------
   BROWSER_ACTION_UNSUPPORTED: {
     domain: ErrorDomain.TOOL,
     category: ErrorCategory.USER,

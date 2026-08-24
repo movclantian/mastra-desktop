@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SlidingNumber } from "@/components/ui/sliding-number";
-import { type CatalogProvider, calculateCostUSD, formatCostUSD } from "@/lib/providers";
+import { type CatalogProvider, calculateCostUSD, formatCostUSD } from "@/features/providers";
 import { cn } from "@/lib/utils";
 
 const PERCENT_MAX = 100;

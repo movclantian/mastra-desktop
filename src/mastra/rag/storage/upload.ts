@@ -48,7 +48,9 @@ export async function createLibraryUploadSession(input: {
   threadId?: string;
 }): Promise<LibraryUploadSession> {
   if (!input.byteSize || input.byteSize <= 0) throw new Error("文件大小必须大于 0 字节");
-  if (input.byteSize > MAX_LIBRARY_FILE_BYTES) throw new Error("单个文件大小不能超过 100 MB");
+  if (input.byteSize > MAX_LIBRARY_FILE_BYTES) {
+    throw new Error(`单个文件大小不能超过 ${MAX_LIBRARY_FILE_BYTES / (1024 * 1024)} MB`);
+  }
 
   await ensureLibrarySchema();
   const id = nanoid();

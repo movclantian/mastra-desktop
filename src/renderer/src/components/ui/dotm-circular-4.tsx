@@ -1,9 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import type { DotAnimationResolver, DotMatrixCommonProps } from "@/lib/dotmatrix-core";
-import { DotMatrixBase, isWithinCircularMask } from "@/lib/dotmatrix-core";
-import { useCyclePhase, useDotMatrixPhases, usePrefersReducedMotion } from "@/lib/dotmatrix-hooks";
+import type {
+  DotAnimationResolver,
+  DotMatrixCommonProps,
+} from "@/components/visual/dotmatrix/core";
+import { DotMatrixBase, isWithinCircularMask } from "@/components/visual/dotmatrix/core";
+import {
+  useCyclePhase,
+  useDotMatrixPhases,
+  usePrefersReducedMotion,
+} from "@/components/visual/dotmatrix/hooks";
 
 export type DotmCircular4Props = DotMatrixCommonProps;
 

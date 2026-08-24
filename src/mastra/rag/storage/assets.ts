@@ -35,7 +35,9 @@ export async function uploadAsset(
   skipIndexing = false,
 ): Promise<LibraryAsset> {
   if (input.bytes.byteLength === 0) throw new Error("文件内容不能为空");
-  if (input.bytes.byteLength > MAX_LIBRARY_FILE_BYTES) throw new Error("单个文件不能超过 100 MB");
+  if (input.bytes.byteLength > MAX_LIBRARY_FILE_BYTES) {
+    throw new Error(`单个文件不能超过 ${MAX_LIBRARY_FILE_BYTES / (1024 * 1024)} MB`);
+  }
 
   await ensureLibrarySchema();
   const normalized = normalizeFilename(input.filename);

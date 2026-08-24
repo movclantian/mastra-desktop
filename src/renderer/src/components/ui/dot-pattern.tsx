@@ -1,8 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
 import type React from "react";
-import { useEffect, useId, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,10 +14,9 @@ import { cn } from "@/lib/utils";
  * @param {number} [cx=1] - The x-offset of individual dots
  * @param {number} [cy=1] - The y-offset of individual dots
  * @param {number} [cr=1] - The radius of each dot
- * @param {string} [className] - Additional CSS classes to apply to the SVG container
- * @param {boolean} [glow=false] - Whether dots should have a glowing animation effect
+ * @param {string} [className] - Additional CSS classes to apply to the container
  */
-interface DotPatternProps extends React.SVGProps<SVGSVGElement> {
+interface DotPatternProps extends React.HTMLAttributes<HTMLDivElement> {
   width?: number;
   height?: number;
   x?: number;
@@ -28,15 +25,23 @@ interface DotPatternProps extends React.SVGProps<SVGSVGElement> {
   cy?: number;
   cr?: number;
   className?: string;
-  glow?: boolean;
-  [key: string]: unknown;
 }
 
 /**
  * DotPattern Component
  *
- * A React component that creates an animated or static dot pattern background using SVG.
- * The pattern automatically adjusts to fill its container and can optionally display glowing dots.
+ * 点阵背景:一个 `radial-gradient` 由浏览器按 `background-size` 平铺,整个背景
+ * 只有一个 DOM 节点,且天然铺满容器 —— 与容器尺寸无关,resize 无成本。
+ *
+ * 上游 Magic UI 的实现把每颗点渲染成独立的 `motion.circle`
+ * (数量 = ceil(w/width) * ceil(h/height),全屏下约五千个),并把
+ * getBoundingClientRect 的结果存进 state + 监听 resize 全量重算。
+ * 那套写法只在需要逐点随机延迟的 glow 动画时才有必要,而本项目两处调用
+ * 都是静态点阵(glow 从未启用),于是整条逐点渲染路径连同 glow 一起移除。
+ *
+ * 点位与上游一致:第 (col,row) 颗落在 (x + col*width + cx, y + row*height + cy)。
+ * gradient 的圆心默认在每块 tile 的中心,所以 tile 原点要回退半块。
+ * 外沿多 0.5px 过渡是为了拿到与 SVG `<circle>` 相当的抗锯齿边缘。
  *
  * @component
  *
@@ -46,22 +51,12 @@ interface DotPatternProps extends React.SVGProps<SVGSVGElement> {
  * // Basic usage
  * <DotPattern />
  *
- * // With glowing effect and custom spacing
- * <DotPattern
- *   width={20}
- *   height={20}
- *   glow={true}
- *   className="opacity-50"
- * />
+ * // With custom spacing
+ * <DotPattern width={20} height={20} className="opacity-50" />
  *
  * @notes
- * - The component is client-side only ("use client")
- * - Automatically responds to container size changes
- * - When glow is enabled, dots will animate with random delays and durations
- * - Uses Motion for animations
  * - Dots color can be controlled via the text color utility classes
  */
-
 export function DotPattern({
   width = 16,
   height = 16,
@@ -71,87 +66,23 @@ export function DotPattern({
   cy = 1,
   cr = 1,
   className,
-  glow = false,
+  style,
   ...props
 }: DotPatternProps) {
-  const id = useId();
-  const containerRef = useRef<SVGSVGElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-
-  useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const { width, height } = containerRef.current.getBoundingClientRect();
-        setDimensions({ width, height });
-      }
-    };
-
-    updateDimensions();
-    window.addEventListener("resize", updateDimensions);
-    return () => window.removeEventListener("resize", updateDimensions);
-  }, []);
-
-  const dots = Array.from(
-    {
-      length: Math.ceil(dimensions.width / width) * Math.ceil(dimensions.height / height),
-    },
-    (_, i) => {
-      const col = i % Math.ceil(dimensions.width / width);
-      const row = Math.floor(i / Math.ceil(dimensions.width / width));
-      return {
-        x: col * width + cx + x,
-        y: row * height + cy + y,
-        delay: Math.random() * 5,
-        duration: Math.random() * 3 + 2,
-      };
-    },
-  );
-
   return (
-    <svg
-      ref={containerRef}
+    <div
       aria-hidden="true"
       className={cn(
         "pointer-events-none absolute inset-0 h-full w-full text-neutral-400/80",
         className,
       )}
+      style={{
+        backgroundImage: `radial-gradient(circle at center, currentColor ${cr}px, transparent ${cr + 0.5}px)`,
+        backgroundSize: `${width}px ${height}px`,
+        backgroundPosition: `${x + cx - width / 2}px ${y + cy - height / 2}px`,
+        ...style,
+      }}
       {...props}
-    >
-      <defs>
-        <radialGradient id={`${id}-gradient`}>
-          <stop offset="0%" stopColor="currentColor" stopOpacity="1" />
-          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-      {dots.map((dot) => (
-        <motion.circle
-          key={`${dot.x}-${dot.y}`}
-          cx={dot.x}
-          cy={dot.y}
-          r={cr}
-          fill={glow ? `url(#${id}-gradient)` : "currentColor"}
-          initial={glow ? { opacity: 0.4, scale: 1 } : {}}
-          animate={
-            glow
-              ? {
-                  opacity: [0.4, 1, 0.4],
-                  scale: [1, 1.5, 1],
-                }
-              : {}
-          }
-          transition={
-            glow
-              ? {
-                  duration: dot.duration,
-                  repeat: Infinity,
-                  repeatType: "reverse",
-                  delay: dot.delay,
-                  ease: "easeInOut",
-                }
-              : {}
-          }
-        />
-      ))}
-    </svg>
+    />
   );
 }
