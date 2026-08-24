@@ -25,10 +25,13 @@ function scopeKey(): string {
 /** 落库前的唯一归一化入口:枚举字段校验取值,数值字段收敛到合法区间。 */
 function normalizeSettings(parsed: Partial<LibrarySettings>): LibrarySettings {
   const merged = { ...DEFAULT_LIBRARY_SETTINGS, ...parsed };
+  const stored = Object.fromEntries(
+    Object.entries(merged).filter(([key]) => key in DEFAULT_LIBRARY_SETTINGS),
+  ) as unknown as LibrarySettings;
   const finite = (value: number | undefined, fallback: number) =>
     typeof value === "number" && Number.isFinite(value) ? value : fallback;
   return {
-    ...merged,
+    ...stored,
     chunkStrategy: VALID_CHUNK_STRATEGIES.includes(
       parsed.chunkStrategy as LibrarySettings["chunkStrategy"],
     )

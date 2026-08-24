@@ -133,8 +133,7 @@ interface KnowledgeLibraryProps {
 }
 
 export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: KnowledgeLibraryProps) {
-  const { user, activeThreadId, createThread, queueLibraryFiles, setActiveView, providers } =
-    useWorkbench();
+  const { user, activeThreadId, createThread, queueLibraryFiles, setActiveView } = useWorkbench();
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [folderId, setFolderId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
@@ -250,21 +249,6 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
     }
     return entries;
   }, [collapsedFolderIds, documentFolderIds, documentFolders, visibleAssets]);
-  const providerEmbeddingOptions = React.useMemo(
-    () =>
-      providers.flatMap((provider) =>
-        provider.enabledModels
-          .filter((model) => Boolean(model.embedding))
-          .map((model) => ({
-            value: provider.registryId
-              ? `${provider.registryId}/${model.id}`
-              : `${provider.id}/${model.id}`,
-            label: `${provider.name} / ${model.name}`,
-          })),
-      ),
-    [providers],
-  );
-
   const createFolder = async () => {
     if (!folderName.trim()) return;
     try {
@@ -1125,8 +1109,7 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
           <DialogHeader>
             <DialogTitle>资料库设置</DialogTitle>
             <DialogDescription>
-              默认使用本机 FastEmbed；也可选择模型供应商中启用的 embedding
-              模型。向量与原文件都保存在当前 LibSQL 存储目录。
+              使用本机 FastEmbed Small(384 维)。向量与原文件都保存在当前 LibSQL 存储目录。
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 max-h-[min(32rem,calc(100svh-12rem))] pr-3">
@@ -1162,38 +1145,6 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                           {strategy}
                         </SelectItem>
                       ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <span>嵌入模型</span>
-                  <Select
-                    value={settings.embeddingModel}
-                    onValueChange={(value) =>
-                      setSettings((current) => ({
-                        ...current,
-                        embeddingModel: value as LibrarySettings["embeddingModel"],
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="small">FastEmbed Small · 384 维</SelectItem>
-                      <SelectItem value="base">FastEmbed Base · 768 维</SelectItem>
-                      {providerEmbeddingOptions.length > 0 ? (
-                        <>
-                          <SelectItem value="__separator" disabled>
-                            供应商嵌入模型
-                          </SelectItem>
-                          {providerEmbeddingOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </>
-                      ) : null}
                     </SelectContent>
                   </Select>
                 </div>

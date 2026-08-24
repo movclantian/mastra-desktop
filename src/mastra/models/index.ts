@@ -16,7 +16,6 @@ export {
   getProvidersConfig,
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
-  resolveConfiguredEmbeddingModelForUse,
   resolveConfiguredModel,
   resolveDefaultLanguageModel,
   resolveDefaultModelId,

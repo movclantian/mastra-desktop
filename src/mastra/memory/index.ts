@@ -18,16 +18,11 @@
  *   observation.extract(Extractor[])与 reflection.extract(Extractor[]) 可由设置面板配置；
  *   任意 schema/hook 仍保留为代码级扩展点,不允许普通 JSON 设置执行任意代码。
  */
-import { createHash } from "node:crypto";
 import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
 import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
-import {
-  resolveConfiguredEmbeddingModelForUse,
-  resolveDefaultModelId,
-  WORKBENCH_GATEWAY_ID,
-} from "../models";
+import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
 import {
   appStorage,
   getAppConfig,
@@ -39,14 +34,6 @@ import {
 const MEMORY_CONFIG_KEY = "memory";
 
 export interface MemoryUserConfig {
-  /** 语义召回与 OM 共用的嵌入模型:默认使用本机 FastEmbed,也可选择供应商模型 */
-  embeddingModel: string;
-  /** 记忆向量空间版本;切换模型时递增,禁止跨版本混用 */
-  embeddingIndexVersion: number;
-  /** 当前版本的重建状态;required 时语义召回保持关闭 */
-  embeddingRebuildStatus: "ready" | "required";
-  /** 首次 embedding 后确认的维度;外部模型未知时为 null */
-  embeddingDimension: number | null;
   /** options.lastMessages — 每次请求注入的最近消息数,默认 10 */
   lastMessages: number;
   /** options.readOnly — 只读记忆(不保存新消息,不注册 updateWorkingMemory 工具) */
@@ -176,10 +163,6 @@ const DEFAULT_WORKING_MEMORY_SCHEMA = `{
 `;
 
 const DEFAULT_CONFIG: MemoryUserConfig = {
-  embeddingModel: "small",
-  embeddingIndexVersion: 1,
-  embeddingRebuildStatus: "required",
-  embeddingDimension: null,
   // lastMessages:20 为项目自定(官方 memory-class.mdx 默认 10)。
   lastMessages: 20,
   readOnly: false,
@@ -243,27 +226,6 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   ],
 };
 
-function configuredEmbeddingModelFor(model: string) {
-  return {
-    specificationVersion: "v2" as const,
-    modelId: "mastra-work/embedding",
-    provider: "mastra-work",
-    maxEmbeddingsPerCall: 2048,
-    supportsParallelCalls: true,
-    async doEmbed(args: {
-      values: string[];
-      abortSignal?: AbortSignal;
-      headers?: Record<string, string>;
-    }) {
-      const selected = await resolveConfiguredEmbeddingModelForUse(model);
-      if (!selected) {
-        throw new Error(`记忆嵌入模型 ${model} 未配置或不可用`);
-      }
-      return selected.doEmbed(args);
-    },
-  };
-}
-
 /** 读取记忆配置(app_config 表 key="memory";无记录或损坏时回落默认值) */
 const memoryConfigByScope = new Map<string, MemoryUserConfig>();
 
@@ -294,33 +256,9 @@ export async function getMemoryConfig(): Promise<MemoryUserConfig> {
   }
 }
 
-/**
- * 写入记忆配置并实时生效。向量索引状态由服务端持有；只有重建流程可以
- * 提交新的 ready/dimension，普通设置保存不能用旧客户端 payload 绕过重建。
- */
-export async function saveMemoryConfig(
-  next: MemoryUserConfig,
-  options: { completeEmbeddingRebuild?: boolean } = {},
-): Promise<void> {
-  const previous = currentConfig();
-  const normalizedInput = normalizeMemoryConfig({ ...previous, ...next });
-  const embeddingChanged = previous.embeddingModel !== normalizedInput.embeddingModel;
-  const normalized = {
-    ...normalizedInput,
-    embeddingIndexVersion: embeddingChanged
-      ? previous.embeddingIndexVersion + 1
-      : previous.embeddingIndexVersion,
-    embeddingRebuildStatus: embeddingChanged
-      ? ("required" as const)
-      : options.completeEmbeddingRebuild
-        ? normalizedInput.embeddingRebuildStatus
-        : previous.embeddingRebuildStatus,
-    embeddingDimension: embeddingChanged
-      ? (knownEmbeddingDimension(normalizedInput.embeddingModel) ?? null)
-      : options.completeEmbeddingRebuild
-        ? normalizedInput.embeddingDimension
-        : previous.embeddingDimension,
-  } satisfies MemoryUserConfig;
+/** 写入记忆配置并实时生效。嵌入固定使用本机 FastEmbed，不持久化模型或版本状态。 */
+export async function saveMemoryConfig(next: MemoryUserConfig): Promise<void> {
+  const normalized = normalizeMemoryConfig({ ...currentConfig(), ...next });
   await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2));
   memoryConfigByScope.set(memoryScopeKey(), normalized);
   const runtime = getMemoryRuntime();
@@ -356,6 +294,9 @@ function normalizeExtractor(value: unknown, index: number): OmExtractorUserConfi
 /** 配置边界的唯一归一化入口,避免 HTTP JSON 直接破坏运行时类型。 */
 function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConfig {
   const merged = { ...DEFAULT_CONFIG, ...input };
+  const stored = Object.fromEntries(
+    Object.entries(merged).filter(([key]) => key in DEFAULT_CONFIG),
+  ) as unknown as MemoryUserConfig;
   const extractors = Array.isArray(input.omExtractors)
     ? input.omExtractors
         .map((item, index) => normalizeExtractor(item, index))
@@ -364,25 +305,7 @@ function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConf
   const unique = new Set<string>();
   return {
     ...DEFAULT_CONFIG,
-    ...merged,
-    embeddingModel:
-      typeof merged.embeddingModel === "string" &&
-      (merged.embeddingModel === "small" ||
-        merged.embeddingModel === "base" ||
-        /^[^/\s]+\/[^/\s]+$/.test(merged.embeddingModel))
-        ? merged.embeddingModel
-        : DEFAULT_CONFIG.embeddingModel,
-    embeddingIndexVersion: Math.max(
-      1,
-      Math.round(finite(merged.embeddingIndexVersion, DEFAULT_CONFIG.embeddingIndexVersion, 1)),
-    ),
-    embeddingRebuildStatus: merged.embeddingRebuildStatus === "ready" ? "ready" : "required",
-    embeddingDimension:
-      merged.embeddingDimension === null
-        ? null
-        : Number.isInteger(merged.embeddingDimension) && Number(merged.embeddingDimension) > 0
-          ? Number(merged.embeddingDimension)
-          : null,
+    ...stored,
     lastMessages: Math.round(finite(merged.lastMessages, DEFAULT_CONFIG.lastMessages, 1, 500)),
     semanticRecallTopK: Math.round(finite(merged.semanticRecallTopK, 4, 1, 50)),
     semanticRecallMessageRangeBefore: Math.round(
@@ -513,139 +436,6 @@ interface OmModelSelection {
   memoryScope?: "thread" | "resource";
 }
 
-function knownEmbeddingDimension(model: string): number | undefined {
-  if (model === "small") return 384;
-  if (model === "base") return 768;
-  return undefined;
-}
-
-export function embeddingModelKey(model: string): string {
-  if (model === "small" || model === "base") return model;
-  const normalized = model.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-  const digest = createHash("sha256").update(model).digest("hex").slice(0, 12);
-  return `${normalized.slice(0, 40) || "custom"}_${digest}`;
-}
-
-class VersionedMemory extends Memory {
-  private readonly embeddingIndexPrefix: string;
-
-  constructor(
-    config: ConstructorParameters<typeof Memory>[0],
-    identity: { model: string; version: number },
-  ) {
-    super(config);
-    this.embeddingIndexPrefix = `memory_messages_v${identity.version}_${embeddingModelKey(identity.model)}`;
-  }
-
-  protected override getEmbeddingIndexName(dimensions?: number): string {
-    // Memory uses the undefined-dimension form as a cleanup prefix. Keep it
-    // broad so deleteThread/deleteMessages can remove vectors left by older
-    // model/version spaces, while every actual create/query call supplies the
-    // measured dimension and stays in the current versioned space.
-    if (dimensions === undefined) return "memory_messages";
-    // Keep the official bare-prefix behavior for the default 1536-dimension
-    // index so Memory's cleanup discovers every dimension-specific sibling.
-    return dimensions === 1536
-      ? this.embeddingIndexPrefix
-      : `${this.embeddingIndexPrefix}_${dimensions}`;
-  }
-}
-
-class VersionedMemoryVector extends LibSQLVector {
-  private readonly observationIndexPrefix: string;
-
-  constructor(
-    config: ConstructorParameters<typeof LibSQLVector>[0],
-    identity: { model: string; version: number },
-  ) {
-    super(config);
-    this.observationIndexPrefix = `memory_observations_v${identity.version}_${embeddingModelKey(identity.model)}`;
-  }
-
-  private versionObservationIndex(indexName: string): string {
-    const defaultPrefix = "memory_observations_";
-    if (!indexName.startsWith(defaultPrefix) || indexName.startsWith(this.observationIndexPrefix)) {
-      return indexName;
-    }
-    return `${this.observationIndexPrefix}_${indexName.slice(defaultPrefix.length)}`;
-  }
-
-  private preservePhysicalObservationIndex(indexName: string): string {
-    // Memory cleanup receives physical names from vector.listIndexes(). Do
-    // not rewrite those names: old model/version indexes must be deleted in
-    // place instead of being redirected to the current namespace.
-    return indexName;
-  }
-
-  override query(args: Parameters<LibSQLVector["query"]>[0]): ReturnType<LibSQLVector["query"]> {
-    return super.query({ ...args, indexName: this.versionObservationIndex(args.indexName) });
-  }
-
-  override upsert(args: Parameters<LibSQLVector["upsert"]>[0]): ReturnType<LibSQLVector["upsert"]> {
-    return super.upsert({ ...args, indexName: this.versionObservationIndex(args.indexName) });
-  }
-
-  override createIndex(
-    args: Parameters<LibSQLVector["createIndex"]>[0],
-  ): ReturnType<LibSQLVector["createIndex"]> {
-    return super.createIndex({ ...args, indexName: this.versionObservationIndex(args.indexName) });
-  }
-
-  override deleteIndex(
-    args: Parameters<LibSQLVector["deleteIndex"]>[0],
-  ): ReturnType<LibSQLVector["deleteIndex"]> {
-    return super.deleteIndex({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-
-  override describeIndex(
-    args: Parameters<LibSQLVector["describeIndex"]>[0],
-  ): ReturnType<LibSQLVector["describeIndex"]> {
-    return super.describeIndex({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-
-  override updateVector(
-    args: Parameters<LibSQLVector["updateVector"]>[0],
-  ): ReturnType<LibSQLVector["updateVector"]> {
-    return super.updateVector({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-
-  override deleteVector(
-    args: Parameters<LibSQLVector["deleteVector"]>[0],
-  ): ReturnType<LibSQLVector["deleteVector"]> {
-    return super.deleteVector({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-
-  override deleteVectors(
-    args: Parameters<LibSQLVector["deleteVectors"]>[0],
-  ): ReturnType<LibSQLVector["deleteVectors"]> {
-    return super.deleteVectors({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-
-  override truncateIndex(
-    args: Parameters<LibSQLVector["truncateIndex"]>[0],
-  ): ReturnType<LibSQLVector["truncateIndex"]> {
-    return super.truncateIndex({
-      ...args,
-      indexName: this.preservePhysicalObservationIndex(args.indexName),
-    });
-  }
-}
-
 /**
  * 当前 Memory 实例。Agent 以函数形式引用(memory: () => getMemory()),
  * 配置保存后无需重启即对后续请求生效。
@@ -724,192 +514,135 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
   const observationExtract = dedupeExtractors(config.omExtractors, "observation");
   const reflectionExtract = dedupeExtractors(config.omExtractors, "reflection");
 
-  const expectedDimension =
-    config.embeddingDimension ?? knownEmbeddingDimension(config.embeddingModel);
-  const semanticRecallEnabled = config.semanticRecall && config.embeddingRebuildStatus === "ready";
-  const retrievalVectorEnabled =
-    config.omRetrievalVector && config.embeddingRebuildStatus === "ready";
-  const embedder =
-    config.embeddingModel === "base"
-      ? fastembed.baseV2
-      : config.embeddingModel === "small"
-        ? fastembed.smallV2
-        : configuredEmbeddingModelFor(config.embeddingModel);
-  let observedDimension: number | undefined;
-  const validatedEmbedder = {
-    ...embedder,
-    async doEmbed(args: Parameters<typeof embedder.doEmbed>[0]) {
-      const result = await embedder.doEmbed(args);
-      const dimensions = new Set(
-        result.embeddings
-          .map((embedding) => embedding.length)
-          .filter((dimension): dimension is number => dimension > 0),
-      );
-      if (dimensions.size > 1) {
-        throw new Error(
-          `Embedding batch returned multiple dimensions for ${config.embeddingModel}: ${[...dimensions].join(", ")}`,
-        );
-      }
-      const dimension = [...dimensions][0];
-      if (dimension && expectedDimension && dimension !== expectedDimension) {
-        throw new Error(
-          `Embedding dimension mismatch for ${config.embeddingModel}: expected ${expectedDimension}, got ${dimension}`,
-        );
-      }
-      if (dimension && observedDimension && dimension !== observedDimension) {
-        throw new Error(
-          `Embedding dimension changed within index version ${config.embeddingIndexVersion}: ${observedDimension} -> ${dimension}`,
-        );
-      }
-      if (dimension) observedDimension = dimension;
-      return result;
-    },
-  };
-
-  return new VersionedMemory(
-    {
-      storage: appStorage as LibSQLStore,
-      // semantic-recall.mdx:LibSQLVector 与 LibSQLStore 共用同一数据库文件
-      vector: new VersionedMemoryVector(
-        {
-          id: `mastra-vector-v${config.embeddingIndexVersion}-${embeddingModelKey(config.embeddingModel)}`,
-          url: getStorageUrl(),
-        },
-        {
-          model: config.embeddingModel,
-          version: config.embeddingIndexVersion,
-        },
-      ),
-      embedder: validatedEmbedder,
-      options: {
-        // message-history.mdx:lastMessages 注入最近 N 条;readOnly 只读
-        lastMessages: config.lastMessages,
-        ...(config.readOnly ? { readOnly: true } : {}),
-        // semantic-recall.mdx:topK / messageRange(官方对象形态 {before, after})/ scope
-        ...(semanticRecallEnabled
-          ? {
-              semanticRecall: {
-                topK: config.semanticRecallTopK,
-                messageRange: {
-                  before: config.semanticRecallMessageRangeBefore,
-                  after: config.semanticRecallMessageRangeAfter,
-                },
-                scope: semanticRecallScope,
+  return new Memory({
+    storage: appStorage as LibSQLStore,
+    // semantic-recall.mdx:LibSQLVector 与 LibSQLStore 共用同一数据库文件
+    vector: new LibSQLVector({ id: "mastra-vector", url: getStorageUrl() }),
+    embedder: fastembed.smallV2,
+    options: {
+      // message-history.mdx:lastMessages 注入最近 N 条;readOnly 只读
+      lastMessages: config.lastMessages,
+      ...(config.readOnly ? { readOnly: true } : {}),
+      // semantic-recall.mdx:topK / messageRange(官方对象形态 {before, after})/ scope
+      ...(config.semanticRecall
+        ? {
+            semanticRecall: {
+              topK: config.semanticRecallTopK,
+              messageRange: {
+                before: config.semanticRecallMessageRangeBefore,
+                after: config.semanticRecallMessageRangeAfter,
               },
-            }
-          : {}),
-        // working-memory.mdx:template(replace 语义)与 schema(merge 语义)二选一;
-        // schema 文本损坏时回落 template,服务不因此起不来。
-        // useStateSignals:working memory 默认折进 system message,agent 每改一次就把整段
-        // 前缀缓存打掉;改走 state signal 后它作为追加消息下发(带 cacheKey 去重与快照
-        // 重注入),system prompt 保持稳定 —— 存储与工具形态不变,工具名变成 setWorkingMemory
-        // (working-memory.mdx「Opt in to state signals」)。
-        ...(config.workingMemory
-          ? {
-              workingMemory:
-                config.workingMemoryFormat === "schema"
-                  ? (() => {
-                      const schema = parseWorkingMemorySchema(config.workingMemorySchema);
-                      return schema
-                        ? {
-                            enabled: true,
-                            scope: workingMemoryScope,
-                            schema,
-                            useStateSignals: true,
-                          }
-                        : {
-                            enabled: true,
-                            scope: workingMemoryScope,
-                            template: config.workingMemoryTemplate,
-                            useStateSignals: true,
-                          };
-                    })()
-                  : {
-                      enabled: true,
-                      scope: workingMemoryScope,
-                      template: config.workingMemoryTemplate,
-                      useStateSignals: true,
-                    },
-            }
-          : {}),
-        // 标题由 routes/threads/title.ts 的单一 helper 负责；这里不再把
-        // generateTitle 传给官方 Memory，避免首轮消息产生两次标题生成。
-        // observational-memory.mdx:顶层 + observation/reflection 深层子项。
-        // continuationHints(@mastra/memory 1.27)刻意关闭 <current-task> /
-        // <suggested-response> 注入:本 Agent 自带控制流 —— TaskSignalProvider 的
-        // task_* 工具 + Queue UI 承载任务状态,instructions 规定了 submit_plan /
-        // ask_user 与引用格式纪律;记忆再注入这两段提示等于第二个控制器与其争控制权。
-        ...(config.observationalMemory
-          ? {
-              observationalMemory: {
-                ...(omObserverModel || omReflectionModel
-                  ? {}
-                  : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
-                scope: observationalMemoryScope,
-                // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
-                // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
-                // 把前缀砸掉。本 App 允许同线程中途换模型(见 agents/index.ts 的动态 model),
-                // 换模型时缓存必然失效 —— activateOnProviderChange 让压缩正好搭这趟车。
-                activateAfterIdle: "auto" as const,
-                activateOnProviderChange: true,
-                ...(config.omTemporalMarkers ? { temporalMarkers: true } : {}),
-                // retrieval:布尔之外的 { vector, scope } 形态(retrieval 默认 scope = resource)
-                ...(config.omRetrieval
-                  ? {
-                      retrieval: {
-                        ...(retrievalVectorEnabled ? { vector: true } : {}),
-                        scope: config.omRetrievalScope,
-                      },
-                    }
-                  : {}),
-                observation: {
-                  continuationHints: false,
-                  ...(omObserverModel ? { model: workbenchModelId(omObserverModel) } : {}),
-                  ...(config.omObserverInstruction.trim()
-                    ? { instruction: config.omObserverInstruction.trim() }
-                    : {}),
-                  ...(config.omThreadTitle ? { threadTitle: true } : {}),
-                  ...(config.omManageWorkingMemory ? { manageWorkingMemory: true } : {}),
-                  // 'auto' 字面量 = 按模型多模态能力自动决定;on/off → true/false
-                  observeAttachments:
-                    config.omObserveAttachments === "auto"
-                      ? ("auto" as const)
-                      : config.omObserveAttachments === "on",
-                  ...(config.omMessageTokens > 0 ? { messageTokens: config.omMessageTokens } : {}),
-                  ...(config.omMaxTokensPerBatch > 0
-                    ? { maxTokensPerBatch: config.omMaxTokensPerBatch }
-                    : {}),
-                  modelSettings: {
-                    temperature: config.omTemperature,
-                    ...(config.omMaxOutputTokens > 0
-                      ? { maxOutputTokens: config.omMaxOutputTokens }
-                      : {}),
+              scope: semanticRecallScope,
+            },
+          }
+        : {}),
+      // working-memory.mdx:template(replace 语义)与 schema(merge 语义)二选一;
+      // schema 文本损坏时回落 template,服务不因此起不来。
+      // useStateSignals:working memory 默认折进 system message,agent 每改一次就把整段
+      // 前缀缓存打掉;改走 state signal 后它作为追加消息下发(带 cacheKey 去重与快照
+      // 重注入),system prompt 保持稳定 —— 存储与工具形态不变,工具名变成 setWorkingMemory
+      // (working-memory.mdx「Opt in to state signals」)。
+      ...(config.workingMemory
+        ? {
+            workingMemory:
+              config.workingMemoryFormat === "schema"
+                ? (() => {
+                    const schema = parseWorkingMemorySchema(config.workingMemorySchema);
+                    return schema
+                      ? {
+                          enabled: true,
+                          scope: workingMemoryScope,
+                          schema,
+                          useStateSignals: true,
+                        }
+                      : {
+                          enabled: true,
+                          scope: workingMemoryScope,
+                          template: config.workingMemoryTemplate,
+                          useStateSignals: true,
+                        };
+                  })()
+                : {
+                    enabled: true,
+                    scope: workingMemoryScope,
+                    template: config.workingMemoryTemplate,
+                    useStateSignals: true,
                   },
-                  // 官方默认 0.2(messageTokens 的 20%);关闭时显式传 false
-                  ...(config.omBufferEnabled
-                    ? { bufferTokens: config.omBufferTokens }
-                    : { bufferTokens: false }),
-                  ...(observationExtract.length > 0 ? { extract: observationExtract } : {}),
-                },
-                reflection: {
-                  continuationHints: false,
-                  ...(omReflectionModel ? { model: workbenchModelId(omReflectionModel) } : {}),
-                  ...(config.omReflectionInstruction.trim()
-                    ? { instruction: config.omReflectionInstruction.trim() }
+          }
+        : {}),
+      // 标题由 routes/threads/title.ts 的单一 helper 负责；这里不再把
+      // generateTitle 传给官方 Memory，避免首轮消息产生两次标题生成。
+      // observational-memory.mdx:顶层 + observation/reflection 深层子项。
+      // continuationHints(@mastra/memory 1.27)刻意关闭 <current-task> /
+      // <suggested-response> 注入:本 Agent 自带控制流 —— TaskSignalProvider 的
+      // task_* 工具 + Queue UI 承载任务状态,instructions 规定了 submit_plan /
+      // ask_user 与引用格式纪律;记忆再注入这两段提示等于第二个控制器与其争控制权。
+      ...(config.observationalMemory
+        ? {
+            observationalMemory: {
+              ...(omObserverModel || omReflectionModel
+                ? {}
+                : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
+              scope: observationalMemoryScope,
+              // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
+              // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
+              // 把前缀砸掉。本 App 允许同线程中途换模型(见 agents/index.ts 的动态 model),
+              // 换模型时缓存必然失效 —— activateOnProviderChange 让压缩正好搭这趟车。
+              activateAfterIdle: "auto" as const,
+              activateOnProviderChange: true,
+              ...(config.omTemporalMarkers ? { temporalMarkers: true } : {}),
+              // retrieval:布尔之外的 { vector, scope } 形态(retrieval 默认 scope = resource)
+              ...(config.omRetrieval
+                ? {
+                    retrieval: {
+                      ...(config.omRetrievalVector ? { vector: true } : {}),
+                      scope: config.omRetrievalScope,
+                    },
+                  }
+                : {}),
+              observation: {
+                continuationHints: false,
+                ...(omObserverModel ? { model: workbenchModelId(omObserverModel) } : {}),
+                ...(config.omObserverInstruction.trim()
+                  ? { instruction: config.omObserverInstruction.trim() }
+                  : {}),
+                ...(config.omThreadTitle ? { threadTitle: true } : {}),
+                ...(config.omManageWorkingMemory ? { manageWorkingMemory: true } : {}),
+                // 'auto' 字面量 = 按模型多模态能力自动决定;on/off → true/false
+                observeAttachments:
+                  config.omObserveAttachments === "auto"
+                    ? ("auto" as const)
+                    : config.omObserveAttachments === "on",
+                ...(config.omMessageTokens > 0 ? { messageTokens: config.omMessageTokens } : {}),
+                ...(config.omMaxTokensPerBatch > 0
+                  ? { maxTokensPerBatch: config.omMaxTokensPerBatch }
+                  : {}),
+                modelSettings: {
+                  temperature: config.omTemperature,
+                  ...(config.omMaxOutputTokens > 0
+                    ? { maxOutputTokens: config.omMaxOutputTokens }
                     : {}),
-                  ...(config.omObservationTokens > 0
-                    ? { observationTokens: config.omObservationTokens }
-                    : {}),
-                  ...(reflectionExtract.length > 0 ? { extract: reflectionExtract } : {}),
                 },
+                // 官方默认 0.2(messageTokens 的 20%);关闭时显式传 false
+                ...(config.omBufferEnabled
+                  ? { bufferTokens: config.omBufferTokens }
+                  : { bufferTokens: false }),
+                ...(observationExtract.length > 0 ? { extract: observationExtract } : {}),
               },
-            }
-          : {}),
-      },
+              reflection: {
+                continuationHints: false,
+                ...(omReflectionModel ? { model: workbenchModelId(omReflectionModel) } : {}),
+                ...(config.omReflectionInstruction.trim()
+                  ? { instruction: config.omReflectionInstruction.trim() }
+                  : {}),
+                ...(config.omObservationTokens > 0
+                  ? { observationTokens: config.omObservationTokens }
+                  : {}),
+                ...(reflectionExtract.length > 0 ? { extract: reflectionExtract } : {}),
+              },
+            },
+          }
+        : {}),
     },
-    {
-      model: config.embeddingModel,
-      version: config.embeddingIndexVersion,
-    },
-  );
+  });
 }

@@ -394,11 +394,7 @@ export async function fetchProviderModels(
     if (!registryProvider) {
       throw new Error(`未找到内置供应商 ${provider.registryId}`);
     }
-    models = registryProvider.models.map((id) => ({
-      id,
-      name: id,
-      ...(registryProvider.embeddingModels?.includes(id) ? { embedding: true } : {}),
-    }));
+    models = registryProvider.models.map((id) => ({ id, name: id }));
   } else {
     // 自定义网关:服务端代理拉取 /models
     const response = await apiFetch(`${MASTRA_SERVER_URL}/work/providers/models`, {

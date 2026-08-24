@@ -11,7 +11,7 @@ import { LibSQLVector } from "@mastra/libsql";
 import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
 import { nanoid } from "nanoid";
-import { resolveConfiguredEmbeddingModelForUse, resolveDefaultLanguageModel } from "../../models";
+import { resolveDefaultLanguageModel } from "../../models";
 import { getStorageDirectory, getStorageUrl, runWithResourceScope } from "../../storage";
 import { getLibrarySettings } from "../settings";
 import {
@@ -23,18 +23,13 @@ import {
   updateLibraryIndexRunStage,
   withClient,
 } from "../storage/db";
-import {
-  LIBRARY_INDEX_NAMES,
-  type LibraryAsset,
-  type LibraryIndexStage,
-  type LibrarySettings,
-} from "../types";
+import type { LibraryAsset, LibraryIndexStage, LibrarySettings } from "../types";
 import { extractText } from "./extract";
 
 let vectorPromise: Promise<LibSQLVector> | undefined;
 const vectorIndexPromises = new Map<string, Promise<void>>();
 const indexingPromises = new Map<string, Promise<void>>();
-const LIBRARY_PROVIDER_INDEX_VERSION = 2;
+export const LIBRARY_EMBEDDING_DIMENSION = 384;
 
 export async function getVector(): Promise<LibSQLVector> {
   if (!vectorPromise) {
@@ -45,57 +40,30 @@ export async function getVector(): Promise<LibSQLVector> {
   return vectorPromise;
 }
 
-export async function embeddingModelFor(settings: LibrarySettings) {
-  if (settings.embeddingModel.includes("/")) {
-    const configured = await resolveConfiguredEmbeddingModelForUse(settings.embeddingModel);
-    if (configured) return configured;
-    throw new Error(`嵌入模型 ${settings.embeddingModel} 未配置或不可用`);
-  }
-  return settings.embeddingModel === "base" ? fastembed.base : fastembed.small;
+export function libraryEmbedder() {
+  return fastembed.smallV2;
 }
 
-export function libraryIndexName(settings: LibrarySettings, dimension?: number): string {
-  if (settings.embeddingModel.includes("/")) {
-    if (!dimension || !Number.isInteger(dimension) || dimension <= 0) {
-      throw new Error(`嵌入模型 ${settings.embeddingModel} 未提供有效维度`);
-    }
-    const safeModel = settings.embeddingModel.replace(/[^a-zA-Z0-9_]+/g, "_");
-    return `library_vectors_provider_v${LIBRARY_PROVIDER_INDEX_VERSION}_${safeModel.slice(0, 38)}_${dimension}`;
-  }
-  return settings.embeddingModel === "base" ? LIBRARY_INDEX_NAMES.base : LIBRARY_INDEX_NAMES.small;
+export function libraryIndexName(): string {
+  return "library_vectors_fastembed_small";
 }
 
-export function observedEmbeddingDimension(
-  settings: LibrarySettings,
-  embeddings: readonly number[][],
-): number {
+export function observedEmbeddingDimension(embeddings: readonly number[][]): number {
   const dimensions = new Set(embeddings.map((embedding) => embedding.length));
   if (dimensions.size !== 1 || dimensions.has(0)) {
-    throw new Error(
-      `嵌入模型 ${settings.embeddingModel} 返回了不一致的维度: ${[...dimensions].join(", ") || "空结果"}`,
-    );
+    throw new Error(`本地 FastEmbed 返回了不一致的维度: ${[...dimensions].join(", ") || "空结果"}`);
   }
   const dimension = [...dimensions][0];
-  const expectedDimension =
-    settings.embeddingModel === "base"
-      ? 768
-      : settings.embeddingModel === "small"
-        ? 384
-        : undefined;
-  if (expectedDimension && dimension !== expectedDimension) {
+  if (dimension !== LIBRARY_EMBEDDING_DIMENSION) {
     throw new Error(
-      `嵌入模型 ${settings.embeddingModel} 维度不匹配: 预期 ${expectedDimension},实际 ${dimension}`,
+      `本地 FastEmbed 维度不匹配: 预期 ${LIBRARY_EMBEDDING_DIMENSION},实际 ${dimension}`,
     );
   }
   return dimension;
 }
 
-async function ensureVectorIndex(
-  vector: LibSQLVector,
-  settings: LibrarySettings,
-  dimension: number,
-): Promise<string> {
-  const indexName = libraryIndexName(settings, dimension);
+async function ensureVectorIndex(vector: LibSQLVector, dimension: number): Promise<string> {
+  const indexName = libraryIndexName();
   const pending = vectorIndexPromises.get(indexName);
   if (pending) {
     await pending;
@@ -232,7 +200,7 @@ function queueAssetIndex(
         try {
           await ensureLibrarySchema();
           const vector = await getVector();
-          const embeddingModel = await embeddingModelFor(settings);
+          const embedder = libraryEmbedder();
           const doc = MDocument.fromText(extractedText);
           await updateLibraryIndexRunStage(run.id, "chunk");
           await extractMetadata(doc, settings);
@@ -259,11 +227,11 @@ function queueAssetIndex(
           await updateLibraryIndexRunStage(run.id, "embedding");
           const chunkTexts = chunks.map((chunk) => chunk.text);
           const { embeddings } = await embedMany({
-            model: embeddingModel,
+            model: embedder,
             values: chunkTexts,
           });
-          const dimension = observedEmbeddingDimension(settings, embeddings);
-          const indexName = await ensureVectorIndex(vector, settings, dimension);
+          const dimension = observedEmbeddingDimension(embeddings);
+          const indexName = await ensureVectorIndex(vector, dimension);
 
           stage = "vector";
           await updateLibraryIndexRunStage(run.id, "vector");

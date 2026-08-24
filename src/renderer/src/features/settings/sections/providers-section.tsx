@@ -610,11 +610,6 @@ export function ModelListSection({
                   </p>
                   <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                     <CapabilityBadges caps={caps} />
-                    {model.embedding ? (
-                      <Badge variant="secondary" className="text-[10px]">
-                        Embedding
-                      </Badge>
-                    ) : null}
                     {contextWindow ? (
                       <Badge
                         variant="secondary"

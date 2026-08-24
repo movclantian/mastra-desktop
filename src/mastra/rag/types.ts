@@ -3,12 +3,6 @@
  * 被 RAG 内全部模块及 chat 路由 / Agent 处理器引用。
  */
 
-export const LIBRARY_INDEX_NAMES = {
-  small: "library_vectors_fastembed_small",
-  base: "library_vectors_fastembed_base",
-} as const;
-type LibraryEmbeddingModel = keyof typeof LIBRARY_INDEX_NAMES | `${string}/${string}`;
-
 export type LibraryIndexStage = "extract" | "chunk" | "embedding" | "vector" | "persist";
 export type LibraryIndexRunStatus = "running" | "succeeded" | "unsupported" | "failed";
 
@@ -68,7 +62,6 @@ export interface LibrarySettings {
   rerankSemanticWeight: number;
   rerankVectorWeight: number;
   rerankPositionWeight: number;
-  embeddingModel: LibraryEmbeddingModel;
   extractTitle: boolean;
   extractSummary: boolean;
   extractQuestions: boolean;
@@ -97,7 +90,6 @@ export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   rerankSemanticWeight: 0.4,
   rerankVectorWeight: 0.4,
   rerankPositionWeight: 0.2,
-  embeddingModel: "small",
   extractTitle: false,
   extractSummary: false,
   extractQuestions: false,

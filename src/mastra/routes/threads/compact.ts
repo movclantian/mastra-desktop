@@ -64,7 +64,7 @@ async function refreshObservationVectors(
   observedAt?: Date,
 ) {
   const config = await getMemoryConfig();
-  if (!config.omRetrievalVector || config.embeddingRebuildStatus !== "ready" || !memory.vector) {
+  if (!config.omRetrievalVector || !memory.vector) {
     return;
   }
   const vector = memory.vector;

@@ -8,8 +8,8 @@ import { GraphRAG, MastraAgentRelevanceScorer, rerank, rerankWithScorer } from "
 import { embed } from "ai";
 import { resolveDefaultLanguageModel } from "../../models";
 import {
-  embeddingModelFor,
   getVector,
+  libraryEmbedder,
   libraryIndexName,
   observedEmbeddingDimension,
 } from "../document/indexing";
@@ -26,10 +26,9 @@ export async function searchLibrary(
   await ensureLibrarySchema();
   const settings = await getLibrarySettings();
   const vector = await getVector();
-  const embeddingModel = await embeddingModelFor(settings);
-  const { embedding } = await embed({ model: embeddingModel, value: query });
-  const dimension = observedEmbeddingDimension(settings, [embedding]);
-  const indexName = libraryIndexName(settings, dimension);
+  const { embedding } = await embed({ model: libraryEmbedder(), value: query });
+  const dimension = observedEmbeddingDimension([embedding]);
+  const indexName = libraryIndexName();
   const graphRag = graphRagOverride ?? settings.graphRag;
   const indexes = await vector.listIndexes();
   if (!indexes.includes(indexName)) return [];

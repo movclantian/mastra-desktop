@@ -45,7 +45,7 @@ import {
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
-import { memoryConfigRoute, rebuildMemoryIndexRoute, saveMemoryConfigRoute } from "./memory";
+import { memoryConfigRoute, saveMemoryConfigRoute } from "./memory";
 import {
   listProviderModelsRoute,
   modelsCatalogRoute,
@@ -138,7 +138,6 @@ export const workRoutes = [
   storageInfoRoute,
   memoryConfigRoute,
   saveMemoryConfigRoute,
-  rebuildMemoryIndexRoute,
   mcpConfigRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,

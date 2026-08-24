@@ -6,7 +6,7 @@
  * resolveRequestModel 供 chat / session 路由按请求覆盖模型 —— 路由 id 只携带
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
-import { type GatewayLanguageModel, ModelRouterEmbeddingModel } from "@mastra/core/llm";
+import type { GatewayLanguageModel } from "@mastra/core/llm";
 import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
 import {
   createGatewayModel,
@@ -21,8 +21,6 @@ export const REQUEST_MODEL_CONTEXT_KEY = "mastra-work:request-model";
 export interface EnabledModel {
   id: string;
   name: string;
-  /** true only when the provider advertises an embedding endpoint for this model */
-  embedding?: boolean;
 }
 
 export interface UserProviderConfig {
@@ -99,48 +97,6 @@ export async function saveProvidersConfig(config: Partial<ProvidersUserConfig>):
   };
   await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2));
   providersConfigCache.set(providerScopeKey(), next);
-}
-
-/**
- * Build a provider-backed embedding model from the same BYOK registry used by
- * chat. Synchronous after provider config cache is populated.
- */
-function getConfiguredEmbeddingModel(reference: string): ModelRouterEmbeddingModel | undefined {
-  const separator = reference.indexOf("/");
-  if (separator <= 0) return undefined;
-  const providerId = reference.slice(0, separator);
-  const modelId = reference.slice(separator + 1);
-  const provider = providersConfigCache
-    .get(providerScopeKey())
-    ?.providers.find(
-      (candidate) => candidate.id === providerId || routerPrefix(candidate) === providerId,
-    );
-  if (!provider || provider.disabled || !provider.apiKey || !modelId) return undefined;
-  const enabledModel = provider.enabledModels.find((model) => model.id === modelId);
-  if (!enabledModel?.embedding) return undefined;
-  const routedProviderId = routerPrefix(provider);
-  if (provider.baseUrl) {
-    if (provider.protocol && provider.protocol !== "openai") return undefined;
-    return new ModelRouterEmbeddingModel({
-      providerId: routedProviderId,
-      modelId,
-      url: provider.baseUrl,
-      apiKey: provider.apiKey,
-    });
-  }
-  if (routedProviderId !== "openai" && routedProviderId !== "google") return undefined;
-  return new ModelRouterEmbeddingModel({
-    providerId: routedProviderId,
-    modelId,
-    apiKey: provider.apiKey,
-  });
-}
-
-export async function resolveConfiguredEmbeddingModelForUse(
-  reference: string,
-): Promise<ModelRouterEmbeddingModel | undefined> {
-  await getProvidersConfig();
-  return getConfiguredEmbeddingModel(reference);
 }
 
 /** 可用供应商 = 未禁用、有 Key、且至少启用了一个模型 */

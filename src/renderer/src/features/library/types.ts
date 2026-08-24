@@ -49,7 +49,6 @@ export interface LibrarySettings {
   rerankSemanticWeight: number;
   rerankVectorWeight: number;
   rerankPositionWeight: number;
-  embeddingModel: "small" | "base" | `${string}/${string}`;
   extractTitle: boolean;
   extractSummary: boolean;
   extractQuestions: boolean;
@@ -84,7 +83,6 @@ export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   rerankSemanticWeight: 0.4,
   rerankVectorWeight: 0.4,
   rerankPositionWeight: 0.2,
-  embeddingModel: "small",
   extractTitle: false,
   extractSummary: false,
   extractQuestions: false,

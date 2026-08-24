@@ -119,10 +119,6 @@ export function saveThreadSubagentModel(
   );
 }
 
-export function rebuildMemoryIndex<T>(): Promise<T> {
-  return requestJson<T>("/work/memory/reindex", { method: "POST" }, "重建记忆索引失败");
-}
-
 export function fetchUsage<T>(query: string): Promise<T> {
   return requestJson<T>(`/work/usage${query}`, {}, "加载用量统计失败");
 }

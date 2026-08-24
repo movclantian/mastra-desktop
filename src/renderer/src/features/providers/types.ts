@@ -2,7 +2,6 @@ export interface RegistryProvider {
   id: string;
   name: string;
   models: string[];
-  embeddingModels: string[];
   apiKeyEnvVar: string;
   docUrl: string;
 }
@@ -12,7 +11,6 @@ export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 export interface EnabledModel {
   id: string;
   name: string;
-  embedding?: boolean;
 }
 
 export interface ProviderConfig {

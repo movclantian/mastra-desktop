@@ -1,4 +1,4 @@
-import { PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { PlusIcon, Trash2Icon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,6 @@ import {
   fetchMemoryConfig,
   fetchThreadObservationalMemory,
   fetchThreadSubagentModels,
-  rebuildMemoryIndex as rebuildMemoryIndexRequest,
   saveMemoryConfig,
   saveThreadObservationalMemory,
   saveThreadSubagentModel,
@@ -55,10 +54,6 @@ const DEFAULT_THREAD_OM_DRAFT = {
 };
 
 export interface MemoryDraft {
-  embeddingModel: string;
-  embeddingIndexVersion: number;
-  embeddingRebuildStatus: "ready" | "required";
-  embeddingDimension: number | null;
   lastMessages: number;
   readOnly: boolean;
   semanticRecall: boolean;
@@ -110,10 +105,6 @@ export interface OmExtractorDraft {
 }
 
 export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
-  embeddingModel: "small",
-  embeddingIndexVersion: 1,
-  embeddingRebuildStatus: "required",
-  embeddingDimension: null,
   lastMessages: 20,
   readOnly: false,
   semanticRecall: false,
@@ -177,7 +168,6 @@ export function MemorySection() {
     useWorkbench();
   const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
   const [loaded, setLoaded] = React.useState(false);
-  const [rebuildingIndex, setRebuildingIndex] = React.useState(false);
   const [threadOmDraft, setThreadOmDraft] = React.useState(DEFAULT_THREAD_OM_DRAFT);
   const [threadOmLoaded, setThreadOmLoaded] = React.useState(false);
   const [threadSubagentModels, setThreadSubagentModels] = React.useState<Record<string, string>>(
@@ -388,31 +378,6 @@ export function MemorySection() {
     return () => window.clearTimeout(timer);
   }, [draft, loaded, derivedMessageTokens]);
 
-  const rebuildMemoryIndex = async () => {
-    setRebuildingIndex(true);
-    try {
-      const result = await rebuildMemoryIndexRequest<{
-        embeddingIndexVersion?: unknown;
-        embeddingDimension?: unknown;
-      }>();
-      setDraft((current) => ({
-        ...current,
-        embeddingRebuildStatus: "ready",
-        ...(typeof result.embeddingIndexVersion === "number"
-          ? { embeddingIndexVersion: result.embeddingIndexVersion }
-          : {}),
-        ...(typeof result.embeddingDimension === "number"
-          ? { embeddingDimension: result.embeddingDimension }
-          : {}),
-      }));
-      toast.success("记忆消息向量索引已重建");
-    } catch {
-      toast.error("记忆索引重建失败");
-    } finally {
-      setRebuildingIndex(false);
-    }
-  };
-
   return (
     <>
       <SettingCard
@@ -443,66 +408,9 @@ export function MemorySection() {
         title="语义召回(semanticRecall)"
         description="按语义相似度召回历史消息,需向量存储与 embedder(semantic-recall.mdx)。"
       >
-        <div className="space-y-2 py-3">
-          <div className="space-y-1">
-            <p className="text-sm leading-none font-medium">记忆嵌入模型(embedder)</p>
-            <p className="text-xs text-muted-foreground">
-              默认使用本机 FastEmbed，不需要 API Key；也可以选择已在模型供应商中启用的 embedding
-              模型。
-            </p>
-          </div>
-          <Select
-            value={draft.embeddingModel}
-            onValueChange={(value) =>
-              value &&
-              setDraft({
-                ...draft,
-                embeddingModel: value,
-                ...(value !== draft.embeddingModel
-                  ? { embeddingRebuildStatus: "required" as const, embeddingDimension: null }
-                  : {}),
-              })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="small">本机 FastEmbed Small · 384 维</SelectItem>
-              <SelectItem value="base">本机 FastEmbed Base · 768 维</SelectItem>
-              {providers.flatMap((provider) =>
-                provider.enabledModels
-                  .filter((model) => Boolean(model.embedding))
-                  .map((model) => {
-                    const value = `${provider.registryId ?? provider.id}/${model.id}`;
-                    return (
-                      <SelectItem key={value} value={value}>
-                        {provider.name} / {model.name}
-                      </SelectItem>
-                    );
-                  }),
-              )}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t py-3">
-          <div className="min-w-0 space-y-1">
-            <p className="text-sm leading-none font-medium">向量空间状态</p>
-            <p className="text-xs text-muted-foreground">
-              v{draft.embeddingIndexVersion} · {draft.embeddingDimension ?? "维度待确认"} 维 ·{" "}
-              {draft.embeddingRebuildStatus === "ready" ? "可用" : "需要重建"}
-            </p>
-          </div>
-          <Button
-            disabled={rebuildingIndex}
-            onClick={() => void rebuildMemoryIndex()}
-            size="sm"
-            variant="outline"
-          >
-            <RefreshCwIcon className={rebuildingIndex ? "animate-spin" : undefined} />
-            {rebuildingIndex ? "重建中" : "重建消息索引"}
-          </Button>
-        </div>
+        <p className="py-3 text-xs text-muted-foreground">
+          使用本机 FastEmbed Small(384 维),无需 API Key。向量索引不随模型配置变化,也不需要手动重建。
+        </p>
         <SettingRow title="启用语义召回" description="对话内容将写入向量库用于相似检索">
           <Switch
             checked={draft.semanticRecall}

@@ -17,7 +17,6 @@ export interface RegistryProvider {
   id: string;
   name: string;
   models: string[];
-  embeddingModels: string[];
   apiKeyEnvVar: string;
   docUrl: string;
 }
@@ -33,9 +32,6 @@ const builtinProviderRegistry: RegistryProvider[] = Object.entries(PROVIDER_REGI
       id,
       name: provider.name,
       models,
-      // 官方 registry 不单列 embedding 模型；名称匹配足以提供正确的默认分类,
-      // 在线 catalog 可用时会在能力徽章中补充更细粒度的信息。
-      embeddingModels: models.filter((modelId) => /embed/i.test(modelId)),
       apiKeyEnvVar: Array.isArray(provider.apiKeyEnvVar)
         ? provider.apiKeyEnvVar.join(" / ")
         : provider.apiKeyEnvVar,
@@ -236,10 +232,7 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
           name: m.displayName ?? m.name.replace(/^models\//, ""),
         }));
     return c.json({
-      models: models.map((model) => ({
-        ...model,
-        ...(/embed/i.test(model.id) ? { embedding: true } : {}),
-      })),
+      models,
     });
   },
 });
