@@ -1320,9 +1320,9 @@ export const PromptInputHeader = ({ className, ...props }: PromptInputHeaderProp
 export type PromptInputFooterProps = Omit<ComponentProps<typeof InputGroupAddon>, "align">;
 
 export const PromptInputFooter = ({ className, ...props }: PromptInputFooterProps) => (
-  // gap-0:左右两组之间的距离由右组的 ml-auto(弹性空白)独占提供。留着 gap 会在
-  // 那段空白之外再吃掉固定宽度,让「空白见底」提前发生,也让实测的最小宽度虚高。
-  // 暂时改成gap-2
+  // 左右两组之间还有 gap-2 的固定间距,其余距离由右组的 ml-auto(弹性空白)提供。
+  // gap 属于「footer 自己吃掉的固定宽度」,ChatPromptInput 的实测已经把 column-gap
+  // 与内距一并算进最小边界 —— 所以这里改 gap 不会让那个下限失真。
   <InputGroupAddon
     align="block-end"
     className={cn("justify-between gap-2", className)}

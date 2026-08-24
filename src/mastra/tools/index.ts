@@ -6,6 +6,7 @@
  */
 
 export {
+  authenticateMcpServer,
   getConfiguredMcpTools,
   getMcpConfig,
   type McpServerConfig,

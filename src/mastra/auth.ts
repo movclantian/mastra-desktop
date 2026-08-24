@@ -215,7 +215,10 @@ export async function revokeAuthSession(token: string | undefined): Promise<void
 }
 
 function tokenFromRequest(token: string, request: MastraAuthRequest): string {
-  const authorization = getRequestHeader(request, "Authorization") ?? token;
+  const suppliedToken = token.trim().replace(/^Bearer\s+/i, "");
+  if (suppliedToken) return suppliedToken;
+
+  const authorization = getRequestHeader(request, "Authorization") ?? "";
   if (authorization?.trim()) {
     return authorization.trim().replace(/^Bearer\s+/i, "");
   }
@@ -224,7 +227,12 @@ function tokenFromRequest(token: string, request: MastraAuthRequest): string {
     .split(";")
     .map((part) => part.trim())
     .find((part) => part.startsWith("mastra-token="));
-  return match?.slice("mastra-token=".length) ?? "";
+  const value = match?.slice("mastra-token=".length) ?? "";
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 // SimpleAuth remains the Mastra auth provider, while users and sessions are

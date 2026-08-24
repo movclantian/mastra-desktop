@@ -1,5 +1,5 @@
 /**
- * Webhook 信号路由(/work/signals/*):线程订阅管理与外部事件接收入口。
+ * Webhook 信号路由(/work/signals/*):持久化线程订阅管理与外部事件接收入口。
  * 官方文档:docs/en/docs/harness/signals.mdx「Use HTTP routes」、
  * docs/en/reference/signals/webhook-signal-provider.mdx。
  */
@@ -25,7 +25,7 @@ export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/sub
     if (!(await getOwnedThread(await getWorkMemory(), body.threadId, body.resourceId))) {
       throw workError("THREAD_NOT_FOUND");
     }
-    const subscription = workWebhookSignals.subscribeThread(
+    const subscription = await workWebhookSignals.subscribePersistent(
       { resourceId: body.resourceId, threadId: body.threadId },
       body.externalResourceId,
       body.metadata,
@@ -51,7 +51,7 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
       throw workError("THREAD_NOT_FOUND");
     }
     return c.json({
-      removed: workWebhookSignals.unsubscribeThread(
+      removed: await workWebhookSignals.unsubscribePersistent(
         { resourceId: body.resourceId, threadId: body.threadId },
         body.externalResourceId,
       ),
@@ -62,7 +62,7 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
 export const webhookSignalRoute = registerApiRoute("/work/signals/webhook", {
   method: "POST",
   handler: async (c) => {
-    const result = await workWebhookSignals.handleWebhook({
+    const result = await workWebhookSignals.handleWebhookPersistent({
       body: await c.req.json(),
       headers: Object.fromEntries(c.req.raw.headers.entries()),
       params: {},

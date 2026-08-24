@@ -4,7 +4,9 @@ import { mastraWorkAgent } from "../../agents";
 import {
   type AgentProfile,
   deleteAgentProfile,
+  ensureProfileAgentsRegistered,
   listAgentProfiles,
+  unregisterProfileAgents,
   upsertAgentProfile,
 } from "../../agents/custom";
 
@@ -24,9 +26,30 @@ const agentProfileInputSchema = z.object({
   skills: z.array(z.string()).optional(),
   workflow: z
     .object({
-      strategy: z.enum(["supervisor", "sequence", "parallel"]),
+      strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
       steps: z.array(
-        z.object({ id: z.string(), memberId: z.string(), prompt: z.string().optional() }),
+        z.object({
+          id: z.string(),
+          memberId: z.string().optional(),
+          kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
+          prompt: z.string().optional(),
+          retries: z.number().int().min(0).max(5).optional(),
+          condition: z
+            .object({
+              operator: z.enum(["contains", "equals", "not_contains"]),
+              value: z.string(),
+            })
+            .optional(),
+          branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
+          loop: z
+            .object({
+              mode: z.enum(["until", "while", "foreach"]),
+              maxIterations: z.number().int().min(1).max(20),
+              concurrency: z.number().int().min(1).max(8).optional(),
+            })
+            .optional(),
+          approval: z.object({ title: z.string(), description: z.string() }).optional(),
+        }),
       ),
       synthesis: z.boolean(),
     })
@@ -55,10 +78,34 @@ export const agentProfilesRoute = registerApiRoute("/work/agents", {
   method: "GET",
   handler: async (c) => {
     const agents = await listAgentProfiles();
-    const registered = c.get("mastra").listAgents();
+    const registry = c.get("mastra");
+    const registrations = await Promise.all(
+      agents.map((profile) => ensureProfileAgentsRegistered(registry, profile)),
+    );
+    const registryEntries = Object.entries(registry.listAgents()).map(([registryKey, agent]) => ({
+      registryKey,
+      agentId: agent.id,
+      name: agent.name,
+    }));
     return c.json({
       agents,
-      registeredAgentIds: Object.values(registered).map((agent) => agent.id),
+      registeredAgentIds: registrations.flatMap((registration) => [
+        registration.profile.id,
+        ...Object.values(registration.members).map((member) => member.id),
+      ]),
+      registryEntries,
+      registryAgentIds: registryEntries.map((entry) => entry.agentId),
+      registeredAgents: registrations.map((registration) => ({
+        agentId: registration.profile.id,
+        name: registration.profile.name,
+        registryKey: registration.profileKey,
+        members: Object.entries(registration.members).map(([memberId, member]) => ({
+          memberId,
+          agentId: member.id,
+          name: member.name,
+          registryKey: registration.memberKeys[memberId],
+        })),
+      })),
     });
   },
 });
@@ -76,6 +123,8 @@ export const saveAgentProfileRoute = registerApiRoute("/work/agents", {
         return c.json({ error: "Agent 团队至少需要一位成员" }, 400);
       }
       const profile = await upsertAgentProfile(parsed.data as Partial<AgentProfile>);
+      if (profile.enabled) await ensureProfileAgentsRegistered(c.get("mastra"), profile);
+      else unregisterProfileAgents(c.get("mastra"), profile.id);
       return c.json({ agent: profile });
     } catch (error) {
       return c.json({ error: errorText(error) }, 400);
@@ -87,7 +136,9 @@ export const deleteAgentProfileRoute = registerApiRoute("/work/agents/:agentId",
   method: "DELETE",
   handler: async (c) => {
     try {
-      await deleteAgentProfile(c.req.param("agentId"));
+      const agentId = c.req.param("agentId");
+      unregisterProfileAgents(c.get("mastra"), agentId);
+      await deleteAgentProfile(agentId);
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: errorText(error) }, 400);
@@ -103,9 +154,27 @@ const agentDraftSchema = z.object({
   instructions: z.string(),
   workflow: z
     .object({
-      strategy: z.enum(["supervisor", "sequence", "parallel"]),
+      strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
       steps: z.array(
-        z.object({ id: z.string(), memberId: z.string(), prompt: z.string().optional() }),
+        z.object({
+          id: z.string(),
+          memberId: z.string().optional(),
+          kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
+          prompt: z.string().optional(),
+          retries: z.number().int().min(0).max(5).optional(),
+          condition: z
+            .object({ operator: z.enum(["contains", "equals", "not_contains"]), value: z.string() })
+            .optional(),
+          branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
+          loop: z
+            .object({
+              mode: z.enum(["until", "while", "foreach"]),
+              maxIterations: z.number().int().min(1).max(20),
+              concurrency: z.number().int().min(1).max(8).optional(),
+            })
+            .optional(),
+          approval: z.object({ title: z.string(), description: z.string() }).optional(),
+        }),
       ),
       synthesis: z.boolean(),
     })
@@ -134,7 +203,7 @@ export const assistAgentProfileRoute = registerApiRoute("/work/agents/assist", {
     }
     try {
       const result = await mastraWorkAgent.generate(
-        `根据用户描述生成一个可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。类型:${body.type === "team" ? "team" : "agent"}。用户描述:\n${body.description}`,
+        `根据用户描述生成一个可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
         {
           structuredOutput: {
             schema: agentDraftSchema,

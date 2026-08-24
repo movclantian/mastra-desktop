@@ -5,6 +5,7 @@ import { getLibsqlClient } from "./storage";
 export interface UsageEventInput {
   resourceId: string;
   threadId?: string;
+  provider?: string;
   model?: string;
   inputTokens: number;
   outputTokens: number;
@@ -29,14 +30,23 @@ export interface UsageSummary {
     outputTokens: number;
     totalTokens: number;
   }>;
-  providers: Array<{ provider: string; requests: number; tokens: number; cost: null }>;
+  providers: Array<{
+    provider: string;
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    tokens: number;
+    cost: number | null;
+  }>;
   models: Array<{
     model: string;
     provider: string;
     requests: number;
+    inputTokens: number;
+    outputTokens: number;
     tokens: number;
-    cost: null;
-    averageCost: null;
+    cost: number | null;
+    averageCost: number | null;
   }>;
   requests: Array<{
     id: string;
@@ -95,7 +105,11 @@ function number(value: unknown): number {
 
 export async function recordUsageEvent(input: UsageEventInput): Promise<void> {
   await ensureUsageSchema();
-  const { provider, model } = modelParts(input.model);
+  const inferred = modelParts(input.model);
+  const provider = (input.provider?.trim() || inferred.provider || "unknown").trim();
+  const model = (
+    input.model && !input.model.includes("/") ? input.model : inferred.model || "unknown"
+  ).trim();
   const inputTokens = number(input.inputTokens);
   const outputTokens = number(input.outputTokens);
   await (await getLibsqlClient()).execute({
@@ -163,13 +177,15 @@ export async function getUsageSummary(
         args,
       }),
       client.execute({
-        sql: `SELECT provider, COUNT(*) requests, COALESCE(SUM(total_tokens), 0) tokens
+        sql: `SELECT provider, COUNT(*) requests, COALESCE(SUM(input_tokens), 0) inputTokens,
+          COALESCE(SUM(output_tokens), 0) outputTokens, COALESCE(SUM(total_tokens), 0) tokens
           FROM usage_events WHERE resource_id = ? AND created_at >= ? AND created_at < ?
           GROUP BY provider ORDER BY tokens DESC`,
         args,
       }),
       client.execute({
-        sql: `SELECT model, provider, COUNT(*) requests, COALESCE(SUM(total_tokens), 0) tokens
+        sql: `SELECT model, provider, COUNT(*) requests, COALESCE(SUM(input_tokens), 0) inputTokens,
+          COALESCE(SUM(output_tokens), 0) outputTokens, COALESCE(SUM(total_tokens), 0) tokens
           FROM usage_events WHERE resource_id = ? AND created_at >= ? AND created_at < ?
           GROUP BY provider, model ORDER BY tokens DESC`,
         args,
@@ -208,6 +224,8 @@ export async function getUsageSummary(
     providers: rowsToNumbers(providerResult.rows as Record<string, unknown>[]).map((row) => ({
       provider: String(row.provider),
       requests: number(row.requests),
+      inputTokens: number(row.inputTokens),
+      outputTokens: number(row.outputTokens),
       tokens: number(row.tokens),
       cost: null,
     })),
@@ -215,6 +233,8 @@ export async function getUsageSummary(
       model: String(row.model),
       provider: String(row.provider),
       requests: number(row.requests),
+      inputTokens: number(row.inputTokens),
+      outputTokens: number(row.outputTokens),
       tokens: number(row.tokens),
       cost: null,
       averageCost: null,

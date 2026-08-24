@@ -68,7 +68,7 @@ export const authLogoutRoute = registerApiRoute("/work/auth/logout", {
 export const authMeRoute = registerApiRoute("/work/auth/me", {
   method: "GET",
   handler: (c) => {
-    const user = authUserFromContext((c.get as (key: string) => unknown)("user"));
+    const user = authUserFromContext(c.get("requestContext")?.get("user"));
     if (!user) throw workError("AUTH_REQUIRED");
     return c.json({
       user: {

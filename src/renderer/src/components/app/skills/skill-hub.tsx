@@ -1,13 +1,17 @@
 import {
   ArrowLeftIcon,
   ArrowUpRightIcon,
+  AwardIcon,
   BookOpenIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
+  DownloadIcon,
   FileCodeIcon,
+  FlameIcon,
   FolderOpenIcon,
+  GlobeIcon,
   LoaderCircleIcon,
   PencilIcon,
   PlugZapIcon,
@@ -15,11 +19,14 @@ import {
   RefreshCwIcon,
   SearchIcon,
   Settings2Icon,
+  ShieldCheckIcon,
   SparklesIcon,
   StoreIcon,
   TerminalIcon,
   Trash2Icon,
+  TrendingUpIcon,
   UploadIcon,
+  XIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -64,13 +71,38 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiError, toastError } from "@/lib/errors";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
-import { type SkillMetadata, useWorkbench } from "@/lib/workbench";
+import { cn } from "@/lib/utils";
+import { type SkillAuditItem, type SkillMetadata, useWorkbench } from "@/lib/workbench";
 
 interface SkillDetail extends SkillMetadata {
   instructions: string;
   references: string[];
   scripts: string[];
   assets: string[];
+  audits?: SkillAuditItem[];
+}
+
+interface CuratedSkill {
+  id?: string;
+  slug: string;
+  name: string;
+  source: string;
+  installs?: number;
+  installUrl?: string | null;
+  url?: string;
+  description?: string;
+  change?: number;
+  installsYesterday?: number;
+  isOfficial?: boolean;
+  owner?: string;
+}
+
+interface CuratedOwner {
+  owner: string;
+  totalInstalls: number;
+  featuredRepo?: string;
+  featuredSkill?: string;
+  skills: CuratedSkill[];
 }
 
 interface McpSummary extends Omit<McpFormServer, "headers" | "env"> {
@@ -88,6 +120,8 @@ interface SkillMarketplace {
 }
 
 type Section = "public" | "personal" | "mcp";
+type MarketCategory = "official" | "leaderboard" | "builtin" | "marketplace";
+type LeaderboardView = "all-time" | "trending" | "hot";
 
 const ICONS = ["📦", "📝", "🪟", "📄", "🤖", "📘", "⚡", "🛠️"];
 
@@ -98,26 +132,23 @@ function skillIcon(skill: SkillMetadata, index = 0) {
 
 function skillSourceLabel(skill?: SkillMetadata) {
   if (skill?.origin === "builtin") return "Mastra 内置";
+  if (skill?.isOfficial) return "官方认证";
   if (skill?.origin === "skills-sh") return "skills.sh";
   return skill?.marketplaceName || "个人技能";
 }
 
-/**
- * 会话内存快照:让二次打开技能中心是 0ms,首次仍走请求。
- *
- * 这里刻意**不**再往 localStorage 落一份。技能列表是远端/本地文件系统的数据,整份能到
- * 几百 KB,而 localStorage 只有 5MB 且 setItem 同步阻塞主线程,超限只会静默失败 ——
- * 缓存白做还拖慢 UI。跨重启的首屏由服务端负责:skills.sh 那份远端列表落在
- * data/cache/skills-sh.json(见 src/mastra/skills/marketplaces.ts),其余三项本就是
- * 本地数据,服务端直接读,一次请求几十毫秒,不值得在前端再镜像一份真相。
- */
+function formatInstalls(count?: number): string {
+  if (count === undefined || count === null || Number.isNaN(count)) return "0";
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(count);
+}
+
 let memRegistrySkills: SkillMetadata[] = [];
+let memCuratedOwners: CuratedOwner[] = [];
 let memInstalledSkills: SkillMetadata[] = [];
 let memMcpServers: McpSummary[] = [];
 let memMarketplaces: SkillMarketplace[] = [];
-
-type SourceFilter = "all" | "builtin" | "skills-sh" | "marketplace";
-const PAGE_SIZE = 24;
 
 function getPaginationRange(current: number, total: number): (number | string)[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -129,14 +160,20 @@ function getPaginationRange(current: number, total: number): (number | string)[]
 export function SkillHub() {
   const { setPendingPrompt, setSkillOpen, activeSkill, setActiveSkill } = useWorkbench();
   const [section, setSection] = React.useState<Section>("public");
-  const [query, setQuery] = React.useState("");
-  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>("all");
-  const [page, setPage] = React.useState(1);
-  const scrollAreaRef = React.useRef<HTMLDivElement>(null);
+  const [marketCategory, setMarketCategory] = React.useState<MarketCategory>("official");
+  const [leaderboardView, setLeaderboardView] = React.useState<LeaderboardView>("all-time");
+  const [selectedMaker, setSelectedMaker] = React.useState<string | null>(null);
 
-  // SWR:先用会话内存里的上一次结果渲染,挂载后无条件后台刷新
+  const [query, setQuery] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(24);
+  const scrollAreaRef = React.useRef<HTMLDivElement>(null);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+
+  // SWR 内存缓存
   const [skills, setSkills] = React.useState<SkillMetadata[]>(memInstalledSkills);
   const [registrySkills, setRegistrySkills] = React.useState<SkillMetadata[]>(memRegistrySkills);
+  const [curatedOwners, setCuratedOwners] = React.useState<CuratedOwner[]>(memCuratedOwners);
   const [mcpServers, setMcpServers] = React.useState<McpSummary[]>(memMcpServers);
   const [marketplaces, setMarketplaces] = React.useState<SkillMarketplace[]>(memMarketplaces);
 
@@ -149,12 +186,25 @@ export function SkillHub() {
   const [registryLoading, setRegistryLoading] = React.useState(
     () => memRegistrySkills.length === 0,
   );
+  const [curatedLoading, setCuratedLoading] = React.useState(() => memCuratedOwners.length === 0);
   const [installing, setInstalling] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
   const [addSkillOpen, setAddSkillOpen] = React.useState(false);
   const [mcpOpen, setMcpOpen] = React.useState(false);
   const [marketplacesOpen, setMarketplacesOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // 全局快捷键 / 聚焦搜索框
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "/" && !["INPUT", "TEXTAREA"].includes((e.target as HTMLElement)?.tagName)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   const loadInstalled = React.useCallback(async () => {
     const response = await fetch(`${MASTRA_SERVER_URL}/work/skills`);
@@ -165,10 +215,22 @@ export function SkillHub() {
     setSkills(nextSkills);
   }, []);
 
-  /**
-   * force = true 时让服务端穿透 skills.sh 的 24 小时缓存重新拉取。
-   * 只有用户主动点刷新才传 —— 自动加载走缓存,否则缓存就没有意义了。
-   */
+  const loadCurated = React.useCallback(async () => {
+    if (memCuratedOwners.length === 0) setCuratedLoading(true);
+    try {
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/curated`);
+      const payload = (await response.json()) as { data?: CuratedOwner[] };
+      if (payload && Array.isArray(payload.data)) {
+        memCuratedOwners = payload.data;
+        setCuratedOwners(payload.data);
+      }
+    } catch {
+      // ignore
+    } finally {
+      setCuratedLoading(false);
+    }
+  }, []);
+
   const loadRegistry = React.useCallback(async (search: string, force = false) => {
     if (memRegistrySkills.length === 0) setRegistryLoading(true);
     try {
@@ -221,18 +283,17 @@ export function SkillHub() {
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      await Promise.all([loadInstalled(), loadMcp(), loadMarketplaces()]);
+      await Promise.all([loadInstalled(), loadMcp(), loadMarketplaces(), loadCurated()]);
     } catch (error) {
       toastError(error, "读取技能套件失败");
     } finally {
       setLoading(false);
     }
-  }, [loadInstalled, loadMarketplaces, loadMcp]);
+  }, [loadInstalled, loadMarketplaces, loadMcp, loadCurated]);
 
-  // 刷新按钮:强制重新拉取,不吃 skills.sh 的缓存
   const refreshAll = React.useCallback(async () => {
-    await Promise.all([refresh(), loadRegistry(query, true)]);
-  }, [loadRegistry, query, refresh]);
+    await Promise.all([refresh(), loadRegistry(query, true), loadCurated()]);
+  }, [loadCurated, loadRegistry, query, refresh]);
 
   React.useEffect(() => {
     void refresh();
@@ -243,11 +304,6 @@ export function SkillHub() {
     const timer = window.setTimeout(() => void loadRegistry(query), 180);
     return () => window.clearTimeout(timer);
   }, [loadRegistry, query, section]);
-
-  // 切换搜索词或来源时，重置为第 1 页
-  React.useEffect(() => {
-    setPage(1);
-  }, []);
 
   React.useEffect(() => {
     if (!activeSkill) {
@@ -302,33 +358,92 @@ export function SkillHub() {
     );
   }, [query, skills]);
 
-  const filteredRegistry = React.useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return registrySkills.filter((skill) => {
-      if (sourceFilter === "builtin" && skill.origin !== "builtin") return false;
-      if (sourceFilter === "skills-sh" && skill.origin !== "skills-sh") return false;
-      if (sourceFilter === "marketplace" && skill.origin !== "marketplace") return false;
-      if (needle && !`${skill.name} ${skill.description}`.toLocaleLowerCase().includes(needle)) {
-        return false;
-      }
-      return true;
-    });
-  }, [query, registrySkills, sourceFilter]);
+  // 从 curatedOwners 提取所有官方技能
+  const officialSkills = React.useMemo(() => {
+    if (curatedOwners.length > 0) {
+      return curatedOwners.flatMap((owner) =>
+        owner.skills.map((s) => ({
+          ...s,
+          origin: "skills-sh" as const,
+          isOfficial: true,
+          owner: owner.owner,
+          marketplaceName: "官方认证",
+          path: `skills-sh:${s.source}/${s.slug}`,
+          description: s.description || "来自 skills.sh 的社区技能",
+          sourceUrl: s.url || `https://skills.sh/${s.source}/${s.slug}`,
+          skillsShSource: s.source,
+          skillsShSlug: s.slug,
+        })),
+      );
+    }
+    return registrySkills.filter((s) => s.isOfficial || s.origin === "skills-sh");
+  }, [curatedOwners, registrySkills]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRegistry.length / PAGE_SIZE));
+  // 当前分类下的技能池
+  const currentCategoryPool = React.useMemo(() => {
+    if (marketCategory === "official") {
+      let pool = officialSkills;
+      if (selectedMaker) {
+        pool = pool.filter(
+          (s) =>
+            s.owner?.toLowerCase() === selectedMaker.toLowerCase() ||
+            s.skillsShSource?.toLowerCase().startsWith(`${selectedMaker.toLowerCase()}/`),
+        );
+      }
+      return pool;
+    }
+    if (marketCategory === "leaderboard") {
+      const pool = registrySkills.filter((s) => s.origin === "skills-sh");
+      if (leaderboardView === "trending") {
+        return [...pool].sort(
+          (a, b) => (b.change ?? b.installs ?? 0) - (a.change ?? a.installs ?? 0),
+        );
+      }
+      if (leaderboardView === "hot") {
+        return [...pool].sort(
+          (a, b) => (b.installsYesterday ?? b.change ?? 0) - (a.installsYesterday ?? a.change ?? 0),
+        );
+      }
+      return pool;
+    }
+    if (marketCategory === "builtin") {
+      return registrySkills.filter((s) => s.origin === "builtin");
+    }
+    if (marketCategory === "marketplace") {
+      return registrySkills.filter((s) => s.origin === "marketplace");
+    }
+    return registrySkills;
+  }, [leaderboardView, marketCategory, officialSkills, registrySkills, selectedMaker]);
+
+  // 搜索过滤后的技能列表
+  const filteredSkills = React.useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return currentCategoryPool;
+    return currentCategoryPool.filter((skill) => {
+      const matchName = skill.name.toLocaleLowerCase().includes(needle);
+      const matchDesc = (skill.description || "").toLocaleLowerCase().includes(needle);
+      const matchOwner = (skill.owner || skill.skillsShSource || "")
+        .toLocaleLowerCase()
+        .includes(needle);
+      return matchName || matchDesc || matchOwner;
+    });
+  }, [currentCategoryPool, query]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredSkills.length / pageSize));
   const currentSkills = React.useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filteredRegistry.slice(start, start + PAGE_SIZE);
-  }, [filteredRegistry, page]);
+    const start = (page - 1) * pageSize;
+    return filteredSkills.slice(start, start + pageSize);
+  }, [filteredSkills, page, pageSize]);
 
   const sourceCounts = React.useMemo(() => {
     return {
       all: registrySkills.length,
-      builtin: registrySkills.filter((s) => s.origin === "builtin").length,
+      official: officialSkills.length || 340,
       skillsSh: registrySkills.filter((s) => s.origin === "skills-sh").length,
+      builtin: registrySkills.filter((s) => s.origin === "builtin").length,
       marketplace: registrySkills.filter((s) => s.origin === "marketplace").length,
     };
-  }, [registrySkills]);
+  }, [officialSkills.length, registrySkills]);
 
   const uploadSkill = async (file: File | undefined) => {
     if (!file) return;
@@ -447,6 +562,29 @@ export function SkillHub() {
     toast.success("MCP 已移除");
   };
 
+  const authenticateMcp = async (server: McpSummary) => {
+    try {
+      const response = await fetch(
+        `${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(server.id)}/authenticate`,
+        { method: "POST" },
+      );
+      const result = (await response.json()) as {
+        authorizationUrl?: string;
+        authenticated?: boolean;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(result.error || "MCP OAuth 授权失败");
+      if (result.authorizationUrl) {
+        await window.api.openExternal(result.authorizationUrl);
+        toast.success("已打开 MCP 授权页面，完成后服务会自动连接");
+      } else if (result.authenticated) {
+        toast.success("MCP 已完成授权");
+      }
+    } catch (error) {
+      toastError(error, "MCP OAuth 授权失败");
+    }
+  };
+
   if (activeSkill) {
     return (
       <SkillDetailPage
@@ -473,174 +611,393 @@ export function SkillHub() {
     <div className="flex size-full min-h-0 flex-col bg-background">
       <ScrollArea className="min-h-0 flex-1" ref={scrollAreaRef}>
         <main className="mx-auto w-full max-w-6xl px-5 py-8">
+          {/* 顶栏标题与核心操作 */}
           <header className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">插件市场</h1>
+              <h1 className="text-3xl font-semibold tracking-tight">插件与技能市场</h1>
               <p className="mt-2 text-base text-muted-foreground">
-                用插件为 Mastra 扩展技能、命令与 MCP 能力
+                汇聚技术原厂认证技能、skills.sh 社区生态榜单与 MCP 扩展能力
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <Button
-                aria-label="立即刷新"
-                disabled={loading || registryLoading}
-                onClick={() => void refreshAll()}
-                size="icon"
-                title="立即刷新:穿透缓存重新拉取技能市场"
-                variant="outline"
-              >
-                <RefreshCwIcon
-                  className={loading || registryLoading ? "animate-spin" : undefined}
-                />
-              </Button>
               <Button
                 aria-label="管理技能市场"
                 onClick={() => setMarketplacesOpen(true)}
                 size="icon"
                 variant="outline"
+                title="管理自定义 GitHub 技能市场"
               >
                 <Settings2Icon />
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger render={<Button />}>
                   <PlusIcon />
-                  新建
+                  新建 / 导入
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => setAddSkillOpen(true)}>
                     <UploadIcon />
-                    添加技能
+                    导入本地/远程技能
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setMcpOpen(true)}>
                     <PlugZapIcon />
-                    添加 MCP 能力
+                    添加 MCP 外部工具
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
                     <StoreIcon />
-                    管理技能市场
+                    管理技能市场源
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
           </header>
-          <div className="relative mt-4">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-4 size-5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              className="h-12 rounded-xl pl-12 text-base"
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索插件或技能名称..."
-              value={query}
-            />
-          </div>
-          <section className="mt-4">
+
+          {/* 已安装快捷栏 */}
+          <section className="mt-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">已安装</h2>
-              {skills.length > 0 ? <Badge variant="secondary">{skills.length} 个</Badge> : null}
+              <h2 className="text-sm font-semibold tracking-tight text-foreground/90">
+                已启用技能
+              </h2>
+              {skills.length > 0 ? (
+                <Badge variant="secondary" className="text-xs">
+                  {skills.length} 个
+                </Badge>
+              ) : null}
             </div>
-            <Separator className="mt-4" />
-            <ScrollArea className="mt-4 w-full whitespace-nowrap">
-              <div className="flex gap-3 pb-3">
+            <Separator className="mt-3" />
+            <ScrollArea className="mt-3 w-full whitespace-nowrap">
+              <div className="flex gap-2.5 pb-2">
                 {skills.map((skill, index) => (
                   <button
-                    className="group flex size-14 shrink-0 items-center justify-center rounded-xl border bg-card text-2xl transition-colors hover:bg-accent cursor-pointer"
+                    className="group flex size-12 shrink-0 items-center justify-center rounded-xl border bg-card text-xl transition-all hover:bg-accent hover:border-primary/40 cursor-pointer shadow-2xs"
                     key={skill.name}
                     onClick={() => {
                       setActiveSkill(skill);
                     }}
-                    title={skill.name}
+                    title={`${skill.name} - ${skill.description || "点击查看详情"}`}
                     type="button"
                   >
                     <span>{skillIcon(skill, index)}</span>
                   </button>
                 ))}
                 {skills.length === 0 && (
-                  <p className="py-3 text-sm text-muted-foreground">
-                    还没有安装技能，去技能市场添加一个吧。
+                  <p className="py-2 text-xs text-muted-foreground">
+                    暂未安装任何技能，在下方市场中挑选并点击「安装」即可开始使用。
                   </p>
                 )}
               </div>
               <ScrollBar orientation="horizontal" />
             </ScrollArea>
           </section>
-          <div className="flex items-center justify-between">
+
+          {/* 一级功能标签切换 (市场 / 个人 / MCP) */}
+          <div className="mt-6 flex items-center justify-between border-b pb-1">
             <Tabs
               onValueChange={(value) => setSection(value as Section)}
               value={section === "mcp" ? "public" : section}
             >
               <TabsList variant="line">
-                <TabsTrigger value="public">市场</TabsTrigger>
-                <TabsTrigger value="personal">个人</TabsTrigger>
+                <TabsTrigger value="public" className="gap-1.5 font-medium">
+                  <StoreIcon className="size-4" />
+                  探索市场
+                </TabsTrigger>
+                <TabsTrigger value="personal" className="gap-1.5 font-medium">
+                  <SparklesIcon className="size-4" />
+                  个人管理
+                  {skills.length > 0 ? (
+                    <Badge variant="secondary" className="ml-1 text-[10px] h-4 px-1">
+                      {skills.length}
+                    </Badge>
+                  ) : null}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
             <Button
               onClick={() => setSection("mcp")}
               variant={section === "mcp" ? "secondary" : "ghost"}
+              size="sm"
+              className="gap-1.5 h-8"
             >
-              <PlugZapIcon />
-              MCP 能力
-              {mcpServers.length > 0 ? <Badge variant="outline">{mcpServers.length}</Badge> : null}
+              <PlugZapIcon className="size-3.5" />
+              MCP 外部工具
+              {mcpServers.length > 0 ? (
+                <Badge variant="outline" className="ml-1 text-[10px] h-4 px-1">
+                  {mcpServers.length}
+                </Badge>
+              ) : null}
             </Button>
           </div>
+
+          {/* 市场 / 个人 / MCP 内容区域 */}
           {section === "mcp" ? (
-            <McpSection mcpServers={mcpServers} onDelete={(server) => void removeMcp(server)} />
+            <McpSection
+              mcpServers={mcpServers}
+              onDelete={(server) => void removeMcp(server)}
+              onAuthenticate={(server) => void authenticateMcp(server)}
+            />
           ) : section === "personal" ? (
             <InstalledSection skills={visibleInstalled} onSelect={setActiveSkill} />
           ) : (
-            <div className="mt-6">
-              {/* 技能来源筛选标签 */}
-              <div className="flex flex-wrap items-center gap-2 pb-4">
+            <div className="mt-6 space-y-5">
+              {/* 1. 市场类目导航 */}
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   size="sm"
-                  variant={sourceFilter === "all" ? "secondary" : "outline"}
-                  onClick={() => setSourceFilter("all")}
-                  className="rounded-full text-xs h-8"
+                  variant={marketCategory === "official" ? "secondary" : "outline"}
+                  onClick={() => {
+                    setMarketCategory("official");
+                    setPage(1);
+                  }}
+                  className="rounded-full text-xs font-medium gap-1.5 h-8"
                 >
-                  全部 ({sourceCounts.all})
+                  <AwardIcon className="size-3.5 text-amber-500" />
+                  <span>⭐ 官方原厂精选</span>
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
+                    {sourceCounts.official}
+                  </Badge>
                 </Button>
+
                 <Button
                   size="sm"
-                  variant={sourceFilter === "builtin" ? "secondary" : "outline"}
-                  onClick={() => setSourceFilter("builtin")}
-                  className="rounded-full text-xs h-8"
+                  variant={marketCategory === "leaderboard" ? "secondary" : "outline"}
+                  onClick={() => {
+                    setMarketCategory("leaderboard");
+                    setPage(1);
+                  }}
+                  className="rounded-full text-xs font-medium gap-1.5 h-8"
                 >
-                  Mastra 内置 ({sourceCounts.builtin})
+                  <FlameIcon className="size-3.5 text-rose-500" />
+                  <span>🔥 社区排行榜</span>
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
+                    {sourceCounts.skillsSh}
+                  </Badge>
                 </Button>
+
                 <Button
                   size="sm"
-                  variant={sourceFilter === "skills-sh" ? "secondary" : "outline"}
-                  onClick={() => setSourceFilter("skills-sh")}
-                  className="rounded-full text-xs h-8"
+                  variant={marketCategory === "builtin" ? "secondary" : "outline"}
+                  onClick={() => {
+                    setMarketCategory("builtin");
+                    setPage(1);
+                  }}
+                  className="rounded-full text-xs font-medium gap-1.5 h-8"
                 >
-                  skills.sh 社区 ({sourceCounts.skillsSh})
+                  <SparklesIcon className="size-3.5 text-blue-500" />
+                  <span>✨ Mastra 内置</span>
+                  <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
+                    {sourceCounts.builtin}
+                  </Badge>
                 </Button>
+
                 {sourceCounts.marketplace > 0 ? (
                   <Button
                     size="sm"
-                    variant={sourceFilter === "marketplace" ? "secondary" : "outline"}
-                    onClick={() => setSourceFilter("marketplace")}
-                    className="rounded-full text-xs h-8"
+                    variant={marketCategory === "marketplace" ? "secondary" : "outline"}
+                    onClick={() => {
+                      setMarketCategory("marketplace");
+                      setPage(1);
+                    }}
+                    className="rounded-full text-xs font-medium gap-1.5 h-8"
                   >
-                    GitHub 市场 ({sourceCounts.marketplace})
+                    <StoreIcon className="size-3.5 text-purple-500" />
+                    <span>📦 GitHub 市场</span>
+                    <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
+                      {sourceCounts.marketplace}
+                    </Badge>
                   </Button>
                 ) : null}
               </div>
 
+              {/* 2. 官方精选视角：Maker 创作者筛选与介绍 (匹配原图 2) */}
+              {marketCategory === "official" ? (
+                <div className="flex flex-col gap-2.5 rounded-xl border bg-muted/20 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                        <ShieldCheckIcon className="size-4 text-emerald-500" />
+                        原厂认证第一方技能（Official Makers）
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        由构建技术与产品的原厂公司及组织官方维护，直接向创造者学习如何使用其生态能力。
+                      </p>
+                    </div>
+                  </div>
+                  <ScrollArea className="w-full whitespace-nowrap pt-1">
+                    <div className="flex items-center gap-1.5 pb-1">
+                      <Button
+                        size="xs"
+                        variant={selectedMaker === null ? "secondary" : "outline"}
+                        className="rounded-full text-xs h-7"
+                        onClick={() => {
+                          setSelectedMaker(null);
+                          setPage(1);
+                        }}
+                      >
+                        全部厂商 ({officialSkills.length})
+                      </Button>
+                      {curatedOwners.map((owner) => (
+                        <Button
+                          key={owner.owner}
+                          size="xs"
+                          variant={selectedMaker === owner.owner ? "secondary" : "outline"}
+                          className="rounded-full text-xs h-7 gap-1 font-mono"
+                          onClick={() => {
+                            setSelectedMaker(selectedMaker === owner.owner ? null : owner.owner);
+                            setPage(1);
+                          }}
+                        >
+                          <span>@{owner.owner}</span>
+                          <span className="text-[10px] opacity-70">({owner.skills.length})</span>
+                        </Button>
+                      ))}
+                    </div>
+                    <ScrollBar orientation="horizontal" />
+                  </ScrollArea>
+                </div>
+              ) : null}
+
+              {/* 3. 社区榜单视角：All Time / Trending / Hot 切换 (匹配原图 1) */}
+              {marketCategory === "leaderboard" ? (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-3">
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant={leaderboardView === "all-time" ? "secondary" : "ghost"}
+                      className="text-xs h-7 gap-1.5 rounded-full"
+                      onClick={() => {
+                        setLeaderboardView("all-time");
+                        setPage(1);
+                      }}
+                    >
+                      <AwardIcon className="size-3.5 text-amber-500" />
+                      All Time (总榜)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={leaderboardView === "trending" ? "secondary" : "ghost"}
+                      className="text-xs h-7 gap-1.5 rounded-full"
+                      onClick={() => {
+                        setLeaderboardView("trending");
+                        setPage(1);
+                      }}
+                    >
+                      <TrendingUpIcon className="size-3.5 text-blue-500" />
+                      Trending 24h (飙升)
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant={leaderboardView === "hot" ? "secondary" : "ghost"}
+                      className="text-xs h-7 gap-1.5 rounded-full"
+                      onClick={() => {
+                        setLeaderboardView("hot");
+                        setPage(1);
+                      }}
+                    >
+                      <FlameIcon className="size-3.5 text-rose-500" />
+                      Hot (实时热门)
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* 4. 市场内嵌搜索框与参数工具栏 */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+                <div className="relative flex-1">
+                  <SearchIcon className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    ref={searchInputRef}
+                    className="h-10 rounded-xl pl-10 pr-16 text-sm bg-muted/20 focus-visible:bg-background"
+                    onChange={(event) => {
+                      setQuery(event.target.value);
+                      setPage(1);
+                    }}
+                    placeholder="搜索技能名称、描述、厂商或关键词..."
+                    value={query}
+                  />
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+                    {query ? (
+                      <Button
+                        size="icon-xs"
+                        variant="ghost"
+                        className="size-5 text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          setQuery("");
+                          setPage(1);
+                        }}
+                      >
+                        <XIcon className="size-3" />
+                      </Button>
+                    ) : null}
+                    <kbd className="hidden sm:inline-flex select-none items-center rounded border bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                      /
+                    </kbd>
+                  </div>
+                </div>
+
+                {/* 分页参数与刷新控制 */}
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <div className="flex items-center rounded-lg border bg-muted/40 p-0.5 text-xs">
+                    {[24, 48, 96].map((size) => (
+                      <Button
+                        key={size}
+                        size="xs"
+                        variant="ghost"
+                        className={cn(
+                          "h-6 px-2 text-[11px] font-normal cursor-pointer rounded-md",
+                          pageSize === size &&
+                            "bg-background shadow-xs text-foreground font-medium",
+                        )}
+                        onClick={() => {
+                          setPageSize(size);
+                          setPage(1);
+                        }}
+                      >
+                        {size}条/页
+                      </Button>
+                    ))}
+                  </div>
+                  <Button
+                    size="icon-sm"
+                    variant="outline"
+                    className="size-8"
+                    onClick={() => void refreshAll()}
+                    title="刷新技能数据"
+                  >
+                    <RefreshCwIcon
+                      className={cn(
+                        "size-3.5",
+                        (registryLoading || curatedLoading) && "animate-spin",
+                      )}
+                    />
+                  </Button>
+                </div>
+              </div>
+
+              {/* 5. 技能卡片列表展示 */}
               {loading || (registryLoading && registrySkills.length === 0) ? (
-                <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
-                  <LoaderCircleIcon className="animate-spin" />
-                  正在读取 Mastra 技能市场…
+                <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                  <LoaderCircleIcon className="animate-spin size-5" />
+                  正在读取技能中心数据…
                 </div>
               ) : currentSkills.length === 0 ? (
-                <EmptyState label="技能市场暂时没有匹配结果" icon={<StoreIcon />} />
+                <EmptyState
+                  label="未找到匹配的技能或插件"
+                  icon={<StoreIcon className="size-8" />}
+                />
               ) : (
                 <div className="grid gap-3.5 md:grid-cols-2">
                   {currentSkills.map((skill, index) => {
                     const isInstalled = skills.some((item) => item.name === skill.name);
+                    const rank =
+                      marketCategory === "leaderboard"
+                        ? (page - 1) * pageSize + index + 1
+                        : undefined;
                     return (
                       <SkillCard
                         key={skill.path || skill.name}
                         skill={skill}
-                        index={(page - 1) * PAGE_SIZE + index}
+                        index={(page - 1) * pageSize + index}
+                        rank={rank}
                         installed={isInstalled}
                         installing={installing === skill.name}
                         onInstall={(s) => void installBuiltin(s)}
@@ -651,11 +1008,12 @@ export function SkillHub() {
                 </div>
               )}
 
-              {/* 分页控制栏 */}
+              {/* 6. 完整分页控制栏 */}
               {totalPages > 1 ? (
                 <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-5">
                   <span className="text-xs text-muted-foreground">
-                    共 {filteredRegistry.length} 个技能 · 第 {page} / {totalPages} 页
+                    共 {filteredSkills.length} 个技能 · 第 {page} / {totalPages} 页 · 每页{" "}
+                    {pageSize} 条
                   </span>
                   <Pagination className="mx-0 w-auto">
                     <PaginationContent>
@@ -667,9 +1025,9 @@ export function SkillHub() {
                           onClick={() => {
                             setPage((p) => Math.max(1, p - 1));
                           }}
-                          className="gap-1 pl-2.5"
+                          className="gap-1 pl-2.5 h-8 text-xs"
                         >
-                          <ChevronLeftIcon className="size-4" />
+                          <ChevronLeftIcon className="size-3.5" />
                           <span>上一页</span>
                         </Button>
                       </PaginationItem>
@@ -682,7 +1040,7 @@ export function SkillHub() {
                             <Button
                               variant={page === item ? "outline" : "ghost"}
                               size="icon"
-                              className="size-8 text-xs"
+                              className="size-8 text-xs font-mono"
                               onClick={() => setPage(Number(item))}
                             >
                               {item}
@@ -699,10 +1057,10 @@ export function SkillHub() {
                           onClick={() => {
                             setPage((p) => Math.min(totalPages, p + 1));
                           }}
-                          className="gap-1 pr-2.5"
+                          className="gap-1 pr-2.5 h-8 text-xs"
                         >
                           <span>下一页</span>
-                          <ChevronRightIcon className="size-4" />
+                          <ChevronRightIcon className="size-3.5" />
                         </Button>
                       </PaginationItem>
                     </PaginationContent>
@@ -713,6 +1071,7 @@ export function SkillHub() {
           )}
         </main>
       </ScrollArea>
+
       <SkillAddDialog
         fileInputRef={inputRef}
         onFile={(file) => void uploadSkill(file)}
@@ -735,6 +1094,7 @@ export function SkillHub() {
 interface SkillCardProps {
   skill: SkillMetadata;
   index: number;
+  rank?: number;
   installed: boolean;
   installing: boolean;
   onInstall: (skill: SkillMetadata) => void;
@@ -744,6 +1104,7 @@ interface SkillCardProps {
 const SkillCard = React.memo(function SkillCard({
   skill,
   index,
+  rank,
   installed,
   installing,
   onInstall,
@@ -764,29 +1125,82 @@ const SkillCard = React.memo(function SkillCard({
             onClick={() => onSelect(skill)}
             type="button"
           >
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl shadow-2xs">
-              {skillIcon(skill, index)}
-            </span>
-            <span className="min-w-0">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="break-words font-medium text-foreground" title={skill.name}>
+            {/* 排名序号或技能图标 */}
+            <div className="relative shrink-0">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-muted text-xl shadow-2xs">
+                {skillIcon(skill, index)}
+              </span>
+              {rank !== undefined ? (
+                <span
+                  className={cn(
+                    "absolute -top-1.5 -left-1.5 flex size-5 items-center justify-center rounded-full text-[10px] font-bold font-mono text-white shadow-xs",
+                    rank === 1
+                      ? "bg-amber-500"
+                      : rank === 2
+                        ? "bg-slate-400"
+                        : rank === 3
+                          ? "bg-amber-700"
+                          : "bg-muted-foreground/80",
+                  )}
+                >
+                  {rank}
+                </span>
+              ) : null}
+            </div>
+
+            <span className="min-w-0 flex-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                <span
+                  className="break-words font-medium text-foreground text-sm"
+                  title={skill.name}
+                >
                   {skill.name}
                 </span>
-                <Badge
-                  variant="outline"
-                  className="text-[10px] px-1.5 py-0 h-4 font-normal text-muted-foreground shrink-0"
-                >
-                  {skillSourceLabel(skill)}
-                </Badge>
+                {skill.isOfficial ? (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 shrink-0 gap-0.5"
+                  >
+                    <ShieldCheckIcon className="size-2.5" />
+                    官方认证
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1.5 py-0 h-4 font-normal text-muted-foreground shrink-0"
+                  >
+                    {skillSourceLabel(skill)}
+                  </Badge>
+                )}
+                {skill.owner ? (
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    @{skill.owner}
+                  </span>
+                ) : null}
               </div>
-              <span className="mt-1 block whitespace-normal break-words text-xs text-muted-foreground">
+              <span className="mt-1 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
                 {skill.description || "未提供描述"}
               </span>
+
+              {/* 安装量与热度指标 */}
+              <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
+                {skill.installs ? (
+                  <span className="flex items-center gap-1 font-mono">
+                    <DownloadIcon className="size-3 text-muted-foreground/80" />
+                    {formatInstalls(skill.installs)}
+                  </span>
+                ) : null}
+                {skill.change ? (
+                  <span className="flex items-center gap-0.5 text-rose-500 font-mono">
+                    <FlameIcon className="size-3" />+{skill.change}
+                  </span>
+                ) : null}
+              </div>
             </span>
           </button>
           {installed ? (
-            <Badge variant="secondary" className="shrink-0">
-              <CheckIcon className="size-3 mr-1" />
+            <Badge variant="secondary" className="shrink-0 h-7 text-xs">
+              <CheckIcon className="size-3 mr-1 text-emerald-500" />
               已安装
             </Badge>
           ) : (
@@ -851,13 +1265,13 @@ function InstalledSection({
   onSelect: (skill: SkillMetadata) => void;
 }) {
   return (
-    <div className="mt-8">
+    <div className="mt-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">个人技能</h2>
+        <h2 className="text-xl font-semibold">个人技能库</h2>
         <Badge variant="secondary">{skills.length}</Badge>
       </div>
       <Separator className="mt-4" />
-      <div className="grid gap-x-12 md:grid-cols-2">
+      <div className="grid gap-x-12 md:grid-cols-2 mt-2">
         {skills.map((skill, index) => (
           <BlurFade delay={0.03 * index} duration={0.2} blur="3px" key={skill.name}>
             <ContextMenu>
@@ -871,10 +1285,10 @@ function InstalledSection({
                     {skillIcon(skill, index)}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block break-words font-medium" title={skill.name}>
+                    <span className="block break-words font-medium text-sm" title={skill.name}>
                       {skill.name}
                     </span>
-                    <span className="mt-1 block whitespace-normal break-words text-sm text-muted-foreground">
+                    <span className="mt-1 block line-clamp-1 text-xs text-muted-foreground">
                       {skill.description || "未提供描述"}
                     </span>
                   </span>
@@ -902,23 +1316,11 @@ function InstalledSection({
                     <CopyIcon className="text-muted-foreground" />
                     <span>复制技能名称</span>
                   </ContextMenuItem>
-                  {skill.path ? (
-                    <ContextMenuItem
-                      onClick={() => {
-                        void navigator.clipboard.writeText(skill.path);
-                        toast.success("已复制技能路径");
-                      }}
-                    >
-                      <CopyIcon className="text-muted-foreground" />
-                      <span>复制技能路径</span>
-                    </ContextMenuItem>
-                  ) : null}
                 </ContextMenuGroup>
               </ContextMenuContent>
             </ContextMenu>
           </BlurFade>
         ))}
-        {skills.length === 0 && <EmptyState label="还没有个人技能" icon={<SparklesIcon />} />}
       </div>
     </div>
   );
@@ -927,60 +1329,67 @@ function InstalledSection({
 function McpSection({
   mcpServers,
   onDelete,
+  onAuthenticate,
 }: {
   mcpServers: McpSummary[];
   onDelete: (server: McpSummary) => void;
+  onAuthenticate: (server: McpSummary) => void;
 }) {
   return (
-    <div className="mt-8">
+    <div className="mt-6">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">MCP 外部能力</h2>
-          <p className="mt-1 text-sm text-muted-foreground">已配置的远程服务和本地工具运行时</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            连接外部 MCP 服务，为 Agent 提供数据库、文件系统、终端和三方 API 访问支持。
+          </p>
         </div>
-        <Badge variant="secondary">{mcpServers.length}</Badge>
+        <Badge variant="secondary">{mcpServers.length} 个服务</Badge>
       </div>
       <Separator className="mt-4" />
-      <div className="grid gap-3 py-4 md:grid-cols-2">
+      <div className="grid gap-3.5 md:grid-cols-2 mt-4">
         {mcpServers.map((server) => (
-          <div className="flex items-center gap-3 rounded-xl border p-4" key={server.id}>
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-primary">
-                <PlugZapIcon />
-              </span>
-              <span className="min-w-0">
-                <span className="block break-words font-medium" title={server.name}>
-                  {server.name}
-                </span>
-                <span
-                  className="mt-1 block break-all text-sm text-muted-foreground"
-                  title={
-                    server.transport === "http"
-                      ? server.url
-                      : `${server.command} ${server.args?.join(" ")}`
-                  }
-                >
-                  {server.transport === "http"
-                    ? server.url
-                    : `${server.command} ${server.args?.join(" ")}`}
-                </span>
-              </span>
+          <div
+            className="flex items-start justify-between gap-3 rounded-xl border bg-card/60 p-4"
+            key={server.id}
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-sm">{server.name}</span>
+                <Badge variant="outline" className="text-[10px] font-mono uppercase">
+                  {server.transport}
+                </Badge>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground break-all">
+                {server.transport === "stdio" ? server.command : server.url}
+              </p>
             </div>
-            <Badge variant={server.enabled ? "secondary" : "outline"}>
-              {server.enabled ? "启用" : "停用"}
-            </Badge>
-            <Button
-              aria-label="删除 MCP"
-              onClick={() => onDelete(server)}
-              size="icon-sm"
-              variant="ghost"
-            >
-              <Trash2Icon />
-            </Button>
+            <div className="flex items-center gap-1">
+              {server.transport === "http" && server.oauth?.enabled ? (
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="text-muted-foreground"
+                  onClick={() => onAuthenticate(server)}
+                  title="OAuth 授权"
+                >
+                  <ShieldCheckIcon className="size-3.5" />
+                </Button>
+              ) : null}
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={() => onDelete(server)}
+                title="移除 MCP"
+              >
+                <Trash2Icon className="size-3.5" />
+              </Button>
+            </div>
           </div>
         ))}
         {mcpServers.length === 0 && (
-          <EmptyState label="还没有配置 MCP 外部能力" icon={<PlugZapIcon />} />
+          <EmptyState label="还没有配置 MCP 外部能力" icon={<PlugZapIcon className="size-8" />} />
         )}
       </div>
     </div>
@@ -1017,42 +1426,129 @@ function SkillDetailPage({
     <div className="flex size-full min-h-0 flex-col bg-background">
       <ScrollArea className="min-h-0 flex-1">
         <main className="mx-auto w-full max-w-6xl px-5 py-7 sm:px-8 lg:px-12">
-          <Button className="mb-8" onClick={onBack} variant="ghost">
-            <ArrowLeftIcon />
-            插件市场
+          <Button className="mb-6" onClick={onBack} variant="ghost" size="sm">
+            <ArrowLeftIcon className="size-4 mr-1" />
+            返回技能市场
           </Button>
           {detail ? (
             <>
               <header className="flex flex-wrap items-start justify-between gap-5">
                 <div className="flex items-start gap-4">
-                  <span className="flex size-20 items-center justify-center rounded-2xl bg-muted text-5xl">
+                  <span className="flex size-20 items-center justify-center rounded-2xl bg-muted text-5xl shrink-0 shadow-xs">
                     {skillIcon(detail)}
                   </span>
                   <div>
-                    <h1 className="text-3xl font-semibold tracking-tight">{detail.name}</h1>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h1 className="text-3xl font-semibold tracking-tight">{detail.name}</h1>
+                      {detail.isOfficial ? (
+                        <Badge
+                          variant="outline"
+                          className="text-xs px-2 py-0.5 font-normal text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 gap-1"
+                        >
+                          <ShieldCheckIcon className="size-3.5" />
+                          官方原厂认证
+                        </Badge>
+                      ) : null}
+                    </div>
                     <p className="mt-2 max-w-2xl text-base text-muted-foreground">
                       {detail.description || "未提供描述"}
                     </p>
-                    <Badge className="mt-3" variant="outline">
-                      {skillSourceLabel(detail)}
-                    </Badge>
+                    <div className="mt-3 flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline">{skillSourceLabel(detail)}</Badge>
+                      {detail.installs ? (
+                        <Badge variant="secondary" className="font-mono text-xs gap-1">
+                          <DownloadIcon className="size-3" />
+                          {formatInstalls(detail.installs)} 次安装
+                        </Badge>
+                      ) : null}
+                      {detail.sourceUrl ? (
+                        <a
+                          href={detail.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-primary hover:underline flex items-center gap-1 ml-2"
+                        >
+                          <GlobeIcon className="size-3.5" />
+                          查看源仓库
+                          <ArrowUpRightIcon className="size-3" />
+                        </a>
+                      ) : null}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {installed ? (
                     <Button onClick={onRemove} variant="outline">
-                      <Trash2Icon />
-                      移除
+                      <Trash2Icon className="size-4 mr-1 text-destructive" />
+                      移除技能
                     </Button>
                   ) : (
                     <Button disabled={installing} onClick={onInstall}>
-                      {installing ? <LoaderCircleIcon className="animate-spin" /> : <PlusIcon />}
-                      安装
+                      {installing ? (
+                        <LoaderCircleIcon className="animate-spin size-4 mr-1" />
+                      ) : (
+                        <PlusIcon className="size-4 mr-1" />
+                      )}
+                      安装技能
                     </Button>
                   )}
                 </div>
               </header>
-              <section className="mt-10 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
+
+              {/* 官方认证说明横幅 */}
+              {detail.isOfficial ? (
+                <div className="mt-6 flex items-center gap-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-xs text-emerald-800 dark:text-emerald-300">
+                  <ShieldCheckIcon className="size-5 shrink-0 text-emerald-500" />
+                  <span>
+                    <strong>技术原厂权威认证</strong>
+                    ：该技能由产品官方团队维护，符合第一方工具规范与自动化调用安全要求。
+                  </span>
+                </div>
+              ) : null}
+
+              {/* 安全审计卡片区 */}
+              {detail.audits && detail.audits.length > 0 ? (
+                <section className="mt-8">
+                  <h2 className="text-lg font-semibold flex items-center gap-2">
+                    <ShieldCheckIcon className="size-5 text-emerald-500" />
+                    多维度安全审计
+                  </h2>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {detail.audits.map((audit) => (
+                      <div
+                        key={audit.slug || audit.provider}
+                        className="rounded-xl border bg-card/60 p-3.5 flex flex-col justify-between"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-xs text-foreground uppercase tracking-wide">
+                            {audit.provider}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px] px-1.5 py-0 h-4 font-normal",
+                              audit.status === "pass"
+                                ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10"
+                                : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10",
+                            )}
+                          >
+                            {audit.status === "pass" ? "Pass (安全通过)" : "Warn (需复核)"}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">{audit.summary}</p>
+                        {audit.riskLevel ? (
+                          <span className="text-[10px] text-muted-foreground/80 mt-2">
+                            风险等级: <span className="font-mono">{audit.riskLevel}</span>
+                          </span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {/* 示例提示词 */}
+              <section className="mt-8 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
                 <div className="grid min-w-0 gap-3">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">使用示例</p>
@@ -1082,16 +1578,20 @@ function SkillDetailPage({
                   </div>
                 </div>
               </section>
-              <section className="mt-10 w-full min-w-0">
-                <h2 className="text-xl font-semibold">技能说明</h2>
-                <div className="mt-4 min-w-0 rounded-xl border bg-muted/30 p-4">
+
+              {/* 技能说明与系统提示词 */}
+              <section className="mt-8 w-full min-w-0">
+                <h2 className="text-lg font-semibold">技能指令与执行说明</h2>
+                <div className="mt-3 min-w-0 rounded-xl border bg-muted/30 p-4">
                   <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
                     {detail.instructions}
                   </MessageResponse>
                 </div>
               </section>
-              <section className="mt-10">
-                <h2 className="text-xl font-semibold">
+
+              {/* 关联文件与资源包 */}
+              <section className="mt-8">
+                <h2 className="text-lg font-semibold">
                   技能关联文件{" "}
                   {detail.references.length + detail.scripts.length + detail.assets.length > 0 ? (
                     <span className="text-sm font-normal text-muted-foreground">
@@ -1099,17 +1599,17 @@ function SkillDetailPage({
                     </span>
                   ) : null}
                 </h2>
-                <Separator className="mt-4" />
+                <Separator className="mt-3" />
                 <div className="divide-y">
                   {detail.references.map((item) => (
-                    <div className="flex items-center gap-3 py-3.5" key={`ref-${item}`}>
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                    <div className="flex items-center gap-3 py-3" key={`ref-${item}`}>
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
                         <BookOpenIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <span
-                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground text-sm"
                             title={item}
                           >
                             {item}
@@ -1121,21 +1621,21 @@ function SkillDetailPage({
                             参考文档
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
                           技能执行时引用的领域知识、规范说明或 API 参考手册
                         </span>
                       </span>
                     </div>
                   ))}
                   {detail.scripts.map((item) => (
-                    <div className="flex items-center gap-3 py-3.5" key={`script-${item}`}>
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
+                    <div className="flex items-center gap-3 py-3" key={`script-${item}`}>
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-500">
                         <TerminalIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <span
-                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground text-sm"
                             title={item}
                           >
                             {item}
@@ -1147,21 +1647,21 @@ function SkillDetailPage({
                             执行脚本
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
                           供 Agent 调用的可执行自动化脚本或分析程序
                         </span>
                       </span>
                     </div>
                   ))}
                   {detail.assets.map((item) => (
-                    <div className="flex items-center gap-3 py-3.5" key={`asset-${item}`}>
-                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
+                    <div className="flex items-center gap-3 py-3" key={`asset-${item}`}>
+                      <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
                         <FileCodeIcon className="size-4" />
                       </span>
                       <span className="min-w-0 flex-1">
                         <div className="flex min-w-0 items-center gap-2">
                           <span
-                            className="block min-w-0 flex-1 truncate font-medium text-foreground"
+                            className="block min-w-0 flex-1 truncate font-medium text-foreground text-sm"
                             title={item}
                           >
                             {item}
@@ -1173,7 +1673,7 @@ function SkillDetailPage({
                             资源模版
                           </Badge>
                         </div>
-                        <span className="mt-0.5 block whitespace-normal break-words text-xs text-muted-foreground">
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
                           模版代码、样式文件、静态数据或媒体资源
                         </span>
                       </span>
@@ -1181,7 +1681,7 @@ function SkillDetailPage({
                   ))}
                   {detail.references.length + detail.scripts.length + detail.assets.length ===
                     0 && (
-                    <div className="py-6 text-sm text-muted-foreground">
+                    <div className="py-5 text-sm text-muted-foreground">
                       <p className="font-medium text-foreground/80">此技能为纯指令型技能</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         由 <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code>{" "}

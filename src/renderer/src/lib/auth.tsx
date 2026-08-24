@@ -6,9 +6,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
@@ -80,7 +80,7 @@ function syncAuthCookie(token: string | null): void {
   if (typeof document === "undefined") return;
   // biome-ignore lint/suspicious/noDocumentCookie: cookie sync required for API authentication in Electron renderer
   document.cookie = token
-    ? `${AUTH_COOKIE_KEY}=${encodeURIComponent(token)}; Path=/; SameSite=Lax`
+    ? `${AUTH_COOKIE_KEY}=${token}; Path=/; SameSite=Lax`
     : `${AUTH_COOKIE_KEY}=; Path=/; Max-Age=0; SameSite=Lax`;
 }
 
@@ -265,21 +265,22 @@ function LoginScreen({
                           <ChevronDownIcon />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-64">
-                          <DropdownMenuLabel>记住的账户</DropdownMenuLabel>
-                          <DropdownMenuSeparator />
-                          {rememberedAccounts.map((account) => (
-                            <DropdownMenuItem
-                              key={account.email}
-                              onClick={() => selectAccount(account)}
-                            >
-                              <span className="flex min-w-0 flex-col">
-                                <span className="truncate">{account.name}</span>
-                                <span className="truncate text-xs text-muted-foreground">
-                                  {account.email}
+                          <DropdownMenuGroup>
+                            <DropdownMenuLabel>记住的账户</DropdownMenuLabel>
+                            {rememberedAccounts.map((account) => (
+                              <DropdownMenuItem
+                                key={account.email}
+                                onClick={() => selectAccount(account)}
+                              >
+                                <span className="flex min-w-0 flex-col">
+                                  <span className="truncate">{account.name}</span>
+                                  <span className="truncate text-xs text-muted-foreground">
+                                    {account.email}
+                                  </span>
                                 </span>
-                              </span>
-                            </DropdownMenuItem>
-                          ))}
+                              </DropdownMenuItem>
+                            ))}
+                          </DropdownMenuGroup>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     ) : null}
@@ -316,7 +317,7 @@ function LoginScreen({
                 ) : null}
 
                 {mode === "login" ? (
-                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <div className="flex flex-wrap items-center justify-center gap-x-20 gap-y-2">
                     <label
                       className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
                       htmlFor="remember-login"

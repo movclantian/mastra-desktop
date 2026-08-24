@@ -38,6 +38,14 @@ export interface McpFormServer {
   env?: Record<string, string>;
   inheritDefaultEnv?: boolean;
   requireToolApproval?: boolean;
+  oauth?: {
+    enabled: boolean;
+    redirectUrl?: string;
+    clientName?: string;
+    clientId?: string;
+    clientSecret?: string;
+    scopes?: string[];
+  };
 }
 
 interface Props {
@@ -59,6 +67,7 @@ const initial = (): McpFormServer => ({
   env: {},
   inheritDefaultEnv: true,
   requireToolApproval: true,
+  oauth: { enabled: false },
 });
 
 function parseLines(value: string) {
@@ -280,6 +289,18 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                       placeholder="api.example.com"
                       hint="每行一个 Host，可留空。"
                     />
+                    <CheckField
+                      id="mcp-oauth"
+                      checked={form.oauth?.enabled === true}
+                      onCheckedChange={(checked) =>
+                        update({ oauth: { ...(form.oauth ?? {}), enabled: checked } })
+                      }
+                    >
+                      <span className="font-medium">使用 OAuth 授权</span>
+                      <span className="text-xs text-muted-foreground">
+                        需要登录时，保存后可从 MCP 服务卡片启动授权。
+                      </span>
+                    </CheckField>
                   </CollapsibleContent>
                 </Collapsible>
               </section>

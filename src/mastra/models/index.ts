@@ -5,7 +5,11 @@
  * - create-model: 共享的模型构建工厂与网关常量 (无内部依赖, 打破 gateway/providers 循环)
  */
 
-export { type GatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
+export {
+  type GatewayProtocol,
+  normalizeGatewayBaseUrl,
+  WORKBENCH_GATEWAY_ID,
+} from "./create-model";
 export { type GatewayLanguageModel, WorkbenchGateway } from "./gateways";
 export {
   defaultModelFamily,
@@ -18,5 +22,6 @@ export {
   resolveDefaultModelId,
   resolveRequestModel,
   saveProvidersConfig,
+  splitRouterId,
   usesOpenAIResponses,
 } from "./providers";

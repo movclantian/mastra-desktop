@@ -24,8 +24,12 @@ import {
   type ToolSet,
   type UIMessage,
 } from "ai";
-import { mastraWorkAgent, SKILL_NAMES_CONTEXT_KEY } from "../../agents";
-import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
+import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import {
+  AGENT_PROFILE_CONTEXT_KEY,
+  ensureProfileAgentsRegistered,
+  getAgentProfile,
+} from "../../agents/custom";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../agents/permissions";
 import { SUBAGENT_MODELS_CONTEXT_KEY } from "../../agents/subagents";
@@ -34,6 +38,7 @@ import { isTerminalAgentChunk, workSessionHost } from "../../harness";
 import { OM_MODELS_CONTEXT_KEY } from "../../memory";
 import {
   defaultModelFamily,
+  getProvidersConfig,
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveRequestModel,
@@ -84,9 +89,28 @@ interface LibraryCitationSource {
   score: number;
 }
 
+interface WorkspaceLogData {
+  objectId: string;
+  sha256: string;
+  byteSize: number;
+  contentType: string;
+  encoding: string;
+  chunkSize: number;
+  chunkCount: number;
+  storagePath: string;
+  workspacePath: string;
+  characterCount: number;
+  lineCount: number;
+  exitCode: number | null;
+  stdout: { lines: number; bytes: number };
+  stderr: { lines: number; bytes: number };
+  source: string;
+}
+
 type WorkDataParts = {
   "task-update": { tasks: unknown[] };
   "library-sources": LibraryCitationSource[];
+  "workspace-log": WorkspaceLogData;
 };
 
 type WorkUIMessage = UIMessage<WorkMessageMetadata, WorkDataParts>;
@@ -312,12 +336,99 @@ function durableClientStream<C>(
   return clientStream;
 }
 
+async function resolveUsageModelInfo(
+  model: unknown,
+  rawModel: unknown,
+  rawModelSelection: unknown,
+): Promise<{ provider: string; model: string }> {
+  // 1. Check rawModelSelection (from client)
+  if (rawModelSelection && typeof rawModelSelection === "object") {
+    const sel = rawModelSelection as {
+      providerId?: string;
+      modelId?: string;
+      modelName?: string;
+    };
+    if (sel.modelId) {
+      let providerName = sel.providerId || "custom";
+      try {
+        const config = await getProvidersConfig();
+        const p = config.providers.find(
+          (item) => item.id === sel.providerId || item.registryId === sel.providerId,
+        );
+        if (p?.name) providerName = p.name;
+      } catch {}
+      return {
+        provider: providerName,
+        model: sel.modelName || sel.modelId,
+      };
+    }
+  }
+
+  // 2. Check rawModel (from client body.model)
+  if (
+    rawModel &&
+    typeof rawModel === "object" &&
+    "id" in rawModel &&
+    typeof rawModel.id === "string"
+  ) {
+    const parts = rawModel.id.split("/");
+    if (parts.length >= 2) {
+      const providerId = parts[0];
+      const modelId = parts.slice(1).join("/");
+      let providerName = providerId;
+      try {
+        const config = await getProvidersConfig();
+        const p = config.providers.find(
+          (item) => item.id === providerId || item.registryId === providerId,
+        );
+        if (p?.name) providerName = p.name;
+      } catch {}
+      return { provider: providerName, model: modelId };
+    }
+    return { provider: "custom", model: rawModel.id };
+  }
+
+  if (typeof rawModel === "string" && rawModel.trim()) {
+    const parts = rawModel.trim().split("/");
+    if (parts.length >= 2) {
+      return { provider: parts[0], model: parts.slice(1).join("/") };
+    }
+    return { provider: "custom", model: rawModel.trim() };
+  }
+
+  // 3. Fallback to default configured model
+  try {
+    const config = await getProvidersConfig();
+    const sel = config.modelSelection;
+    if (sel) {
+      const p = config.providers.find((item) => item.id === sel.providerId);
+      return {
+        provider: p?.name || sel.providerId || "custom",
+        model: sel.modelName || sel.modelId,
+      };
+    }
+  } catch {}
+
+  // 4. Check model instance
+  if (model && typeof model === "object") {
+    const m = model as { modelId?: string; provider?: string; id?: string };
+    if (m.modelId) {
+      const providerName = m.provider?.split(".")[0] || "custom";
+      return { provider: providerName, model: m.modelId };
+    }
+  }
+
+  return { provider: "unknown", model: "unknown" };
+}
+
 async function persistLatestUsage(
   threadId: string | undefined,
   resourceId: string | undefined,
   usage: LanguageModelUsage | undefined,
   userMessageText?: string,
   model?: unknown,
+  rawModel?: unknown,
+  rawModelSelection?: unknown,
   latencyMs = 0,
 ) {
   if (!threadId) return;
@@ -349,16 +460,16 @@ async function persistLatestUsage(
     metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
   });
   if (resourceId) {
-    const usageModel =
-      typeof model === "string"
-        ? model
-        : model && typeof model === "object" && "id" in model && typeof model.id === "string"
-          ? model.id
-          : undefined;
+    const { provider, model: modelName } = await resolveUsageModelInfo(
+      model,
+      rawModel,
+      rawModelSelection,
+    );
     await recordUsageEvent({
       resourceId,
       threadId,
-      model: usageModel,
+      provider,
+      model: modelName,
       inputTokens: usage?.inputTokens ?? 0,
       outputTokens: usage?.outputTokens ?? 0,
       latencyMs,
@@ -513,9 +624,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       agentProfileId?: string;
       [key: string]: unknown;
     };
-    const authenticatedUser = (c.get as (key: string) => unknown)("user") as
-      | { id?: unknown }
-      | undefined;
+    const authenticatedUser = c.get("requestContext")?.get("user") as { id?: unknown } | undefined;
     const authenticatedResourceId =
       typeof authenticatedUser?.id === "string" ? authenticatedUser.id : undefined;
     if (!authenticatedResourceId) throw workError("AUTH_REQUIRED");
@@ -541,9 +650,11 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     if (body.memory?.resource) {
       requestContext.set(LIBRARY_RESOURCE_CONTEXT_KEY, body.memory.resource);
       requestContext.set(LIBRARY_ORIGIN_CONTEXT_KEY, new URL(c.req.url).origin);
+      requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, body.memory.resource);
     }
     if (body.memory?.thread) {
       requestContext.set(LIBRARY_THREAD_CONTEXT_KEY, body.memory.thread);
+      requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, body.memory.thread);
     }
     // BYOK 模型解析在路由层完成:自定义网关 → 官方端点 LanguageModel 实例,
     // 内置供应商 → model router 对象。agent.stream() 运行时经 getLLM({ model })
@@ -589,6 +700,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const requestedAgentProfileId =
       typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined;
     let profile = await getAgentProfile(requestedAgentProfileId);
+    let profileAgent = (await ensureProfileAgentsRegistered(mastra, profile)).profile;
     requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     requestContext.set(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY, {
       vision: attachmentCapabilities?.vision === true,
@@ -630,6 +742,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       });
       if (session) {
         profile = await getAgentProfile(session.agentProfileId);
+        profileAgent = (await ensureProfileAgentsRegistered(mastra, profile)).profile;
         if (session.workspacePath) {
           requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, session.workspacePath);
         }
@@ -656,7 +769,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             resourceId: body.memory.resource,
             scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
             threadId: body.memory.thread,
-            agent: mastraWorkAgent,
+            agent: profileAgent,
           });
           liveSession.setMode(session.modeId);
         }
@@ -745,7 +858,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     // (docs/en/reference/ai-sdk/handle-chat-stream.mdx)。
     const handlerOptions = {
       mastra,
-      agentId: profile.id,
+      agentId: profileAgent.id,
       version: "v7" as const,
       sendReasoning: true,
       // params 里没有 context 字段,本轮资料库片段只能走 defaultOptions(AgentExecutionOptions)
@@ -783,6 +896,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         : {}),
       messages: body.messages,
       requestContext,
+      untilIdle: true,
     };
     const sessionExecutionOptions =
       body.memory?.thread && body.memory.resource
@@ -797,7 +911,26 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
                     params.providerOptions as AgentExecutionOptions["providerOptions"],
                 }
               : {}),
+            ...((bodyRest as Record<string, unknown>).versions !== undefined
+              ? {
+                  versions: (bodyRest as Record<string, unknown>)
+                    .versions as AgentExecutionOptions["versions"],
+                }
+              : {}),
+            ...((bodyRest as Record<string, unknown>).scorers !== undefined
+              ? {
+                  scorers: (bodyRest as Record<string, unknown>)
+                    .scorers as AgentExecutionOptions["scorers"],
+                }
+              : {}),
+            ...((bodyRest as Record<string, unknown>).isTaskComplete !== undefined
+              ? {
+                  isTaskComplete: (bodyRest as Record<string, unknown>)
+                    .isTaskComplete as AgentExecutionOptions["isTaskComplete"],
+                }
+              : {}),
             requestContext,
+            untilIdle: true,
             memory: { thread: body.memory.thread, resource: body.memory.resource },
           } satisfies AgentExecutionOptions)
         : undefined;
@@ -807,7 +940,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           resourceId: body.memory.resource,
           scope: sessionScope,
           threadId: body.memory.thread,
-          agent: mastraWorkAgent,
+          agent: profileAgent,
         })
         .setExecutionDefaults(sessionExecutionOptions);
     }
@@ -835,7 +968,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             body.memory?.resource,
             usage,
             firstUserText,
-            model ?? rawModel,
+            model,
+            rawModel,
+            rawModelSelection,
             Date.now() - requestStartedAt,
           );
           await persistMessageBranchOperation({
@@ -861,7 +996,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: body.memory.resource,
         scope: sessionScope,
         threadId: body.memory.thread,
-        agent: mastraWorkAgent,
+        agent: profileAgent,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const signal = await session.steer(
@@ -906,7 +1041,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: sessionMemory.resource,
         scope: sessionScope,
         threadId: sessionMemory.thread,
-        agent: mastraWorkAgent,
+        agent: profileAgent,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const subscription = await session.subscribe(sessionMemory.thread);

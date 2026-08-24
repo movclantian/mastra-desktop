@@ -4,15 +4,24 @@
  * grants / workbench-state / notification。
  * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
  */
-import { toAISdkStream } from "@mastra/ai-sdk";
-import type { AgentExecutionOptions, AgentThreadSubscription } from "@mastra/core/agent";
+import { toAISdkStream, workflowSnapshotToStream } from "@mastra/ai-sdk";
+import type { Agent, AgentExecutionOptions, AgentThreadSubscription } from "@mastra/core/agent";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import type { MastraModelOutput } from "@mastra/core/stream";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
+import {
+  type AnyWorkflow,
+  createWorkflowStateReader,
+  type WorkflowState,
+} from "@mastra/core/workflows";
 import { createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
-import { mastraWorkAgent, SKILL_NAMES_CONTEXT_KEY } from "../../agents";
-import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
+import { SKILL_NAMES_CONTEXT_KEY } from "../../agents";
+import {
+  AGENT_PROFILE_CONTEXT_KEY,
+  ensureProfileAgentsRegistered,
+  getAgentProfile,
+} from "../../agents/custom";
 import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode } from "../../agents/modes";
 import {
   applySessionGrants,
@@ -39,6 +48,7 @@ import {
   requestModelFamily,
   resolveConfiguredModel,
   resolveRequestModel,
+  splitRouterId,
   usesOpenAIResponses,
 } from "../../models";
 import { LIBRARY_RESOURCE_CONTEXT_KEY } from "../../rag";
@@ -78,6 +88,7 @@ const notificationInputSchema = z.object({
 
 interface SessionRouteResult {
   session: WorkSession;
+  agent: Agent;
   resourceId: string;
   threadId: string;
   thread: NonNullable<OwnedThread>;
@@ -89,6 +100,12 @@ interface SessionMessageBody {
   model?: unknown;
   modelSettings?: unknown;
   providerOptions?: unknown;
+  /** Official per-invocation subagent version overrides. */
+  versions?: AgentExecutionOptions["versions"];
+  /** Official scorer selection by registered scorer name. */
+  scorers?: AgentExecutionOptions["scorers"];
+  /** Official completion-scoring policy; scorers are resolved by the server. */
+  isTaskComplete?: AgentExecutionOptions["isTaskComplete"];
   webSearch?: unknown;
   agentProfileId?: unknown;
 }
@@ -106,11 +123,12 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   }
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const profile = await getAgentProfile(metadata.agentProfileId);
+  const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile)).profile;
   const session = workSessionHost.getOrCreate({
     resourceId,
     scope,
     threadId,
-    agent: mastraWorkAgent,
+    agent,
   });
   const mode = resolveMode(metadata.modeId);
   session.setMode(mode.id);
@@ -127,7 +145,8 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   const modelSelection = metadata.modelSelectionByMode?.[mode.id];
   if (modelSelection) {
     const model = await resolveConfiguredModel(modelSelection.providerId, modelSelection.modelId);
-    if (model) requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
+    if (!model) throw workError("MODEL_NOT_CONFIGURED");
+    requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
   }
   if (metadata.subagentModels) {
     requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, metadata.subagentModels);
@@ -143,7 +162,7 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     requestContext,
     memory: { thread: threadId, resource: resourceId },
   });
-  return { session, resourceId, threadId, thread };
+  return { session, agent, resourceId, threadId, thread };
 }
 
 async function sessionExecutionOptions(
@@ -158,7 +177,9 @@ async function sessionExecutionOptions(
       : ((result.thread.metadata as ThreadMetadata | undefined)?.agentProfileId ?? undefined),
   );
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  result.session.setAgent(mastraWorkAgent);
+  const registered = await ensureProfileAgentsRegistered(c.get("mastra"), profile);
+  result.agent = registered.profile;
+  result.session.setAgent(result.agent);
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(
@@ -201,23 +222,170 @@ async function sessionExecutionOptions(
     ...(providerOptions
       ? { providerOptions: providerOptions as AgentExecutionOptions["providerOptions"] }
       : {}),
+    ...(body.versions !== undefined ? { versions: body.versions } : {}),
+    ...(body.scorers !== undefined ? { scorers: body.scorers } : {}),
+    ...(body.isTaskComplete !== undefined ? { isTaskComplete: body.isTaskComplete } : {}),
     requestContext,
+    untilIdle: true,
     memory: { thread: result.threadId, resource: result.resourceId },
   };
 }
 
-async function persistentDisplayState(_c: ContextWithMastra, result: SessionRouteResult) {
+interface WorkflowRouteResult extends SessionRouteResult {
+  workflow: AnyWorkflow;
+  state: WorkflowState;
+}
+
+function workflowSnapshotRecord(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+async function workflowRouteFor(c: ContextWithMastra): Promise<WorkflowRouteResult> {
+  const session = await sessionFor(c);
+  const workflowId = c.req.param("workflowId");
+  const runId = c.req.param("runId");
+  if (!workflowId || !runId)
+    throw workError("VALIDATION_FAILED", { text: "workflowId and runId are required" });
+
+  const workflows = await session.agent.listWorkflows({
+    requestContext: c.get("requestContext"),
+  });
+  const workflow = workflows[workflowId];
+  if (!workflow) throw workError("WORKFLOW_NOT_FOUND");
+
+  const state = await workflow.getWorkflowRunById(runId, {
+    fields: [
+      "result",
+      "error",
+      "payload",
+      "steps",
+      "activeStepsPath",
+      "serializedStepGraph",
+      "suspendedPaths",
+      "resumeLabels",
+      "waitingPaths",
+      "requestContext",
+    ],
+  });
+  if (!state || state.resourceId !== session.resourceId) {
+    throw workError("WORKFLOW_RUN_NOT_FOUND");
+  }
+  if (state.requestContext?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] !== session.threadId) {
+    throw workError("WORKFLOW_RUN_NOT_FOUND");
+  }
+  return { ...session, workflow, state };
+}
+
+function workflowResumeTarget(
+  state: WorkflowState,
+  body: { step?: unknown; label?: unknown; forEachIndex?: unknown },
+): { step: string | string[]; forEachIndex?: number } {
+  const explicitStep =
+    typeof body.step === "string"
+      ? body.step.trim()
+      : Array.isArray(body.step)
+        ? body.step.filter(
+            (value): value is string => typeof value === "string" && value.trim().length > 0,
+          )
+        : undefined;
+  const label = typeof body.label === "string" ? body.label.trim() : "";
+  const reader = createWorkflowStateReader(state);
+  const labeled = label ? reader.getResumeLabel(label) : undefined;
+  const suspended = reader.getSuspendedStep();
+  const step =
+    explicitStep && (!Array.isArray(explicitStep) || explicitStep.length > 0)
+      ? explicitStep
+      : (labeled?.stepId ?? suspended?.path);
+  if (!step || (Array.isArray(step) && step.length === 0)) {
+    throw workError("WORKFLOW_RUN_INVALID_STATE");
+  }
+  const rawIndex = body.forEachIndex ?? labeled?.foreachIndex;
+  if (rawIndex !== undefined && (!Number.isInteger(rawIndex) || Number(rawIndex) < 0)) {
+    throw workError("VALIDATION_FAILED", { text: "forEachIndex must be a non-negative integer" });
+  }
+  return {
+    step,
+    ...(rawIndex === undefined ? {} : { forEachIndex: Number(rawIndex) }),
+  };
+}
+
+async function persistentDisplayState(c: ContextWithMastra, result: SessionRouteResult) {
   const displayState = result.session.getDisplayState();
   const threadState = await appStorage.getStore("threadState");
   const tasks = await threadState?.getState<TaskItem[]>({
     threadId: result.threadId,
     type: TASK_STATE_TYPE,
   });
-  const agent = mastraWorkAgent;
+  const agent = result.agent;
   const { runs } = await agent.listSuspendedRuns({
     threadId: result.threadId,
     resourceId: result.resourceId,
   });
+  const manager = c.get("mastra").backgroundTaskManager;
+  const backgroundTasks = manager
+    ? (
+        await manager.listTasks({
+          resourceId: result.resourceId,
+          threadId: result.threadId,
+          orderBy: "createdAt",
+          orderDirection: "desc",
+          perPage: 50,
+        })
+      ).tasks
+    : [];
+  const workflowRuns = await (async () => {
+    const workflows = await agent.listWorkflows({ requestContext: c.get("requestContext") });
+    const listed = await Promise.all(
+      Object.entries(workflows).map(async ([workflowName, workflow]) => {
+        try {
+          const listing = await workflow.listWorkflowRuns({
+            resourceId: result.resourceId,
+            perPage: false,
+          });
+          return listing.runs
+            .filter((run) => {
+              const snapshot = workflowSnapshotRecord(run.snapshot);
+              const context =
+                snapshot?.requestContext && typeof snapshot.requestContext === "object"
+                  ? (snapshot.requestContext as Record<string, unknown>)
+                  : undefined;
+              return context?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] === result.threadId;
+            })
+            .map((run) => {
+              const snapshot = workflowSnapshotRecord(run.snapshot);
+              const status = typeof snapshot?.status === "string" ? snapshot.status : undefined;
+              return {
+                workflowName,
+                runId: run.runId,
+                resourceId: run.resourceId,
+                createdAt: run.createdAt,
+                updatedAt: run.updatedAt,
+                snapshot: run.snapshot,
+                ...(status ? { status } : {}),
+              };
+            });
+        } catch {
+          return [];
+        }
+      }),
+    );
+    return listed
+      .flat()
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
+      .slice(0, 12);
+  })();
   const policyMetadata = (result.thread.metadata ?? {}) as {
     modeId?: string;
     permissionRules?: unknown;
@@ -229,9 +397,23 @@ async function persistentDisplayState(_c: ContextWithMastra, result: SessionRout
     }),
     resolveMode(policyMetadata.modeId),
   );
+  const backgroundSuspended = backgroundTasks.some((task) => task.status === "suspended");
+  const workflowSuspended = workflowRuns.some((run) =>
+    ["suspended", "paused"].includes(run.status ?? ""),
+  );
+  const workflowRunning = workflowRuns.some((run) =>
+    ["pending", "running", "waiting"].includes(run.status ?? ""),
+  );
   return {
     ...displayState,
-    status: displayState.activeRunId ? "running" : runs.length > 0 ? "suspended" : "idle",
+    status: displayState.activeRunId
+      ? "running"
+      : runs.length > 0 || backgroundSuspended || workflowSuspended
+        ? "suspended"
+        : backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
+            workflowRunning
+          ? "running"
+          : "idle",
     tasks: Array.isArray(tasks) ? tasks : [],
     suspendedRuns: runs.map((run) => ({
       ...run,
@@ -241,6 +423,8 @@ async function persistentDisplayState(_c: ContextWithMastra, result: SessionRout
         policy: resolveToolPolicy(rules, toolCall.toolName ?? ""),
       })),
     })),
+    backgroundTasks,
+    workflowRuns,
   };
 }
 
@@ -505,6 +689,98 @@ export const sessionDisplayStateRoute = registerApiRoute(
   },
 );
 
+/**
+ * Official Workflow state operations for the workbench. These routes expose
+ * the persisted Mastra snapshot directly and use the AI SDK stream helpers for
+ * replay/resume, so the UI does not need a second workflow event protocol.
+ */
+export const workflowRunDetailRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId",
+  {
+    method: "GET",
+    handler: async (c) => {
+      const result = await workflowRouteFor(c);
+      return c.json({ workflow: result.state });
+    },
+  },
+);
+
+export const workflowRunReplayRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/stream",
+  {
+    method: "GET",
+    handler: async (c) => {
+      const result = await workflowRouteFor(c);
+      return createUIMessageStreamResponse({
+        stream: workflowSnapshotToStream(result.state),
+      });
+    },
+  },
+);
+
+export const workflowRunResumeRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/resume",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const result = await workflowRouteFor(c);
+      const body = (await c.req.json().catch(() => ({}))) as {
+        resumeData?: unknown;
+        step?: unknown;
+        label?: unknown;
+        forEachIndex?: unknown;
+      };
+      const target = workflowResumeTarget(result.state, body);
+      const run = await result.workflow.createRun({
+        runId: result.state.runId,
+        resourceId: result.resourceId,
+      });
+      const stream = run.resumeStream({
+        step: target.step,
+        resumeData: body.resumeData,
+        requestContext: c.get("requestContext"),
+        ...(target.forEachIndex === undefined ? {} : { forEachIndex: target.forEachIndex }),
+      });
+      return createUIMessageStreamResponse({
+        stream: toAISdkStream(stream, { from: "workflow", version: "v7" }),
+      });
+    },
+  },
+);
+
+export const workflowRunRestartRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/restart",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const result = await workflowRouteFor(c);
+      const run = await result.workflow.createRun({
+        runId: result.state.runId,
+        resourceId: result.resourceId,
+      });
+      return c.json({ workflow: await run.restart({ requestContext: c.get("requestContext") }) });
+    },
+  },
+);
+
+export const workflowRunCancelRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/cancel",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const result = await workflowRouteFor(c);
+      const run = await result.workflow.createRun({
+        runId: result.state.runId,
+        resourceId: result.resourceId,
+      });
+      await run.cancel();
+      return c.json({
+        workflow: await result.workflow.getWorkflowRunById(result.state.runId),
+      });
+    },
+  },
+);
+
 export const sessionSubagentModelsRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/subagent-models",
   {
@@ -529,6 +805,18 @@ export const updateSessionSubagentModelsRoute = registerApiRoute(
       if (typeof body.agentType !== "string" || !body.agentType.trim()) {
         throw workError("VALIDATION_FAILED", { text: "agentType is required" });
       }
+      const threadProfile = await getAgentProfile(
+        ((result.thread.metadata ?? {}) as ThreadMetadata).agentProfileId,
+      );
+      const supportedAgentTypes = new Set([
+        "default",
+        "explorer",
+        "reviewer",
+        ...threadProfile.members.map((member) => member.id),
+      ]);
+      if (!supportedAgentTypes.has(body.agentType)) {
+        throw workError("VALIDATION_FAILED", { text: "unsupported agentType" });
+      }
       if (body.modelId !== null && typeof body.modelId !== "string") {
         throw workError("VALIDATION_FAILED", { text: "modelId must be a string or null" });
       }
@@ -537,7 +825,14 @@ export const updateSessionSubagentModelsRoute = registerApiRoute(
       };
       const next = { ...(metadata.subagentModels ?? {}) };
       if (body.modelId === null || body.modelId.trim() === "") delete next[body.agentType];
-      else next[body.agentType] = body.modelId.trim();
+      else {
+        const routerId = body.modelId.trim();
+        const { providerId, modelId } = splitRouterId(routerId);
+        if (!(await resolveConfiguredModel(providerId, modelId))) {
+          throw workError("MODEL_NOT_CONFIGURED");
+        }
+        next[body.agentType] = routerId;
+      }
       const memory = await getWorkMemory();
       const thread = await memory.updateThread({
         id: result.threadId,
@@ -622,7 +917,7 @@ export const sessionToolGrantRevokeRoute = registerApiRoute(
  * 工作台状态上报(state lane 的生产者入口)。
  *
  * 渲染进程各面板把自己那一份 PUT 上来 —— 编辑器打开了什么、终端跑完了什么、
- * 哪些面板可见。服务端只维护内存镜像,真正把它变成模型可见的 <state> 是
+ * 哪些面板可见。服务端持久化工作台快照,真正把它变成模型可见的 <state> 是
  * agents/processors.ts 里三条 lane 的 computeStateSignal():只在模型要推理时
  * 注入,所以频繁上报不会唤醒空闲的 agent、也不会污染历史。
  */
@@ -640,7 +935,7 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
         });
       }
       return c.json({
-        state: mergeWorkbenchState(result.resourceId, result.threadId, parsed.data),
+        state: await mergeWorkbenchState(result.resourceId, result.threadId, parsed.data),
       });
     },
   },
@@ -705,6 +1000,11 @@ export const sessionRoutes = [
   sessionPermissionsRoute,
   updateSessionPermissionsRoute,
   sessionDisplayStateRoute,
+  workflowRunDetailRoute,
+  workflowRunReplayRoute,
+  workflowRunResumeRoute,
+  workflowRunRestartRoute,
+  workflowRunCancelRoute,
   sessionSubagentModelsRoute,
   updateSessionSubagentModelsRoute,
   sessionGrantRoute,

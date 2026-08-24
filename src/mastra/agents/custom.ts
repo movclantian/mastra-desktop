@@ -1,7 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import type { Agent, SubAgent } from "@mastra/core/agent";
+import type { Agent } from "@mastra/core/agent";
+import type { Mastra } from "@mastra/core/mastra";
 import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
@@ -13,12 +14,32 @@ const CONFIG_KEY = "agent-profiles";
 
 export type AgentProfileType = "agent" | "team";
 
-export type AgentWorkflowStrategy = "supervisor" | "sequence" | "parallel";
+/**
+ * The four coordination patterns used in Mastra's multi-agent guide.
+ *
+ * `handoff` and `council` are implemented with Workflow control flow, while
+ * `supervisor` stays model-driven through Agent delegation and `workflow`
+ * exposes the explicit graph controls.
+ */
+export type AgentWorkflowStrategy = "supervisor" | "handoff" | "workflow" | "council";
+
+export type AgentWorkflowCondition = {
+  operator: "contains" | "equals" | "not_contains";
+  value: string;
+};
+
+export type AgentWorkflowStepKind = "agent" | "approval" | "branch" | "loop";
 
 export interface AgentWorkflowStep {
   id: string;
-  memberId: string;
+  memberId?: string;
+  kind?: AgentWorkflowStepKind;
   prompt?: string;
+  retries?: number;
+  condition?: AgentWorkflowCondition;
+  branch?: { onTrueMemberId: string; onFalseMemberId: string };
+  loop?: { mode: "until" | "while" | "foreach"; maxIterations: number; concurrency?: number };
+  approval?: { title: string; description: string };
 }
 
 export interface AgentWorkflowDefinition {
@@ -153,12 +174,32 @@ function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined 
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
   const usedStepIds = new Set<string>();
-  const steps = Array.isArray(raw.steps)
+  const steps: AgentWorkflowStep[] = Array.isArray(raw.steps)
     ? raw.steps.flatMap((item, index) => {
         if (!item || typeof item !== "object") return [];
         const step = item as Record<string, unknown>;
-        const memberId = typeof step.memberId === "string" ? step.memberId.trim() : "";
-        if (!memberId) return [];
+        const memberId = typeof step.memberId === "string" ? step.memberId.trim() : undefined;
+        const rawCondition =
+          typeof step.condition === "object" && step.condition !== null
+            ? (step.condition as Record<string, unknown>)
+            : undefined;
+        const rawBranch =
+          typeof step.branch === "object" && step.branch !== null
+            ? (step.branch as Record<string, unknown>)
+            : undefined;
+        const rawLoop =
+          typeof step.loop === "object" && step.loop !== null
+            ? (step.loop as Record<string, unknown>)
+            : undefined;
+        const rawApproval =
+          typeof step.approval === "object" && step.approval !== null
+            ? (step.approval as Record<string, unknown>)
+            : undefined;
+        const kind: AgentWorkflowStepKind =
+          step.kind === "approval" || step.kind === "branch" || step.kind === "loop"
+            ? step.kind
+            : "agent";
+        if ((kind === "agent" || kind === "loop") && !memberId) return [];
         const baseId =
           typeof step.id === "string" && step.id.trim() ? step.id.trim() : `step-${index + 1}`;
         let id = baseId;
@@ -168,9 +209,64 @@ function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined 
         return [
           {
             id,
-            memberId,
+            ...(memberId ? { memberId } : {}),
+            kind,
             ...(typeof step.prompt === "string" && step.prompt.trim()
               ? { prompt: step.prompt.trim() }
+              : {}),
+            ...(typeof step.retries === "number" && Number.isFinite(step.retries)
+              ? { retries: Math.max(0, Math.min(5, Math.floor(step.retries))) }
+              : {}),
+            ...(rawCondition
+              ? {
+                  condition: {
+                    operator:
+                      rawCondition.operator === "equals" || rawCondition.operator === "not_contains"
+                        ? rawCondition.operator
+                        : "contains",
+                    value: typeof rawCondition.value === "string" ? rawCondition.value : "",
+                  },
+                }
+              : {}),
+            ...(kind === "branch" && rawBranch
+              ? {
+                  branch: {
+                    onTrueMemberId:
+                      typeof rawBranch.onTrueMemberId === "string" ? rawBranch.onTrueMemberId : "",
+                    onFalseMemberId:
+                      typeof rawBranch.onFalseMemberId === "string"
+                        ? rawBranch.onFalseMemberId
+                        : "",
+                  },
+                }
+              : {}),
+            ...(kind === "loop" && rawLoop
+              ? {
+                  loop: {
+                    mode:
+                      rawLoop.mode === "while" || rawLoop.mode === "foreach"
+                        ? rawLoop.mode
+                        : "until",
+                    maxIterations:
+                      typeof rawLoop.maxIterations === "number"
+                        ? Math.max(1, Math.min(20, Math.floor(rawLoop.maxIterations)))
+                        : 3,
+                    ...(typeof rawLoop.concurrency === "number"
+                      ? { concurrency: Math.max(1, Math.min(8, Math.floor(rawLoop.concurrency))) }
+                      : {}),
+                  },
+                }
+              : {}),
+            ...(kind === "approval" && rawApproval
+              ? {
+                  approval: {
+                    title: typeof rawApproval.title === "string" ? rawApproval.title : "人工审批",
+                    description:
+                      typeof rawApproval.description === "string"
+                        ? rawApproval.description
+                        : "请确认是否继续工作流。",
+                  },
+                }
               : {}),
           },
         ];
@@ -178,7 +274,9 @@ function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined 
     : [];
   if (steps.length === 0) return undefined;
   const strategy =
-    raw.strategy === "sequence" || raw.strategy === "parallel" ? raw.strategy : "supervisor";
+    raw.strategy === "handoff" || raw.strategy === "workflow" || raw.strategy === "council"
+      ? raw.strategy
+      : "supervisor";
   return { strategy, steps, synthesis: raw.synthesis !== false };
 }
 
@@ -220,7 +318,13 @@ export async function upsertAgentProfile(input: Partial<AgentProfile>): Promise<
     (profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID,
   );
   const existing = current.find((profile) => profile.id === input.id);
-  const now = new Date().toISOString();
+  const previousUpdatedAt = existing ? Date.parse(existing.updatedAt) : Number.NaN;
+  const now = new Date(
+    Math.max(
+      Date.now(),
+      Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : 0,
+    ),
+  ).toISOString();
   const teamWorkflow =
     input.type === "team" && !input.workflow
       ? {
@@ -251,8 +355,12 @@ export async function deleteAgentProfile(id: string): Promise<void> {
   memberCache.delete(scopedProfileKey(id));
 }
 
-type ProfileAgentFactory = (profile: AgentProfile) => Agent;
-type MemberAgentFactory = (profile: AgentProfile, member: AgentMemberDefinition) => SubAgent;
+type ProfileAgentFactory = (profile: AgentProfile, resourceScope?: string) => Agent;
+type MemberAgentFactory = (
+  profile: AgentProfile,
+  member: AgentMemberDefinition,
+  resourceScope?: string,
+) => Agent;
 
 let profileAgentFactory: ProfileAgentFactory | undefined;
 let memberAgentFactory: MemberAgentFactory | undefined;
@@ -265,26 +373,226 @@ export function setProfileAgentFactories(factories: {
   memberAgentFactory = factories.member;
 }
 
-const memberCache = new Map<string, { updatedAt: string; agents: Record<string, SubAgent> }>();
+const memberCache = new Map<string, { updatedAt: string; agents: Record<string, Agent> }>();
 
-function scopedProfileKey(id: string): string {
-  return JSON.stringify([getResourceScope() ?? "__system__", id]);
+function scopedProfileKey(id: string, resourceScope = getResourceScope()): string {
+  return JSON.stringify([resourceScope ?? "__system__", id]);
 }
 
 export async function resolveProfileMembers(
   profile: AgentProfile,
-): Promise<Record<string, SubAgent>> {
+  resourceScope?: string,
+): Promise<Record<string, Agent>> {
   if (profile.type !== "team") return {};
-  const key = scopedProfileKey(profile.id);
+  const key = scopedProfileKey(profile.id, resourceScope);
   const cached = memberCache.get(key);
   if (cached?.updatedAt === profile.updatedAt) return cached.agents;
   if (!memberAgentFactory) throw new Error("Profile Agent factory is not initialized");
-  const agents: Record<string, SubAgent> = {};
+  const agents: Record<string, Agent> = {};
   for (const member of profile.members) {
-    agents[member.id] = memberAgentFactory(profile, member);
+    agents[member.id] = memberAgentFactory(
+      profile,
+      member,
+      resourceScope ?? getResourceScope(),
+    );
   }
   memberCache.set(key, { updatedAt: profile.updatedAt, agents });
   return agents;
+}
+
+/**
+ * Mastra's registry is process-wide, while profiles are resource-scoped. Keep
+ * the registration key and Agent id tenant-qualified so two users can create
+ * profiles with the same local id without colliding in `mastra.addAgent()`.
+ */
+function registrationScope(resourceScope = getResourceScope()): string {
+  return resourceScope ?? "__system__";
+}
+
+function registrationToken(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 24);
+}
+
+export function profileAgentRegistryKey(profile: AgentProfile, resourceScope?: string): string {
+  return `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(
+    profile.id,
+  )}`;
+}
+
+export function profileMemberAgentRegistryKey(
+  profile: AgentProfile,
+  memberId: string,
+  resourceScope?: string,
+): string {
+  return `${profileAgentRegistryKey(profile, resourceScope)}-member-${registrationToken(
+    memberId,
+  )}`;
+}
+
+export function profileAgentRuntimeId(
+  profile: AgentProfile,
+  memberId?: string,
+  resourceScope?: string,
+): string {
+  const prefix = memberId ? "member" : "profile";
+  return `${prefix}-${registrationToken(registrationScope(resourceScope))}-${registrationToken(
+    profile.id,
+  )}${memberId ? `-${registrationToken(memberId)}` : ""}`;
+}
+
+type AgentRegistry = Pick<Mastra, "addAgent" | "removeAgent" | "listAgents">;
+
+export interface RegisteredProfileAgents {
+  profile: Agent;
+  members: Record<string, Agent>;
+  profileKey: string;
+  memberKeys: Record<string, string>;
+}
+
+const registeredProfiles = new Map<
+  string,
+  { updatedAt: string; registration: RegisteredProfileAgents }
+>();
+const registrationLocks = new Map<
+  string,
+  { updatedAt: string; promise: Promise<RegisteredProfileAgents> }
+>();
+const removedProfileKeys = new Set<string>();
+
+function isRegistrationPresent(
+  registry: AgentRegistry,
+  registration: RegisteredProfileAgents,
+): boolean {
+  const agents = registry.listAgents();
+  if (agents[registration.profileKey] !== registration.profile) return false;
+  return Object.entries(registration.memberKeys).every(
+    ([memberId, key]) => agents[key] === registration.members[memberId],
+  );
+}
+
+function removeRegisteredProfileEntries(registry: AgentRegistry, profileKey: string): void {
+  const memberPrefix = `${profileKey}-member-`;
+  for (const key of Object.keys(registry.listAgents())) {
+    if (key === profileKey || key.startsWith(memberPrefix)) registry.removeAgent(key);
+  }
+}
+
+async function registerProfileAgents(
+  registry: AgentRegistry,
+  profile: AgentProfile,
+  profileKey: string,
+  resourceScope: string,
+): Promise<RegisteredProfileAgents> {
+  const cached = registeredProfiles.get(profileKey);
+  if (
+    cached?.updatedAt === profile.updatedAt &&
+    isRegistrationPresent(registry, cached.registration)
+  ) {
+    return cached.registration;
+  }
+
+  if (cached) {
+    removeRegisteredProfileEntries(registry, cached.registration.profileKey);
+    registeredProfiles.delete(profileKey);
+  }
+
+  if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
+  const profileAgent = profileAgentFactory(profile, resourceScope);
+  const members = await resolveProfileMembers(profile, resourceScope);
+  const memberKeys = Object.fromEntries(
+    Object.keys(members).map((memberId) => [
+      memberId,
+      profileMemberAgentRegistryKey(profile, memberId, resourceScope),
+    ]),
+  );
+
+  // Remove stale registry entries as well, so a hot reload or process-level
+  // cache reset cannot turn a valid profile save into a duplicate-key error.
+  if (removedProfileKeys.has(profileKey)) {
+    removeRegisteredProfileEntries(registry, profileKey);
+    throw new Error("Profile Agent was removed during registration");
+  }
+  removeRegisteredProfileEntries(registry, profileKey);
+  registry.addAgent(profileAgent, profileKey);
+  for (const [memberId, member] of Object.entries(members)) {
+    registry.addAgent(member, memberKeys[memberId]);
+  }
+
+  const registration = { profile: profileAgent, members, profileKey, memberKeys };
+  const agents = registry.listAgents();
+  if (agents[profileKey] !== profileAgent) {
+    throw new Error(`Profile Agent registration was not accepted for key ${profileKey}`);
+  }
+  for (const [memberId, key] of Object.entries(memberKeys)) {
+    if (agents[key] !== members[memberId]) {
+      throw new Error(`Team member registration was not accepted for ${memberId}`);
+    }
+  }
+  registeredProfiles.set(profileKey, { updatedAt: profile.updatedAt, registration });
+  return registration;
+}
+
+/**
+ * Create and register a real Profile Agent and all of its Team members.
+ * Registration is idempotent for an unchanged profile and replaces the
+ * previous instance after a profile edit. The returned Profile Agent is the
+ * object that chat/session routes must execute, rather than the default Agent.
+ */
+export async function ensureProfileAgentsRegistered(
+  registry: AgentRegistry,
+  profile: AgentProfile,
+): Promise<RegisteredProfileAgents> {
+  if (profile.id === DEFAULT_AGENT_PROFILE_ID) {
+    const defaultAgent = Object.values(registry.listAgents()).find(
+      (agent) => agent.id === DEFAULT_AGENT_PROFILE_ID,
+    );
+    if (!defaultAgent) throw new Error("Default work agent is not registered");
+    return {
+      profile: defaultAgent,
+      members: {},
+      profileKey: DEFAULT_AGENT_PROFILE_ID,
+      memberKeys: {},
+    };
+  }
+  const resourceScope = registrationScope();
+  const profileKey = profileAgentRegistryKey(profile, resourceScope);
+  removedProfileKeys.delete(profileKey);
+  const cached = registeredProfiles.get(profileKey);
+  if (
+    cached?.updatedAt === profile.updatedAt &&
+    isRegistrationPresent(registry, cached.registration)
+  ) {
+    return cached.registration;
+  }
+
+  const active = registrationLocks.get(profileKey);
+  if (active?.updatedAt === profile.updatedAt) return active.promise;
+
+  const promise = active
+    ? active.promise
+        .catch(() => undefined)
+        .then(() => registerProfileAgents(registry, profile, profileKey, resourceScope))
+    : registerProfileAgents(registry, profile, profileKey, resourceScope);
+  registrationLocks.set(profileKey, { updatedAt: profile.updatedAt, promise });
+  try {
+    return await promise;
+  } finally {
+    if (registrationLocks.get(profileKey)?.promise === promise) {
+      registrationLocks.delete(profileKey);
+    }
+  }
+}
+
+/** Remove a profile and all registered Team members from Mastra. */
+export function unregisterProfileAgents(registry: AgentRegistry, profileId: string): void {
+  const prefix = `profile-${registrationToken(registrationScope())}-${registrationToken(profileId)}`;
+  removedProfileKeys.add(prefix);
+  memberCache.delete(scopedProfileKey(profileId));
+  removeRegisteredProfileEntries(registry, prefix);
+  for (const [key] of registeredProfiles) {
+    if (key !== prefix) continue;
+    registeredProfiles.delete(key);
+  }
 }
 
 export async function resolveManagedSkillPaths(names: string[]): Promise<string[]> {
@@ -326,9 +634,38 @@ export async function loadManagedSkill(
   };
 }
 
-/** Build a team workflow from the authenticated user's profile without global registration. */
+function conditionMatches(input: unknown, condition?: AgentWorkflowCondition): boolean {
+  if (!condition) return true;
+  const record =
+    typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
+  const text = String(record.text ?? record.prompt ?? input ?? "");
+  if (condition.operator === "equals") return text.trim() === condition.value.trim();
+  if (condition.operator === "not_contains")
+    return !text.toLowerCase().includes(condition.value.toLowerCase());
+  return text.toLowerCase().includes(condition.value.toLowerCase());
+}
+
+function createApprovalWorkflowStep(step: AgentWorkflowStep) {
+  const title = step.approval?.title || "人工审批";
+  const description = step.approval?.description || "请确认是否继续工作流。";
+  return createStep({
+    id: step.id,
+    inputSchema: z.object({ text: z.string() }),
+    outputSchema: z.object({ text: z.string() }),
+    resumeSchema: z.object({ approved: z.boolean(), feedback: z.string().optional() }),
+    suspendSchema: z.object({ title: z.string(), description: z.string() }),
+    execute: async ({ inputData, resumeData, suspend, bail }) => {
+      if (!resumeData) return await suspend({ title, description });
+      if (!resumeData.approved) return bail({ text: inputData.text });
+      return { text: inputData.text };
+    },
+  });
+}
+
+/** Build a team workflow from the authenticated user's profile and its scoped member Agents. */
 export async function buildProfileWorkflow(
   profile: AgentProfile,
+  resourceScope?: string,
 ): Promise<{ workflow: AnyWorkflow } | undefined> {
   if (
     profile.type !== "team" ||
@@ -338,20 +675,26 @@ export async function buildProfileWorkflow(
   )
     return undefined;
   const memberIds = new Set(profile.members.map((member) => member.id));
-  const steps = profile.workflow.steps.filter((step) => memberIds.has(step.memberId));
+  const steps = profile.workflow.steps.filter(
+    (step) =>
+      (step.kind === "approval" ||
+        (step.memberId && memberIds.has(step.memberId)) ||
+        (step.kind === "branch" &&
+          step.branch &&
+          memberIds.has(step.branch.onTrueMemberId) &&
+          memberIds.has(step.branch.onFalseMemberId))) === true,
+  );
   if (steps.length === 0) return undefined;
 
-  const members = await resolveProfileMembers(profile);
-  const agentSteps = steps.map((step) => {
-    const member = members[step.memberId];
-    if (!member) return undefined;
-    return cloneStep(createStep(member), { id: step.id });
-  });
-  const resolvedAgentSteps = agentSteps.filter((step): step is NonNullable<typeof step> =>
-    Boolean(step),
-  );
-  if (resolvedAgentSteps.length !== steps.length) return undefined;
+  const members = await resolveProfileMembers(profile, resourceScope);
   if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
+  const makeAgentStep = (memberId: string | undefined, id: string, retries?: number) => {
+    if (!memberId) return undefined;
+    const member = members[memberId];
+    if (!member) return undefined;
+    const created = retries ? createStep(member, { retries }) : createStep(member);
+    return cloneStep(created, { id });
+  };
 
   const workflow = createWorkflow({
     id: `agent-team-${profile.id}`,
@@ -364,7 +707,11 @@ export async function buildProfileWorkflow(
     { id: "workflow-input" },
   );
 
-  if (profile.workflow.strategy === "parallel") {
+  if (profile.workflow.strategy === "council") {
+    const resolvedAgentSteps = steps
+      .map((step) => makeAgentStep(step.memberId, step.id, step.retries))
+      .filter((step): step is NonNullable<typeof step> => Boolean(step));
+    if (resolvedAgentSteps.length !== steps.length) return undefined;
     flow = flow.parallel(resolvedAgentSteps);
     if (profile.workflow.synthesis) {
       flow = flow.map(
@@ -383,7 +730,11 @@ export async function buildProfileWorkflow(
         }),
         { id: "synthesis-input" },
       );
-      flow = flow.then(cloneStep(createStep(profileAgentFactory(profile)), { id: "synthesis" }));
+      const synthesis = cloneStep(
+        createStep(profileAgentFactory(profile, resourceScope)),
+        { id: "synthesis" },
+      );
+      flow = flow.then(synthesis);
     } else {
       flow = flow.map(
         async ({ inputData }: { inputData: Record<string, { text: string }> }) => ({
@@ -394,8 +745,149 @@ export async function buildProfileWorkflow(
         { id: "parallel-result" },
       );
     }
+  } else if (profile.workflow.strategy === "workflow") {
+    for (const step of steps) {
+      const kind = step.kind ?? "agent";
+      if (kind === "approval") {
+        flow = flow.map(
+          async ({ inputData }: { inputData: { text?: string; prompt?: string } }) => ({
+            text: inputData.text ?? inputData.prompt ?? "",
+          }),
+          { id: `${step.id}-input` },
+        );
+        flow = flow.then(createApprovalWorkflowStep(step));
+        continue;
+      }
+      const loop =
+        step.kind === "loop"
+          ? (step.loop ?? { mode: "until" as const, maxIterations: 3 })
+          : undefined;
+      if (loop?.mode === "foreach") {
+        const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
+        if (!agentStep) return undefined;
+        flow = flow.map(
+          async ({
+            inputData,
+            getInitData,
+          }: {
+            inputData: { text?: string; prompt?: string };
+            getInitData: () => { request: string };
+          }) => {
+            const request = getInitData().request;
+            const prompts = request
+              .split(/\r?\n/)
+              .map((prompt) => prompt.trim())
+              .filter(Boolean);
+            const previous = inputData.text ?? inputData.prompt ?? "";
+            return (prompts.length > 0 ? prompts : [request.trim()]).map((prompt) => ({
+              prompt: [
+                `${step.prompt ?? "继续处理这个任务"}: ${prompt}`,
+                `上一步结果: ${previous}`,
+              ].join("\n\n"),
+            }));
+          },
+          { id: `${step.id}-items` },
+        );
+        flow = flow.foreach(agentStep, { concurrency: loop.concurrency ?? 1 });
+        flow = flow.map(
+          async ({ inputData }: { inputData: Array<{ text: string }> }) => ({
+            text: inputData.map((result) => result.text).join("\n\n"),
+          }),
+          { id: `${step.id}-merge` },
+        );
+        continue;
+      }
+      flow = flow.map(
+        async ({
+          inputData,
+          getInitData,
+        }: {
+          inputData: { text?: string; prompt?: string };
+          getInitData: () => { request: string };
+        }) => ({
+          prompt: `${step.prompt ?? "继续处理这个任务"}: ${getInitData().request}\n\n上一步结果: ${
+            inputData.text ?? inputData.prompt ?? ""
+          }`,
+          text: inputData.text ?? inputData.prompt ?? "",
+        }),
+        { id: `${step.id}-input` },
+      );
+      if (kind === "branch" && step.branch) {
+        const onTrue = makeAgentStep(step.branch.onTrueMemberId, `${step.id}-true`, step.retries);
+        const onFalse = makeAgentStep(
+          step.branch.onFalseMemberId,
+          `${step.id}-false`,
+          step.retries,
+        );
+        if (!onTrue || !onFalse) return undefined;
+        flow = flow.branch([
+          [
+            async ({ inputData }: { inputData: { prompt: string; text?: string } }) =>
+              conditionMatches(inputData.text ?? inputData.prompt, step.condition),
+            onTrue,
+          ],
+          [async () => true, onFalse],
+        ]);
+        flow = flow.map(
+          async ({ inputData }: { inputData: Record<string, { text: string }> }) => ({
+            text: Object.values(inputData)[0]?.text ?? "",
+          }),
+          { id: `${step.id}-merge` },
+        );
+        continue;
+      }
+      const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
+      if (!agentStep) return undefined;
+      if (kind === "loop" && loop) {
+        const condition = async ({
+          inputData,
+          iterationCount,
+        }: {
+          inputData: unknown;
+          iterationCount: number;
+        }) => {
+          const matches = conditionMatches(inputData, step.condition);
+          return loop.mode === "while"
+            ? matches && iterationCount < loop.maxIterations
+            : matches || iterationCount >= loop.maxIterations;
+        };
+        flow =
+          loop.mode === "while"
+            ? flow.dowhile(agentStep, condition)
+            : flow.dountil(agentStep, condition);
+      } else {
+        flow = flow.then(agentStep);
+      }
+    }
+    if (profile.workflow.synthesis) {
+      flow = flow.map(
+        async ({
+          inputData,
+          getInitData,
+        }: {
+          inputData: { text: string };
+          getInitData: () => { request: string };
+        }) => ({
+          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${inputData.text}`,
+        }),
+        { id: "synthesis-input" },
+      );
+      const synthesis = cloneStep(
+        createStep(profileAgentFactory(profile, resourceScope)),
+        { id: "synthesis" },
+      );
+      flow = flow.then(synthesis);
+    }
   } else {
+    // Official Handoffs pattern: each specialist receives the previous
+    // specialist's result and owns the next stage of the task.
+    let hasInvalidStep = false;
     steps.forEach((step, index) => {
+      const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
+      if (!agentStep) {
+        hasInvalidStep = true;
+        return;
+      }
       if (index > 0) {
         flow = flow.map(
           async ({
@@ -410,8 +902,9 @@ export async function buildProfileWorkflow(
           { id: `${step.id}-input` },
         );
       }
-      flow = flow.then(resolvedAgentSteps[index]);
+      flow = flow.then(agentStep);
     });
+    if (hasInvalidStep) return undefined;
     if (profile.workflow.synthesis) {
       flow = flow.map(
         async ({
@@ -425,7 +918,11 @@ export async function buildProfileWorkflow(
         }),
         { id: "synthesis-input" },
       );
-      flow = flow.then(cloneStep(createStep(profileAgentFactory(profile)), { id: "synthesis" }));
+      const synthesis = cloneStep(
+        createStep(profileAgentFactory(profile, resourceScope)),
+        { id: "synthesis" },
+      );
+      flow = flow.then(synthesis);
     }
   }
   return { workflow: flow.commit() as AnyWorkflow };

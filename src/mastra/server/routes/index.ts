@@ -11,6 +11,7 @@ import {
   saveAgentProfileRoute,
 } from "./agents";
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
+import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import {
   guardrailsConfigRoute,
@@ -38,6 +39,7 @@ import {
   uploadLibraryAssetsRoute,
 } from "./library";
 import {
+  authenticateMcpConfigRoute,
   deleteMcpConfigRoute,
   mcpConfigRoute,
   saveMcpConfigRoute,
@@ -68,6 +70,9 @@ import {
   skillMarketplacesRoute,
   skillRoute,
   skillsRoute,
+  skillsShAuditRoute,
+  skillsShCuratedRoute,
+  skillsShListRoute,
   skillsShSkillRoute,
   uploadSkillRoute,
 } from "./skills";
@@ -82,6 +87,7 @@ import {
   recentWorkspacesRoute,
   saveThreadFileRoute,
   saveWorkspaceConfigRoute,
+  threadChangeContentRoute,
   threadChangesRoute,
   threadFileRoute,
   threadRawFileRoute,
@@ -94,6 +100,7 @@ export const workRoutes = [
   authRegisterRoute,
   authLogoutRoute,
   authMeRoute,
+  ...backgroundTaskRoutes,
   detectedIdesRoute,
   openInAppRoute,
   agentProfilesRoute,
@@ -135,6 +142,7 @@ export const workRoutes = [
   saveMcpConfigRoute,
   testMcpConfigRoute,
   deleteMcpConfigRoute,
+  authenticateMcpConfigRoute,
   guardrailsConfigRoute,
   saveGuardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -142,6 +150,7 @@ export const workRoutes = [
   saveWorkspaceConfigRoute,
   recentWorkspacesRoute,
   threadChangesRoute,
+  threadChangeContentRoute,
   threadTreeRoute,
   createThreadTreeEntryRoute,
   threadFileRoute,
@@ -161,6 +170,9 @@ export const workRoutes = [
   saveSkillMarketplaceRoute,
   skillMarketplacesRoute,
   skillRoute,
+  skillsShAuditRoute,
+  skillsShCuratedRoute,
+  skillsShListRoute,
   skillsShSkillRoute,
   uploadSkillRoute,
   importSkillRoute,

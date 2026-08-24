@@ -21,7 +21,6 @@ import {
   MessageBranchSelector,
   MessageResponse,
 } from "@/components/ai-elements/message";
-import { Shimmer } from "@/components/ai-elements/shimmer";
 import {
   Attachment,
   AttachmentContent,
@@ -54,6 +53,7 @@ import {
 } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
 import { Textarea } from "@/components/ui/textarea";
+import { WordRotate } from "@/components/ui/word-rotate";
 import { MASTRA_SERVER_URL } from "@/lib/providers";
 import {
   buildCitationEntries,
@@ -607,9 +607,18 @@ export const MessageItem = React.memo(function MessageItem({
             <MessageHeader className="px-0">MastraWork</MessageHeader>
             <MessageAttachments files={files} messageId={message.id} />
             {isStreaming && assistantSegments.length === 0 ? (
-              <div className="flex items-center gap-2.5 py-1 text-xs text-muted-foreground">
-                <DotmSquare3 size={16} dotSize={2} colorPreset="solid-theme" />
-                <Shimmer>正在深度思考与规划…</Shimmer>
+              <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground font-medium">
+                <DotmSquare3 size={15} dotSize={2} colorPreset="solid-theme" />
+                <WordRotate
+                  words={[
+                    "正在深度思考与规划…",
+                    "正在解析指令与上下文…",
+                    "正在检索工具库与工作区…",
+                    "正在调度智能体组织回复…",
+                  ]}
+                  duration={2200}
+                  className="text-xs text-muted-foreground font-medium"
+                />
               </div>
             ) : null}
             <CitationProvider entries={citationEntries}>

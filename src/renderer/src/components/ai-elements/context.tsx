@@ -3,11 +3,11 @@
 import type { LanguageModelUsage } from "ai";
 import type { ComponentProps } from "react";
 import { createContext, useContext, useMemo } from "react";
-import { getUsage } from "tokenlens";
 import { Button } from "@/components/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SlidingNumber } from "@/components/ui/sliding-number";
+import { type CatalogProvider, calculateCostUSD, formatCostUSD } from "@/lib/providers";
 import { cn } from "@/lib/utils";
 
 const PERCENT_MAX = 100;
@@ -60,6 +60,7 @@ interface ContextSchema {
   usage?: LanguageModelUsage;
   modelId?: ModelId;
   breakdown?: ContextUsageBreakdown;
+  catalog?: CatalogProvider[];
 }
 
 const ContextContext = createContext<ContextSchema | null>(null);
@@ -141,11 +142,12 @@ export const Context = ({
   usage,
   modelId,
   breakdown,
+  catalog,
   ...props
 }: ContextProps) => {
   const contextValue = useMemo(
-    () => ({ breakdown, maxTokens, modelId, usage, usedTokens }),
-    [breakdown, maxTokens, modelId, usage, usedTokens],
+    () => ({ breakdown, catalog, maxTokens, modelId, usage, usedTokens }),
+    [breakdown, catalog, maxTokens, modelId, usage, usedTokens],
   );
 
   return (
@@ -338,34 +340,13 @@ export const ContextContentFooter = ({
   className,
   ...props
 }: ContextContentFooterProps) => {
-  const { modelId, usage } = useContextValue();
+  const { modelId, usage, usedTokens, catalog } = useContextValue();
   const input = splitInputTokens(usage);
-  // tokenlens 的 totalUSD = input + output + cacheRead + cacheWrite,所以 input 必须传
-  // 「未缓存」部分,否则命中的 token 会被按全价重复计一次。
-  const cost = modelId
-    ? getUsage({
-        modelId,
-        usage: {
-          cacheReads: input.cacheRead,
-          cacheWrites: input.cacheWrite,
-          input: input.noCache,
-          output: usage?.outputTokens ?? 0,
-        },
-      }).costUSD
-    : undefined;
-  // 模型目录里没有缓存单价时 cacheRead/WriteUSD 为空,这些 token 不能凭空免费 —— 退回输入价。
-  const unpricedCacheTokens =
-    (cost?.cacheReadUSD === undefined ? input.cacheRead : 0) +
-    (cost?.cacheWriteUSD === undefined ? input.cacheWrite : 0);
-  const unpricedUSD =
-    modelId && unpricedCacheTokens > 0
-      ? (getUsage({ modelId, usage: { input: unpricedCacheTokens, output: 0 } }).costUSD
-          ?.inputUSD ?? 0)
-      : 0;
-  const totalCost = new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    style: "currency",
-  }).format((cost?.totalUSD ?? 0) + unpricedUSD);
+  const inputTokens = input.total > 0 ? input.total : Math.max(0, usedTokens);
+  const outputTokens = usage?.outputTokens ?? 0;
+
+  const cost = modelId ? calculateCostUSD(modelId, inputTokens, outputTokens, catalog) : null;
+  const formattedCost = formatCostUSD(cost);
 
   return (
     <div
@@ -378,7 +359,7 @@ export const ContextContentFooter = ({
       {children ?? (
         <>
           <span className="text-muted-foreground">总费用</span>
-          <span>{totalCost}</span>
+          <span className="font-semibold tabular-nums text-foreground">{formattedCost}</span>
         </>
       )}
     </div>

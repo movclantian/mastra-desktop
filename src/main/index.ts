@@ -506,7 +506,7 @@ function ensureMastraRunning(): Promise<void> {
 /** 数据落盘目录:优先在服务存活时问 /work/storage,拿不到再用默认位置推算 */
 function defaultMastraDataDir(): string {
   try {
-    return is.dev ? join(getProjectRoot(), "data") : join(process.resourcesPath, "data");
+    return join(homedir(), ".mastrawork");
   } catch {
     return "";
   }
@@ -515,9 +515,7 @@ function defaultMastraDataDir(): string {
 /** DuckDB observability 数据目录,与会话数据库分离且不属于 Mastra public 输出。 */
 function defaultMastraObservabilityDir(): string {
   try {
-    return is.dev
-      ? join(getProjectRoot(), "data", "observability")
-      : join(process.resourcesPath, "data", "observability");
+    return join(homedir(), ".mastrawork", "observability");
   } catch {
     return "";
   }
@@ -617,143 +615,70 @@ interface DetectedIdeInfo {
   category: "ide" | "system";
 }
 
-interface IdeCandidate {
-  id: string;
-  name: string;
-  commands: string[];
-  windowsPaths?: string[];
-  macPaths?: string[];
-  linuxPaths?: string[];
-}
-
-const IDE_REGISTRY: IdeCandidate[] = [
-  {
-    id: "trae",
-    name: "TraeCode CN",
-    commands: ["trae", "trae.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "Trae", "Trae.exe"),
-      "D:\\Trae CN\\bin\\trae.cmd",
-      "D:\\Trae CN\\Trae.exe",
-      "C:\\Program Files\\Trae\\Trae.exe",
-    ],
-    macPaths: ["/Applications/Trae.app"],
-  },
-  {
-    id: "vscode",
-    name: "Visual Studio Code",
-    commands: ["code", "code.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "bin", "code.cmd"),
-      join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"),
-      "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
-      "D:\\Microsoft VS Code\\bin\\code.cmd",
-    ],
-    macPaths: ["/Applications/Visual Studio Code.app"],
-    linuxPaths: ["/usr/bin/code", "/snap/bin/code"],
-  },
-  {
-    id: "antigravity",
-    name: "Antigravity",
-    commands: ["agy", "agy.cmd", "antigravity", "antigravity.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "agy", "bin", "agy.exe"),
-      join(process.env.LOCALAPPDATA || "", "Programs", "Antigravity", "Antigravity.exe"),
-    ],
-    macPaths: ["/Applications/Antigravity.app", join(homedir(), ".agy", "bin", "agy")],
-  },
-  {
-    id: "cursor",
-    name: "Cursor",
-    commands: ["cursor", "cursor.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "Cursor.exe"),
-      join(
-        process.env.LOCALAPPDATA || "",
-        "Programs",
-        "cursor",
-        "resources",
-        "app",
-        "bin",
-        "cursor.cmd",
-      ),
-    ],
-    macPaths: ["/Applications/Cursor.app"],
-  },
-  {
-    id: "windsurf",
-    name: "Windsurf",
-    commands: ["windsurf", "windsurf.cmd"],
-    windowsPaths: [
-      join(process.env.LOCALAPPDATA || "", "Programs", "Windsurf", "Windsurf.exe"),
-      join(process.env.LOCALAPPDATA || "", "Programs", "Windsurf", "bin", "windsurf.cmd"),
-    ],
-    macPaths: ["/Applications/Windsurf.app"],
-  },
-  {
-    id: "vscode-insiders",
-    name: "VS Code Insiders",
-    commands: ["code-insiders", "code-insiders.cmd"],
-    windowsPaths: [
-      join(
-        process.env.LOCALAPPDATA || "",
-        "Programs",
-        "Microsoft VS Code Insiders",
-        "bin",
-        "code-insiders.cmd",
-      ),
-    ],
-    macPaths: ["/Applications/Visual Studio Code - Insiders.app"],
-  },
-  {
-    id: "webstorm",
-    name: "WebStorm",
-    commands: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
-    macPaths: ["/Applications/WebStorm.app"],
-  },
-  {
-    id: "idea",
-    name: "IntelliJ IDEA",
-    commands: ["idea", "idea64.exe", "idea.cmd"],
-    macPaths: ["/Applications/IntelliJ IDEA.app", "/Applications/IntelliJ IDEA CE.app"],
-  },
-  {
-    id: "pycharm",
-    name: "PyCharm",
-    commands: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
-    macPaths: ["/Applications/PyCharm.app", "/Applications/PyCharm CE.app"],
-  },
-  {
-    id: "sublime",
-    name: "Sublime Text",
-    commands: ["subl", "sublime_text"],
-    macPaths: ["/Applications/Sublime Text.app"],
-  },
-  {
-    id: "positron",
-    name: "Positron",
-    commands: ["positron", "positron.cmd"],
-    windowsPaths: [join(process.env.LOCALAPPDATA || "", "Programs", "Positron", "Positron.exe")],
-    macPaths: ["/Applications/Positron.app"],
-  },
-];
-
-async function isCommandAvailable(command: string): Promise<boolean> {
+/**
+ * 动态探测 VS Code 可执行文件绝对路径或启动命令：
+ * 1. 跨平台系统 PATH 检测 (where.exe / which)
+ * 2. Windows 专属：动态查注册表 App Paths (HKEY_CURRENT_USER / HKEY_LOCAL_MACHINE)
+ * 3. macOS 专属：使用 Spotlight 通过 Bundle ID (com.microsoft.VSCode) 动态定位
+ */
+async function findVSCodeExecutable(): Promise<string | null> {
+  // 1. 优先查系统 PATH (跨平台通用)
   try {
     const isWin = process.platform === "win32";
     const lookupTool = isWin ? "where.exe" : "which";
-    await execFileAsync(lookupTool, [command], { timeout: 1500 });
-    return true;
+    const commands = isWin ? ["code.cmd", "code.exe", "code"] : ["code"];
+    for (const cmd of commands) {
+      try {
+        const { stdout } = await execFileAsync(lookupTool, [cmd], { timeout: 1500 });
+        const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+        if (firstLine && existsSync(firstLine)) return firstLine;
+      } catch {
+        // try next command
+      }
+    }
   } catch {
-    return false;
+    // ignore
   }
-}
 
-function isPathAvailable(paths: string[] = []): boolean {
-  for (const p of paths) {
-    if (p && existsSync(p)) return true;
+  // 2. Windows 专属：动态查询注册表 App Paths (无视安装在哪个盘符或非标准路径)
+  if (process.platform === "win32") {
+    const regKeys = [
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe",
+      "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe",
+      "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\Applications\\Code.exe\\shell\\open\\command",
+    ];
+    for (const key of regKeys) {
+      try {
+        const { stdout } = await execFileAsync("reg.exe", ["query", key, "/ve"], { timeout: 1500 });
+        const match = stdout.match(/REG_SZ\s+(?:"([^"]+)"|(\S+))/i);
+        const resolvedPath = (match?.[1] || match?.[2] || "").trim();
+        if (resolvedPath && existsSync(resolvedPath)) {
+          return resolvedPath;
+        }
+      } catch {
+        // try next reg key
+      }
+    }
   }
-  return false;
+
+  // 3. macOS 专属：通过 Spotlight 搜索 Bundle ID 动态定位 (无论安装到何处)
+  if (process.platform === "darwin") {
+    try {
+      const { stdout } = await execFileAsync(
+        "mdfind",
+        ["kMDItemCFBundleIdentifier == 'com.microsoft.VSCode'"],
+        { timeout: 2000 },
+      );
+      const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+      if (firstLine && existsSync(firstLine)) {
+        return firstLine;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 let cachedDetectedIdes: DetectedIdeInfo[] | null = null;
@@ -766,41 +691,15 @@ async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIdeInf
 
   const results: DetectedIdeInfo[] = [];
 
-  await Promise.all(
-    IDE_REGISTRY.map(async (candidate) => {
-      const platformPaths =
-        process.platform === "win32"
-          ? candidate.windowsPaths
-          : process.platform === "darwin"
-            ? candidate.macPaths
-            : candidate.linuxPaths;
-
-      if (isPathAvailable(platformPaths)) {
-        results.push({
-          id: candidate.id,
-          name: candidate.name,
-          command: candidate.commands[0],
-          category: "ide",
-        });
-        return;
-      }
-
-      for (const cmd of candidate.commands) {
-        if (await isCommandAvailable(cmd)) {
-          results.push({
-            id: candidate.id,
-            name: candidate.name,
-            command: cmd,
-            category: "ide",
-          });
-          return;
-        }
-      }
-    }),
-  );
-
-  const orderMap = new Map(IDE_REGISTRY.map((item, idx) => [item.id, idx]));
-  results.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+  const vscodePath = await findVSCodeExecutable();
+  if (vscodePath) {
+    results.push({
+      id: "vscode",
+      name: "Visual Studio Code",
+      command: vscodePath,
+      category: "ide",
+    });
+  }
 
   results.push({
     id: "terminal",
@@ -912,30 +811,26 @@ function bootstrap(): void {
           return { ok: true };
         }
 
-        // IDE 映射表
-        const ideCommands: Record<string, string[]> = {
-          trae: ["trae", "trae.cmd"],
-          vscode: ["code", "code.cmd"],
-          antigravity: ["antigravity", "antigravity.cmd", "agy", "agy.cmd"],
-          cursor: ["cursor", "cursor.cmd"],
-          windsurf: ["windsurf", "windsurf.cmd"],
-          "vscode-insiders": ["code-insiders", "code-insiders.cmd"],
-          webstorm: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
-          idea: ["idea", "idea64.exe", "idea.cmd"],
-          pycharm: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
-          sublime: ["subl", "sublime_text"],
-          positron: ["positron", "positron.cmd"],
-        };
+        if (appName === "vscode") {
+          const vscodeTarget = (await findVSCodeExecutable()) || "code";
+          if (process.platform === "darwin" && vscodeTarget.endsWith(".app")) {
+            const child = spawn("open", ["-a", vscodeTarget, targetPath], {
+              detached: true,
+              stdio: "ignore",
+            });
+            child.unref();
+          } else {
+            const child = spawn(vscodeTarget, [targetPath], {
+              detached: true,
+              stdio: "ignore",
+              shell: true,
+            });
+            child.unref();
+          }
+          return { ok: true };
+        }
 
-        const candidates = ideCommands[appName] || [appName];
-        const cmd = candidates[0];
-        const child = spawn(cmd, [targetPath], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
-        return { ok: true };
+        return { ok: false, error: `不支持的应用: ${appName}` };
       } catch (error) {
         return {
           ok: false,
@@ -1007,12 +902,19 @@ function bootstrap(): void {
           }
         }
         const url = `file:${join(targetDir, "mastra.db").replace(/\\/g, "/")}`;
+        const defaultDir = join(homedir(), ".mastrawork");
+        await mkdir(defaultDir, { recursive: true });
+        await writeFile(
+          join(defaultDir, "storage-location.json"),
+          JSON.stringify({ url }, null, 2),
+          "utf-8",
+        );
         const root = is.dev ? getProjectRoot() : process.resourcesPath;
         await writeFile(
           join(root, "storage-location.json"),
           JSON.stringify({ url }, null, 2),
           "utf-8",
-        );
+        ).catch(() => undefined);
       } catch (err) {
         // 搬迁/写配置失败:保留旧配置,按旧位置拉回服务,错误交给渲染进程提示
         void ensureMastraRunning().catch(() => {});

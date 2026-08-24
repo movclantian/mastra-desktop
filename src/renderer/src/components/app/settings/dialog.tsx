@@ -23,6 +23,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
@@ -111,9 +112,37 @@ export function SettingsDialog() {
                 </SidebarGroupContent>
               </SidebarGroup>
             </SidebarContent>
+            <SidebarFooter className="border-t border-border p-2">
+              <div className="flex min-w-0 items-center justify-between gap-1.5 px-1 py-0.5">
+                <div className="flex min-w-0 flex-col">
+                  <span
+                    className="truncate text-xs font-medium text-sidebar-foreground"
+                    title={user?.name ?? user?.email}
+                  >
+                    {user?.name || "用户"}
+                  </span>
+                  <span className="truncate text-[10px] text-muted-foreground" title={user?.email}>
+                    {user?.email}
+                  </span>
+                </div>
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  title="退出登录"
+                  aria-label="退出登录"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    signOut();
+                    setSettingsOpen(false);
+                  }}
+                >
+                  <LogOutIcon className="size-3.5" />
+                </Button>
+              </div>
+            </SidebarFooter>
           </Sidebar>
           <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-            <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-background px-4">
+            <header className="flex h-10 shrink-0 items-center justify-between border-b border-border bg-background px-4 pr-12">
               <Breadcrumb>
                 <BreadcrumbList>
                   <BreadcrumbItem className="hidden md:block">
@@ -125,26 +154,6 @@ export function SettingsDialog() {
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="max-w-40 truncate text-xs text-muted-foreground"
-                  title={user?.email}
-                >
-                  {user?.name}
-                </span>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  title="退出登录"
-                  aria-label="退出登录"
-                  onClick={() => {
-                    signOut();
-                    setSettingsOpen(false);
-                  }}
-                >
-                  <LogOutIcon />
-                </Button>
-              </div>
             </header>
 
             {section === "themes" ? (

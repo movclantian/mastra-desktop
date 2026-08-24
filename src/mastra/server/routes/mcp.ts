@@ -5,6 +5,7 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../../errors";
 import {
+  authenticateMcpServer,
   getMcpConfig,
   type McpServerConfig,
   saveMcpConfig,
@@ -69,6 +70,20 @@ export const testMcpConfigRoute = registerApiRoute("/work/mcp/test", {
         },
         400,
       );
+    }
+  },
+});
+
+export const authenticateMcpConfigRoute = registerApiRoute("/work/mcp/:id/authenticate", {
+  method: "POST",
+  handler: async (c) => {
+    try {
+      return c.json(await authenticateMcpServer(c.req.param("id")));
+    } catch (error) {
+      throw workError("MCP_CONNECTION_FAILED", {
+        text: error instanceof Error ? error.message : "MCP OAuth 授权失败",
+        cause: error,
+      });
     }
   },
 });

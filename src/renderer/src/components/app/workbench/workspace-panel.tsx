@@ -1639,15 +1639,59 @@ function CodeChangeRow({
   change,
   open,
   onOpenChange,
+  fetchContent,
 }: {
   change: WorkspaceFileChange;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  fetchContent: (
+    changeId: string,
+    side: "before" | "after",
+  ) => Promise<{ content: string; binary: boolean } | null>;
 }) {
   const ChangeIcon =
     change.kind === "created" ? CheckCircle2Icon : change.kind === "deleted" ? XIcon : FileDiffIcon;
-  const before = change.before ?? "";
-  const after = change.after ?? "";
+  const [content, setContent] = React.useState<{ before: string; after: string } | null>(null);
+  const [contentLoading, setContentLoading] = React.useState(false);
+  const [contentError, setContentError] = React.useState(false);
+  React.useEffect(() => {
+    if (!open || content || contentLoading || contentError) return;
+    let cancelled = false;
+    setContentLoading(true);
+    setContentError(false);
+    void Promise.all([
+      change.before && change.before.encoding !== "binary"
+        ? fetchContent(change.id, "before")
+        : Promise.resolve(null),
+      change.after && change.after.encoding !== "binary"
+        ? fetchContent(change.id, "after")
+        : Promise.resolve(null),
+    ])
+      .then(([before, after]) => {
+        if (cancelled) return;
+        if (
+          (change.before && change.before.encoding !== "binary" && !before) ||
+          (change.after && change.after.encoding !== "binary" && !after)
+        ) {
+          setContentError(true);
+          return;
+        }
+        setContent({ before: before?.content ?? "", after: after?.content ?? "" });
+      })
+      .catch(() => {
+        if (!cancelled) setContentError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setContentLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [change, content, contentError, contentLoading, fetchContent, open]);
+  const before = content?.before ?? "";
+  const after = content?.after ?? "";
+  const hasBinarySnapshot =
+    change.before?.encoding === "binary" || change.after?.encoding === "binary";
   const timestamp = new Date(change.createdAt);
   return (
     <Collapsible
@@ -1680,12 +1724,22 @@ function CodeChangeRow({
         </time>
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t p-2">
-        <CodeComparison
-          afterCode={after}
-          beforeCode={before}
-          filename={change.path}
-          language={changeLanguage(change.path)}
-        />
+        {hasBinarySnapshot ? (
+          <div className="px-1 py-4 text-xs text-muted-foreground">
+            二进制快照已完整保存，可通过对象引用读取元数据
+          </div>
+        ) : contentLoading ? (
+          <div className="px-1 py-4 text-xs text-muted-foreground">正在读取完整快照...</div>
+        ) : contentError ? (
+          <div className="px-1 py-4 text-xs text-destructive">完整快照读取失败</div>
+        ) : (
+          <CodeComparison
+            afterCode={after}
+            beforeCode={before}
+            filename={change.path}
+            language={changeLanguage(change.path)}
+          />
+        )}
         <div className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-muted-foreground">
           <Code2Icon className="size-3" />
           <span>{change.toolName.replace(/^mastra_workspace_/, "")}</span>
@@ -1704,12 +1758,17 @@ function CodeChangeGroup({
   onOpenChange,
   expandedChanges,
   onChangeOpen,
+  fetchContent,
 }: {
   group: WorkspaceChangeGroup;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   expandedChanges: Set<string>;
   onChangeOpen: (changeId: string, open: boolean) => void;
+  fetchContent: (
+    changeId: string,
+    side: "before" | "after",
+  ) => Promise<{ content: string; binary: boolean } | null>;
 }) {
   const latest = group.changes[0];
   const LatestIcon =
@@ -1752,6 +1811,7 @@ function CodeChangeGroup({
             key={change.id}
             onOpenChange={(nextOpen) => onChangeOpen(change.id, nextOpen)}
             open={expandedChanges.has(change.id)}
+            fetchContent={fetchContent}
           />
         ))}
       </CollapsibleContent>
@@ -1760,7 +1820,7 @@ function CodeChangeGroup({
 }
 
 function CodeChangesWorkspace({ active }: { active: boolean }) {
-  const { activeThreadId, fetchThreadChanges } = useWorkbench();
+  const { activeThreadId, fetchThreadChanges, fetchThreadChangeContent } = useWorkbench();
   const [changes, setChanges] = React.useState<WorkspaceFileChange[]>([]);
   const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
   const [expandedChanges, setExpandedChanges] = React.useState<Set<string>>(new Set());
@@ -1810,6 +1870,13 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
 
   const orderedChanges = React.useMemo(() => [...changes].reverse(), [changes]);
   const changeGroups = React.useMemo(() => groupWorkspaceChanges(orderedChanges), [orderedChanges]);
+  const fetchContent = React.useCallback(
+    (changeId: string, side: "before" | "after") => {
+      if (!activeThreadId) return Promise.resolve(null);
+      return fetchThreadChangeContent(activeThreadId, changeId, side);
+    },
+    [activeThreadId, fetchThreadChangeContent],
+  );
   return (
     <div className="flex size-full min-h-0 flex-col bg-muted/10">
       <PanelHeader className="h-10 shrink-0 justify-between border-b bg-muted/30 px-3">
@@ -1876,6 +1943,7 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
                   });
                 }}
                 open={expandedFiles.has(group.path)}
+                fetchContent={fetchContent}
               />
             ))
           )}

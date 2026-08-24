@@ -9,6 +9,7 @@
 import { existsSync, statSync } from "node:fs";
 import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../../agents";
+import { ensureProfileAgentsRegistered, getAgentProfile } from "../../../agents/custom";
 import { workError } from "../../../errors";
 import { workSessionHost } from "../../../harness";
 import { deleteThreadWorkspace } from "../../../workspace";
@@ -29,10 +30,26 @@ export const listThreadsRoute = registerApiRoute("/work/threads", {
       perPage: false,
     });
     // Studio 直连/连接测试/工作记忆等路径产生的线程 metadata 可能为 null,
-    // 统一归一化成对象 —— 侧边栏直接读 t.metadata.archivedAt 会炸掉整个 UI
-    return c.json({
-      threads: result.threads.map((thread) => ({ ...thread, metadata: thread.metadata ?? {} })),
-    });
+    // 统一归一化成对象并结合底层 agent 状态探测线程是否在后台活跃运行中
+    const threads = await Promise.all(
+      result.threads.map(async (thread) => {
+        const metadata = (thread.metadata ?? {}) as Record<string, unknown>;
+        const profile = await getAgentProfile(
+          typeof metadata.agentProfileId === "string" ? metadata.agentProfileId : undefined,
+        );
+        const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile)).profile;
+        const activeRunId =
+          agent.getActiveThreadRunId({ resourceId, threadId: thread.id }) ?? null;
+        return {
+          ...thread,
+          metadata: {
+            ...metadata,
+            ...(activeRunId ? { activeRunId, isWorking: true } : {}),
+          },
+        };
+      }),
+    );
+    return c.json({ threads });
   },
 });
 

@@ -51,6 +51,16 @@ const ERROR_TRANSLATIONS: Record<string, { title: string; hint?: string }> = {
   },
   SESSION_FOLLOW_UP_BLOCKED: { title: "追加消息未能加入队列", hint: "请稍后重试" },
 
+  // ---- Workflow 与后台任务 ---------------------------------------------
+  WORKFLOW_NOT_FOUND: { title: "Workflow 不存在或已被删除" },
+  WORKFLOW_RUN_NOT_FOUND: { title: "Workflow 运行记录不存在或不属于当前会话" },
+  WORKFLOW_RUN_INVALID_STATE: {
+    title: "Workflow 当前状态不支持此操作",
+    hint: "请刷新运行状态后重试",
+  },
+  BACKGROUND_TASKS_DISABLED: { title: "后台任务未启用" },
+  BACKGROUND_TASK_NOT_FOUND: { title: "后台任务不存在或已被删除" },
+
   // ---- 模型与供应商 ------------------------------------------------------
   MODEL_NOT_CONFIGURED: {
     title: "所选模型不可用",

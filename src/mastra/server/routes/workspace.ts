@@ -14,7 +14,11 @@ import {
   saveWorkspaceConfig,
   type WorkspaceUserConfig,
 } from "../../workspace";
-import { listWorkspaceChanges, recordWorkspaceChange } from "../../workspace/changes";
+import {
+  listWorkspaceChanges,
+  readWorkspaceChangeContent,
+  recordWorkspaceChange,
+} from "../../workspace/changes";
 import { getWorkMemory } from "./threads";
 import { getOwnedThread, isTrustedLocalRequest } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
@@ -55,9 +59,56 @@ export const threadChangesRoute = registerApiRoute("/work/threads/:threadId/chan
     if (!threadId || !resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemory();
     if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
-    return c.json({ changes: await listWorkspaceChanges(threadId) });
+    const offsetValue = Number(c.req.query("offset"));
+    const limitValue = Number(c.req.query("limit"));
+    const hasPaging = Number.isFinite(offsetValue) || Number.isFinite(limitValue);
+    const offset = Number.isFinite(offsetValue) ? Math.max(0, Math.trunc(offsetValue)) : 0;
+    const limit = Number.isFinite(limitValue)
+      ? Math.min(500, Math.max(0, Math.trunc(limitValue)))
+      : 200;
+    const changes = await listWorkspaceChanges(
+      threadId,
+      resourceId,
+      hasPaging ? { offset, limit } : {},
+    );
+    return c.json({ changes, ...(hasPaging ? { offset, limit } : {}) });
   },
 });
+
+// GET /work/threads/:threadId/changes/:changeId/content?resourceId=<id>&side=before|after
+// 只在用户展开历史记录时读取完整快照,避免列表接口注入大文件内容。
+export const threadChangeContentRoute = registerApiRoute(
+  "/work/threads/:threadId/changes/:changeId/content",
+  {
+    method: "GET",
+    handler: async (c) => {
+      if (!isTrustedLocalRequest(c))
+        throw workError("VALIDATION_FAILED", { text: "Untrusted origin" });
+      const threadId = c.req.param("threadId");
+      const changeId = c.req.param("changeId");
+      const resourceId = c.req.query("resourceId");
+      const side = c.req.query("side");
+      if (!threadId || !changeId || !resourceId) {
+        throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
+      }
+      if (side !== "before" && side !== "after") {
+        throw workError("VALIDATION_FAILED", { text: "side must be before or after" });
+      }
+      const memory = await getWorkMemory();
+      if (!(await getOwnedThread(memory, threadId, resourceId))) {
+        throw workError("THREAD_NOT_FOUND");
+      }
+      const result = await readWorkspaceChangeContent({
+        threadId,
+        changeId,
+        side,
+        userId: resourceId,
+      });
+      if (!result) throw workError("WORKSPACE_FILE_NOT_FOUND");
+      return c.json({ content: result.content, binary: result.binary, metadata: result.metadata });
+    },
+  },
+);
 
 // GET /work/threads/:threadId/tree?path=<相对路径> — 线程工作区文件树(单层按需拉取)
 // 显式目录和隐式默认目录都属于线程工作区,均可由用户浏览。
@@ -329,6 +380,72 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
   },
 });
 
+// 动态探测 VS Code 可执行文件路径 (跨平台 PATH / Windows 注册表 App Paths / macOS Spotlight)
+async function findVSCodeExecutable(): Promise<string | null> {
+  const { execFile } = await import("node:child_process");
+  const { existsSync } = await import("node:fs");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+
+  // 1. 优先查系统 PATH (跨平台)
+  try {
+    const isWin = process.platform === "win32";
+    const lookupTool = isWin ? "where.exe" : "which";
+    const commands = isWin ? ["code.cmd", "code.exe", "code"] : ["code"];
+    for (const cmd of commands) {
+      try {
+        const { stdout } = await execFileAsync(lookupTool, [cmd], { timeout: 1500 });
+        const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+        if (firstLine && existsSync(firstLine)) return firstLine;
+      } catch {
+        // try next command
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 2. Windows 专属：动态查注册表 App Paths
+  if (process.platform === "win32") {
+    const regKeys = [
+      "HKEY_CURRENT_USER\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe",
+      "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\Code.exe",
+      "HKEY_LOCAL_MACHINE\\SOFTWARE\\Classes\\Applications\\Code.exe\\shell\\open\\command",
+    ];
+    for (const key of regKeys) {
+      try {
+        const { stdout } = await execFileAsync("reg.exe", ["query", key, "/ve"], { timeout: 1500 });
+        const match = stdout.match(/REG_SZ\s+(?:"([^"]+)"|(\S+))/i);
+        const resolvedPath = (match?.[1] || match?.[2] || "").trim();
+        if (resolvedPath && existsSync(resolvedPath)) {
+          return resolvedPath;
+        }
+      } catch {
+        // try next reg key
+      }
+    }
+  }
+
+  // 3. macOS 专属：通过 Spotlight 搜索 Bundle ID
+  if (process.platform === "darwin") {
+    try {
+      const { stdout } = await execFileAsync(
+        "mdfind",
+        ["kMDItemCFBundleIdentifier == 'com.microsoft.VSCode'"],
+        { timeout: 2000 },
+      );
+      const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
+      if (firstLine && existsSync(firstLine)) {
+        return firstLine;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 // POST /work/workspace/open-in — 在本地 IDE 或系统工具中打开工作区
 export const openInAppRoute = registerApiRoute("/work/workspace/open-in", {
   method: "POST",
@@ -367,21 +484,24 @@ export const openInAppRoute = registerApiRoute("/work/workspace/open-in", {
         } else {
           spawn("x-terminal-emulator", [], { cwd: targetPath, detached: true, stdio: "ignore" });
         }
+      } else if (appName === "vscode") {
+        const vscodeTarget = (await findVSCodeExecutable()) || "code";
+        if (process.platform === "darwin" && vscodeTarget.endsWith(".app")) {
+          const child = spawn("open", ["-a", vscodeTarget, targetPath], {
+            detached: true,
+            stdio: "ignore",
+          });
+          child.unref();
+        } else {
+          const child = spawn(vscodeTarget, [targetPath], {
+            detached: true,
+            stdio: "ignore",
+            shell: true,
+          });
+          child.unref();
+        }
       } else {
-        const ideCommands: Record<string, string[]> = {
-          trae: ["trae", "trae.cmd"],
-          vscode: ["code", "code.cmd"],
-          antigravity: ["antigravity", "antigravity.cmd", "agy", "agy.cmd"],
-          cursor: ["cursor", "cursor.cmd"],
-        };
-        const candidates = ideCommands[appName] || [appName];
-        const cmd = candidates[0];
-        const child = spawn(cmd, [targetPath], {
-          detached: true,
-          stdio: "ignore",
-          shell: true,
-        });
-        child.unref();
+        throw workError("VALIDATION_FAILED", { text: `不支持的应用: ${appName}` });
       }
       return c.json({ ok: true });
     } catch (err) {
@@ -397,143 +517,6 @@ export const detectedIdesRoute = registerApiRoute("/work/workspace/detected-ides
   method: "GET",
   handler: async (c) => {
     try {
-      const { execFile } = await import("node:child_process");
-      const { existsSync } = await import("node:fs");
-      const { promisify } = await import("node:util");
-      const os = await import("node:os");
-      const path = await import("node:path");
-
-      const execFileAsync = promisify(execFile);
-
-      const IDE_REGISTRY = [
-        {
-          id: "trae",
-          name: "TraeCode CN",
-          commands: ["trae", "trae.cmd"],
-          windowsPaths: [
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "Trae", "Trae.exe"),
-            "D:\\Trae CN\\bin\\trae.cmd",
-            "D:\\Trae CN\\Trae.exe",
-            "C:\\Program Files\\Trae\\Trae.exe",
-          ],
-          macPaths: ["/Applications/Trae.app"],
-        },
-        {
-          id: "vscode",
-          name: "Visual Studio Code",
-          commands: ["code", "code.cmd"],
-          windowsPaths: [
-            path.join(
-              process.env.LOCALAPPDATA || "",
-              "Programs",
-              "Microsoft VS Code",
-              "bin",
-              "code.cmd",
-            ),
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "Microsoft VS Code", "Code.exe"),
-            "C:\\Program Files\\Microsoft VS Code\\bin\\code.cmd",
-            "D:\\Microsoft VS Code\\bin\\code.cmd",
-          ],
-          macPaths: ["/Applications/Visual Studio Code.app"],
-          linuxPaths: ["/usr/bin/code", "/snap/bin/code"],
-        },
-        {
-          id: "antigravity",
-          name: "Antigravity",
-          commands: ["agy", "agy.cmd", "antigravity", "antigravity.cmd"],
-          windowsPaths: [
-            path.join(process.env.LOCALAPPDATA || "", "agy", "bin", "agy.exe"),
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "Antigravity", "Antigravity.exe"),
-          ],
-          macPaths: [
-            "/Applications/Antigravity.app",
-            path.join(os.homedir(), ".agy", "bin", "agy"),
-          ],
-        },
-        {
-          id: "cursor",
-          name: "Cursor",
-          commands: ["cursor", "cursor.cmd"],
-          windowsPaths: [
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "cursor", "Cursor.exe"),
-            path.join(
-              process.env.LOCALAPPDATA || "",
-              "Programs",
-              "cursor",
-              "resources",
-              "app",
-              "bin",
-              "cursor.cmd",
-            ),
-          ],
-          macPaths: ["/Applications/Cursor.app"],
-        },
-        {
-          id: "windsurf",
-          name: "Windsurf",
-          commands: ["windsurf", "windsurf.cmd"],
-          windowsPaths: [
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "Windsurf", "Windsurf.exe"),
-            path.join(
-              process.env.LOCALAPPDATA || "",
-              "Programs",
-              "Windsurf",
-              "bin",
-              "windsurf.cmd",
-            ),
-          ],
-          macPaths: ["/Applications/Windsurf.app"],
-        },
-        {
-          id: "vscode-insiders",
-          name: "VS Code Insiders",
-          commands: ["code-insiders", "code-insiders.cmd"],
-          windowsPaths: [
-            path.join(
-              process.env.LOCALAPPDATA || "",
-              "Programs",
-              "Microsoft VS Code Insiders",
-              "bin",
-              "code-insiders.cmd",
-            ),
-          ],
-          macPaths: ["/Applications/Visual Studio Code - Insiders.app"],
-        },
-        {
-          id: "webstorm",
-          name: "WebStorm",
-          commands: ["webstorm", "webstorm64.exe", "webstorm.cmd"],
-          macPaths: ["/Applications/WebStorm.app"],
-        },
-        {
-          id: "idea",
-          name: "IntelliJ IDEA",
-          commands: ["idea", "idea64.exe", "idea.cmd"],
-          macPaths: ["/Applications/IntelliJ IDEA.app", "/Applications/IntelliJ IDEA CE.app"],
-        },
-        {
-          id: "pycharm",
-          name: "PyCharm",
-          commands: ["pycharm", "pycharm64.exe", "pycharm.cmd"],
-          macPaths: ["/Applications/PyCharm.app", "/Applications/PyCharm CE.app"],
-        },
-        {
-          id: "sublime",
-          name: "Sublime Text",
-          commands: ["subl", "sublime_text"],
-          macPaths: ["/Applications/Sublime Text.app"],
-        },
-        {
-          id: "positron",
-          name: "Positron",
-          commands: ["positron", "positron.cmd"],
-          windowsPaths: [
-            path.join(process.env.LOCALAPPDATA || "", "Programs", "Positron", "Positron.exe"),
-          ],
-          macPaths: ["/Applications/Positron.app"],
-        },
-      ];
-
       const results: Array<{
         id: string;
         name: string;
@@ -541,45 +524,15 @@ export const detectedIdesRoute = registerApiRoute("/work/workspace/detected-ides
         category: "ide" | "system";
       }> = [];
 
-      await Promise.all(
-        IDE_REGISTRY.map(async (candidate) => {
-          const platformPaths =
-            process.platform === "win32"
-              ? candidate.windowsPaths
-              : process.platform === "darwin"
-                ? candidate.macPaths
-                : candidate.linuxPaths;
-
-          if (platformPaths?.some((p) => p && existsSync(p))) {
-            results.push({
-              id: candidate.id,
-              name: candidate.name,
-              command: candidate.commands[0],
-              category: "ide",
-            });
-            return;
-          }
-
-          const lookupTool = process.platform === "win32" ? "where.exe" : "which";
-          for (const cmd of candidate.commands) {
-            try {
-              await execFileAsync(lookupTool, [cmd], { timeout: 1500 });
-              results.push({
-                id: candidate.id,
-                name: candidate.name,
-                command: cmd,
-                category: "ide",
-              });
-              return;
-            } catch {
-              // try next command
-            }
-          }
-        }),
-      );
-
-      const orderMap = new Map(IDE_REGISTRY.map((item, idx) => [item.id, idx]));
-      results.sort((a, b) => (orderMap.get(a.id) ?? 999) - (orderMap.get(b.id) ?? 999));
+      const vscodePath = await findVSCodeExecutable();
+      if (vscodePath) {
+        results.push({
+          id: "vscode",
+          name: "Visual Studio Code",
+          command: vscodePath,
+          category: "ide",
+        });
+      }
 
       results.push({
         id: "terminal",

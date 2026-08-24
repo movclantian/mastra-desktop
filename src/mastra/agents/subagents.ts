@@ -3,9 +3,52 @@
  * 写进上下文,这里在 model 回调里读取并解析(见 chat / session 路由)。
  */
 import { Agent } from "@mastra/core/agent";
-import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultModelId, resolveRequestModel } from "../models";
+import {
+  REQUEST_MODEL_CONTEXT_KEY,
+  resolveConfiguredModel,
+  resolveDefaultModelId,
+  splitRouterId,
+} from "../models/providers";
 
 export const SUBAGENT_MODELS_CONTEXT_KEY = "mastra-work:subagent-models";
+
+type RequestContextLike = { get: (key: string) => unknown };
+
+type ResolvedModel = Awaited<ReturnType<typeof resolveConfiguredModel>>;
+
+function requestModelFromContext(requestContext: RequestContextLike): ResolvedModel | undefined {
+  const model = requestContext.get(REQUEST_MODEL_CONTEXT_KEY);
+  return typeof model === "object" && model !== null ? (model as ResolvedModel) : undefined;
+}
+
+export async function resolveSubagentModel(requestContext: RequestContextLike, agentType: string) {
+  const selected = requestContext.get(SUBAGENT_MODELS_CONTEXT_KEY);
+  if (typeof selected !== "object" || selected === null) return undefined;
+  const models = selected as Record<string, unknown>;
+  const configured = models[agentType] ?? models.default;
+  if (configured === undefined || configured === null || configured === "") return undefined;
+
+  const routerId =
+    typeof configured === "string"
+      ? configured.trim()
+      : typeof configured === "object"
+        ? (() => {
+            const value = configured as Record<string, unknown>;
+            const providerId = typeof value.providerId === "string" ? value.providerId : "";
+            const modelId = typeof value.modelId === "string" ? value.modelId : "";
+            return providerId && modelId ? `${providerId}/${modelId}` : "";
+          })()
+        : "";
+  if (!routerId) {
+    throw new Error(`子 Agent ${agentType} 的模型配置无效,需要 provider/model 路由。`);
+  }
+  const { providerId, modelId } = splitRouterId(routerId);
+  const model = await resolveConfiguredModel(providerId, modelId);
+  if (!model) {
+    throw new Error(`子 Agent ${agentType} 的模型 ${routerId} 未配置或已被禁用。`);
+  }
+  return model;
+}
 
 /**
  * 探索子 Agent (docs/en/docs/subagents.mdx):
@@ -18,7 +61,9 @@ const explorerAgent = new Agent({
   instructions:
     "你是探索子 Agent (Explorer)。\n专注于迅速探查指定目录、文档或网络信息,用清晰、简短的结构化列表返回事实与关键结论。",
   model: async ({ requestContext }) => {
-    const model = await resolveRequestModel(requestContext.get(REQUEST_MODEL_CONTEXT_KEY));
+    const selectedModel = await resolveSubagentModel(requestContext, "explorer");
+    if (selectedModel) return selectedModel;
+    const model = requestModelFromContext(requestContext);
     if (model) return model;
     const defaultModel = await resolveDefaultModelId();
     if (defaultModel) return defaultModel;
@@ -37,7 +82,9 @@ const reviewerAgent = new Agent({
   instructions:
     "你是审查子 Agent (Reviewer)。\n专注于静态分析、逻辑校验、架构一致性与安全隐患排查,输出严谨的技术评审意见。",
   model: async ({ requestContext }) => {
-    const model = await resolveRequestModel(requestContext.get(REQUEST_MODEL_CONTEXT_KEY));
+    const selectedModel = await resolveSubagentModel(requestContext, "reviewer");
+    if (selectedModel) return selectedModel;
+    const model = requestModelFromContext(requestContext);
     if (model) return model;
     const defaultModel = await resolveDefaultModelId();
     if (defaultModel) return defaultModel;

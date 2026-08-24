@@ -10,7 +10,7 @@ import {
   libraryGraphSearchTool,
   libraryVectorSearchTool,
 } from "../rag";
-import { getStorageDirectory, PROJECT_ROOT } from "../storage";
+import { DEFAULT_MASTRA_DATA_DIRECTORY, getStorageDirectory } from "../storage";
 
 /**
  * Code Mode 工具 (docs/en/docs/agents/code-mode.mdx, reference/tools/create-code-mode.mdx):
@@ -29,7 +29,7 @@ export const codeMode = createCodeMode({
   sandbox: new LocalSandbox({
     env: {},
     timeout: 30_000,
-    workingDirectory: getStorageDirectory() || PROJECT_ROOT,
+    workingDirectory: getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
   }),
   timeout: 30_000,
 });

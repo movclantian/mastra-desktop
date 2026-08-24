@@ -778,7 +778,10 @@ export function WorkspaceSection() {
             })}
           </div>
         </div>
-        <SettingRow title="默认工具输出上限(maxOutputTokens)" description="超出后由 Workspace 截断">
+        <SettingRow
+          title="默认工具输出上限(maxOutputTokens)"
+          description="仅用于内置后台进程读取工具；前台命令 stdout/stderr 会完整归档"
+        >
           <Input
             className="w-32"
             min={1}

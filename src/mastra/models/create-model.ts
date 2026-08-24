@@ -38,6 +38,30 @@ export function inferGatewayProtocol(registryId: string): GatewayProtocol | unde
   }
 }
 
+export function normalizeGatewayBaseUrl(
+  baseUrl: string | undefined,
+  protocol: GatewayProtocol | undefined,
+): string | undefined {
+  if (!baseUrl) return undefined;
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  if (!trimmed) return undefined;
+  if (protocol === "anthropic") {
+    if (trimmed.endsWith("/v1")) return trimmed;
+    return `${trimmed}/v1`;
+  }
+  if (protocol === "openai") {
+    if (trimmed.endsWith("/v1")) return trimmed;
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.pathname === "" || parsed.pathname === "/") {
+        return `${trimmed}/v1`;
+      }
+    } catch {}
+    return trimmed;
+  }
+  return trimmed;
+}
+
 export function createGatewayModel(options: {
   modelId: string;
   apiKey: string;
@@ -45,21 +69,29 @@ export function createGatewayModel(options: {
   protocol: GatewayProtocol | undefined;
   useResponses?: boolean;
 }): GatewayLanguageModel {
-  const { modelId, apiKey, baseUrl, protocol, useResponses } = options;
+  const { modelId, apiKey, protocol, useResponses } = options;
+  const normalizedBaseUrl = normalizeGatewayBaseUrl(options.baseUrl, protocol);
   switch (protocol) {
     case "anthropic":
-      return createAnthropic({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey })(modelId);
+      return createAnthropic({
+        ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
+        apiKey,
+      })(modelId);
     case "gemini":
-      return createGoogleGenerativeAI({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey })(
-        modelId,
-      );
+      return createGoogleGenerativeAI({
+        ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
+        apiKey,
+      })(modelId);
     default: {
-      const openai = createOpenAI({ ...(baseUrl ? { baseURL: baseUrl } : {}), apiKey });
+      const openai = createOpenAI({
+        ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
+        apiKey,
+      });
       if (useResponses) return openai.responses(modelId);
-      if (baseUrl) {
+      if (normalizedBaseUrl) {
         return createOpenAICompatible({
           name: "mastra-work-openai-compatible",
-          baseURL: baseUrl,
+          baseURL: normalizedBaseUrl,
           apiKey,
         }).chatModel(modelId);
       }

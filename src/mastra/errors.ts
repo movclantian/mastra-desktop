@@ -134,6 +134,36 @@ export const WORK_ERRORS = {
     status: 409,
     text: "The follow-up was cancelled before it could be queued",
   },
+  BACKGROUND_TASKS_DISABLED: {
+    domain: ErrorDomain.AGENT,
+    category: ErrorCategory.SYSTEM,
+    status: 409,
+    text: "Background tasks are not enabled",
+  },
+  BACKGROUND_TASK_NOT_FOUND: {
+    domain: ErrorDomain.AGENT,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "Background task not found",
+  },
+  WORKFLOW_NOT_FOUND: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "Workflow not found",
+  },
+  WORKFLOW_RUN_NOT_FOUND: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "Workflow run not found",
+  },
+  WORKFLOW_RUN_INVALID_STATE: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "Workflow run cannot perform this operation in its current state",
+  },
 
   // ---- 模型与供应商(models/)--------------------------------------------
   MODEL_NOT_CONFIGURED: {

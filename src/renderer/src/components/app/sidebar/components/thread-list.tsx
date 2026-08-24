@@ -355,8 +355,8 @@ export function DirectThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId, agentBusy } = useWorkbench();
-  const isWorking = thread.id === activeThreadId && agentBusy;
+  const { activeThreadId, setActiveThreadId, isThreadBusy } = useWorkbench();
+  const isWorking = isThreadBusy(thread.id);
 
   return (
     <BlurFade duration={0.2} blur="3px">
@@ -413,8 +413,8 @@ function WorkspaceThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId, agentBusy } = useWorkbench();
-  const isWorking = thread.id === activeThreadId && agentBusy;
+  const { activeThreadId, setActiveThreadId, isThreadBusy } = useWorkbench();
+  const isWorking = isThreadBusy(thread.id);
 
   return (
     <SidebarMenuSubItem>
@@ -466,9 +466,10 @@ export function WorkspaceGroup({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { createThread, setActiveThreadId, setTerminalPanelOpen } = useWorkbench();
+  const { createThread, setActiveThreadId, setTerminalPanelOpen, isThreadBusy } = useWorkbench();
   const sorted = sortThreads(threads);
   const [open, setOpen] = React.useState(false);
+  const hasWorkingThread = sorted.some((t) => isThreadBusy(t.id));
 
   const handleCopyPath = () => {
     void navigator.clipboard.writeText(path);
@@ -496,9 +497,18 @@ export function WorkspaceGroup({
                   {sorted.length}
                 </span>
               ) : null}
+              {!open && hasWorkingThread ? (
+                <span
+                  className="ml-auto mr-1 flex items-center text-primary"
+                  title="工作区中有正在运行的会话…"
+                >
+                  <Dotm3x3_6 size={11} dotSize={1.8} colorPreset="solid-theme" />
+                </span>
+              ) : null}
               <ChevronRightIcon
                 className={cn(
-                  "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                  open || !hasWorkingThread ? "ml-auto" : "",
+                  "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
                   open && "rotate-90 text-foreground",
                 )}
               />

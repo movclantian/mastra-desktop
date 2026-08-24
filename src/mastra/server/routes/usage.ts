@@ -17,7 +17,7 @@ function parseDate(value: string | undefined, fallback: number): number {
 export const usageSummaryRoute = registerApiRoute("/work/usage", {
   method: "GET",
   handler: async (c) => {
-    const user = (c.get as (key: string) => unknown)("user") as { id?: unknown } | undefined;
+    const user = c.get("requestContext")?.get("user") as { id?: unknown } | undefined;
     const resourceId = typeof user?.id === "string" ? user.id : "";
     if (!resourceId) throw workError("AUTH_REQUIRED");
     const now = Date.now();

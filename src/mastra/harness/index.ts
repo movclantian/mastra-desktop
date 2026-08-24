@@ -1,7 +1,7 @@
 /**
  * Harness 运行时执行套件 (docs/en/docs/harness/):
  * - session: WorkSessionHost 与 WorkSession (agent-controller.mdx)
- * - signals: WebhookSignalProvider 与 NotificationInbox (signals.mdx)
+ * - signals: 持久化 Webhook/PollingSignalProvider 与 NotificationInbox (signals.mdx)
  */
 
 export { setDefaultWorkAgent } from "./registry";
@@ -11,4 +11,11 @@ export {
   type WorkSession,
   workSessionHost,
 } from "./session";
-export { notificationInboxTool, type WorkNotificationInput, workWebhookSignals } from "./signals";
+export {
+  getNotificationInboxTool,
+  PersistentPollingSignalProvider,
+  PersistentWebhookSignalProvider,
+  type WorkNotificationInput,
+  workPollingSignals,
+  workWebhookSignals,
+} from "./signals";

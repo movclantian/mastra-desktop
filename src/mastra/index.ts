@@ -6,7 +6,9 @@
  * docs/en/docs/studio/editor.mdx(编辑器工作区)。
  */
 
+import { InMemoryServerCache } from "@mastra/core/cache";
 import { getErrorFromUnknown } from "@mastra/core/error";
+import { EventEmitterPubSub, withCaching } from "@mastra/core/events";
 import { Mastra } from "@mastra/core/mastra";
 import type { Processor } from "@mastra/core/processors";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
@@ -17,6 +19,7 @@ import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
+import { workSubagents } from "./agents/subagents";
 import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
 import {
   agentsMdProcessor,
@@ -88,7 +91,42 @@ const logger = new PinoLogger({
 });
 
 export const mastra = new Mastra({
-  agents: { mastraWorkAgent },
+  // Keep the built-in delegation targets in the same Mastra registry as
+  // dynamically-created Profile and Team member Agents. They remain available
+  // to the default Agent through its `agents` resolver, while direct registry
+  // lookups and workflow steps resolve the exact same instances.
+  agents: {
+    mastraWorkAgent,
+    explorer: workSubagents.explorer,
+    reviewer: workSubagents.reviewer,
+  },
+  backgroundTasks: {
+    enabled: true,
+    globalConcurrency: 10,
+    perAgentConcurrency: 5,
+    backpressure: "queue",
+    defaultTimeoutMs: 300_000,
+    onTaskComplete: (task) => {
+      logger.info("Background task completed", {
+        taskId: task.id,
+        toolName: task.toolName,
+        runId: task.runId,
+        resourceId: task.resourceId,
+        threadId: task.threadId,
+      });
+    },
+    onTaskFailed: (task) => {
+      logger.error("Background task failed", {
+        taskId: task.id,
+        toolName: task.toolName,
+        runId: task.runId,
+        resourceId: task.resourceId,
+        threadId: task.threadId,
+        error: task.error,
+      });
+    },
+  },
+  pubsub: withCaching(new EventEmitterPubSub(), new InMemoryServerCache()),
   processors: processorRegistry,
   tools: {
     ask_user: askUserTool,
@@ -100,19 +138,17 @@ export const mastra = new Mastra({
   server: {
     auth: workAuth,
     middleware: async (c, next) => {
-      const user = c.get("user") as AuthUser | undefined;
+      const requestContext = c.get("requestContext");
+      let user = requestContext?.get("user") as AuthUser | undefined;
       if (!user) {
-        const publicAuthRoute =
-          c.req.path === "/work/auth/login" || c.req.path === "/work/auth/register";
-        if (
-          !publicAuthRoute &&
-          (c.req.path === "/chat" ||
-            c.req.path.startsWith("/chat/") ||
-            c.req.path === "/work" ||
-            c.req.path.startsWith("/work/"))
-        ) {
-          return c.json({ error: "Authentication required" }, 401);
+        try {
+          user = (await workAuth.authenticateToken("", c.req.raw)) ?? undefined;
+          if (user) requestContext?.set("user", user);
+        } catch {
+          // Route-level auth returns the canonical 401 response when lookup fails.
         }
+      }
+      if (!user) {
         await next();
         return;
       }
@@ -153,7 +189,6 @@ export const mastra = new Mastra({
         }
       }
 
-      const requestContext = c.get("requestContext");
       requestContext.set("user", user);
       requestContext.set("userId", user.id);
       requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);

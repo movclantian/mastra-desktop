@@ -25,7 +25,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MASTRA_SERVER_URL } from "@/lib/providers";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  calculateCostUSD,
+  formatCostUSD,
+  MASTRA_SERVER_URL,
+  useModelCatalog,
+} from "@/lib/providers";
 import { cn } from "@/lib/utils";
 
 interface UsageSummary {
@@ -45,14 +51,23 @@ interface UsageSummary {
     outputTokens: number;
     totalTokens: number;
   }>;
-  providers: Array<{ provider: string; requests: number; tokens: number; cost: null }>;
+  providers: Array<{
+    provider: string;
+    requests: number;
+    inputTokens: number;
+    outputTokens: number;
+    tokens: number;
+    cost: number | null;
+  }>;
   models: Array<{
     model: string;
     provider: string;
     requests: number;
+    inputTokens: number;
+    outputTokens: number;
     tokens: number;
-    cost: null;
-    averageCost: null;
+    cost: number | null;
+    averageCost: number | null;
   }>;
   requests: Array<{
     id: string;
@@ -88,17 +103,20 @@ function formatDuration(ms: number): string {
 function activityForRange(
   range: DateRange | undefined,
   entries: UsageSummary["activity"],
-): Activity[] {
+): Array<Activity & { tokens?: number }> {
   const from = startOfDay(range?.from ?? subDays(new Date(), 30));
   const to = startOfDay(range?.to ?? new Date());
   const byDate = new Map(entries.map((entry) => [entry.date, entry]));
-  const result: Activity[] = [];
+  const result: Array<Activity & { tokens?: number }> = [];
   for (let date = from; date <= to; date = addDays(date, 1)) {
     const key = format(date, "yyyy-MM-dd");
-    const count = byDate.get(key)?.count ?? 0;
+    const item = byDate.get(key);
+    const count = item?.count ?? 0;
+    const tokens = item?.tokens ?? 0;
     result.push({
       date: key,
       count,
+      tokens,
       level: count === 0 ? 0 : Math.min(4, Math.ceil(Math.log10(count + 1))),
     });
   }
@@ -107,6 +125,7 @@ function activityForRange(
 
 export function UsageSection() {
   const { isDark } = useTheme();
+  const catalog = useModelCatalog();
   const [range, setRange] = React.useState<DateRange>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -146,6 +165,20 @@ export function UsageSection() {
     longestChatMs: 0,
   };
   const activity = activityForRange(range, summary?.activity ?? []);
+
+  // 计算累计预估费用
+  const totalCostUSD = React.useMemo(() => {
+    let sum = 0;
+    let priced = false;
+    for (const m of summary?.models ?? []) {
+      const cost = calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
+      if (cost !== null) {
+        sum += cost;
+        priced = true;
+      }
+    }
+    return priced ? sum : null;
+  }, [summary?.models, catalog]);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -187,10 +220,11 @@ export function UsageSection() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
         {[
           ["累计 Token 数", formatNumber(totals.totalTokens)],
           ["模型请求数", formatNumber(totals.requests)],
+          ["预估总费用", formatCostUSD(totalCostUSD)],
           [
             "平均响应时长",
             formatDuration(
@@ -217,17 +251,36 @@ export function UsageSection() {
           <CardTitle className="text-sm">Token 活动</CardTitle>
         </CardHeader>
         <CardContent className="min-w-0 overflow-x-auto pb-4">
-          <ActivityCalendar
-            data={activity}
-            colorScheme={isDark ? "dark" : "light"}
-            theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
-            labels={{ totalCount: "{{count}} 次请求" }}
-            blockSize={12}
-            blockMargin={3}
-            blockRadius={3}
-            showWeekdayLabels
-            showTotalCount
-          />
+          <TooltipProvider>
+            <ActivityCalendar
+              data={activity}
+              colorScheme={isDark ? "dark" : "light"}
+              theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
+              labels={{ totalCount: "{{count}} 次请求" }}
+              blockSize={12}
+              blockMargin={3}
+              blockRadius={3}
+              showWeekdayLabels
+              showTotalCount
+              renderBlock={(block, item) => {
+                const activityItem = item as Activity & { tokens?: number };
+                return (
+                  <Tooltip key={item.date}>
+                    <TooltipTrigger render={block} />
+                    <TooltipContent className="text-xs">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-semibold">{item.date}</span>
+                        <span>请求：{formatNumber(item.count)} 次</span>
+                        {typeof activityItem.tokens === "number" && activityItem.tokens > 0 ? (
+                          <span>Token：{formatNumber(activityItem.tokens)}</span>
+                        ) : null}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              }}
+            />
+          </TooltipProvider>
         </CardContent>
       </Card>
 
@@ -298,44 +351,56 @@ export function UsageSection() {
                       <TableHead className="text-right">输入</TableHead>
                       <TableHead className="text-right">输出</TableHead>
                       <TableHead className="text-right">总 Token</TableHead>
+                      <TableHead className="text-right">预估费用</TableHead>
                       <TableHead className="text-right">用时</TableHead>
                       <TableHead className="text-right">状态</TableHead>
                       <TableHead>来源</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {summary?.requests.map((request) => (
-                      <TableRow key={request.id}>
-                        <TableCell>
-                          {new Date(request.createdAt).toLocaleString("zh-CN", {
-                            month: "2-digit",
-                            day: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </TableCell>
-                        <TableCell>{request.provider}</TableCell>
-                        <TableCell className="max-w-56 truncate font-mono text-xs">
-                          {request.model}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatNumber(request.inputTokens)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatNumber(request.outputTokens)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatNumber(request.totalTokens)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatDuration(request.latencyMs)}
-                        </TableCell>
-                        <TableCell className="text-right text-emerald-500">
-                          {request.status}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">{request.source}</TableCell>
-                      </TableRow>
-                    ))}
+                    {summary?.requests.map((request) => {
+                      const requestCost = calculateCostUSD(
+                        request.model,
+                        request.inputTokens,
+                        request.outputTokens,
+                        catalog,
+                      );
+                      return (
+                        <TableRow key={request.id}>
+                          <TableCell>
+                            {new Date(request.createdAt).toLocaleString("zh-CN", {
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </TableCell>
+                          <TableCell>{request.provider}</TableCell>
+                          <TableCell className="max-w-56 truncate font-mono text-xs">
+                            {request.model}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(request.inputTokens)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(request.outputTokens)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumber(request.totalTokens)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums font-mono text-xs">
+                            {formatCostUSD(requestCost)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatDuration(request.latencyMs)}
+                          </TableCell>
+                          <TableCell className="text-right text-emerald-500">
+                            {request.status}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{request.source}</TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </ScrollArea>
@@ -344,25 +409,57 @@ export function UsageSection() {
         </TabsContent>
         <TabsContent value="providers" className="min-w-0">
           <StatsTable
-            headers={["供应商", "请求数", "Tokens", "成本"]}
-            rows={(summary?.providers ?? []).map((row) => [
-              row.provider,
-              formatNumber(row.requests),
-              formatNumber(row.tokens),
-              "未定价",
-            ])}
+            headers={["供应商", "请求数", "Tokens", "预估成本"]}
+            rows={(summary?.providers ?? []).map((row) => {
+              let costSum = 0;
+              let isPriced = false;
+              const modelsOfProvider = (summary?.models ?? []).filter(
+                (m) => m.provider === row.provider,
+              );
+              if (modelsOfProvider.length > 0) {
+                for (const m of modelsOfProvider) {
+                  const cost = calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
+                  if (cost !== null) {
+                    costSum += cost;
+                    isPriced = true;
+                  }
+                }
+              } else {
+                const cost = calculateCostUSD(
+                  row.provider,
+                  row.inputTokens,
+                  row.outputTokens,
+                  catalog,
+                );
+                if (cost !== null) {
+                  costSum += cost;
+                  isPriced = true;
+                }
+              }
+              return [
+                row.provider,
+                formatNumber(row.requests),
+                formatNumber(row.tokens),
+                isPriced ? formatCostUSD(costSum) : "未定价",
+              ];
+            })}
           />
         </TabsContent>
         <TabsContent value="models" className="min-w-0">
           <StatsTable
-            headers={["模型", "请求数", "Tokens", "总成本", "平均成本"]}
-            rows={(summary?.models ?? []).map((row) => [
-              row.model,
-              formatNumber(row.requests),
-              formatNumber(row.tokens),
-              "未定价",
-              "未定价",
-            ])}
+            headers={["模型", "供应商", "请求数", "Tokens", "总成本", "单次平均成本"]}
+            rows={(summary?.models ?? []).map((row) => {
+              const cost = calculateCostUSD(row.model, row.inputTokens, row.outputTokens, catalog);
+              const avgCost = cost !== null && row.requests > 0 ? cost / row.requests : null;
+              return [
+                row.model,
+                row.provider,
+                formatNumber(row.requests),
+                formatNumber(row.tokens),
+                formatCostUSD(cost),
+                formatCostUSD(avgCost),
+              ];
+            })}
           />
         </TabsContent>
       </Tabs>
@@ -388,7 +485,7 @@ function StatsTable({ headers, rows }: { headers: string[]; rows: string[][] }) 
                 {row.map((cell, cellIndex) => (
                   <TableCell
                     key={`${headers[cellIndex] ?? cellIndex}:${cell}`}
-                    className={cellIndex > 0 ? "tabular-nums" : "font-mono text-xs"}
+                    className={cellIndex > 1 ? "tabular-nums" : "font-mono text-xs"}
                   >
                     {cell}
                   </TableCell>

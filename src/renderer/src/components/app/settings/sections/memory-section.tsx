@@ -162,7 +162,8 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
 };
 
 export function MemorySection() {
-  const { providers, catalog, modelSelection, activeThreadId, user } = useWorkbench();
+  const { providers, catalog, modelSelection, activeThreadId, user, agentSelection } =
+    useWorkbench();
   const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
   const [loaded, setLoaded] = React.useState(false);
   const [threadOmDraft, setThreadOmDraft] = React.useState(DEFAULT_THREAD_OM_DRAFT);
@@ -171,6 +172,21 @@ export function MemorySection() {
     {},
   );
   const [threadSubagentLoaded, setThreadSubagentLoaded] = React.useState(false);
+  const threadSubagentModelsRef = React.useRef<Record<string, string>>({});
+  const threadSubagentSaveSequence = React.useRef<Record<string, number>>({});
+  const subagentModelOptions = React.useMemo(() => {
+    const options: Array<[string, string]> = [
+      ["default", "默认子 Agent"],
+      ["explorer", "Explorer 调研"],
+      ["reviewer", "Reviewer 复查"],
+    ];
+    for (const member of agentSelection.type === "team" ? agentSelection.members : []) {
+      if (!options.some(([agentType]) => agentType === member.id)) {
+        options.push([member.id, member.name || member.id]);
+      }
+    }
+    return options;
+  }, [agentSelection]);
 
   // messageTokens 派生:Observer/Reflector 所用(或跟随的)模型上下文窗口 × 25%,
   // 夹在 8K~250K —— 窗口越大触发阈值越高,在撑爆上下文前完成压缩。
@@ -230,6 +246,8 @@ export function MemorySection() {
     if (!activeThreadId) {
       setThreadOmLoaded(false);
       setThreadSubagentLoaded(false);
+      threadSubagentModelsRef.current = {};
+      setThreadSubagentModels({});
       return;
     }
     setThreadOmLoaded(false);
@@ -265,16 +283,33 @@ export function MemorySection() {
 
   React.useEffect(() => {
     if (!activeThreadId) return;
+    const controller = new AbortController();
     setThreadSubagentLoaded(false);
+    setThreadSubagentModels({});
     fetch(
       `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/subagent-models?resourceId=${encodeURIComponent(user.id)}`,
+      { signal: controller.signal },
     )
       .then((response) => (response.ok ? response.json() : null))
-      .then((payload: { subagentModels?: Record<string, string> } | null) =>
-        setThreadSubagentModels(payload?.subagentModels ?? {}),
-      )
-      .catch(() => setThreadSubagentModels({}))
-      .finally(() => setThreadSubagentLoaded(true));
+      .then((payload: { subagentModels?: Record<string, string> } | null) => {
+        if (controller.signal.aborted) return;
+        const next = payload?.subagentModels ?? {};
+        threadSubagentModelsRef.current = next;
+        setThreadSubagentModels(next);
+      })
+      .catch((error: unknown) => {
+        if (
+          controller.signal.aborted ||
+          (error instanceof DOMException && error.name === "AbortError")
+        )
+          return;
+        threadSubagentModelsRef.current = {};
+        setThreadSubagentModels({});
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setThreadSubagentLoaded(true);
+      });
+    return () => controller.abort();
   }, [activeThreadId, user.id]);
 
   const saveThreadOmConfig = async () => {
@@ -1138,11 +1173,7 @@ export function MemorySection() {
           title="当前线程子 Agent 模型"
           description="只覆盖本线程委托任务的模型；跟随当前模型会使用本次主 Agent 请求的模型。"
         >
-          {[
-            ["default", "默认子 Agent"],
-            ["explorer", "Explorer 调研"],
-            ["reviewer", "Reviewer 复查"],
-          ].map(([agentType, label]) => (
+          {subagentModelOptions.map(([agentType, label]) => (
             <SettingRow key={agentType} title={label}>
               <div className="w-64">
                 <ModelSelectDropdown
@@ -1150,15 +1181,14 @@ export function MemorySection() {
                   providers={providers}
                   value={threadSubagentModels[agentType] ?? FOLLOW_CURRENT_MODEL}
                   onChange={(modelId) => {
-                    const previous = threadSubagentModels;
-                    setThreadSubagentModels((current) => {
-                      if (modelId === FOLLOW_CURRENT_MODEL) {
-                        const next = { ...current };
-                        delete next[agentType];
-                        return next;
-                      }
-                      return { ...current, [agentType]: modelId };
-                    });
+                    const previous = threadSubagentModelsRef.current;
+                    const next = { ...previous };
+                    if (modelId === FOLLOW_CURRENT_MODEL) delete next[agentType];
+                    else next[agentType] = modelId;
+                    threadSubagentModelsRef.current = next;
+                    setThreadSubagentModels(next);
+                    const sequence = (threadSubagentSaveSequence.current[agentType] ?? 0) + 1;
+                    threadSubagentSaveSequence.current[agentType] = sequence;
                     void fetch(
                       `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/subagent-models?resourceId=${encodeURIComponent(user.id)}`,
                       {
@@ -1172,10 +1202,14 @@ export function MemorySection() {
                     )
                       .then((response) => {
                         if (response.ok) return;
+                        if (threadSubagentSaveSequence.current[agentType] !== sequence) return;
+                        threadSubagentModelsRef.current = previous;
                         setThreadSubagentModels(previous);
                         toast.error("子 Agent 模型保存失败");
                       })
                       .catch(() => {
+                        if (threadSubagentSaveSequence.current[agentType] !== sequence) return;
+                        threadSubagentModelsRef.current = previous;
                         setThreadSubagentModels(previous);
                         toast.error("子 Agent 模型保存失败");
                       });

@@ -203,6 +203,10 @@ export async function resolveConfiguredModel(
     config.providers.find((candidate) => candidate.id === providerId);
 
   if (!provider || provider.disabled || !provider.apiKey || !modelId) return undefined;
+  // A route is valid only when the model is explicitly enabled for this
+  // provider. This keeps persisted subagent selections and request overrides
+  // aligned with the same catalog used by the model picker.
+  if (!provider.enabledModels.some((model) => model.id === modelId)) return undefined;
   if (!provider.registryId && !provider.baseUrl) return undefined;
 
   if (provider.baseUrl) {
@@ -270,7 +274,13 @@ export async function resolveDefaultModelId(): Promise<`${string}/${string}` | u
     ? config.providers.find((candidate) => candidate.id === selection.providerId)
     : undefined;
   if (selection) {
-    if (!provider || provider.disabled || !provider.apiKey) return undefined;
+    if (
+      !provider ||
+      provider.disabled ||
+      !provider.apiKey ||
+      !provider.enabledModels.some((model) => model.id === selection.modelId)
+    )
+      return undefined;
     return `${WORKBENCH_GATEWAY_ID}/${routerPrefix(provider)}/${selection.modelId}`;
   }
   const fallback = usableProviders(config).find((candidate) => candidate.enabledModels.length > 0);
@@ -285,7 +295,15 @@ export async function resolveDefaultLanguageModel(): Promise<GatewayLanguageMode
   const provider = selection
     ? config.providers.find((candidate) => candidate.id === selection.providerId)
     : usableProviders(config).find((candidate) => candidate.enabledModels.length > 0);
-  if (!provider || provider.disabled || !provider.apiKey) return undefined;
+  if (
+    !provider ||
+    provider.disabled ||
+    !provider.apiKey ||
+    !provider.enabledModels.some(
+      (model) => model.id === (selection?.modelId ?? provider.enabledModels[0]?.id),
+    )
+  )
+    return undefined;
   const modelId = selection ? selection.modelId : provider.enabledModels[0]?.id;
   if (!modelId) return undefined;
   const protocol =

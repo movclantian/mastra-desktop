@@ -17,6 +17,7 @@ import {
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
 } from "../rag";
+import { appStorage } from "../storage";
 import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 /**
@@ -170,25 +171,49 @@ type WorkbenchState = z.infer<typeof workbenchStateSchema>;
 type StateLaneId = keyof WorkbenchState;
 type StateLaneValue<K extends StateLaneId> = NonNullable<WorkbenchState[K]>;
 
-const workbenchStateByThread = new Map<string, WorkbenchState>();
+const WORKBENCH_STATE_TYPE = "workbench";
+const workbenchWrites = new Map<string, Promise<unknown>>();
 
-function workbenchStateKey(resourceId: string, threadId: string): string {
+async function getWorkbenchStateStore() {
+  return appStorage.getStore("threadState");
+}
+
+function stateThreadId(resourceId: string, threadId: string): string {
   return JSON.stringify([resourceId, threadId]);
 }
 
-export function mergeWorkbenchState(
+export async function mergeWorkbenchState(
   resourceId: string,
   threadId: string,
   patch: WorkbenchState,
-): WorkbenchState {
-  const key = workbenchStateKey(resourceId, threadId);
-  const next = { ...(workbenchStateByThread.get(key) ?? {}), ...patch };
-  workbenchStateByThread.set(key, next);
-  return next;
+): Promise<WorkbenchState> {
+  const store = await getWorkbenchStateStore();
+  const key = stateThreadId(resourceId, threadId);
+  const previous = workbenchWrites.get(key) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    const current =
+      (await store?.getState<WorkbenchState>({ threadId: key, type: WORKBENCH_STATE_TYPE })) ?? {};
+    const merged = workbenchStateSchema.parse({ ...current, ...patch });
+    await store?.setState({ threadId: key, type: WORKBENCH_STATE_TYPE, value: merged });
+    return merged;
+  });
+  workbenchWrites.set(key, next);
+  try {
+    return await next;
+  } finally {
+    if (workbenchWrites.get(key) === next) workbenchWrites.delete(key);
+  }
 }
 
-function readWorkbenchState(resourceId: string, threadId: string): WorkbenchState | undefined {
-  return workbenchStateByThread.get(workbenchStateKey(resourceId, threadId));
+async function readWorkbenchState(
+  resourceId: string,
+  threadId: string,
+): Promise<WorkbenchState | undefined> {
+  const store = await getWorkbenchStateStore();
+  return store?.getState<WorkbenchState>({
+    threadId: stateThreadId(resourceId, threadId),
+    type: WORKBENCH_STATE_TYPE,
+  });
 }
 
 function stateSignalValue<K extends StateLaneId>(
@@ -239,8 +264,8 @@ function createStateLaneProcessor<K extends StateLaneId>(options: {
   return {
     id: `${options.stateId}-state`,
     stateId: options.stateId,
-    computeStateSignal(args) {
-      const value = readWorkbenchState(args.resourceId, args.threadId)?.[options.stateId] as
+    async computeStateSignal(args) {
+      const value = (await readWorkbenchState(args.resourceId, args.threadId))?.[options.stateId] as
         | StateLaneValue<K>
         | undefined;
       if (!value) return;

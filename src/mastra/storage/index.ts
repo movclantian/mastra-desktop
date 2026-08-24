@@ -4,10 +4,12 @@
  * docs/en/reference/storage/composite.mdx(按 domain 路由存储后端)。
  * 默认域走 LibSQL(与 Studio 共享 src/mastra/public/mastra.db),
  * observability 域走 DuckDB(OLAP 指标,docs/en/docs/observability/metrics/overview.mdx)。
+ * 外部大内容对象见 ./content-objects.ts:按用户/线程隔离、SHA-256 命名并支持分段读取。
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, parse, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { DuckDBStore } from "@mastra/duckdb";
@@ -31,39 +33,50 @@ function findProjectRoot(): string {
 
 export const PROJECT_ROOT = findProjectRoot();
 
+/** 默认用户业务数据根目录:用户家目录下的 .mastrawork 文件夹 */
+export const DEFAULT_MASTRA_DATA_DIRECTORY = join(homedir(), ".mastrawork");
+
 /**
  * 存储位置配置:
  * `MASTRA_STORAGE_URL` 环境变量优先,其次读取 storage-location.json,
- * 默认落到 <项目根>/data/mastra.db(置于 .mastra 构建目录与 public 外部,避免构建器复制与清理锁定)。
+ * 默认落到 <用户家目录>/.mastrawork/mastra.db。
  *
  * 注意:libsql 本地文件在 Windows 下必须使用绝对路径 + 正斜杠的 `file:` URL,
  * 相对路径会抛 SQLITE_CANTOPEN(错误码 14)。
  */
-const STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
-// DuckDB 运行期间持有写前日志(WAL);放在 data/ 目录下,
-// 避免 Mastra 打包器把活跃数据库当静态资产或构建缓存清空。
-const OBSERVABILITY_STORAGE_DIRECTORY = join(PROJECT_ROOT, "data", "observability");
+const STORAGE_CONFIG_FILE = join(DEFAULT_MASTRA_DATA_DIRECTORY, "storage-location.json");
+const LEGACY_STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
 
 /** 规整为 libsql 可用的绝对 file: URL(正斜杠) */
 function toFileUrl(filePath: string): string {
-  const absolute = resolve(PROJECT_ROOT, filePath).replace(/\\/g, "/");
+  const normalized = filePath.startsWith("file:") ? filePath.slice("file:".length) : filePath;
+  const absolute = (
+    isAbsolute(normalized) ? normalized : resolve(PROJECT_ROOT, normalized)
+  ).replace(/\\/g, "/");
   return `file:${absolute}`;
 }
 
 export function getStorageUrl(): string {
   let url = process.env.MASTRA_STORAGE_URL;
-  if (!url && existsSync(STORAGE_CONFIG_FILE)) {
-    try {
-      const config = JSON.parse(readFileSync(STORAGE_CONFIG_FILE, "utf-8")) as {
-        url?: string;
-      };
-      url = config.url;
-    } catch {
-      // 配置文件损坏时回落到默认位置
+  if (!url) {
+    for (const configFile of [STORAGE_CONFIG_FILE, LEGACY_STORAGE_CONFIG_FILE]) {
+      if (existsSync(configFile)) {
+        try {
+          const config = JSON.parse(readFileSync(configFile, "utf-8")) as {
+            url?: string;
+          };
+          if (config.url) {
+            url = config.url;
+            break;
+          }
+        } catch {
+          // 配置文件损坏时回落到默认位置
+        }
+      }
     }
   }
   if (!url) {
-    url = "file:./data/mastra.db";
+    url = toFileUrl(join(DEFAULT_MASTRA_DATA_DIRECTORY, "mastra.db"));
   }
   if (url.startsWith("file:")) {
     return toFileUrl(url.slice("file:".length));
@@ -74,17 +87,15 @@ export function getStorageUrl(): string {
 export function getStorageDirectory(): string {
   const url = getStorageUrl();
   if (!url.startsWith("file:")) {
-    return "";
+    return DEFAULT_MASTRA_DATA_DIRECTORY;
   }
   return dirname(url.slice("file:".length));
 }
 
 function ensureDirectory(): void {
-  const directory = getStorageDirectory();
-  if (directory) {
-    mkdirSync(directory, { recursive: true });
-  }
-  mkdirSync(OBSERVABILITY_STORAGE_DIRECTORY, { recursive: true });
+  const directory = getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY;
+  mkdirSync(directory, { recursive: true });
+  mkdirSync(join(directory, "observability"), { recursive: true });
 }
 ensureDirectory();
 
@@ -97,7 +108,11 @@ export const appStorage = new MastraCompositeStore({
   }),
   domains: {
     observability: new DuckDBStore({
-      path: join(OBSERVABILITY_STORAGE_DIRECTORY, "mastra.duckdb").replace(/\\/g, "/"),
+      path: join(
+        getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
+        "observability",
+        "mastra.duckdb",
+      ).replace(/\\/g, "/"),
     }).observability,
   },
 });
@@ -167,3 +182,14 @@ export async function setAppConfig(key: string, value: string): Promise<void> {
     args: [scopedConfigKey(key), value],
   });
 }
+
+/** Remove an application configuration value from the scoped store. */
+export async function deleteAppConfig(key: string): Promise<void> {
+  await ensureAppConfigTable();
+  await (await getLibsqlClient()).execute({
+    sql: `DELETE FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
+    args: [scopedConfigKey(key)],
+  });
+}
+
+export * from "./content-objects";

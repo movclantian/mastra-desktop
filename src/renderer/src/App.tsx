@@ -8,6 +8,7 @@ import {
   Settings2Icon,
 } from "lucide-react";
 import * as React from "react";
+import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 
 import { OpenInIde } from "@/components/ai-elements/open-in-chat";
 import { AgentHub } from "@/components/app/agents";
@@ -18,12 +19,16 @@ import { AppSidebar } from "@/components/app/sidebar";
 import { SkillHub } from "@/components/app/skills";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
+import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { SmoothCursor } from "@/components/ui/smooth-cursor";
 import { Toaster } from "@/components/ui/sonner";
 import { Spinner } from "@/components/ui/spinner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useHorizontalWheelScroll, useLinkRouting } from "@/hooks/use-global-interactions";
+import { useWindowMinWidth } from "@/hooks/use-window-min-width";
 import { cn } from "@/lib/utils";
 import { useWorkbench, WorkbenchProvider } from "@/lib/workbench";
 
@@ -33,6 +38,43 @@ const KnowledgeLibrary = React.lazy(() =>
   import("@/components/app/library").then((module) => ({ default: module.KnowledgeLibrary })),
 );
 
+/**
+ * 右侧工作区面板的可用性下限。
+ *
+ * 这个数**不能**像 chatMinWidth 那样实测:面板顶层的标签栏是 min-w-0 + overflow-x-auto,
+ * min-content 就是 0,量出来只剩右侧几个图标按钮的宽度(≈120px)—— 技术上不溢出,
+ * 但浏览器视图与文件树在那个宽度下已经没有使用价值。所以它是产品判断,
+ * 性质等同 VS Code 侧边栏的 minSize,不是待消除的魔数。
+ */
+const WORKSPACE_MIN_WIDTH = 340;
+/**
+ * 输入区左右内距之外,聊天区自己还要留的水平留白(promptArea 外层的 px-4)。
+ * 聊天区下限 = 输入区实测最小边界 + 这一项 —— 没有别的常量参与。
+ */
+const CHAT_HORIZONTAL_PADDING = 32;
+/** 终端抽屉的默认高度与下限。和 WORKSPACE_MIN_WIDTH 一样是产品判断,不是可实测量 */
+const TERMINAL_DEFAULT_HEIGHT = 280;
+const TERMINAL_MIN_HEIGHT = 140;
+/** 两组面板布局各自持久化。按用户隔离,与 workbench 里那批偏好同一套约定 */
+const SHELL_LAYOUT_ID = "mastra-work:shell-layout";
+const CHAT_LAYOUT_ID = "mastra-work:chat-layout";
+
+/**
+ * 库用 flex-grow 表达布局,所以过渡挂在 flex-grow 上,并且要穿透到它自己渲染的
+ * 那层 [data-panel](Panel 的 className 落在更内层,动不了尺寸)。
+ *
+ * 必须是直接子代选择器:两个 Group 是嵌套的,用后代选择器会让外层的过渡规则一并
+ * 命中内层的 Panel —— 那样拖终端分隔条时,外层还挂着过渡,拖手就变成橡皮筋。
+ */
+const DRAWER_TRANSITION =
+  "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-linear";
+
+/**
+ * Panel 内层 div 的 `overflow: auto` 是库写死的 inline style,className 压不过它 ——
+ * 只能同样经 style 覆盖。抽屉收起时正是靠这一层把「撑住下限的内容」裁掉。
+ */
+const PANEL_CLIP = { overflow: "hidden" } as const;
+
 function PanelFallback() {
   return (
     <div className="flex size-full items-center justify-center bg-background">
@@ -41,62 +83,67 @@ function PanelFallback() {
   );
 }
 
-function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | null {
-  if (!(target instanceof Element)) return null;
-  const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
-  if (!anchor || anchor.hasAttribute("download")) return null;
-  try {
-    return /^https?:$/i.test(new URL(anchor.href).protocol) ? anchor : null;
-  } catch {
-    return null;
-  }
-}
+/**
+ * 抽屉开合的过渡开关。
+ *
+ * react-resizable-panels 不做动画,而库作者明确说明过:常开 CSS transition 能让
+ * 折叠/展开动起来,但会破坏 drag-to-resize —— 拖手会变成橡皮筋追赶。库又不暴露
+ * 拖拽态,没法靠 CSS 反选,所以这里自己关掉两种情况:
+ *
+ *   · 拖拽期间 —— 从 Separator 的 pointerdown 到 pointerup
+ *   · 首帧 —— 挂载时那次 collapse 只是把恢复出来的布局与「抽屉默认收起」对齐,
+ *     不该表演成一次滑出
+ *
+ * 其余时候过渡常挂着,于是开合动画不需要任何时序配合:命令式 collapse()/expand()
+ * 改的就是 flex-grow,CSS 自然把它补成 200ms。
+ */
+function useDrawerTransition() {
+  const [ready, setReady] = React.useState(false);
+  const [resizing, setResizing] = React.useState(false);
 
-/**
- * 右侧工作区面板的可用性下限。
- *
- * 这个数**不能**像 chatMinWidth 那样实测:面板顶层的标签栏是 min-w-0 + overflow-x-auto,
- * min-content 就是 0,量出来只剩右侧几个图标按钮的宽度(≈120px)—— 技术上不溢出,
- * 但浏览器视图与文件树在那个宽度下已经没有使用价值。所以它是产品判断,
- * 性质等同 VS Code 侧边栏的 minSize,不是待消除的魔数。
- *
- * 三处用到:面板的默认宽度(最保守的那一端)、拖拽的下界,以及窗口撑不大时
- * 「面板放不下就让位」的判据。
- */
-const WORKSPACE_MIN_WIDTH = 340;
-/**
- * 输入区左右内距之外,聊天区自己还要留的水平留白(promptArea 外层的 px-4)。
- * 聊天区下限 = 输入区实测最小边界 + 这一项 —— 没有别的常量参与。
- */
-const CHAT_HORIZONTAL_PADDING = 32;
-/** 终端抽屉的默认高度。和 WORKSPACE_MIN_WIDTH 一样是产品判断,不是可实测量 */
-const TERMINAL_DEFAULT_HEIGHT = 280;
-const WORKSPACE_WIDTH_KEY = "mastra-work:workspace-width";
-const TERMINAL_HEIGHT_KEY = "mastra-work:terminal-height";
-
-/**
- * 用户拖出来的面板尺寸,持久化到 localStorage —— 与 workbench 里那批偏好同一套约定
- * (mastra-work: 前缀、读不出来就退回默认值)。
- *
- * 存的是**意图**而不是当前渲染值,所以不会把某次空间不足时的夹取结果记成偏好。
- */
-function usePersistentSize(key: string, fallback: number, userId: string) {
-  const storageKey = `${key}:${encodeURIComponent(userId)}`;
-  const [value, setValue] = React.useState(() => {
-    // 只校验「正数」:Infinity 是合法取值,面板用它表达「占满可用空间」(见下面的
-    // preferredWorkspaceWidth)。parseFloat 能原样读回 String(Infinity)。
-    const stored = Number.parseFloat(localStorage.getItem(storageKey) ?? "");
-    return stored > 0 ? stored : fallback;
-  });
   React.useEffect(() => {
-    localStorage.setItem(storageKey, String(value));
-  }, [storageKey, value]);
-  return [value, setValue] as const;
+    const frame = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  const onPointerDown = React.useCallback(() => {
+    setResizing(true);
+    // pointercancel 也要收尾:触摸被系统手势接管时不会有 pointerup,漏掉它 resizing
+    // 就永久为真 —— 过渡再也挂不回来,依赖它的尺寸约束也永久冻结(见 AppShell)
+    const stop = () => {
+      setResizing(false);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+    };
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }, []);
+
+  return {
+    /** 加在 Group 上 */
+    className: ready && !resizing ? DRAWER_TRANSITION : undefined,
+    /** 拖拽进行中。Panel 的尺寸约束必须在这期间保持不变,理由见 AppShell */
+    resizing,
+    /** 摊到 ResizableHandle 上 */
+    handleProps: { onPointerDown },
+  };
 }
 
-function AppShell() {
+/**
+ * 拖手的状态:抽屉收起时一并停掉,展开时 hover 高亮。
+ *
+ * 不条件渲染它:Separator 必须是 Group 的直接 DOM 子元素,增删会打乱库按
+ * Panel/Separator 顺序推出来的布局。留在原位隐藏掉,结构就始终是稳定的。
+ */
+function drawerHandleProps(open: boolean) {
+  return {
+    disabled: !open,
+    className: open ? "transition-colors hover:bg-primary" : "pointer-events-none opacity-0",
+  };
+}
+
+function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: () => void }) {
   const {
-    user,
     threads,
     activeThreadId,
     createThread,
@@ -111,361 +158,285 @@ function AppShell() {
     setWorkspacePanelOpen,
     terminalPanelOpen,
     setTerminalPanelOpen,
-    openBrowserUrl,
-    promptMinWidth,
+    isThreadBusy,
   } = useWorkbench();
-  const [librarySettingsOpen, setLibrarySettingsOpen] = React.useState(false);
-  /**
-   * 用户拖出来的**意图**宽度。它只在拖拽时改变,不会被空间不足反向改写 ——
-   * 真正渲染的是下面夹过的 workspaceWidth。这样空间回来时面板自动回到意图宽度,
-   * 不会停在被压扁的状态,也不需要额外记一份"原始值"。
-   *
-   * 初值取下限:窗口最小宽度里含着这个数(见下面的 setMinimumWidth),所以初值越大,
-   * 首次打开面板就把用户的窗口撑得越多。默认该是干扰最小的那一端,想要更宽自己拖。
-   *
-   * 特例 Infinity = 「占满可用空间」。拖到预算尽头时存的是这个而不是当时的像素值:
-   * 绝对值会经 setMinimumWidth 变成窗口硬下限,一次拖到底就把窗口永久钉宽;存意图
-   * 则窗口能缩、面板跟着缩,窗口变宽面板自己占回去。下面的 Math.min 天然消化它。
-   */
-  const [preferredWorkspaceWidth, setPreferredWorkspaceWidth] = usePersistentSize(
-    WORKSPACE_WIDTH_KEY,
-    WORKSPACE_MIN_WIDTH,
-    user.id,
-  );
-  const [isDraggingWorkspace, setIsDraggingWorkspace] = React.useState(false);
-  const [terminalHeight, setTerminalHeight] = usePersistentSize(
-    TERMINAL_HEIGHT_KEY,
-    TERMINAL_DEFAULT_HEIGHT,
-    user.id,
-  );
-  const [isDraggingTerminal, setIsDraggingTerminal] = React.useState(false);
-  /** 聊天区 + 右侧面板共同占据的那一行容器,是分配宽度的总额 */
-  const shellRef = React.useRef<HTMLDivElement>(null);
-  const [shellWidth, setShellWidth] = React.useState(0);
-  /**
-   * 聊天区能接受的最窄宽度,完全由输入区实测的最小边界推出(见 workbench 的
-   * promptMinWidth)。测到之前为 0,即不施加约束 —— 不拿任何猜测值去限制布局。
-   */
-  const chatMinWidth = promptMinWidth > 0 ? promptMinWidth + CHAT_HORIZONTAL_PADDING : 0;
-  /**
-   * 面板能分到的宽度预算 = 总额 - 聊天区下限。
-   *
-   * 这两个值都与面板当前宽度无关,所以可以在渲染期直接算出来、把宽度夹住,
-   * 而不是先渲染成超宽再由 ResizeObserver 事后收回 —— 后者会实打实地挤压一帧,
-   * 叠上 200ms 的宽度过渡就是肉眼可见的「先压瘪再弹回」。
-   *
-   * 这里**不**用面板自己的下限兜底:两个下限只能有一个是硬的,而聊天区那个才是
-   * 不可侵犯的。让面板坚持它的 WORKSPACE_MIN_WIDTH,结果只会是 promptInput 被压坏 ——
-   * 预算不够时的正确反应是面板让位,而不是硬挤。
-   *
-   * 硬边界另有 aside 上那条等价的 CSS max-width 兜着(同帧生效、不滞后);
-   * 这个 JS 版本负责拖拽夹取和内层宽度。
-   */
-  const workspaceBudget =
-    shellWidth > 0 && chatMinWidth > 0 ? shellWidth - chatMinWidth : Number.POSITIVE_INFINITY;
-  /**
-   * 真正用于渲染与拖拽计算的宽度:意图宽度被预算夹过之后的结果。
-   * 下界只是防出负数(预算可能小于 0) —— 面板真被渲染出来时预算已 ≥ 下限,夹不到。
-   *
-   * 两端都可能是 Infinity(意图占满、且还没测到 shell 宽度),那一帧先按下限渲染;
-   * ResizeObserver 报出宽度后就换成真实预算,只影响首帧。
-   */
-  const budgetedWorkspaceWidth = Math.min(preferredWorkspaceWidth, workspaceBudget);
-  const workspaceWidth = Number.isFinite(budgetedWorkspaceWidth)
-    ? Math.max(WORKSPACE_MIN_WIDTH, budgetedWorkspaceWidth)
-    : WORKSPACE_MIN_WIDTH;
-  /** 用户的意图。按钮状态、以及窗口最小宽度要替面板留多少额度,都只看这个 */
-  const wantsWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen && !agentOpen;
-  /**
-   * 实际是否渲染面板:预算连面板自己的下限都到不了就干脆不渲染,整块让给聊天区。
-   *
-   * 这是渲染期的派生值而不是 effect,所以既没有「先打开、再由 effect 检查该不该关」
-   * 的竞态,也不存在 effect 依赖不再变化、挤压被永久固化的死角。
-   *
-   * 刻意不把 workspacePanelOpen 改回 false —— 意图与实际分离,和
-   * preferredWorkspaceWidth / workspaceWidth 是同一个套路:窗口一放大、sidebar 一收起,
-   * 面板自己就回来了,不用用户再点一次。
-   */
-  const showWorkspace = wantsWorkspace && workspaceBudget >= WORKSPACE_MIN_WIDTH;
 
-  React.useEffect(() => {
-    if (!libraryOpen) setLibrarySettingsOpen(false);
-  }, [libraryOpen]);
-
-  // 全局滚轮横向转换:当鼠标悬浮在任意可横向滚动的区域(如标签栏、操作条、代码块)上时,
-  // 标准鼠标垂直滚轮(deltaY)自动转化为平滑横向滚动,支持极速浏览海量标签。
-  React.useEffect(() => {
-    const handleGlobalWheel = (event: WheelEvent) => {
-      // 若已有横向分量或垂直滚轮为 0,直接由系统原生处理
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.deltaY === 0) return;
-
-      let target = event.target as HTMLElement | null;
-      while (target && target !== document.body && target !== document.documentElement) {
-        const style = window.getComputedStyle(target);
-        const overflowX = style.overflowX;
-        const overflowY = style.overflowY;
-
-        const isScrollableX =
-          (overflowX === "auto" || overflowX === "scroll") &&
-          target.scrollWidth > target.clientWidth;
-        const isScrollableY =
-          (overflowY === "auto" || overflowY === "scroll") &&
-          target.scrollHeight > target.clientHeight;
-
-        // 如果容器可横向滚动且纵向不可滚动(或显式声明了 data-horizontal-scroll)
-        if (isScrollableX && (!isScrollableY || target.dataset.horizontalScroll === "true")) {
-          const isScrollingRight = event.deltaY > 0;
-          const canScroll = isScrollingRight
-            ? target.scrollLeft < target.scrollWidth - target.clientWidth - 1
-            : target.scrollLeft > 1;
-
-          if (canScroll) {
-            target.scrollLeft += event.deltaY;
-            event.preventDefault();
-            return;
-          }
-        }
-        target = target.parentElement;
-      }
-    };
-
-    window.addEventListener("wheel", handleGlobalWheel, { passive: false });
-    return () => window.removeEventListener("wheel", handleGlobalWheel);
-  }, []);
-
-  // 只做一件事:把「可分配总额」测出来。聊天区被挤窄的来源不止一个(窗口缩放、
-  // sidebar 展开/收起、面板显隐),但它们最终都体现为这一行容器的宽度变化,
-  // 所以观察它一个就够 —— 也包括 sidebar 折叠,那件事压根不发 window.resize。
-  //
-  // 注意这里不再回写面板宽度:宽度是渲染期从「总额 - 聊天区下限」直接夹出来的
-  // 派生值,不存在观察-写回的回路,也就没有先挤压再回弹的那一帧。
-  React.useEffect(() => {
-    const shell = shellRef.current;
-    if (!shell) return;
-    const observer = new ResizeObserver(() => {
-      const width = shell.clientWidth;
-      setShellWidth((current) => (current === width ? current : width));
-    });
-    observer.observe(shell);
-    return () => observer.disconnect();
-  }, []);
-
-  // 窗口宽度同样由实测下限决定,而不是写死的 minWidth。
-  // 外围占用(sidebar + 窗口边框)= 窗口宽度 - 这一行的总额,都是实测值。
-  //
-  // 关键:面板开着时,额度里留的是它**当前的宽度**,而不是它的可用性下限。于是
-  // 「面板以期望宽度展开所需的宽度」既是窗口要长到的目标、也是窗口的最小宽度 ——
-  // 窗口去适应内容,而不是把内容压进窗口。这几件事因此自动自洽,不需要额外分支:
-  //   · 点开面板 → 窗口不够就正好长到那个宽度,不多也不少
-  //   · 面板开着 → 窗口再也缩不到会挤压面板的程度
-  //   · 拖窄面板 → 额度跟着降,窗口立刻又能缩了
-  //   · 拖宽面板 → 已被 workspaceBudget 夹在总额内,算出的额度最多等于当前窗口宽,
-  //     所以永远不会反向把窗口撑大;拖到底时额度正好等于窗口宽,窗口就地被钉住
-  //   · 展开 sidebar → chrome 变大 → 窗口跟着长,面板与聊天区都保持原宽
-  //
-  // 这里必须看**意图**(wantsWorkspace)而不是实际渲染:用 showWorkspace 会死锁 ——
-  // 空间不足 → 不渲染 → 不留额度 → 窗口不被撑大 → 永远不足。
-  React.useEffect(() => {
-    if (chatMinWidth <= 0 || shellWidth <= 0) return;
-    const chrome = window.innerWidth - shellWidth;
-    // 「占满」只保面板的下限额度:它表达的是「有多少用多少」,不是「把窗口给我撑到这么宽」。
-    // 拖出来的具体数值才代表后者 —— 那时窗口该被撑到刚好放得下,不多也不少。
-    const reserve = wantsWorkspace
-      ? Number.isFinite(preferredWorkspaceWidth)
-        ? preferredWorkspaceWidth
-        : WORKSPACE_MIN_WIDTH
-      : 0;
-    window.api?.setMinimumWidth?.(chatMinWidth + chrome + reserve);
-  }, [chatMinWidth, preferredWorkspaceWidth, shellWidth, wantsWorkspace]);
-
-  const activeThread = threads.find((t) => t.id === activeThreadId);
-
-  // 工作区水平拖拽拉伸
-  const handleWorkspaceResizeStart = React.useCallback(
-    (event: React.PointerEvent) => {
-      event.preventDefault();
-      setIsDraggingWorkspace(true);
-      const startX = event.clientX;
-      const startWidth = workspaceWidth;
-
-      const onPointerMove = (e: PointerEvent) => {
-        const deltaX = startX - e.clientX;
-        const next = startWidth + deltaX;
-        // 上限直接用渲染期那个 workspaceBudget:拖拽与渲染共用同一条边界,
-        // 所以拖到底的位置正好是「弹性空白刚被消费完」,不会先超出再被夹回来。
-        //
-        // 拖到底存 Infinity(占满)而不是当时的像素值:那个数值会变成窗口硬下限,
-        // 一次拖到底就把窗口钉宽、再也缩不回去。往回拖一点就自动退回具体数值。
-        // 预算未测到时 workspaceBudget 是 Infinity,next 永远够不着,不会误判成占满。
-        setPreferredWorkspaceWidth(
-          next >= workspaceBudget ? Number.POSITIVE_INFINITY : Math.max(WORKSPACE_MIN_WIDTH, next),
-        );
-      };
-
-      const onPointerUp = () => {
-        setIsDraggingWorkspace(false);
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", onPointerUp);
-      };
-
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-    },
-    [setPreferredWorkspaceWidth, workspaceBudget, workspaceWidth],
-  );
-
-  // 终端垂直拖拽拉伸
-  const handleTerminalResizeStart = React.useCallback(
-    (event: React.PointerEvent) => {
-      event.preventDefault();
-      setIsDraggingTerminal(true);
-      const startY = event.clientY;
-      const startHeight = terminalHeight;
-
-      const onPointerMove = (e: PointerEvent) => {
-        const deltaY = startY - e.clientY;
-        const newHeight = Math.max(140, Math.min(window.innerHeight * 0.6, startHeight + deltaY));
-        setTerminalHeight(newHeight);
-      };
-
-      const onPointerUp = () => {
-        setIsDraggingTerminal(false);
-        window.removeEventListener("pointermove", onPointerMove);
-        window.removeEventListener("pointerup", onPointerUp);
-      };
-
-      window.addEventListener("pointermove", onPointerMove);
-      window.addEventListener("pointerup", onPointerUp);
-    },
-    [setTerminalHeight, terminalHeight],
-  );
-
-  React.useEffect(() => {
-    const routeClick = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 0) return;
-      const anchor = httpLinkFromTarget(event.target);
-      if (!anchor || anchor.hasAttribute("download")) return;
-      event.preventDefault();
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        if (window.api?.openExternal) void window.api.openExternal(anchor.href);
-        else window.open(anchor.href, "_blank", "noopener,noreferrer");
-      } else {
-        openBrowserUrl(anchor.href);
-      }
-    };
-    const routeAuxClick = (event: MouseEvent) => {
-      if (event.defaultPrevented || event.button !== 1) return;
-      const anchor = httpLinkFromTarget(event.target);
-      if (!anchor || anchor.hasAttribute("download")) return;
-      event.preventDefault();
-      if (window.api?.openExternal) void window.api.openExternal(anchor.href);
-      else window.open(anchor.href, "_blank", "noopener,noreferrer");
-    };
-    document.addEventListener("click", routeClick, true);
-    document.addEventListener("auxclick", routeAuxClick, true);
-    return () => {
-      document.removeEventListener("click", routeClick, true);
-      document.removeEventListener("auxclick", routeAuxClick, true);
-    };
-  }, [openBrowserUrl]);
-
-  // 顶栏标题按页面切换;新建会话只属于会话页,资料库设置固定在资料库页右上角
+  // 标题按页面切换;新建会话只属于会话页,资料库设置固定在资料库页右上角
   const title = agentOpen
     ? "专家"
     : skillOpen
       ? "技能套件"
       : libraryOpen
         ? "资料库"
-        : (activeThread?.title ?? "MastraWork");
+        : (threads.find((thread) => thread.id === activeThreadId)?.title ?? "MastraWork");
+
+  const isCurrentThreadBusy = activeThreadId ? isThreadBusy(activeThreadId) : false;
+
+  return (
+    <PanelHeader className="relative z-10 px-4">
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <SidebarTrigger className="-ml-1" />
+        {skillOpen && activeSkill ? (
+          <>
+            <Separator orientation="vertical" className="mx-1 h-4" />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setActiveSkill(null)}
+              className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <ArrowLeftIcon className="size-3.5" />
+              返回插件市场
+            </Button>
+            <Separator orientation="vertical" className="mx-1 h-4" />
+            <p className="truncate text-sm font-medium">{activeSkill.name}</p>
+          </>
+        ) : (
+          <>
+            <Separator orientation="vertical" className="mx-1 h-4" />
+            <div className="flex items-center gap-2 min-w-0">
+              <p className="truncate text-sm font-medium">{title}</p>
+              {isCurrentThreadBusy && !skillOpen && !libraryOpen && !agentOpen ? (
+                <span
+                  className="flex shrink-0 items-center text-primary"
+                  title="当前会话正在运行中…"
+                >
+                  <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
+                </span>
+              ) : null}
+            </div>
+          </>
+        )}
+      </div>
+      {!skillOpen && !libraryOpen && !agentOpen ? (
+        <>
+          <OpenInIde />
+          <Separator orientation="vertical" className="mx-0.5 h-4" />
+          <Button
+            aria-label={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
+            aria-pressed={terminalPanelOpen}
+            onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
+            size="icon-sm"
+            title={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
+            variant={terminalPanelOpen ? "secondary" : "ghost"}
+          >
+            {terminalPanelOpen ? <PanelBottomCloseIcon /> : <PanelBottomOpenIcon />}
+          </Button>
+          <Button
+            aria-label={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
+            aria-pressed={workspacePanelOpen}
+            onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
+            size="icon-sm"
+            title={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
+            variant={workspacePanelOpen ? "secondary" : "ghost"}
+          >
+            {workspacePanelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setLibraryOpen(false);
+              setAgentOpen(false);
+              void createThread();
+            }}
+          >
+            <PlusIcon />
+            新建会话
+          </Button>
+        </>
+      ) : null}
+      {libraryOpen ? (
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          aria-label="资料库设置"
+          title="资料库设置"
+          onClick={onOpenLibrarySettings}
+        >
+          <Settings2Icon />
+        </Button>
+      ) : null}
+    </PanelHeader>
+  );
+}
+
+/**
+ * 抽屉内容。收起时 Panel 尺寸是 0,`w-full` 会把内容一起压瘪,所以另外用可用性下限
+ * 撑住 —— 超出的部分由 Panel 的 PANEL_CLIP 裁掉,滑出于是看起来是「被推出视野」
+ * 而不是「被挤扁」。收起时连边框一起去掉,否则会在边缘留一条 1px 的线。
+ */
+function WorkspaceDrawer({ open }: { open: boolean }) {
+  return (
+    <div
+      style={{ minWidth: WORKSPACE_MIN_WIDTH }}
+      className={cn(
+        "flex h-full min-h-0 w-full flex-col bg-background transition-opacity duration-200 ease-linear",
+        open ? "border-l opacity-100" : "opacity-0 pointer-events-none",
+      )}
+    >
+      <React.Suspense fallback={<PanelFallback />}>
+        <WorkspacePanel />
+      </React.Suspense>
+    </div>
+  );
+}
+
+function TerminalDrawer({ open }: { open: boolean }) {
+  return (
+    <div
+      style={{ minHeight: TERMINAL_MIN_HEIGHT }}
+      className={cn(
+        "flex h-full w-full min-w-0 flex-col bg-background transition-opacity duration-200 ease-linear",
+        open ? "border-t opacity-100" : "opacity-0 pointer-events-none",
+      )}
+    >
+      <React.Suspense fallback={<PanelFallback />}>
+        <TerminalPanel />
+      </React.Suspense>
+    </div>
+  );
+}
+
+/** 会话页 = 聊天区 + 底部终端抽屉。这个 Group 只存在于本页,布局也就单独持久化 */
+function ChatWithTerminal({ userId }: { userId: string }) {
+  const { terminalPanelOpen } = useWorkbench();
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: `${CHAT_LAYOUT_ID}:${encodeURIComponent(userId)}`,
+    storage: localStorage,
+    // 只记用户亲手拖出来的高度。空间不足时库夹取出来的结果不算偏好,
+    // 否则一次挤压就会被固化成「用户想要的高度」
+    onlySaveAfterUserInteractions: true,
+  });
+  const terminalRef = usePanelRef();
+  const transition = useDrawerTransition();
+
+  React.useEffect(() => {
+    const panel = terminalRef.current;
+    if (!panel) return;
+    // collapse() 会记住当前高度,expand() 原样恢复 —— 不需要自己存一份
+    if (terminalPanelOpen) panel.expand();
+    else panel.collapse();
+  }, [terminalPanelOpen, terminalRef]);
+
+  return (
+    <ResizablePanelGroup
+      orientation="vertical"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
+      className={cn("min-h-0", transition.className)}
+    >
+      <ResizablePanel style={PANEL_CLIP} className="flex min-h-0 flex-col">
+        <ChatPanel />
+      </ResizablePanel>
+      <ResizableHandle {...transition.handleProps} {...drawerHandleProps(terminalPanelOpen)} />
+      <ResizablePanel
+        panelRef={terminalRef}
+        collapsible
+        collapsedSize={0}
+        defaultSize={TERMINAL_DEFAULT_HEIGHT}
+        minSize={TERMINAL_MIN_HEIGHT}
+        maxSize="60%"
+        groupResizeBehavior="preserve-pixel-size"
+        style={PANEL_CLIP}
+      >
+        <TerminalDrawer open={terminalPanelOpen} />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  );
+}
+
+function AppShell() {
+  const {
+    user,
+    libraryOpen,
+    skillOpen,
+    agentOpen,
+    workspacePanelOpen,
+    openBrowserUrl,
+    promptMinWidth,
+  } = useWorkbench();
+  const [librarySettingsOpen, setLibrarySettingsOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!libraryOpen) setLibrarySettingsOpen(false);
+  }, [libraryOpen]);
+
+  useHorizontalWheelScroll();
+  useLinkRouting(openBrowserUrl);
+
+  const transition = useDrawerTransition();
+
+  /**
+   * 聊天区能接受的最窄宽度,完全由输入区实测的最小边界推出(见 workbench 的
+   * promptMinWidth)。测到之前为 0,即不施加约束 —— 不拿任何猜测值去限制布局。
+   */
+  const chatMinWidth = promptMinWidth > 0 ? promptMinWidth + CHAT_HORIZONTAL_PADDING : 0;
+  /**
+   * 拖拽期间冻结这个下限,拖完再让新值生效。
+   *
+   * minSize 是 Panel 的 prop,一变 react-resizable-panels 就会注销并重新注册这个
+   * Panel;而它的拖拽状态里存的是 pointerdown 那一刻的 Panel 对象引用,换了对象就
+   * 定位不到 pivot 索引,进行中的拖拽当场断掉 —— 表现正是「拖一点点就拖不动,
+   * 松开手重来又只能拖一点点」。
+   *
+   * 输入区里本来就有会自己变宽的内容(上下文占比的数字位数、模型名),边生成边拖
+   * 分隔条一定撞上,所以这不是在防假想情况。冻结期间下限最多差几像素,无妨。
+   */
+  const frozenChatMinWidth = React.useRef(chatMinWidth);
+  if (!transition.resizing) frozenChatMinWidth.current = chatMinWidth;
+  const panelMinWidth = transition.resizing ? frozenChatMinWidth.current : chatMinWidth;
+  /**
+   * 用户的**意图**。按钮状态、窗口最小宽度要替面板留多少额度,都只看这个。
+   *
+   * 意图与实际刻意分离:空间不够时由库把面板折叠掉,而这里不回写 workspacePanelOpen。
+   * 于是窗口一放大、sidebar 一收起,面板自己就回来了,不用用户再点一次。
+   */
+  const wantsWorkspace = workspacePanelOpen && !skillOpen && !libraryOpen && !agentOpen;
+
+  const groupRef = React.useRef<HTMLDivElement>(null);
+  useWindowMinWidth({
+    elementRef: groupRef,
+    // 同样用冻结值:拖分隔条的半途窗口自己变宽会更难受,整套约束一起按住到松手
+    contentMinWidth: panelMinWidth,
+    // 只保面板的可用性下限,而不是它当前有多宽:窗口该长到「面板刚好能用」为止。
+    // 留当前宽度的话,用户每拖宽一次就把窗口下限顶高一次,再也缩不回来。
+    reservedWidth: wantsWorkspace ? WORKSPACE_MIN_WIDTH : 0,
+  });
+
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: `${SHELL_LAYOUT_ID}:${encodeURIComponent(user.id)}`,
+    storage: localStorage,
+    onlySaveAfterUserInteractions: true,
+  });
+  const workspaceRef = usePanelRef();
+
+  React.useEffect(() => {
+    const panel = workspaceRef.current;
+    if (!panel) return;
+    if (wantsWorkspace) panel.expand();
+    else panel.collapse();
+  }, [wantsWorkspace, workspaceRef]);
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
       <SidebarInset className="overflow-hidden border shadow-sm">
-        {/* ref 必须挂在这一层:它同时含聊天区与右侧面板,宽度才是「可分配总额」。
-            挂到里面的聊天区上就只能量到扣掉面板之后的余量,算出来的上限会偏小。 */}
-        <div
-          className="flex size-full min-h-0 min-w-0 overflow-hidden bg-background"
-          ref={shellRef}
+        <ResizablePanelGroup
+          orientation="horizontal"
+          elementRef={groupRef}
+          defaultLayout={defaultLayout}
+          onLayoutChanged={onLayoutChanged}
+          className={cn("min-h-0 min-w-0 overflow-hidden bg-background", transition.className)}
         >
-          {/* 左侧主体(聊天 / 技能 / 资料库 / 终端) */}
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <PanelHeader className="relative z-10 px-4">
-              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                <SidebarTrigger className="-ml-1" />
-                {skillOpen && activeSkill ? (
-                  <>
-                    <Separator orientation="vertical" className="mx-1 h-4" />
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setActiveSkill(null)}
-                      className="h-7 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground cursor-pointer"
-                    >
-                      <ArrowLeftIcon className="size-3.5" />
-                      返回插件市场
-                    </Button>
-                    <Separator orientation="vertical" className="mx-1 h-4" />
-                    <p className="truncate text-sm font-medium">{activeSkill.name}</p>
-                  </>
-                ) : (
-                  <>
-                    <Separator orientation="vertical" className="mx-1 h-4" />
-                    <p className="truncate text-sm font-medium">{title}</p>
-                  </>
-                )}
-              </div>
-              {!skillOpen && !libraryOpen && !agentOpen ? (
-                <>
-                  <OpenInIde />
-                  <Separator orientation="vertical" className="mx-0.5 h-4" />
-                  <Button
-                    aria-label={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
-                    aria-pressed={terminalPanelOpen}
-                    onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
-                    size="icon-sm"
-                    title={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
-                    variant={terminalPanelOpen ? "secondary" : "ghost"}
-                  >
-                    {terminalPanelOpen ? <PanelBottomCloseIcon /> : <PanelBottomOpenIcon />}
-                  </Button>
-                  <Button
-                    aria-label={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
-                    aria-pressed={workspacePanelOpen}
-                    onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
-                    size="icon-sm"
-                    title={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
-                    variant={workspacePanelOpen ? "secondary" : "ghost"}
-                  >
-                    {workspacePanelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      setLibraryOpen(false);
-                      setAgentOpen(false);
-                      void createThread();
-                    }}
-                  >
-                    <PlusIcon />
-                    新建会话
-                  </Button>
-                </>
-              ) : null}
-              {libraryOpen ? (
-                <Button
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label="资料库设置"
-                  title="资料库设置"
-                  onClick={() => setLibrarySettingsOpen(true)}
-                >
-                  <Settings2Icon />
-                </Button>
-              ) : null}
-            </PanelHeader>
-
+          {/* 左侧主体(会话 / 技能 / 资料库 / 专家)。聊天区下限是硬的:预算不够时
+              正确的反应是右侧面板让位,而不是把 promptInput 压坏 */}
+          <ResizablePanel
+            minSize={panelMinWidth}
+            style={PANEL_CLIP}
+            className="flex min-w-0 flex-col"
+          >
+            <AppTopBar onOpenLibrarySettings={() => setLibrarySettingsOpen(true)} />
             <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
               {agentOpen ? (
                 <BlurFade key="agent-hub" duration={0.2} blur="3px" className="size-full">
@@ -485,95 +456,25 @@ function AppShell() {
                   </React.Suspense>
                 </BlurFade>
               ) : (
-                <div className="flex size-full min-h-0 flex-col overflow-hidden">
-                  <div className="min-h-0 flex-1 overflow-hidden">
-                    <ChatPanel />
-                  </div>
-
-                  {/* 底部终端抽屉:平滑滑入/滑出与可拉伸高度 */}
-                  <aside
-                    style={{
-                      height: terminalPanelOpen ? `${terminalHeight}px` : 0,
-                    }}
-                    className={cn(
-                      "relative flex w-full min-w-0 flex-col border-t bg-background overflow-hidden shrink-0",
-                      !isDraggingTerminal && "transition-[height,opacity] duration-200 ease-linear",
-                      terminalPanelOpen
-                        ? "opacity-100"
-                        : "border-t-0 opacity-0 pointer-events-none",
-                    )}
-                  >
-                    {terminalPanelOpen ? (
-                      <div
-                        onPointerDown={handleTerminalResizeStart}
-                        className="group/resizer absolute -top-1.5 inset-x-0 z-30 h-3 cursor-row-resize select-none"
-                      >
-                        <div className="my-auto h-px w-full bg-border group-hover/resizer:h-0.5 group-hover/resizer:bg-primary transition-colors" />
-                      </div>
-                    ) : null}
-                    <div
-                      style={{ height: `${terminalHeight}px` }}
-                      className={cn(
-                        "flex w-full min-h-0 shrink-0 flex-col",
-                        !isDraggingTerminal && "transition-transform duration-200 ease-linear",
-                        terminalPanelOpen ? "translate-y-0" : "translate-y-4",
-                      )}
-                    >
-                      <React.Suspense fallback={<PanelFallback />}>
-                        <TerminalPanel />
-                      </React.Suspense>
-                    </div>
-                  </aside>
-                </div>
+                <ChatWithTerminal userId={user.id} />
               )}
             </main>
-          </div>
-
-          {/* 右侧工作区抽屉:平滑滑入/滑出与可拉伸宽度 */}
-          <aside
-            style={{
-              width: showWorkspace ? `${workspaceWidth}px` : 0,
-              // 硬边界交给浏览器在布局期算,与 shell 宽度同帧生效。
-              // 下面那条 ResizeObserver → setState → 渲染 的链路天生滞后一帧,
-              // 而 sidebar 展开是 200ms 里连续变窄(≈21px/帧),那一帧就足以把聊天区
-              // 压过下限、让标签抖一下。100% 即 shell 宽度,算式与 workspaceBudget 逐项对应。
-              //
-              // 这里不给面板留下限:滞后帧里宁可让面板临时更窄,也不能压聊天区。
-              // 稳态下 showWorkspace 已经保证了预算 ≥ WORKSPACE_MIN_WIDTH。
-              maxWidth: chatMinWidth > 0 ? `calc(100% - ${chatMinWidth}px)` : undefined,
-            }}
-            className={cn(
-              "relative flex h-full min-h-0 flex-col border-l bg-background overflow-hidden shrink-0",
-              !isDraggingWorkspace && "transition-[width,opacity] duration-200 ease-linear",
-              showWorkspace ? "opacity-100" : "border-l-0 opacity-0 pointer-events-none",
-            )}
+          </ResizablePanel>
+          <ResizableHandle {...transition.handleProps} {...drawerHandleProps(wantsWorkspace)} />
+          {/* 右侧工作区抽屉。collapsible 顺带实现了「放不下就让位」:尺寸被压到
+              minSize 以下时库自动折叠,不需要额外的预算判断 */}
+          <ResizablePanel
+            panelRef={workspaceRef}
+            collapsible
+            collapsedSize={0}
+            minSize={WORKSPACE_MIN_WIDTH}
+            // sidebar 展开让这一行变窄时,面板保持原宽、由聊天区吸收
+            groupResizeBehavior="preserve-pixel-size"
+            style={PANEL_CLIP}
           >
-            {showWorkspace ? (
-              <div
-                onPointerDown={handleWorkspaceResizeStart}
-                className="group/resizer absolute inset-y-0 -left-1.5 z-30 w-3 cursor-col-resize select-none"
-              >
-                <div className="mx-auto h-full w-px bg-border group-hover/resizer:w-0.5 group-hover/resizer:bg-primary transition-colors" />
-              </div>
-            ) : null}
-            {/* 这一层刻意保持固定宽度、不跟着 aside 走:滑入过渡期 aside 宽度是 0,
-                用 w-full 会让内容也从 0 长出来、被压瘪。它也不需要上面那条 CSS 上限 ——
-                真滞后了一帧,多出来的部分被 aside 的 overflow-hidden 裁掉即可,
-                聊天区已经被 aside 的 max-width 护住,不会挨挤。 */}
-            <div
-              style={{ width: `${workspaceWidth}px` }}
-              className={cn(
-                "flex h-full min-h-0 shrink-0 flex-col",
-                !isDraggingWorkspace && "transition-transform duration-200 ease-linear",
-                showWorkspace ? "translate-x-0" : "translate-x-4",
-              )}
-            >
-              <React.Suspense fallback={<PanelFallback />}>
-                <WorkspacePanel />
-              </React.Suspense>
-            </div>
-          </aside>
-        </div>
+            <WorkspaceDrawer open={wantsWorkspace} />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </SidebarInset>
       <SettingsDialog />
     </SidebarProvider>

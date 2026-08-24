@@ -1,4 +1,10 @@
-export { AgentInteractionHistory, AgentInteractionPanel, AgentQueuePanel } from "./agent-panels";
+export type { BackgroundTaskAction, WorkflowRunAction } from "./agent-panels";
+export {
+  AgentInteractionHistory,
+  AgentInteractionPanel,
+  AgentQueuePanel,
+  WorkflowRunPanel,
+} from "./agent-panels";
 export { ChatAgentSelector } from "./agent-selector";
 export { ChatApprovalSelector } from "./approval-selector";
 export { AssistantTrace } from "./assistant-trace";

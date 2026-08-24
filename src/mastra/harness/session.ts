@@ -237,6 +237,7 @@ export class WorkSession {
     const options: AgentExecutionOptions = {
       ...this.executionDefaults,
       ...streamOptions,
+      untilIdle: streamOptions.untilIdle ?? this.executionDefaults.untilIdle ?? true,
       memory: {
         resource: this.resourceId,
         thread: this.currentThreadId,

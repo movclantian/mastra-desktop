@@ -24,13 +24,18 @@ import {
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
 import {
+  DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
+  getContentObjectAccessPaths,
   getResourceScope,
   getStorageDirectory,
-  PROJECT_ROOT,
   setAppConfig,
 } from "../storage";
-import { createWorkspaceChangeHooks, deleteWorkspaceChanges } from "./changes";
+import {
+  createWorkspaceChangeHooks,
+  createWorkspaceOutputArchiveHooks,
+  deleteWorkspaceChanges,
+} from "./changes";
 
 export {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
@@ -47,20 +52,33 @@ import "vscode-languageserver-protocol";
 const WORKSPACE_CONFIG_KEY = "workspace";
 const RECENT_WORKSPACES_KEY = "recent-workspaces";
 const RECENT_WORKSPACES_LIMIT = 12;
-const MANAGED_SKILLS_DIRECTORY = join(getStorageDirectory() || PROJECT_ROOT, "skills");
+const MANAGED_SKILLS_DIRECTORY = join(
+  getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
+  "skills",
+);
 
 /** chat 路由 → Agent 动态 workspace 函数传递线程工作区路径的 RequestContext key */
 export const WORKSPACE_PATH_CONTEXT_KEY = "mastra-work:workspace-path";
 
 /** 默认线程工作区根:<存储目录>/workspace/threads(绝对路径,规避 cwd 漂移) */
-const DEFAULT_THREADS_ROOT = join(getStorageDirectory() || PROJECT_ROOT, "workspace", "threads");
+const DEFAULT_THREADS_ROOT = join(
+  getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
+  "workspace",
+  "threads",
+);
 
 function scopeKey(): string {
   return getResourceScope() ?? "__system__";
 }
 
 function scopePathSegment(): string {
-  return getResourceScope() ? encodeURIComponent(getResourceScope() as string) : "system";
+  const scope = getResourceScope();
+  if (!scope) return "system";
+  const trimmed = scope.trim();
+  if (!trimmed || trimmed === "." || trimmed === ".." || trimmed.includes("\0")) {
+    throw new Error("resource scope is invalid");
+  }
+  return encodeURIComponent(trimmed);
 }
 
 function defaultThreadsRoot(): string {
@@ -208,7 +226,11 @@ const DEFAULT_CONFIG: WorkspaceUserConfig = {
   nativeSeatbeltProfilePath: "",
   nativeBwrapArgs: [],
   nativeReadOnly: false,
-  tools: { requireReadBeforeWrite: true, maxOutputTokens: 3_000, writeLockTimeoutMs: 30_000 },
+  tools: {
+    requireReadBeforeWrite: true,
+    maxOutputTokens: 3_000,
+    writeLockTimeoutMs: 30_000,
+  },
   skillsPaths: ["skills"],
   autoIndexPaths: [],
 };
@@ -395,6 +417,12 @@ interface WorkspaceRuntime {
   cache: Map<string, Workspace>;
 }
 
+function cachedWorkspacesForPath(runtime: WorkspaceRuntime, workspacePath: string) {
+  return [...runtime.cache.entries()].filter(
+    ([key]) => key === workspacePath || key.startsWith(`${workspacePath}\u0000`),
+  );
+}
+
 const runtimeByScope = new Map<string, WorkspaceRuntime>();
 
 function getRuntime(): WorkspaceRuntime {
@@ -443,23 +471,47 @@ export function getManagedSkillsDirectory(): string {
  * Agent 的动态 workspace 函数按 requestContext 里的线程工作区路径调用;
  * 每个实例的 filesystem/sandbox 都 contained 在该目录内。
  */
-export function getThreadWorkspace(workspacePath: string): Workspace {
+export function getThreadWorkspace(workspacePath: string, threadId?: string): Workspace {
   const runtime = getRuntime();
   const config = runtime.config;
-  const cached = runtime.cache.get(workspacePath);
+  const cacheKey = threadId ? `${workspacePath}\u0000${threadId}` : workspacePath;
+  const cached = runtime.cache.get(cacheKey);
   if (cached) return cached;
 
   // Windows 无受支持的原生隔离后端(seatbelt=macOS / bwrap=Linux),
   // 用户配置了也强制回落 none,避免 LocalSandbox 启动失败(按创建时配置计算)。
   const effectiveIsolation = process.platform === "win32" ? ("none" as const) : config.isolation;
 
+  const contentPaths = getResourceScope()
+    ? getContentObjectAccessPaths(getResourceScope(), threadId)
+    : [];
+  const allowedPaths = [...config.allowedPaths, ...contentPaths];
   const filesystem = new LocalFilesystem({
     basePath: workspacePath,
-    ...(config.allowedPaths.length ? { allowedPaths: config.allowedPaths } : {}),
+    ...(allowedPaths.length ? { allowedPaths } : {}),
     ...(config.readOnly ? { readOnly: true } : {}),
   });
+  const changeHooks = createWorkspaceChangeHooks(filesystem);
+  const outputArchive = createWorkspaceOutputArchiveHooks();
+  // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
+  const workspaceTools = getWorkspaceToolsConfig();
+  const executeConfig = workspaceTools.mastra_workspace_execute_command;
+  workspaceTools.mastra_workspace_execute_command = {
+    ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),
+    backgroundProcesses: outputArchive.backgroundProcesses,
+  };
+  workspaceTools.hooks = {
+    beforeToolCall: async (params) => {
+      await changeHooks.beforeToolCall?.(params);
+      await outputArchive.hooks.beforeToolCall?.(params);
+    },
+    afterToolCall: async (params) => {
+      await changeHooks.afterToolCall?.(params);
+      await outputArchive.hooks.afterToolCall?.(params);
+    },
+  };
   const workspace = new Workspace({
-    id: `mastra-work:${workspacePath}`,
+    id: `mastra-work:${workspacePath}${threadId ? `:${threadId}` : ""}`,
     name: "MastraWork Workspace",
     filesystem,
     ...(config.sandboxEnabled
@@ -501,18 +553,11 @@ export function getThreadWorkspace(workspacePath: string): Workspace {
           },
         }
       : {}),
-    ...(Object.keys(config.tools).length
-      ? {
-          tools: {
-            ...getWorkspaceToolsConfig(),
-            hooks: createWorkspaceChangeHooks(filesystem),
-          } as WorkspaceToolsConfig,
-        }
-      : { tools: { hooks: createWorkspaceChangeHooks(filesystem) } as WorkspaceToolsConfig }),
+    tools: workspaceTools,
     ...(config.skillsPaths.length ? { skills: config.skillsPaths } : {}),
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
   });
-  runtime.cache.set(workspacePath, workspace);
+  runtime.cache.set(cacheKey, workspace);
   return workspace;
 }
 
@@ -527,22 +572,20 @@ export async function deleteThreadWorkspace(threadId: string, metadata?: unknown
   const runtime = getRuntime();
 
   // 1. 销毁并清除隐式工作区的 Workspace 实例及物理目录
-  const implicitCached = runtime.cache.get(implicitPath);
-  if (implicitCached) {
-    runtime.cache.delete(implicitPath);
+  for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, implicitPath)) {
+    runtime.cache.delete(cacheKey);
     await Promise.resolve()
-      .then(() => implicitCached.destroy())
+      .then(() => workspace.destroy())
       .catch(() => undefined);
   }
   await rm(implicitPath, { recursive: true, force: true }).catch(() => undefined);
 
   // 2. 若 metadata 指向了自定义路径:
   if (meta?.workspacePath) {
-    const explicitCached = runtime.cache.get(meta.workspacePath);
-    if (explicitCached) {
-      runtime.cache.delete(meta.workspacePath);
+    for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, meta.workspacePath)) {
+      runtime.cache.delete(cacheKey);
       await Promise.resolve()
-        .then(() => explicitCached.destroy())
+        .then(() => workspace.destroy())
         .catch(() => undefined);
     }
     // 如果该路径非用户外部显式选中的项目(例如位于 threadsRoot 内部),亦物理清理

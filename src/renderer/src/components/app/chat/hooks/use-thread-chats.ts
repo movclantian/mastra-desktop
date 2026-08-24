@@ -30,6 +30,7 @@ export interface ThreadChats {
 export function useThreadChats(
   userId: string,
   buildRequestBody: (threadId: string) => Record<string, unknown>,
+  onThreadBusyChange?: (threadId: string, isBusy: boolean) => void,
 ): ThreadChats {
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
   const generatedMessageIdsRef = React.useRef(new Map<string, string>());
@@ -37,6 +38,8 @@ export function useThreadChats(
   const reconnectTimersRef = React.useRef(new Map<string, number>());
   const buildRequestBodyRef = React.useRef(buildRequestBody);
   buildRequestBodyRef.current = buildRequestBody;
+  const onThreadBusyChangeRef = React.useRef(onThreadBusyChange);
+  onThreadBusyChangeRef.current = onThreadBusyChange;
 
   React.useEffect(
     () => () => {
@@ -80,6 +83,7 @@ export function useThreadChats(
               window.clearTimeout(reconnectTimer);
               reconnectTimersRef.current.delete(threadId);
             }
+            onThreadBusyChangeRef.current?.(threadId, true);
             const payload: Record<string, unknown> = {
               ...buildRequestBodyRef.current(threadId),
               responseMessageId: generatedMessageIdsRef.current.get(threadId),
@@ -100,11 +104,13 @@ export function useThreadChats(
               window.clearTimeout(timer);
               reconnectTimersRef.current.delete(threadId);
             }
+            onThreadBusyChangeRef.current?.(threadId, false);
           }
         },
         onError: (error) => {
           const detail = streamErrorMessage(error);
           if (!isTransientStreamError(error)) {
+            onThreadBusyChangeRef.current?.(threadId, false);
             toast.error(`本轮生成失败：${detail}`);
             return;
           }
@@ -112,6 +118,7 @@ export function useThreadChats(
           const attempt = (reconnectAttemptsRef.current.get(threadId) ?? 0) + 1;
           reconnectAttemptsRef.current.set(threadId, attempt);
           if (attempt > STREAM_RECONNECT_LIMIT) {
+            onThreadBusyChangeRef.current?.(threadId, false);
             toast.error(`流式响应中断：${detail}`);
             return;
           }
@@ -133,10 +140,13 @@ export function useThreadChats(
                 };
                 if (!payload.displayState?.activeRunId) {
                   reconnectAttemptsRef.current.delete(threadId);
+                  onThreadBusyChangeRef.current?.(threadId, false);
                   toast.error(`流式响应中断：${detail}`);
                 }
               })
-              .catch(() => undefined);
+              .catch(() => {
+                onThreadBusyChangeRef.current?.(threadId, false);
+              });
           }, delay);
           reconnectTimersRef.current.set(threadId, timer);
         },

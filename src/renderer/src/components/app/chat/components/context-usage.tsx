@@ -120,11 +120,8 @@ export function ChatContextUsage({
         maxTokens={maxTokens}
         usage={usage}
         breakdown={breakdown}
-        modelId={
-          selectedProvider.registryId
-            ? `${selectedProvider.registryId}:${modelSelection.modelId}`
-            : undefined
-        }
+        modelId={modelSelection.modelId}
+        catalog={catalog}
       >
         <ContextTrigger />
         <ContextContent>

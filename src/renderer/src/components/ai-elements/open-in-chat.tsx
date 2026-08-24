@@ -383,18 +383,6 @@ export interface LocalIdeItem {
 }
 
 export const IDE_ICON_MAP: Record<string, React.ReactNode> = {
-  trae: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect x="2" y="2" width="20" height="20" rx="5" fill="#00C777" />
-      <rect x="6.5" y="7.5" width="4.5" height="9" rx="1.5" fill="white" />
-      <rect x="13" y="7.5" width="4.5" height="9" rx="1.5" fill="white" />
-    </svg>
-  ),
   vscode: (
     <svg
       viewBox="0 0 24 24"
@@ -406,133 +394,6 @@ export const IDE_ICON_MAP: Record<string, React.ReactNode> = {
         d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.276a1 1 0 0 0-.004 1.446l4.24 3.92-4.24 3.92a1 1 0 0 0 .004 1.446l1.322 1.217a1 1 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 21.36V3.957a1.5 1.5 0 0 0-.85-1.37zM18 17.525l-7.38-6.185L18 5.155v12.37z"
         fill="#007ACC"
       />
-    </svg>
-  ),
-  "vscode-insiders": (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path
-        d="M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.12-3.128a.999.999 0 0 0-1.276.057L.327 7.276a1 1 0 0 0-.004 1.446l4.24 3.92-4.24 3.92a1 1 0 0 0 .004 1.446l1.322 1.217a1 1 0 0 0 1.276.057l4.12-3.128 9.46 8.63a1.492 1.492 0 0 0 1.704.29l4.942-2.377A1.5 1.5 0 0 0 24 21.36V3.957a1.5 1.5 0 0 0-.85-1.37zM18 17.525l-7.38-6.185L18 5.155v12.37z"
-        fill="#23A758"
-      />
-    </svg>
-  ),
-  antigravity: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path d="M12 3L2 20h4.5l5.5-10.5L17.5 20H22L12 3z" fill="url(#antigravity-brand-grad)" />
-      <defs>
-        <linearGradient
-          id="antigravity-brand-grad"
-          x1="2"
-          y1="20"
-          x2="22"
-          y2="3"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0%" stopColor="#4285F4" />
-          <stop offset="35%" stopColor="#34A853" />
-          <stop offset="70%" stopColor="#FBBC05" />
-          <stop offset="100%" stopColor="#EA4335" />
-        </linearGradient>
-      </defs>
-    </svg>
-  ),
-  cursor: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <path d="M22.5 6.2L12.5.4a1.4 1.4 0 0 0-1.4 0L1.1 6.2A1.4 1.4 0 0 0 .4 7.4v11.6c0 .5.3 1 .7 1.2l9.9 5.8c.4.3.9.3 1.4 0l9.9-5.8c.4-.3.7-.7.7-1.2V7.4c0-.5-.3-1-.5-1.2zm-.9 1.4l-9.8 17-9.8-17h19.6z" />
-    </svg>
-  ),
-  windsurf: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <circle cx="12" cy="12" r="10" fill="#00D2FF" />
-      <path d="M7 16l5-8 5 8H7z" fill="white" />
-    </svg>
-  ),
-  webstorm: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="24" height="24" rx="4" fill="#00CDD7" />
-      <path d="M5 6h14v12H5z" fill="#000" />
-      <path d="M7 15h3.5v1.5H7zm0-6h1.5v4.5H7zm4 0h1.5l1.5 3 1.5-3H17l-2.2 4.5h-1.6z" fill="#FFF" />
-    </svg>
-  ),
-  idea: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="24" height="24" rx="4" fill="#000" />
-      <rect x="2" y="2" width="20" height="20" rx="3" fill="url(#idea-grad)" />
-      <rect x="5" y="5" width="14" height="14" rx="1" fill="#000" />
-      <path d="M7 15h3.5v1.5H7zm0-6h1.5v4.5H7zm4 0h1.5v4.5H11z" fill="#FFF" />
-      <defs>
-        <linearGradient id="idea-grad" x1="0" y1="0" x2="24" y2="24">
-          <stop stopColor="#FE315D" />
-          <stop offset="1" stopColor="#F97A12" />
-        </linearGradient>
-      </defs>
-    </svg>
-  ),
-  pycharm: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="24" height="24" rx="4" fill="#21D789" />
-      <rect x="5" y="5" width="14" height="14" rx="1" fill="#000" />
-      <path
-        d="M7 15h3.5v1.5H7zm0-6h3.5c1 0 1.5.5 1.5 1.5s-.5 1.5-1.5 1.5H7zm1.5 1.2v.6h2c.3 0 .5-.1.5-.3s-.2-.3-.5-.3z"
-        fill="#FFF"
-      />
-    </svg>
-  ),
-  sublime: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <rect width="24" height="24" rx="4" fill="#333" />
-      <path d="M4 14.5l14-5.5L4 5zM20 9.5l-14 5.5L20 19z" fill="#FF9800" />
-    </svg>
-  ),
-  positron: (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      className="size-4 shrink-0"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <circle cx="12" cy="12" r="10" fill="#4B6BFB" />
-      <circle cx="12" cy="12" r="4" fill="#FFF" />
     </svg>
   ),
   terminal: (
@@ -590,20 +451,12 @@ export function OpenInIde({ className }: { className?: string }) {
     : `${PREFERRED_IDE_KEY}:anonymous`;
   const [open, setOpen] = React.useState(false);
   const [detectedIdes, setDetectedIdes] = React.useState<LocalIdeItem[]>([
-    { id: "trae", name: "TraeCode CN", command: "trae", category: "ide", icon: IDE_ICON_MAP.trae },
     {
       id: "vscode",
       name: "Visual Studio Code",
       command: "code",
       category: "ide",
       icon: IDE_ICON_MAP.vscode,
-    },
-    {
-      id: "antigravity",
-      name: "Antigravity",
-      command: "agy",
-      category: "ide",
-      icon: IDE_ICON_MAP.antigravity,
     },
     {
       id: "terminal",
@@ -623,9 +476,9 @@ export function OpenInIde({ className }: { className?: string }) {
 
   const [preferredId, setPreferredId] = React.useState<string>(() => {
     try {
-      return localStorage.getItem(preferredIdeKey) || "trae";
+      return localStorage.getItem(preferredIdeKey) || "vscode";
     } catch {
-      return "trae";
+      return "vscode";
     }
   });
 

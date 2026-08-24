@@ -84,12 +84,24 @@ export interface ThreadMetadata {
     compactedAt: string;
   };
   contextUsage?: Record<string, unknown>;
+  isWorking?: boolean;
+  activeRunId?: string | null;
 }
 
 /** GET /work/workspace/recent:近期显式绑定的工作区目录 */
 export interface RecentWorkspace {
   path: string;
   lastUsedAt: string;
+}
+
+export interface SkillAuditItem {
+  provider: string;
+  slug: string;
+  status: "pass" | "warn" | "fail" | string;
+  summary: string;
+  auditedAt?: string;
+  riskLevel?: "NONE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" | string;
+  categories?: string[];
 }
 
 export interface SkillMetadata {
@@ -106,6 +118,11 @@ export interface SkillMetadata {
   skillsShSlug?: string;
   installs?: number;
   sourceUrl?: string;
+  change?: number;
+  installsYesterday?: number;
+  isOfficial?: boolean;
+  owner?: string;
+  audits?: SkillAuditItem[];
 }
 
 /** GET /work/threads/:id/tree:文件树单层条目 */
@@ -118,12 +135,22 @@ export interface TreeEntry {
 
 export type WorkspaceChangeKind = "created" | "modified" | "deleted";
 
+export interface WorkspaceChangeSnapshot {
+  objectId: string;
+  sha256: string;
+  byteSize: number;
+  contentType: string;
+  encoding: string;
+  chunkSize: number;
+  chunkCount: number;
+}
+
 export interface WorkspaceFileChange {
   id: string;
   path: string;
   kind: WorkspaceChangeKind;
-  before: string | null;
-  after: string | null;
+  before: WorkspaceChangeSnapshot | null;
+  after: WorkspaceChangeSnapshot | null;
   toolName: string;
   toolCallId?: string;
   createdAt: string;
@@ -164,8 +191,18 @@ export interface AgentMemberDefinition {
 }
 
 export interface AgentWorkflowDefinition {
-  strategy: "supervisor" | "sequence" | "parallel";
-  steps: Array<{ id: string; memberId: string; prompt?: string }>;
+  strategy: "supervisor" | "handoff" | "workflow" | "council";
+  steps: Array<{
+    id: string;
+    memberId?: string;
+    kind?: "agent" | "approval" | "branch" | "loop";
+    prompt?: string;
+    retries?: number;
+    condition?: { operator: "contains" | "equals" | "not_contains"; value: string };
+    branch?: { onTrueMemberId: string; onFalseMemberId: string };
+    loop?: { mode: "until" | "while" | "foreach"; maxIterations: number; concurrency?: number };
+    approval?: { title: string; description: string };
+  }>;
   synthesis: boolean;
 }
 
@@ -413,6 +450,11 @@ interface WorkbenchValue {
   // 线程工作区文件树(显式和隐式绑定线程均可访问;单层按需拉取)
   fetchTreeEntries: (threadId: string, path?: string) => Promise<TreeEntry[]>;
   fetchThreadChanges: (threadId: string) => Promise<WorkspaceFileChange[]>;
+  fetchThreadChangeContent: (
+    threadId: string,
+    changeId: string,
+    side: "before" | "after",
+  ) => Promise<{ content: string; binary: boolean; metadata: WorkspaceChangeSnapshot } | null>;
   activeThreadId: string | null;
   setActiveThreadId: (id: string | null) => void;
   // 搜索结果跳转(chat-panel 消费后清除)
@@ -452,6 +494,10 @@ interface WorkbenchValue {
   settingsSection: string;
   setSettingsSection: (section: string) => void;
   openSettings: (section?: string) => void;
+  /** 记录各线程当前是否处于后台执行/流式中 */
+  busyThreadIds: Record<string, boolean>;
+  setThreadBusy: (threadId: string, busy: boolean) => void;
+  isThreadBusy: (threadId: string) => boolean;
   /** Agent 是否有任务进行中(流式生成/等待响应);chat panel 同步,设置页消费 */
   agentBusy: boolean;
   setAgentBusy: (busy: boolean) => void;
@@ -641,7 +687,39 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     if (section) setSettingsSection(section);
     setSettingsOpen(true);
   }, []);
-  const [agentBusy, setAgentBusy] = useState(false);
+  const [busyThreadIds, setBusyThreadIds] = useState<Record<string, boolean>>({});
+
+  const setThreadBusy = useCallback((threadId: string, busy: boolean) => {
+    if (!threadId) return;
+    setBusyThreadIds((prev) => {
+      if (Boolean(prev[threadId]) === busy) return prev;
+      const next = { ...prev };
+      if (busy) {
+        next[threadId] = true;
+      } else {
+        delete next[threadId];
+      }
+      return next;
+    });
+  }, []);
+
+  const isThreadBusy = useCallback(
+    (threadId: string) => {
+      if (busyThreadIds[threadId]) return true;
+      const thread = threads.find((t) => t.id === threadId);
+      return Boolean(thread?.metadata?.isWorking || thread?.metadata?.activeRunId);
+    },
+    [busyThreadIds, threads],
+  );
+
+  const [activeAgentBusy, setActiveAgentBusy] = useState(false);
+  const agentBusy = useMemo(
+    () => Object.keys(busyThreadIds).length > 0 || activeAgentBusy,
+    [busyThreadIds, activeAgentBusy],
+  );
+  const setAgentBusy = useCallback((busy: boolean) => {
+    setActiveAgentBusy(busy);
+  }, []);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
   const [activeSkill, setActiveSkill] = useState<SkillMetadata | null>(null);
@@ -1384,6 +1462,33 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     [user.id],
   );
 
+  const fetchThreadChangeContent = useCallback(
+    async (threadId: string, changeId: string, side: "before" | "after") => {
+      try {
+        const query = new URLSearchParams({ resourceId: user.id, side });
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(threadId)}/changes/${encodeURIComponent(changeId)}/content?${query.toString()}`,
+        );
+        if (!response.ok) return null;
+        const payload = (await response.json()) as {
+          content?: unknown;
+          binary?: unknown;
+          metadata?: WorkspaceChangeSnapshot;
+        };
+        if (typeof payload.content !== "string" || !payload.metadata) return null;
+        return {
+          content: payload.content,
+          binary: payload.binary === true,
+          metadata: payload.metadata,
+        };
+      } catch {
+        return null;
+      }
+    },
+    [user.id],
+  );
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Complete workbench context value bundle
   const value = useMemo<WorkbenchValue>(
     () => ({
       user,
@@ -1402,6 +1507,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshRecentWorkspaces,
       fetchTreeEntries,
       fetchThreadChanges,
+      fetchThreadChangeContent,
       activeThreadId,
       setActiveThreadId: selectThread,
       pendingJump,
@@ -1430,6 +1536,9 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       settingsSection,
       setSettingsSection,
       openSettings,
+      busyThreadIds,
+      setThreadBusy,
+      isThreadBusy,
       agentBusy,
       setAgentBusy,
       libraryOpen,
@@ -1479,6 +1588,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       refreshRecentWorkspaces,
       fetchTreeEntries,
       fetchThreadChanges,
+      fetchThreadChangeContent,
       activeThreadId,
       selectThread,
       pendingJump,
@@ -1504,7 +1614,11 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       settingsOpen,
       settingsSection,
       openSettings,
+      busyThreadIds,
+      setThreadBusy,
+      isThreadBusy,
       agentBusy,
+      setAgentBusy,
       libraryOpen,
       skillOpen,
       agentOpen,
@@ -1529,6 +1643,7 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       openBrowserUrl,
       activeSkill,
       user,
+      setAgentBusy,
     ],
   );
 

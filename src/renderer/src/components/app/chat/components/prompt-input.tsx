@@ -718,9 +718,9 @@ export function ChatPromptInput({
   /**
    * 实测输入区的最小边界并上报,由 AppShell 用来限制面板拖拽幅度与窗口最小宽度。
    *
-   * 量的是「左组宽 + 右组宽 + 左右内距」—— 也就是中间那段弹性空白刚被消费完时的
-   * 宽度。这个数只有内容自己知道(控件增删、标签改名、换更长的模型名都会变),
-   * 所以必须实测,不能写成常量。
+   * 量的是「左组自然宽 + 右组自然宽 + footer 自身的左右内距与列间距」—— 也就是
+   * 两组控件都完整显示、中间弹性空白刚好为 0 时的宽度。这个数只有内容自己知道
+   * (控件增删、标签改名、换更长的模型名都会变),所以必须实测,不能写成常量。
    *
    * 要紧的是这个数必须只反映**内容**、绝不反映**当前容器有多宽**:一旦压缩值能
    * 被报上去,下限就会随容器一起缩,约束越放越松,挤压于是被固化而不是被纠正。
@@ -735,12 +735,11 @@ export function ChatPromptInput({
     /**
      * 读一组在「不被 flex 压缩」时的宽度。
      *
-     * 空白见底后 flex 会把两组压到刚好塞满容器 —— 也就是说压缩态下
-     * 「两组之和 ≈ 容器宽」恒成立,靠比对容器宽根本判不出是否失真。
-     * 所以这里临时用 max-content 顶开压缩再读。写-读-还原在同一个同步块内,
-     * 浏览器只多算一次布局、不会绘制中间态;回调结束时尺寸已复原,
-     * 也不会引起 ResizeObserver 自激。内部 label 的 max-w 上限依然生效,
-     * 量到的正是「标签完整显示」时的宽度,而不是无限伸展。
+     * 两组都带 min-w-0,容器一紧就是它们先让步,所以直接量 offsetWidth 量到的是
+     * 压缩后的值 —— 正是上面那条不变量禁止上报的东西。这里临时用 max-content
+     * 顶开压缩再读:写-读-还原在同一个同步块内,浏览器只多算一次布局、不会绘制
+     * 中间态;回调结束时尺寸已复原,也不会引起 ResizeObserver 自激。内部 label 的
+     * max-w 上限依然生效,量到的正是「标签完整显示」时的宽度,而不是无限伸展。
      */
     const naturalWidth = (element: HTMLElement) => {
       const previous = element.style.minWidth;
@@ -751,14 +750,23 @@ export function ChatPromptInput({
     };
     const measure = () => {
       const styles = getComputedStyle(footer);
-      const padding =
-        Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
-      // 中间那段由右组 ml-auto 独占的弹性空白。还有余量说明两组都是自然宽度,
-      // 直接量即可(零额外布局开销);见底了才走上面的顶开测量。
-      const slack = right.offsetLeft - left.offsetLeft - left.offsetWidth;
-      const used =
-        slack > 0 ? left.offsetWidth + right.offsetWidth : naturalWidth(left) + naturalWidth(right);
-      reportPromptMinWidth(used + padding);
+      // 列间距和内距一样是 footer 自己吃掉的固定宽度,少算它下限就偏小。
+      // 未设置 gap 时 computed 值是 "normal",parseFloat 得 NaN —— 归零。
+      const gap = Number.parseFloat(styles.columnGap);
+      const fixed =
+        Number.parseFloat(styles.paddingLeft) +
+        Number.parseFloat(styles.paddingRight) +
+        (Number.isFinite(gap) ? gap : 0);
+      /**
+       * 无条件顶开测量,不再先看中间还剩多少空白。
+       *
+       * 「有空白就说明没被压缩,可以直接量」只在 footer 的 gap 为 0 时成立:
+       * 一旦两组之间有固定 gap,压缩态下剩的那段空白恰好等于 gap 而不是 0,
+       * 判断于是永远走「直接量」—— 压缩值被报上去,下限随容器一起缩。
+       * 那次判断省下的是一次固有尺寸计算(浏览器本身有缓存),换来的却是
+       * 整条不变量失效,不值得。
+       */
+      reportPromptMinWidth(naturalWidth(left) + naturalWidth(right) + fixed);
     };
     measure();
     // 同时观察两组自身:换模型、开关检索都会改变它们的宽度,而 footer 尺寸未必变
@@ -907,11 +915,12 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* 唯一被消费的是中间那段弹性空白 —— 由右组的 ml-auto 独占提供(Footer 自身
-            gap-0,不在空白之外再吃固定宽度)。空白被压到 0 时的宽度就是输入区真正的
-            最小边界,由上面的 ResizeObserver 实测上报,AppShell 用它去限制面板能拖多宽、
-            以及窗口能缩多窄 —— 所以正常情况下根本走不到「空白见底」这一步,
-            两组控件既不换行也不溢出,更不需要滚动条,而这个边界没有任何魔数。
+        {/* 会被消费的只有中间那段弹性空白(右组 ml-auto 提供);Footer 的 gap 与内距
+            是固定占用,已一并计入下面实测的最小边界。两组都完整显示、弹性空白刚好
+            为 0 时的宽度就是输入区真正的最小边界,由上面的 ResizeObserver 实测上报,
+            AppShell 用它去限制面板能拖多宽、以及窗口能缩多窄 —— 所以正常情况下根本
+            走不到「空白见底」这一步,两组控件既不换行也不溢出,更不需要滚动条,
+            而这个边界没有任何魔数。
             万一约束还没到位(首帧、内容刚变长),两组的 min-w-0 会让模式/模型的标签
             先截短兜底,而不是把发送按钮顶到容器外面去。 */}
         <PromptInputFooter

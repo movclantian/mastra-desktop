@@ -9,6 +9,7 @@ import { Queue } from "@/components/ai-elements/queue";
 import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { DotPattern } from "@/components/ui/dot-pattern";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import { MagicCard } from "@/components/ui/magic-card";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
@@ -23,7 +24,7 @@ import {
 import { SparklesText } from "@/components/ui/sparkles-text";
 import { Spinner } from "@/components/ui/spinner";
 import { WordRotate } from "@/components/ui/word-rotate";
-import { toastError } from "@/lib/errors";
+import { readErrorPayload, toastError } from "@/lib/errors";
 import {
   buildReasoningRequest,
   buildRequestModel,
@@ -33,6 +34,7 @@ import {
 } from "@/lib/providers";
 import type { ToolCategory } from "@/lib/session-policy";
 import { useWorkbench } from "@/lib/workbench";
+import type { BackgroundTaskAction, WorkflowRunAction } from "./components";
 import {
   AgentInteractionPanel,
   AgentQueuePanel,
@@ -41,6 +43,7 @@ import {
   ChatWorkspaceSelector,
   MessageItem,
   UserRequestQueuePanel,
+  WorkflowRunPanel,
 } from "./components";
 import { usePlaceholderChat, useThreadChats } from "./hooks";
 import { buildDisplayMessages, persistAttachments as uploadAttachments } from "./lib";
@@ -48,21 +51,28 @@ import {
   type AgentInteraction,
   type AgentTask,
   areTasksEqual,
+  asRecord,
+  type BackgroundTaskState,
   type CompressResult,
   getActiveToolsFromMessages,
+  getBackgroundTasksFromMessages,
   getMessageInteractions,
   getSubagentsFromMessages,
   getTasksFromMessages,
   getToolName,
+  getWorkflowStateFromDisplayState,
+  getWorkflowStateFromMessages,
   isToolPart,
   type LibraryFilePart,
   type MessageBranchRecord,
   type MessageBranchVersion,
   type MessageFileReference,
   mergeInteractions,
+  mergeWorkflowRuntimeStates,
   parseSuspendedRuns,
   type QueuedRequest,
   type WorkDisplayState,
+  type WorkflowRuntimeRun,
   type WorkUIMessage,
 } from "./types";
 
@@ -88,6 +98,7 @@ export function ChatPanel() {
     setPendingJump,
     catalog,
     refreshThreadSettings,
+    setThreadBusy,
     setAgentBusy,
     openWorkspacePanel,
     setTerminalPanelOpen,
@@ -105,6 +116,8 @@ export function ChatPanel() {
   const [queueDispatchVersion, setQueueDispatchVersion] = React.useState(0);
   const [queueCanDispatch, setQueueCanDispatch] = React.useState(false);
   const [persistedInteractions, setPersistedInteractions] = React.useState<AgentInteraction[]>([]);
+  const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
+  const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
   const [messageBranches, setMessageBranches] = React.useState<Record<string, MessageBranchRecord>>(
     {},
   );
@@ -210,8 +223,10 @@ export function ChatPanel() {
     agentProfileId: agentSelection.id,
   });
 
-  const { getThreadChat, retainActive } = useThreadChats(user.id, (threadId) =>
-    buildRequestBodyRef.current(threadId),
+  const { getThreadChat, retainActive } = useThreadChats(
+    user.id,
+    (threadId) => buildRequestBodyRef.current(threadId),
+    setThreadBusy,
   );
   const placeholderChat = usePlaceholderChat();
   const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
@@ -335,7 +350,11 @@ export function ChatPanel() {
       );
       if (!response.ok) return undefined;
       const payload = (await response.json()) as {
-        displayState?: Omit<WorkDisplayState, "suspendedRuns"> & { suspendedRuns?: unknown };
+        displayState?: Omit<WorkDisplayState, "suspendedRuns"> & {
+          suspendedRuns?: unknown;
+          backgroundTasks?: BackgroundTaskState[];
+          workflowRuns?: WorkDisplayState["workflowRuns"];
+        };
       };
       if (!payload.displayState) return undefined;
       return {
@@ -353,6 +372,8 @@ export function ChatPanel() {
       setTasks([]);
       setTaskSnapshotLoaded(true);
       setPersistedInteractions([]);
+      setBackgroundTasks([]);
+      setWorkflowRuns([]);
       return;
     }
     try {
@@ -361,11 +382,15 @@ export function ChatPanel() {
       const nextTasks = displayState?.tasks ?? [];
       setTasks((current) => (areTasksEqual(current, nextTasks) ? current : nextTasks));
       setPersistedInteractions(displayState?.suspendedRuns ?? []);
+      setBackgroundTasks(displayState?.backgroundTasks ?? []);
+      setWorkflowRuns(displayState?.workflowRuns ?? []);
       setTaskSnapshotLoaded(Boolean(displayState));
     } catch {
       if (requestId !== displayStateRequestId.current) return;
       setTasks((current) => (current.length === 0 ? current : []));
       setPersistedInteractions([]);
+      setBackgroundTasks([]);
+      setWorkflowRuns([]);
     }
   }, [activeThreadId, fetchDisplayState]);
 
@@ -396,6 +421,8 @@ export function ChatPanel() {
     setQueuedRequests([]);
     setQueueCanDispatch(false);
     setPersistedInteractions([]);
+    setBackgroundTasks([]);
+    setWorkflowRuns([]);
     setResolvedInteractionKeys(new Set());
     retainActive(activeThreadId);
   }, [activeChat, activeThreadId, reloadMessages, retainActive]);
@@ -615,6 +642,127 @@ export function ChatPanel() {
   };
 
   const isBusy = status === "submitted" || status === "streaming";
+  React.useEffect(() => {
+    if (!activeThreadId) return;
+    setThreadBusy(activeThreadId, isBusy);
+  }, [activeThreadId, isBusy, setThreadBusy]);
+  React.useEffect(() => {
+    if (!isBusy || !activeThreadId) return;
+    const timer = window.setInterval(() => {
+      void reloadDisplayState();
+    }, 1200);
+    return () => window.clearInterval(timer);
+  }, [activeThreadId, isBusy, reloadDisplayState]);
+
+  // Keep the queue current after the agent stream closes. The official
+  // BackgroundTaskManager stream emits lifecycle events for tasks that finish
+  // after the conversation has become idle, so polling is not required for
+  // this global status lane.
+  React.useEffect(() => {
+    if (!activeThreadId) return;
+    const source = new EventSource(
+      `${MASTRA_SERVER_URL}/work/background-tasks/stream?threadId=${encodeURIComponent(activeThreadId)}&resourceId=${encodeURIComponent(user.id)}`,
+    );
+    // BackgroundTaskManager.stream() emits the official AI SDK chunk names
+    // and nests task fields under `payload`.
+    const eventTypes = [
+      "background-task-running",
+      "background-task-completed",
+      "background-task-failed",
+      "background-task-cancelled",
+      "background-task-output",
+      "background-task-suspended",
+      "background-task-resumed",
+    ];
+    const handleEvent = (event: Event) => {
+      try {
+        const chunk = JSON.parse((event as MessageEvent).data) as {
+          type?: unknown;
+          payload?: unknown;
+        };
+        const payload =
+          typeof chunk.payload === "object" && chunk.payload !== null
+            ? (chunk.payload as Record<string, unknown>)
+            : undefined;
+        if (!payload || typeof payload.taskId !== "string") return;
+        const statusByChunk: Record<string, BackgroundTaskState["status"]> = {
+          "background-task-running": "running",
+          "background-task-output": "running",
+          "background-task-completed": "completed",
+          "background-task-failed": "failed",
+          "background-task-cancelled": "cancelled",
+          "background-task-suspended": "suspended",
+          "background-task-resumed": "running",
+        };
+        const chunkType = typeof chunk.type === "string" ? chunk.type : "";
+        const status = statusByChunk[chunkType];
+        if (!status) return;
+        const taskId = payload.taskId;
+        setBackgroundTasks((current) => {
+          const previous = current.find((task) => task.id === taskId);
+          const next = current.filter((task) => task.id !== taskId);
+          const nextTask: BackgroundTaskState = {
+            ...(previous ?? {}),
+            id: taskId,
+            status,
+            toolName:
+              typeof payload.toolName === "string"
+                ? payload.toolName
+                : (previous?.toolName ?? "background task"),
+            toolCallId:
+              typeof payload.toolCallId === "string"
+                ? payload.toolCallId
+                : (previous?.toolCallId ?? taskId),
+            agentId:
+              typeof payload.agentId === "string" ? payload.agentId : (previous?.agentId ?? ""),
+            runId: typeof payload.runId === "string" ? payload.runId : (previous?.runId ?? ""),
+            ...(payload.result !== undefined ? { result: payload.result } : {}),
+            ...(payload.error && typeof payload.error === "object"
+              ? { error: payload.error as BackgroundTaskState["error"] }
+              : {}),
+            ...(payload.suspendPayload !== undefined
+              ? { suspendPayload: payload.suspendPayload }
+              : {}),
+            ...(typeof payload.retryCount === "number" ? { retryCount: payload.retryCount } : {}),
+            ...(typeof payload.maxRetries === "number" ? { maxRetries: payload.maxRetries } : {}),
+            ...(typeof payload.timeoutMs === "number" ? { timeoutMs: payload.timeoutMs } : {}),
+            ...(typeof payload.startedAt === "string" ? { startedAt: payload.startedAt } : {}),
+            ...(typeof payload.suspendedAt === "string"
+              ? { suspendedAt: payload.suspendedAt }
+              : {}),
+            ...(typeof payload.completedAt === "string"
+              ? { completedAt: payload.completedAt }
+              : {}),
+            ...(chunkType === "background-task-output" && payload.payload !== undefined
+              ? { output: asRecord(payload.payload)?.payload ?? payload.payload }
+              : {}),
+          };
+          if (chunkType === "background-task-running" || chunkType === "background-task-resumed") {
+            nextTask.error = undefined;
+            nextTask.suspendPayload = undefined;
+          } else if (chunkType === "background-task-completed") {
+            nextTask.error = undefined;
+            nextTask.suspendPayload = undefined;
+          } else if (
+            chunkType === "background-task-failed" ||
+            chunkType === "background-task-cancelled"
+          ) {
+            nextTask.result = undefined;
+          }
+          next.unshift(nextTask);
+          return next;
+        });
+      } catch {
+        // Ignore malformed lifecycle records; the next display-state refresh
+        // remains the authoritative snapshot.
+      }
+    };
+    for (const eventType of eventTypes) source.addEventListener(eventType, handleEvent);
+    return () => {
+      for (const eventType of eventTypes) source.removeEventListener(eventType, handleEvent);
+      source.close();
+    };
+  }, [activeThreadId, user.id]);
   // 同步到 workbench:设置页(存储位置迁移会重启服务)据此判断是否需要二次确认
   React.useEffect(() => {
     setAgentBusy(isBusy);
@@ -652,6 +800,87 @@ export function ChatPanel() {
     }
   }, [isBusy, messages, openWorkspacePanel, setTerminalPanelOpen]);
   const subagents = React.useMemo(() => getSubagentsFromMessages(messages), [messages]);
+  const streamedWorkflow = React.useMemo(() => getWorkflowStateFromMessages(messages), [messages]);
+  const persistedWorkflow = React.useMemo(
+    () => getWorkflowStateFromDisplayState(workflowRuns),
+    [workflowRuns],
+  );
+  const workflow = React.useMemo(
+    () => mergeWorkflowRuntimeStates(streamedWorkflow, persistedWorkflow),
+    [persistedWorkflow, streamedWorkflow],
+  );
+  const streamedBackgroundTasks = React.useMemo(
+    () => getBackgroundTasksFromMessages(messages),
+    [messages],
+  );
+  const visibleBackgroundTasks = React.useMemo(() => {
+    const merged = new Map(streamedBackgroundTasks.map((task) => [task.id, task]));
+    // Merge the persisted snapshot with stream updates. The manager snapshot
+    // may be older than a terminal event that arrived on this connection, so
+    // replacing the whole record would make the panel jump backwards.
+    for (const task of backgroundTasks) {
+      const streamed = merged.get(task.id);
+      merged.set(task.id, { ...task, ...(streamed ?? {}) });
+    }
+    return [...merged.values()];
+  }, [backgroundTasks, streamedBackgroundTasks]);
+  const handleWorkflowAction = React.useCallback(
+    async (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => {
+      if (!activeThreadId) return;
+      const endpoint = `${[
+        MASTRA_SERVER_URL,
+        "work/sessions/workbench/threads",
+        encodeURIComponent(activeThreadId),
+        "workflows",
+        encodeURIComponent(run.workflowId),
+        "runs",
+        encodeURIComponent(run.runId),
+        action,
+      ].join("/")}?resourceId=${encodeURIComponent(user.id)}`;
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          ...(action === "resume" ? { body: JSON.stringify({ resumeData }) } : {}),
+        });
+        if (!response.ok) {
+          toastError(await readErrorPayload(response, "Workflow 操作失败"));
+          return;
+        }
+        // Resume/restart are UI streams. Consume the response so the official
+        // workflow run advances to its terminal state and persists its result.
+        await response.text();
+        await reloadDisplayState();
+        await reloadMessages();
+      } catch (error) {
+        toastError(error, "Workflow 操作失败");
+      }
+    },
+    [activeThreadId, reloadDisplayState, reloadMessages, user.id],
+  );
+  const handleBackgroundTaskAction = React.useCallback(
+    async (task: BackgroundTaskState, action: BackgroundTaskAction, resumeData?: unknown) => {
+      try {
+        const response = await fetch(
+          `${MASTRA_SERVER_URL}/work/background-tasks/${encodeURIComponent(task.id)}/${action}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            ...(action === "resume" ? { body: JSON.stringify({ resumeData }) } : {}),
+          },
+        );
+        if (!response.ok) {
+          toastError(await readErrorPayload(response, "后台任务操作失败"));
+          return;
+        }
+        await reloadDisplayState();
+        await reloadMessages();
+      } catch (error) {
+        toastError(error, "后台任务操作失败");
+      }
+    },
+    [reloadDisplayState, reloadMessages],
+  );
   const messageBranchByMessageId = React.useMemo(() => {
     const byMessageId = new Map<string, MessageBranchRecord>();
     for (const branch of Object.values(messageBranches)) {
@@ -1035,11 +1264,13 @@ export function ChatPanel() {
   // 立即重新评估队列,即使其余依赖未变化
   // biome-ignore lint/correctness/useExhaustiveDependencies: 故意的额外依赖
   React.useEffect(() => {
+    const workflowBlocksQueue = Boolean(workflow?.active);
     if (
       status !== "ready" ||
       !activeThreadId ||
       !queueCanDispatch ||
       interactions.length > 0 ||
+      workflowBlocksQueue ||
       queuedRequests.length === 0 ||
       sendingQueuedRequest.current
     ) {
@@ -1097,6 +1328,7 @@ export function ChatPanel() {
     queuedRequests,
     reloadMessages,
     status,
+    workflow,
   ]);
 
   // 输入区(Queue 卡片 + 工作区卡片 + 输入框):新会话时垂直居中展示,
@@ -1105,7 +1337,8 @@ export function ChatPanel() {
     queuedRequests.length > 0 ||
     visibleTasks.length > 0 ||
     activeTools.length > 0 ||
-    subagents.length > 0;
+    subagents.length > 0 ||
+    visibleBackgroundTasks.length > 0;
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1126,13 +1359,17 @@ export function ChatPanel() {
             />
             <AgentQueuePanel
               activeTools={activeTools}
+              onBackgroundAction={handleBackgroundTaskAction}
               queuedFollowUps={queuedRequests.filter((request) => request.followUpId).length}
               subagents={subagents}
               tasks={visibleTasks}
+              backgroundTasks={visibleBackgroundTasks}
             />
           </Queue>
         </div>
       ) : null}
+
+      <WorkflowRunPanel onAction={handleWorkflowAction} workflow={workflow} />
 
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
@@ -1292,8 +1529,8 @@ export function ChatPanel() {
                         </MessageAvatar>
                         <MessageContent>
                           <MessageHeader className="px-0">MastraWork</MessageHeader>
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-medium">
-                            <Spinner className="size-3.5" />
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+                            <DotmSquare3 size={15} dotSize={2} colorPreset="solid-theme" />
                             <WordRotate
                               words={[
                                 "正在深入推理中...",

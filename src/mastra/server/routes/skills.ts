@@ -12,11 +12,14 @@ import {
   categorizeSkillResources,
   getMarketplaceSkillDetail,
   getSkillMarketplaces,
+  getSkillsShAudit,
+  getSkillsShCurated,
   getSkillsShSkillDetail,
   installMarketplaceSkill,
   installSkillsShSkill,
   listMarketplaceSkills,
   listSkillsShSkills,
+  listSkillsShSkillsWithOptions,
   type MarketplaceSkill,
   normalizeMarketplace,
   parseSkillMarkdown,
@@ -304,6 +307,95 @@ export const skillsShSkillRoute = registerApiRoute("/work/skills/skills-sh/skill
       return c.json(
         { error: error instanceof Error ? error.message : "读取 skills.sh 技能详情失败" },
         404,
+      );
+    }
+  },
+});
+
+export const skillsShCuratedRoute = registerApiRoute("/work/skills/skills-sh/curated", {
+  method: "GET",
+  handler: async (c) => {
+    try {
+      const curated = await getSkillsShCurated();
+      return c.json(curated);
+    } catch (error) {
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : "获取官方精选技能失败",
+          data: [],
+          totalOwners: 0,
+          totalSkills: 0,
+        },
+        500,
+      );
+    }
+  },
+});
+
+export const skillsShAuditRoute = registerApiRoute("/work/skills/skills-sh/audit", {
+  method: "GET",
+  handler: async (c) => {
+    try {
+      const source = c.req.query("source");
+      const slug = c.req.query("slug");
+      if (!source || !slug) {
+        throw workError("VALIDATION_FAILED", { text: "缺少技能标识" });
+      }
+      const audits = await getSkillsShAudit(source, slug);
+      return c.json({ audits });
+    } catch {
+      return c.json({ audits: [] });
+    }
+  },
+});
+
+export const skillsShListRoute = registerApiRoute("/work/skills/skills-sh/list", {
+  method: "GET",
+  handler: async (c) => {
+    try {
+      const view = (c.req.query("view") as "all-time" | "trending" | "hot") || "all-time";
+      const curated = c.req.query("curated") === "1" || c.req.query("curated") === "true";
+      const owner = c.req.query("owner") || undefined;
+      const page = Number(c.req.query("page")) || 0;
+      const perPage = Number(c.req.query("perPage") || c.req.query("per_page")) || 50;
+      const query = (c.req.query("query") || c.req.query("q") || "").trim();
+      const force = c.req.query("refresh") === "1";
+
+      const result = await listSkillsShSkillsWithOptions({
+        view,
+        curated,
+        owner,
+        page,
+        perPage,
+        query,
+        force,
+      });
+
+      return c.json({
+        ...result,
+        skills: result.skills.map((skill) => ({
+          ...skill,
+          path: `skills-sh:${skill.source}/${skill.slug}`,
+          description: skill.description || "来自 skills.sh 的社区技能",
+          origin: "skills-sh" as const,
+          marketplaceName: skill.isOfficial ? "skills.sh 官方认证" : "skills.sh",
+          sourcePath: skill.slug,
+          skillsShSource: skill.source,
+          skillsShSlug: skill.slug,
+          sourceUrl: skill.url || `https://skills.sh/${skill.source}/${skill.slug}`,
+        })),
+      });
+    } catch (error) {
+      return c.json(
+        {
+          error: error instanceof Error ? error.message : "读取 skills.sh 技能列表失败",
+          skills: [],
+          total: 0,
+          page: 0,
+          perPage: 50,
+          hasMore: false,
+        },
+        500,
       );
     }
   },

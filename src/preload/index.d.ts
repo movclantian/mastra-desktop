@@ -10,7 +10,7 @@ declare global {
       detectIdes: () => Promise<
         Array<{ id: string; name: string; command: string; category: "ide" | "system" }>
       >;
-      /** 打开本地外部 IDE 或系统工具(TraeCode, VS Code, Antigravity, 终端, 资源管理器)并定位到工作区 */
+      /** 打开本地外部 IDE 或系统工具 (VS Code, 终端, 文件资源管理器) 并定位到工作区 */
       openInApp: (app: string, targetPath: string) => Promise<{ ok: boolean; error?: string }>;
       /** 使用操作系统默认浏览器打开 HTTP(S) URL。 */
       openExternal: (url: string) => Promise<void>;

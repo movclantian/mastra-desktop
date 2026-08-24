@@ -54,15 +54,17 @@ type DraftField =
   | "description"
   | "instructions"
   | "workflowStrategy"
-  | "memberText";
+  | "memberText"
+  | "workflowStepsJson";
 type Draft = {
   type: AgentProfile["type"];
   displayName: string;
   profession: string;
   description: string;
   instructions: string;
-  workflowStrategy: "supervisor" | "sequence" | "parallel";
+  workflowStrategy: "supervisor" | "handoff" | "workflow" | "council";
   memberText: string;
+  workflowStepsJson: string;
 };
 
 type AssistDraft = {
@@ -70,7 +72,7 @@ type AssistDraft = {
   profession?: unknown;
   description?: unknown;
   instructions?: unknown;
-  workflow?: { strategy?: unknown };
+  workflow?: { strategy?: unknown; steps?: unknown };
   members?: unknown;
 };
 
@@ -82,6 +84,7 @@ const createEmptyDraft = (type: AgentProfile["type"] = "agent"): Draft => ({
   instructions: "",
   workflowStrategy: "supervisor",
   memberText: "",
+  workflowStepsJson: "[]",
 });
 
 function textValue(value: unknown): string {
@@ -183,6 +186,7 @@ export function AgentHub() {
       description: profile.description,
       instructions: profile.instructions,
       workflowStrategy: profile.workflow?.strategy ?? "supervisor",
+      workflowStepsJson: JSON.stringify(profile.workflow?.steps ?? [], null, 2),
       memberText: profile.members
         .map(
           (member) =>
@@ -221,10 +225,17 @@ export function AgentHub() {
         description: textValue(generated.description),
         instructions: textValue(generated.instructions),
         workflowStrategy:
-          generated.workflow?.strategy === "sequence" || generated.workflow?.strategy === "parallel"
+          generated.workflow?.strategy === "handoff" ||
+          generated.workflow?.strategy === "workflow" ||
+          generated.workflow?.strategy === "council"
             ? generated.workflow.strategy
             : "supervisor",
         memberText: memberTextFromDraft(generated.members),
+        workflowStepsJson: JSON.stringify(
+          Array.isArray(generated.workflow?.steps) ? generated.workflow.steps : [],
+          null,
+          2,
+        ),
       });
       setAssistOpen(false);
       setDialogOpen(true);
@@ -248,6 +259,21 @@ export function AgentHub() {
     }
     setSaving(true);
     try {
+      let workflowSteps = members.map((member, index) => ({
+        id: `step-${index + 1}`,
+        memberId: member.id,
+      }));
+      if (draft.type === "team" && draft.workflowStrategy === "workflow") {
+        try {
+          const parsed = JSON.parse(draft.workflowStepsJson);
+          if (!Array.isArray(parsed)) throw new Error("编排节点必须是数组");
+          workflowSteps = parsed as typeof workflowSteps;
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "编排节点 JSON 无效");
+          setSaving(false);
+          return;
+        }
+      }
       const response = await fetch(`${MASTRA_SERVER_URL}/work/agents`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -271,10 +297,7 @@ export function AgentHub() {
             draft.type === "team"
               ? {
                   strategy: draft.workflowStrategy,
-                  steps: members.map((member, index) => ({
-                    id: `step-${index + 1}`,
-                    memberId: member.id,
-                  })),
+                  steps: workflowSteps,
                   synthesis: true,
                 }
               : undefined,
@@ -491,25 +514,30 @@ export function AgentHub() {
                   <fieldset className="grid gap-2 border-0 p-0 text-sm font-medium">
                     <legend>执行策略</legend>
                     <div className="flex flex-wrap gap-2">
-                      {(["supervisor", "sequence", "parallel"] as const).map((strategy) => (
-                        <Button
-                          key={strategy}
-                          type="button"
-                          size="sm"
-                          variant={draft.workflowStrategy === strategy ? "secondary" : "outline"}
-                          aria-pressed={draft.workflowStrategy === strategy}
-                          onClick={() => updateDraft("workflowStrategy", strategy)}
-                        >
-                          {strategy === "supervisor"
-                            ? "智能委派"
-                            : strategy === "sequence"
-                              ? "按成员顺序"
-                              : "并行协作"}
-                        </Button>
-                      ))}
+                      {(["supervisor", "handoff", "workflow", "council"] as const).map(
+                        (strategy) => (
+                          <Button
+                            key={strategy}
+                            type="button"
+                            size="sm"
+                            variant={draft.workflowStrategy === strategy ? "secondary" : "outline"}
+                            aria-pressed={draft.workflowStrategy === strategy}
+                            onClick={() => updateDraft("workflowStrategy", strategy)}
+                          >
+                            {strategy === "supervisor"
+                              ? "Supervisors · 智能委派"
+                              : strategy === "handoff"
+                                ? "Handoffs · 顺序交接"
+                                : strategy === "workflow"
+                                  ? "Workflows · 显式编排"
+                                  : "Council · 并行评议"}
+                          </Button>
+                        ),
+                      )}
                     </div>
                     <span className="text-xs font-normal text-muted-foreground">
-                      保存后会注册为 Mastra dynamic workflow,成员顺序来自下方列表。
+                      Workflows 策略会按配置生成显式 Mastra
+                      Workflow；其中可使用分支、循环和人工审批节点。
                     </span>
                   </fieldset>
                   <div className="grid gap-1.5 text-sm font-medium">
@@ -525,6 +553,24 @@ export function AgentHub() {
                       每位成员都会注册为独立 Mastra Agent,并按上方策略执行。
                     </span>
                   </div>
+                  {draft.workflowStrategy === "workflow" ? (
+                    <div className="grid gap-1.5 text-sm font-medium">
+                      <label htmlFor="agent-workflow-steps">编排节点(JSON)</label>
+                      <Textarea
+                        id="agent-workflow-steps"
+                        className="min-h-40 resize-y font-mono text-xs"
+                        value={draft.workflowStepsJson}
+                        onChange={(event) => updateDraft("workflowStepsJson", event.target.value)}
+                        placeholder={
+                          '[{"id":"review","kind":"approval","approval":{"title":"确认发布","description":"请确认后继续"}}]'
+                        }
+                      />
+                      <span className="text-xs font-normal text-muted-foreground">
+                        节点 kind 支持 agent、approval、branch、loop；branch 使用
+                        branch.onTrueMemberId/onFalseMemberId，loop 使用 loop.mode/maxIterations。
+                      </span>
+                    </div>
+                  ) : null}
                 </>
               ) : null}
             </div>

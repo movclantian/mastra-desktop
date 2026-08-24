@@ -99,7 +99,7 @@ export function normalizeGatewayUrl(input: string, protocol?: GatewayProtocol): 
   }
   // 折叠相邻重复的版本段(/v1/v1 → /v1;版本号不同则不动,如 /v1beta 不受影响)
   url = url.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
-  if (protocol === "openai") {
+  if (protocol === "openai" || protocol === "anthropic") {
     try {
       const parsed = new URL(url);
       if (parsed.pathname === "/" || parsed.pathname === "") {
@@ -157,10 +157,12 @@ export interface ProviderConfig {
 // ---------------------------------------------------------------------------
 // models.dev 模型能力目录(可选元数据)
 // 跨会话由服务端代理缓存 1 小时;会话内再缓存解析结果,避免重复解析大 JSON。
+import { getUsage, models as tokenlensModels } from "tokenlens";
+
 // 目录不可用时只是不显示能力徽章,不影响供应商和模型本身的使用。
 // ---------------------------------------------------------------------------
 
-interface CatalogModel {
+export interface CatalogModel {
   id: string;
   name: string;
   reasoning: boolean;
@@ -168,6 +170,12 @@ interface CatalogModel {
   vision: boolean;
   audio: boolean;
   contextWindow: number;
+  cost?: {
+    input?: number;
+    output?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
 }
 
 export interface CatalogProvider {
@@ -193,7 +201,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
       throw new Error((await readErrorPayload(response, "拉取模型目录失败")).error);
     }
     // models.dev api.json 模型字段:reasoning / tool_call /
-    // modalities.input 含 image|audio / limit.context
+    // modalities.input 含 image|audio / limit.context / cost
     const raw = (await response.json()) as Record<
       string,
       {
@@ -206,6 +214,12 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
             tool_call?: boolean;
             modalities?: { input?: string[] | string };
             limit?: { context?: number | string };
+            cost?: {
+              input?: number;
+              output?: number;
+              cache_read?: number;
+              cache_write?: number;
+            };
           }
         >;
       }
@@ -235,6 +249,14 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
             (modality) => modality === "audio" || modality.startsWith("audio/"),
           ),
           contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : 0,
+          cost: m.cost
+            ? {
+                input: typeof m.cost.input === "number" ? m.cost.input : undefined,
+                output: typeof m.cost.output === "number" ? m.cost.output : undefined,
+                cacheRead: typeof m.cost.cache_read === "number" ? m.cost.cache_read : undefined,
+                cacheWrite: typeof m.cost.cache_write === "number" ? m.cost.cache_write : undefined,
+              }
+            : undefined,
         };
       }),
     }));
@@ -246,6 +268,146 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
     throw error;
   });
   return catalogPromise;
+}
+
+export function useModelCatalog(): CatalogProvider[] {
+  const [catalog, setCatalog] = React.useState<CatalogProvider[]>([]);
+  React.useEffect(() => {
+    let active = true;
+    loadModelCatalog()
+      .then((data) => {
+        if (active) setCatalog(data);
+      })
+      .catch(() => {
+        if (active) setCatalog([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  return catalog;
+}
+
+/**
+ * 结合 models.dev catalog 目录与 tokenlens 计算 Token 对应 USD 成本。
+ */
+export function calculateCostUSD(
+  modelId: string,
+  inputTokens: number,
+  outputTokens: number,
+  catalog?: CatalogProvider[],
+): number | null {
+  if (!modelId || (inputTokens === 0 && outputTokens === 0)) return null;
+  const cleanId = modelId.trim();
+  const normId = cleanId.toLowerCase();
+
+  // 1. 优先匹配 models.dev 目录价格 (最权威最新，单位: USD / 1M tokens)
+  if (catalog && catalog.length > 0) {
+    const strippedId = normId.replace(/[^a-z0-9]/g, "");
+    for (const provider of catalog) {
+      const match = provider.models.find((m) => {
+        const mNorm = m.id.toLowerCase();
+        const mStripped = mNorm.replace(/[^a-z0-9]/g, "");
+        return (
+          mNorm === normId ||
+          normId.endsWith(`/${mNorm}`) ||
+          mNorm.endsWith(normId) ||
+          m.name.toLowerCase() === normId ||
+          (strippedId.length >= 4 &&
+            (mStripped.includes(strippedId) || strippedId.includes(mStripped)))
+        );
+      });
+      if (
+        match?.cost &&
+        typeof match.cost.input === "number" &&
+        typeof match.cost.output === "number"
+      ) {
+        const costUSD =
+          (inputTokens * match.cost.input + outputTokens * match.cost.output) / 1_000_000;
+        return costUSD;
+      }
+    }
+  }
+
+  // 2. 尝试 tokenlens (精确匹配)
+  try {
+    const lensResult = getUsage({
+      modelId: cleanId,
+      usage: { input: inputTokens, output: outputTokens },
+    });
+    if (lensResult.costUSD?.totalUSD !== undefined && !Number.isNaN(lensResult.costUSD.totalUSD)) {
+      return lensResult.costUSD.totalUSD;
+    }
+  } catch {}
+
+  // 3. 尝试 tokenlens (模糊匹配已知模型家族与变体)
+  try {
+    const clean = normId.replace(/^[^:]+:/, "").replace(/^[^/]+\//, "");
+    const stripped = clean.replace(/[^a-z0-9]/g, "");
+    const modelKeys = Object.keys(tokenlensModels ?? {});
+
+    // 3.1 词干全等
+    for (const key of modelKeys) {
+      const keyModel = key.split(":")[1] || key;
+      const keyStripped = keyModel.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (keyStripped === stripped) {
+        const res = getUsage({
+          modelId: key,
+          usage: { input: inputTokens, output: outputTokens },
+        });
+        if (res.costUSD?.totalUSD !== undefined && !Number.isNaN(res.costUSD.totalUSD)) {
+          return res.costUSD.totalUSD;
+        }
+      }
+    }
+
+    // 3.2 关键词命中度匹配
+    let bestKey: string | null = null;
+    let bestScore = 0;
+    const tokens = clean.split(/[-_./]/).filter((t) => t.length >= 2);
+    if (tokens.length > 0) {
+      for (const key of modelKeys) {
+        const keyModel = (key.split(":")[1] || key).toLowerCase();
+        const matchedCount = tokens.filter((t) => keyModel.includes(t)).length;
+        const score = matchedCount / tokens.length;
+        if (score > bestScore && score >= 0.5) {
+          bestScore = score;
+          bestKey = key;
+        }
+      }
+      if (bestKey) {
+        const res = getUsage({
+          modelId: bestKey,
+          usage: { input: inputTokens, output: outputTokens },
+        });
+        if (res.costUSD?.totalUSD !== undefined && !Number.isNaN(res.costUSD.totalUSD)) {
+          return res.costUSD.totalUSD;
+        }
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * 格式化输出成本金额。
+ */
+export function formatCostUSD(cost: number | null): string {
+  if (cost === null || cost === undefined || Number.isNaN(cost)) {
+    return "未定价";
+  }
+  if (cost === 0) return "$0.00";
+  if (cost < 0.0001) return `< $0.0001`;
+  if (cost < 0.01) {
+    return `$${cost.toFixed(4)}`;
+  }
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(cost);
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +708,26 @@ export async function testProviderModel(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
+    // 聊天路由会先校验线程归属;连接测试也必须先在当前用户的租户下创建线程。
+    const createThreadResponse = await fetch(`${MASTRA_SERVER_URL}/work/threads`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        resourceId,
+        threadId,
+        title: "连接测试",
+        metadata: { draft: true },
+      }),
+    });
+    if (!createThreadResponse.ok) {
+      const detail = await createThreadResponse.text().catch(() => "");
+      return {
+        ok: false,
+        error: `创建测试线程失败:HTTP ${createThreadResponse.status} ${detail.slice(0, 200)}`,
+      };
+    }
+
     // memory 必须带:Agent 配置了 memory,不带 threadId 会被 Agent.stream 拒绝
     const response = await fetch(`${MASTRA_SERVER_URL}/chat/mastra-work-agent`, {
       method: "POST",
