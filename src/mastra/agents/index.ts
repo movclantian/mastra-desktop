@@ -13,30 +13,18 @@ import {
 } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { TaskSignalProvider } from "@mastra/core/signals";
-import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import type { AnyWorkflow } from "@mastra/core/workflows";
-import {
-  getNotificationInboxTool,
-  setDefaultWorkAgent,
-  workPollingSignals,
-  workWebhookSignals,
-} from "../harness";
+import { setDefaultWorkAgent, workPollingSignals, workWebhookSignals } from "../harness";
 import { getMemory } from "../memory";
 import {
   type GatewayLanguageModel,
   REQUEST_MODEL_CONTEXT_KEY,
   resolveConfiguredModel,
-  resolveDefaultModelId,
+  resolveDefaultLanguageModel,
 } from "../models";
-import {
-  libraryDocumentChunkerTool,
-  libraryGraphSearchTool,
-  libraryVectorSearchTool,
-} from "../rag";
 import {
   CODE_MODE_EXTERNAL_TOOL_NAMES,
   codeMode,
-  getConfiguredMcpTools,
   MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
   resolveWebSearchTools,
@@ -66,7 +54,6 @@ import {
 } from "./custom";
 import {
   buildGuardrailErrorProcessors,
-  buildGuardrailInputProcessors,
   buildGuardrailOutputProcessors,
   getGuardrailsRuntimeConfig,
 } from "./guardrails";
@@ -82,14 +69,7 @@ import {
   resolveToolPolicy,
   SESSION_GRANTS_CONTEXT_KEY,
 } from "./permissions";
-import {
-  agentsMdProcessor,
-  editorStateProcessor,
-  libraryAttachmentProcessor,
-  promptCacheProcessor,
-  terminalStateProcessor,
-  workbenchStateProcessor,
-} from "./processors";
+import { buildInputPipeline, resolveSharedTools } from "./shared";
 import { resolveSubagentModel, SUBAGENT_MODELS_CONTEXT_KEY, workSubagents } from "./subagents";
 
 export { workBrowser } from "./browser";
@@ -318,6 +298,7 @@ function createWorkAgent(
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         ));
       const instructions = member
         ? [
@@ -335,6 +316,7 @@ function createWorkAgent(
         const tools = await resolveWebSearchTools(
           selection,
           requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         );
         const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
         instructions.push(webSearchInstructions(selection, searchAvailable));
@@ -347,7 +329,12 @@ function createWorkAgent(
               (value): value is string => typeof value === "string" && value.trim().length > 0,
             )
             .slice(0, 4)
-            .map((name) => loadManagedSkill(name)),
+            .map((name) =>
+              loadManagedSkill(
+                name,
+                requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+              ),
+            ),
         );
         for (const skill of activated) {
           if (skill) {
@@ -368,6 +355,7 @@ function createWorkAgent(
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         ));
       if (member && requestContext) {
         const selectedMemberModel = await resolveSubagentModel(requestContext, member.id);
@@ -377,6 +365,7 @@ function createWorkAgent(
         const configured = await resolveConfiguredModel(
           member.model.providerId,
           member.model.modelId,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         );
         if (!configured) {
           throw new Error(
@@ -390,6 +379,7 @@ function createWorkAgent(
         const configured = await resolveConfiguredModel(
           profile.model.providerId,
           profile.model.modelId,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         );
         if (!configured) {
           throw new Error(
@@ -398,13 +388,15 @@ function createWorkAgent(
         }
         return configured;
       }
-      const modelId = await resolveDefaultModelId();
-      if (!modelId) {
+      const model = await resolveDefaultLanguageModel(
+        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+      );
+      if (!model) {
         throw new Error(
           "尚未配置模型供应商。请在 MastraWork 的设置 →「模型供应商」中添加供应商与 API Key,并选定一个模型。",
         );
       }
-      return modelId;
+      return model;
     },
     memory: ({ requestContext }) =>
       getMemory({
@@ -412,27 +404,32 @@ function createWorkAgent(
         ...(member ? { memoryScope: member.memoryScope } : {}),
       }),
     skills: fixedProfile
-      ? async () => resolveManagedSkillPaths(member?.skills ?? fixedProfile.skills)
-      : () => [getManagedSkillsDirectory()],
-    inputProcessors: async ({ requestContext }) => [
-      libraryAttachmentProcessor,
-      editorStateProcessor,
-      terminalStateProcessor,
-      workbenchStateProcessor,
-      agentsMdProcessor,
-      ...(await buildGuardrailInputProcessors(requestContext)),
-      // 缓存断点必须最后挂:guardrails 里的 ProviderHistoryCompat / ToolCallFilter 同样
-      // 改写出站 prompt,排在它们前面的话挂上的 providerOptions 会被整条消息替换掉。
-      promptCacheProcessor,
-    ],
-    outputProcessors: async () => buildGuardrailOutputProcessors(),
-    errorProcessors: async () => buildGuardrailErrorProcessors(),
+      ? async ({ requestContext }) =>
+          resolveManagedSkillPaths(
+            member?.skills ?? fixedProfile.skills,
+            requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+          )
+      : ({ requestContext }) => [
+          getManagedSkillsDirectory(
+            requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+          ),
+        ],
+    inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
+    outputProcessors: async ({ requestContext }) =>
+      buildGuardrailOutputProcessors(
+        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+      ),
+    errorProcessors: async ({ requestContext }) =>
+      buildGuardrailErrorProcessors(
+        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+      ),
     signals: [new TaskSignalProvider(), workWebhookSignals, workPollingSignals],
     agents: async ({ requestContext }) => {
       const profile =
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         ));
       if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
       const members = await resolveProfileMembers(
@@ -451,6 +448,7 @@ function createWorkAgent(
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         ));
       const workflowResult = await buildProfileWorkflow(
         profile,
@@ -470,11 +468,16 @@ function createWorkAgent(
       waitTimeoutMs: 900_000,
     },
     workspace: async ({ requestContext }) => {
-      if (!isWorkspaceEnabled()) return undefined;
+      const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+      if (!isWorkspaceEnabled(resourceId)) return undefined;
       const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
       if (!path) return undefined;
       const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-      return getThreadWorkspace(path, typeof threadId === "string" ? threadId : undefined);
+      return getThreadWorkspace(
+        path,
+        typeof threadId === "string" ? threadId : undefined,
+        resourceScopeFromRequestContext(requestContext),
+      );
     },
     tools: async ({ requestContext }) => {
       const { mode, rules } = resolveSessionPolicy(
@@ -482,20 +485,11 @@ function createWorkAgent(
         requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
         requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
       );
+      const sharedTools = await resolveSharedTools(requestContext);
+      if (!isCodeModeAvailable(rules)) delete sharedTools.execute_typescript;
       const tools: ToolsInput = {
         ...mode.additionalTools,
-        ask_user: askUserTool,
-        ...(isCodeModeAvailable(rules) ? { execute_typescript: codeMode.tool } : {}),
-        submit_plan: submitPlanTool,
-        library_vector_search: libraryVectorSearchTool,
-        library_graph_search: libraryGraphSearchTool,
-        library_document_chunker: libraryDocumentChunkerTool,
-        notification_inbox: await getNotificationInboxTool(),
-        ...(await resolveWebSearchTools(
-          parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
-          requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
-        )),
-        ...(await getConfiguredMcpTools()),
+        ...sharedTools,
       };
       const approvalSafeTools = withoutToolLevelApprovals(tools, rules);
       const visibleTools = mode.availableTools
@@ -513,7 +507,9 @@ function createWorkAgent(
         requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
         requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
       );
-      const retries = getGuardrailsRuntimeConfig().maxProcessorRetries;
+      const retries = getGuardrailsRuntimeConfig(
+        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+      ).maxProcessorRetries;
       const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
       if (isFullyAllowed(rules)) {
         return {

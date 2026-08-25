@@ -354,7 +354,6 @@ export async function persistMessageBranchOperation(options: {
   resourceId?: string;
   operation?: BranchOperation;
   requestMessages: UIMessage[];
-  responseMessageId?: string;
 }) {
   if (!options.threadId || !options.operation) return;
   await options.memory.settled();
@@ -363,10 +362,9 @@ export async function persistMessageBranchOperation(options: {
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const branches = readMessageBranches(metadata);
   const current = await recalledMessages(options.memory, options.threadId, options.resourceId);
-  const newestAssistant =
-    (options.responseMessageId
-      ? current.find((message) => message.id === options.responseMessageId)
-      : undefined) ?? [...current].reverse().find((message) => message.role === "assistant");
+  // 本轮新回复 = 重跑刚结束后时间线上的最后一条助手消息。客户端无法预知它的 id
+  // (助手 id 由服务端在 run 的 start chunk 下发),所以不接受任何请求侧提示。
+  const newestAssistant = [...current].reverse().find((message) => message.role === "assistant");
 
   if (options.operation.kind === "regenerate") {
     const previous = options.operation.previousAssistant;

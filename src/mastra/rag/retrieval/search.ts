@@ -24,7 +24,7 @@ export async function searchLibrary(
   graphRagOverride?: boolean,
 ) {
   await ensureLibrarySchema();
-  const settings = await getLibrarySettings();
+  const settings = await getLibrarySettings(resourceId);
   const vector = await getVector();
   const { embedding } = await embed({ model: libraryEmbedder(), value: query });
   const dimension = observedEmbeddingDimension([embedding]);
@@ -65,7 +65,7 @@ export async function searchLibrary(
       });
       allowed = rerankResult.map((entry) => ({ ...entry.result, score: entry.score }));
     } else {
-      const defaultModel = await resolveDefaultLanguageModel();
+      const defaultModel = await resolveDefaultLanguageModel(resourceId);
       if (defaultModel) {
         const rerankResult = await rerank(allowed, query, defaultModel as never, {
           topK: settings.topK,

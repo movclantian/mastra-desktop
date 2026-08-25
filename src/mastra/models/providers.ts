@@ -7,7 +7,7 @@
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
 import type { GatewayLanguageModel } from "@mastra/core/llm";
-import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
+import { getAppConfig, setAppConfig } from "../storage";
 import {
   createGatewayModel,
   type GatewayProtocol,
@@ -57,15 +57,15 @@ const PROVIDERS_CONFIG_KEY = "providers";
 const DEFAULT_PROVIDERS_CONFIG: ProvidersUserConfig = { providers: [], modelSelection: null };
 const providersConfigCache = new Map<string, ProvidersUserConfig>();
 
-function providerScopeKey(): string {
-  return getResourceScope() ?? "__system__";
+function providerScopeKey(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
 }
 
-export async function getProvidersConfig(): Promise<ProvidersUserConfig> {
-  const scope = providerScopeKey();
+export async function getProvidersConfig(resourceId?: string): Promise<ProvidersUserConfig> {
+  const scope = providerScopeKey(resourceId);
   const cached = providersConfigCache.get(scope);
   if (cached) return cached;
-  const raw = await getAppConfig(PROVIDERS_CONFIG_KEY);
+  const raw = await getAppConfig(PROVIDERS_CONFIG_KEY, resourceId);
   if (!raw) {
     providersConfigCache.set(scope, DEFAULT_PROVIDERS_CONFIG);
     return DEFAULT_PROVIDERS_CONFIG;
@@ -88,15 +88,18 @@ export async function getProvidersConfig(): Promise<ProvidersUserConfig> {
  * 写入供应商配置。按字段合并:
  * 只传 providers 只覆盖供应商清单, 只传 modelSelection 只覆盖默认选定模型。
  */
-export async function saveProvidersConfig(config: Partial<ProvidersUserConfig>): Promise<void> {
-  const current = await getProvidersConfig();
+export async function saveProvidersConfig(
+  config: Partial<ProvidersUserConfig>,
+  resourceId?: string,
+): Promise<void> {
+  const current = await getProvidersConfig(resourceId);
   const next: ProvidersUserConfig = {
     providers: config.providers ?? current.providers,
     modelSelection:
       config.modelSelection !== undefined ? config.modelSelection : current.modelSelection,
   };
-  await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2));
-  providersConfigCache.set(providerScopeKey(), next);
+  await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
+  providersConfigCache.set(providerScopeKey(resourceId), next);
 }
 
 /** 可用供应商 = 未禁用、有 Key、且至少启用了一个模型 */
@@ -141,19 +144,21 @@ function isRequestModel(value: unknown): value is RequestModel {
 /** 前端 body.model 携带模型路由 id; 真正的 URL、协议和 Key 始终从服务端读取 */
 export async function resolveRequestModel(
   value: unknown,
-): Promise<GatewayLanguageModel | { id: `${string}/${string}`; apiKey: string } | undefined> {
+  resourceId?: string,
+): Promise<GatewayLanguageModel | undefined> {
   if (!isRequestModel(value)) return undefined;
   const { providerId, modelId } = splitRouterId(value.id);
-  return resolveConfiguredModel(providerId, modelId);
+  return resolveConfiguredModel(providerId, modelId, resourceId);
 }
 
 /** Resolve a persisted thread model selection without reconstructing a client request payload */
 export async function resolveConfiguredModel(
   providerId: string,
   modelId: string,
-): Promise<GatewayLanguageModel | { id: `${string}/${string}`; apiKey: string } | undefined> {
+  resourceId?: string,
+): Promise<GatewayLanguageModel | undefined> {
   if (!providerId.trim() || !modelId.trim()) return undefined;
-  const config = await getProvidersConfig();
+  const config = await getProvidersConfig(resourceId);
   const provider =
     config.providers.find((candidate) => routerPrefix(candidate) === providerId) ??
     config.providers.find((candidate) => candidate.id === providerId);
@@ -175,8 +180,14 @@ export async function resolveConfiguredModel(
     });
   }
 
-  const routedId = `${WORKBENCH_GATEWAY_ID}/${routerPrefix(provider)}/${modelId}`;
-  return { id: routedId as `${string}/${string}`, apiKey: provider.apiKey };
+  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
+  if (!protocol) return undefined;
+  return createGatewayModel({
+    modelId,
+    apiKey: provider.apiKey,
+    protocol,
+    useResponses: provider.useResponses,
+  });
 }
 
 /** 当前请求模型的家族名 (Mastra registry id) */
@@ -186,9 +197,12 @@ export function requestModelFamily(value: unknown): string | undefined {
 }
 
 /** 当前生效模型是否为「OpenAI 协议 + Responses 端点」的自定义网关 */
-export async function usesOpenAIResponses(rawModel: unknown): Promise<boolean> {
+export async function usesOpenAIResponses(
+  rawModel: unknown,
+  resourceId?: string,
+): Promise<boolean> {
   if (isRequestModel(rawModel)) {
-    const config = await getProvidersConfig();
+    const config = await getProvidersConfig(resourceId);
     const { providerId } = splitRouterId(rawModel.id);
     const provider =
       config.providers.find((candidate) => routerPrefix(candidate) === providerId) ??
@@ -197,7 +211,7 @@ export async function usesOpenAIResponses(rawModel: unknown): Promise<boolean> {
       provider?.baseUrl && provider.protocol === "openai" && provider.useResponses === true,
     );
   }
-  const config = await getProvidersConfig();
+  const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   if (!selection) return false;
   const provider = config.providers.find((candidate) => candidate.id === selection.providerId);
@@ -213,8 +227,8 @@ export async function usesOpenAIResponses(rawModel: unknown): Promise<boolean> {
 }
 
 /** 未显式指定模型时的家族名 (取自存储的默认选定模型) */
-export async function defaultModelFamily(): Promise<string | undefined> {
-  const config = await getProvidersConfig();
+export async function defaultModelFamily(resourceId?: string): Promise<string | undefined> {
+  const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   if (!selection) return undefined;
   const provider = config.providers.find((candidate) => candidate.id === selection.providerId);
@@ -223,8 +237,10 @@ export async function defaultModelFamily(): Promise<string | undefined> {
 }
 
 /** Agent 的默认模型 (Studio 直接聊天、以及记忆里「跟随当前模型」的场景) */
-export async function resolveDefaultModelId(): Promise<`${string}/${string}` | undefined> {
-  const config = await getProvidersConfig();
+export async function resolveDefaultModelId(
+  resourceId?: string,
+): Promise<`${string}/${string}` | undefined> {
+  const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   const provider = selection
     ? config.providers.find((candidate) => candidate.id === selection.providerId)
@@ -245,8 +261,10 @@ export async function resolveDefaultModelId(): Promise<`${string}/${string}` | u
   return `${WORKBENCH_GATEWAY_ID}/${routerPrefix(fallback)}/${fallbackModel.id}`;
 }
 
-export async function resolveDefaultLanguageModel(): Promise<GatewayLanguageModel | undefined> {
-  const config = await getProvidersConfig();
+export async function resolveDefaultLanguageModel(
+  resourceId?: string,
+): Promise<GatewayLanguageModel | undefined> {
+  const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   const provider = selection
     ? config.providers.find((candidate) => candidate.id === selection.providerId)

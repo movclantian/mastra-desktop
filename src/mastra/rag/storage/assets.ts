@@ -126,7 +126,7 @@ export async function uploadAsset(
   };
 
   if (extractable && !skipIndexing) {
-    const settings = await getLibrarySettings();
+    const settings = await getLibrarySettings(input.resourceId);
     void reindexAsset(input.resourceId, id, settings).catch(() => undefined);
   }
   return createdAsset;

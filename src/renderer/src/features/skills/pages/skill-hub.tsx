@@ -516,7 +516,7 @@ export function SkillHub() {
                   <span>
                     已筛选厂商：
                     <strong className="font-mono text-foreground">@{selectedMaker}</strong> (
-                    {filteredSkills.length} 个技能)
+                    {currentSkills.length} 个技能)
                   </span>
                   <Button
                     size="xs"

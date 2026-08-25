@@ -1,6 +1,8 @@
 import { requestJson } from "@/api/client";
 import type { MessageSearchHit, ModelSelection, WorkThread } from "@/features/workbench/types";
 
+const MEMORY_AGENT_ID = "mastra-work-agent";
+
 function resourceQuery(resourceId: string): string {
   return `resourceId=${encodeURIComponent(resourceId)}`;
 }
@@ -75,7 +77,10 @@ export async function updateThreadMode(
 export async function updateThreadPermissions(
   threadId: string,
   resourceId: string,
-  rules: Record<string, unknown>,
+  rules: {
+    categories: Partial<Record<string, string>>;
+    tools: Partial<Record<string, string>>;
+  },
 ): Promise<void> {
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/permissions?${resourceQuery(resourceId)}`,
@@ -118,10 +123,43 @@ export async function cloneThreadRequest(
 }
 
 export async function searchMemory(resourceId: string, query: string): Promise<MessageSearchHit[]> {
-  const payload = await requestJson<{ hits?: MessageSearchHit[] }>(
-    `/work/memory/search?q=${encodeURIComponent(query)}&${resourceQuery(resourceId)}`,
-    {},
-    "搜索历史消息失败",
-  );
-  return Array.isArray(payload.hits) ? payload.hits : [];
+  const params = new URLSearchParams({
+    agentId: MEMORY_AGENT_ID,
+    resourceId,
+    searchQuery: query,
+    limit: "20",
+  });
+  const payload = await requestJson<{
+    results?: Array<{
+      id?: string;
+      threadId?: string;
+      threadTitle?: string;
+      role?: string;
+      content?: string;
+      createdAt?: string;
+    }>;
+    searchType?: string;
+  }>(`/api/memory/search?${params.toString()}`, {}, "搜索历史消息失败");
+  const semantic = payload.searchType === "semantic";
+  return (payload.results ?? []).flatMap((result) => {
+    if (
+      typeof result.id !== "string" ||
+      typeof result.threadId !== "string" ||
+      typeof result.content !== "string" ||
+      typeof result.createdAt !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        threadId: result.threadId,
+        threadTitle: result.threadTitle || result.threadId,
+        messageId: result.id,
+        role: result.role || "assistant",
+        text: result.content,
+        createdAt: result.createdAt,
+        semantic,
+      },
+    ];
+  });
 }

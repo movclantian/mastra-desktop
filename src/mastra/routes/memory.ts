@@ -3,6 +3,8 @@
  * Memory 主体见 src/mastra/memory/index.ts,
  * 参数语义参考 docs/en/docs/memory/{overview,semantic-recall,working-memory}.mdx。
  */
+
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { getMemoryConfig, type MemoryUserConfig, saveMemoryConfig } from "../memory";
 
@@ -10,7 +12,9 @@ import { getMemoryConfig, type MemoryUserConfig, saveMemoryConfig } from "../mem
 export const memoryConfigRoute = registerApiRoute("/work/memory", {
   method: "GET",
   handler: async (c) => {
-    return c.json(await getMemoryConfig());
+    return c.json(
+      await getMemoryConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+    );
   },
 });
 
@@ -18,7 +22,10 @@ export const memoryConfigRoute = registerApiRoute("/work/memory", {
 export const saveMemoryConfigRoute = registerApiRoute("/work/memory", {
   method: "POST",
   handler: async (c) => {
-    await saveMemoryConfig(await c.req.json<MemoryUserConfig>());
+    await saveMemoryConfig(
+      await c.req.json<MemoryUserConfig>(),
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     return c.json({ ok: true });
   },
 });

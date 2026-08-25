@@ -12,7 +12,7 @@ import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
 import { nanoid } from "nanoid";
 import { resolveDefaultLanguageModel } from "../../models";
-import { getStorageDirectory, getStorageUrl, runWithResourceScope } from "../../storage";
+import { getStorageDirectory, getStorageUrl } from "../../storage";
 import { getLibrarySettings } from "../settings";
 import {
   beginLibraryIndexRun,
@@ -127,6 +127,7 @@ async function extractMetadata(
   doc: MDocument,
   settings: LibrarySettings,
   modelOverride?: MastraLanguageModel,
+  resourceId?: string,
 ) {
   if (
     !settings.extractTitle &&
@@ -136,7 +137,7 @@ async function extractMetadata(
   ) {
     return;
   }
-  const model = modelOverride ?? (await resolveDefaultLanguageModel());
+  const model = modelOverride ?? (await resolveDefaultLanguageModel(resourceId));
   if (!model) return;
   try {
     const llm = model as never;
@@ -193,106 +194,22 @@ function queueAssetIndex(
   const previous = indexingPromises.get(key) ?? Promise.resolve();
   const next = previous
     .catch(() => undefined)
-    .then(() =>
-      runWithResourceScope(asset.resourceId, async () => {
-        let stage: LibraryIndexStage = "chunk";
-        const run = await beginLibraryIndexRun(asset.resourceId, asset.id);
-        try {
-          await ensureLibrarySchema();
-          const vector = await getVector();
-          const embedder = libraryEmbedder();
-          const doc = MDocument.fromText(extractedText);
-          await updateLibraryIndexRunStage(run.id, "chunk");
-          await extractMetadata(doc, settings);
-          const chunks = await chunkDocument(doc, settings);
-          if (chunks.length === 0) {
-            await finishLibraryIndexRun(run.id, "unsupported", "chunk", "文档未能切分出有效文本块");
-            await withClient((client) =>
-              client.execute({
-                sql: "UPDATE library_assets SET status = 'unsupported', updated_at = ? WHERE id = ? AND resource_id = ?",
-                args: [now(), asset.id, asset.resourceId],
-              }),
-            );
-            emitIndexSettled({
-              resourceId: asset.resourceId,
-              assetId: asset.id,
-              filename: asset.filename,
-              threadIds: asset.threadIds,
-              outcome: "unsupported",
-            });
-            return;
-          }
-
-          stage = "embedding";
-          await updateLibraryIndexRunStage(run.id, "embedding");
-          const chunkTexts = chunks.map((chunk) => chunk.text);
-          const { embeddings } = await embedMany({
-            model: embedder,
-            values: chunkTexts,
-          });
-          const dimension = observedEmbeddingDimension(embeddings);
-          const indexName = await ensureVectorIndex(vector, dimension);
-
-          stage = "vector";
-          await updateLibraryIndexRunStage(run.id, "vector");
-          const vectorIds = chunks.map((_, index) => `${asset.id}_${index}`);
-          const vectorMetadatas = chunks.map((chunk, index) => ({
-            assetId: asset.id,
-            resourceId: asset.resourceId,
-            filename: asset.filename,
-            chunkIndex: index,
-            text: chunk.text,
-            ...(chunk.metadata ?? {}),
-          }));
-          await vector.upsert({
-            indexName,
-            vectors: embeddings,
-            ids: vectorIds,
-            metadata: vectorMetadatas,
-          });
-
-          stage = "persist";
-          await updateLibraryIndexRunStage(run.id, "persist");
-          await withClient(async (client) => {
-            const statements = [
-              {
-                sql: "DELETE FROM library_chunks WHERE asset_id = ?",
-                args: [asset.id],
-              },
-              ...chunks.map((chunk, index) => ({
-                sql: `INSERT INTO library_chunks (id, asset_id, chunk_index, text, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-                args: [
-                  nanoid(),
-                  asset.id,
-                  index,
-                  chunk.text,
-                  JSON.stringify(chunk.metadata ?? {}),
-                  now(),
-                ],
-              })),
-              {
-                sql: "UPDATE library_assets SET status = 'ready', updated_at = ? WHERE id = ? AND resource_id = ?",
-                args: [now(), asset.id, asset.resourceId],
-              },
-            ];
-            await client.batch(statements);
-          });
-          await finishLibraryIndexRun(run.id, "succeeded", "persist");
-          emitIndexSettled({
-            resourceId: asset.resourceId,
-            assetId: asset.id,
-            filename: asset.filename,
-            threadIds: asset.threadIds,
-            outcome: "succeeded",
-            chunkCount: chunks.length,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          await finishLibraryIndexRun(run.id, "failed", stage, message);
+    .then(async () => {
+      let stage: LibraryIndexStage = "chunk";
+      const run = await beginLibraryIndexRun(asset.resourceId, asset.id);
+      try {
+        await ensureLibrarySchema();
+        const vector = await getVector();
+        const embedder = libraryEmbedder();
+        const doc = MDocument.fromText(extractedText);
+        await updateLibraryIndexRunStage(run.id, "chunk");
+        await extractMetadata(doc, settings, undefined, asset.resourceId);
+        const chunks = await chunkDocument(doc, settings);
+        if (chunks.length === 0) {
+          await finishLibraryIndexRun(run.id, "unsupported", "chunk", "文档未能切分出有效文本块");
           await withClient((client) =>
             client.execute({
-              sql: "UPDATE library_assets SET status = 'error', updated_at = ? WHERE id = ? AND resource_id = ?",
+              sql: "UPDATE library_assets SET status = 'unsupported', updated_at = ? WHERE id = ? AND resource_id = ?",
               args: [now(), asset.id, asset.resourceId],
             }),
           );
@@ -301,12 +218,94 @@ function queueAssetIndex(
             assetId: asset.id,
             filename: asset.filename,
             threadIds: asset.threadIds,
-            outcome: "failed",
-            error: message,
+            outcome: "unsupported",
           });
+          return;
         }
-      }),
-    )
+
+        stage = "embedding";
+        await updateLibraryIndexRunStage(run.id, "embedding");
+        const chunkTexts = chunks.map((chunk) => chunk.text);
+        const { embeddings } = await embedMany({
+          model: embedder,
+          values: chunkTexts,
+        });
+        const dimension = observedEmbeddingDimension(embeddings);
+        const indexName = await ensureVectorIndex(vector, dimension);
+
+        stage = "vector";
+        await updateLibraryIndexRunStage(run.id, "vector");
+        const vectorIds = chunks.map((_, index) => `${asset.id}_${index}`);
+        const vectorMetadatas = chunks.map((chunk, index) => ({
+          assetId: asset.id,
+          resourceId: asset.resourceId,
+          filename: asset.filename,
+          chunkIndex: index,
+          text: chunk.text,
+          ...(chunk.metadata ?? {}),
+        }));
+        await vector.upsert({
+          indexName,
+          vectors: embeddings,
+          ids: vectorIds,
+          metadata: vectorMetadatas,
+        });
+
+        stage = "persist";
+        await updateLibraryIndexRunStage(run.id, "persist");
+        await withClient(async (client) => {
+          const statements = [
+            {
+              sql: "DELETE FROM library_chunks WHERE asset_id = ?",
+              args: [asset.id],
+            },
+            ...chunks.map((chunk, index) => ({
+              sql: `INSERT INTO library_chunks (id, asset_id, chunk_index, text, metadata, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)`,
+              args: [
+                nanoid(),
+                asset.id,
+                index,
+                chunk.text,
+                JSON.stringify(chunk.metadata ?? {}),
+                now(),
+              ],
+            })),
+            {
+              sql: "UPDATE library_assets SET status = 'ready', updated_at = ? WHERE id = ? AND resource_id = ?",
+              args: [now(), asset.id, asset.resourceId],
+            },
+          ];
+          await client.batch(statements);
+        });
+        await finishLibraryIndexRun(run.id, "succeeded", "persist");
+        emitIndexSettled({
+          resourceId: asset.resourceId,
+          assetId: asset.id,
+          filename: asset.filename,
+          threadIds: asset.threadIds,
+          outcome: "succeeded",
+          chunkCount: chunks.length,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await finishLibraryIndexRun(run.id, "failed", stage, message);
+        await withClient((client) =>
+          client.execute({
+            sql: "UPDATE library_assets SET status = 'error', updated_at = ? WHERE id = ? AND resource_id = ?",
+            args: [now(), asset.id, asset.resourceId],
+          }),
+        );
+        emitIndexSettled({
+          resourceId: asset.resourceId,
+          assetId: asset.id,
+          filename: asset.filename,
+          threadIds: asset.threadIds,
+          outcome: "failed",
+          error: message,
+        });
+      }
+    })
     .finally(() => {
       if (indexingPromises.get(key) === next) indexingPromises.delete(key);
     });
@@ -381,13 +380,13 @@ export async function recoverInterruptedLibraryIndexes(): Promise<void> {
   );
   for (const row of result.rows) {
     const asset = rowToAsset(row);
-    void runWithResourceScope(asset.resourceId, async () => {
-      const settings = await getLibrarySettings();
+    void (async () => {
+      const settings = await getLibrarySettings(asset.resourceId);
       if (asset.extractedText) {
         await queueAssetIndex(asset, asset.extractedText, settings);
       } else {
         await reindexAsset(asset.resourceId, asset.id, settings);
       }
-    }).catch(() => undefined);
+    })().catch(() => undefined);
   }
 }

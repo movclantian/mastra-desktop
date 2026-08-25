@@ -2,6 +2,8 @@
  * MCP 配置路由(/work/mcp):读写服务器清单 + 连通性测试。
  * 配置主体见 src/mastra/connections/mcp.ts(docs/en/docs/connections/mcp.mdx)。
  */
+
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../errors";
 import {
@@ -16,7 +18,8 @@ import {
 export const mcpConfigRoute = registerApiRoute("/work/mcp", {
   method: "GET",
   handler: async (c) => {
-    const config = await getMcpConfig();
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const config = await getMcpConfig(resourceId);
     return c.json({ servers: config.servers.map(summarizeMcpServer) });
   },
 });
@@ -28,10 +31,11 @@ export const saveMcpConfigRoute = registerApiRoute("/work/mcp", {
       const payload = (await c.req.json()) as { server?: unknown };
       const server = payload.server as McpServerConfig | undefined;
       if (!server) throw workError("MCP_CONFIG_MISSING");
-      const config = await getMcpConfig();
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      const config = await getMcpConfig(resourceId);
       const next = config.servers.filter((item) => item.id !== server.id);
       next.push(server);
-      await saveMcpConfig({ servers: next });
+      await saveMcpConfig({ servers: next }, resourceId);
       return c.json({ server: summarizeMcpServer(server) }, 201);
     } catch (error) {
       throw workError("MCP_CONFIG_INVALID", {
@@ -46,9 +50,13 @@ export const deleteMcpConfigRoute = registerApiRoute("/work/mcp/:id", {
   method: "DELETE",
   handler: async (c) => {
     const id = c.req.param("id");
-    const config = await getMcpConfig();
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const config = await getMcpConfig(resourceId);
     if (!config.servers.some((server) => server.id === id)) throw workError("MCP_SERVER_NOT_FOUND");
-    await saveMcpConfig({ servers: config.servers.filter((server) => server.id !== id) });
+    await saveMcpConfig(
+      { servers: config.servers.filter((server) => server.id !== id) },
+      resourceId,
+    );
     return c.json({ ok: true });
   },
 });
@@ -59,7 +67,12 @@ export const testMcpConfigRoute = registerApiRoute("/work/mcp/test", {
     try {
       const payload = (await c.req.json()) as { server?: McpServerConfig };
       if (!payload.server) throw workError("MCP_CONFIG_MISSING");
-      return c.json(await testMcpServer(payload.server));
+      return c.json(
+        await testMcpServer(
+          payload.server,
+          c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+        ),
+      );
     } catch (error) {
       return c.json(
         {
@@ -78,7 +91,12 @@ export const authenticateMcpConfigRoute = registerApiRoute("/work/mcp/:id/authen
   method: "POST",
   handler: async (c) => {
     try {
-      return c.json(await authenticateMcpServer(c.req.param("id")));
+      return c.json(
+        await authenticateMcpServer(
+          c.req.param("id"),
+          c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+        ),
+      );
     } catch (error) {
       throw workError("MCP_CONNECTION_FAILED", {
         text: error instanceof Error ? error.message : "MCP OAuth 授权失败",

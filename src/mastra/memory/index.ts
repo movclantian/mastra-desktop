@@ -18,16 +18,19 @@
  *   observation.extract(Extractor[])与 reflection.extract(Extractor[]) 可由设置面板配置；
  *   任意 schema/hook 仍保留为代码级扩展点,不允许普通 JSON 设置执行任意代码。
  */
+
+import type { MastraModelConfig } from "@mastra/core/llm";
 import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
 import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
-import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
+import { resolveConfiguredModel, resolveDefaultLanguageModel, splitRouterId } from "../models";
 import {
   appStorage,
   getAppConfig,
-  getResourceScope,
   getStorageUrl,
+  type RequestContextLike,
+  resourceIdFromContext,
   setAppConfig,
 } from "../storage";
 
@@ -229,19 +232,19 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
 /** 读取记忆配置(app_config 表 key="memory";无记录或损坏时回落默认值) */
 const memoryConfigByScope = new Map<string, MemoryUserConfig>();
 
-function memoryScopeKey(): string {
-  return getResourceScope() ?? "__system__";
+function memoryScopeKey(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
 }
 
-function currentConfig(): MemoryUserConfig {
-  return memoryConfigByScope.get(memoryScopeKey()) ?? DEFAULT_CONFIG;
+function currentConfig(resourceId?: string): MemoryUserConfig {
+  return memoryConfigByScope.get(memoryScopeKey(resourceId)) ?? DEFAULT_CONFIG;
 }
 
-export async function getMemoryConfig(): Promise<MemoryUserConfig> {
-  const scope = memoryScopeKey();
+export async function getMemoryConfig(resourceId?: string): Promise<MemoryUserConfig> {
+  const scope = memoryScopeKey(resourceId);
   const cached = memoryConfigByScope.get(scope);
   if (cached) return cached;
-  const raw = await getAppConfig(MEMORY_CONFIG_KEY);
+  const raw = await getAppConfig(MEMORY_CONFIG_KEY, resourceId);
   if (!raw) {
     memoryConfigByScope.set(scope, DEFAULT_CONFIG);
     return DEFAULT_CONFIG;
@@ -257,11 +260,11 @@ export async function getMemoryConfig(): Promise<MemoryUserConfig> {
 }
 
 /** 写入记忆配置并实时生效。嵌入固定使用本机 FastEmbed，不持久化模型或版本状态。 */
-export async function saveMemoryConfig(next: MemoryUserConfig): Promise<void> {
-  const normalized = normalizeMemoryConfig({ ...currentConfig(), ...next });
-  await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2));
-  memoryConfigByScope.set(memoryScopeKey(), normalized);
-  const runtime = getMemoryRuntime();
+export async function saveMemoryConfig(next: MemoryUserConfig, resourceId?: string): Promise<void> {
+  const normalized = normalizeMemoryConfig({ ...currentConfig(resourceId), ...next });
+  await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
+  memoryConfigByScope.set(memoryScopeKey(resourceId), normalized);
+  const runtime = getMemoryRuntime(resourceId);
   runtime.cachedMemory = null;
   runtime.memoryByOmModels.clear();
 }
@@ -395,8 +398,8 @@ function dedupeExtractors(
  * separate observer/reflection stages, while summarizeThread accepts one flat
  * list; preserve configuration order and remove duplicate names globally.
  */
-export function getConfiguredMemoryExtractors(): Extractor[] {
-  const config = currentConfig();
+export function getConfiguredMemoryExtractors(resourceId?: string): Extractor[] {
+  const config = currentConfig(resourceId);
   const seen = new Set<string>();
   const extractors: Extractor[] = [];
   for (const item of config.omExtractors) {
@@ -418,8 +421,8 @@ interface MemoryRuntime {
 
 const memoryRuntimeByScope = new Map<string, MemoryRuntime>();
 
-function getMemoryRuntime(): MemoryRuntime {
-  const scope = memoryScopeKey();
+function getMemoryRuntime(resourceId?: string): MemoryRuntime {
+  const scope = memoryScopeKey(resourceId);
   let runtime = memoryRuntimeByScope.get(scope);
   if (!runtime) {
     runtime = { cachedMemory: null, memoryByOmModels: new Map() };
@@ -444,7 +447,8 @@ export function getMemory(options?: {
   requestContext?: RequestContext;
   memoryScope?: "thread" | "resource";
 }): Memory {
-  const runtime = getMemoryRuntime();
+  const resourceId = resourceIdFromContext(options?.requestContext as RequestContextLike);
+  const runtime = getMemoryRuntime(resourceId);
   const selection = options?.requestContext?.get(OM_MODELS_CONTEXT_KEY) as
     | OmModelSelection
     | undefined;
@@ -458,15 +462,18 @@ export function getMemory(options?: {
     ]);
     const existing = runtime.memoryByOmModels.get(key);
     if (existing) return existing;
-    const memory = buildMemory({
-      observerModelId,
-      reflectorModelId,
-      memoryScope: options?.memoryScope,
-    });
+    const memory = buildMemory(
+      {
+        observerModelId,
+        reflectorModelId,
+        memoryScope: options?.memoryScope,
+      },
+      resourceId,
+    );
     runtime.memoryByOmModels.set(key, memory);
     return memory;
   }
-  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory();
+  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory({}, resourceId);
   return runtime.cachedMemory;
 }
 
@@ -480,14 +487,8 @@ export async function settleAllMemory(): Promise<void> {
   await Promise.allSettled([...instances].map((memory) => memory.settled()));
 }
 
-function workbenchModelId(modelId: string): `${string}/${string}` {
-  return (
-    modelId.startsWith(`${WORKBENCH_GATEWAY_ID}/`) ? modelId : `${WORKBENCH_GATEWAY_ID}/${modelId}`
-  ) as `${string}/${string}`;
-}
-
-function buildMemory(overrides: OmModelSelection = {}): Memory {
-  const config = currentConfig();
+function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Memory {
+  const config = currentConfig(resourceId);
   // 官方约束:顶层 model 与 observation.model/reflection.model 互斥 ——
   // 任一子模型配置时只传子模型,否则传顶层(或全部省略 = 跟随当前模型)。
   const omObserverModel = overrides.observerModelId?.trim() || config.omObserverModel.trim();
@@ -499,13 +500,22 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
   // OM 的配置对象不能省略 model:Mastra 会把「未配置」静默解析为
   // google/gemini-2.5-flash,这会让用户明明选择了自定义网关却在后台观察任务里
   // 触发 Google 的环境变量检查。空配置必须动态跟随工作台当前模型,并在没有模型
-  // 时给出明确的配置错误;实际路由 id 由 WorkbenchGateway 在 Mastra 实例上解析。
-  const omFollowCurrentModel = async () => {
-    const modelId = await resolveDefaultModelId();
-    if (!modelId) {
+  // 时给出明确的配置错误;模型按 resourceId 直接解析为 LanguageModel。
+  const resolveConfiguredMemoryModel = async (modelId: string): Promise<MastraModelConfig> => {
+    const { providerId, modelId: selectedModelId } = splitRouterId(modelId);
+    const model = await resolveConfiguredModel(providerId, selectedModelId, resourceId);
+    if (!model) {
+      throw new Error("记忆配置中的模型不可用,请先在「模型供应商」中启用该模型");
+    }
+    return model;
+  };
+
+  const omFollowCurrentModel = async (): Promise<MastraModelConfig> => {
+    const model = await resolveDefaultLanguageModel(resourceId);
+    if (!model) {
       throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
     }
-    return modelId;
+    return model;
   };
 
   // 自定义抽取器(observational-memory.mdx「Extractor API」):schema 省略 =
@@ -582,7 +592,11 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
             observationalMemory: {
               ...(omObserverModel || omReflectionModel
                 ? {}
-                : { model: omTopModel ? workbenchModelId(omTopModel) : omFollowCurrentModel }),
+                : {
+                    model: omTopModel
+                      ? () => resolveConfiguredMemoryModel(omTopModel)
+                      : omFollowCurrentModel,
+                  }),
               scope: observationalMemoryScope,
               // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
               // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
@@ -602,7 +616,9 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
                 : {}),
               observation: {
                 continuationHints: false,
-                ...(omObserverModel ? { model: workbenchModelId(omObserverModel) } : {}),
+                ...(omObserverModel
+                  ? { model: () => resolveConfiguredMemoryModel(omObserverModel) }
+                  : {}),
                 ...(config.omObserverInstruction.trim()
                   ? { instruction: config.omObserverInstruction.trim() }
                   : {}),
@@ -631,7 +647,9 @@ function buildMemory(overrides: OmModelSelection = {}): Memory {
               },
               reflection: {
                 continuationHints: false,
-                ...(omReflectionModel ? { model: workbenchModelId(omReflectionModel) } : {}),
+                ...(omReflectionModel
+                  ? { model: () => resolveConfiguredMemoryModel(omReflectionModel) }
+                  : {}),
                 ...(config.omReflectionInstruction.trim()
                   ? { instruction: config.omReflectionInstruction.trim() }
                   : {}),

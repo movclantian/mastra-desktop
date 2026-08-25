@@ -244,7 +244,10 @@ export function useWorkbenchConfig({
     async (rules: PermissionRules) => {
       setPermissionRulesState(rules);
       if (!activeThreadId) return;
-      await updateThreadPermissions(activeThreadId, user.id, rules);
+      await updateThreadPermissions(activeThreadId, user.id, {
+        categories: { ...rules.categories },
+        tools: { ...rules.tools },
+      });
       await refreshThreads();
     },
     [activeThreadId, refreshThreads, user.id],

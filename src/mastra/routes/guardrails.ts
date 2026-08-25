@@ -6,6 +6,8 @@
  * 参数语义参考 docs/en/docs/agents/{guardrails,processors}.mdx
  * 与 docs/en/reference/processors/*.mdx。
  */
+
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import {
   type GuardrailsUserConfig,
@@ -19,7 +21,9 @@ import { isWorkspaceEnabled } from "../workspace";
 export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
   method: "GET",
   handler: async (c) => {
-    return c.json(await getGuardrailsConfig());
+    return c.json(
+      await getGuardrailsConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+    );
   },
 });
 
@@ -27,7 +31,10 @@ export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
 export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
   method: "POST",
   handler: async (c) => {
-    await saveGuardrailsConfig(await c.req.json<GuardrailsUserConfig>());
+    await saveGuardrailsConfig(
+      await c.req.json<GuardrailsUserConfig>(),
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     return c.json({ ok: true });
   },
 });
@@ -43,15 +50,24 @@ export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
 export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status", {
   method: "GET",
   handler: async (c) => {
-    const config = await getGuardrailsConfig();
+    const config = await getGuardrailsConfig(
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     // 组合存储按 domain 路由:经 getStore('observability') 取观测域接口
     const observability = (await c.get("mastra").getStorage()?.getStore("observability")) as
       | { getMetricAggregate?: unknown }
       | undefined;
     return c.json({
-      modelReady: Boolean(config.model.trim() || (await resolveDefaultModelId())),
+      modelReady: Boolean(
+        config.model.trim() ||
+          (await resolveDefaultModelId(
+            c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+          )),
+      ),
       costMetricsReady: typeof observability?.getMetricAggregate === "function",
-      workspaceReady: isWorkspaceEnabled(),
+      workspaceReady: isWorkspaceEnabled(
+        c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      ),
     });
   },
 });

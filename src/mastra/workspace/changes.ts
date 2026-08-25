@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type { BackgroundProcessConfig } from "@mastra/core/workspace";
 import {
+  atomicWrite,
   type ContentObjectMetadata,
   contentObjectReference,
   deleteContentObject,
   getContentObjectMetadata,
-  getResourceScope,
   getStorageDirectory,
   putContentObject,
   readContentObject,
@@ -110,6 +111,8 @@ export function createWorkspaceOutputArchiveHooks(): {
   hooks: WorkspaceToolHooks;
   backgroundProcesses: BackgroundProcessConfig;
 } {
+  // Foreground and background commands have different lifecycle callbacks;
+  // maps bridge their start/output/exit events without putting state on Workspace.
   const pending = new Map<string, PendingOutput>();
   const pendingBackground = new Map<string, PendingOutput>();
   const backgroundByPid = new Map<string, PendingOutput>();
@@ -128,7 +131,6 @@ export function createWorkspaceOutputArchiveHooks(): {
       contentType: "text/plain; charset=utf-8",
       encoding: "utf8",
       source: record.command,
-      ttlMs: 30 * 24 * 60 * 60 * 1000,
     });
     const payload = {
       objectId: metadata.objectId,
@@ -179,7 +181,8 @@ export function createWorkspaceOutputArchiveHooks(): {
         )
           return;
         const userId =
-          outputRequestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ?? getResourceScope();
+          outputRequestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ??
+          outputRequestValue(context, MASTRA_RESOURCE_ID_KEY);
         const threadId = outputThreadId(context);
         if (!userId || !threadId) return;
         const callId = outputCallId(context) ?? `${threadId}:${Date.now()}:${Math.random()}`;
@@ -317,14 +320,9 @@ function pathSegment(value: string, name: string): string {
 }
 
 function currentUserId(explicit?: string): string {
-  const scoped = getResourceScope();
   const candidate = explicit?.trim();
-  if (scoped && candidate && candidate !== scoped) {
-    throw new Error("Workspace change user does not match the authenticated user");
-  }
-  const userId = scoped || candidate;
-  if (!userId) throw new Error("Authenticated user is required");
-  return userId;
+  if (!candidate) throw new Error("Authenticated user is required");
+  return candidate;
 }
 
 function changesPath(threadId: string, userId?: string): string {
@@ -461,8 +459,21 @@ export async function readWorkspaceChangeContent(input: {
     kind,
   });
   if (!result) return null;
-  if (metadata.encoding === "binary") return { metadata, content: "", binary: true };
-  return { metadata, content: result.content.toString(metadata.encoding), binary: false };
+  const snapshotMetadata = {
+    ...metadata,
+    contentType: snapshot.contentType,
+    encoding: snapshot.encoding,
+    chunkSize: snapshot.chunkSize,
+    chunkCount: snapshot.chunkCount,
+  } satisfies ContentObjectMetadata;
+  if (snapshot.encoding === "binary") {
+    return { metadata: snapshotMetadata, content: "", binary: true };
+  }
+  return {
+    metadata: snapshotMetadata,
+    content: result.content.toString(snapshot.encoding),
+    binary: false,
+  };
 }
 
 async function readSnapshotContent(
@@ -551,21 +562,7 @@ export async function recordWorkspaceChange(input: {
       await mkdir(join(CHANGE_DIRECTORY, pathSegment(userId, "userId"), "threads"), {
         recursive: true,
       });
-      const targetPath = changesPath(input.threadId, userId);
-      const temporaryPath = `${targetPath}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporaryPath, JSON.stringify(changes), "utf8");
-        try {
-          await rename(temporaryPath, targetPath);
-        } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code !== "EEXIST" && code !== "EPERM") throw error;
-          await rm(targetPath, { force: true });
-          await rename(temporaryPath, targetPath);
-        }
-      } finally {
-        await rm(temporaryPath, { force: true }).catch(() => undefined);
-      }
+      await atomicWrite(changesPath(input.threadId, userId), JSON.stringify(changes));
     });
   writeQueues.set(queueKey, next);
   await next;

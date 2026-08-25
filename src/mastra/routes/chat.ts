@@ -41,7 +41,6 @@ import { isTerminalAgentChunk, workSessionHost } from "../harness";
 import { OM_MODELS_CONTEXT_KEY } from "../memory";
 import {
   defaultModelFamily,
-  getProvidersConfig,
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveRequestModel,
@@ -61,7 +60,6 @@ import {
   parseWebSearchSelection,
   WEB_SEARCH_CONTEXT_KEY,
 } from "../tools";
-import { recordUsageEvent } from "../usage";
 import {
   addRecentWorkspace,
   ensureDirectory,
@@ -275,17 +273,16 @@ async function normalizeIncrementalMessages(options: {
     return [latest];
   }
 
-  if (current.length > 1) {
-    throw workError("VALIDATION_FAILED", {
-      text: "Only one new message may be submitted per request",
-    });
+  // 未落库的消息一律只能是用户回合:客户端伪造的助手历史到此为止,永远进不了
+  // Memory。多于一条则取最后一条 —— 上一轮生成失败(模型报错 / 断流)时 AI SDK
+  // 会把那条用户消息留在本地列表里,它从未落库,于是下一次发送就带着两条「新
+  // 消息」。拒绝会让整条线程卡死在同一个错误上直到刷新;丢弃早先那次未发生的
+  // 尝试才是它的真实语义。进 run 的始终只有最后一条,防伪造强度不变。
+  if (current.some((message) => message.role !== "user")) {
+    throw workError("VALIDATION_FAILED", { text: "The new message must be a user message" });
   }
-  if (current.length === 1) {
-    if (current[0].role !== "user") {
-      throw workError("VALIDATION_FAILED", { text: "The new message must be a user message" });
-    }
-    return current;
-  }
+  const newestUser = current.at(-1);
+  if (newestUser) return [newestUser];
 
   // Edits reuse the persisted user message id. The branch operation has already
   // captured the old version, so the replacement is the only message sent to the run.
@@ -504,91 +501,6 @@ function durableClientStream<C>(
   return clientStream;
 }
 
-async function resolveUsageModelInfo(
-  model: unknown,
-  rawModel: unknown,
-  rawModelSelection: unknown,
-): Promise<{ provider: string; model: string }> {
-  // 1. Check rawModelSelection (from client)
-  if (rawModelSelection && typeof rawModelSelection === "object") {
-    const sel = rawModelSelection as {
-      providerId?: string;
-      modelId?: string;
-      modelName?: string;
-    };
-    if (sel.modelId) {
-      let providerName = sel.providerId || "custom";
-      try {
-        const config = await getProvidersConfig();
-        const p = config.providers.find(
-          (item) => item.id === sel.providerId || item.registryId === sel.providerId,
-        );
-        if (p?.name) providerName = p.name;
-      } catch {}
-      return {
-        provider: providerName,
-        model: sel.modelName || sel.modelId,
-      };
-    }
-  }
-
-  // 2. Check rawModel (from client body.model)
-  if (
-    rawModel &&
-    typeof rawModel === "object" &&
-    "id" in rawModel &&
-    typeof rawModel.id === "string"
-  ) {
-    const parts = rawModel.id.split("/");
-    if (parts.length >= 2) {
-      const providerId = parts[0];
-      const modelId = parts.slice(1).join("/");
-      let providerName = providerId;
-      try {
-        const config = await getProvidersConfig();
-        const p = config.providers.find(
-          (item) => item.id === providerId || item.registryId === providerId,
-        );
-        if (p?.name) providerName = p.name;
-      } catch {}
-      return { provider: providerName, model: modelId };
-    }
-    return { provider: "custom", model: rawModel.id };
-  }
-
-  if (typeof rawModel === "string" && rawModel.trim()) {
-    const parts = rawModel.trim().split("/");
-    if (parts.length >= 2) {
-      return { provider: parts[0], model: parts.slice(1).join("/") };
-    }
-    return { provider: "custom", model: rawModel.trim() };
-  }
-
-  // 3. Fallback to default configured model
-  try {
-    const config = await getProvidersConfig();
-    const sel = config.modelSelection;
-    if (sel) {
-      const p = config.providers.find((item) => item.id === sel.providerId);
-      return {
-        provider: p?.name || sel.providerId || "custom",
-        model: sel.modelName || sel.modelId,
-      };
-    }
-  } catch {}
-
-  // 4. Check model instance
-  if (model && typeof model === "object") {
-    const m = model as { modelId?: string; provider?: string; id?: string };
-    if (m.modelId) {
-      const providerName = m.provider?.split(".")[0] || "custom";
-      return { provider: providerName, model: m.modelId };
-    }
-  }
-
-  return { provider: "unknown", model: "unknown" };
-}
-
 async function persistLatestUsage(
   threadId: string | undefined,
   resourceId: string | undefined,
@@ -596,9 +508,6 @@ async function persistLatestUsage(
   requestContext: RequestContext,
   userMessageText?: string,
   model?: unknown,
-  rawModel?: unknown,
-  rawModelSelection?: unknown,
-  latencyMs = 0,
 ) {
   if (!threadId) return;
   const memory = resourceId
@@ -631,22 +540,6 @@ async function persistLatestUsage(
     // draft 一经产生真实消息往来即失效(新会话线程 = 无任何历史消息)
     metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
   });
-  if (resourceId) {
-    const { provider, model: modelName } = await resolveUsageModelInfo(
-      model,
-      rawModel,
-      rawModelSelection,
-    );
-    await recordUsageEvent({
-      resourceId,
-      threadId,
-      provider,
-      model: modelName,
-      inputTokens: usage?.inputTokens ?? 0,
-      outputTokens: usage?.outputTokens ?? 0,
-      latencyMs,
-    });
-  }
 }
 
 /**
@@ -693,7 +586,10 @@ async function prepareThreadSession(options: {
   if (!thread) return undefined;
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const patch: ThreadMetadata = {};
-  const profile = await getAgentProfile(options.agentProfileId ?? metadata.agentProfileId);
+  const profile = await getAgentProfile(
+    options.agentProfileId ?? metadata.agentProfileId,
+    options.resourceId,
+  );
   if (metadata.agentProfileId !== profile.id && options.agentProfileId)
     patch.agentProfileId = profile.id;
 
@@ -781,7 +677,6 @@ function isPlanApproval(resumeData: unknown): boolean {
 export const workChatRoute = registerApiRoute("/chat/:agentId", {
   method: "POST",
   handler: async (c) => {
-    const requestStartedAt = Date.now();
     // chatRoute() is the convenience wrapper around this same adapter. We keep
     // the lower-level handler here because the workbench must prepare request
     // context and transform UI data chunks per thread before returning the
@@ -852,8 +747,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       requestContext.set(LIBRARY_THREAD_CONTEXT_KEY, body.memory.thread);
       requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, body.memory.thread);
     }
-    // BYOK 模型解析在路由层完成:自定义网关 → 官方端点 LanguageModel 实例,
-    // 内置供应商 → model router 对象。agent.stream() 运行时经 getLLM({ model })
+    // BYOK 模型解析在路由层完成:所有供应商都按当前资源构造官方 LanguageModel。
+    // agent.stream() 运行时经 getLLM({ model })
     // 覆盖模型(见 @mastra/core Agent.stream);ChatStreamHandlerParams 类型未
     // 公开 model 字段,用条件展开透传(spread 不触发 excess property check)。
     const {
@@ -867,11 +762,13 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       sessionScope,
       sessionAction,
       agentProfileId: rawAgentProfileId,
-      responseMessageId,
       modelSettings: rawModelSettings,
       ...bodyRest
     } = body;
-    const model = rawModel !== undefined ? await resolveRequestModel(rawModel) : undefined;
+    const model =
+      rawModel !== undefined
+        ? await resolveRequestModel(rawModel, authenticatedResourceId)
+        : undefined;
     if (rawModel !== undefined && !model) {
       throw workError("MODEL_NOT_CONFIGURED");
     }
@@ -895,8 +792,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     }
     const requestedAgentProfileId =
       typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined;
-    let profile = await getAgentProfile(requestedAgentProfileId);
-    let profileAgent = (await ensureProfileAgentsRegistered(mastra, profile)).profile;
+    let profile = await getAgentProfile(requestedAgentProfileId, authenticatedResourceId);
+    let profileAgent = (
+      await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId)
+    ).profile;
     requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     requestContext.set(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY, {
       vision: attachmentCapabilities?.vision === true,
@@ -916,7 +815,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     // 模型家族(Mastra registry id):自定义 baseUrl 网关一律得到 undefined,
     // 所以 'openai' 只会是官方 OpenAI —— 供应商专属参数据此判断能不能发。
     const modelFamily =
-      rawModel !== undefined ? requestModelFamily(rawModel) : await defaultModelFamily();
+      rawModel !== undefined
+        ? requestModelFamily(rawModel)
+        : await defaultModelFamily(authenticatedResourceId);
     const webSearch = parseWebSearchSelection(rawWebSearch);
     if (webSearch) {
       requestContext.set(WEB_SEARCH_CONTEXT_KEY, webSearch);
@@ -939,8 +840,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         requestContext,
       });
       if (session) {
-        profile = await getAgentProfile(session.agentProfileId);
-        profileAgent = (await ensureProfileAgentsRegistered(mastra, profile)).profile;
+        profile = await getAgentProfile(session.agentProfileId, authenticatedResourceId);
+        profileAgent = (
+          await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId)
+        ).profile;
         if (session.workspacePath) {
           requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, session.workspacePath);
         }
@@ -1149,9 +1052,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             requestContext,
             firstUserText,
             model,
-            rawModel,
-            rawModelSelection,
-            Date.now() - requestStartedAt,
           );
           await persistMessageBranchOperation({
             memory: requestMemory,
@@ -1159,8 +1059,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
             resourceId: body.memory?.resource,
             operation: branchOperation,
             requestMessages: body.messages,
-            responseMessageId:
-              typeof responseMessageId === "string" ? responseMessageId : undefined,
           });
         },
       });
@@ -1171,7 +1069,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         .map((part) => ("text" in part ? part.text : ""))
         .join(" ")
         .trim();
-      if (!content) throw workError("VALIDATION_FAILED", { text: "A text message is required" });
+      if (!latestUser || !content) {
+        throw workError("VALIDATION_FAILED", { text: "A text message is required" });
+      }
       const session = workSessionHost.getOrCreate({
         resourceId: body.memory.resource,
         scope: sessionScope,
@@ -1179,14 +1079,17 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         agent: profileAgent,
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
+      // 客户端消息 id 即持久化 id(见 WorkSession 的 userSignal):下一次请求的
+      // 增量校验才能把这条插话认成已落库的历史,而不是又一条「本轮新消息」。
       const signal = await session.steer(
         {
           contents: content,
-          ...(latestUser?.metadata
+          ...(latestUser.metadata
             ? { metadata: latestUser.metadata as Record<string, unknown> }
             : {}),
         },
         turnExecutionOptions,
+        latestUser.id,
       );
       const accepted = await signal.accepted;
       if (accepted.action !== "wake") {
@@ -1225,7 +1128,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       });
       session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const subscription = await session.subscribe(sessionMemory.thread);
-      const signal = session.sendMessage(input, turnExecutionOptions);
+      // 落库沿用客户端消息 id(见 WorkSession 的 userSignal),否则前端本地的
+      // 这条用户消息在下一轮请求里会被增量校验判成新消息。
+      const signal = session.sendMessage(input, turnExecutionOptions, latestMessage.id);
       const accepted = await signal.accepted;
       if (!("runId" in accepted) || accepted.action === "blocked") {
         session.releaseSubscription(subscription);

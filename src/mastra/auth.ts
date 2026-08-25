@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import type { MastraAuthRequest } from "@mastra/core/server";
 import { getRequestHeader, SimpleAuth } from "@mastra/core/server";
+import { workError } from "./errors";
 import { getLibsqlClient } from "./storage";
 
 export interface AuthUser {
@@ -13,16 +14,6 @@ export interface AuthUser {
 export interface AuthSession {
   token: string;
   user: AuthUser;
-}
-
-export class AuthServiceError extends Error {
-  constructor(
-    public readonly code: "AUTH_INVALID_CREDENTIALS" | "AUTH_EMAIL_EXISTS" | "AUTH_VALIDATION",
-    message: string,
-  ) {
-    super(message);
-    this.name = "AuthServiceError";
-  }
 }
 
 const AUTH_USERS_TABLE = "auth_users";
@@ -67,13 +58,13 @@ function normalizeName(value: unknown): string {
 
 function validateRegistration(name: string, email: string, password: string): void {
   if (!name || name.length > 80) {
-    throw new AuthServiceError("AUTH_VALIDATION", "请输入 1-80 个字符的名称");
+    throw workError("AUTH_VALIDATION", { text: "请输入 1-80 个字符的名称" });
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
-    throw new AuthServiceError("AUTH_VALIDATION", "请输入有效的邮箱地址");
+    throw workError("AUTH_VALIDATION", { text: "请输入有效的邮箱地址" });
   }
   if (password.length < 8 || password.length > 200) {
-    throw new AuthServiceError("AUTH_VALIDATION", "密码长度必须为 8-200 个字符");
+    throw workError("AUTH_VALIDATION", { text: "密码长度必须为 8-200 个字符" });
   }
 }
 
@@ -107,6 +98,15 @@ function hashToken(token: string): string {
   return scryptSync(token, "mastra-work-session", 32).toString("hex");
 }
 
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; extendedCode?: unknown };
+  return (
+    candidate.code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    candidate.extendedCode === "SQLITE_CONSTRAINT_UNIQUE"
+  );
+}
+
 async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
   if (!token) return null;
   await ensureAuthSchema();
@@ -118,14 +118,7 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
       WHERE s.token_hash = ? AND s.expires_at > ?`,
     args: [hashToken(token), Date.now()],
   });
-  const user = rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
-  if (user) {
-    await client.execute({
-      sql: `DELETE FROM ${AUTH_SESSIONS_TABLE} WHERE expires_at <= ?`,
-      args: [Date.now()],
-    });
-  }
-  return user;
+  return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
 }
 
 async function findUserById(id: string): Promise<AuthUser | null> {
@@ -154,8 +147,16 @@ async function findUserByEmail(email: string): Promise<{
     : null;
 }
 
+async function sweepExpiredSessions(): Promise<void> {
+  await (await getLibsqlClient()).execute({
+    sql: `DELETE FROM ${AUTH_SESSIONS_TABLE} WHERE expires_at <= ?`,
+    args: [Date.now()],
+  });
+}
+
 async function issueSession(user: AuthUser): Promise<AuthSession> {
   await ensureAuthSchema();
+  await sweepExpiredSessions();
   const token = randomBytes(32).toString("base64url");
   const now = Date.now();
   await (await getLibsqlClient()).execute({
@@ -184,8 +185,8 @@ export async function registerAuthUser(input: {
       args: [user.id, user.email, user.name, hashPassword(password), user.role, Date.now()],
     });
   } catch (error) {
-    if (String(error).toLowerCase().includes("unique")) {
-      throw new AuthServiceError("AUTH_EMAIL_EXISTS", "该邮箱已经注册");
+    if (isUniqueConstraintError(error)) {
+      throw workError("AUTH_EMAIL_EXISTS", { text: "该邮箱已经注册" });
     }
     throw error;
   }
@@ -200,7 +201,7 @@ export async function loginAuthUser(input: {
   const password = typeof input.password === "string" ? input.password : "";
   const record = email ? await findUserByEmail(email) : null;
   if (!record || !verifyPassword(password, record.passwordHash)) {
-    throw new AuthServiceError("AUTH_INVALID_CREDENTIALS", "邮箱或密码错误");
+    throw workError("AUTH_INVALID_CREDENTIALS", { text: "邮箱或密码错误" });
   }
   return issueSession(record.user);
 }
@@ -215,12 +216,12 @@ export async function revokeAuthSession(token: string | undefined): Promise<void
 }
 
 function tokenFromRequest(token: string, request: MastraAuthRequest): string {
-  const suppliedToken = token.trim().replace(/^Bearer\s+/i, "");
+  const suppliedToken = token.trim();
   if (suppliedToken) return suppliedToken;
 
-  const authorization = getRequestHeader(request, "Authorization") ?? "";
-  if (authorization?.trim()) {
-    return authorization.trim().replace(/^Bearer\s+/i, "");
+  const authorization = getRequestHeader(request, "Authorization")?.trim();
+  if (authorization) {
+    return authorization.replace(/^Bearer\s+/i, "");
   }
   const cookie = getRequestHeader(request, "Cookie") ?? "";
   const match = cookie
@@ -235,8 +236,7 @@ function tokenFromRequest(token: string, request: MastraAuthRequest): string {
   }
 }
 
-// SimpleAuth remains the Mastra auth provider, while users and sessions are
-// loaded from the application database instead of an environment token map.
+// Only x-shutdown-token uses SimpleAuth's in-memory token map; user sessions use the DB.
 class DatabaseAuth extends SimpleAuth<AuthUser> {
   override async authenticateToken(token: string, request: MastraAuthRequest) {
     const internal = getRequestHeader(request, "x-shutdown-token");
@@ -250,10 +250,10 @@ class DatabaseAuth extends SimpleAuth<AuthUser> {
   }
 }
 
-const authUsers: Record<string, AuthUser> = {};
+const shutdownUsers: Record<string, AuthUser> = {};
 const internalToken = process.env.MASTRA_SHUTDOWN_TOKEN?.trim();
 if (internalToken) {
-  authUsers[internalToken] = {
+  shutdownUsers[internalToken] = {
     id: "__system__",
     name: "Mastra system",
     email: "system@mastra-work.app",
@@ -262,7 +262,7 @@ if (internalToken) {
 }
 
 export const workAuth = new DatabaseAuth({
-  tokens: authUsers,
+  tokens: shutdownUsers,
   headers: ["x-shutdown-token"],
   mapUserToResourceId: (user) => user.id,
   protected: ["/api/*", "/chat/*", "/work/*"],

@@ -12,25 +12,11 @@ async function readJson<T extends Record<string, unknown>>(c: {
   }
 }
 
-function rethrowAuthError(error: unknown): never {
-  if (error instanceof Error && "code" in error) {
-    const code = (error as { code: string }).code;
-    if (code === "AUTH_INVALID_CREDENTIALS") throw workError("AUTH_INVALID_CREDENTIALS");
-    if (code === "AUTH_EMAIL_EXISTS") throw workError("AUTH_EMAIL_EXISTS");
-    if (code === "AUTH_VALIDATION") throw workError("AUTH_VALIDATION", { text: error.message });
-  }
-  throw error;
-}
-
 export const authLoginRoute = registerApiRoute("/work/auth/login", {
   method: "POST",
   requiresAuth: false,
   handler: async (c) => {
-    try {
-      return c.json(await loginAuthUser(await readJson<{ email: unknown; password: unknown }>(c)));
-    } catch (error) {
-      rethrowAuthError(error);
-    }
+    return c.json(await loginAuthUser(await readJson<{ email: unknown; password: unknown }>(c)));
   },
 });
 
@@ -38,16 +24,12 @@ export const authRegisterRoute = registerApiRoute("/work/auth/register", {
   method: "POST",
   requiresAuth: false,
   handler: async (c) => {
-    try {
-      return c.json(
-        await registerAuthUser(
-          await readJson<{ name: unknown; email: unknown; password: unknown }>(c),
-        ),
-        201,
-      );
-    } catch (error) {
-      rethrowAuthError(error);
-    }
+    return c.json(
+      await registerAuthUser(
+        await readJson<{ name: unknown; email: unknown; password: unknown }>(c),
+      ),
+      201,
+    );
   },
 });
 

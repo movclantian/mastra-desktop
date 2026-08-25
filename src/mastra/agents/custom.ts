@@ -5,7 +5,7 @@ import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
-import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
+import { getAppConfig, setAppConfig } from "../storage";
 import { getManagedSkillsDirectory } from "../workspace";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
@@ -274,8 +274,8 @@ function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined 
   return { strategy, steps, synthesis: raw.synthesis !== false };
 }
 
-export async function listAgentProfiles(): Promise<AgentProfile[]> {
-  const raw = await getAppConfig(CONFIG_KEY);
+export async function listAgentProfiles(resourceId?: string): Promise<AgentProfile[]> {
+  const raw = await getAppConfig(CONFIG_KEY, resourceId);
   if (!raw) return [DEFAULT_PROFILE];
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -291,24 +291,31 @@ export async function listAgentProfiles(): Promise<AgentProfile[]> {
   }
 }
 
-export async function getAgentProfile(id: string | undefined): Promise<AgentProfile> {
-  const profiles = await listAgentProfiles();
+export async function getAgentProfile(
+  id: string | undefined,
+  resourceId?: string,
+): Promise<AgentProfile> {
+  const profiles = await listAgentProfiles(resourceId);
   return (
     profiles.find((profile) => profile.id === (id?.trim() || DEFAULT_AGENT_PROFILE_ID)) ??
     DEFAULT_PROFILE
   );
 }
 
-async function saveProfiles(profiles: AgentProfile[]): Promise<void> {
+async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Promise<void> {
   await setAppConfig(
     CONFIG_KEY,
     JSON.stringify(profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID)),
+    resourceId,
   );
 }
 
-export async function upsertAgentProfile(input: Partial<AgentProfile>): Promise<AgentProfile> {
+export async function upsertAgentProfile(
+  input: Partial<AgentProfile>,
+  resourceId?: string,
+): Promise<AgentProfile> {
   if (input.id === DEFAULT_AGENT_PROFILE_ID) throw new Error("默认 Agent 不可覆盖");
-  const current = (await listAgentProfiles()).filter(
+  const current = (await listAgentProfiles(resourceId)).filter(
     (profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID,
   );
   const existing = current.find((profile) => profile.id === input.id);
@@ -336,14 +343,17 @@ export async function upsertAgentProfile(input: Partial<AgentProfile>): Promise<
     },
     existing?.createdAt ?? now,
   );
-  await saveProfiles([...current.filter((item) => item.id !== profile.id), profile]);
+  await saveProfiles([...current.filter((item) => item.id !== profile.id), profile], resourceId);
   return profile;
 }
 
-export async function deleteAgentProfile(id: string): Promise<void> {
+export async function deleteAgentProfile(id: string, resourceId?: string): Promise<void> {
   if (id === DEFAULT_AGENT_PROFILE_ID) throw new Error("默认 Agent 不可删除");
-  await saveProfiles((await listAgentProfiles()).filter((profile) => profile.id !== id));
-  memberCache.delete(scopedProfileKey(id));
+  await saveProfiles(
+    (await listAgentProfiles(resourceId)).filter((profile) => profile.id !== id),
+    resourceId,
+  );
+  memberCache.delete(scopedProfileKey(id, resourceId));
 }
 
 type ProfileAgentFactory = (profile: AgentProfile, resourceScope?: string) => Agent;
@@ -366,8 +376,8 @@ export function setProfileAgentFactories(factories: {
 
 const memberCache = new Map<string, { updatedAt: string; agents: Record<string, Agent> }>();
 
-function scopedProfileKey(id: string, resourceScope = getResourceScope()): string {
-  return JSON.stringify([resourceScope ?? "__system__", id]);
+function scopedProfileKey(id: string, resourceScope?: string): string {
+  return `${resourceScope?.trim() || "__system__"}\u0000${id}`;
 }
 
 export async function resolveProfileMembers(
@@ -381,7 +391,7 @@ export async function resolveProfileMembers(
   if (!memberAgentFactory) throw new Error("Profile Agent factory is not initialized");
   const agents: Record<string, Agent> = {};
   for (const member of profile.members) {
-    agents[member.id] = memberAgentFactory(profile, member, resourceScope ?? getResourceScope());
+    agents[member.id] = memberAgentFactory(profile, member, resourceScope);
   }
   memberCache.set(key, { updatedAt: profile.updatedAt, agents });
   return agents;
@@ -392,8 +402,8 @@ export async function resolveProfileMembers(
  * the registration key and Agent id tenant-qualified so two users can create
  * profiles with the same local id without colliding in `mastra.addAgent()`.
  */
-function registrationScope(resourceScope = getResourceScope()): string {
-  return resourceScope ?? "__system__";
+function registrationScope(resourceScope?: string): string {
+  return resourceScope?.trim() || "__system__";
 }
 
 function registrationToken(value: string): string {
@@ -526,6 +536,7 @@ async function registerProfileAgents(
 export async function ensureProfileAgentsRegistered(
   registry: AgentRegistry,
   profile: AgentProfile,
+  resourceScope?: string,
 ): Promise<RegisteredProfileAgents> {
   if (profile.id === DEFAULT_AGENT_PROFILE_ID) {
     const defaultAgent = Object.values(registry.listAgents()).find(
@@ -539,8 +550,8 @@ export async function ensureProfileAgentsRegistered(
       memberKeys: {},
     };
   }
-  const resourceScope = registrationScope();
-  const profileKey = profileAgentRegistryKey(profile, resourceScope);
+  const normalizedScope = registrationScope(resourceScope);
+  const profileKey = profileAgentRegistryKey(profile, normalizedScope);
   removedProfileKeys.delete(profileKey);
   const cached = registeredProfiles.get(profileKey);
   if (
@@ -556,8 +567,8 @@ export async function ensureProfileAgentsRegistered(
   const promise = active
     ? active.promise
         .catch(() => undefined)
-        .then(() => registerProfileAgents(registry, profile, profileKey, resourceScope))
-    : registerProfileAgents(registry, profile, profileKey, resourceScope);
+        .then(() => registerProfileAgents(registry, profile, profileKey, normalizedScope))
+    : registerProfileAgents(registry, profile, profileKey, normalizedScope);
   registrationLocks.set(profileKey, { updatedAt: profile.updatedAt, promise });
   try {
     return await promise;
@@ -569,10 +580,14 @@ export async function ensureProfileAgentsRegistered(
 }
 
 /** Remove a profile and all registered Team members from Mastra. */
-export function unregisterProfileAgents(registry: AgentRegistry, profileId: string): void {
-  const prefix = `profile-${registrationToken(registrationScope())}-${registrationToken(profileId)}`;
+export function unregisterProfileAgents(
+  registry: AgentRegistry,
+  profileId: string,
+  resourceScope?: string,
+): void {
+  const prefix = `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(profileId)}`;
   removedProfileKeys.add(prefix);
-  memberCache.delete(scopedProfileKey(profileId));
+  memberCache.delete(scopedProfileKey(profileId, resourceScope));
   removeRegisteredProfileEntries(registry, prefix);
   for (const [key] of registeredProfiles) {
     if (key !== prefix) continue;
@@ -580,10 +595,13 @@ export function unregisterProfileAgents(registry: AgentRegistry, profileId: stri
   }
 }
 
-export async function resolveManagedSkillPaths(names: string[]): Promise<string[]> {
+export async function resolveManagedSkillPaths(
+  names: string[],
+  resourceId?: string,
+): Promise<string[]> {
   const requested = new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean));
   if (requested.size === 0) return [];
-  const root = getManagedSkillsDirectory();
+  const root = getManagedSkillsDirectory(resourceId);
   const entries = await readdir(root, { withFileTypes: true });
   const paths: string[] = [];
   for (const entry of entries) {
@@ -608,8 +626,9 @@ export async function resolveManagedSkillPaths(names: string[]): Promise<string[
 /** Read an explicitly activated managed skill from the current resource scope. */
 export async function loadManagedSkill(
   name: string,
+  resourceId?: string,
 ): Promise<{ name: string; instructions: string } | undefined> {
-  const [directory] = await resolveManagedSkillPaths([name]);
+  const [directory] = await resolveManagedSkillPaths([name], resourceId);
   if (!directory) return undefined;
   const content = await readFile(join(directory, "SKILL.md"), "utf8");
   const metadataName = /^---\s*[\s\S]*?\bname:\s*["']?([^\r\n"']+)/m.exec(content)?.[1]?.trim();

@@ -58,8 +58,8 @@ const DEFAULT_TOOLS_CONFIG: ToolsUserConfig = {
   anysearch: { apiKey: "" },
 };
 
-export async function getToolsConfig(): Promise<ToolsUserConfig> {
-  const raw = await getAppConfig(TOOLS_CONFIG_KEY);
+export async function getToolsConfig(resourceId?: string): Promise<ToolsUserConfig> {
+  const raw = await getAppConfig(TOOLS_CONFIG_KEY, resourceId);
   if (!raw) return DEFAULT_TOOLS_CONFIG;
   try {
     const parsed = JSON.parse(raw) as Partial<ToolsUserConfig>;
@@ -73,8 +73,8 @@ export async function getToolsConfig(): Promise<ToolsUserConfig> {
   }
 }
 
-export async function saveToolsConfig(config: ToolsUserConfig): Promise<void> {
-  await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(config, null, 2));
+export async function saveToolsConfig(config: ToolsUserConfig, resourceId?: string): Promise<void> {
+  await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(config, null, 2), resourceId);
 }
 
 interface DepthPreset {
@@ -108,6 +108,25 @@ const MAX_RAW_LENGTH = 12_000;
 
 function clamp(text: string): string {
   return text.length > MAX_RAW_LENGTH ? `${text.slice(0, MAX_RAW_LENGTH)}\n…[已截断]` : text;
+}
+
+async function archiveWebText(
+  text: string,
+  context: { requestContext?: { get?: (key: string) => unknown } },
+  options: { source: string; contentType: string },
+) {
+  const metadata = await archiveTextContent(text, context, {
+    kind: "web",
+    source: options.source,
+    contentType: options.contentType,
+  });
+  return {
+    summary: contentSummary(text),
+    contentObject: contentObjectReference(metadata),
+    readHint: contentReferenceText(metadata),
+    characterCount: metadata.characterCount ?? text.length,
+    byteSize: metadata.byteSize,
+  };
 }
 
 const archivedFetchOutput = z.object({
@@ -146,17 +165,16 @@ function createArchivedWebFetchTool() {
       };
       const content =
         typeof result?.content === "string" ? result.content : JSON.stringify(result ?? "");
-      const metadata = await archiveTextContent(content, context, {
-        kind: "web",
+      const archived = await archiveWebText(content, context, {
         source: url,
         contentType: result?.contentType ?? "text/plain; charset=utf-8",
       });
       return {
-        content: contentSummary(content),
-        contentObject: contentObjectReference(metadata),
-        readHint: contentReferenceText(metadata),
-        characterCount: metadata.characterCount ?? content.length,
-        byteSize: metadata.byteSize,
+        content: archived.summary,
+        contentObject: archived.contentObject,
+        readHint: archived.readHint,
+        characterCount: archived.characterCount,
+        byteSize: archived.byteSize,
         ...(result?.url ? { url: result.url } : {}),
         ...(typeof result?.status === "number" ? { status: result.status } : {}),
         ...(typeof result?.ok === "boolean" ? { ok: result.ok } : {}),
@@ -208,8 +226,7 @@ function createArchivedTavilyExtractTool(apiKey: string) {
         ...result,
         results: await Promise.all(
           result.results.map(async (item) => {
-            const metadata = await archiveTextContent(item.rawContent, context, {
-              kind: "web",
+            const archived = await archiveWebText(item.rawContent, context, {
               source: item.url,
               contentType:
                 input.format === "text"
@@ -218,10 +235,10 @@ function createArchivedTavilyExtractTool(apiKey: string) {
             });
             return {
               ...item,
-              rawContent: contentSummary(item.rawContent),
-              contentObject: contentObjectReference(metadata),
-              characterCount: metadata.characterCount ?? item.rawContent.length,
-              readHint: contentReferenceText(metadata),
+              rawContent: archived.summary,
+              contentObject: archived.contentObject,
+              characterCount: archived.characterCount,
+              readHint: archived.readHint,
             };
           }),
         ),
@@ -292,8 +309,7 @@ function createArchivedTavilySearchTool(apiKey: string) {
         results: await Promise.all(
           result.results.map(async (item) => {
             if (!item.rawContent) return item;
-            const metadata = await archiveTextContent(item.rawContent, context, {
-              kind: "web",
+            const archived = await archiveWebText(item.rawContent, context, {
               source: item.url,
               contentType:
                 input.includeRawContent === "text"
@@ -302,9 +318,9 @@ function createArchivedTavilySearchTool(apiKey: string) {
             });
             return {
               ...item,
-              rawContent: contentSummary(item.rawContent),
-              contentObject: contentObjectReference(metadata),
-              readHint: contentReferenceText(metadata),
+              rawContent: archived.summary,
+              contentObject: archived.contentObject,
+              readHint: archived.readHint,
             };
           }),
         ),
@@ -760,6 +776,7 @@ export function parseWebSearchSelection(value: unknown): WebSearchSelection | nu
 export async function resolveWebSearchTools(
   selection: WebSearchSelection | null,
   modelFamily?: unknown,
+  resourceId?: string,
 ): Promise<ToolsInput> {
   if (!selection) return {};
   const preset = DEPTH_PRESETS[selection.depth];
@@ -769,7 +786,7 @@ export async function resolveWebSearchTools(
     return { web_search: webSearchTool, web_fetch: createArchivedWebFetchTool() };
   }
 
-  const config = await getToolsConfig();
+  const config = await getToolsConfig(resourceId);
 
   if (selection.engine === "tavily") {
     if (!config.tavily.apiKey) return {};

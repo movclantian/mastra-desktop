@@ -4,13 +4,6 @@ import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { fetchWorkspaceSettings, saveWorkspaceSettings } from "../api";
@@ -29,8 +22,6 @@ export interface WorkspaceDraft {
   sandboxEnabled: boolean;
   sandboxTimeoutMs: number;
   sandboxEnv: Record<string, string>;
-  isolation: "none" | "seatbelt" | "bwrap";
-  allowNetwork: boolean;
   bm25: boolean;
   bm25K1: number;
   bm25B: number;
@@ -41,12 +32,6 @@ export interface WorkspaceDraft {
   lspDisableServers: string[];
   lspBinaryOverrides: Record<string, string>;
   lspSearchPaths: string[];
-  nativeReadOnlyPaths: string[];
-  nativeReadWritePaths: string[];
-  nativeAllowSystemBinaries: boolean;
-  nativeSeatbeltProfilePath: string;
-  nativeBwrapArgs: string[];
-  nativeReadOnly: boolean;
   tools: {
     requireReadBeforeWrite?: boolean;
     maxOutputTokens?: number;
@@ -65,8 +50,6 @@ export const DEFAULT_WORKSPACE_DRAFT: WorkspaceDraft = {
   sandboxEnabled: true,
   sandboxTimeoutMs: 30_000,
   sandboxEnv: {},
-  isolation: "none",
-  allowNetwork: false,
   bm25: true,
   bm25K1: 1.5,
   bm25B: 0.75,
@@ -77,19 +60,10 @@ export const DEFAULT_WORKSPACE_DRAFT: WorkspaceDraft = {
   lspDisableServers: [],
   lspBinaryOverrides: {},
   lspSearchPaths: [],
-  nativeReadOnlyPaths: [],
-  nativeReadWritePaths: [],
-  nativeAllowSystemBinaries: true,
-  nativeSeatbeltProfilePath: "",
-  nativeBwrapArgs: [],
-  nativeReadOnly: false,
   tools: { requireReadBeforeWrite: true, maxOutputTokens: 3_000, writeLockTimeoutMs: 30_000 },
   skillsPaths: ["skills"],
   autoIndexPaths: [],
 };
-
-/** Windows 无原生隔离后端(seatbelt=macOS / bwrap=Linux),相关选项不展示 */
-export const IS_WINDOWS = navigator.userAgent.includes("Windows");
 
 const WORKSPACE_TOOL_OPTIONS = [
   ["mastra_workspace_read_file", "读取文件"],
@@ -364,9 +338,6 @@ function structuralChangeLabel(before: WorkspaceDraft, after: WorkspaceDraft): s
   if (before.allowedPaths.length !== after.allowedPaths.length) return "额外目录";
   if (before.sandboxEnabled !== after.sandboxEnabled) return "沙箱开关";
   if (before.sandboxTimeoutMs !== after.sandboxTimeoutMs) return "命令超时";
-  if (before.isolation !== after.isolation) return "原生隔离";
-  if (before.allowNetwork !== after.allowNetwork) return "沙箱网络";
-  if (before.nativeReadOnly !== after.nativeReadOnly) return "隔离只读模式";
   if (Object.keys(before.sandboxEnv).length !== Object.keys(after.sandboxEnv).length)
     return "环境变量";
   if (before.bm25 !== after.bm25) return "BM25 搜索";
@@ -497,42 +468,6 @@ export function WorkspaceSection() {
               value={draft.sandboxTimeoutMs / 1000}
               onChange={(v) => patch({ sandboxTimeoutMs: v * 1000 })}
             />
-            {!IS_WINDOWS ? (
-              <div className="flex items-center justify-between gap-4 py-4">
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm leading-none font-medium">原生隔离(isolation)</p>
-                  <p className="text-xs text-muted-foreground">
-                    seatbelt = macOS;bwrap = Linux;默认 none
-                  </p>
-                </div>
-                <Select
-                  value={draft.isolation}
-                  onValueChange={(v) =>
-                    v !== null && patch({ isolation: v as WorkspaceDraft["isolation"] })
-                  }
-                >
-                  <SelectTrigger className="w-52 shrink-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">none(不隔离)</SelectItem>
-                    <SelectItem value="seatbelt">seatbelt(macOS)</SelectItem>
-                    <SelectItem value="bwrap">bwrap(Linux)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : null}
-            {!IS_WINDOWS && draft.isolation !== "none" ? (
-              <SettingRow
-                description="原生隔离下默认阻止网络;开启后沙箱内命令可联网"
-                title="允许网络访问(allowNetwork)"
-              >
-                <Switch
-                  checked={draft.allowNetwork}
-                  onCheckedChange={(v) => patch({ allowNetwork: v })}
-                />
-              </SettingRow>
-            ) : null}
             <EnvEntryList
               description="仅注入此处声明的变量(默认仅 PATH),不继承宿主环境,避免泄漏密钥"
               onChange={(sandboxEnv) => patch({ sandboxEnv })}
@@ -654,63 +589,6 @@ export function WorkspaceSection() {
           </>
         ) : null}
       </SettingCard>
-
-      {draft.sandboxEnabled && !IS_WINDOWS && draft.isolation !== "none" ? (
-        <SettingCard
-          title="原生隔离扩展"
-          description="控制 seatbelt/bwrap 的额外读写路径与只读策略。"
-        >
-          <SettingRow
-            title="工作目录只读(nativeSandbox.readOnly)"
-            description="沙箱进程只能读取工作目录,readWritePaths 仍保持可写"
-          >
-            <Switch
-              checked={draft.nativeReadOnly}
-              onCheckedChange={(nativeReadOnly) => patch({ nativeReadOnly })}
-            />
-          </SettingRow>
-          <SettingRow
-            title="允许系统二进制(allowSystemBinaries)"
-            description="允许执行 node/python 等宿主系统程序"
-          >
-            <Switch
-              checked={draft.nativeAllowSystemBinaries}
-              onCheckedChange={(nativeAllowSystemBinaries) => patch({ nativeAllowSystemBinaries })}
-            />
-          </SettingRow>
-          <DirectoryList
-            title="额外只读路径(readOnlyPaths)"
-            description="隔离进程可以读取但不能写入的目录"
-            value={draft.nativeReadOnlyPaths}
-            onChange={(nativeReadOnlyPaths) => patch({ nativeReadOnlyPaths })}
-          />
-          <DirectoryList
-            title="额外读写路径(readWritePaths)"
-            description="隔离进程可以读写的目录"
-            value={draft.nativeReadWritePaths}
-            onChange={(nativeReadWritePaths) => patch({ nativeReadWritePaths })}
-          />
-          {draft.isolation === "seatbelt" ? (
-            <div className="space-y-2 py-2">
-              <p className="text-sm font-medium">自定义 Profile 路径(seatbeltProfilePath)</p>
-              <Input
-                value={draft.nativeSeatbeltProfilePath}
-                placeholder="可选,留空使用自动生成"
-                onChange={(event) => patch({ nativeSeatbeltProfilePath: event.target.value })}
-              />
-            </div>
-          ) : null}
-          {draft.isolation === "bwrap" ? (
-            <RelativePathList
-              title="自定义 bwrap 参数"
-              description="每项作为一个参数;填写后会替换默认参数"
-              value={draft.nativeBwrapArgs}
-              onChange={(nativeBwrapArgs) => patch({ nativeBwrapArgs })}
-              placeholder="--ro-bind"
-            />
-          ) : null}
-        </SettingCard>
-      ) : null}
 
       <SettingCard
         title="Workspace 工具策略"

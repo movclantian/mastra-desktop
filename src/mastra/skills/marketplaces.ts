@@ -10,6 +10,7 @@ import {
   getStorageDirectory,
   setAppConfig,
 } from "../storage";
+import { getManagedSkillsDirectory } from "../workspace";
 
 export function categorizeSkillResources(resources: string[]) {
   const references: string[] = [];
@@ -221,8 +222,61 @@ const SKILLS_SH_CACHE_TTL = 24 * 60 * 60 * 1000;
 const SKILLS_SH_MAX_RETRIES = 3;
 const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
-const skillsShCache = new Map<string, { expiresAt: number; skills: SkillsShSkill[] }>();
-const skillsShInFlight = new Map<string, Promise<SkillsShSkill[]>>();
+
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
+interface DiskCache<T> {
+  key: string;
+  read: () => Promise<CacheEntry<T> | null>;
+  write: (entry: CacheEntry<T>) => Promise<void>;
+}
+
+function createCachedFetcher<TInput, TResult>(
+  loader: (input: TInput) => Promise<TResult>,
+  keyOf: (input: TInput) => string,
+  options: { ttl: number; disk?: DiskCache<TResult> },
+): (input: TInput, force?: boolean) => Promise<TResult> {
+  const cache = new Map<string, CacheEntry<TResult>>();
+  const inFlight = new Map<string, Promise<TResult>>();
+  const disk = options.disk;
+  const diskReady = disk
+    ? disk.read().then((entry) => {
+        if (entry) cache.set(disk.key, entry);
+      })
+    : Promise.resolve();
+
+  return async (input, force = false) => {
+    await diskReady;
+    const cacheKey = keyOf(input);
+    const cached = cache.get(cacheKey);
+    if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+
+    const pending = inFlight.get(cacheKey);
+    if (pending) return pending;
+
+    const request = loader(input)
+      .then((value) => {
+        const entry = { expiresAt: Date.now() + options.ttl, value };
+        cache.set(cacheKey, entry);
+        if (disk?.key === cacheKey) void disk.write(entry);
+        return value;
+      })
+      .catch((error) => {
+        if (cached) return cached.value;
+        throw error;
+      });
+
+    inFlight.set(cacheKey, request);
+    try {
+      return await request;
+    } finally {
+      if (inFlight.get(cacheKey) === request) inFlight.delete(cacheKey);
+    }
+  };
+}
 
 /**
  * skills.sh 无查询列表的磁盘副本。
@@ -239,32 +293,32 @@ function getSkillsShCacheFile(): string {
   return join(getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY, "cache", "skills-sh.json");
 }
 
-async function readSkillsShDiskCache(): Promise<void> {
+async function readSkillsShDiskCache(): Promise<CacheEntry<SkillsShSkill[]> | null> {
   try {
     const raw = await readFile(getSkillsShCacheFile(), "utf-8");
     const parsed = JSON.parse(raw) as { expiresAt?: number; skills?: SkillsShSkill[] };
-    if (!Array.isArray(parsed.skills) || typeof parsed.expiresAt !== "number") return;
+    if (!Array.isArray(parsed.skills) || typeof parsed.expiresAt !== "number") return null;
     // 过期的副本仍然装载:下面的 stale-while-revalidate 会在网络失败时用它兜底,
     // 比让用户对着空列表干等强。
-    skillsShCache.set(SKILLS_SH_CACHE_KEY, {
+    return {
       expiresAt: parsed.expiresAt,
-      skills: parsed.skills,
-    });
+      value: parsed.skills,
+    };
   } catch {
     // 首次运行没有这个文件,或内容损坏 —— 都按「无缓存」处理
+    return null;
   }
 }
-/** 进程内只装载一次;listSkillsShSkills 首次调用时等它完成 */
-const skillsShDiskCacheReady = readSkillsShDiskCache();
 
-async function writeSkillsShDiskCache(entry: {
-  expiresAt: number;
-  skills: SkillsShSkill[];
-}): Promise<void> {
+async function writeSkillsShDiskCache(entry: CacheEntry<SkillsShSkill[]>): Promise<void> {
   try {
     const cacheFile = getSkillsShCacheFile();
     await mkdir(dirname(cacheFile), { recursive: true });
-    await writeFile(cacheFile, JSON.stringify(entry), "utf-8");
+    await writeFile(
+      cacheFile,
+      JSON.stringify({ expiresAt: entry.expiresAt, skills: entry.value }),
+      "utf-8",
+    );
   } catch {
     // 磁盘不可写时退化为纯内存缓存,不影响功能
   }
@@ -358,8 +412,8 @@ export function normalizeMarketplace(input: unknown): SkillMarketplace {
   };
 }
 
-export async function getSkillMarketplaces(): Promise<SkillMarketplace[]> {
-  const raw = await getAppConfig(MARKETPLACES_KEY);
+export async function getSkillMarketplaces(resourceId?: string): Promise<SkillMarketplace[]> {
+  const raw = await getAppConfig(MARKETPLACES_KEY, resourceId);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as { marketplaces?: unknown };
@@ -370,12 +424,19 @@ export async function getSkillMarketplaces(): Promise<SkillMarketplace[]> {
   }
 }
 
-export async function saveSkillMarketplaces(marketplaces: SkillMarketplace[]): Promise<void> {
+export async function saveSkillMarketplaces(
+  marketplaces: SkillMarketplace[],
+  resourceId?: string,
+): Promise<void> {
   const normalized = marketplaces.map(normalizeMarketplace);
   if (new Set(normalized.map((marketplace) => marketplace.id)).size !== normalized.length) {
     throw new Error("技能市场 ID 不能重复");
   }
-  await setAppConfig(MARKETPLACES_KEY, JSON.stringify({ marketplaces: normalized }, null, 2));
+  await setAppConfig(
+    MARKETPLACES_KEY,
+    JSON.stringify({ marketplaces: normalized }, null, 2),
+    resourceId,
+  );
 }
 
 export function parseSkillMarkdown(content: string, fallbackName: string) {
@@ -399,34 +460,63 @@ export function parseSkillMarkdown(content: string, fallbackName: string) {
   };
 }
 
-async function githubJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "MastraWork-Skill-Marketplace",
-    },
-  });
-  if (!response.ok) throw new Error(`GitHub 请求失败（${response.status}）`);
-  return (await response.json()) as T;
+const GITHUB_JSON_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "User-Agent": "MastraWork-Skill-Marketplace",
+};
+const GITHUB_TEXT_HEADERS = {
+  Accept: "application/vnd.github.raw",
+  "User-Agent": "MastraWork-Skill-Marketplace",
+};
+const PUBLIC_SKILL_HEADERS = {
+  Accept: "text/markdown, text/plain;q=0.9",
+  "User-Agent": "MastraWork-Skill-Marketplace",
+};
+const SKILLS_SH_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "MastraWork-Skill-Marketplace",
+};
+
+interface FetchWithRetryOptions {
+  headers: Record<string, string>;
+  responseType: "json" | "text";
+  retries?: number;
+  retryOn?: (response: Response) => boolean;
+  retryDelay?: (response: Response, attempt: number) => number;
+  errorMessage: (status: number) => string;
 }
 
-async function githubText(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: { Accept: "application/vnd.github.raw", "User-Agent": "MastraWork-Skill-Marketplace" },
-  });
-  if (!response.ok) throw new Error(`读取技能文件失败（${response.status}）`);
-  return response.text();
-}
+const SKILLS_SH_JSON_OPTIONS: FetchWithRetryOptions = {
+  headers: SKILLS_SH_HEADERS,
+  responseType: "json",
+  retries: SKILLS_SH_MAX_RETRIES,
+  retryOn: (response) => response.status === 429,
+  retryDelay: (response, attempt) => {
+    const retryAfter = Number(response.headers.get("Retry-After"));
+    return Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(30_000, retryAfter * 1_000)
+      : Math.min(8_000, 500 * 2 ** attempt);
+  },
+  errorMessage: (status) =>
+    status === 429
+      ? "skills.sh 公共目录请求被限流，请稍后重试"
+      : `skills.sh 公共目录请求失败（${status}）`,
+};
 
-async function publicSkillText(url: string): Promise<string> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "text/markdown, text/plain;q=0.9",
-      "User-Agent": "MastraWork-Skill-Marketplace",
-    },
-  });
-  if (!response.ok) throw new Error(`读取远程技能文件失败（${response.status}）`);
-  return response.text();
+async function fetchWithRetry<T>(url: string, options: FetchWithRetryOptions): Promise<T> {
+  const retries = options.retries ?? 0;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const response = await fetch(url, { headers: options.headers });
+    if (response.ok) {
+      return (options.responseType === "json" ? await response.json() : await response.text()) as T;
+    }
+    if (!options.retryOn?.(response) || attempt === retries) {
+      throw new Error(options.errorMessage(response.status));
+    }
+    const delayMs = options.retryDelay?.(response, attempt) ?? 500 * 2 ** attempt;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  throw new Error(options.errorMessage(500));
 }
 
 function normalizeSkillsShCoordinate(value: string, label: string): string {
@@ -442,28 +532,6 @@ function normalizeSkillsShCoordinate(value: string, label: string): string {
     throw new Error(`skills.sh ${label} 无效`);
   }
   return normalized;
-}
-
-async function skillsShPublicJson<T>(url: string): Promise<T> {
-  for (let attempt = 0; attempt <= SKILLS_SH_MAX_RETRIES; attempt += 1) {
-    const response = await fetch(url, {
-      headers: { Accept: "application/json", "User-Agent": "MastraWork-Skill-Marketplace" },
-    });
-    if (response.ok) return (await response.json()) as T;
-    if (response.status !== 429 || attempt === SKILLS_SH_MAX_RETRIES) {
-      if (response.status === 429) {
-        throw new Error("skills.sh 公共目录请求被限流，请稍后重试");
-      }
-      throw new Error(`skills.sh 公共目录请求失败（${response.status}）`);
-    }
-    const retryAfter = Number(response.headers.get("Retry-After"));
-    const delayMs =
-      Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.min(30_000, retryAfter * 1_000)
-        : Math.min(8_000, 500 * 2 ** attempt);
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  throw new Error("skills.sh 公共目录请求失败");
 }
 
 const KNOWN_OFFICIAL_OWNERS = new Set([
@@ -511,20 +579,6 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
     const sourceType =
       raw.sourceType === "well-known" || !normalizedSource.includes("/") ? "well-known" : "github";
 
-    // 稳定派生趋势与热度指标，确保无远端增量快照时榜单依然具备分化与区分度
-    let seed = 0;
-    for (let i = 0; i < normalizedSlug.length; i += 1) {
-      seed = (seed * 31 + normalizedSlug.charCodeAt(i)) >>> 0;
-    }
-    const derivedChange = Math.max(1, Math.round((validInstalls * ((seed % 25) + 5)) / 100));
-    const derivedInstallsYesterday = Math.max(
-      1,
-      Math.round((validInstalls * ((seed % 15) + 2)) / 100),
-    );
-
-    const change = typeof raw.change === "number" ? raw.change : derivedChange;
-    const installsYesterday =
-      typeof raw.installsYesterday === "number" ? raw.installsYesterday : derivedInstallsYesterday;
     const owner =
       typeof raw.owner === "string" && raw.owner.trim()
         ? raw.owner.trim()
@@ -550,8 +604,12 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
       url: typeof raw.url === "string" ? raw.url : undefined,
       isDuplicate: raw.isDuplicate === true,
       description: typeof raw.description === "string" ? raw.description : undefined,
-      change,
-      installsYesterday,
+      change:
+        typeof raw.change === "number" && Number.isFinite(raw.change) ? raw.change : undefined,
+      installsYesterday:
+        typeof raw.installsYesterday === "number" && Number.isFinite(raw.installsYesterday)
+          ? raw.installsYesterday
+          : undefined,
       owner,
       isOfficial,
     };
@@ -577,9 +635,10 @@ export async function getSkillsShCurated(force = false): Promise<CuratedResponse
     // 1. 并发拉取前 4 页基础全时榜，筛选其中的官方技能与创作者
     const pages = await Promise.all(
       [0, 1, 2, 3].map((p) =>
-        skillsShPublicJson<SkillsShPublicPage>(`https://skills.sh/api/skills/all-time/${p}`).catch(
-          () => ({ skills: [] }),
-        ),
+        fetchWithRetry<SkillsShPublicPage>(
+          `https://skills.sh/api/skills/all-time/${p}`,
+          SKILLS_SH_JSON_OPTIONS,
+        ).catch(() => ({ skills: [] })),
       ),
     );
     const baseSkills = pages
@@ -647,7 +706,7 @@ export async function getSkillsShAudit(source: string, slug: string): Promise<Sk
   ];
   for (const endpoint of endpoints) {
     try {
-      const res = await skillsShPublicJson<SkillAuditResponse>(endpoint);
+      const res = await fetchWithRetry<SkillAuditResponse>(endpoint, SKILLS_SH_JSON_OPTIONS);
       if (res && Array.isArray(res.audits)) {
         return res.audits;
       }
@@ -658,9 +717,6 @@ export async function getSkillsShAudit(source: string, slug: string): Promise<Sk
   return [];
 }
 
-const skillsShOptionsCache = new Map<string, { expiresAt: number; result: SkillsShListResult }>();
-const skillsShOptionsInFlight = new Map<string, Promise<SkillsShListResult>>();
-
 function getSkillsShQueryCacheKey(options: SkillsShQueryOptions): string {
   const view = options.view || "all-time";
   const curated = options.curated ? "1" : "0";
@@ -669,6 +725,113 @@ function getSkillsShQueryCacheKey(options: SkillsShQueryOptions): string {
   const perPage = options.perPage || 50;
   const query = (options.query || "").trim().toLowerCase();
   return `${view}:${curated}:${owner}:${page}:${perPage}:${query}`;
+}
+
+function filterSkills(skills: SkillsShSkill[], owner?: string, query?: string): SkillsShSkill[] {
+  const normalizedOwner = owner?.trim().toLowerCase();
+  const normalizedQuery = query?.trim().toLowerCase();
+  return skills.filter((skill) => {
+    if (
+      normalizedOwner &&
+      skill.owner?.toLowerCase() !== normalizedOwner &&
+      !skill.source.toLowerCase().startsWith(`${normalizedOwner}/`)
+    ) {
+      return false;
+    }
+    if (!normalizedQuery) return true;
+    return (
+      skill.name.toLowerCase().includes(normalizedQuery) ||
+      skill.source.toLowerCase().includes(normalizedQuery) ||
+      (skill.description ?? "").toLowerCase().includes(normalizedQuery)
+    );
+  });
+}
+
+function sortSkills(view: SkillsShQueryOptions["view"], skills: SkillsShSkill[]): SkillsShSkill[] {
+  return [...skills].sort((a, b) => {
+    if (view === "trending") return (b.change ?? 0) - (a.change ?? 0);
+    if (view === "hot") return (b.installsYesterday ?? 0) - (a.installsYesterday ?? 0);
+    return b.installs - a.installs;
+  });
+}
+
+function paginateSkills(
+  skills: SkillsShSkill[],
+  page: number,
+  perPage: number,
+  view: string,
+  curatedOwners?: CuratedOwner[],
+): SkillsShListResult {
+  const total = skills.length;
+  const start = page * perPage;
+  return {
+    skills: skills.slice(start, start + perPage),
+    total,
+    page,
+    perPage,
+    hasMore: start + perPage < total,
+    view,
+    ...(curatedOwners ? { curatedOwners } : {}),
+  };
+}
+
+interface SkillsShFetchedPage {
+  skills: SkillsShSkill[];
+  total?: number;
+  page?: number;
+  perPage?: number;
+  hasMore?: boolean;
+}
+
+async function fetchSkillsShLeaderboardPage(
+  view: string,
+  page: number,
+  perPage: number,
+): Promise<SkillsShFetchedPage | null> {
+  try {
+    const v1Result = await fetchWithRetry<{
+      data?: unknown[];
+      pagination?: { page: number; perPage: number; total: number; hasMore: boolean };
+    }>(
+      `https://skills.sh/api/v1/skills?view=${view}&page=${page}&per_page=${perPage}`,
+      SKILLS_SH_JSON_OPTIONS,
+    );
+    if (Array.isArray(v1Result.data) && v1Result.data.length > 0) {
+      const pagination = v1Result.pagination;
+      return {
+        skills: v1Result.data
+          .map(normalizeSkillsShEntry)
+          .filter((skill): skill is SkillsShSkill => Boolean(skill)),
+        total: pagination?.total,
+        page: pagination?.page,
+        perPage: pagination?.perPage,
+        hasMore: pagination?.hasMore,
+      };
+    }
+  } catch {
+    // Try the legacy page endpoint below.
+  }
+
+  const legacyPage = await fetchWithRetry<SkillsShPublicPage>(
+    `https://skills.sh/api/skills/${view}/${page}`,
+    SKILLS_SH_JSON_OPTIONS,
+  ).catch((): SkillsShPublicPage => ({ skills: [] }));
+  const rawSkills = Array.isArray(legacyPage.skills) ? legacyPage.skills : [];
+  const skills = rawSkills
+    .map(normalizeSkillsShEntry)
+    .filter((skill): skill is SkillsShSkill => Boolean(skill));
+  if (skills.length === 0) return null;
+  return {
+    skills,
+    total:
+      legacyPage.total ??
+      (rawSkills.length >= perPage
+        ? Math.max(500, (page + 5) * perPage)
+        : page * perPage + rawSkills.length),
+    page,
+    perPage,
+    hasMore: skills.length >= perPage,
+  };
 }
 
 async function executeListSkillsShSkillsWithOptions(
@@ -683,54 +846,24 @@ async function executeListSkillsShSkillsWithOptions(
     if (owner) {
       // 指定具体厂商: 优先走官方 search API 直接查询该厂商全量技能
       const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(owner)}&limit=100`;
-      const payload = await skillsShPublicJson<{ skills?: unknown[] }>(searchUrl).catch(() => ({
-        skills: [],
-      }));
-      let skills = (payload.skills ?? [])
-        .map(normalizeSkillsShEntry)
-        .filter((s): s is SkillsShSkill => Boolean(s))
-        .filter(
-          (s) =>
-            s.owner?.toLowerCase() === owner.toLowerCase() ||
-            s.source.toLowerCase().startsWith(`${owner.toLowerCase()}/`),
-        );
-
-      if (normalizedQuery) {
-        const q = normalizedQuery.toLowerCase();
-        skills = skills.filter(
-          (s) =>
-            s.name.toLowerCase().includes(q) ||
-            s.source.toLowerCase().includes(q) ||
-            (s.description || "").toLowerCase().includes(q),
-        );
-      }
-
-      skills.sort((a, b) => b.installs - a.installs);
-      const total = skills.length;
-      const start = page * perPage;
-      return {
-        skills: skills.slice(start, start + perPage),
-        total,
-        page,
-        perPage,
-        hasMore: start + perPage < total,
-        view: "curated",
-      };
+      const payload = await fetchWithRetry<{ skills?: unknown[] }>(
+        searchUrl,
+        SKILLS_SH_JSON_OPTIONS,
+      ).catch(() => ({ skills: [] }));
+      const skills = filterSkills(
+        (payload.skills ?? [])
+          .map(normalizeSkillsShEntry)
+          .filter((s): s is SkillsShSkill => Boolean(s)),
+        owner,
+        normalizedQuery,
+      );
+      return paginateSkills(sortSkills("all-time", skills), page, perPage, "curated");
     }
 
     // 未指定具体厂商 (即点击 "⭐ 原厂认证" 根分类):
     const curatedData = await getSkillsShCurated();
     const allOfficialSkills = curatedData.data.flatMap((o) => o.skills);
-    let filtered = allOfficialSkills;
-    if (normalizedQuery) {
-      const q = normalizedQuery.toLowerCase();
-      filtered = filtered.filter(
-        (s) =>
-          s.name.toLowerCase().includes(q) ||
-          s.source.toLowerCase().includes(q) ||
-          (s.description || "").toLowerCase().includes(q),
-      );
-    }
+    const filtered = filterSkills(allOfficialSkills, undefined, normalizedQuery);
     const seen = new Set<string>();
     const deduped: SkillsShSkill[] = [];
     for (const skill of filtered) {
@@ -739,154 +872,62 @@ async function executeListSkillsShSkillsWithOptions(
         deduped.push(skill);
       }
     }
-    deduped.sort((a, b) => b.installs - a.installs);
-
-    const total = deduped.length;
-    const start = page * perPage;
-    return {
-      skills: deduped.slice(start, start + perPage),
-      total,
+    return paginateSkills(
+      sortSkills("all-time", deduped),
       page,
       perPage,
-      hasMore: start + perPage < total,
-      view: "curated",
-      curatedOwners: curatedData.data,
-    };
+      "curated",
+      curatedData.data,
+    );
   }
 
   // 2. 如果包含搜索关键词
   if (normalizedQuery.length >= 2) {
     const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(normalizedQuery)}&limit=200${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
-    const payload = await skillsShPublicJson<{ skills?: unknown[] }>(searchUrl).catch(() => ({
-      skills: [],
-    }));
-    const skills = (payload.skills ?? [])
-      .map(normalizeSkillsShEntry)
-      .filter((skill): skill is SkillsShSkill => Boolean(skill));
-    const total = skills.length;
-    const start = page * perPage;
-    return {
-      skills: skills.slice(start, start + perPage),
-      total,
-      page,
-      perPage,
-      hasMore: start + perPage < total,
-      view,
-    };
+    const payload = await fetchWithRetry<{ skills?: unknown[] }>(
+      searchUrl,
+      SKILLS_SH_JSON_OPTIONS,
+    ).catch(() => ({ skills: [] }));
+    const skills = filterSkills(
+      (payload.skills ?? [])
+        .map(normalizeSkillsShEntry)
+        .filter((skill): skill is SkillsShSkill => Boolean(skill)),
+      owner,
+      normalizedQuery,
+    );
+    return paginateSkills(skills, page, perPage, view);
   }
 
   // 3. 榜单查询 (view: all-time | trending | hot)
   const viewPath = view === "trending" ? "trending" : view === "hot" ? "hot" : "all-time";
-  try {
-    const v1Res = await skillsShPublicJson<{
-      data?: unknown[];
-      pagination?: { page: number; perPage: number; total: number; hasMore: boolean };
-    }>(`https://skills.sh/api/v1/skills?view=${viewPath}&page=${page}&per_page=${perPage}`);
-    if (v1Res && Array.isArray(v1Res.data) && v1Res.data.length > 0) {
-      let skills = v1Res.data
-        .map(normalizeSkillsShEntry)
-        .filter((skill): skill is SkillsShSkill => Boolean(skill));
-      if (owner) {
-        skills = skills.filter((s) => s.owner?.toLowerCase() === owner.toLowerCase());
-      }
-      if (view === "trending") {
-        skills.sort((a, b) => (b.change ?? 0) - (a.change ?? 0));
-      } else if (view === "hot") {
-        skills.sort((a, b) => (b.installsYesterday ?? 0) - (a.installsYesterday ?? 0));
-      }
-      return {
-        skills,
-        total: v1Res.pagination?.total ?? skills.length,
-        page: v1Res.pagination?.page ?? page,
-        perPage: v1Res.pagination?.perPage ?? perPage,
-        hasMore: v1Res.pagination?.hasMore ?? skills.length >= perPage,
-        view,
-      };
-    }
-  } catch {
-    // fallback
-  }
-
-  const fallbackPage = await skillsShPublicJson<SkillsShPublicPage>(
-    `https://skills.sh/api/skills/${viewPath}/${page}`,
-  ).catch((): SkillsShPublicPage => ({ skills: [] }));
-
-  let skills = (fallbackPage.skills ?? [])
-    .map(normalizeSkillsShEntry)
-    .filter((skill): skill is SkillsShSkill => Boolean(skill));
-
-  if (skills.length === 0) {
-    // 若特定榜单接口未返回，基于全量技能做针对性排序
-    const all = await listSkillsShSkills();
-    skills = [...all];
-    if (owner) {
-      skills = skills.filter((s) => s.owner?.toLowerCase() === owner.toLowerCase());
-    }
-    if (view === "trending") {
-      skills.sort((a, b) => (b.change ?? 0) - (a.change ?? 0));
-    } else if (view === "hot") {
-      skills.sort((a, b) => (b.installsYesterday ?? 0) - (a.installsYesterday ?? 0));
-    } else {
-      skills.sort((a, b) => b.installs - a.installs);
-    }
-    const start = page * perPage;
+  const fetchedPage = await fetchSkillsShLeaderboardPage(viewPath, page, perPage);
+  if (fetchedPage) {
+    const skills = sortSkills(view, filterSkills(fetchedPage.skills, owner));
     return {
-      skills: skills.slice(start, start + perPage),
-      total: skills.length,
-      page,
-      perPage,
-      hasMore: start + perPage < skills.length,
+      skills,
+      total: fetchedPage.total ?? skills.length,
+      page: fetchedPage.page ?? page,
+      perPage: fetchedPage.perPage ?? perPage,
+      hasMore: fetchedPage.hasMore ?? skills.length >= perPage,
       view,
     };
   }
 
-  return {
-    skills,
-    total:
-      fallbackPage.total ??
-      (fallbackPage.skills.length >= perPage
-        ? Math.max(500, (page + 5) * perPage)
-        : page * perPage + fallbackPage.skills.length),
-    page,
-    perPage,
-    hasMore: skills.length >= perPage,
-    view,
-  };
+  // 若榜单接口均未返回，基于全量技能做过滤、排序和分页。
+  const allSkills = filterSkills(await listSkillsShSkills(), owner);
+  return paginateSkills(sortSkills(view, allSkills), page, perPage, view);
 }
+
+const cachedSkillsShOptions = createCachedFetcher(
+  executeListSkillsShSkillsWithOptions,
+  getSkillsShQueryCacheKey,
+  { ttl: SKILLS_SH_CACHE_TTL },
+);
 
 export async function listSkillsShSkillsWithOptions(
   options: SkillsShQueryOptions = {},
 ): Promise<SkillsShListResult> {
-  const cacheKey = getSkillsShQueryCacheKey(options);
-  const cached = skillsShOptionsCache.get(cacheKey);
-  if (!options.force && cached && cached.expiresAt > Date.now()) {
-    return cached.result;
-  }
-
-  const pending = skillsShOptionsInFlight.get(cacheKey);
-  if (pending) return pending;
-
-  const request = executeListSkillsShSkillsWithOptions(options)
-    .then((result) => {
-      skillsShOptionsCache.set(cacheKey, {
-        expiresAt: Date.now() + SKILLS_SH_CACHE_TTL,
-        result,
-      });
-      return result;
-    })
-    .catch((error) => {
-      if (cached) return cached.result;
-      throw error;
-    });
-
-  skillsShOptionsInFlight.set(cacheKey, request);
-  try {
-    return await request;
-  } finally {
-    if (skillsShOptionsInFlight.get(cacheKey) === request) {
-      skillsShOptionsInFlight.delete(cacheKey);
-    }
-  }
+  return cachedSkillsShOptions(options, options.force);
 }
 
 async function listSkillsShPublicSkills(query: string): Promise<SkillsShSkill[]> {
@@ -897,45 +938,35 @@ async function listSkillsShPublicSkills(query: string): Promise<SkillsShSkill[]>
   const pagesToFetch = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   const pages = await Promise.all(
     pagesToFetch.map((p) =>
-      skillsShPublicJson<SkillsShPublicPage>(`https://skills.sh/api/skills/all-time/${p}`).catch(
-        () => ({ skills: [] }),
-      ),
+      fetchWithRetry<SkillsShPublicPage>(
+        `https://skills.sh/api/skills/all-time/${p}`,
+        SKILLS_SH_JSON_OPTIONS,
+      ).catch(() => ({ skills: [] })),
     ),
   );
   const skills = pages
     .flatMap((p) => p.skills ?? [])
     .map(normalizeSkillsShEntry)
     .filter((skill): skill is SkillsShSkill => Boolean(skill));
-  return skills;
+  return filterSkills(skills, undefined, query);
 }
 
+const cachedSkillsShPublicSkills = createCachedFetcher(
+  listSkillsShPublicSkills,
+  (query) => query.toLocaleLowerCase() || SKILLS_SH_CACHE_KEY,
+  {
+    ttl: SKILLS_SH_CACHE_TTL,
+    disk: {
+      key: SKILLS_SH_CACHE_KEY,
+      read: readSkillsShDiskCache,
+      write: writeSkillsShDiskCache,
+    },
+  },
+);
+
 export async function listSkillsShSkills(query = "", force = false): Promise<SkillsShSkill[]> {
-  await skillsShDiskCacheReady;
   const normalizedQuery = query.trim();
-  const cacheKey = normalizedQuery.toLocaleLowerCase() || SKILLS_SH_CACHE_KEY;
-  const cached = skillsShCache.get(cacheKey);
-  if (!force && cached && cached.expiresAt > Date.now()) return cached.skills;
-
-  const pending = skillsShInFlight.get(cacheKey);
-  if (pending) return pending;
-
-  const request = listSkillsShPublicSkills(normalizedQuery)
-    .then((skills) => {
-      const entry = { expiresAt: Date.now() + SKILLS_SH_CACHE_TTL, skills };
-      skillsShCache.set(cacheKey, entry);
-      if (cacheKey === SKILLS_SH_CACHE_KEY) void writeSkillsShDiskCache(entry);
-      return skills;
-    })
-    .catch((error) => {
-      if (cached) return cached.skills;
-      throw error;
-    });
-  skillsShInFlight.set(cacheKey, request);
-  try {
-    return await request;
-  } finally {
-    if (skillsShInFlight.get(cacheKey) === request) skillsShInFlight.delete(cacheKey);
-  }
+  return cachedSkillsShPublicSkills(normalizedQuery, force);
 }
 
 function normalizeSkillsShFilePath(path: string): string {
@@ -1014,7 +1045,11 @@ export async function getSkillsShSkillDetail(
       `/.well-known/skills/${encodeURIComponent(normalizedSlug)}/SKILL.md`,
     ]) {
       try {
-        instructions = await publicSkillText(`${baseUrl}${path}`);
+        instructions = await fetchWithRetry<string>(`${baseUrl}${path}`, {
+          headers: PUBLIC_SKILL_HEADERS,
+          responseType: "text",
+          errorMessage: (status) => `读取远程技能文件失败（${status}）`,
+        });
         break;
       } catch {
         // Try the other well-known convention before reporting an unavailable skill.
@@ -1039,8 +1074,13 @@ export async function getSkillsShSkillDetail(
   let branch = "main";
   for (const candidate of ["main", "master"]) {
     try {
-      tree = await githubJson<{ tree?: Array<{ path: string; type: string }> }>(
+      tree = await fetchWithRetry<{ tree?: Array<{ path: string; type: string }> }>(
         `https://api.github.com/repos/${owner}/${repo}/git/trees/${candidate}?recursive=1`,
+        {
+          headers: GITHUB_JSON_HEADERS,
+          responseType: "json",
+          errorMessage: (status) => `GitHub 请求失败（${status}）`,
+        },
       );
       branch = candidate;
       break;
@@ -1073,11 +1113,16 @@ export async function getSkillsShSkillDetail(
       .slice(0, SKILLS_SH_MAX_FILES)
       .map(async (item) => ({
         path: item.path.slice(skillPrefix ? skillPrefix.length + 1 : 0),
-        contents: await githubText(
+        contents: await fetchWithRetry<string>(
           `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${item.path
             .split("/")
             .map(encodeURIComponent)
             .join("/")}`,
+          {
+            headers: GITHUB_TEXT_HEADERS,
+            responseType: "text",
+            errorMessage: (status) => `读取技能文件失败（${status}）`,
+          },
         ),
       })),
   );
@@ -1092,13 +1137,17 @@ export async function getSkillsShSkillDetail(
   return detail;
 }
 
-export async function installSkillsShSkill(source: string, slugValue: string): Promise<string> {
+export async function installSkillsShSkill(
+  source: string,
+  slugValue: string,
+  resourceId?: string,
+): Promise<string> {
   const detail = await getSkillsShSkillDetail(source, slugValue);
   const skillName = detail.name.trim();
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(skillName)) {
     throw new Error(`技能名称无效：${skillName}`);
   }
-  const root = join(getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY, "skills", skillName);
+  const root = join(getManagedSkillsDirectory(resourceId), skillName);
   if (
     await access(root).then(
       () => true,
@@ -1142,8 +1191,13 @@ export async function listMarketplaceSkills(
   if (!marketplace.enabled) return [];
   const { owner, repo, branch, path: configuredPath } = repositoryUrl(marketplace);
   const effectiveBranch = marketplace.branch || branch;
-  const tree = await githubJson<{ tree?: GitTreeItem[] }>(
+  const tree = await fetchWithRetry<{ tree?: GitTreeItem[] }>(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(effectiveBranch)}?recursive=1`,
+    {
+      headers: GITHUB_JSON_HEADERS,
+      responseType: "json",
+      errorMessage: (status) => `GitHub 请求失败（${status}）`,
+    },
   );
   const skillFiles = (tree.tree ?? []).filter(
     (item) =>
@@ -1156,8 +1210,13 @@ export async function listMarketplaceSkills(
     skillFiles.map(async (file) => {
       const parent = file.path.split("/").at(-2) || basename(file.path, ".md");
       const sourcePath = validateSkillPath(file.path, configuredPath);
-      const raw = await githubText(
+      const raw = await fetchWithRetry<string>(
         `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(effectiveBranch)}/${sourcePath.split("/").map(encodeURIComponent).join("/")}`,
+        {
+          headers: GITHUB_TEXT_HEADERS,
+          responseType: "text",
+          errorMessage: (status) => `读取技能文件失败（${status}）`,
+        },
       );
       const parsed = parseSkillMarkdown(raw, parent);
       return {
@@ -1180,20 +1239,36 @@ export async function listMarketplaceSkills(
   );
 }
 
-export async function getMarketplaceSkillDetail(marketplaceId: string, sourcePath: string) {
-  const marketplace = (await getSkillMarketplaces()).find((item) => item.id === marketplaceId);
+export async function getMarketplaceSkillDetail(
+  marketplaceId: string,
+  sourcePath: string,
+  resourceId?: string,
+) {
+  const marketplace = (await getSkillMarketplaces(resourceId)).find(
+    (item) => item.id === marketplaceId,
+  );
   if (!marketplace) throw new Error("技能市场不存在");
   const { owner, repo, path: configuredPath } = repositoryUrl(marketplace);
   const branch = marketplace.branch || DEFAULT_BRANCH;
   const normalizedSourcePath = validateSkillPath(sourcePath, configuredPath);
-  const raw = await githubText(
+  const raw = await fetchWithRetry<string>(
     `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${normalizedSourcePath.split("/").map(encodeURIComponent).join("/")}`,
+    {
+      headers: GITHUB_TEXT_HEADERS,
+      responseType: "text",
+      errorMessage: (status) => `读取技能文件失败（${status}）`,
+    },
   );
   const parent = normalizedSourcePath.split("/").at(-2) || basename(normalizedSourcePath, ".md");
   const parsed = parseSkillMarkdown(raw, parent);
   const prefix = normalizedSourcePath.slice(0, -"SKILL.md".length);
-  const tree = await githubJson<{ tree?: GitTreeItem[] }>(
+  const tree = await fetchWithRetry<{ tree?: GitTreeItem[] }>(
     `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+    {
+      headers: GITHUB_JSON_HEADERS,
+      responseType: "json",
+      errorMessage: (status) => `GitHub 请求失败（${status}）`,
+    },
   );
   const resources = (tree.tree ?? [])
     .filter(
@@ -1218,18 +1293,17 @@ export async function getMarketplaceSkillDetail(marketplaceId: string, sourcePat
   };
 }
 
-export async function installMarketplaceSkill(skill: MarketplaceSkill): Promise<string> {
-  const marketplaces = await getSkillMarketplaces();
+export async function installMarketplaceSkill(
+  skill: MarketplaceSkill,
+  resourceId?: string,
+): Promise<string> {
+  const marketplaces = await getSkillMarketplaces(resourceId);
   const marketplace = marketplaces.find((item) => item.id === skill.marketplaceId);
   if (!marketplace) throw new Error("技能市场不存在或已被删除");
   const { owner, repo, path: configuredPath } = repositoryUrl(marketplace);
   const branch = marketplace.branch || DEFAULT_BRANCH;
   const sourcePath = validateSkillPath(skill.sourcePath, configuredPath);
-  const root = join(
-    getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
-    "skills",
-    slug(skill.name),
-  );
+  const root = join(getManagedSkillsDirectory(resourceId), slug(skill.name));
   if (
     await access(root).then(
       () => true,
@@ -1239,13 +1313,23 @@ export async function installMarketplaceSkill(skill: MarketplaceSkill): Promise<
     throw new Error("该技能已经安装");
   await mkdir(root, { recursive: true });
   try {
-    const raw = await githubText(
+    const raw = await fetchWithRetry<string>(
       `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${sourcePath.split("/").map(encodeURIComponent).join("/")}`,
+      {
+        headers: GITHUB_TEXT_HEADERS,
+        responseType: "text",
+        errorMessage: (status) => `读取技能文件失败（${status}）`,
+      },
     );
     await writeFile(join(root, "SKILL.md"), raw, "utf8");
     const fileBase = sourcePath.slice(0, -"SKILL.md".length);
-    const tree = await githubJson<{ tree?: GitTreeItem[] }>(
+    const tree = await fetchWithRetry<{ tree?: GitTreeItem[] }>(
       `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+      {
+        headers: GITHUB_JSON_HEADERS,
+        responseType: "json",
+        errorMessage: (status) => `GitHub 请求失败（${status}）`,
+      },
     );
     for (const item of tree.tree ?? []) {
       if (item.type !== "blob" || !item.path.startsWith(fileBase) || item.path === sourcePath)
@@ -1256,8 +1340,13 @@ export async function installMarketplaceSkill(skill: MarketplaceSkill): Promise<
       await mkdir(dirname(target), { recursive: true });
       await writeFile(
         target,
-        await githubText(
+        await fetchWithRetry<string>(
           `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${item.path.split("/").map(encodeURIComponent).join("/")}`,
+          {
+            headers: GITHUB_TEXT_HEADERS,
+            responseType: "text",
+            errorMessage: (status) => `读取技能文件失败（${status}）`,
+          },
         ),
       );
     }

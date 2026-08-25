@@ -1,3 +1,4 @@
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
 import { mastraWorkAgent } from "../agents";
@@ -76,10 +77,11 @@ const agentProfileInputSchema = z.object({
 export const agentProfilesRoute = registerApiRoute("/work/agents", {
   method: "GET",
   handler: async (c) => {
-    const agents = await listAgentProfiles();
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const agents = await listAgentProfiles(resourceId);
     const registry = c.get("mastra");
     const registrations = await Promise.all(
-      agents.map((profile) => ensureProfileAgentsRegistered(registry, profile)),
+      agents.map((profile) => ensureProfileAgentsRegistered(registry, profile, resourceId)),
     );
     const registryEntries = Object.entries(registry.listAgents()).map(([registryKey, agent]) => ({
       registryKey,
@@ -121,9 +123,11 @@ export const saveAgentProfileRoute = registerApiRoute("/work/agents", {
       ) {
         return c.json({ error: "Agent 团队至少需要一位成员" }, 400);
       }
-      const profile = await upsertAgentProfile(parsed.data as Partial<AgentProfile>);
-      if (profile.enabled) await ensureProfileAgentsRegistered(c.get("mastra"), profile);
-      else unregisterProfileAgents(c.get("mastra"), profile.id);
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      const profile = await upsertAgentProfile(parsed.data as Partial<AgentProfile>, resourceId);
+      if (profile.enabled)
+        await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId);
+      else unregisterProfileAgents(c.get("mastra"), profile.id, resourceId);
       return c.json({ agent: profile });
     } catch (error) {
       return c.json({ error: errorText(error) }, 400);
@@ -136,8 +140,9 @@ export const deleteAgentProfileRoute = registerApiRoute("/work/agents/:agentId",
   handler: async (c) => {
     try {
       const agentId = c.req.param("agentId");
-      unregisterProfileAgents(c.get("mastra"), agentId);
-      await deleteAgentProfile(agentId);
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      unregisterProfileAgents(c.get("mastra"), agentId, resourceId);
+      await deleteAgentProfile(agentId, resourceId);
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: errorText(error) }, 400);

@@ -5,6 +5,7 @@
  * - /work/providers/models:自定义网关模型列表拉取(参考 docs/en/models/gateways/custom-gateways.mdx)
  */
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../errors";
 import { getProvidersConfig, saveProvidersConfig } from "../models";
@@ -242,15 +243,17 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
 //
 // 配置必须在服务端:Studio 的模型选择器与 Agent 的默认模型都要读到它,
 // 而 Studio 跑在 Mastra 进程里,读不到渲染进程的 localStorage。
-// Key 由 WorkbenchGateway.resolveAuth 直接取用(见 src/mastra/models/gateways.ts),
-// 不注入 process.env、也不再随请求体下发。
+// 请求内的模型实例由 resolveConfiguredModel 按资源直接构造；WorkbenchGateway
+// 仅保留给 Studio/model registry 使用。Key 不注入 process.env、也不随请求体下发。
 // ---------------------------------------------------------------------------
 
 // GET /work/providers/config — 读取供应商与当前选定模型
 export const providersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "GET",
   handler: async (c) => {
-    return c.json(await getProvidersConfig());
+    return c.json(
+      await getProvidersConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+    );
   },
 });
 
@@ -259,7 +262,10 @@ export const saveProvidersConfigRoute = registerApiRoute("/work/providers/config
   method: "POST",
   handler: async (c) => {
     const config = (await c.req.json()) as Parameters<typeof saveProvidersConfig>[0];
-    await saveProvidersConfig(config);
+    await saveProvidersConfig(
+      config,
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     return c.json({ ok: true });
   },
 });

@@ -76,8 +76,12 @@ export const inlineEditRoute = registerApiRoute("/work/threads/:threadId/inline-
     const snapshot = metadata.modelSelectionByMode?.[mode.id];
     const selectedModel = input.modelSelection ?? snapshot;
     const resolved = selectedModel
-      ? await resolveConfiguredModel(selectedModel.providerId, selectedModel.modelId)
-      : await resolveDefaultLanguageModel();
+      ? await resolveConfiguredModel(
+          selectedModel.providerId,
+          selectedModel.modelId,
+          input.resourceId,
+        )
+      : await resolveDefaultLanguageModel(input.resourceId);
     if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
     const recalled = await memory.recall({
@@ -94,7 +98,7 @@ export const inlineEditRoute = registerApiRoute("/work/threads/:threadId/inline-
       .slice(-8)
       .join("\n\n");
 
-    const profile = await getAgentProfile(metadata.agentProfileId);
+    const profile = await getAgentProfile(metadata.agentProfileId, input.resourceId);
     const instruction =
       input.instruction?.trim() || "改进选中的代码,保持原有行为、接口和外部可观察结果不变。";
     const prompt = [
@@ -155,8 +159,12 @@ export const inlineCompletionRoute = registerApiRoute("/work/threads/:threadId/i
     const snapshot = metadata.modelSelectionByMode?.[mode.id];
     const selectedModel = input.modelSelection ?? snapshot;
     const resolved = selectedModel
-      ? await resolveConfiguredModel(selectedModel.providerId, selectedModel.modelId)
-      : await resolveDefaultLanguageModel();
+      ? await resolveConfiguredModel(
+          selectedModel.providerId,
+          selectedModel.modelId,
+          input.resourceId,
+        )
+      : await resolveDefaultLanguageModel(input.resourceId);
     if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
     const recalled = await memory.recall({
@@ -172,7 +180,7 @@ export const inlineCompletionRoute = registerApiRoute("/work/threads/:threadId/i
       .filter(Boolean)
       .slice(-8)
       .join("\n\n");
-    const profile = await getAgentProfile(metadata.agentProfileId);
+    const profile = await getAgentProfile(metadata.agentProfileId, input.resourceId);
     const prompt = [
       `文件: ${input.path}`,
       input.language ? `语言: ${input.language}` : "",

@@ -4,16 +4,29 @@
  * docs/en/reference/storage/composite.mdx(按 domain 路由存储后端)。
  * 默认域走 LibSQL(与 Studio 共享 src/mastra/public/mastra.db),
  * observability 域走 DuckDB(OLAP 指标,docs/en/docs/observability/metrics/overview.mdx)。
- * 外部大内容对象见 ./content-objects.ts:按用户/线程隔离、SHA-256 命名并支持分段读取。
+ * 外部内容归档写入 Workspace allowedPaths 可读的用户目录。
  */
-import { AsyncLocalStorage } from "node:async_hooks";
+
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { DuckDBStore } from "@mastra/duckdb";
 import { LibSQLStore } from "@mastra/libsql";
+
+export interface RequestContextLike {
+  get?: (key: string) => unknown;
+}
+
+/** Resolve the authenticated tenant from Mastra's official request context. */
+export function resourceIdFromContext(context?: RequestContextLike): string | undefined {
+  const value = context?.get?.(MASTRA_RESOURCE_ID_KEY);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
 
 /**
  * 项目根目录定位。
@@ -45,43 +58,36 @@ export const DEFAULT_MASTRA_DATA_DIRECTORY = join(homedir(), ".mastrawork");
  * 相对路径会抛 SQLITE_CANTOPEN(错误码 14)。
  */
 const STORAGE_CONFIG_FILE = join(DEFAULT_MASTRA_DATA_DIRECTORY, "storage-location.json");
-const LEGACY_STORAGE_CONFIG_FILE = join(PROJECT_ROOT, "storage-location.json");
 
 /** 规整为 libsql 可用的绝对 file: URL(正斜杠) */
 function toFileUrl(filePath: string): string {
-  const normalized = filePath.startsWith("file:") ? filePath.slice("file:".length) : filePath;
+  const normalized = filePath.startsWith("file:") ? filePath.slice(5) : filePath;
   const absolute = (
     isAbsolute(normalized) ? normalized : resolve(PROJECT_ROOT, normalized)
   ).replace(/\\/g, "/");
   return `file:${absolute}`;
 }
 
+function filePathFromUrl(url: string): string {
+  return url.slice(5);
+}
+
 export function getStorageUrl(): string {
   let url = process.env.MASTRA_STORAGE_URL;
   if (!url) {
-    for (const configFile of [STORAGE_CONFIG_FILE, LEGACY_STORAGE_CONFIG_FILE]) {
-      if (existsSync(configFile)) {
-        try {
-          const config = JSON.parse(readFileSync(configFile, "utf-8")) as {
-            url?: string;
-          };
-          if (config.url) {
-            url = config.url;
-            break;
-          }
-        } catch {
-          // 配置文件损坏时回落到默认位置
-        }
+    if (existsSync(STORAGE_CONFIG_FILE)) {
+      try {
+        const config = JSON.parse(readFileSync(STORAGE_CONFIG_FILE, "utf-8")) as { url?: string };
+        url = config.url;
+      } catch {
+        // 配置文件损坏时回落到默认位置
       }
     }
   }
   if (!url) {
     url = toFileUrl(join(DEFAULT_MASTRA_DATA_DIRECTORY, "mastra.db"));
   }
-  if (url.startsWith("file:")) {
-    return toFileUrl(url.slice("file:".length));
-  }
-  return url; // 远程 libsql(http://...)原样返回
+  return url.startsWith("file:") ? toFileUrl(url) : url;
 }
 
 export function getStorageDirectory(): string {
@@ -89,7 +95,7 @@ export function getStorageDirectory(): string {
   if (!url.startsWith("file:")) {
     return DEFAULT_MASTRA_DATA_DIRECTORY;
   }
-  return dirname(url.slice("file:".length));
+  return dirname(filePathFromUrl(url));
 }
 
 function ensureDirectory(): void {
@@ -136,21 +142,30 @@ export function getLibsqlClient(): Promise<Client> {
  */
 const APP_CONFIG_TABLE = "app_config";
 let appConfigTableReady: Promise<void> | undefined;
-
-/** Request-scoped tenant boundary used by all app configuration helpers. */
-const resourceScope = new AsyncLocalStorage<string>();
-
-export function runWithResourceScope<T>(resourceId: string, callback: () => T): T {
-  return resourceScope.run(resourceId, callback);
+function scopedConfigKey(key: string, resourceId?: string): string {
+  const scope = resourceId?.trim();
+  return scope ? `${scope}\u0000${key}` : key;
 }
 
-export function getResourceScope(): string | undefined {
-  return resourceScope.getStore();
-}
-
-function scopedConfigKey(key: string): string {
-  const resourceId = getResourceScope();
-  return resourceId ? JSON.stringify([resourceId, key]) : key;
+/** Write a file through a same-directory temporary file and atomic rename. */
+export async function atomicWrite(filePath: string, data: string | Uint8Array): Promise<void> {
+  const directory = dirname(filePath);
+  await mkdir(directory, { recursive: true });
+  const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryPath, data, { flag: "wx" });
+    try {
+      await rename(temporaryPath, filePath);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "EPERM") throw error;
+      await access(filePath);
+      await rm(filePath, { force: true });
+      await rename(temporaryPath, filePath);
+    }
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }
 
 function ensureAppConfigTable(): Promise<void> {
@@ -163,32 +178,32 @@ function ensureAppConfigTable(): Promise<void> {
 }
 
 /** 读取应用配置;不存在返回 null */
-export async function getAppConfig(key: string): Promise<string | null> {
+export async function getAppConfig(key: string, resourceId?: string): Promise<string | null> {
   await ensureAppConfigTable();
   const result = await (await getLibsqlClient()).execute({
     sql: `SELECT value FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
-    args: [scopedConfigKey(key)],
+    args: [scopedConfigKey(key, resourceId)],
   });
   const value = result.rows[0]?.value;
   return typeof value === "string" ? value : null;
 }
 
 /** 写入应用配置(upsert) */
-export async function setAppConfig(key: string, value: string): Promise<void> {
+export async function setAppConfig(key: string, value: string, resourceId?: string): Promise<void> {
   await ensureAppConfigTable();
   await (await getLibsqlClient()).execute({
     sql: `INSERT INTO ${APP_CONFIG_TABLE} (key, value) VALUES (?, ?)
           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    args: [scopedConfigKey(key), value],
+    args: [scopedConfigKey(key, resourceId), value],
   });
 }
 
 /** Remove an application configuration value from the scoped store. */
-export async function deleteAppConfig(key: string): Promise<void> {
+export async function deleteAppConfig(key: string, resourceId?: string): Promise<void> {
   await ensureAppConfigTable();
   await (await getLibsqlClient()).execute({
     sql: `DELETE FROM ${APP_CONFIG_TABLE} WHERE key = ?`,
-    args: [scopedConfigKey(key)],
+    args: [scopedConfigKey(key, resourceId)],
   });
 }
 

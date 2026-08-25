@@ -540,8 +540,9 @@ function SortableRequestItem({
         <QueueItemActions className="shrink-0">
           {/* 立即转向排在编辑左侧:它是这条请求的主动作(打断当前回合、越过
               队列顺序直接发出),编辑/移除是它的辅助动作。native follow-up
-              (已被服务端 queueMessage 接受)不能改文本也不能单独撤回,但可以
-              被转向——steer 会 abort 当前 run 并作废服务端整个 follow-up 队列 */}
+              (已被服务端会话接受并排入 follow-up 队列)不能改文本也不能单独
+              撤回,但可以被转向——steer 会 abort 当前 run 并作废服务端整个
+              follow-up 队列 */}
           {onSteerNow ? (
             <QueueItemAction
               aria-label="立即转向到这条请求"

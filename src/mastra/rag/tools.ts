@@ -93,8 +93,11 @@ export const libraryDocumentChunkerTool = createTool({
       }),
     ),
   }),
-  execute: async ({ text, strategy, chunkSize, chunkOverlap }) => {
-    const defaultSettings = await getLibrarySettings();
+  execute: async ({ text, strategy, chunkSize, chunkOverlap }, context) => {
+    const resourceId = context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as
+      | string
+      | undefined;
+    const defaultSettings = await getLibrarySettings(resourceId);
     const settings = {
       ...defaultSettings,
       ...(strategy ? { chunkStrategy: strategy } : {}),

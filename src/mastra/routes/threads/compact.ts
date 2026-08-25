@@ -63,7 +63,7 @@ async function refreshObservationVectors(
   observations: string,
   observedAt?: Date,
 ) {
-  const config = await getMemoryConfig();
+  const config = await getMemoryConfig(resourceId);
   if (!config.omRetrievalVector || !memory.vector) {
     return;
   }
@@ -257,8 +257,8 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
   method: "POST",
   handler: async (c) => {
     const threadId = c.req.param("threadId");
-    // model 为前端 buildRequestModel 的 BYOK 对象;resolveRequestModel 统一解析为
-    // 官方端点的 LanguageModel 实例(自定义网关)或 model router 对象(内置供应商)
+    // model 为前端 buildRequestModel 的 BYOK 对象;resolveRequestModel 按当前资源
+    // 统一解析为官方端点的 LanguageModel 实例。
     const body = (await c.req.json()) as {
       model?: unknown;
       resourceId?: string;
@@ -268,7 +268,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
     if (!body.resourceId) {
       throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     }
-    const model = await resolveRequestModel(body.model);
+    const model = await resolveRequestModel(body.model, body.resourceId);
     if (!model) {
       throw workError("VALIDATION_FAILED", { text: "model is required" });
     }
@@ -306,7 +306,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
     }
 
     // 1) 生成整线摘要(观察记忆管线)
-    const extractors = getConfiguredMemoryExtractors();
+    const extractors = getConfiguredMemoryExtractors(body.resourceId);
     const { summary, extracted, extractionFailures, usage } = await memory.summarizeThread({
       threadId,
       model: model as never,

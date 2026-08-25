@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import Busboy from "@fastify/busboy";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
 import { workError } from "../errors";
@@ -406,7 +407,7 @@ export const reindexLibraryAssetRoute = registerApiRoute("/work/library/assets/:
         (candidate) => candidate.id === c.req.param("assetId"),
       );
       if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
-      const settings = await getLibrarySettings();
+      const settings = await getLibrarySettings(resourceId);
       void reindexAsset(resourceId, c.req.param("assetId"), settings).catch(() => undefined);
       return c.json({ assetId: c.req.param("assetId"), status: "indexing" }, 202);
     } catch (error) {
@@ -425,7 +426,7 @@ export const reindexFailedLibraryAssetsRoute = registerApiRoute("/work/library/r
       const body = (await c.req.json()) as { resourceId?: string };
       const resourceId = requireResourceId(body.resourceId);
       if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
-      const settings = await getLibrarySettings();
+      const settings = await getLibrarySettings(resourceId);
       const assets = await listAssets(resourceId);
       const retryable = assets.filter(
         (asset) => asset.status === "error" || asset.status === "indexing",
@@ -505,13 +506,23 @@ export const deleteLibraryFolderRoute = registerApiRoute("/work/library/folders/
 
 export const librarySettingsRoute = registerApiRoute("/work/library/settings", {
   method: "GET",
-  handler: async (c) => c.json({ settings: await getLibrarySettings() }),
+  handler: async (c) =>
+    c.json({
+      settings: await getLibrarySettings(
+        c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      ),
+    }),
 });
 
 export const saveLibrarySettingsRoute = registerApiRoute("/work/library/settings", {
   method: "PUT",
   handler: async (c) => {
     const body = (await c.req.json()) as Record<string, unknown>;
-    return c.json({ settings: await saveLibrarySettings(body) });
+    return c.json({
+      settings: await saveLibrarySettings(
+        body,
+        c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      ),
+    });
   },
 });

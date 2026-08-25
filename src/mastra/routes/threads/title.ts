@@ -31,7 +31,7 @@ export async function generateThreadTitleHelper(options: {
   const thread = await getOwnedThread(memory, options.threadId, options.resourceId);
   if (!thread) return null;
 
-  const memoryConfig = await getMemoryConfig();
+  const memoryConfig = await getMemoryConfig(options.resourceId);
   if (!options.force && !memoryConfig.generateTitle) {
     return thread.title ?? "New Chat";
   }
@@ -68,13 +68,15 @@ export async function generateThreadTitleHelper(options: {
     const requestedModel =
       options.model !== undefined ? options.model : configuredModel || undefined;
     if (requestedModel !== undefined) {
-      const resolved = await resolveRequestModel(requestedModel);
+      const resolved = await resolveRequestModel(requestedModel, options.resourceId);
       if (resolved && typeof resolved === "object" && "doGenerate" in resolved) {
         modelInstance = resolved as unknown as LanguageModel;
       }
     }
     if (!modelInstance) {
-      modelInstance = (await resolveDefaultLanguageModel()) as unknown as LanguageModel;
+      modelInstance = (await resolveDefaultLanguageModel(
+        options.resourceId,
+      )) as unknown as LanguageModel;
     }
 
     if (modelInstance) {

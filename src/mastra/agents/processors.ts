@@ -8,6 +8,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+import type { MastraDBMessage } from "@mastra/core/agent";
 import type { InputProcessor, ProcessorActiveStateSignal } from "@mastra/core/processors";
 import { z } from "zod";
 import {
@@ -416,13 +417,17 @@ async function readAgentsMd(path: string): Promise<string | undefined> {
   }
 }
 
-function hasSentAgentsMd(messages: unknown[], path: string): boolean {
-  const needle = JSON.stringify(path).slice(1, -1);
-  for (const message of messages) {
-    const raw = JSON.stringify(message ?? "");
-    if (raw.includes("dynamic-agents-md") && raw.includes(needle)) return true;
-  }
-  return false;
+function hasSentAgentsMd(messages: MastraDBMessage[], path: string): boolean {
+  return messages.some((message) => {
+    const metadata = message.content.metadata;
+    if (!metadata || typeof metadata !== "object") return false;
+    const signal = metadata.signal;
+    if (!signal || typeof signal !== "object" || Array.isArray(signal)) return false;
+    const attributes = (signal as { attributes?: unknown }).attributes;
+    if (!attributes || typeof attributes !== "object" || Array.isArray(attributes)) return false;
+    const record = attributes as { type?: unknown; path?: unknown };
+    return record.type === "dynamic-agents-md" && record.path === path;
+  });
 }
 
 function agentsMdPathsFromStep(step: unknown): string[] {

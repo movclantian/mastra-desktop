@@ -3,6 +3,8 @@
  * 存数据库 app_config 表(key = "tools"),工具在每次请求时按当前配置实例化,
  * 因此改 Key 立即生效、无需重启服务。工具主体见 src/mastra/tools/web-search.ts。
  */
+
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { getToolsConfig, saveToolsConfig, type ToolsUserConfig } from "../tools";
 
@@ -10,7 +12,9 @@ import { getToolsConfig, saveToolsConfig, type ToolsUserConfig } from "../tools"
 export const toolsConfigRoute = registerApiRoute("/work/tools", {
   method: "GET",
   handler: async (c) => {
-    return c.json(await getToolsConfig());
+    return c.json(
+      await getToolsConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+    );
   },
 });
 
@@ -18,7 +22,10 @@ export const toolsConfigRoute = registerApiRoute("/work/tools", {
 export const saveToolsConfigRoute = registerApiRoute("/work/tools", {
   method: "POST",
   handler: async (c) => {
-    await saveToolsConfig(await c.req.json<ToolsUserConfig>());
+    await saveToolsConfig(
+      await c.req.json<ToolsUserConfig>(),
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     return c.json({ ok: true });
   },
 });

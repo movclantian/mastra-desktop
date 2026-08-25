@@ -5,6 +5,7 @@
 import { access, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import AdmZip from "adm-zip";
 import { workError } from "../errors";
@@ -35,6 +36,12 @@ const require = createRequire(import.meta.url);
 
 function builtinSkillsDirectory(): string {
   return resolve(dirname(require.resolve("@mastra/editor")), "ee", "workspace", "skills");
+}
+
+function resourceIdFromRequest(c: {
+  get: (key: "requestContext") => { get: (key: string) => unknown };
+}): string {
+  return c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
 }
 
 function isWithin(root: string, target: string): boolean {
@@ -100,7 +107,7 @@ async function readLocalSkill(directory: string) {
   };
 }
 
-async function unpackSkillArchive(buffer: Buffer, filename: string) {
+async function unpackSkillArchive(buffer: Buffer, filename: string, resourceId?: string) {
   const archive = new AdmZip(buffer);
   const entries = archive.getEntries();
   if (entries.length === 0 || entries.length > MAX_SKILL_ENTRIES) {
@@ -111,7 +118,7 @@ async function unpackSkillArchive(buffer: Buffer, filename: string) {
     0,
   );
   if (totalBytes > MAX_SKILL_UNPACKED_BYTES) throw new Error("解压后的技能包不能超过 100 MB");
-  const root = getManagedSkillsDirectory();
+  const root = getManagedSkillsDirectory(resourceId);
   const names = entries.map((entry) => entry.entryName.replaceAll("\\", "/")).filter(Boolean);
   const skillFiles = names.filter((name) => basename(name).toUpperCase() === "SKILL.MD");
   if (skillFiles.length !== 1) throw new Error("ZIP 中必须恰好包含一个 SKILL.md");
@@ -177,7 +184,7 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
           .filter((entry) => entry.isDirectory())
           .map((entry) => readLocalSkill(resolve(root, entry.name)).catch(() => null)),
       );
-      const marketplaces = await getSkillMarketplaces();
+      const marketplaces = await getSkillMarketplaces(resourceIdFromRequest(c));
       const externalSkills = (
         await Promise.all(
           marketplaces
@@ -267,7 +274,8 @@ export const builtinSkillRoute = registerApiRoute("/work/skills/registry/:name",
 
 export const skillMarketplacesRoute = registerApiRoute("/work/skills/marketplaces", {
   method: "GET",
-  handler: async (c) => c.json({ marketplaces: await getSkillMarketplaces() }),
+  handler: async (c) =>
+    c.json({ marketplaces: await getSkillMarketplaces(resourceIdFromRequest(c)) }),
 });
 
 export const marketplaceSkillRoute = registerApiRoute("/work/skills/marketplaces/:id/skill", {
@@ -276,7 +284,13 @@ export const marketplaceSkillRoute = registerApiRoute("/work/skills/marketplaces
     try {
       const sourcePath = c.req.query("path");
       if (!sourcePath) throw workError("VALIDATION_FAILED", { text: "缺少技能路径" });
-      return c.json({ skill: await getMarketplaceSkillDetail(c.req.param("id"), sourcePath) });
+      return c.json({
+        skill: await getMarketplaceSkillDetail(
+          c.req.param("id"),
+          sourcePath,
+          resourceIdFromRequest(c),
+        ),
+      });
     } catch (error) {
       return c.json(
         { error: error instanceof Error ? error.message : "读取市场技能详情失败" },
@@ -407,11 +421,12 @@ export const saveSkillMarketplaceRoute = registerApiRoute("/work/skills/marketpl
   handler: async (c) => {
     try {
       const marketplace = normalizeMarketplace(await c.req.json());
-      const current = await getSkillMarketplaces();
-      await saveSkillMarketplaces([
-        ...current.filter((item) => item.id !== marketplace.id),
-        marketplace,
-      ]);
+      const resourceId = resourceIdFromRequest(c);
+      const current = await getSkillMarketplaces(resourceId);
+      await saveSkillMarketplaces(
+        [...current.filter((item) => item.id !== marketplace.id), marketplace],
+        resourceId,
+      );
       return c.json({ marketplace }, 201);
     } catch (error) {
       throw workError("VALIDATION_FAILED", {
@@ -426,10 +441,14 @@ export const deleteSkillMarketplaceRoute = registerApiRoute("/work/skills/market
   method: "DELETE",
   handler: async (c) => {
     const id = c.req.param("id");
-    const current = await getSkillMarketplaces();
+    const resourceId = resourceIdFromRequest(c);
+    const current = await getSkillMarketplaces(resourceId);
     if (!current.some((marketplace) => marketplace.id === id))
       throw workError("SKILL_MARKETPLACE_NOT_FOUND");
-    await saveSkillMarketplaces(current.filter((marketplace) => marketplace.id !== id));
+    await saveSkillMarketplaces(
+      current.filter((marketplace) => marketplace.id !== id),
+      resourceId,
+    );
     return c.json({ ok: true });
   },
 });
@@ -448,7 +467,10 @@ export const installMarketplaceSkillRoute = registerApiRoute(
         ) {
           throw workError("VALIDATION_FAILED", { text: "技能市场条目无效" });
         }
-        const root = await installMarketplaceSkill(payload as MarketplaceSkill);
+        const root = await installMarketplaceSkill(
+          payload as MarketplaceSkill,
+          resourceIdFromRequest(c),
+        );
         const skill = await readLocalSkill(root);
         return c.json({ skill }, 201);
       } catch (error) {
@@ -470,7 +492,7 @@ export const installBuiltinSkillRoute = registerApiRoute("/work/skills/registry/
     if (!isWithin(sourceRoot, source) || source === sourceRoot) {
       throw workError("VALIDATION_FAILED", { text: "内置技能路径无效" });
     }
-    const targetRoot = resolve(getManagedSkillsDirectory(), name);
+    const targetRoot = resolve(getManagedSkillsDirectory(resourceIdFromRequest(c)), name);
     const alreadyInstalled = await access(targetRoot).then(
       () => true,
       () => false,
@@ -498,7 +520,11 @@ export const installSkillsShSkillRoute = registerApiRoute("/work/skills/skills-s
       if (typeof payload.source !== "string" || typeof payload.slug !== "string") {
         throw workError("VALIDATION_FAILED", { text: "skills.sh 技能标识无效" });
       }
-      const root = await installSkillsShSkill(payload.source, payload.slug);
+      const root = await installSkillsShSkill(
+        payload.source,
+        payload.slug,
+        resourceIdFromRequest(c),
+      );
       return c.json({ skill: await readLocalSkill(root) }, 201);
     } catch (error) {
       if (error instanceof Error && error.message === "该技能已经安装") {
@@ -522,7 +548,11 @@ export const uploadSkillRoute = registerApiRoute("/work/skills", {
     if (value.size > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
 
     try {
-      const skill = await unpackSkillArchive(Buffer.from(await value.arrayBuffer()), value.name);
+      const skill = await unpackSkillArchive(
+        Buffer.from(await value.arrayBuffer()),
+        value.name,
+        resourceIdFromRequest(c),
+      );
       if (!skill) throw new Error("解压后未发现有效的 SKILL.md");
       return c.json({ skill }, 201);
     } catch (error) {
@@ -571,6 +601,7 @@ export const importSkillRoute = registerApiRoute("/work/skills/import", {
       const skill = await unpackSkillArchive(
         buffer,
         filename.endsWith(".zip") ? filename : `${filename}.zip`,
+        resourceIdFromRequest(c),
       );
       return c.json({ skill }, 201);
     } catch (error) {
@@ -588,7 +619,7 @@ export const deleteSkillRoute = registerApiRoute("/work/skills/:name", {
     const agent = c.get("mastra").getAgent("mastraWorkAgent");
     const skill = await agent.getSkill(decodeURIComponent(c.req.param("name")));
     if (!skill) throw workError("SKILL_NOT_FOUND");
-    const root = resolve(getManagedSkillsDirectory());
+    const root = resolve(getManagedSkillsDirectory(resourceIdFromRequest(c)));
     const target = isAbsolute(skill.path) ? resolve(skill.path) : resolve(root, skill.path);
     if (!isWithin(root, target) || target === root) throw workError("SKILL_MANAGED_ONLY");
     await rm(target, { recursive: true, force: true });

@@ -89,8 +89,10 @@ export const listThreadsRoute = registerApiRoute("/work/threads", {
         const metadata = (thread.metadata ?? {}) as Record<string, unknown>;
         const profile = await getAgentProfile(
           typeof metadata.agentProfileId === "string" ? metadata.agentProfileId : undefined,
+          resourceId,
         );
-        const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile)).profile;
+        const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId))
+          .profile;
         const activeRunId = agent.getActiveThreadRunId({ resourceId, threadId: thread.id }) ?? null;
         return {
           ...thread,
@@ -233,7 +235,7 @@ export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
       await workBrowser.closeThreadSession(threadId);
     }
     // 物理清理本地工作区目录及释放 Workspace 内存实例
-    await deleteThreadWorkspace(threadId, thread.metadata);
+    await deleteThreadWorkspace(threadId, thread.metadata, resourceId);
 
     await memory.settled();
     const { messages } = await memory.recall({

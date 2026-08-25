@@ -13,6 +13,7 @@
  *   THIRD_PARTY(上游服务问题)。
  */
 import { ErrorCategory, ErrorDomain, MastraError } from "@mastra/core/error";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 interface WorkErrorDefinition {
   /** 官方错误域(ErrorDomain) */
@@ -20,13 +21,10 @@ interface WorkErrorDefinition {
   /** 官方错误类别(ErrorCategory) */
   category: ErrorCategory;
   /** HTTP 状态码(onError 出站用,Hono ContentfulStatusCode 字面量联合) */
-  status: WorkHttpStatus;
+  status: ContentfulStatusCode;
   /** 默认错误文本;可用 workError(code, { text }) 覆盖为动态详情 */
   text: string;
 }
-
-/** 本注册表允许的 HTTP 状态(Hono c.json 的 ContentfulStatusCode 子集) */
-type WorkHttpStatus = 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 500 | 502;
 
 // ---------------------------------------------------------------------------
 // 按模块注册(与 src/mastra 的目录结构一一对应)
@@ -377,7 +375,7 @@ export type WorkErrorCode = keyof typeof WORK_ERRORS;
  * text/details 可覆盖默认文案,用于携带动态上下文(上游 URL、原因等)。
  */
 export class WorkApiError extends MastraError {
-  readonly status: WorkHttpStatus;
+  readonly status: ContentfulStatusCode;
   constructor(
     code: WorkErrorCode,
     options: { text?: string; details?: Record<string, unknown>; cause?: unknown } = {},
@@ -388,7 +386,7 @@ export class WorkApiError extends MastraError {
         id: code,
         domain: definition.domain,
         category: definition.category,
-        ...(options.text ? { text: options.text } : {}),
+        text: options.text ?? definition.text,
         ...(options.details ? { details: options.details as Record<string, never> } : {}),
       },
       options.cause,

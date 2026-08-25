@@ -25,7 +25,7 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { calculateCostUSD, formatCostUSD, useModelCatalog } from "@/features/providers";
+import { formatCostUSD } from "@/features/providers";
 import { useTheme } from "@/features/theme/theme-provider";
 import { cn } from "@/lib/utils";
 import { fetchUsage } from "../api";
@@ -38,6 +38,7 @@ interface UsageSummary {
     totalTokens: number;
     totalLatencyMs: number;
     longestChatMs: number;
+    totalCost: number | null;
   };
   activity: Array<{ date: string; count: number; tokens: number }>;
   trend: Array<{
@@ -76,6 +77,7 @@ interface UsageSummary {
     latencyMs: number;
     status: number;
     source: string;
+    cost: number | null;
   }>;
 }
 
@@ -121,7 +123,6 @@ function activityForRange(
 
 export function UsageSection() {
   const { isDark } = useTheme();
-  const catalog = useModelCatalog();
   const [range, setRange] = React.useState<DateRange>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -157,22 +158,9 @@ export function UsageSection() {
     totalTokens: 0,
     totalLatencyMs: 0,
     longestChatMs: 0,
+    totalCost: null,
   };
   const activity = activityForRange(range, summary?.activity ?? []);
-
-  // 计算累计预估费用
-  const totalCostUSD = React.useMemo(() => {
-    let sum = 0;
-    let priced = false;
-    for (const m of summary?.models ?? []) {
-      const cost = calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
-      if (cost !== null) {
-        sum += cost;
-        priced = true;
-      }
-    }
-    return priced ? sum : null;
-  }, [summary?.models, catalog]);
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
@@ -218,7 +206,7 @@ export function UsageSection() {
         {[
           ["累计 Token 数", formatNumber(totals.totalTokens)],
           ["模型请求数", formatNumber(totals.requests)],
-          ["预估总费用", formatCostUSD(totalCostUSD)],
+          ["预估总费用", formatCostUSD(totals.totalCost)],
           [
             "平均响应时长",
             formatDuration(
@@ -353,12 +341,7 @@ export function UsageSection() {
                   </TableHeader>
                   <TableBody>
                     {summary?.requests.map((request) => {
-                      const requestCost = calculateCostUSD(
-                        request.model,
-                        request.inputTokens,
-                        request.outputTokens,
-                        catalog,
-                      );
+                      const requestCost = request.cost;
                       return (
                         <TableRow key={request.id}>
                           <TableCell>
@@ -405,36 +388,11 @@ export function UsageSection() {
           <StatsTable
             headers={["供应商", "请求数", "Tokens", "预估成本"]}
             rows={(summary?.providers ?? []).map((row) => {
-              let costSum = 0;
-              let isPriced = false;
-              const modelsOfProvider = (summary?.models ?? []).filter(
-                (m) => m.provider === row.provider,
-              );
-              if (modelsOfProvider.length > 0) {
-                for (const m of modelsOfProvider) {
-                  const cost = calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
-                  if (cost !== null) {
-                    costSum += cost;
-                    isPriced = true;
-                  }
-                }
-              } else {
-                const cost = calculateCostUSD(
-                  row.provider,
-                  row.inputTokens,
-                  row.outputTokens,
-                  catalog,
-                );
-                if (cost !== null) {
-                  costSum += cost;
-                  isPriced = true;
-                }
-              }
               return [
                 row.provider,
                 formatNumber(row.requests),
                 formatNumber(row.tokens),
-                isPriced ? formatCostUSD(costSum) : "未定价",
+                formatCostUSD(row.cost),
               ];
             })}
           />
@@ -443,15 +401,13 @@ export function UsageSection() {
           <StatsTable
             headers={["模型", "供应商", "请求数", "Tokens", "总成本", "单次平均成本"]}
             rows={(summary?.models ?? []).map((row) => {
-              const cost = calculateCostUSD(row.model, row.inputTokens, row.outputTokens, catalog);
-              const avgCost = cost !== null && row.requests > 0 ? cost / row.requests : null;
               return [
                 row.model,
                 row.provider,
                 formatNumber(row.requests),
                 formatNumber(row.tokens),
-                formatCostUSD(cost),
-                formatCostUSD(avgCost),
+                formatCostUSD(row.cost),
+                formatCostUSD(row.averageCost),
               ];
             })}
           />

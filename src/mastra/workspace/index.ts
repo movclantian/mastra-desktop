@@ -27,7 +27,6 @@ import {
   DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
   getContentObjectAccessPaths,
-  getResourceScope,
   getStorageDirectory,
   setAppConfig,
 } from "../storage";
@@ -67,12 +66,12 @@ const DEFAULT_THREADS_ROOT = join(
   "threads",
 );
 
-function scopeKey(): string {
-  return getResourceScope() ?? "__system__";
+function scopeKey(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
 }
 
-function scopePathSegment(): string {
-  const scope = getResourceScope();
+function scopePathSegment(resourceId?: string): string {
+  const scope = resourceId?.trim();
   if (!scope) return "system";
   const trimmed = scope.trim();
   if (!trimmed || trimmed === "." || trimmed === ".." || trimmed.includes("\0")) {
@@ -81,9 +80,9 @@ function scopePathSegment(): string {
   return encodeURIComponent(trimmed);
 }
 
-function defaultThreadsRoot(): string {
-  return getResourceScope()
-    ? join(DEFAULT_THREADS_ROOT, "users", scopePathSegment())
+function defaultThreadsRoot(resourceId?: string): string {
+  return resourceId
+    ? join(DEFAULT_THREADS_ROOT, "users", scopePathSegment(resourceId))
     : DEFAULT_THREADS_ROOT;
 }
 
@@ -102,10 +101,6 @@ export interface WorkspaceUserConfig {
   sandboxTimeoutMs: number;
   /** 沙箱环境变量(默认仅 PATH,避免泄漏宿主密钥) */
   sandboxEnv: Record<string, string>;
-  /** 原生隔离后端:Windows 仅支持 none */
-  isolation: "none" | "seatbelt" | "bwrap";
-  /** 原生隔离下是否放行网络(默认阻止) */
-  allowNetwork: boolean;
   /** BM25 关键词搜索(skills 内容亦自动索引) */
   bm25: boolean;
   bm25K1: number;
@@ -118,12 +113,6 @@ export interface WorkspaceUserConfig {
   lspDisableServers: string[];
   lspBinaryOverrides: Record<string, string>;
   lspSearchPaths: string[];
-  nativeReadOnlyPaths: string[];
-  nativeReadWritePaths: string[];
-  nativeAllowSystemBinaries: boolean;
-  nativeSeatbeltProfilePath: string;
-  nativeBwrapArgs: string[];
-  nativeReadOnly: boolean;
   tools: WorkspaceToolsUserConfig;
   /** Skills 目录(相对每个工作区,含 SKILL.md 的文件夹的父目录) */
   skillsPaths: string[];
@@ -182,8 +171,8 @@ function wrapWorkspaceApproval(
   };
 }
 
-function getWorkspaceToolsConfig(): WorkspaceToolsConfig {
-  const source = getRuntime().config.tools as WorkspaceToolsConfig;
+function getWorkspaceToolsConfig(resourceId?: string): WorkspaceToolsConfig {
+  const source = getRuntime(resourceId).config.tools as WorkspaceToolsConfig;
   const output = { ...source } as Record<string, unknown>;
   if (source.requireApproval !== undefined) {
     output.requireApproval = wrapWorkspaceApproval(source.requireApproval);
@@ -208,8 +197,6 @@ const DEFAULT_CONFIG: WorkspaceUserConfig = {
   sandboxEnabled: true,
   sandboxTimeoutMs: 30_000,
   sandboxEnv: {},
-  isolation: "none",
-  allowNetwork: false,
   bm25: true,
   bm25K1: 1.5,
   bm25B: 0.75,
@@ -220,12 +207,6 @@ const DEFAULT_CONFIG: WorkspaceUserConfig = {
   lspDisableServers: [],
   lspBinaryOverrides: {},
   lspSearchPaths: [],
-  nativeReadOnlyPaths: [],
-  nativeReadWritePaths: [],
-  nativeAllowSystemBinaries: true,
-  nativeSeatbeltProfilePath: "",
-  nativeBwrapArgs: [],
-  nativeReadOnly: false,
   tools: {
     requireReadBeforeWrite: true,
     maxOutputTokens: 3_000,
@@ -235,40 +216,44 @@ const DEFAULT_CONFIG: WorkspaceUserConfig = {
   autoIndexPaths: [],
 };
 
-function defaultWorkspaceConfig(): WorkspaceUserConfig {
-  return { ...DEFAULT_CONFIG, threadsRoot: defaultThreadsRoot() };
+function defaultWorkspaceConfig(resourceId?: string): WorkspaceUserConfig {
+  return { ...DEFAULT_CONFIG, threadsRoot: defaultThreadsRoot(resourceId) };
 }
 
 /** 读取工作区配置(app_config 表 key="workspace";无记录或损坏时回落默认值) */
-export async function getWorkspaceConfig(): Promise<WorkspaceUserConfig> {
-  const raw = await getAppConfig(WORKSPACE_CONFIG_KEY);
+export async function getWorkspaceConfig(resourceId?: string): Promise<WorkspaceUserConfig> {
+  const raw = await getAppConfig(WORKSPACE_CONFIG_KEY, resourceId);
   if (!raw) {
-    const next = defaultWorkspaceConfig();
-    getRuntime().config = next;
+    const next = defaultWorkspaceConfig(resourceId);
+    getRuntime(resourceId).config = next;
     return next;
   }
   try {
-    const next = normalizeWorkspaceConfig(JSON.parse(raw) as Partial<WorkspaceUserConfig>);
-    getRuntime().config = next;
+    const next = normalizeWorkspaceConfig(
+      JSON.parse(raw) as Partial<WorkspaceUserConfig>,
+      resourceId,
+    );
+    getRuntime(resourceId).config = next;
     return next;
   } catch {
-    const next = defaultWorkspaceConfig();
-    getRuntime().config = next;
+    const next = defaultWorkspaceConfig(resourceId);
+    getRuntime(resourceId).config = next;
     return next;
   }
 }
 
 /** 写入工作区配置并实时生效:替换运行时配置、清空实例缓存(下次请求按新配置重建) */
-export async function saveWorkspaceConfig(next: WorkspaceUserConfig): Promise<void> {
-  const normalized = normalizeWorkspaceConfig(next);
-  await setAppConfig(WORKSPACE_CONFIG_KEY, JSON.stringify(normalized, null, 2));
-  const runtime = getRuntime();
+export async function saveWorkspaceConfig(
+  next: WorkspaceUserConfig,
+  resourceId?: string,
+): Promise<void> {
+  const normalized = normalizeWorkspaceConfig(next, resourceId);
+  await setAppConfig(WORKSPACE_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
+  const runtime = getRuntime(resourceId);
   runtime.config = normalized;
   const previous = [...runtime.cache.values()];
   runtime.cache.clear();
-  await Promise.allSettled(
-    previous.map((workspace) => Promise.resolve().then(() => workspace.destroy())),
-  );
+  await Promise.allSettled(previous.map(async (workspace) => workspace.destroy()));
 }
 
 function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -324,13 +309,15 @@ function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
   return output;
 }
 
-function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): WorkspaceUserConfig {
-  const defaults = defaultWorkspaceConfig();
+function normalizeWorkspaceConfig(
+  input: Partial<WorkspaceUserConfig>,
+  resourceId?: string,
+): WorkspaceUserConfig {
+  const defaults = defaultWorkspaceConfig(resourceId);
   const merged = { ...defaults, ...input };
   const rawEnv = merged.sandboxEnv;
   return {
     ...defaults,
-    ...merged,
     enabled: merged.enabled !== false,
     threadsRoot:
       typeof merged.threadsRoot === "string" ? merged.threadsRoot.trim() : defaults.threadsRoot,
@@ -346,9 +333,6 @@ function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): Workspac
             ),
           ) as Record<string, string>)
         : {},
-    isolation:
-      merged.isolation === "seatbelt" || merged.isolation === "bwrap" ? merged.isolation : "none",
-    allowNetwork: merged.allowNetwork === true,
     bm25: merged.bm25 === true,
     bm25K1: boundedNumber(merged.bm25K1, 1.5, 0.1, 5),
     bm25B: boundedNumber(merged.bm25B, 0.75, 0, 1),
@@ -360,15 +344,6 @@ function normalizeWorkspaceConfig(input: Partial<WorkspaceUserConfig>): Workspac
     lspMaxOpenClients: Math.round(boundedNumber(merged.lspMaxOpenClients, 8, 1, 100)),
     lspDisableServers: cleanStrings(merged.lspDisableServers),
     lspSearchPaths: cleanStrings(merged.lspSearchPaths),
-    nativeReadOnlyPaths: cleanStrings(merged.nativeReadOnlyPaths),
-    nativeReadWritePaths: cleanStrings(merged.nativeReadWritePaths),
-    nativeAllowSystemBinaries: merged.nativeAllowSystemBinaries !== false,
-    nativeSeatbeltProfilePath:
-      typeof merged.nativeSeatbeltProfilePath === "string"
-        ? merged.nativeSeatbeltProfilePath.trim()
-        : "",
-    nativeBwrapArgs: cleanStrings(merged.nativeBwrapArgs),
-    nativeReadOnly: merged.nativeReadOnly === true,
     lspBinaryOverrides:
       typeof merged.lspBinaryOverrides === "object" && merged.lspBinaryOverrides !== null
         ? (Object.fromEntries(
@@ -391,8 +366,8 @@ export interface RecentWorkspace {
 }
 
 /** 近期绑定工作区(promptInput 选择器下拉列表数据源) */
-export async function listRecentWorkspaces(): Promise<RecentWorkspace[]> {
-  const raw = await getAppConfig(RECENT_WORKSPACES_KEY);
+export async function listRecentWorkspaces(resourceId?: string): Promise<RecentWorkspace[]> {
+  const raw = await getAppConfig(RECENT_WORKSPACES_KEY, resourceId);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as RecentWorkspace[];
@@ -403,13 +378,13 @@ export async function listRecentWorkspaces(): Promise<RecentWorkspace[]> {
 }
 
 /** 记录一次显式绑定(去重置顶,超限淘汰最旧) */
-export async function addRecentWorkspace(path: string): Promise<void> {
-  const current = await listRecentWorkspaces();
+export async function addRecentWorkspace(path: string, resourceId?: string): Promise<void> {
+  const current = await listRecentWorkspaces(resourceId);
   const next = [
     { path, lastUsedAt: new Date().toISOString() },
     ...current.filter((item) => item.path !== path),
   ].slice(0, RECENT_WORKSPACES_LIMIT);
-  await setAppConfig(RECENT_WORKSPACES_KEY, JSON.stringify(next, null, 2));
+  await setAppConfig(RECENT_WORKSPACES_KEY, JSON.stringify(next, null, 2), resourceId);
 }
 
 interface WorkspaceRuntime {
@@ -425,29 +400,29 @@ function cachedWorkspacesForPath(runtime: WorkspaceRuntime, workspacePath: strin
 
 const runtimeByScope = new Map<string, WorkspaceRuntime>();
 
-function getRuntime(): WorkspaceRuntime {
-  const key = scopeKey();
+function getRuntime(resourceId?: string): WorkspaceRuntime {
+  const key = scopeKey(resourceId);
   let runtime = runtimeByScope.get(key);
   if (!runtime) {
-    runtime = { config: defaultWorkspaceConfig(), cache: new Map() };
+    runtime = { config: defaultWorkspaceConfig(resourceId), cache: new Map() };
     runtimeByScope.set(key, runtime);
   }
   return runtime;
 }
 
 /** 工作区总开关(Agent 动态 workspace 函数先查再解析,避免禁用时建目录) */
-export function isWorkspaceEnabled(): boolean {
-  return getRuntime().config.enabled;
+export function isWorkspaceEnabled(resourceId?: string): boolean {
+  return getRuntime(resourceId).config.enabled;
 }
 
 /** 线程工作区根目录(隐式绑定的父目录) */
-export function getThreadsRoot(): string {
-  return getRuntime().config.threadsRoot;
+export function getThreadsRoot(resourceId?: string): string {
+  return getRuntime(resourceId).config.threadsRoot;
 }
 
 /** 线程的隐式工作区目录(仅路径计算;实际创建发生在首条消息绑定时) */
-export function implicitThreadWorkspacePath(threadId: string): string {
-  return join(getThreadsRoot(), threadId);
+export function implicitThreadWorkspacePath(threadId: string, resourceId?: string): string {
+  return join(getThreadsRoot(resourceId), threadId);
 }
 
 /** 确保目录存在(隐式绑定首次落盘) */
@@ -456,9 +431,9 @@ export function ensureDirectory(path: string): void {
 }
 
 /** 全局技能目录:上传一次后可被所有线程的 Agent 发现。 */
-export function getManagedSkillsDirectory(): string {
-  const directory = getResourceScope()
-    ? join(MANAGED_SKILLS_DIRECTORY, "users", scopePathSegment())
+export function getManagedSkillsDirectory(resourceId?: string): string {
+  const directory = resourceId
+    ? join(MANAGED_SKILLS_DIRECTORY, "users", scopePathSegment(resourceId))
     : MANAGED_SKILLS_DIRECTORY;
   ensureDirectory(directory);
   return directory;
@@ -471,21 +446,21 @@ export function getManagedSkillsDirectory(): string {
  * Agent 的动态 workspace 函数按 requestContext 里的线程工作区路径调用;
  * 每个实例的 filesystem/sandbox 都 contained 在该目录内。
  */
-export function getThreadWorkspace(workspacePath: string, threadId?: string): Workspace {
-  const runtime = getRuntime();
+export function getThreadWorkspace(
+  workspacePath: string,
+  threadId?: string,
+  resourceId?: string,
+): Workspace {
+  const runtime = getRuntime(resourceId);
   const config = runtime.config;
-  const cacheKey = threadId ? `${workspacePath}\u0000${threadId}` : workspacePath;
+  const cacheKey = [workspacePath, threadId, resourceId].filter(Boolean).join("\u0000");
   const cached = runtime.cache.get(cacheKey);
   if (cached) return cached;
 
-  // Windows 无受支持的原生隔离后端(seatbelt=macOS / bwrap=Linux),
-  // 用户配置了也强制回落 none,避免 LocalSandbox 启动失败(按创建时配置计算)。
-  const effectiveIsolation = process.platform === "win32" ? ("none" as const) : config.isolation;
-
-  const contentPaths = getResourceScope()
-    ? getContentObjectAccessPaths(getResourceScope(), threadId)
-    : [];
-  const allowedPaths = [...config.allowedPaths, ...contentPaths];
+  const allowedPaths = [
+    ...config.allowedPaths,
+    ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
+  ];
   const filesystem = new LocalFilesystem({
     basePath: workspacePath,
     ...(allowedPaths.length ? { allowedPaths } : {}),
@@ -494,7 +469,7 @@ export function getThreadWorkspace(workspacePath: string, threadId?: string): Wo
   const changeHooks = createWorkspaceChangeHooks(filesystem);
   const outputArchive = createWorkspaceOutputArchiveHooks();
   // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
-  const workspaceTools = getWorkspaceToolsConfig();
+  const workspaceTools = getWorkspaceToolsConfig(resourceId);
   const executeConfig = workspaceTools.mastra_workspace_execute_command;
   workspaceTools.mastra_workspace_execute_command = {
     ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),
@@ -510,53 +485,37 @@ export function getThreadWorkspace(workspacePath: string, threadId?: string): Wo
       await outputArchive.hooks.afterToolCall?.(params);
     },
   };
-  const workspace = new Workspace({
+  const sandbox = config.sandboxEnabled
+    ? new LocalSandbox({
+        workingDirectory: workspacePath,
+        timeout: config.sandboxTimeoutMs,
+        env: config.sandboxEnv,
+      })
+    : undefined;
+  const bm25 = config.bm25 ? { k1: config.bm25K1, b: config.bm25B } : undefined;
+  const lsp = config.lsp
+    ? {
+        root: workspacePath,
+        diagnosticTimeout: config.lspDiagnosticTimeoutMs,
+        initTimeout: config.lspInitTimeoutMs,
+        maxOpenClients: config.lspMaxOpenClients,
+        disableServers: config.lspDisableServers,
+        binaryOverrides: config.lspBinaryOverrides,
+        searchPaths: config.lspSearchPaths,
+      }
+    : undefined;
+  const workspaceConfig: ConstructorParameters<typeof Workspace>[0] = {
     id: `mastra-work:${workspacePath}${threadId ? `:${threadId}` : ""}`,
     name: "MastraWork Workspace",
     filesystem,
-    ...(config.sandboxEnabled
-      ? {
-          sandbox: new LocalSandbox({
-            workingDirectory: workspacePath,
-            timeout: config.sandboxTimeoutMs,
-            env: config.sandboxEnv,
-            ...(effectiveIsolation !== "none"
-              ? {
-                  isolation: effectiveIsolation,
-                  nativeSandbox: {
-                    allowNetwork: config.allowNetwork,
-                    readOnlyPaths: config.nativeReadOnlyPaths,
-                    readWritePaths: config.nativeReadWritePaths,
-                    allowSystemBinaries: config.nativeAllowSystemBinaries,
-                    ...(config.nativeSeatbeltProfilePath
-                      ? { seatbeltProfilePath: config.nativeSeatbeltProfilePath }
-                      : {}),
-                    ...(config.nativeBwrapArgs.length ? { bwrapArgs: config.nativeBwrapArgs } : {}),
-                    readOnly: config.nativeReadOnly,
-                  },
-                }
-              : {}),
-          }),
-        }
-      : {}),
-    ...(config.bm25 ? { bm25: { k1: config.bm25K1, b: config.bm25B } } : {}),
-    ...(config.lsp
-      ? {
-          lsp: {
-            root: workspacePath,
-            diagnosticTimeout: config.lspDiagnosticTimeoutMs,
-            initTimeout: config.lspInitTimeoutMs,
-            maxOpenClients: config.lspMaxOpenClients,
-            disableServers: config.lspDisableServers,
-            binaryOverrides: config.lspBinaryOverrides,
-            searchPaths: config.lspSearchPaths,
-          },
-        }
-      : {}),
+    ...(sandbox ? { sandbox } : {}),
+    ...(bm25 ? { bm25 } : {}),
+    ...(lsp ? { lsp } : {}),
     tools: workspaceTools,
     ...(config.skillsPaths.length ? { skills: config.skillsPaths } : {}),
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
-  });
+  };
+  const workspace = new Workspace(workspaceConfig) as Workspace;
   runtime.cache.set(cacheKey, workspace);
   return workspace;
 }
@@ -566,17 +525,19 @@ export function getThreadWorkspace(workspacePath: string, threadId?: string): Wo
  * - 隐式工作区(<threadsRoot>/<threadId>/):物理删除磁盘目录与文件
  * - 显式绑定工作区:保护用户外部物理项目目录不被删除,仅释放并销毁内存中的 Workspace 实例与子进程
  */
-export async function deleteThreadWorkspace(threadId: string, metadata?: unknown): Promise<void> {
+export async function deleteThreadWorkspace(
+  threadId: string,
+  metadata?: unknown,
+  resourceId?: string,
+): Promise<void> {
   const meta = metadata as { workspacePath?: string; workspaceExplicit?: boolean } | undefined;
-  const implicitPath = implicitThreadWorkspacePath(threadId);
-  const runtime = getRuntime();
+  const implicitPath = implicitThreadWorkspacePath(threadId, resourceId);
+  const runtime = getRuntime(resourceId);
 
   // 1. 销毁并清除隐式工作区的 Workspace 实例及物理目录
   for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, implicitPath)) {
     runtime.cache.delete(cacheKey);
-    await Promise.resolve()
-      .then(() => workspace.destroy())
-      .catch(() => undefined);
+    await workspace.destroy().catch(() => undefined);
   }
   await rm(implicitPath, { recursive: true, force: true }).catch(() => undefined);
 
@@ -584,9 +545,7 @@ export async function deleteThreadWorkspace(threadId: string, metadata?: unknown
   if (meta?.workspacePath) {
     for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, meta.workspacePath)) {
       runtime.cache.delete(cacheKey);
-      await Promise.resolve()
-        .then(() => workspace.destroy())
-        .catch(() => undefined);
+      await workspace.destroy().catch(() => undefined);
     }
     // 如果该路径非用户外部显式选中的项目(例如位于 threadsRoot 内部),亦物理清理
     if (

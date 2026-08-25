@@ -1,8 +1,8 @@
 import {
   type ContentObjectMetadata,
   contentObjectReference,
-  getResourceScope,
   putContentObject,
+  resourceIdFromContext,
 } from "../storage";
 import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
@@ -17,7 +17,9 @@ function requestValue(
 }
 
 function currentScope(context: { requestContext?: { get?: (key: string) => unknown } }) {
-  const userId = requestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ?? getResourceScope();
+  const userId =
+    requestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ??
+    resourceIdFromContext(context.requestContext);
   if (!userId) throw new Error("Authenticated user is required");
   const threadId = requestValue(context, WORKSPACE_THREAD_ID_CONTEXT_KEY);
   return { userId, threadId };
@@ -46,7 +48,6 @@ export async function archiveTextContent(
     contentType: options.contentType ?? "text/plain; charset=utf-8",
     encoding: "utf8",
     source: options.source,
-    ttlMs: 30 * 24 * 60 * 60 * 1000,
   });
 }
 

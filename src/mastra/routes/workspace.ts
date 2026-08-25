@@ -6,6 +6,7 @@
 import { type Dirent, readdirSync } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { workError } from "../errors";
 import {
@@ -26,7 +27,9 @@ import type { ThreadMetadata } from "./threads/types";
 export const workspaceConfigRoute = registerApiRoute("/work/workspace", {
   method: "GET",
   handler: async (c) => {
-    return c.json(await getWorkspaceConfig());
+    return c.json(
+      await getWorkspaceConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+    );
   },
 });
 
@@ -34,7 +37,10 @@ export const workspaceConfigRoute = registerApiRoute("/work/workspace", {
 export const saveWorkspaceConfigRoute = registerApiRoute("/work/workspace", {
   method: "POST",
   handler: async (c) => {
-    await saveWorkspaceConfig(await c.req.json<WorkspaceUserConfig>());
+    await saveWorkspaceConfig(
+      await c.req.json<WorkspaceUserConfig>(),
+      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
     return c.json({ ok: true });
   },
 });
@@ -43,7 +49,11 @@ export const saveWorkspaceConfigRoute = registerApiRoute("/work/workspace", {
 export const recentWorkspacesRoute = registerApiRoute("/work/workspace/recent", {
   method: "GET",
   handler: async (c) => {
-    return c.json({ recent: await listRecentWorkspaces() });
+    return c.json({
+      recent: await listRecentWorkspaces(
+        c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      ),
+    });
   },
 });
 
@@ -186,7 +196,11 @@ export const createThreadTreeEntryRoute = registerApiRoute("/work/threads/:threa
   handler: async (c) => {
     const workspace = await ownedWorkspace(c);
     if (!workspace) throw workError("WORKSPACE_NOT_BROWSABLE");
-    if ((await getWorkspaceConfig()).readOnly) throw workError("WORKSPACE_READ_ONLY");
+    if (
+      (await getWorkspaceConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string))
+        .readOnly
+    )
+      throw workError("WORKSPACE_READ_ONLY");
 
     const body = (await c.req.json()) as { path?: unknown; type?: unknown };
     const relativePath = typeof body.path === "string" ? body.path.trim() : "";
@@ -225,6 +239,7 @@ export const createThreadTreeEntryRoute = registerApiRoute("/work/threads/:threa
     if (type === "file") {
       await recordWorkspaceChange({
         threadId: workspace.threadId,
+        userId: c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
         path: relativePath,
         before: null,
         after: "",
@@ -348,7 +363,10 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
   handler: async (c) => {
     const workspace = await ownedWorkspace(c);
     if (!workspace) throw workError("WORKSPACE_NOT_BROWSABLE");
-    if ((await getWorkspaceConfig()).readOnly) {
+    if (
+      (await getWorkspaceConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string))
+        .readOnly
+    ) {
       throw workError("WORKSPACE_READ_ONLY");
     }
     const relativePath = c.req.query("path");
@@ -367,6 +385,7 @@ export const saveThreadFileRoute = registerApiRoute("/work/threads/:threadId/fil
       const updated = await stat(target);
       await recordWorkspaceChange({
         threadId: workspace.threadId,
+        userId: c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
         path: relativePath,
         before: previousContent,
         after: body.content,

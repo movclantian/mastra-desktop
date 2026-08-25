@@ -22,6 +22,7 @@
  * - 输出:BatchParts 与 TokenLimiter 先跑,再交给按块调用 LLM 的重处理器
  */
 import { InMemoryServerCache } from "@mastra/core/cache";
+import type { MastraModelConfig } from "@mastra/core/llm";
 import type { Processor } from "@mastra/core/processors";
 import {
   BatchPartsProcessor,
@@ -49,8 +50,8 @@ import {
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { resolveDefaultModelId, WORKBENCH_GATEWAY_ID } from "../models";
-import { getAppConfig, getResourceScope, setAppConfig } from "../storage";
+import { resolveConfiguredModel, resolveDefaultLanguageModel, splitRouterId } from "../models";
+import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
 import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
@@ -395,11 +396,11 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
 };
 
 /** 读取护栏配置(app_config 表 key="guardrails";无记录或损坏时回落默认值) */
-export async function getGuardrailsConfig(): Promise<GuardrailsUserConfig> {
-  const scope = getResourceScope() ?? "__system__";
+export async function getGuardrailsConfig(resourceId?: string): Promise<GuardrailsUserConfig> {
+  const scope = scopeKey(resourceId);
   const cached = guardrailsConfigByScope.get(scope);
   if (cached) return cached;
-  const raw = await getAppConfig(GUARDRAILS_CONFIG_KEY);
+  const raw = await getAppConfig(GUARDRAILS_CONFIG_KEY, resourceId);
   if (!raw) {
     guardrailsConfigByScope.set(scope, DEFAULT_CONFIG);
     return DEFAULT_CONFIG;
@@ -415,31 +416,28 @@ export async function getGuardrailsConfig(): Promise<GuardrailsUserConfig> {
 }
 
 /** 写入护栏配置并实时生效:替换运行时配置 + 置空全部处理器缓存 */
-export async function saveGuardrailsConfig(next: GuardrailsUserConfig): Promise<void> {
-  await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(next, null, 2));
-  guardrailsConfigByScope.set(scopeKey(), { ...DEFAULT_CONFIG, ...next });
-  invalidateCache();
+export async function saveGuardrailsConfig(
+  next: GuardrailsUserConfig,
+  resourceId?: string,
+): Promise<void> {
+  await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
+  guardrailsConfigByScope.set(scopeKey(resourceId), { ...DEFAULT_CONFIG, ...next });
+  invalidateCache(resourceId);
 }
 
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
 
-function scopeKey(): string {
-  return getResourceScope() ?? "__system__";
+function scopeKey(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
 }
 
-function currentConfig(): GuardrailsUserConfig {
-  return guardrailsConfigByScope.get(scopeKey()) ?? DEFAULT_CONFIG;
+function currentConfig(resourceId?: string): GuardrailsUserConfig {
+  return guardrailsConfigByScope.get(scopeKey(resourceId)) ?? DEFAULT_CONFIG;
 }
-
-const config = new Proxy(DEFAULT_CONFIG, {
-  get(_target, property: string | symbol) {
-    return currentConfig()[property as keyof GuardrailsUserConfig];
-  },
-}) as GuardrailsUserConfig;
 
 /** 当前配置(chat 路由与 Agent 的 defaultOptions 读它决定 maxProcessorRetries) */
-export function getGuardrailsRuntimeConfig(): GuardrailsUserConfig {
-  return currentConfig();
+export function getGuardrailsRuntimeConfig(resourceId?: string): GuardrailsUserConfig {
+  return currentConfig(resourceId);
 }
 
 // ---------------------------------------------------------------------------
@@ -461,8 +459,8 @@ interface GuardrailRuntime {
 
 const runtimeByScope = new Map<string, GuardrailRuntime>();
 
-function getRuntime(): GuardrailRuntime {
-  const key = scopeKey();
+function getRuntime(resourceId?: string): GuardrailRuntime {
+  const key = scopeKey(resourceId);
   let runtime = runtimeByScope.get(key);
   if (!runtime) {
     runtime = {
@@ -477,8 +475,8 @@ function getRuntime(): GuardrailRuntime {
   return runtime;
 }
 
-function invalidateCache(): void {
-  const runtime = getRuntime();
+function invalidateCache(resourceId?: string): void {
+  const runtime = getRuntime(resourceId);
   runtime.cachedInput = null;
   runtime.cachedOutput = null;
   runtime.cachedError = null;
@@ -487,21 +485,23 @@ function invalidateCache(): void {
 }
 
 /**
- * 护栏模型:统一加上 WorkbenchGateway 前缀,于是 Key 由 resolveAuth 从数据库取
- * (既不注入 process.env,也不落进请求体);未配置供应商时返回 undefined,
- * 需要 LLM 的处理器整体跳过 —— 不能让「没配模型」把整条请求打挂。
+ * 护栏模型按当前资源直接解析为官方 LanguageModel,避免处理器后续通过
+ * 不带 RequestContext 的 gateway 回读另一位用户的配置。未配置供应商时返回
+ * undefined,需要 LLM 的处理器整体跳过 —— 不能让「没配模型」把整条请求打挂。
  */
-async function resolveGuardrailModelId(): Promise<`${string}/${string}` | undefined> {
-  const selected = config.model.trim();
-  if (!selected) return resolveDefaultModelId();
-  return selected.startsWith(`${WORKBENCH_GATEWAY_ID}/`)
-    ? (selected as `${string}/${string}`)
-    : (`${WORKBENCH_GATEWAY_ID}/${selected}` as `${string}/${string}`);
+async function resolveGuardrailModel(
+  cfg: GuardrailsUserConfig = currentConfig(),
+  resourceId?: string,
+): Promise<MastraModelConfig | undefined> {
+  const selected = cfg.model.trim();
+  if (!selected) return resolveDefaultLanguageModel(resourceId);
+  const { providerId, modelId } = splitRouterId(selected);
+  return resolveConfiguredModel(providerId, modelId, resourceId);
 }
 
 /** 内部检测 agent 的结构化输出形态(第三方网关不支持 response_format 时必需) */
-function structuredOutputOptions() {
-  return config.jsonPromptInjection ? { jsonPromptInjection: true } : undefined;
+function structuredOutputOptions(cfg: GuardrailsUserConfig) {
+  return cfg.jsonPromptInjection ? { jsonPromptInjection: true } : undefined;
 }
 
 /**
@@ -542,50 +542,52 @@ function parseRegexRules(text: string): RegexRule[] {
 }
 
 /** 正则过滤器:phase = all 时同一实例进输入与输出两个数组 */
-function buildRegexFilter(): RegexFilterProcessor | undefined {
-  if (!config.regex) return undefined;
-  const rules = parseRegexRules(config.regexRules);
-  if (config.regexPresets.length === 0 && rules.length === 0) return undefined;
+function buildRegexFilter(cfg: GuardrailsUserConfig): RegexFilterProcessor | undefined {
+  if (!cfg.regex) return undefined;
+  const rules = parseRegexRules(cfg.regexRules);
+  if (cfg.regexPresets.length === 0 && rules.length === 0) return undefined;
   return new RegexFilterProcessor({
-    ...(config.regexPresets.length ? { presets: config.regexPresets } : {}),
+    ...(cfg.regexPresets.length ? { presets: cfg.regexPresets } : {}),
     ...(rules.length ? { rules } : {}),
-    strategy: config.regexStrategy,
-    phase: config.regexPhase,
-    includeRedactedValues: config.regexIncludeRedactedValues,
-    streamCarryoverSize: config.regexStreamCarryoverSize,
+    strategy: cfg.regexStrategy,
+    phase: cfg.regexPhase,
+    includeRedactedValues: cfg.regexIncludeRedactedValues,
+    streamCarryoverSize: cfg.regexStreamCarryoverSize,
   });
 }
 
 /** 审核器:输入与输出共用一个实例(无跨请求状态,内部 agent 只需建一次) */
-function buildModeration(model: `${string}/${string}`): ModerationProcessor {
+function buildModeration(model: MastraModelConfig, cfg: GuardrailsUserConfig): ModerationProcessor {
+  const structuredOptions = structuredOutputOptions(cfg);
   return new ModerationProcessor({
     model,
-    categories: config.moderationCategories,
-    threshold: config.moderationThreshold,
-    strategy: config.moderationStrategy,
-    lastMessageOnly: config.moderationLastMessageOnly,
-    includeScores: config.moderationIncludeScores,
-    ...(config.moderationChunkWindow > 0 ? { chunkWindow: config.moderationChunkWindow } : {}),
-    ...(config.moderationInstructions.trim()
-      ? { instructions: config.moderationInstructions.trim() }
+    categories: cfg.moderationCategories,
+    threshold: cfg.moderationThreshold,
+    strategy: cfg.moderationStrategy,
+    lastMessageOnly: cfg.moderationLastMessageOnly,
+    includeScores: cfg.moderationIncludeScores,
+    ...(cfg.moderationChunkWindow > 0 ? { chunkWindow: cfg.moderationChunkWindow } : {}),
+    ...(cfg.moderationInstructions.trim()
+      ? { instructions: cfg.moderationInstructions.trim() }
       : {}),
-    ...(structuredOutputOptions() ? { structuredOutputOptions: structuredOutputOptions() } : {}),
+    ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
   });
 }
 
 /** PII 检测:输入与输出共用一个实例 */
-function buildPII(model: `${string}/${string}`): PIIDetector {
+function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetector {
+  const structuredOptions = structuredOutputOptions(cfg);
   return new PIIDetector({
     model,
-    detectionTypes: config.piiTypes,
-    threshold: config.piiThreshold,
-    strategy: config.piiStrategy,
-    redactionMethod: config.piiRedactionMethod,
-    preserveFormat: config.piiPreserveFormat,
-    lastMessageOnly: config.piiLastMessageOnly,
-    includeDetections: config.piiIncludeDetections,
-    ...(config.piiInstructions.trim() ? { instructions: config.piiInstructions.trim() } : {}),
-    ...(structuredOutputOptions() ? { structuredOutputOptions: structuredOutputOptions() } : {}),
+    detectionTypes: cfg.piiTypes,
+    threshold: cfg.piiThreshold,
+    strategy: cfg.piiStrategy,
+    redactionMethod: cfg.piiRedactionMethod,
+    preserveFormat: cfg.piiPreserveFormat,
+    lastMessageOnly: cfg.piiLastMessageOnly,
+    includeDetections: cfg.piiIncludeDetections,
+    ...(cfg.piiInstructions.trim() ? { instructions: cfg.piiInstructions.trim() } : {}),
+    ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
   });
 }
 
@@ -594,77 +596,79 @@ function buildPII(model: `${string}/${string}`): PIIDetector {
  * 规范化 → 正则 → 注入检测 → 语言 → 审核 → PII → 成本 → Token 上限 →
  * 运行时搜索 → processLLMRequest 类(工具裁剪 / 供应商兼容 / 响应缓存)。
  */
-async function buildInput(): Promise<InputProcessorOrWorkflow[]> {
+async function buildInput(
+  cfg = currentConfig(),
+  resourceId?: string,
+): Promise<InputProcessorOrWorkflow[]> {
   const processors: InputProcessorOrWorkflow[] = [];
-  const model = await resolveGuardrailModelId();
+  const model = await resolveGuardrailModel(cfg, resourceId);
+  const structuredOptions = structuredOutputOptions(cfg);
 
-  if (config.unicode) {
+  if (cfg.unicode) {
     processors.push(
       new UnicodeNormalizer({
-        stripControlChars: config.unicodeStripControlChars,
-        preserveEmojis: config.unicodePreserveEmojis,
-        collapseWhitespace: config.unicodeCollapseWhitespace,
-        trim: config.unicodeTrim,
+        stripControlChars: cfg.unicodeStripControlChars,
+        preserveEmojis: cfg.unicodePreserveEmojis,
+        collapseWhitespace: cfg.unicodeCollapseWhitespace,
+        trim: cfg.unicodeTrim,
       }),
     );
   }
 
-  const regex = buildRegexFilter();
-  if (regex && config.regexPhase !== "output") processors.push(regex);
+  const regex = buildRegexFilter(cfg);
+  if (regex && cfg.regexPhase !== "output") processors.push(regex);
 
   if (model) {
-    if (config.injection) {
+    if (cfg.injection) {
       processors.push(
         new PromptInjectionDetector({
           model,
-          detectionTypes: config.injectionTypes,
-          threshold: config.injectionThreshold,
-          strategy: config.injectionStrategy,
-          lastMessageOnly: config.injectionLastMessageOnly,
-          includeScores: config.injectionIncludeScores,
-          ...(config.injectionInstructions.trim()
-            ? { instructions: config.injectionInstructions.trim() }
+          detectionTypes: cfg.injectionTypes,
+          threshold: cfg.injectionThreshold,
+          strategy: cfg.injectionStrategy,
+          lastMessageOnly: cfg.injectionLastMessageOnly,
+          includeScores: cfg.injectionIncludeScores,
+          ...(cfg.injectionInstructions.trim()
+            ? { instructions: cfg.injectionInstructions.trim() }
             : {}),
-          ...(structuredOutputOptions()
-            ? { structuredOutputOptions: structuredOutputOptions() }
-            : {}),
+          ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
         }),
       );
     }
-    if (config.language && config.languageTargets.length > 0) {
+    if (cfg.language && cfg.languageTargets.length > 0) {
       processors.push(
         new LanguageDetector({
           model,
-          targetLanguages: config.languageTargets,
-          threshold: config.languageThreshold,
-          strategy: config.languageStrategy,
-          preserveOriginal: config.languagePreserveOriginal,
-          minTextLength: config.languageMinTextLength,
-          lastMessageOnly: config.languageLastMessageOnly,
-          includeDetectionDetails: config.languageIncludeDetails,
-          ...(config.languageInstructions.trim()
-            ? { instructions: config.languageInstructions.trim() }
+          targetLanguages: cfg.languageTargets,
+          threshold: cfg.languageThreshold,
+          strategy: cfg.languageStrategy,
+          preserveOriginal: cfg.languagePreserveOriginal,
+          minTextLength: cfg.languageMinTextLength,
+          lastMessageOnly: cfg.languageLastMessageOnly,
+          includeDetectionDetails: cfg.languageIncludeDetails,
+          ...(cfg.languageInstructions.trim()
+            ? { instructions: cfg.languageInstructions.trim() }
             : {}),
         }),
       );
     }
-    if (config.moderationInput) processors.push(buildModeration(model));
-    if (config.piiInput) processors.push(buildPII(model));
+    if (cfg.moderationInput) processors.push(buildModeration(model, cfg));
+    if (cfg.piiInput) processors.push(buildPII(model, cfg));
   }
 
-  if (config.tokenCost && config.tokenCostMax > 0) {
+  if (cfg.tokenCost && cfg.tokenCostMax > 0) {
     // 依赖 observability 存储的 getMetricAggregate;不可用时构造即抛,
     // 捕获后跳过 —— 一个可选护栏不该让整个 Agent 起不来。
     try {
       processors.push(
         new TokenCostControl({
-          maxCost: config.tokenCostMax,
-          scope: config.tokenCostScope,
-          window: config.tokenCostWindow,
-          strategy: config.tokenCostStrategy,
-          includeBreakdown: config.tokenCostIncludeBreakdown,
-          ...(config.tokenCostWarnAtPercent > 0 && config.tokenCostWarnAtPercent < 100
-            ? { warnAtPercent: config.tokenCostWarnAtPercent }
+          maxCost: cfg.tokenCostMax,
+          scope: cfg.tokenCostScope,
+          window: cfg.tokenCostWindow,
+          strategy: cfg.tokenCostStrategy,
+          includeBreakdown: cfg.tokenCostIncludeBreakdown,
+          ...(cfg.tokenCostWarnAtPercent > 0 && cfg.tokenCostWarnAtPercent < 100
+            ? { warnAtPercent: cfg.tokenCostWarnAtPercent }
             : {}),
         }),
       );
@@ -674,16 +678,16 @@ async function buildInput(): Promise<InputProcessorOrWorkflow[]> {
   }
 
   // TokenLimiter 收尾:前面的处理器可能增删消息,最后一步才能保证上下文可容纳
-  if (config.tokenLimitInput && config.tokenLimitInputValue > 0) {
+  if (cfg.tokenLimitInput && cfg.tokenLimitInputValue > 0) {
     processors.push(
       new TokenLimiterProcessor({
-        limit: config.tokenLimitInputValue,
-        trimMode: config.tokenLimitTrimMode,
+        limit: cfg.tokenLimitInputValue,
+        trimMode: cfg.tokenLimitTrimMode,
       }),
     );
   }
 
-  if (config.toolSearch) {
+  if (cfg.toolSearch) {
     processors.push(
       new ToolSearchProcessor({
         // 静态清单为空:本 Agent 的工具全部按请求解析(动态 tools 函数),
@@ -691,42 +695,42 @@ async function buildInput(): Promise<InputProcessorOrWorkflow[]> {
         tools: {},
         includeResolvedTools: true,
         search: {
-          topK: config.toolSearchTopK,
-          minScore: config.toolSearchMinScore,
-          autoLoad: config.toolSearchAutoLoad,
+          topK: cfg.toolSearchTopK,
+          minScore: cfg.toolSearchMinScore,
+          autoLoad: cfg.toolSearchAutoLoad,
         },
-        storage: config.toolSearchStorage,
-        ttl: config.toolSearchTtl,
+        storage: cfg.toolSearchStorage,
+        ttl: cfg.toolSearchTtl,
       }),
     );
   }
 
-  if (config.toolCallFilter) {
+  if (cfg.toolCallFilter) {
     processors.push(
       new ToolCallFilter({
-        ...(config.toolCallFilterExclude.length ? { exclude: config.toolCallFilterExclude } : {}),
-        ...(config.toolCallFilterAfterToolSteps >= 0
-          ? { filterAfterToolSteps: config.toolCallFilterAfterToolSteps }
+        ...(cfg.toolCallFilterExclude.length ? { exclude: cfg.toolCallFilterExclude } : {}),
+        ...(cfg.toolCallFilterAfterToolSteps >= 0
+          ? { filterAfterToolSteps: cfg.toolCallFilterAfterToolSteps }
           : {}),
-        preserveModelOutput: config.toolCallFilterPreserveModelOutput,
+        preserveModelOutput: cfg.toolCallFilterPreserveModelOutput,
       }),
     );
   }
 
-  if (config.providerCompat) processors.push(new ProviderHistoryCompat());
+  if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
 
-  if (config.responseCache) {
-    const runtime = getRuntime();
+  if (cfg.responseCache) {
+    const runtime = getRuntime(resourceId);
     runtime.responseCacheBackend ??= new InMemoryServerCache();
     processors.push(
       new ResponseCache({
         cache: runtime.responseCacheBackend,
-        ttl: config.responseCacheTtl,
+        ttl: cfg.responseCacheTtl,
         agentId: "mastra-work-agent",
-        ...(config.responseCacheScopeMode === "none"
+        ...(cfg.responseCacheScopeMode === "none"
           ? { scope: null }
-          : config.responseCacheScopeMode === "custom" && config.responseCacheScopeValue.trim()
-            ? { scope: config.responseCacheScopeValue.trim() }
+          : cfg.responseCacheScopeMode === "custom" && cfg.responseCacheScopeValue.trim()
+            ? { scope: cfg.responseCacheScopeValue.trim() }
             : {}),
       }),
     );
@@ -736,54 +740,56 @@ async function buildInput(): Promise<InputProcessorOrWorkflow[]> {
 }
 
 /** 输出处理器数组:先批处理与截断,再交给按块调用 LLM 的重处理器 */
-async function buildOutput(): Promise<OutputProcessorOrWorkflow[]> {
+async function buildOutput(
+  cfg = currentConfig(),
+  resourceId?: string,
+): Promise<OutputProcessorOrWorkflow[]> {
   const processors: OutputProcessorOrWorkflow[] = [];
-  const model = await resolveGuardrailModelId();
+  const model = await resolveGuardrailModel(cfg, resourceId);
 
-  if (config.batchParts) {
+  if (cfg.batchParts) {
     processors.push(
       new BatchPartsProcessor({
-        batchSize: config.batchPartsSize,
-        ...(config.batchPartsMaxWaitTime > 0 ? { maxWaitTime: config.batchPartsMaxWaitTime } : {}),
-        emitOnNonText: config.batchPartsEmitOnNonText,
+        batchSize: cfg.batchPartsSize,
+        ...(cfg.batchPartsMaxWaitTime > 0 ? { maxWaitTime: cfg.batchPartsMaxWaitTime } : {}),
+        emitOnNonText: cfg.batchPartsEmitOnNonText,
       }),
     );
   }
 
-  if (config.tokenLimitOutput && config.tokenLimitOutputValue > 0) {
+  if (cfg.tokenLimitOutput && cfg.tokenLimitOutputValue > 0) {
     processors.push(
       new TokenLimiterProcessor({
-        limit: config.tokenLimitOutputValue,
-        strategy: config.tokenLimitOutputStrategy,
-        countMode: config.tokenLimitOutputCountMode,
+        limit: cfg.tokenLimitOutputValue,
+        strategy: cfg.tokenLimitOutputStrategy,
+        countMode: cfg.tokenLimitOutputCountMode,
       }),
     );
   }
 
-  const regex = buildRegexFilter();
-  if (regex && config.regexPhase !== "input") processors.push(regex);
+  const regex = buildRegexFilter(cfg);
+  if (regex && cfg.regexPhase !== "input") processors.push(regex);
 
   if (model) {
-    if (config.piiOutput) processors.push(buildPII(model));
-    if (config.moderationOutput) processors.push(buildModeration(model));
-    if (config.scrubber) {
+    if (cfg.piiOutput) processors.push(buildPII(model, cfg));
+    if (cfg.moderationOutput) processors.push(buildModeration(model, cfg));
+    if (cfg.scrubber) {
+      const structuredOptions = structuredOutputOptions(cfg);
       processors.push(
         new SystemPromptScrubber({
           model,
-          strategy: config.scrubberStrategy,
-          redactionMethod: config.scrubberRedactionMethod,
-          placeholderText: config.scrubberPlaceholderText,
-          includeDetections: config.scrubberIncludeDetections,
-          lastMessageOnly: config.scrubberLastMessageOnly,
-          ...(config.scrubberCustomPatterns.length
-            ? { customPatterns: config.scrubberCustomPatterns }
+          strategy: cfg.scrubberStrategy,
+          redactionMethod: cfg.scrubberRedactionMethod,
+          placeholderText: cfg.scrubberPlaceholderText,
+          includeDetections: cfg.scrubberIncludeDetections,
+          lastMessageOnly: cfg.scrubberLastMessageOnly,
+          ...(cfg.scrubberCustomPatterns.length
+            ? { customPatterns: cfg.scrubberCustomPatterns }
             : {}),
-          ...(config.scrubberInstructions.trim()
-            ? { instructions: config.scrubberInstructions.trim() }
+          ...(cfg.scrubberInstructions.trim()
+            ? { instructions: cfg.scrubberInstructions.trim() }
             : {}),
-          ...(structuredOutputOptions()
-            ? { structuredOutputOptions: structuredOutputOptions() }
-            : {}),
+          ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
         }),
       );
     }
@@ -793,16 +799,16 @@ async function buildOutput(): Promise<OutputProcessorOrWorkflow[]> {
 }
 
 /** 错误处理器数组:供应商 API 拒绝时的恢复通路 */
-function buildError(): ErrorProcessorOrWorkflow[] {
+function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
   const processors: ErrorProcessorOrWorkflow[] = [];
-  if (config.prefillErrorHandler) processors.push(new PrefillErrorHandler());
-  if (config.streamErrorRetry) {
+  if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
+  if (cfg.streamErrorRetry) {
     processors.push(
       new StreamErrorRetryProcessor({
-        maxRetries: config.streamErrorRetryMax,
-        delayMs: config.streamErrorRetryDelayMs,
-        maxRetryAfterMs: config.streamErrorRetryMaxRetryAfterMs,
-        retryUnknownErrors: config.streamErrorRetryUnknown,
+        maxRetries: cfg.streamErrorRetryMax,
+        delayMs: cfg.streamErrorRetryDelayMs,
+        maxRetryAfterMs: cfg.streamErrorRetryMaxRetryAfterMs,
+        retryUnknownErrors: cfg.streamErrorRetryUnknown,
       }),
     );
   }
@@ -817,32 +823,36 @@ function buildError(): ErrorProcessorOrWorkflow[] {
 export async function buildGuardrailInputProcessors(
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
-  const runtime = getRuntime();
-  runtime.cachedInput ??= await buildInput();
-  if (!config.skillSearch || !isWorkspaceEnabled()) return runtime.cachedInput;
+  const resourceId = resourceIdFromContext(requestContext);
+  const cfg = currentConfig(resourceId);
+  const runtime = getRuntime(resourceId);
+  runtime.cachedInput ??= await buildInput(cfg, resourceId);
+  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return runtime.cachedInput;
   const workspacePath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
   if (typeof workspacePath !== "string" || !workspacePath) return runtime.cachedInput;
   let skillSearch = runtime.skillSearchCache.get(workspacePath);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({
-      workspace: getThreadWorkspace(workspacePath),
-      search: { topK: config.skillSearchTopK, minScore: config.skillSearchMinScore },
-      ttl: config.skillSearchTtl,
+      workspace: getThreadWorkspace(workspacePath, undefined, resourceId),
+      search: { topK: cfg.skillSearchTopK, minScore: cfg.skillSearchMinScore },
+      ttl: cfg.skillSearchTtl,
     });
     runtime.skillSearchCache.set(workspacePath, skillSearch);
   }
   return [...runtime.cachedInput, skillSearch];
 }
 
-export async function buildGuardrailOutputProcessors(): Promise<OutputProcessorOrWorkflow[]> {
-  const runtime = getRuntime();
-  runtime.cachedOutput ??= await buildOutput();
+export async function buildGuardrailOutputProcessors(
+  resourceId?: string,
+): Promise<OutputProcessorOrWorkflow[]> {
+  const runtime = getRuntime(resourceId);
+  runtime.cachedOutput ??= await buildOutput(currentConfig(resourceId), resourceId);
   return runtime.cachedOutput;
 }
 
-export function buildGuardrailErrorProcessors(): ErrorProcessorOrWorkflow[] {
-  const runtime = getRuntime();
-  runtime.cachedError ??= buildError();
+export function buildGuardrailErrorProcessors(resourceId?: string): ErrorProcessorOrWorkflow[] {
+  const runtime = getRuntime(resourceId);
+  runtime.cachedError ??= buildError(currentConfig(resourceId));
   return runtime.cachedError;
 }
 

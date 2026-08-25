@@ -241,7 +241,7 @@ export const cloneCompactedEditRoute = registerApiRoute("/work/threads/:threadId
     // before deleting its raw messages; resource-scoped OM is shared by the
     // source and clone, so clearing it here would erase the user's source OM.
     try {
-      if ((await getMemoryConfig()).omScope === "thread") {
+      if ((await getMemoryConfig(body.resourceId)).omScope === "thread") {
         const cloneOm = await memory.omEngine;
         await cloneOm?.clear(clone.id, body.resourceId);
         if (memory.vector) {

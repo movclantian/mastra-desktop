@@ -1,6 +1,5 @@
 import { Chat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/api/client";
@@ -33,7 +32,6 @@ export function useThreadChats(
   onThreadBusyChange?: (threadId: string, isBusy: boolean) => void,
 ): ThreadChats {
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
-  const generatedMessageIdsRef = React.useRef(new Map<string, string>());
   const reconnectAttemptsRef = React.useRef(new Map<string, number>());
   const reconnectTimersRef = React.useRef(new Map<string, number>());
   const buildRequestBodyRef = React.useRef(buildRequestBody);
@@ -56,11 +54,6 @@ export function useThreadChats(
       let chat!: Chat<WorkUIMessage>;
       chat = new Chat<WorkUIMessage>({
         id: threadId,
-        generateId: () => {
-          const id = nanoid();
-          generatedMessageIdsRef.current.set(threadId, id);
-          return id;
-        },
         transport: new DefaultChatTransport<WorkUIMessage>({
           api: `${MASTRA_SERVER_URL}/chat/mastra-work-agent`,
           prepareReconnectToStreamRequest: ({ body }) => {
@@ -86,7 +79,6 @@ export function useThreadChats(
             onThreadBusyChangeRef.current?.(threadId, true);
             const payload: Record<string, unknown> = {
               ...buildRequestBodyRef.current(threadId),
-              responseMessageId: generatedMessageIdsRef.current.get(threadId),
               ...body,
               id,
               trigger,

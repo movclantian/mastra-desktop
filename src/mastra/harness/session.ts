@@ -1,14 +1,15 @@
 /**
  * Harness 会话运行时(docs/en/docs/harness/agent-controller.mdx):
  * 围绕共享 Agent 承载单个会话的生命周期、排队、打断与策略通知。
- * 线程级收发全部走官方原语:queueMessage(ifIdle: wake)、subscribeToThread、
- * abortThreadStream、sendSignal(ifActive: deliver / ifIdle: discard)。
+ * 线程级收发全部走官方原语:sendSignal(type: 'user' / ifIdle: wake)、
+ * subscribeToThread、abortThreadStream。
  */
 import { randomUUID } from "node:crypto";
 import type {
   Agent,
   AgentExecutionOptions,
   AgentMessageInput,
+  AgentSignal,
   AgentThreadSubscription,
 } from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
@@ -87,9 +88,30 @@ export function isTerminalAgentChunk(chunk: unknown): boolean {
 
 interface QueuedFollowUp {
   id: string;
+  messageId: string;
   message: AgentMessageInput;
   streamOptions: AgentExecutionOptions;
   subscription: AgentThreadSubscription;
+}
+
+/**
+ * 把 AgentMessageInput 归一成一条带**显式 id** 的用户信号。
+ *
+ * queueMessage() 只收 AgentMessageInput,内部一律用自生成的 id 落库
+ * (createMessageSignal(message, { id: #generateSignalMessageId(...) })),客户端
+ * 那条用户消息的 id 因此永远对不上持久化行 —— 增量校验(normalizeIncrementalMessages)
+ * 会把上一轮的用户消息重新算成「本轮新消息」,第二次发送即被拒。sendSignal()
+ * 保留调用方给的 id(createSignal 的 `id: signalInput.id ?? 自生成`),所以线程级
+ * 发送统一走它,客户端 id 就是持久化 id。
+ *
+ * type / tagName 与官方 createMessageSignal() 写死的一对值保持一致:落库行的
+ * `type` 取自 tagName,历史归一化(normalizeChatHistoryMessages)靠它把信号行
+ * 还原成普通用户回合。
+ */
+function userSignal(message: AgentMessageInput, id: string): AgentSignal {
+  const input =
+    typeof message === "string" || Array.isArray(message) ? { contents: message } : message;
+  return { ...input, type: "user", tagName: "user", id };
 }
 
 export class WorkSession {
@@ -231,7 +253,15 @@ export class WorkSession {
     return this.followUpTargets.get(followUpId)?.subscription;
   }
 
-  sendMessage(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+  /**
+   * 发起(或排队)一个新回合。messageId 省略时由会话自造 —— 只有工作台聊天
+   * 路由能提供客户端消息 id,会话级 API 没有这个概念。
+   */
+  sendMessage(
+    message: AgentMessageInput,
+    streamOptions: AgentExecutionOptions = {},
+    messageId?: string,
+  ) {
     const requestContext = streamOptions.requestContext ?? new RequestContext();
     requestContext.set(SESSION_GRANTS_CONTEXT_KEY, this.getGrants());
     const options: AgentExecutionOptions = {
@@ -244,9 +274,10 @@ export class WorkSession {
       },
       requestContext,
     };
-    return this.agent.queueMessage(message, {
+    return this.agent.sendSignal(userSignal(message, messageId ?? randomUUID()), {
       resourceId: this.resourceId,
       threadId: this.currentThreadId,
+      ifActive: { behavior: "deliver" },
       ifIdle: { behavior: "wake", streamOptions: options },
     });
   }
@@ -259,6 +290,9 @@ export class WorkSession {
 
     const target: QueuedFollowUp = {
       id: randomUUID(),
+      // follow-up 不经前端的消息列表(只出现在队列 UI,回合结束后靠 reload 从
+      // Memory 取回),所以没有客户端 id 需要对齐,消息 id 自造即可。
+      messageId: randomUUID(),
       message,
       streamOptions,
       subscription: monitor.subscription,
@@ -288,9 +322,10 @@ export class WorkSession {
 
   private async startFollowUp(target: QueuedFollowUp): Promise<boolean> {
     try {
-      const result = this.agent.queueMessage(target.message, {
+      const result = this.agent.sendSignal(userSignal(target.message, target.messageId), {
         resourceId: this.resourceId,
         threadId: this.currentThreadId,
+        ifActive: { behavior: "deliver" },
         ifIdle: { behavior: "wake", streamOptions: target.streamOptions },
       });
       const accepted = await result.accepted;
@@ -363,7 +398,11 @@ export class WorkSession {
     monitor.subscription.unsubscribe();
   }
 
-  async steer(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
+  async steer(
+    message: AgentMessageInput,
+    streamOptions: AgentExecutionOptions = {},
+    messageId?: string,
+  ) {
     const activeRunId = this.agent.getActiveThreadRunId({
       resourceId: this.resourceId,
       threadId: this.currentThreadId,
@@ -385,7 +424,7 @@ export class WorkSession {
         release.unsubscribe();
       }
     }
-    return this.sendMessage(message, streamOptions);
+    return this.sendMessage(message, streamOptions, messageId);
   }
 
   notifyPolicyChange(summary: string, attributes: Record<string, string> = {}): void {

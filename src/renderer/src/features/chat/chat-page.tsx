@@ -1051,7 +1051,7 @@ export function ChatPanel() {
   // 「立即转向」:打断当前回合,把指定排队请求直接发出(失败放回队首)。
   //
   // 服务端 session.steer() 会 abort 当前 run 并 clearFollowUps(),因此已被
-  // queueMessage 接受的 native follow-up 在服务端全部作废 —— 前端必须同步
+  // 服务端会话接受的 native follow-up 全部作废 —— 前端必须同步
   // 清掉它们(带 followUpId 的项),否则界面上会留下永远不会被执行的幽灵项。
   // 纯本地排队项不受影响,继续按顺序等下一回合。
   const steerQueuedRequestNow = React.useCallback(

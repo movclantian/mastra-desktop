@@ -1,5 +1,5 @@
 /**
- * 消息历史路由:分页拉取、批量删除与跨线程搜索。
+ * 消息历史路由:分页拉取与批量删除。
  * 官方文档:docs/en/docs/memory/message-history.mdx;
  * resourceId 租户隔离见 docs/en/docs/memory/multi-user-threads.mdx。
  */
@@ -9,12 +9,7 @@ import type { UIMessage } from "ai";
 import { workError } from "../../errors";
 import { readMessageBranches, snapshot } from "./branches";
 import { removeObservationalMemoryReferences } from "./compact";
-import {
-  getOwnedThread,
-  getWorkMemory,
-  getWorkMemoryForThread,
-  normalizeChatHistoryMessages,
-} from "./shared";
+import { getOwnedThread, getWorkMemoryForThread, normalizeChatHistoryMessages } from "./shared";
 import type {
   MessageBranchRecord,
   MessageBranchVersion,
@@ -411,7 +406,18 @@ function projectBranchMessages(
       rows.push(injected);
     }
   }
-  return rows.flat();
+  // 投影必须幂等。第一步的快照替换与第二步的 [当前版本 + tail] 注入都可能与仍然
+  // 存在的物理行撞上同一个消息 id:tail 的物理删除是尽力而为的(deletePersistedTail
+  // 与分支切换都会吞掉删除异常,失败时尾巴留在 Memory 里),不同版本的 tail 也可能
+  // 覆盖同一段下游。重复 id 会被前端原样回传给 POST /chat,撞上增量校验的唯一性
+  // 检查(Duplicate message ids are not accepted),让整轮对话失败。
+  // 保留首次出现:注入插在锚点行之后,天然早于同 id 的残留物理行,分支时间线优先。
+  const seen = new Set<string>();
+  return rows.flat().filter((message) => {
+    if (seen.has(message.id)) return false;
+    seen.add(message.id);
+    return true;
+  });
 }
 
 function findVersionById(
@@ -580,7 +586,11 @@ export const updateMessageBranchRoute = registerApiRoute(
             const ownerRowIndex = tailRows.findIndex(
               (message) => message.id === tailOwner.message?.id,
             );
-            const subordinateStart = ownerRowIndex >= 0 ? ownerRowIndex + 1 : 1;
+            // 切换助手版本时 tailOwner 就是被切走的那一行(position),根本不在
+            // tailRows 里 —— 此时 tailRows 整段都是下游,起点必须是 0。写死成 1
+            // 会让被物理删除的 tailRows[0] 不归属任何 version.tail,切回来时那条
+            // 消息永久消失。
+            const subordinateStart = ownerRowIndex >= 0 ? ownerRowIndex + 1 : 0;
             const subordinate = tailRows
               .slice(subordinateStart)
               .map((message) => snapshot(message))
@@ -668,91 +678,5 @@ export const deleteMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
     }
     await memory.settled();
     return c.json({ ok: true, threadId, deleted: body.messageIds.length });
-  },
-});
-
-// GET /work/memory/search?q=&resourceId= — 跨线程检索线程消息
-// 官方 API:Memory.recall() 的 vectorSearchString(docs/en/reference/memory/recall.mdx)。
-// 语义召回(embedder/vector 可用)优先;失败或未启用时回退全量拉取 + 文本包含匹配。
-export const searchMessagesRoute = registerApiRoute("/work/memory/search", {
-  method: "GET",
-  handler: async (c) => {
-    const q = c.req.query("q")?.trim();
-    const resourceId = c.req.query("resourceId");
-    if (!q || !resourceId) {
-      throw workError("VALIDATION_FAILED", { text: "q and resourceId are required" });
-    }
-    const memory = await getWorkMemory(c.get("requestContext"));
-    const { threads } = await memory.listThreads({
-      filter: { resourceId },
-      perPage: false,
-    });
-
-    type SearchHit = {
-      threadId: string;
-      threadTitle: string;
-      messageId: string;
-      role: string;
-      text: string;
-      createdAt: string;
-      semantic: boolean;
-    };
-    const hits: SearchHit[] = [];
-    const lower = q.toLowerCase();
-
-    for (const thread of threads) {
-      // 1) 官方语义召回路径
-      try {
-        const { messages } = await memory.recall({
-          threadId: thread.id,
-          resourceId,
-          vectorSearchString: q,
-          perPage: 10,
-        });
-        for (const m of messages ?? []) {
-          const text = (m.content.parts ?? [])
-            .map((p) => (p.type === "text" ? p.text : ""))
-            .filter(Boolean)
-            .join(" ");
-          if (text) {
-            hits.push({
-              threadId: thread.id,
-              threadTitle: thread.title ?? thread.id,
-              messageId: m.id,
-              role: m.role,
-              text,
-              createdAt: m.createdAt.toISOString(),
-              semantic: true,
-            });
-          }
-        }
-      } catch {
-        // embedder/vector 不可用:走文本回退
-      }
-
-      // 2) 文本回退(语义不可用或未命中):全量拉取 + 包含匹配
-      if (!hits.some((h) => h.threadId === thread.id)) {
-        const { messages } = await memory.recall({ threadId: thread.id, perPage: false });
-        for (const m of messages ?? []) {
-          const text = (m.content.parts ?? [])
-            .map((p) => (p.type === "text" ? p.text : ""))
-            .filter(Boolean)
-            .join(" ");
-          if (text?.toLowerCase().includes(lower)) {
-            hits.push({
-              threadId: thread.id,
-              threadTitle: thread.title ?? thread.id,
-              messageId: m.id,
-              role: m.role,
-              text,
-              createdAt: m.createdAt.toISOString(),
-              semantic: false,
-            });
-          }
-        }
-      }
-    }
-
-    return c.json({ hits });
   },
 });

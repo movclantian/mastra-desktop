@@ -123,8 +123,8 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     throw workError("THREAD_NOT_FOUND");
   }
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
-  const profile = await getAgentProfile(metadata.agentProfileId);
-  const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile)).profile;
+  const profile = await getAgentProfile(metadata.agentProfileId, resourceId);
+  const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId)).profile;
   const session = workSessionHost.getOrCreate({
     resourceId,
     scope,
@@ -145,7 +145,11 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   }
   const modelSelection = metadata.modelSelectionByMode?.[mode.id];
   if (modelSelection) {
-    const model = await resolveConfiguredModel(modelSelection.providerId, modelSelection.modelId);
+    const model = await resolveConfiguredModel(
+      modelSelection.providerId,
+      modelSelection.modelId,
+      resourceId,
+    );
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
   }
@@ -176,9 +180,14 @@ async function sessionExecutionOptions(
     typeof body.agentProfileId === "string"
       ? body.agentProfileId
       : ((result.thread.metadata as ThreadMetadata | undefined)?.agentProfileId ?? undefined),
+    result.resourceId,
   );
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  const registered = await ensureProfileAgentsRegistered(c.get("mastra"), profile);
+  const registered = await ensureProfileAgentsRegistered(
+    c.get("mastra"),
+    profile,
+    result.resourceId,
+  );
   result.agent = registered.profile;
   result.session.setAgent(result.agent);
   const skillNames = body.metadata?.skillNames;
@@ -191,7 +200,7 @@ async function sessionExecutionOptions(
     );
   }
   if (body.model !== undefined) {
-    const model = await resolveRequestModel(body.model);
+    const model = await resolveRequestModel(body.model, result.resourceId);
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
     const family = requestModelFamily(body.model);
@@ -204,7 +213,8 @@ async function sessionExecutionOptions(
     typeof body.providerOptions === "object" && body.providerOptions !== null
       ? (body.providerOptions as Record<string, unknown>)
       : undefined;
-  const reasoningSummary = body.model !== undefined && (await usesOpenAIResponses(body.model));
+  const reasoningSummary =
+    body.model !== undefined && (await usesOpenAIResponses(body.model, result.resourceId));
   const providerOptions = reasoningSummary
     ? {
         ...(rawProviderOptions ?? {}),
@@ -616,7 +626,7 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
         text: "selection.providerId and selection.modelId are required",
       });
     }
-    const model = await resolveConfiguredModel(raw.providerId, raw.modelId);
+    const model = await resolveConfiguredModel(raw.providerId, raw.modelId, result.resourceId);
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     const selection = {
       providerId: raw.providerId,
@@ -804,6 +814,7 @@ export const updateSessionSubagentModelsRoute = registerApiRoute(
       }
       const threadProfile = await getAgentProfile(
         ((result.thread.metadata ?? {}) as ThreadMetadata).agentProfileId,
+        result.resourceId,
       );
       const supportedAgentTypes = new Set([
         "default",
@@ -825,7 +836,7 @@ export const updateSessionSubagentModelsRoute = registerApiRoute(
       else {
         const routerId = body.modelId.trim();
         const { providerId, modelId } = splitRouterId(routerId);
-        if (!(await resolveConfiguredModel(providerId, modelId))) {
+        if (!(await resolveConfiguredModel(providerId, modelId, result.resourceId))) {
           throw workError("MODEL_NOT_CONFIGURED");
         }
         next[body.agentType] = routerId;

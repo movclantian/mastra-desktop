@@ -13,7 +13,7 @@ import {
   MCPOAuthClientProvider,
   type OAuthStorage,
 } from "@mastra/mcp";
-import { deleteAppConfig, getAppConfig, getResourceScope, setAppConfig } from "../storage";
+import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
 
 type McpTransport = "http" | "stdio";
 
@@ -65,8 +65,8 @@ interface McpRuntime {
 
 const runtimeByScope = new Map<string, McpRuntime>();
 
-function getRuntime(): McpRuntime {
-  const key = getResourceScope() ?? "__system__";
+function getRuntime(resourceId?: string): McpRuntime {
+  const key = resourceId?.trim() || "__system__";
   let runtime = runtimeByScope.get(key);
   if (!runtime) {
     runtime = { cachedHash: "", cachedClient: null, cachedTools: {} };
@@ -139,8 +139,8 @@ function normalizeServer(value: unknown): McpServerConfig | null {
   return server;
 }
 
-export async function getMcpConfig(): Promise<McpConfig> {
-  const raw = await getAppConfig(MCP_CONFIG_KEY);
+export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
+  const raw = await getAppConfig(MCP_CONFIG_KEY, resourceId);
   if (!raw) return EMPTY_CONFIG;
   try {
     const parsed = JSON.parse(raw) as { servers?: unknown };
@@ -156,15 +156,15 @@ export async function getMcpConfig(): Promise<McpConfig> {
   }
 }
 
-export async function saveMcpConfig(config: McpConfig): Promise<void> {
+export async function saveMcpConfig(config: McpConfig, resourceId?: string): Promise<void> {
   const servers = config.servers
     .map(normalizeServer)
     .filter((item): item is McpServerConfig => Boolean(item));
   if (servers.length !== config.servers.length) throw new Error("MCP 配置无效");
   if (new Set(servers.map((server) => server.id)).size !== servers.length)
     throw new Error("MCP ID 不能重复");
-  await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2));
-  const runtime = getRuntime();
+  await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2), resourceId);
+  const runtime = getRuntime(resourceId);
   await runtime.cachedClient?.disconnect().catch(() => undefined);
   runtime.cachedHash = "";
   runtime.cachedClient = null;
@@ -190,19 +190,25 @@ export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {
 }
 
 class AppOAuthStorage implements OAuthStorage {
-  constructor(private readonly prefix: string) {}
+  constructor(
+    private readonly prefix: string,
+    private readonly resourceId?: string,
+  ) {}
   set(key: string, value: string) {
-    return setAppConfig(`${this.prefix}:${key}`, value);
+    return setAppConfig(`${this.prefix}:${key}`, value, this.resourceId);
   }
   async get(key: string) {
-    return (await getAppConfig(`${this.prefix}:${key}`)) || undefined;
+    return (await getAppConfig(`${this.prefix}:${key}`, this.resourceId)) || undefined;
   }
   delete(key: string) {
-    return deleteAppConfig(`${this.prefix}:${key}`);
+    return deleteAppConfig(`${this.prefix}:${key}`, this.resourceId);
   }
 }
 
-function oauthProvider(server: McpServerConfig): MCPOAuthClientProvider | undefined {
+function oauthProvider(
+  server: McpServerConfig,
+  resourceId?: string,
+): MCPOAuthClientProvider | undefined {
   if (server.transport !== "http" || !server.oauth?.enabled) return undefined;
   const redirectUrl = server.oauth.redirectUrl ?? "http://127.0.0.1:4112/oauth/callback";
   const redirectUris = getCallbackUrlCandidates(redirectUrl).map((url) => url.toString());
@@ -223,18 +229,18 @@ function oauthProvider(server: McpServerConfig): MCPOAuthClientProvider | undefi
           },
         }
       : {}),
-    storage: new AppOAuthStorage(`mcp:oauth:${server.id}`),
+    storage: new AppOAuthStorage(`mcp:oauth:${server.id}`, resourceId),
     onRedirectToAuthorization: async (url) => {
-      getRuntime().resolveAuthorizationUrl?.(url.toString());
+      getRuntime(resourceId).resolveAuthorizationUrl?.(url.toString());
     },
   });
 }
 
-function toDefinition(server: McpServerConfig): MastraMCPServerDefinition {
+function toDefinition(server: McpServerConfig, resourceId?: string): MastraMCPServerDefinition {
   if (server.transport === "http") {
     const headers = server.headers ?? {};
     if (!server.url) throw new Error(`MCP 服务 ${server.id} 缺少 URL`);
-    const authProvider = oauthProvider(server);
+    const authProvider = oauthProvider(server, resourceId);
     return {
       url: new URL(server.url),
       allowedHosts: server.allowedHosts,
@@ -260,16 +266,18 @@ function toDefinition(server: McpServerConfig): MastraMCPServerDefinition {
   } as MastraMCPServerDefinition;
 }
 
-async function createClient(servers: McpServerConfig[]): Promise<MCPClient> {
+async function createClient(servers: McpServerConfig[], resourceId?: string): Promise<MCPClient> {
   return new MCPClient({
     id: "mastra-work-configured-mcp",
     timeout: 30_000,
-    servers: Object.fromEntries(servers.map((server) => [server.id, toDefinition(server)])),
+    servers: Object.fromEntries(
+      servers.map((server) => [server.id, toDefinition(server, resourceId)]),
+    ),
   });
 }
 
-export async function testMcpServer(server: McpServerConfig) {
-  const client = await createClient([server]);
+export async function testMcpServer(server: McpServerConfig, resourceId?: string) {
+  const client = await createClient([server], resourceId);
   try {
     const { toolsets, errors } = await client.listToolsetsWithErrors();
     const tools = Object.values(toolsets).flatMap((toolset) => Object.keys(toolset));
@@ -280,9 +288,9 @@ export async function testMcpServer(server: McpServerConfig) {
   }
 }
 
-export async function getConfiguredMcpTools(): Promise<ToolsInput> {
-  const config = await getMcpConfig();
-  const runtime = getRuntime();
+export async function getConfiguredMcpTools(resourceId?: string): Promise<ToolsInput> {
+  const config = await getMcpConfig(resourceId);
+  const runtime = getRuntime(resourceId);
   const enabled = config.servers.filter((server) => server.enabled);
   const hash = JSON.stringify(enabled);
   if (hash === runtime.cachedHash) return runtime.cachedTools;
@@ -292,7 +300,7 @@ export async function getConfiguredMcpTools(): Promise<ToolsInput> {
   runtime.cachedHash = hash;
   if (enabled.length === 0) return runtime.cachedTools;
   try {
-    runtime.cachedClient = await createClient(enabled);
+    runtime.cachedClient = await createClient(enabled, resourceId);
     const { toolsets } = await runtime.cachedClient.listToolsetsWithErrors();
     runtime.cachedTools = Object.assign({}, ...Object.values(toolsets));
   } catch {
@@ -306,17 +314,18 @@ export async function getConfiguredMcpTools(): Promise<ToolsInput> {
 /** Start the official MCPClient loopback OAuth flow and expose its redirect URL. */
 export async function authenticateMcpServer(
   serverId: string,
+  resourceId?: string,
 ): Promise<{ authorizationUrl?: string; authenticated: boolean }> {
-  const config = await getMcpConfig();
+  const config = await getMcpConfig(resourceId);
   const server = config.servers.find((item) => item.id === serverId);
   if (!server) throw new Error(`MCP 服务 ${serverId} 不存在`);
   if (!server.oauth?.enabled) throw new Error(`MCP 服务 ${serverId} 未启用 OAuth`);
-  const runtime = getRuntime();
+  const runtime = getRuntime(resourceId);
   const enabled = config.servers.filter((item) => item.enabled);
   const hash = JSON.stringify(enabled);
   if (!runtime.cachedClient || runtime.cachedHash !== hash) {
     await runtime.cachedClient?.disconnect().catch(() => undefined);
-    runtime.cachedClient = await createClient(enabled);
+    runtime.cachedClient = await createClient(enabled, resourceId);
     runtime.cachedHash = hash;
   }
   if (!runtime.authentication) {

@@ -12,7 +12,7 @@ import {
 } from "@mastra/core/signals";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { appStorage, getAppConfig, runWithResourceScope, setAppConfig } from "../storage";
+import { appStorage, getAppConfig, setAppConfig } from "../storage";
 import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
 const SIGNAL_REGISTRY_SCOPE = "__mastra_signal_registry__";
@@ -32,31 +32,29 @@ type PersistedSubscription = {
 const subscriptionWrites = new Map<string, Promise<unknown>>();
 
 async function readSubscriptions(key: string): Promise<PersistedSubscription[]> {
-  return runWithResourceScope(SIGNAL_REGISTRY_SCOPE, async () => {
-    const raw = await getAppConfig(key);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((item): item is PersistedSubscription => {
-        if (!item || typeof item !== "object") return false;
-        const value = item as Record<string, unknown>;
-        return (
-          typeof value.id === "string" &&
-          typeof value.providerId === "string" &&
-          typeof value.threadId === "string" &&
-          typeof value.resourceId === "string" &&
-          typeof value.externalResourceId === "string" &&
-          typeof value.subscribedAt === "string" &&
-          typeof value.metadata === "object" &&
-          value.metadata !== null &&
-          !Array.isArray(value.metadata)
-        );
-      });
-    } catch {
-      return [];
-    }
-  });
+  const raw = await getAppConfig(key, SIGNAL_REGISTRY_SCOPE);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is PersistedSubscription => {
+      if (!item || typeof item !== "object") return false;
+      const value = item as Record<string, unknown>;
+      return (
+        typeof value.id === "string" &&
+        typeof value.providerId === "string" &&
+        typeof value.threadId === "string" &&
+        typeof value.resourceId === "string" &&
+        typeof value.externalResourceId === "string" &&
+        typeof value.subscribedAt === "string" &&
+        typeof value.metadata === "object" &&
+        value.metadata !== null &&
+        !Array.isArray(value.metadata)
+      );
+    });
+  } catch {
+    return [];
+  }
 }
 
 async function mutateSubscriptions(
@@ -67,9 +65,7 @@ async function mutateSubscriptions(
   const next = previous.then(async () => {
     const subscriptions = await readSubscriptions(key);
     const updated = update(subscriptions);
-    await runWithResourceScope(SIGNAL_REGISTRY_SCOPE, () =>
-      setAppConfig(key, JSON.stringify(updated)),
-    );
+    await setAppConfig(key, JSON.stringify(updated), SIGNAL_REGISTRY_SCOPE);
     return updated;
   });
   subscriptionWrites.set(key, next);

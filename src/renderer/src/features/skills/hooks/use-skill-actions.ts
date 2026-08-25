@@ -1,6 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
-import type { SkillDetail, SkillMetadata } from "@/features/workbench";
+import type { SkillMetadata } from "@/features/workbench";
 import { toastError } from "@/lib/errors";
 import {
   authenticateMcpServer,
@@ -10,7 +10,7 @@ import {
   installSkill as installSkillRequest,
   uploadSkillArchive,
 } from "../api";
-import type { McpSummary, SkillSection } from "../types";
+import type { McpSummary, SkillDetail, SkillSection } from "../types";
 
 interface UseSkillActionsOptions {
   activeSkill: SkillMetadata | null;

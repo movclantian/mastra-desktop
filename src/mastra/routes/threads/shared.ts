@@ -45,7 +45,7 @@ export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): Mastr
  * 因此在此处一次性收窄,调用方不必各自断言。
  */
 export async function getWorkMemory(requestContext: RequestContext): Promise<Memory> {
-  const { mastra } = await import("../../../index");
+  const { mastra } = await import("../../index");
   const agent = mastra.getAgentById("mastra-work-agent");
   const memory = await agent.getMemory({ requestContext });
   if (!memory) {

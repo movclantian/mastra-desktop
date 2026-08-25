@@ -54,7 +54,7 @@ export async function saveLibrarySettings(settings: LibrarySettings): Promise<Li
   const payload = await readJson<{ settings: LibrarySettings }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/library/settings`, {
       method: "PUT",
-      body: settings,
+      body: { ...settings },
     }),
     "保存资料库设置失败",
   );

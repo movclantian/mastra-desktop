@@ -42,7 +42,7 @@ import {
 } from "./rag";
 import { workChatRoute, workRoutes } from "./routes";
 import { requestShutdown } from "./routes/shutdown";
-import { appStorage, runWithResourceScope } from "./storage";
+import { appStorage } from "./storage";
 import { getThreadsRoot, getThreadWorkspace, getWorkspaceConfig } from "./workspace";
 
 // ---------------------------------------------------------------------------
@@ -89,6 +89,70 @@ const logger = new PinoLogger({
   name: "Mastra",
   level: "info",
 });
+
+const RESOURCE_OWNERSHIP_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+type ResourceOwnershipContext = {
+  req: {
+    method: string;
+    query: (name: string) => string | undefined;
+    header: (name: string) => string | undefined;
+    raw: Request;
+  };
+};
+
+function jsonResourceIds(body: unknown): unknown[] {
+  if (!body || typeof body !== "object") return [];
+
+  const record = body as Record<string, unknown>;
+  const resourceIds: unknown[] = [];
+  if ("resourceId" in record) resourceIds.push(record.resourceId);
+
+  const memory = record.memory;
+  if (memory && typeof memory === "object" && "resource" in memory) {
+    resourceIds.push((memory as Record<string, unknown>).resource);
+  }
+  return resourceIds.filter((value) => value !== undefined);
+}
+
+async function readJsonResourceIds(request: Request): Promise<unknown[] | undefined> {
+  try {
+    return jsonResourceIds(await request.clone().json());
+  } catch {
+    // Let the route perform its canonical JSON validation.
+    return undefined;
+  }
+}
+
+async function readFormResourceIds(request: Request): Promise<string[] | undefined> {
+  try {
+    const resource = (await request.clone().formData()).get("resourceId");
+    return typeof resource === "string" ? [resource] : [];
+  } catch {
+    // Let the route perform its canonical multipart validation.
+    return undefined;
+  }
+}
+
+async function assertResourceIdOwnership(
+  c: ResourceOwnershipContext,
+  user: AuthUser,
+): Promise<boolean> {
+  const queryResource = c.req.query("resourceId");
+  if (queryResource && queryResource !== user.id) return false;
+  if (!RESOURCE_OWNERSHIP_METHODS.has(c.req.method)) return true;
+
+  const contentType = c.req.header("content-type") ?? "";
+  let resourceIds: unknown[] | undefined;
+  if (contentType.includes("multipart/form-data")) {
+    resourceIds = await readFormResourceIds(c.req.raw);
+  } else {
+    resourceIds = await readJsonResourceIds(c.req.raw);
+  }
+
+  if (!resourceIds) return true;
+  return resourceIds.every((resourceId) => resourceId === user.id);
+}
 
 export const mastra = new Mastra({
   // Keep the built-in delegation targets in the same Mastra registry as
@@ -161,53 +225,21 @@ export const mastra = new Mastra({
 
       // The authenticated principal is the only tenant authority. Reject
       // client-supplied ids before any route can query storage with them.
-      const queryResource = c.req.query("resourceId");
-      if (queryResource && queryResource !== user.id) {
+      if (!(await assertResourceIdOwnership(c, user))) {
         return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
-      }
-      if (["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method)) {
-        const contentType = c.req.header("content-type") ?? "";
-        if (!contentType.includes("multipart/form-data")) {
-          try {
-            const body = (await c.req.raw.clone().json()) as Record<string, unknown>;
-            const bodyResources = [
-              body.resourceId,
-              body.memory && typeof body.memory === "object"
-                ? (body.memory as Record<string, unknown>).resource
-                : undefined,
-            ].filter((value) => value !== undefined);
-            if (bodyResources.some((value) => typeof value !== "string" || value !== user.id)) {
-              return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
-            }
-          } catch {
-            // Route-level JSON validation returns the canonical error response.
-          }
-        } else {
-          try {
-            const form = await c.req.raw.clone().formData();
-            const formResource = form.get("resourceId");
-            if (typeof formResource === "string" && formResource !== user.id) {
-              return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
-            }
-          } catch {
-            // Route-level multipart validation returns the canonical error response.
-          }
-        }
       }
 
       requestContext.set("user", user);
       requestContext.set("userId", user.id);
       requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
-      await runWithResourceScope(user.id, async () => {
-        await Promise.all([
-          getWorkspaceConfig(),
-          getMemoryConfig(),
-          getGuardrailsConfig(),
-          getMcpConfig(),
-          getLibrarySettings(),
-        ]);
-        await next();
-      });
+      await Promise.all([
+        getWorkspaceConfig(user.id),
+        getMemoryConfig(user.id),
+        getGuardrailsConfig(user.id),
+        getMcpConfig(user.id),
+        getLibrarySettings(user.id),
+      ]);
+      await next();
     },
     // 全局错误出站(docs/en/reference/configuration.mdx「server.onError」):
     // 路由只 throw workError(...),状态码与响应形状在这里统一决定。
