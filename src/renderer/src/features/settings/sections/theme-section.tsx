@@ -81,6 +81,21 @@ interface ColorFieldProps {
   recommendedSwatches?: string[];
 }
 
+/**
+ * 落点标注:这个区块不是"效果演示",而是动效在产品里的实际落位索引 ——
+ * 每个组件下面写清它现在在哪里被真正使用,调主题时可以照着去对应场景验证。
+ */
+function LandedAt({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="whitespace-normal break-words text-[10px] leading-snug text-primary/80"
+      title="该动效在产品中的实际落点"
+    >
+      → {children}
+    </span>
+  );
+}
+
 function ColorField({ label, description, value, onChange, recommendedSwatches }: ColorFieldProps) {
   return (
     <div className="flex flex-col gap-2 rounded-lg border bg-card/60 p-3 shadow-xs transition-colors hover:bg-card">
@@ -991,14 +1006,15 @@ export function ThemeSection() {
                 <CardTitle className="text-sm font-semibold flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <SparklesIcon className="size-4 text-primary" />
-                    <span>Magic UI 动效与特效交互展台</span>
+                    <span>动效落地索引</span>
                   </div>
                   <Badge variant="secondary" className="text-xs font-mono">
-                    16 官方动效组件实时联动
+                    实时跟随主题 Tokens
                   </Badge>
                 </CardTitle>
                 <CardDescription className="text-xs">
-                  所有按钮、光效、粒子与流体卡片实时响应当前激活的主题风格与调色板 Tokens。
+                  每个动效下方标注它在产品里的实际落点(<span className="text-primary/80">→</span>
+                  )。改主题色后可以照着索引去对应场景核对效果,这里不是单纯的效果陈列。
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-col gap-4 px-4 pb-4 relative z-10">
@@ -1007,20 +1023,23 @@ export function ThemeSection() {
                   <span className="text-xs font-medium text-foreground">
                     文字特效 (Text Motion & Reveal)
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
-                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                    <div className="flex flex-col items-center gap-1.5 p-2 rounded-md border bg-muted/20 text-center">
                       <AnimatedShinyText shimmerWidth={120} className="text-xs font-semibold">
                         ✨ 实时文字扫光高亮
                       </AnimatedShinyText>
+                      <LandedAt>聊天空态副标题(已有会话时)、压缩结果对比条</LandedAt>
                     </div>
-                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                    <div className="flex flex-col items-center gap-1.5 p-2 rounded-md border bg-muted/20 text-center">
                       <SparklesText text="星芒闪烁文字" className="text-xs font-bold" />
+                      <LandedAt>聊天空态主标题</LandedAt>
                     </div>
-                    <div className="flex items-center justify-center p-2 rounded-md border bg-muted/20">
+                    <div className="flex flex-col items-center gap-1.5 p-2 rounded-md border bg-muted/20 text-center">
                       <HyperText
                         text="CYBER_DECRYPT_01"
                         className="text-xs text-primary font-mono"
                       />
+                      <LandedAt>切换模型时的模型名解码、登录页品牌字</LandedAt>
                     </div>
                   </div>
                 </div>
@@ -1030,28 +1049,40 @@ export function ThemeSection() {
                   <span className="text-xs font-medium text-foreground">
                     高光按钮与微交互 (Action Buttons)
                   </span>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <ShimmerButton
-                      shimmerColor="rgba(255, 255, 255, 0.8)"
-                      className="text-xs py-2 px-4 shadow-md"
-                    >
-                      <SparklesIcon className="size-3.5 mr-1.5" />
-                      Shimmer 金属扫光
-                    </ShimmerButton>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col items-start gap-1.5">
+                      <ShimmerButton
+                        shimmerColor="rgba(255, 255, 255, 0.8)"
+                        className="text-xs py-2 px-4 shadow-md"
+                      >
+                        <SparklesIcon className="size-3.5 mr-1.5" />
+                        Shimmer 金属扫光
+                      </ShimmerButton>
+                      <LandedAt>登录 / 注册页的提交按钮</LandedAt>
+                    </div>
 
-                    <RainbowButton className="text-xs h-8 px-4">
-                      <ZapIcon className="size-3.5 mr-1.5" />
-                      Rainbow 彩虹流光
-                    </RainbowButton>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <RainbowButton className="text-xs h-8 px-4">
+                        <ZapIcon className="size-3.5 mr-1.5" />
+                        Rainbow 彩虹流光
+                      </RainbowButton>
+                      <LandedAt>Agent Hub 的「AI 创建 Agent / 团队」</LandedAt>
+                    </div>
 
-                    <InteractiveHoverButton className="text-xs py-1.5 px-4 h-8">
-                      探索工作流
-                    </InteractiveHoverButton>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <InteractiveHoverButton className="text-xs py-1.5 px-4 h-8">
+                        探索工作流
+                      </InteractiveHoverButton>
+                      <LandedAt>Agent 卡片的「使用」、技能卡片的「安装」</LandedAt>
+                    </div>
 
-                    <PulsatingButton duration="2s" className="text-xs py-1.5 px-3.5 h-8">
-                      <FlameIcon className="size-3.5 mr-1" />
-                      呼吸脉冲
-                    </PulsatingButton>
+                    <div className="flex flex-col items-start gap-1.5">
+                      <PulsatingButton duration="2s" className="text-xs py-1.5 px-3.5 h-8">
+                        <FlameIcon className="size-3.5 mr-1" />
+                        呼吸脉冲
+                      </PulsatingButton>
+                      <LandedAt>工具审批的「批准执行」、挂起 Workflow 的「恢复」</LandedAt>
+                    </div>
                   </div>
 
                   {/* Animated Theme Toggler 视口转场形态选择 */}
@@ -1093,26 +1124,33 @@ export function ThemeSection() {
                       ))}
                     </div>
                   </div>
+                  <LandedAt>
+                    ThemeToggler → 登录页右上角的深浅色切换;AnimatedChevron → 执行轨迹与工具步骤的
+                    折叠箭头
+                  </LandedAt>
                 </div>
 
                 {/* 3. 探照灯光晕卡片与霓虹流光 */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <MagicCard
-                    gradientSize={180}
-                    gradientFrom="var(--primary)"
-                    gradientTo="var(--accent)"
-                    className="p-4 flex flex-col justify-between min-h-[110px]"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold">MagicCard 鼠标探照灯</span>
-                      <Wand2Icon className="size-4 text-primary" />
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      移动鼠标即可看到随光标动态游走的主题色彩放射光斑。
-                    </p>
-                  </MagicCard>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                  <div className="flex flex-col gap-1.5">
+                    <MagicCard
+                      gradientSize={180}
+                      gradientFrom="var(--primary)"
+                      gradientTo="var(--accent)"
+                      className="p-4 flex flex-col justify-between min-h-[110px]"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold">MagicCard 鼠标探照灯</span>
+                        <Wand2Icon className="size-4 text-primary" />
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        移动鼠标即可看到随光标动态游走的主题色彩放射光斑。
+                      </p>
+                    </MagicCard>
+                    <LandedAt>Agent Hub 全部 Agent 卡片、技能市场全部技能卡片</LandedAt>
+                  </div>
 
-                  <div className="relative min-h-[110px]">
+                  <div className="flex flex-col gap-1.5">
                     <NeonGradientCard borderRadius={8} borderSize={1.5} className="min-h-[110px]">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs font-semibold">NeonGradient 霓虹发光</span>
@@ -1124,6 +1162,9 @@ export function ThemeSection() {
                         绚丽的双色霓虹流体外边框与环境弥散柔光。
                       </p>
                     </NeonGradientCard>
+                    <LandedAt>
+                      当前正在使用的那张 Agent 卡片(常驻动画,只给激活项以保留强调)
+                    </LandedAt>
                   </div>
                 </div>
 
@@ -1132,30 +1173,40 @@ export function ThemeSection() {
                   <span className="text-xs font-medium text-foreground">
                     环境粒子与轨道 (Ambient Particles & Orbit)
                   </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px]">
-                      <Meteors number={10} />
-                      <OrbitingCircles radius={26} duration={16} delay={2}>
-                        <SparklesIcon className="size-3 text-primary" />
-                      </OrbitingCircles>
-                      <OrbitingCircles radius={44} duration={22} delay={8} reverse>
-                        <ZapIcon className="size-3.5 text-primary" />
-                      </OrbitingCircles>
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                        <span className="text-[10px] font-mono text-muted-foreground">
-                          METEOR FIELD
-                        </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                    <div className="flex flex-col gap-1.5">
+                      <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px]">
+                        <Meteors number={10} />
+                        <OrbitingCircles radius={26} duration={16} delay={2}>
+                          <SparklesIcon className="size-3 text-primary" />
+                        </OrbitingCircles>
+                        <OrbitingCircles radius={44} duration={22} delay={8} reverse>
+                          <ZapIcon className="size-3.5 text-primary" />
+                        </OrbitingCircles>
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <span className="text-[10px] font-mono text-muted-foreground">
+                            METEOR FIELD
+                          </span>
+                        </div>
                       </div>
+                      <LandedAt>
+                        Meteors → 聊天空态、登录页品牌区;OrbitingCircles → Agent 团队卡片的成员轨道
+                      </LandedAt>
                     </div>
 
-                    <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px] flex items-center justify-center">
-                      <Ripple mainCircleSize={48} numCircles={4} mainCircleOpacity={0.32} />
-                      <AnimatedGradientText
-                        speed={2}
-                        className="relative z-10 text-[11px] font-medium"
-                      >
-                        ✨ Gradient 流光描边
-                      </AnimatedGradientText>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="relative overflow-hidden rounded-md border bg-muted/20 min-h-[110px] flex items-center justify-center">
+                        <Ripple mainCircleSize={48} numCircles={4} mainCircleOpacity={0.32} />
+                        <AnimatedGradientText
+                          speed={2}
+                          className="relative z-10 text-[11px] font-medium"
+                        >
+                          ✨ Gradient 流光描边
+                        </AnimatedGradientText>
+                      </div>
+                      <LandedAt>
+                        Ripple → 工作区未绑定空态;GradientText → 团队卡片定位、官方精选标题
+                      </LandedAt>
                     </div>
                   </div>
                 </div>
@@ -1233,6 +1284,10 @@ export function ThemeSection() {
                       </div>
                     </div>
                   </div>
+                  <LandedAt>
+                    SlidingNumber → 聊天页上下文用量条、设置·用量的「累计 Token 数」;NumberTicker →
+                    用量统计的请求数 / 活跃天数 / 响应时长
+                  </LandedAt>
                 </div>
 
                 {/* 2. AnimatedTabs 胶囊惯性吸附滑块 */}
@@ -1245,6 +1300,7 @@ export function ThemeSection() {
                       variant="segmented"
                       activeTab={activeAnimateTab}
                       onChange={setActiveAnimateTab}
+                      layoutId="theme-demo-tabs"
                       tabs={[
                         {
                           id: "tab-1",
@@ -1267,6 +1323,10 @@ export function ThemeSection() {
                       Active: {activeAnimateTab}
                     </Badge>
                   </div>
+                  <LandedAt>
+                    已替换项目内全部页签:Agent Hub 分类、技能中心分区、设置·用量明细;沙箱的 代码 /
+                    输出页签走 Base UI 官方 Tabs.Indicator 滑块
+                  </LandedAt>
                 </div>
 
                 {/* 3. AnimatedCollapsible 物理弹簧高度展开 */}
@@ -1293,6 +1353,7 @@ export function ThemeSection() {
                       <p>• [Agent-03] 物理弹簧阻尼高度动态自适应展开无闪烁。</p>
                     </div>
                   </AnimatedCollapsible>
+                  <LandedAt>执行轨迹里每个工具步骤的参数 / 输出展开</LandedAt>
                 </div>
               </CardContent>
             </Card>
@@ -1329,6 +1390,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">Square Spiral</span>
                         <span className="text-[10px] text-muted-foreground">3×3 螺旋流转</span>
+                        <LandedAt>加载 / 保存 / 提交:面板懒加载、保存文件、添加供应商</LandedAt>
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5 p-2 rounded-md border bg-background/80">
@@ -1336,6 +1398,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">Core Echo</span>
                         <span className="text-[10px] text-muted-foreground">3×3 核心涟漪</span>
+                        <LandedAt>通用工具执行中:侧栏会话忙碌、顶栏状态、轨迹步骤</LandedAt>
                       </div>
                     </div>
                     <div className="flex items-center gap-2.5 p-2 rounded-md border bg-background/80">
@@ -1343,6 +1406,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">Glyph Pulse</span>
                         <span className="text-[10px] text-muted-foreground">3×3 符文脉冲</span>
+                        <LandedAt>上传 / AI 生成:技能安装与导入、压缩上下文、AI 改写</LandedAt>
                       </div>
                     </div>
                   </div>
@@ -1359,6 +1423,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">Core Spiral</span>
                         <span className="text-[10px] text-muted-foreground">5×5 核心旋涡</span>
+                        <LandedAt>模型流式生成中:聊天空态提示、消息列表生成态</LandedAt>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 p-2.5 rounded-md border bg-background/80">
@@ -1366,6 +1431,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">CRT Glide</span>
                         <span className="text-[10px] text-muted-foreground">CRT 电子束扫描</span>
+                        <LandedAt>沙箱执行中:execute_typescript / 工作区命令、终端连接</LandedAt>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 p-2.5 rounded-md border bg-background/80">
@@ -1373,6 +1439,7 @@ export function ThemeSection() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs font-medium">Sound Bars</span>
                         <span className="text-[10px] text-muted-foreground">音频等化均衡器</span>
+                        <LandedAt>语音转写中:麦克风输入处理、音色试听</LandedAt>
                       </div>
                     </div>
                   </div>
@@ -1387,18 +1454,22 @@ export function ThemeSection() {
                     <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
                       <DotmCircular4 size={28} dotSize={2.5} colorPreset="solid-theme" />
                       <span className="text-[11px] font-medium text-center">Radar Arc 雷达</span>
+                      <LandedAt>联网检索、拉取模型列表、连通性测试、会话搜索</LandedAt>
                     </div>
                     <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
                       <DotmCircular5 size={28} dotSize={2.5} colorPreset="solid-theme" />
                       <span className="text-[11px] font-medium text-center">Nova Wheel 新星</span>
+                      <LandedAt>Agent 团队成员流式输出中</LandedAt>
                     </div>
                     <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
                       <DotmHex1 size={28} dotSize={2.5} colorPreset="solid-theme" />
                       <span className="text-[11px] font-medium text-center">Hex Orbit 蜂巢</span>
+                      <LandedAt>知识库切块入库中、RAG 检索工具</LandedAt>
                     </div>
                     <div className="flex flex-col items-center justify-center p-3 rounded-md border bg-background/80 gap-2">
                       <DotmTriangle2 size={28} dotSize={2.5} colorPreset="solid-theme" />
                       <span className="text-[11px] font-medium text-center">Altitude 三角波</span>
+                      <LandedAt>模型推理思考中(执行轨迹的 Reasoning 步骤)</LandedAt>
                     </div>
                   </div>
                 </div>

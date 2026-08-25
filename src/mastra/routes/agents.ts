@@ -1,7 +1,7 @@
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
+import { generateText, Output } from "ai";
 import { z } from "zod";
-import { mastraWorkAgent } from "../agents";
 import {
   type AgentProfile,
   deleteAgentProfile,
@@ -10,10 +10,8 @@ import {
   unregisterProfileAgents,
   upsertAgentProfile,
 } from "../agents/custom";
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "Agent 配置无效";
-}
+import { errorText } from "../errors";
+import { resolveDefaultLanguageModel } from "../models";
 
 const agentProfileInputSchema = z.object({
   id: z.string().optional(),
@@ -23,7 +21,6 @@ const agentProfileInputSchema = z.object({
   profession: z.string().optional(),
   description: z.string().optional(),
   instructions: z.string().min(1),
-  model: z.object({ providerId: z.string(), modelId: z.string() }).optional(),
   skills: z.array(z.string()).optional(),
   workflow: z
     .object({
@@ -63,7 +60,6 @@ const agentProfileInputSchema = z.object({
         profession: z.string().optional(),
         description: z.string().optional(),
         instructions: z.string().min(1),
-        model: z.object({ providerId: z.string(), modelId: z.string() }).optional(),
         skills: z.array(z.string()).optional(),
         memoryScope: z.enum(["thread", "resource"]).optional(),
       }),
@@ -200,23 +196,36 @@ const agentDraftSchema = z.object({
 export const assistAgentProfileRoute = registerApiRoute("/work/agents/assist", {
   method: "POST",
   handler: async (c) => {
-    const body = (await c.req.json()) as { description?: unknown; type?: unknown };
+    const body = (await c.req.json()) as {
+      description?: unknown;
+      type?: unknown;
+    };
     if (typeof body.description !== "string" || !body.description.trim()) {
       return c.json({ error: "请描述想创建的 Agent 或 Agent 团队" }, 400);
     }
     try {
-      const result = await mastraWorkAgent.generate(
-        `根据用户描述生成一个可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
-        {
-          structuredOutput: {
-            schema: agentDraftSchema,
+      const requestContext = c.get("requestContext");
+      const resourceIdValue = requestContext.get(MASTRA_RESOURCE_ID_KEY);
+      const resourceId = typeof resourceIdValue === "string" ? resourceIdValue : undefined;
+      const selectedModel = await resolveDefaultLanguageModel(resourceId);
+      if (!selectedModel) {
+        return c.json(
+          {
+            error: "当前用户尚未配置可用模型,请先在设置中启用供应商并选定模型",
           },
-          maxSteps: 2,
-        },
-      );
-      return c.json({ draft: result.object });
+          400,
+        );
+      }
+
+      const result = await generateText({
+        model: selectedModel,
+        output: Output.object({ schema: agentDraftSchema }),
+        prompt: `根据用户描述生成一个可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
+        abortSignal: c.req.raw.signal,
+      });
+      return c.json({ draft: result.output });
     } catch (error) {
-      return c.json({ error: `AI 创建失败: ${errorText(error)}。请先在设置中配置可用模型。` }, 503);
+      return c.json({ error: `AI 创建失败: ${errorText(error)}` }, 503);
     }
   },
 });

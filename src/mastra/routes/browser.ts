@@ -6,7 +6,7 @@
 import type { KeyboardEventParams, MouseEventParams } from "@mastra/core/browser";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../agents";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import { getOwnedThread, getWorkMemoryForThread, isTrustedLocalRequest } from "./threads/shared";
 
 async function ownedBrowserThread(c: ContextWithMastra) {
@@ -124,7 +124,7 @@ export const browserScreencastRoute = registerApiRoute(
         return c.json(
           {
             error: "browser_unavailable",
-            message: error instanceof Error ? error.message : String(error),
+            message: errorText(error, "浏览器不可用"),
           },
           503,
         );
@@ -188,7 +188,7 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
       return c.json(
         {
           error: "browser_unavailable",
-          message: error instanceof Error ? error.message : String(error),
+          message: errorText(error, "浏览器不可用"),
         },
         503,
       );
@@ -251,7 +251,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
       return c.json(
         {
           error: "browser_unavailable",
-          message: error instanceof Error ? error.message : String(error),
+          message: errorText(error, "浏览器不可用"),
         },
         503,
       );

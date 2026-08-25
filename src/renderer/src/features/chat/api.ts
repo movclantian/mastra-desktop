@@ -4,7 +4,6 @@ import type {
   BackgroundTaskState,
   CompressResult,
   LibraryFilePart,
-  MessageBranchRecord,
   MessageFileReference,
   WorkDisplayState,
   WorkUIMessage,
@@ -85,7 +84,7 @@ export async function uploadChatAttachments(
 export async function fetchThreadMessages(
   threadId: string,
   resourceId: string,
-): Promise<{ messages: WorkUIMessage[]; branches?: Record<string, MessageBranchRecord> }> {
+): Promise<{ messages: WorkUIMessage[] }> {
   return requestJson(
     `/work/threads/${encodeURIComponent(threadId)}/messages?${resourceQuery(resourceId)}`,
     {},
@@ -107,34 +106,6 @@ export async function fetchDisplayState(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?${resourceQuery(resourceId)}`,
     {},
     "加载会话状态失败",
-  );
-}
-
-export async function createCompactedEdit(
-  threadId: string,
-  resourceId: string,
-  messageId: string,
-  text: string,
-): Promise<{ threadId: string }> {
-  const payload = await requestJson<{ thread?: { id?: string } }>(
-    `/work/threads/${encodeURIComponent(threadId)}/compacted-edit`,
-    { method: "POST", body: { resourceId, messageId, text } },
-    "无法创建压缩记忆修正分支",
-  );
-  if (!payload.thread?.id) throw new Error("无法创建压缩记忆修正分支");
-  return { threadId: payload.thread.id };
-}
-
-export async function updateMessageBranch(
-  threadId: string,
-  resourceId: string,
-  rootId: string,
-  currentVersionId: string,
-): Promise<void> {
-  await requestJson(
-    `/work/threads/${encodeURIComponent(threadId)}/branches/${encodeURIComponent(rootId)}`,
-    { method: "PATCH", body: { resourceId, currentVersionId } },
-    "保存消息分支失败",
   );
 }
 

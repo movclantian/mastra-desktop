@@ -188,7 +188,6 @@ export const WORK_ERRORS = {
     status: 502,
     text: "模型能力目录不可用",
   },
-
   // ---- 资料库(routes/library + rag/)-----------------------------------
   LIBRARY_ASSET_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,
@@ -393,6 +392,13 @@ export class WorkApiError extends MastraError {
     );
     this.status = definition.status;
   }
+}
+
+/** Convert an unknown thrown value into a useful, non-empty message. */
+export function errorText(error: unknown, fallback = "未知错误"): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
 }
 
 /** 路由与业务层的统一抛错入口:throw workError("THREAD_NOT_FOUND") */

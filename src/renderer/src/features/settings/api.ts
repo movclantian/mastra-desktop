@@ -68,6 +68,10 @@ export function saveMemoryConfig<T extends Record<string, unknown>>(config: T): 
   return requestJson<void>("/work/memory", { method: "POST", body: config }, "保存记忆配置失败");
 }
 
+export function fetchMemoryProfile<T>(): Promise<T> {
+  return requestJson<T>("/work/memory/profile", {}, "加载个人记忆失败");
+}
+
 export function fetchThreadObservationalMemory<T>(
   threadId: string,
   resourceId: string,
@@ -89,33 +93,6 @@ export function saveThreadObservationalMemory(
     `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config`,
     { method: "PUT", body: { resourceId, config } },
     "保存线程观察记忆配置失败",
-  );
-}
-
-export function fetchThreadSubagentModels<T>(
-  threadId: string,
-  resourceId: string,
-  signal?: AbortSignal,
-): Promise<T> {
-  const query = new URLSearchParams({ resourceId });
-  return requestJson<T>(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/subagent-models?${query}`,
-    signal ? { signal } : {},
-    "加载线程子 Agent 模型失败",
-  );
-}
-
-export function saveThreadSubagentModel(
-  threadId: string,
-  resourceId: string,
-  agentType: string,
-  modelId: string | null,
-): Promise<void> {
-  const query = new URLSearchParams({ resourceId });
-  return requestJson<void>(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/subagent-models?${query}`,
-    { method: "PATCH", body: { agentType, modelId } },
-    "保存线程子 Agent 模型失败",
   );
 }
 

@@ -4,7 +4,6 @@ import "@xterm/xterm/css/xterm.css";
 import {
   ClipboardPasteIcon,
   EraserIcon,
-  LoaderCircleIcon,
   PlusIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -25,6 +24,7 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { DotmSquare10 } from "@/components/ui/dotm-square-10";
 import { PanelHeader, PanelSurface } from "@/features/app-shell/primitives";
 import {
   reportWorkbenchNotification,
@@ -516,7 +516,7 @@ export default function TerminalPanel() {
             {workspacePath ?? "系统终端"}
           </span>
           {activeTab?.status === "connecting" ? (
-            <LoaderCircleIcon className="size-3 animate-spin" />
+            <DotmSquare10 size={14} dotSize={1.6} colorPreset="solid-theme" />
           ) : null}
           {activeTab?.status === "ready" ? <span className="text-xs">已连接</span> : null}
           {activeTab?.sessionId ? (

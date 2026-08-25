@@ -1,6 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
-import { getAuthToken } from "@/features/auth/auth-provider";
+import { getAuthToken } from "@/features/auth";
 import {
   cancelLibraryUpload,
   completeLibraryUpload,

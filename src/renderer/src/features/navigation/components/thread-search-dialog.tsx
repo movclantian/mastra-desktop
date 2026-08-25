@@ -10,7 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Spinner } from "@/components/ui/spinner";
+import { DotmCircular4 } from "@/components/ui/dotm-circular-4";
 import { type MessageSearchHit, useWorkbench } from "@/features/workbench";
 
 /**
@@ -94,7 +94,7 @@ export function ThreadSearchDialog({
         <CommandList className="max-h-[min(60vh,32rem)]">
           {searching ? (
             <CommandEmpty className="flex items-center justify-center gap-2">
-              <Spinner className="size-4" />
+              <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
               正在搜索…
             </CommandEmpty>
           ) : hits === null ? (

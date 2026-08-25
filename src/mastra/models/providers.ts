@@ -141,6 +141,20 @@ function isRequestModel(value: unknown): value is RequestModel {
   return typeof model.id === "string" && typeof model.apiKey === "string";
 }
 
+export interface ModelSelectionInput {
+  providerId: string;
+  modelId: string;
+}
+
+/** Parse an untrusted route payload into the provider/model pair used by the resolver. */
+export function parseModelSelection(value: unknown): ModelSelectionInput | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const selection = value as Record<string, unknown>;
+  const providerId = typeof selection.providerId === "string" ? selection.providerId.trim() : "";
+  const modelId = typeof selection.modelId === "string" ? selection.modelId.trim() : "";
+  return providerId && modelId ? { providerId, modelId } : undefined;
+}
+
 /** 前端 body.model 携带模型路由 id; 真正的 URL、协议和 Key 始终从服务端读取 */
 export async function resolveRequestModel(
   value: unknown,
@@ -170,6 +184,10 @@ export async function resolveConfiguredModel(
   if (!provider.enabledModels.some((model) => model.id === modelId)) return undefined;
   if (!provider.registryId && !provider.baseUrl) return undefined;
 
+  // The registered Mastra gateway is also used by Studio's global model router,
+  // but that router has no resourceId argument. BYOK settings are tenant-scoped,
+  // so request-context routes must resolve the provider here before constructing
+  // the SDK model. The construction itself stays in the shared factory below.
   if (provider.baseUrl) {
     return createGatewayModel({
       modelId,
@@ -177,6 +195,7 @@ export async function resolveConfiguredModel(
       baseUrl: provider.baseUrl,
       protocol: provider.protocol,
       useResponses: provider.useResponses,
+      providerName: provider.name,
     });
   }
 
@@ -187,6 +206,7 @@ export async function resolveConfiguredModel(
     apiKey: provider.apiKey,
     protocol,
     useResponses: provider.useResponses,
+    providerName: provider.name,
   });
 }
 
@@ -280,15 +300,5 @@ export async function resolveDefaultLanguageModel(
     return undefined;
   const modelId = selection ? selection.modelId : provider.enabledModels[0]?.id;
   if (!modelId) return undefined;
-  const protocol =
-    provider.protocol ??
-    (provider.registryId ? inferGatewayProtocol(provider.registryId) : undefined);
-  if (!protocol) return undefined;
-  return createGatewayModel({
-    modelId,
-    apiKey: provider.apiKey,
-    baseUrl: provider.baseUrl,
-    protocol,
-    useResponses: provider.useResponses,
-  });
+  return resolveConfiguredModel(routerPrefix(provider), modelId, resourceId);
 }

@@ -11,4 +11,5 @@ export interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
   signOut: () => void;
+  setSession: (session: AuthSession, remember: boolean, autoLogin: boolean) => void;
 }

@@ -1,12 +1,8 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { useWorkbench } from "@/features/workbench";
 import { fetchGuardrailsConfig, fetchGuardrailsStatus, saveGuardrailsConfig } from "../api";
 import {
-  FOLLOW_CURRENT_MODEL,
-  ModelSelectDropdown,
   NumberRow,
   SelectRow,
   SettingCard,
@@ -44,7 +40,6 @@ const GUARDRAILS_TEXT_KEYS = new Set<string>([
 ]);
 
 export interface GuardrailsDraft {
-  model: string;
   jsonPromptInjection: boolean;
   maxProcessorRetries: number;
 
@@ -143,13 +138,6 @@ export interface GuardrailsDraft {
 
   providerCompat: boolean;
 
-  toolSearch: boolean;
-  toolSearchTopK: number;
-  toolSearchMinScore: number;
-  toolSearchAutoLoad: boolean;
-  toolSearchStorage: "in-memory" | "context";
-  toolSearchTtl: number;
-
   skillSearch: boolean;
   skillSearchTopK: number;
   skillSearchMinScore: number;
@@ -163,9 +151,8 @@ export interface GuardrailsDraft {
   streamErrorRetryUnknown: boolean;
 }
 
-/** 与服务端 DEFAULT_CONFIG 保持一致(model 用下拉哨兵值表示"跟随") */
+/** 与服务端 DEFAULT_CONFIG 保持一致;检测模型自动跟随当前请求模型。 */
 export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
-  model: FOLLOW_CURRENT_MODEL,
   jsonPromptInjection: true,
   maxProcessorRetries: 0,
 
@@ -297,13 +284,6 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
 
   providerCompat: true,
 
-  toolSearch: false,
-  toolSearchTopK: 5,
-  toolSearchMinScore: 0,
-  toolSearchAutoLoad: false,
-  toolSearchStorage: "context",
-  toolSearchTtl: 3_600_000,
-
   skillSearch: false,
   skillSearchTopK: 5,
   skillSearchMinScore: 0,
@@ -413,7 +393,6 @@ interface GuardrailsStatus {
 }
 
 export function GuardrailsSection() {
-  const { providers } = useWorkbench();
   const [draft, setDraft] = React.useState<GuardrailsDraft>(DEFAULT_GUARDRAILS_DRAFT);
   const [listText, setListText] = React.useState<ListText>(() =>
     listTextFromDraft(DEFAULT_GUARDRAILS_DRAFT),
@@ -436,8 +415,6 @@ export function GuardrailsSection() {
     fetchGuardrailsConfig<Partial<GuardrailsDraft>>()
       .then((config) => {
         const merged = { ...DEFAULT_GUARDRAILS_DRAFT, ...config } as GuardrailsDraft;
-        // 空模型串(跟随当前模型)映射为下拉的哨兵值
-        merged.model = merged.model || FOLLOW_CURRENT_MODEL;
         setDraft(merged);
         setListText(listTextFromDraft(merged));
       })
@@ -456,7 +433,6 @@ export function GuardrailsSection() {
     const timer = window.setTimeout(() => {
       void saveGuardrailsConfig({
         ...draft,
-        model: draft.model === FOLLOW_CURRENT_MODEL ? "" : draft.model,
       })
         .then(() => {
           refreshStatus();
@@ -516,34 +492,12 @@ export function GuardrailsSection() {
         description="模型调用前后加一层内置处理器管线:输入侧规范化与检测,输出侧过滤与清洗,报错时恢复(guardrails.mdx / processors.mdx)。历史消息、语义召回、工作记忆三个处理器由记忆模块自动接入,在「记忆」页配置。"
         title="通用"
       >
-        <div className="space-y-2 py-2">
-          <div className="space-y-1">
-            <p className="text-sm leading-none font-medium">护栏检测模型</p>
-            <p className="text-xs text-muted-foreground">
-              注入/语言/审核/PII/清洗五个检测器共用;每轮都要额外调用,建议单独选一个便宜快速的小模型
-            </p>
-          </div>
-          <ModelSelectDropdown
-            allowFollow
-            onChange={(model) => patch({ model })}
-            providers={providers}
-            value={draft.model}
-          />
-        </div>
-        <SwitchRow
-          checked={draft.jsonPromptInjection}
-          description="检测器用提示词注入 JSON 代替原生 response_format;第三方网关多不支持结构化输出,关闭会导致检测结果解析失败"
-          onChange={(v) => patch({ jsonPromptInjection: v })}
-          title="兼容模式结构化输出(jsonPromptInjection)"
-        />
-        <NumberRow
-          description="处理器 abort({ retry: true }) 后的最大重试次数;0 = 不显式设置,用库默认"
-          max={5}
-          onChange={(v) => patch({ maxProcessorRetries: v })}
-          suffix="次"
-          title="处理器重试上限(maxProcessorRetries)"
-          value={draft.maxProcessorRetries}
-        />
+        <SettingRow
+          description="注入、语言、审核、PII 与清洗检测器自动使用当前 promptInput 选择或请求的模型"
+          title="护栏检测模型"
+        >
+          <span className="shrink-0 text-sm font-medium text-muted-foreground">跟随当前模型</span>
+        </SettingRow>
       </SettingCard>
 
       <SettingCard
@@ -556,34 +510,9 @@ export function GuardrailsSection() {
           onChange={(v) => patch({ unicode: v })}
           title="启用文本规范化"
         />
-        {draft.unicode ? (
-          <>
-            <SwitchRow
-              checked={draft.unicodeStripControlChars}
-              description="剔除零宽字符与不可见控制符(常用于绕过关键词检测)"
-              onChange={(v) => patch({ unicodeStripControlChars: v })}
-              title="剔除控制字符(stripControlChars)"
-            />
-            <SwitchRow
-              checked={draft.unicodePreserveEmojis}
-              description="关闭则连同表情符号一并剔除"
-              onChange={(v) => patch({ unicodePreserveEmojis: v })}
-              title="保留表情符号(preserveEmojis)"
-            />
-            <SwitchRow
-              checked={draft.unicodeCollapseWhitespace}
-              description="库默认开启;此处默认关闭 —— 折叠空白会破坏粘贴进来的代码与 Markdown 缩进"
-              onChange={(v) => patch({ unicodeCollapseWhitespace: v })}
-              title="折叠连续空白(collapseWhitespace)"
-            />
-            <SwitchRow
-              checked={draft.unicodeTrim}
-              description="去掉消息首尾空白"
-              onChange={(v) => patch({ unicodeTrim: v })}
-              title="首尾去空白(trim)"
-            />
-          </>
-        ) : null}
+        <p className="px-1 pb-2 text-xs text-muted-foreground">
+          控制字符清理、表情保留和首尾空白处理由系统安全基线管理。
+        </p>
       </SettingCard>
 
       <SettingCard
@@ -615,35 +544,6 @@ export function GuardrailsSection() {
               ]}
               title="命中策略(strategy)"
               value={draft.regexStrategy}
-            />
-            <SelectRow
-              description="all 时同一实例同时进入输入与输出两条管线"
-              onChange={(regexPhase) => patch({ regexPhase })}
-              options={[
-                { value: "all" as const, label: "all(输入+输出)" },
-                { value: "input" as const, label: "input(仅输入)" },
-                { value: "output" as const, label: "output(仅输出)" },
-              ]}
-              title="作用阶段(phase)"
-              value={draft.regexPhase}
-            />
-            {draft.regexStrategy === "redact" ? (
-              <SwitchRow
-                checked={draft.regexIncludeRedactedValues}
-                description="默认关闭:被替换的正是要清除的数据,记录下来等于留了第二份副本"
-                onChange={(v) => patch({ regexIncludeRedactedValues: v })}
-                title="审计记录保留原文(includeRedactedValues)"
-              />
-            ) : null}
-            <NumberRow
-              description="流式替换时回退保留的字符数,需不小于自定义规则可能匹配到的最长片段"
-              max={4096}
-              min={16}
-              onChange={(v) => patch({ regexStreamCarryoverSize: v })}
-              step={16}
-              suffix="字符"
-              title="流式回退窗口(streamCarryoverSize)"
-              value={draft.regexStreamCarryoverSize}
             />
             <TextAreaRow
               description={
@@ -702,26 +602,6 @@ export function GuardrailsSection() {
               title="命中策略(strategy)"
               value={draft.injectionStrategy}
             />
-            <SwitchRow
-              checked={draft.injectionLastMessageOnly}
-              description="只检测本轮新消息,不重复检测已通过的历史(省 token)"
-              onChange={(v) => patch({ injectionLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
-            />
-            <SwitchRow
-              checked={draft.injectionIncludeScores}
-              description="在告警详情里附上每个类型的置信度"
-              onChange={(v) => patch({ injectionIncludeScores: v })}
-              title="附带分数(includeScores)"
-            />
-            <TextAreaRow
-              description="追加给检测代理的判定说明,留空使用库内置提示词"
-              onChange={(injectionInstructions) => patch({ injectionInstructions })}
-              placeholder="例如:本产品允许用户粘贴他人提示词作为素材讨论,不视为注入。"
-              rows={3}
-              title="附加指令(instructions)"
-              value={draft.injectionInstructions}
-            />
           </>
         ) : null}
       </SettingCard>
@@ -776,34 +656,6 @@ export function GuardrailsSection() {
                 title="保留原文(preserveOriginal)"
               />
             ) : null}
-            <NumberRow
-              description="短于该长度的文本不做检测(几个字判语言不可靠)"
-              max={500}
-              onChange={(v) => patch({ languageMinTextLength: v })}
-              suffix="字符"
-              title="最小检测长度(minTextLength)"
-              value={draft.languageMinTextLength}
-            />
-            <SwitchRow
-              checked={draft.languageLastMessageOnly}
-              description="只检测本轮新消息"
-              onChange={(v) => patch({ languageLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
-            />
-            <SwitchRow
-              checked={draft.languageIncludeDetails}
-              description="在结果里附上语言与置信度明细"
-              onChange={(v) => patch({ languageIncludeDetails: v })}
-              title="附带检测明细(includeDetectionDetails)"
-            />
-            <TextAreaRow
-              description="追加给检测代理的说明,留空使用库内置提示词"
-              onChange={(languageInstructions) => patch({ languageInstructions })}
-              placeholder="例如:代码块与技术术语不参与语言判定。"
-              rows={3}
-              title="附加指令(instructions)"
-              value={draft.languageInstructions}
-            />
           </>
         ) : null}
       </SettingCard>
@@ -853,35 +705,6 @@ export function GuardrailsSection() {
               ]}
               title="命中策略(strategy)"
               value={draft.moderationStrategy}
-            />
-            <SwitchRow
-              checked={draft.moderationLastMessageOnly}
-              description="只审核本轮新消息"
-              onChange={(v) => patch({ moderationLastMessageOnly: v })}
-              title="仅审核最新消息(lastMessageOnly)"
-            />
-            <SwitchRow
-              checked={draft.moderationIncludeScores}
-              description="在告警详情里附上各类别得分"
-              onChange={(v) => patch({ moderationIncludeScores: v })}
-              title="附带分数(includeScores)"
-            />
-            <NumberRow
-              description="输出流按该字符数分块送审,0 = 不分块(等整段响应结束再审)"
-              max={20_000}
-              onChange={(v) => patch({ moderationChunkWindow: v })}
-              step={100}
-              suffix="字符"
-              title="流式审核窗口(chunkWindow)"
-              value={draft.moderationChunkWindow}
-            />
-            <TextAreaRow
-              description="追加给审核代理的尺度说明,留空使用库内置提示词"
-              onChange={(moderationInstructions) => patch({ moderationInstructions })}
-              placeholder="例如:安全研究场景下讨论攻击原理不算违规。"
-              rows={3}
-              title="附加指令(instructions)"
-              value={draft.moderationInstructions}
             />
           </>
         ) : null}
@@ -935,47 +758,19 @@ export function GuardrailsSection() {
               value={draft.piiStrategy}
             />
             {draft.piiStrategy === "redact" ? (
-              <>
-                <SelectRow
-                  description="mask 掩码;hash 哈希;placeholder 占位标签;remove 整段删除"
-                  onChange={(piiRedactionMethod) => patch({ piiRedactionMethod })}
-                  options={[
-                    { value: "mask" as const, label: "mask(掩码)" },
-                    { value: "hash" as const, label: "hash(哈希)" },
-                    { value: "placeholder" as const, label: "placeholder(占位)" },
-                    { value: "remove" as const, label: "remove(删除)" },
-                  ]}
-                  title="脱敏方式(redactionMethod)"
-                  value={draft.piiRedactionMethod}
-                />
-                <SwitchRow
-                  checked={draft.piiPreserveFormat}
-                  description="保留原值的格式骨架(如 ***-**-1234),便于模型理解上下文"
-                  onChange={(v) => patch({ piiPreserveFormat: v })}
-                  title="保留格式(preserveFormat)"
-                />
-              </>
+              <SelectRow
+                description="mask 掩码;hash 哈希;placeholder 占位标签;remove 整段删除"
+                onChange={(piiRedactionMethod) => patch({ piiRedactionMethod })}
+                options={[
+                  { value: "mask" as const, label: "mask(掩码)" },
+                  { value: "hash" as const, label: "hash(哈希)" },
+                  { value: "placeholder" as const, label: "placeholder(占位)" },
+                  { value: "remove" as const, label: "remove(删除)" },
+                ]}
+                title="脱敏方式(redactionMethod)"
+                value={draft.piiRedactionMethod}
+              />
             ) : null}
-            <SwitchRow
-              checked={draft.piiLastMessageOnly}
-              description="只检测本轮新消息"
-              onChange={(v) => patch({ piiLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
-            />
-            <SwitchRow
-              checked={draft.piiIncludeDetections}
-              description="默认关闭:明细里含被脱敏的原值,开启前确认日志与原文同级受保护"
-              onChange={(v) => patch({ piiIncludeDetections: v })}
-              title="附带检测明细(includeDetections)"
-            />
-            <TextAreaRow
-              description="追加给检测代理的说明,留空使用库内置提示词"
-              onChange={(piiInstructions) => patch({ piiInstructions })}
-              placeholder="例如:公司公开邮箱 support@example.com 不视为个人信息。"
-              rows={3}
-              title="附加指令(instructions)"
-              value={draft.piiInstructions}
-            />
           </>
         ) : null}
       </SettingCard>
@@ -1006,30 +801,17 @@ export function GuardrailsSection() {
               value={draft.scrubberStrategy}
             />
             {draft.scrubberStrategy === "redact" ? (
-              <>
-                <SelectRow
-                  description="mask 掩码;placeholder 用下方占位文本替换;remove 整段删除"
-                  onChange={(scrubberRedactionMethod) => patch({ scrubberRedactionMethod })}
-                  options={[
-                    { value: "mask" as const, label: "mask(掩码)" },
-                    { value: "placeholder" as const, label: "placeholder(占位)" },
-                    { value: "remove" as const, label: "remove(删除)" },
-                  ]}
-                  title="替换方式(redactionMethod)"
-                  value={draft.scrubberRedactionMethod}
-                />
-                <SettingRow
-                  description="placeholder 方式下用于替换的文本"
-                  title="占位文本(placeholderText)"
-                >
-                  <Input
-                    className="w-52 font-mono text-xs"
-                    onChange={(e) => patch({ scrubberPlaceholderText: e.target.value })}
-                    spellCheck={false}
-                    value={draft.scrubberPlaceholderText}
-                  />
-                </SettingRow>
-              </>
+              <SelectRow
+                description="mask 掩码;placeholder 用下方占位文本替换;remove 整段删除"
+                onChange={(scrubberRedactionMethod) => patch({ scrubberRedactionMethod })}
+                options={[
+                  { value: "mask" as const, label: "mask(掩码)" },
+                  { value: "placeholder" as const, label: "placeholder(占位)" },
+                  { value: "remove" as const, label: "remove(删除)" },
+                ]}
+                title="替换方式(redactionMethod)"
+                value={draft.scrubberRedactionMethod}
+              />
             ) : null}
             <TextAreaRow
               description="一行一条正则字符串,补充库内置的识别模式"
@@ -1038,66 +820,6 @@ export function GuardrailsSection() {
               rows={3}
               title="自定义识别模式(customPatterns)"
               value={listText.scrubberCustomPatterns}
-            />
-            <SwitchRow
-              checked={draft.scrubberIncludeDetections}
-              description="默认关闭:明细里含被清洗的提示词原文"
-              onChange={(v) => patch({ scrubberIncludeDetections: v })}
-              title="附带检测明细(includeDetections)"
-            />
-            <SwitchRow
-              checked={draft.scrubberLastMessageOnly}
-              description="只清洗本轮新生成的消息"
-              onChange={(v) => patch({ scrubberLastMessageOnly: v })}
-              title="仅处理最新消息(lastMessageOnly)"
-            />
-            <TextAreaRow
-              description="追加给检测代理的说明,留空使用库内置提示词"
-              onChange={(scrubberInstructions) => patch({ scrubberInstructions })}
-              placeholder="例如:用户主动询问工具用法时,复述工具名称不算泄漏。"
-              rows={3}
-              title="附加指令(instructions)"
-              value={draft.scrubberInstructions}
-            />
-          </>
-        ) : null}
-      </SettingCard>
-
-      <SettingCard
-        description="输出侧:把细碎的流式分片合并后再下发,降低前端渲染频率(batch-parts-processor.mdx)。"
-        title="流式批处理(BatchPartsProcessor)"
-      >
-        <SwitchRow
-          checked={draft.batchParts}
-          description="默认关闭:合并会让打字机效果变顿挫,弱终端或长响应场景才需要"
-          onChange={(v) => patch({ batchParts: v })}
-          title="启用流式批处理"
-        />
-        {draft.batchParts ? (
-          <>
-            <NumberRow
-              description="累计多少个分片后合并下发"
-              max={100}
-              min={2}
-              onChange={(v) => patch({ batchPartsSize: v })}
-              suffix="片"
-              title="批大小(batchSize)"
-              value={draft.batchPartsSize}
-            />
-            <NumberRow
-              description="未攒够批大小时的最长等待;0 = 不设超时,只按批大小触发"
-              max={5_000}
-              onChange={(v) => patch({ batchPartsMaxWaitTime: v })}
-              step={50}
-              suffix="毫秒"
-              title="最长等待(maxWaitTime)"
-              value={draft.batchPartsMaxWaitTime}
-            />
-            <SwitchRow
-              checked={draft.batchPartsEmitOnNonText}
-              description="遇到工具调用等非文本分片时立即冲刷缓冲,保证时序正确"
-              onChange={(v) => patch({ batchPartsEmitOnNonText: v })}
-              title="非文本分片立即下发(emitOnNonText)"
             />
           </>
         ) : null}
@@ -1114,28 +836,16 @@ export function GuardrailsSection() {
           title="限制输入上下文"
         />
         {draft.tokenLimitInput ? (
-          <>
-            <NumberRow
-              description="送入模型的消息总 token 上限"
-              max={2_000_000}
-              min={1_000}
-              onChange={(v) => patch({ tokenLimitInputValue: v })}
-              step={1_000}
-              suffix="token"
-              title="上下文上限(limit)"
-              value={draft.tokenLimitInputValue}
-            />
-            <SelectRow
-              description="contiguous 保留连续的最近消息;best-fit 跨空档挑选以尽量填满预算"
-              onChange={(tokenLimitTrimMode) => patch({ tokenLimitTrimMode })}
-              options={[
-                { value: "contiguous" as const, label: "contiguous(保留连续)" },
-                { value: "best-fit" as const, label: "best-fit(尽量填满)" },
-              ]}
-              title="裁剪模式(trimMode)"
-              value={draft.tokenLimitTrimMode}
-            />
-          </>
+          <NumberRow
+            description="送入模型的消息总 token 上限"
+            max={2_000_000}
+            min={1_000}
+            onChange={(v) => patch({ tokenLimitInputValue: v })}
+            step={1_000}
+            suffix="token"
+            title="上下文上限(limit)"
+            value={draft.tokenLimitInputValue}
+          />
         ) : null}
         <SwitchRow
           checked={draft.tokenLimitOutput}
@@ -1164,16 +874,6 @@ export function GuardrailsSection() {
               ]}
               title="超限策略(strategy)"
               value={draft.tokenLimitOutputStrategy}
-            />
-            <SelectRow
-              description="cumulative 按整轮累计计数;part 按单个分片计数"
-              onChange={(tokenLimitOutputCountMode) => patch({ tokenLimitOutputCountMode })}
-              options={[
-                { value: "cumulative" as const, label: "cumulative(累计)" },
-                { value: "part" as const, label: "part(按分片)" },
-              ]}
-              title="计数方式(countMode)"
-              value={draft.tokenLimitOutputCountMode}
             />
           </>
         ) : null}
@@ -1256,278 +956,41 @@ export function GuardrailsSection() {
               title="软阈值(warnAtPercent %)"
               value={draft.tokenCostWarnAtPercent}
             />
-            <SwitchRow
-              checked={draft.tokenCostIncludeBreakdown}
-              description="告警中附上按模型/维度拆分的花费明细"
-              onChange={(v) => patch({ tokenCostIncludeBreakdown: v })}
-              title="附带费用明细(includeBreakdown)"
-            />
           </>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="把历史里的工具调用与结果从送给模型的上下文中摘掉,长任务里能省下大量 token(tool-call-filter.mdx)。"
-        title="工具调用裁剪(ToolCallFilter)"
-      >
-        <SwitchRow
-          checked={draft.toolCallFilter}
-          description="只影响送进模型的历史,前端展示不受影响"
-          onChange={(v) => patch({ toolCallFilter: v })}
-          title="启用工具调用裁剪"
-        />
-        {draft.toolCallFilter ? (
-          <>
-            <TextAreaRow
-              description="一行一个工具名,只裁剪列出的工具;留空 = 裁剪全部工具调用"
-              onChange={(text) => patchList("toolCallFilterExclude", text)}
-              placeholder={"library_vector_search\nweb_search"}
-              rows={3}
-              title="仅裁剪这些工具(exclude)"
-              value={listText.toolCallFilterExclude}
-            />
-            <NumberRow
-              description="保留最近 N 个产生工具调用的步骤;-1 = 本轮循环内不裁剪,只裁剪更早的历史"
-              max={20}
-              min={-1}
-              onChange={(v) => patch({ toolCallFilterAfterToolSteps: v })}
-              suffix="步"
-              title="保留最近步骤数(filterAfterToolSteps)"
-              value={draft.toolCallFilterAfterToolSteps}
-            />
-            <SwitchRow
-              checked={draft.toolCallFilterPreserveModelOutput}
-              description="裁掉工具调用时保留模型当时的文字说明,免得上下文出现断层"
-              onChange={(v) => patch({ toolCallFilterPreserveModelOutput: v })}
-              title="保留模型文字(preserveModelOutput)"
-            />
-          </>
-        ) : null}
-      </SettingCard>
-
-      <SettingCard
-        description="相同请求在有效期内直接返回上次结果,不再调用模型(response-cache.mdx)。缓存在内存中,重启即清空。"
-        title="响应缓存(ResponseCache)"
-      >
-        <SwitchRow
-          checked={draft.responseCache}
-          description="默认关闭:对话类场景重复命中率低,且会掩盖模型的随机性"
-          onChange={(v) => patch({ responseCache: v })}
-          title="启用响应缓存"
-        />
-        {draft.responseCache ? (
-          <>
-            <NumberRow
-              description="缓存条目的存活时间"
-              max={86_400}
-              min={10}
-              onChange={(v) => patch({ responseCacheTtl: v })}
-              step={10}
-              suffix="秒"
-              title="有效期(ttl)"
-              value={draft.responseCacheTtl}
-            />
-            <SelectRow
-              description="auto 按用户隔离;none 全局共享(注意串用户);custom 使用固定租户键"
-              onChange={(responseCacheScopeMode) => patch({ responseCacheScopeMode })}
-              options={[
-                { value: "auto" as const, label: "auto(按用户隔离)" },
-                { value: "none" as const, label: "none(全局共享)" },
-                { value: "custom" as const, label: "custom(固定键)" },
-              ]}
-              title="隔离范围(scope)"
-              value={draft.responseCacheScopeMode}
-            />
-            {draft.responseCacheScopeMode === "custom" ? (
-              <SettingRow description="所有请求共用的缓存键前缀" title="自定义范围键">
-                <Input
-                  className="w-52 font-mono text-xs"
-                  onChange={(e) => patch({ responseCacheScopeValue: e.target.value })}
-                  placeholder="tenant-a"
-                  spellCheck={false}
-                  value={draft.responseCacheScopeValue}
-                />
-              </SettingRow>
-            ) : null}
-          </>
-        ) : null}
-      </SettingCard>
-
-      <SettingCard
-        description="切换供应商后,把历史里上一家的推理块、工具调用等私有字段整理成新供应商能接受的形态,并在其报错时二次修正(provider-history-compat.mdx)。"
-        title="供应商历史兼容(ProviderHistoryCompat)"
+        description="在切换模型或供应商时整理历史消息中的私有字段,保证上下文仍能被当前供应商接受。默认开启,必要时可关闭。"
+        title="供应商历史兼容"
       >
         <SwitchRow
           checked={draft.providerCompat}
-          description="本产品允许随时换模型换供应商,建议常开"
+          description="仅影响跨供应商发送历史消息时的兼容处理"
           onChange={(v) => patch({ providerCompat: v })}
           title="启用历史兼容"
         />
       </SettingCard>
 
       <SettingCard
-        description="工具多到撑爆提示词时,先按语义检索出相关工具再交给模型,其余工具不进提示词(tool-search-processor.mdx)。"
-        title="工具检索(ToolSearchProcessor)"
-      >
-        <SwitchRow
-          checked={draft.toolSearch}
-          description="本产品当前工具数量有限,默认关闭;接入大量 MCP 工具后再开"
-          onChange={(v) => patch({ toolSearch: v })}
-          title="启用工具检索"
-        />
-        {draft.toolSearch ? (
-          <>
-            <NumberRow
-              description="每轮检索出多少个候选工具"
-              max={30}
-              min={1}
-              onChange={(v) => patch({ toolSearchTopK: v })}
-              suffix="个"
-              title="候选数(topK)"
-              value={draft.toolSearchTopK}
-            />
-            <SliderRow
-              description="低于该相关度的工具不返回;0 = 不设下限"
-              max={1}
-              min={0}
-              onChange={(v) => patch({ toolSearchMinScore: Math.round(v * 100) / 100 })}
-              step={0.05}
-              title="最低相关度(minScore)"
-              value={draft.toolSearchMinScore}
-            />
-            <SwitchRow
-              checked={draft.toolSearchAutoLoad}
-              description="检索到即直接装载,省一次模型往返;开启时 topK 要压小"
-              onChange={(v) => patch({ toolSearchAutoLoad: v })}
-              title="自动装载(autoLoad)"
-            />
-            <SelectRow
-              description="context 从会话消息推导已装载工具,重启不丢;in-memory 存进程内存"
-              onChange={(toolSearchStorage) => patch({ toolSearchStorage })}
-              options={[
-                { value: "context" as const, label: "context(随会话)" },
-                { value: "in-memory" as const, label: "in-memory(进程内存)" },
-              ]}
-              title="装载状态存储(storage)"
-              value={draft.toolSearchStorage}
-            />
-            {draft.toolSearchStorage === "in-memory" ? (
-              <NumberRow
-                description="线程闲置多久后清掉它的已装载工具集合(仅 in-memory 生效)"
-                max={1_440}
-                min={1}
-                onChange={(v) => patch({ toolSearchTtl: v * 60_000 })}
-                suffix="分钟"
-                title="闲置清理(ttl)"
-                value={Math.round(draft.toolSearchTtl / 60_000)}
-              />
-            ) : null}
-          </>
-        ) : null}
-      </SettingCard>
-
-      <SettingCard
-        action={
-          <ReadyBadge blockedText="需启用工作区" ready={status.workspaceReady} readyText="可用" />
-        }
-        description="按语义检索工作区里的 SKILL.md,只把相关技能的指令注入提示词(skill-search-processor.mdx)。需要线程已绑定工作区。"
-        title="技能检索(SkillSearchProcessor)"
-      >
-        <SwitchRow
-          checked={draft.skillSearch}
-          description="未绑定工作区的线程自动跳过该处理器"
-          disabled={!status.workspaceReady}
-          onChange={(v) => patch({ skillSearch: v })}
-          title="启用技能检索"
-        />
-        {draft.skillSearch ? (
-          <>
-            <NumberRow
-              description="每轮检索出多少个候选技能"
-              max={20}
-              min={1}
-              onChange={(v) => patch({ skillSearchTopK: v })}
-              suffix="个"
-              title="候选数(topK)"
-              value={draft.skillSearchTopK}
-            />
-            <SliderRow
-              description="低于该相关度的技能不返回;0 = 不设下限"
-              max={1}
-              min={0}
-              onChange={(v) => patch({ skillSearchMinScore: Math.round(v * 100) / 100 })}
-              step={0.05}
-              title="最低相关度(minScore)"
-              value={draft.skillSearchMinScore}
-            />
-            <NumberRow
-              description="线程闲置多久后清掉它的已装载技能集合"
-              max={1_440}
-              min={1}
-              onChange={(v) => patch({ skillSearchTtl: v * 60_000 })}
-              suffix="分钟"
-              title="闲置清理(ttl)"
-              value={Math.round(draft.skillSearchTtl / 60_000)}
-            />
-          </>
-        ) : null}
-      </SettingCard>
-
-      <SettingCard
-        description="供应商 API 报错时的恢复通路,失败请求不必直接抛给用户(prefill-error-handler.mdx / stream-error-retry-processor.mdx)。"
-        title="错误恢复(errorProcessors)"
+        description="供应商 API 报错时自动修正预填充请求,并对限流和瞬时网络错误进行恢复。默认开启,必要时可关闭。"
+        title="错误恢复"
       >
         <SwitchRow
           checked={draft.prefillErrorHandler}
-          description="部分供应商拒绝以助手消息结尾的请求,该处理器识别这类报错并自动修正后重发"
+          description="修正部分供应商拒绝以助手消息结尾的请求"
           onChange={(v) => patch({ prefillErrorHandler: v })}
-          title="预填充错误修正(PrefillErrorHandler)"
+          title="预填充错误修正"
         />
         <SwitchRow
           checked={draft.streamErrorRetry}
-          description="限流与瞬时网络错误自动重试,尊重响应里的 Retry-After"
+          description="对限流与瞬时网络错误自动重试并遵守 Retry-After"
           onChange={(v) => patch({ streamErrorRetry: v })}
-          title="流式错误重试(StreamErrorRetryProcessor)"
+          title="流式错误重试"
         />
-        {draft.streamErrorRetry ? (
-          <>
-            <NumberRow
-              description="同一轮请求最多重试几次"
-              max={5}
-              min={1}
-              onChange={(v) => patch({ streamErrorRetryMax: v })}
-              suffix="次"
-              title="重试次数(maxRetries)"
-              value={draft.streamErrorRetryMax}
-            />
-            <NumberRow
-              description="首次重试前的等待时间,后续按指数退避"
-              max={30_000}
-              min={100}
-              onChange={(v) => patch({ streamErrorRetryDelayMs: v })}
-              step={100}
-              suffix="毫秒"
-              title="重试间隔(delayMs)"
-              value={draft.streamErrorRetryDelayMs}
-            />
-            <NumberRow
-              description="供应商要求的等待时间超过该值就放弃,不让用户干等"
-              max={300_000}
-              min={1_000}
-              onChange={(v) => patch({ streamErrorRetryMaxRetryAfterMs: v })}
-              step={1_000}
-              suffix="毫秒"
-              title="可接受的最长等待(maxRetryAfterMs)"
-              value={draft.streamErrorRetryMaxRetryAfterMs}
-            />
-            <SwitchRow
-              checked={draft.streamErrorRetryUnknown}
-              description="默认关闭:未知错误多半重试也不会好,反而拖长失败反馈"
-              onChange={(v) => patch({ streamErrorRetryUnknown: v })}
-              title="重试未知错误(retryUnknownErrors)"
-            />
-          </>
-        ) : null}
+        <p className="px-1 pb-2 text-xs text-muted-foreground">
+          重试次数、退避间隔和未知错误判定由系统稳定性基线管理。
+        </p>
       </SettingCard>
     </>
   );

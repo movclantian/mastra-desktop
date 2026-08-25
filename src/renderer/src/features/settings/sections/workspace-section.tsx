@@ -3,8 +3,8 @@ import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { fetchWorkspaceSettings, saveWorkspaceSettings } from "../api";
 import { SettingCard, SettingRow, SliderRow } from "../components/controls";
@@ -97,7 +97,11 @@ export function DirectoryPickerField({
         {value || "点击右侧按钮选择目录"}
       </p>
       <Button variant="outline" size="sm" disabled={picking} onClick={() => void pick()}>
-        {picking ? <Spinner className="size-4" /> : <FolderOpenIcon />}
+        {picking ? (
+          <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
+        ) : (
+          <FolderOpenIcon />
+        )}
         选择目录
       </Button>
     </div>
@@ -125,7 +129,7 @@ function ListFieldHeader({
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <Button variant="outline" size="sm" className="shrink-0" disabled={picking} onClick={onAdd}>
-        {picking ? <Spinner className="size-4" /> : <PlusIcon />}
+        {picking ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : <PlusIcon />}
         {addLabel}
       </Button>
     </div>

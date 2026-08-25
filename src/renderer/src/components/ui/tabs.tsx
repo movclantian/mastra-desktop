@@ -20,7 +20,7 @@ function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-[orientation=horizontal]/tabs:h-8 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list relative inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-[orientation=horizontal]/tabs:h-8 group-data-[orientation=vertical]/tabs:h-fit group-data-[orientation=vertical]/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
@@ -65,6 +65,27 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
   );
 }
 
+/**
+ * 滑动指示器(Base UI 官方 Tabs.Indicator)。必须放在 TabsList 内部 ——
+ * 它按激活项的位置/尺寸写入 --active-tab-* 变量,这里用 CSS transition
+ * 把变量变化补成滑动。用官方原语而不是自己算位置,可访问性与状态机全部沿用上游。
+ */
+function TabsIndicator({ className, ...props }: TabsPrimitive.Indicator.Props) {
+  return (
+    <TabsPrimitive.Indicator
+      data-slot="tabs-indicator"
+      renderBeforeHydration
+      className={cn(
+        "pointer-events-none absolute top-0 left-0 z-0",
+        "h-[var(--active-tab-height)] w-[var(--active-tab-width)] translate-x-[var(--active-tab-left)]",
+        "transition-[translate,width,height] duration-300 ease-out",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
@@ -75,4 +96,4 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   );
 }
 
-export { Tabs, TabsContent, TabsList, TabsTrigger, tabsListVariants };
+export { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger, tabsListVariants };

@@ -19,7 +19,6 @@ import { getMemory } from "../memory";
 import {
   type GatewayLanguageModel,
   REQUEST_MODEL_CONTEXT_KEY,
-  resolveConfiguredModel,
   resolveDefaultLanguageModel,
 } from "../models";
 import {
@@ -70,7 +69,7 @@ import {
   SESSION_GRANTS_CONTEXT_KEY,
 } from "./permissions";
 import { buildInputPipeline, resolveSharedTools } from "./shared";
-import { resolveSubagentModel, SUBAGENT_MODELS_CONTEXT_KEY, workSubagents } from "./subagents";
+import { workSubagents } from "./subagents";
 
 export { workBrowser } from "./browser";
 
@@ -238,16 +237,6 @@ const WORK_DELEGATION: DelegationConfig = {
       .slice(-24)
       .map((message) => compactDelegationMessage(message as MastraDBMessage));
   },
-  onDelegationStart: async (context) => {
-    // Mastra copies request context at the delegation boundary. Set the map
-    // explicitly as well so dynamic model resolution remains stable when the
-    // parent run is resumed or delegated through a nested tool.
-    const selectedModels = context.requestContext.get(SUBAGENT_MODELS_CONTEXT_KEY);
-    if (selectedModels !== undefined) {
-      context.requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, selectedModels);
-    }
-    return { proceed: true };
-  },
   onDelegationComplete: (context) => {
     if (!context.success) {
       context.bail();
@@ -351,43 +340,7 @@ function createWorkAgent(
         | { id: `${string}/${string}`; apiKey: string }
         | GatewayLanguageModel
         | undefined;
-      const profile =
-        fixedProfile ??
-        (await getAgentProfile(
-          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
-          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-        ));
-      if (member && requestContext) {
-        const selectedMemberModel = await resolveSubagentModel(requestContext, member.id);
-        if (selectedMemberModel) return selectedMemberModel;
-      }
-      if (member?.model) {
-        const configured = await resolveConfiguredModel(
-          member.model.providerId,
-          member.model.modelId,
-          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-        );
-        if (!configured) {
-          throw new Error(
-            `Agent ${member.id} 的模型 ${member.model.providerId}/${member.model.modelId} 未配置或已被禁用。`,
-          );
-        }
-        return configured;
-      }
       if (requestModel) return requestModel;
-      if (profile.model) {
-        const configured = await resolveConfiguredModel(
-          profile.model.providerId,
-          profile.model.modelId,
-          requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-        );
-        if (!configured) {
-          throw new Error(
-            `Agent ${profile.id} 的模型 ${profile.model.providerId}/${profile.model.modelId} 未配置或已被禁用。`,
-          );
-        }
-        return configured;
-      }
       const model = await resolveDefaultLanguageModel(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
       );
@@ -415,10 +368,7 @@ function createWorkAgent(
           ),
         ],
     inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
-    outputProcessors: async ({ requestContext }) =>
-      buildGuardrailOutputProcessors(
-        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-      ),
+    outputProcessors: async ({ requestContext }) => buildGuardrailOutputProcessors(requestContext),
     errorProcessors: async ({ requestContext }) =>
       buildGuardrailErrorProcessors(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,

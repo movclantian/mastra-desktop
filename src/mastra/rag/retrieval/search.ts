@@ -16,13 +16,14 @@ import {
 import { getLibrarySettings } from "../settings";
 import { ensureLibrarySchema, withClient } from "../storage/db";
 
-export async function searchLibrary(
-  resourceId: string,
-  query: string,
-  threadId?: string,
-  rerankModel?: MastraLanguageModel,
-  graphRagOverride?: boolean,
-) {
+export async function searchLibrary(options: {
+  resourceId: string;
+  query: string;
+  threadId?: string;
+  rerankModel?: MastraLanguageModel;
+  graphRag?: boolean;
+}) {
+  const { resourceId, query, threadId, rerankModel, graphRag: graphRagOverride } = options;
   await ensureLibrarySchema();
   const settings = await getLibrarySettings(resourceId);
   const vector = await getVector();

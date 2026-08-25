@@ -13,6 +13,7 @@ import {
   MCPOAuthClientProvider,
   type OAuthStorage,
 } from "@mastra/mcp";
+import { stringRecord } from "../config/normalize";
 import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
 
 type McpTransport = "http" | "stdio";
@@ -75,15 +76,6 @@ function getRuntime(resourceId?: string): McpRuntime {
   return runtime;
 }
 
-function cleanRecord(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).filter(
-      ([key, item]) => key.trim().length > 0 && typeof item === "string",
-    ),
-  ) as Record<string, string>;
-}
-
 function normalizeServer(value: unknown): McpServerConfig | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Record<string, unknown>;
@@ -107,7 +99,7 @@ function normalizeServer(value: unknown): McpServerConfig | null {
     } catch {
       return null;
     }
-    server.headers = cleanRecord(raw.headers);
+    server.headers = stringRecord(raw.headers);
     server.allowedHosts = Array.isArray(raw.allowedHosts)
       ? raw.allowedHosts.filter(
           (item): item is string => typeof item === "string" && item.trim().length > 0,
@@ -133,7 +125,7 @@ function normalizeServer(value: unknown): McpServerConfig | null {
     server.args = Array.isArray(raw.args)
       ? raw.args.filter((item): item is string => typeof item === "string")
       : [];
-    server.env = cleanRecord(raw.env);
+    server.env = stringRecord(raw.env);
     server.inheritDefaultEnv = raw.inheritDefaultEnv !== false;
   }
   return server;

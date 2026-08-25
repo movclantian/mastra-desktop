@@ -1,17 +1,16 @@
 /**
- * 观察记忆(OM)线程级配置路由:读写线程 metadata 上的 OM 覆盖项。
+ * 观察记忆(OM)线程级配置路由:读写观察与反思阈值覆盖项。
  * 官方文档:docs/en/docs/memory/observational-memory.mdx。
  */
 import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../../errors";
 import { appStorage } from "../../storage";
 import { getOwnedThread, getWorkMemoryForThread } from "./shared";
-import type { ThreadMetadata } from "./types";
 
 const OBSERVATION_NUMBERS = new Set(["messageTokens"]);
 const REFLECTION_NUMBERS = new Set(["observationTokens"]);
 
-type OmPhaseInput = Record<string, unknown> & { model?: unknown };
+type OmPhaseInput = Record<string, unknown>;
 
 function phaseInput(value: unknown): OmPhaseInput | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -25,18 +24,11 @@ function numericOverrides(source: OmPhaseInput | undefined, keys: Set<string>) {
   for (const key of keys) {
     const value = source[key];
     if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
-      output[key] = Math.min(2_000_000, Math.round(value));
+      const maximum = key === "messageTokens" ? 250_000 : 2_000_000;
+      output[key] = Math.min(maximum, Math.round(value));
     }
   }
   return output;
-}
-
-function hasOwnModel(phase: OmPhaseInput | undefined): boolean {
-  return Boolean(phase && Object.hasOwn(phase, "model"));
-}
-
-function normalizedModel(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 export const observationalMemoryConfigRoute = registerApiRoute(
@@ -56,7 +48,6 @@ export const observationalMemoryConfigRoute = registerApiRoute(
         observation?: Record<string, unknown>;
         reflection?: Record<string, unknown>;
       };
-      const metadata = (thread.metadata ?? {}) as ThreadMetadata;
       return c.json({
         config: {
           observation: {
@@ -64,14 +55,12 @@ export const observationalMemoryConfigRoute = registerApiRoute(
               overrides.observation as OmPhaseInput | undefined,
               OBSERVATION_NUMBERS,
             ),
-            ...(metadata.observerModelId ? { model: metadata.observerModelId } : {}),
           },
           reflection: {
             ...numericOverrides(
               overrides.reflection as OmPhaseInput | undefined,
               REFLECTION_NUMBERS,
             ),
-            ...(metadata.reflectorModelId ? { model: metadata.reflectorModelId } : {}),
           },
         },
       });
@@ -92,13 +81,9 @@ export const updateObservationalMemoryConfigRoute = registerApiRoute(
       const reflection = phaseInput(config?.reflection);
       const observationNumbers = numericOverrides(observation, OBSERVATION_NUMBERS);
       const reflectionNumbers = numericOverrides(reflection, REFLECTION_NUMBERS);
-      const observerModelChanged = hasOwnModel(observation);
-      const reflectorModelChanged = hasOwnModel(reflection);
       if (
         Object.keys(observationNumbers).length === 0 &&
-        Object.keys(reflectionNumbers).length === 0 &&
-        !observerModelChanged &&
-        !reflectorModelChanged
+        Object.keys(reflectionNumbers).length === 0
       ) {
         return c.json(
           { error: "config must contain supported observation or reflection fields" },
@@ -139,32 +124,14 @@ export const updateObservationalMemoryConfigRoute = registerApiRoute(
         }
       }
 
-      const currentMetadata = (thread.metadata ?? {}) as ThreadMetadata;
-      const nextMetadata: ThreadMetadata = { ...currentMetadata };
-      if (observerModelChanged) {
-        const modelId = normalizedModel(observation?.model);
-        if (modelId) nextMetadata.observerModelId = modelId;
-        else delete nextMetadata.observerModelId;
-      }
-      if (reflectorModelChanged) {
-        const modelId = normalizedModel(reflection?.model);
-        if (modelId) nextMetadata.reflectorModelId = modelId;
-        else delete nextMetadata.reflectorModelId;
-      }
-      if (observerModelChanged || reflectorModelChanged) {
-        await memory.updateThread({ id: threadId, title: thread.title, metadata: nextMetadata });
-      }
-
       return c.json({
         ok: true,
         config: {
           observation: {
             ...observationNumbers,
-            ...(nextMetadata.observerModelId ? { model: nextMetadata.observerModelId } : {}),
           },
           reflection: {
             ...reflectionNumbers,
-            ...(nextMetadata.reflectorModelId ? { model: nextMetadata.reflectorModelId } : {}),
           },
         },
       });

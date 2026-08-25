@@ -4,7 +4,7 @@ import { MicIcon, SquareIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { DotmSquare18 } from "@/components/ui/dotm-square-18";
 import { cn } from "@/lib/utils";
 
 interface SpeechRecognition extends EventTarget {
@@ -303,7 +303,8 @@ export const SpeechInput = ({
         onClick={toggleListening}
         {...props}
       >
-        {isProcessing && <Spinner />}
+        {/* 音频均衡器点阵 = 正在转写语音,比通用转圈更贴合"处理声音"这件事 */}
+        {isProcessing && <DotmSquare18 size={16} dotSize={2} colorPreset="solid-theme" />}
         {!isProcessing && isListening && <SquareIcon className="size-4" />}
         {!(isProcessing || isListening) && <MicIcon className="size-4" />}
       </Button>

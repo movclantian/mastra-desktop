@@ -1,4 +1,4 @@
-import { CheckIcon, ChevronDownIcon, WrenchIcon, XIcon } from "lucide-react";
+import { CheckIcon, WrenchIcon, XIcon } from "lucide-react";
 import * as React from "react";
 import {
   ChainOfThought,
@@ -32,9 +32,13 @@ import {
 } from "@/components/ai-elements/stack-trace";
 import { Task, TaskContent, TaskItem, TaskTrigger } from "@/components/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/components/ai-elements/tool";
+import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import { AnimatedChevron } from "@/components/ui/animated-icon";
-import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
+import { DotmCircular4 } from "@/components/ui/dotm-circular-4";
+import { DotmHex1 } from "@/components/ui/dotm-hex-1";
+import { DotmSquare10 } from "@/components/ui/dotm-square-10";
+import { DotmTriangle2 } from "@/components/ui/dotm-triangle-2";
 import { getTraceStepStatus, type TracePart } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -44,6 +48,31 @@ import { getTraceStepStatus, type TracePart } from "../types";
 // 组件仍按 part 引用 memo:AI SDK 流式更新时未变更的 part 保持引用稳定
 // (AI SDK v5 特性),已完成步骤可跳过重渲染,这是流式不卡顿的根治手段。
 // ---------------------------------------------------------------------------
+
+/**
+ * 运行中指示器按工具类别分派点阵动效 —— 同一个转圈无法区分"在跑代码"
+ * 和"在联网检索",不同点阵各自对应一种真实工作形态:
+ * CRT 电子束扫描 = 沙箱执行、雷达 = 联网检索、蜂巢 = 知识库/RAG 检索、
+ * 核心涟漪 = 其余通用工具调用。
+ */
+function ToolRunningMatrix({ name }: { name: string }) {
+  const id = name.toLowerCase();
+  if (id.includes("execute_typescript") || id.includes("execute_command")) {
+    return <DotmSquare10 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  }
+  if (
+    id.includes("search") ||
+    id.includes("tavily") ||
+    id.includes("fetch") ||
+    id.includes("web")
+  ) {
+    return <DotmCircular4 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  }
+  if (id.includes("rag") || id.includes("knowledge") || id.includes("library")) {
+    return <DotmHex1 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  }
+  return <Dotm3x3_6 size={13} dotSize={2} colorPreset="solid-theme" />;
+}
 
 const ReasoningStepItem = React.memo(function ReasoningStepItem({
   part,
@@ -56,7 +85,13 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
   return (
     <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
       <Reasoning className="mb-0" defaultOpen={partStreaming} isStreaming={partStreaming}>
-        <ReasoningTrigger />
+        <div className="flex min-w-0 items-center gap-2">
+          <ReasoningTrigger />
+          {/* 三角波点阵 = 模型正在思考,与工具执行态的点阵形态明确区分 */}
+          {partStreaming ? (
+            <DotmTriangle2 size={14} dotSize={1.8} colorPreset="solid-theme" />
+          ) : null}
+        </div>
         {/*
          * 流式与完成态统一走 ReasoningContent(Streamdown):Streamdown 为流式
          * 增量解析设计,块级 memo,每 token 只重解析尾部未完成块 —— 与主回答
@@ -129,113 +164,115 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
   );
 
   return (
-    <Collapsible onOpenChange={setOpen} open={open}>
-      <TaskItem className="flex items-start gap-2">
-        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
-          {active ? (
-            <Dotm3x3_6 size={13} dotSize={2} colorPreset="solid-theme" />
-          ) : failed ? (
-            <XIcon className="size-3.5 text-destructive" />
+    <AnimatedCollapsible
+      open={open}
+      duration={0.24}
+      contentClassName="min-w-0"
+      trigger={
+        <TaskItem className="flex items-start gap-2">
+          <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+            {active ? (
+              <ToolRunningMatrix name={name} />
+            ) : failed ? (
+              <XIcon className="size-3.5 text-destructive" />
+            ) : (
+              <CheckIcon className="size-3.5 text-emerald-500" />
+            )}
+          </span>
+          {hasDetails ? (
+            <button
+              className="min-w-0 flex-1 break-words text-left"
+              onClick={() => setOpen(!open)}
+              type="button"
+            >
+              {summary}
+            </button>
           ) : (
-            <CheckIcon className="size-3.5 text-emerald-500" />
+            <span className="min-w-0 flex-1 break-words">{summary}</span>
           )}
-        </span>
-        {hasDetails ? (
-          <button
-            className="min-w-0 flex-1 break-words text-left"
-            onClick={() => setOpen(!open)}
-            type="button"
-          >
-            {summary}
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 break-words">{summary}</span>
-        )}
-        {hasDetails ? (
-          <ChevronDownIcon
-            className={`mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
-          />
-        ) : null}
-      </TaskItem>
+          {hasDetails ? (
+            <AnimatedChevron open={open} className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+          ) : null}
+        </TaskItem>
+      }
+    >
       {hasDetails ? (
-        <CollapsibleContent className="min-w-0">
-          <div className="mt-1 min-w-0 max-w-full space-y-2 pl-3">
-            {sandboxTool ? (
-              <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
-                <SandboxHeader
-                  state={part.state}
-                  title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
-                />
-                <SandboxContent className="min-w-0">
-                  <SandboxTabs defaultValue="code">
-                    <SandboxTabsBar>
-                      <SandboxTabsList>
-                        <SandboxTabsTrigger value="code">代码</SandboxTabsTrigger>
-                        <SandboxTabsTrigger value="output">输出</SandboxTabsTrigger>
-                      </SandboxTabsList>
-                    </SandboxTabsBar>
-                    <SandboxTabContent value="code">
+        <div className="mt-1 min-w-0 max-w-full space-y-2 pl-3">
+          {sandboxTool ? (
+            <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
+              <SandboxHeader
+                state={part.state}
+                title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
+              />
+              <SandboxContent className="min-w-0">
+                <SandboxTabs defaultValue="code">
+                  <SandboxTabsBar>
+                    <SandboxTabsList>
+                      <SandboxTabsTrigger value="code">代码</SandboxTabsTrigger>
+                      <SandboxTabsTrigger value="output">输出</SandboxTabsTrigger>
+                    </SandboxTabsList>
+                  </SandboxTabsBar>
+                  <SandboxTabContent value="code">
+                    <CodeBlock
+                      className="min-w-0 max-w-full rounded-none border-0"
+                      code={
+                        commandSandbox
+                          ? typeof input.command === "string"
+                            ? input.command
+                            : "# 正在生成命令..."
+                          : typeof input.code === "string"
+                            ? input.code
+                            : "// 正在生成代码..."
+                      }
+                      language={commandSandbox ? "bash" : "typescript"}
+                      showLineNumbers
+                    >
+                      <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                    </CodeBlock>
+                  </SandboxTabContent>
+                  <SandboxTabContent value="output">
+                    {failed ? (
+                      <StackTrace
+                        className="rounded-none border-0"
+                        defaultOpen
+                        trace={sandboxOutput || errorText || "执行失败"}
+                      >
+                        <StackTraceHeader>
+                          <StackTraceError>
+                            <StackTraceErrorType />
+                            <StackTraceErrorMessage />
+                          </StackTraceError>
+                          <StackTraceActions>
+                            <StackTraceCopyButton />
+                            <StackTraceExpandButton />
+                          </StackTraceActions>
+                        </StackTraceHeader>
+                        <StackTraceContent>
+                          <StackTraceFrames />
+                        </StackTraceContent>
+                      </StackTrace>
+                    ) : (
                       <CodeBlock
                         className="min-w-0 max-w-full rounded-none border-0"
-                        code={
-                          commandSandbox
-                            ? typeof input.command === "string"
-                              ? input.command
-                              : "# 正在生成命令..."
-                            : typeof input.code === "string"
-                              ? input.code
-                              : "// 正在生成代码..."
-                        }
-                        language={commandSandbox ? "bash" : "typescript"}
-                        showLineNumbers
+                        code={sandboxOutput || "正在等待输出…"}
+                        language="log"
                       >
                         <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
                       </CodeBlock>
-                    </SandboxTabContent>
-                    <SandboxTabContent value="output">
-                      {failed ? (
-                        <StackTrace
-                          className="rounded-none border-0"
-                          defaultOpen
-                          trace={sandboxOutput || errorText || "执行失败"}
-                        >
-                          <StackTraceHeader>
-                            <StackTraceError>
-                              <StackTraceErrorType />
-                              <StackTraceErrorMessage />
-                            </StackTraceError>
-                            <StackTraceActions>
-                              <StackTraceCopyButton />
-                              <StackTraceExpandButton />
-                            </StackTraceActions>
-                          </StackTraceHeader>
-                          <StackTraceContent>
-                            <StackTraceFrames />
-                          </StackTraceContent>
-                        </StackTrace>
-                      ) : (
-                        <CodeBlock
-                          className="min-w-0 max-w-full rounded-none border-0"
-                          code={sandboxOutput || "正在等待输出…"}
-                          language="log"
-                        >
-                          <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
-                        </CodeBlock>
-                      )}
-                    </SandboxTabContent>
-                  </SandboxTabs>
-                </SandboxContent>
-              </Sandbox>
-            ) : (
-              <>
-                {hasInput ? <ToolInput input={part.input} /> : null}
-                {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
-              </>
-            )}
-          </div>
-        </CollapsibleContent>
+                    )}
+                  </SandboxTabContent>
+                </SandboxTabs>
+              </SandboxContent>
+            </Sandbox>
+          ) : (
+            <>
+              {hasInput ? <ToolInput input={part.input} /> : null}
+              {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
+            </>
+          )}
+        </div>
       ) : null}
-    </Collapsible>
+    </AnimatedCollapsible>
   );
 });
 

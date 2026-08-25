@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import AdmZip from "adm-zip";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import {
   categorizeSkillResources,
   getMarketplaceSkillDetail,
@@ -152,7 +152,15 @@ async function unpackSkillArchive(buffer: Buffer, filename: string, resourceId?:
 export const skillsRoute = registerApiRoute("/work/skills", {
   method: "GET",
   handler: async (c) => {
-    const skills = await c.get("mastra").getAgent("mastraWorkAgent").listSkills();
+    const root = getManagedSkillsDirectory(resourceIdFromRequest(c));
+    const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+    const skills = (
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => readLocalSkill(resolve(root, entry.name)).catch(() => null)),
+      )
+    ).filter((s): s is NonNullable<typeof s> => Boolean(s));
     return c.json({ skills });
   },
 });
@@ -160,10 +168,13 @@ export const skillsRoute = registerApiRoute("/work/skills", {
 export const skillRoute = registerApiRoute("/work/skills/:name", {
   method: "GET",
   handler: async (c) => {
-    const skill = await c
-      .get("mastra")
-      .getAgent("mastraWorkAgent")
-      .getSkill(decodeURIComponent(c.req.param("name")));
+    const name = basename(decodeURIComponent(c.req.param("name")));
+    const root = getManagedSkillsDirectory(resourceIdFromRequest(c));
+    const target = resolve(root, name);
+    if (!isWithin(root, target) || target === root) {
+      throw workError("VALIDATION_FAILED", { text: "技能路径无效" });
+    }
+    const skill = await readLocalSkill(target).catch(() => null);
     if (!skill) throw workError("SKILL_NOT_FOUND");
     return c.json({ skill });
   },
@@ -200,7 +211,7 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
         );
         skillsSh = await Promise.race([listSkillsShSkills(query, forceRefresh), timeoutPromise]);
       } catch (error) {
-        skillsShError = error instanceof Error ? error.message : "skills.sh 暂时不可用";
+        skillsShError = errorText(error, "skills.sh 暂时不可用");
       }
       const skills = [
         ...builtinSkills
@@ -236,7 +247,7 @@ export const builtinSkillsRoute = registerApiRoute("/work/skills/registry", {
       });
     } catch (error) {
       throw workError("SKILL_READ_FAILED", {
-        text: error instanceof Error ? error.message : "读取内置技能失败",
+        text: errorText(error, "读取内置技能失败"),
         cause: error,
       });
     }
@@ -264,10 +275,7 @@ export const builtinSkillRoute = registerApiRoute("/work/skills/registry/:name",
         },
       });
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : "读取内置技能详情失败" },
-        500,
-      );
+      return c.json({ error: errorText(error, "读取内置技能详情失败") }, 500);
     }
   },
 });
@@ -292,10 +300,7 @@ export const marketplaceSkillRoute = registerApiRoute("/work/skills/marketplaces
         ),
       });
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : "读取市场技能详情失败" },
-        404,
-      );
+      return c.json({ error: errorText(error, "读取市场技能详情失败") }, 404);
     }
   },
 });
@@ -319,10 +324,7 @@ export const skillsShSkillRoute = registerApiRoute("/work/skills/skills-sh/skill
         },
       });
     } catch (error) {
-      return c.json(
-        { error: error instanceof Error ? error.message : "读取 skills.sh 技能详情失败" },
-        404,
-      );
+      return c.json({ error: errorText(error, "读取 skills.sh 技能详情失败") }, 404);
     }
   },
 });
@@ -336,7 +338,7 @@ export const skillsShCuratedRoute = registerApiRoute("/work/skills/skills-sh/cur
     } catch (error) {
       return c.json(
         {
-          error: error instanceof Error ? error.message : "获取官方精选技能失败",
+          error: errorText(error, "获取官方精选技能失败"),
           data: [],
           totalOwners: 0,
           totalSkills: 0,
@@ -403,7 +405,7 @@ export const skillsShListRoute = registerApiRoute("/work/skills/skills-sh/list",
     } catch (error) {
       return c.json(
         {
-          error: error instanceof Error ? error.message : "读取 skills.sh 技能列表失败",
+          error: errorText(error, "读取 skills.sh 技能列表失败"),
           skills: [],
           total: 0,
           page: 0,
@@ -430,7 +432,7 @@ export const saveSkillMarketplaceRoute = registerApiRoute("/work/skills/marketpl
       return c.json({ marketplace }, 201);
     } catch (error) {
       throw workError("VALIDATION_FAILED", {
-        text: error instanceof Error ? error.message : "保存技能市场失败",
+        text: errorText(error, "保存技能市场失败"),
         cause: error,
       });
     }
@@ -475,7 +477,7 @@ export const installMarketplaceSkillRoute = registerApiRoute(
         return c.json({ skill }, 201);
       } catch (error) {
         throw workError("SKILL_INSTALL_FAILED", {
-          text: error instanceof Error ? error.message : "安装市场技能失败",
+          text: errorText(error, "安装市场技能失败"),
           cause: error,
         });
       }
@@ -505,7 +507,7 @@ export const installBuiltinSkillRoute = registerApiRoute("/work/skills/registry/
     } catch (error) {
       await rm(targetRoot, { recursive: true, force: true }).catch(() => undefined);
       throw workError("SKILL_INSTALL_FAILED", {
-        text: error instanceof Error ? error.message : "安装技能失败",
+        text: errorText(error, "安装技能失败"),
         cause: error,
       });
     }
@@ -531,7 +533,7 @@ export const installSkillsShSkillRoute = registerApiRoute("/work/skills/skills-s
         throw workError("SKILL_ALREADY_INSTALLED", { cause: error });
       }
       throw workError("SKILL_INSTALL_FAILED", {
-        text: error instanceof Error ? error.message : "安装 skills.sh 技能失败",
+        text: errorText(error, "安装 skills.sh 技能失败"),
         cause: error,
       });
     }
@@ -557,7 +559,7 @@ export const uploadSkillRoute = registerApiRoute("/work/skills", {
       return c.json({ skill }, 201);
     } catch (error) {
       throw workError("SKILL_PACKAGE_INVALID", {
-        text: error instanceof Error ? error.message : "技能包解析失败",
+        text: errorText(error, "技能包解析失败"),
         cause: error,
       });
     }
@@ -606,7 +608,7 @@ export const importSkillRoute = registerApiRoute("/work/skills/import", {
       return c.json({ skill }, 201);
     } catch (error) {
       throw workError("SKILL_PACKAGE_INVALID", {
-        text: error instanceof Error ? error.message : "导入技能失败",
+        text: errorText(error, "导入技能失败"),
         cause: error,
       });
     }
@@ -616,11 +618,9 @@ export const importSkillRoute = registerApiRoute("/work/skills/import", {
 export const deleteSkillRoute = registerApiRoute("/work/skills/:name", {
   method: "DELETE",
   handler: async (c) => {
-    const agent = c.get("mastra").getAgent("mastraWorkAgent");
-    const skill = await agent.getSkill(decodeURIComponent(c.req.param("name")));
-    if (!skill) throw workError("SKILL_NOT_FOUND");
+    const name = basename(decodeURIComponent(c.req.param("name")));
     const root = resolve(getManagedSkillsDirectory(resourceIdFromRequest(c)));
-    const target = isAbsolute(skill.path) ? resolve(skill.path) : resolve(root, skill.path);
+    const target = resolve(root, name);
     if (!isWithin(root, target) || target === root) throw workError("SKILL_MANAGED_ONLY");
     await rm(target, { recursive: true, force: true });
     return c.json({ ok: true });

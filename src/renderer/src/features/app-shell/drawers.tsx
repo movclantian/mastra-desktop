@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Spinner } from "@/components/ui/spinner";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
 import { cn } from "@/lib/utils";
 
 const WorkspacePanel = React.lazy(() => import("@/features/workspace/pages/workspace-panel"));
@@ -8,7 +8,7 @@ const TerminalPanel = React.lazy(() => import("@/features/terminal/terminal-pane
 export function PanelFallback() {
   return (
     <div className="flex size-full items-center justify-center bg-background">
-      <Spinner className="size-5" />
+      <Dotm3x3_1 size={20} dotSize={3} colorPreset="solid-theme" />
     </div>
   );
 }

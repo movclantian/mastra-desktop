@@ -35,10 +35,8 @@ import {
 } from "../agents/custom";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../agents/permissions";
-import { SUBAGENT_MODELS_CONTEXT_KEY } from "../agents/subagents";
 import { workError } from "../errors";
 import { isTerminalAgentChunk, workSessionHost } from "../harness";
-import { OM_MODELS_CONTEXT_KEY } from "../memory";
 import {
   defaultModelFamily,
   REQUEST_MODEL_CONTEXT_KEY,
@@ -69,9 +67,13 @@ import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
-import { generateThreadTitleHelper, getWorkMemory } from "./threads";
-import { persistMessageBranchOperation, prepareMessageBranchOperation } from "./threads/branches";
-import { getOwnedThread, getWorkMemoryForThread } from "./threads/shared";
+import { getWorkMemory } from "./threads";
+import { removeObservationalMemoryReferences } from "./threads/compact";
+import {
+  getOwnedThread,
+  getWorkMemoryForThread,
+  normalizeChatHistoryMessages,
+} from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
 
 /** 消息 metadata:用量 + 用户显式引用,前端据此显示上下文与强调徽章 */
@@ -116,6 +118,61 @@ type WorkDataParts = {
 
 type WorkUIMessage = UIMessage<WorkMessageMetadata, WorkDataParts>;
 
+async function truncateHistoryForRewrite(options: {
+  memory: Memory;
+  threadId: string;
+  resourceId: string;
+  trigger?: unknown;
+  messageId?: unknown;
+}): Promise<void> {
+  if (
+    (options.trigger !== "regenerate-message" && options.trigger !== "submit-message") ||
+    typeof options.messageId !== "string"
+  ) {
+    return;
+  }
+
+  const recalled = await options.memory.recall({
+    threadId: options.threadId,
+    resourceId: options.resourceId,
+    perPage: false,
+  });
+  const messages = recalled.messages ?? [];
+  const targetIndex = messages.findIndex((message) => message.id === options.messageId);
+  const target = targetIndex >= 0 ? messages[targetIndex] : undefined;
+  if (!target) throw workError("MESSAGE_NOT_FOUND");
+  // AI SDK uses the last assistant message id when sendMessage(undefined)
+  // submits an approval response. That is a native approval resume, not a
+  // user edit, so its persisted history must remain untouched.
+  if (options.trigger === "submit-message" && target.role === "assistant") return;
+  if (
+    (options.trigger === "regenerate-message" && target.role !== "assistant") ||
+    (options.trigger === "submit-message" && target.role !== "user")
+  ) {
+    throw workError("MESSAGE_NOT_FOUND");
+  }
+
+  const startIndex = options.trigger === "regenerate-message" ? targetIndex : targetIndex + 1;
+  const messageIds = messages.slice(startIndex).map((message) => message.id);
+  if (messageIds.length === 0) return;
+
+  await options.memory.settled();
+  let restoreObservations: (() => Promise<void>) | undefined;
+  try {
+    restoreObservations = await removeObservationalMemoryReferences(
+      options.memory,
+      options.threadId,
+      options.resourceId,
+      messageIds,
+    );
+    await options.memory.deleteMessages(messageIds);
+  } catch (error) {
+    await restoreObservations?.();
+    throw error;
+  }
+  await options.memory.settled();
+}
+
 function userMessageInput(message: WorkUIMessage): AgentMessageInput | undefined {
   type AgentMessageContents = Exclude<AgentSignalContents, string>;
   const contents = message.parts.reduce<AgentMessageContents>((result, part) => {
@@ -150,6 +207,8 @@ async function normalizeIncrementalMessages(options: {
   messages: WorkUIMessage[];
   trigger?: unknown;
   messageId?: unknown;
+  runId?: unknown;
+  toolCallId?: unknown;
   resumeData?: unknown;
 }): Promise<WorkUIMessage[]> {
   if (!Array.isArray(options.messages)) {
@@ -161,6 +220,10 @@ async function normalizeIncrementalMessages(options: {
     perPage: false,
   });
   const persistedIds = new Set((persisted.messages ?? []).map((message) => message.id));
+  const persistedChatMessages = toAISdkMessages(
+    normalizeChatHistoryMessages(persisted.messages ?? []),
+    { version: "v7" },
+  ) as WorkUIMessage[];
   const unique = new Map<string, WorkUIMessage>();
   for (const message of options.messages) {
     if (!message || typeof message.id !== "string" || !message.id.trim()) {
@@ -178,38 +241,7 @@ async function normalizeIncrementalMessages(options: {
     // AI SDK removes the target assistant from the request before sending it.
     // Resolve it from Memory and use the preceding persisted user turn as the
     // only input for the new run.
-    const thread = await options.memory.getThreadById({ threadId: options.threadId });
-    const branchMessageIds = new Set<string>();
-    const branchAssistantIds = new Set<string>();
-    const branches = (thread?.metadata as { messageBranches?: unknown } | undefined)
-      ?.messageBranches;
-    if (branches && typeof branches === "object" && !Array.isArray(branches)) {
-      for (const branch of Object.values(branches as Record<string, unknown>)) {
-        if (typeof branch !== "object" || branch === null) continue;
-        const versions = (branch as { versions?: unknown }).versions;
-        if (!Array.isArray(versions)) continue;
-        for (const version of versions) {
-          const id =
-            typeof version === "object" && version !== null
-              ? (version as { message?: { id?: unknown } }).message?.id
-              : undefined;
-          if (typeof id === "string") branchMessageIds.add(id);
-          if (
-            typeof id === "string" &&
-            typeof version === "object" &&
-            version !== null &&
-            (version as { role?: unknown }).role === "assistant"
-          ) {
-            branchAssistantIds.add(id);
-          }
-        }
-      }
-    }
-    if (
-      options.messages.some(
-        (message) => !persistedIds.has(message.id) && !branchMessageIds.has(message.id),
-      )
-    ) {
+    if (options.messages.some((message) => !persistedIds.has(message.id))) {
       throw workError("VALIDATION_FAILED", {
         text: "Regeneration may only reference persisted messages",
       });
@@ -218,19 +250,7 @@ async function normalizeIncrementalMessages(options: {
       (message) => message.id === targetId,
     );
     const target = persisted.messages?.[persistedIndex];
-    if (!target) {
-      if (!branchAssistantIds.has(targetId)) throw workError("MESSAGE_NOT_FOUND");
-      const parent = [...options.messages].reverse().find((message) => message.role === "user");
-      if (!parent) {
-        throw workError("VALIDATION_FAILED", {
-          text: "The regenerated branch has no user turn",
-        });
-      }
-      return [parent];
-    }
-    if (target.role !== "assistant") {
-      throw workError("MESSAGE_NOT_FOUND");
-    }
+    if (target?.role !== "assistant") throw workError("MESSAGE_NOT_FOUND");
     const previousUser = [...(persisted.messages ?? []).slice(0, persistedIndex)]
       .reverse()
       .find((message) => message.role === "user");
@@ -251,26 +271,30 @@ async function normalizeIncrementalMessages(options: {
   }
 
   const current = options.messages.filter((message) => !persistedIds.has(message.id));
-  if (options.resumeData) {
+  if (options.resumeData !== undefined) {
     if (current.length > 0) {
       throw workError("VALIDATION_FAILED", {
-        text: "Approval responses may only reference persisted messages",
+        text: "Tool resume responses may only reference persisted messages",
+      });
+    }
+    const runId = typeof options.runId === "string" ? options.runId.trim() : "";
+    const toolCallId = typeof options.toolCallId === "string" ? options.toolCallId.trim() : "";
+    if (!runId || !toolCallId) {
+      throw workError("VALIDATION_FAILED", {
+        text: "runId and toolCallId are required for tool resume responses",
       });
     }
     const latest = options.messages.at(-1);
-    if (
-      !latest ||
-      !persistedIds.has(latest.id) ||
-      latest.role !== "assistant" ||
-      !latest.parts.some((part) => {
-        const type =
-          typeof part === "object" && part !== null ? (part as { type?: unknown }).type : undefined;
-        return typeof type === "string" && type.includes("approval");
-      })
-    ) {
-      throw workError("VALIDATION_FAILED", { text: "A persisted approval message is required" });
+    if (!latest || !persistedIds.has(latest.id) || latest.role !== "assistant") {
+      throw workError("VALIDATION_FAILED", {
+        text: "A persisted tool interaction message is required",
+      });
     }
-    return [latest];
+    const persistedLatest = persistedChatMessages.find((message) => message.id === latest.id);
+    if (!persistedLatest) {
+      throw workError("MESSAGE_NOT_FOUND");
+    }
+    return [persistedLatest];
   }
 
   // 未落库的消息一律只能是用户回合:客户端伪造的助手历史到此为止,永远进不了
@@ -284,25 +308,24 @@ async function normalizeIncrementalMessages(options: {
   const newestUser = current.at(-1);
   if (newestUser) return [newestUser];
 
-  // Edits reuse the persisted user message id. The branch operation has already
-  // captured the old version, so the replacement is the only message sent to the run.
+  // Edits reuse the persisted user message id; send only the replacement to the run.
   if (trigger === "submit-message" && targetId) {
     const replacement = unique.get(targetId);
     if (replacement?.role === "user") return [replacement];
   }
 
-  // Approval responses reuse the persisted assistant row and are consumed by
-  // handleChatStream; no historical rows need to cross this boundary.
+  // Native approval responses reuse the persisted assistant row. The request
+  // target came from listSuspendedRuns(); Mastra's handleChatStream owns the
+  // UI-message approval conversion and resume operation.
   const latest = options.messages.at(-1);
-  const latestParts = latest?.parts ?? [];
-  const isApproval =
-    latest?.role === "assistant" &&
-    latestParts.some((part) => {
-      const type =
-        typeof part === "object" && part !== null ? (part as { type?: unknown }).type : undefined;
-      return typeof type === "string" && type.includes("approval");
-    });
-  if (isApproval && latest && persistedIds.has(latest.id)) return [latest];
+  const nativeApprovalTarget =
+    typeof options.runId === "string" &&
+    options.runId.trim() &&
+    typeof options.toolCallId === "string" &&
+    options.toolCallId.trim();
+  if (latest && persistedIds.has(latest.id) && nativeApprovalTarget) {
+    return [latest];
+  }
 
   throw workError("VALIDATION_FAILED", { text: "A new user message is required" });
 }
@@ -506,8 +529,6 @@ async function persistLatestUsage(
   resourceId: string | undefined,
   usage: LanguageModelUsage | undefined,
   requestContext: RequestContext,
-  userMessageText?: string,
-  model?: unknown,
 ) {
   if (!threadId) return;
   const memory = resourceId
@@ -516,27 +537,8 @@ async function persistLatestUsage(
   const thread = await memory.getThreadById({ threadId });
   if (!thread) return;
 
-  let title = thread.title;
-  // 首轮消息自动智能提炼标题：仅在标题仍为默认或草稿时生成
-  if (resourceId && (thread.title === "New Chat" || thread.metadata?.draft)) {
-    try {
-      const generated = await generateThreadTitleHelper({
-        threadId,
-        resourceId,
-        userMessage: userMessageText,
-        model,
-        force: false,
-        requestContext,
-      });
-      if (generated) title = generated;
-    } catch {
-      // 保证主流程永不因起名中断
-    }
-  }
-
   await memory.updateThread({
     id: threadId,
-    title,
     // draft 一经产生真实消息往来即失效(新会话线程 = 无任何历史消息)
     metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
   });
@@ -570,9 +572,6 @@ async function prepareThreadSession(options: {
       workspacePath?: string;
       modeId: string;
       permissionRules: unknown;
-      subagentModels?: Record<string, string>;
-      observerModelId?: string;
-      reflectorModelId?: string;
       agentProfileId: string;
     }
   | undefined
@@ -646,9 +645,6 @@ async function prepareThreadSession(options: {
     workspacePath,
     modeId,
     permissionRules: metadata.permissionRules,
-    subagentModels: metadata.subagentModels,
-    observerModelId: metadata.observerModelId,
-    reflectorModelId: metadata.reflectorModelId,
     agentProfileId: profile.id,
   };
 }
@@ -727,15 +723,16 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       messages: body.messages,
       trigger: body.trigger,
       messageId: body.messageId,
+      runId: body.runId,
+      toolCallId: body.toolCallId,
       resumeData: body.resumeData,
     });
-    const branchOperation = await prepareMessageBranchOperation({
+    await truncateHistoryForRewrite({
       memory: requestMemory,
-      threadId: body.memory?.thread,
-      resourceId: body.memory?.resource,
+      threadId: body.memory.thread,
+      resourceId: authenticatedResourceId,
       trigger: body.trigger,
       messageId: body.messageId,
-      requestMessages: body.messages,
     });
     const mastra = c.get("mastra");
     if (body.memory?.resource) {
@@ -855,16 +852,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         if (session.permissionRules !== undefined) {
           requestContext.set(PERMISSION_RULES_CONTEXT_KEY, session.permissionRules);
         }
-        if (session.subagentModels) {
-          requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, session.subagentModels);
-        }
         requestContext.set(AGENT_PROFILE_CONTEXT_KEY, session.agentProfileId);
-        if (session.observerModelId || session.reflectorModelId) {
-          requestContext.set(OM_MODELS_CONTEXT_KEY, {
-            observerModelId: session.observerModelId,
-            reflectorModelId: session.reflectorModelId,
-          });
-        }
         if (body.memory.resource) {
           const liveSession = workSessionHost.getOrCreate({
             resourceId: body.memory.resource,
@@ -874,6 +862,30 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           });
           liveSession.setMode(session.modeId);
         }
+      }
+    }
+    const explicitResumeTarget =
+      typeof body.runId === "string" && typeof body.toolCallId === "string"
+        ? { runId: body.runId.trim(), toolCallId: body.toolCallId.trim() }
+        : undefined;
+    const resumeTargets = explicitResumeTarget ? [explicitResumeTarget] : [];
+    if (resumeTargets.length > 0 && body.memory?.thread && body.memory.resource) {
+      // Mastra storage is the source of truth for suspended tools. Message
+      // parts are only the AI SDK transport representation and must not be
+      // reinterpreted here.
+      const { runs } = await profileAgent.listSuspendedRuns({
+        threadId: body.memory.thread,
+        resourceId: body.memory.resource,
+      });
+      const allTargetsPending = resumeTargets.every((target) =>
+        runs
+          .find((run) => run.runId === target.runId)
+          ?.toolCalls.some((toolCall) => toolCall.toolCallId === target.toolCallId),
+      );
+      if (!allTargetsPending) {
+        throw workError("VALIDATION_FAILED", {
+          text: "The requested tool interaction is no longer pending",
+        });
       }
     }
     // 检索到的资料库片段以「本轮专属的对话消息」下发(AgentExecutionOptions.context,
@@ -898,12 +910,12 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           model && typeof model === "object" && "doGenerate" in model && "doStream" in model
             ? (model as unknown as MastraLanguageModel)
             : undefined;
-        const hits = await searchLibrary(
-          body.memory.resource,
+        const hits = await searchLibrary({
+          resourceId: body.memory.resource,
           query,
-          body.memory.thread,
+          threadId: body.memory.thread,
           rerankModel,
-        );
+        });
         if (hits.length > 0) {
           const origin = new URL(c.req.url).origin;
           librarySources = hits.map((hit) => ({
@@ -1039,27 +1051,12 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       durableClientStream(stream, {
         librarySources: librarySources ?? [],
         onFinish: async (usage) => {
-          const firstUserMsg = [...body.messages].find((m) => m.role === "user");
-          const firstUserText = firstUserMsg?.parts
-            .filter((p) => p.type === "text")
-            .map((p) => ("text" in p ? p.text : ""))
-            .join(" ")
-            .trim();
           await persistLatestUsage(
             body.memory?.thread,
             body.memory?.resource,
             usage,
             requestContext,
-            firstUserText,
-            model,
           );
-          await persistMessageBranchOperation({
-            memory: requestMemory,
-            threadId: body.memory?.thread,
-            resourceId: body.memory?.resource,
-            operation: branchOperation,
-            requestMessages: body.messages,
-          });
         },
       });
     if (sessionAction === "steer" && body.memory?.thread && body.memory.resource) {
@@ -1111,7 +1108,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         typeof body.messageId !== "string" &&
         body.runId === undefined &&
         body.resumeData === undefined &&
-        branchOperation === undefined &&
         latestMessage?.role === "user" &&
         sessionMemory?.thread &&
         sessionMemory.resource,

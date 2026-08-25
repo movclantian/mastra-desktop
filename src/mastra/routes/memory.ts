@@ -4,9 +4,11 @@
  * 参数语义参考 docs/en/docs/memory/{overview,semantic-recall,working-memory}.mdx。
  */
 
+import { getThreadOMMetadata } from "@mastra/core/memory";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { getMemoryConfig, type MemoryUserConfig, saveMemoryConfig } from "../memory";
+import { getWorkMemory } from "./threads/shared";
 
 // GET /work/memory — 读取当前记忆配置
 export const memoryConfigRoute = registerApiRoute("/work/memory", {
@@ -27,5 +29,78 @@ export const saveMemoryConfigRoute = registerApiRoute("/work/memory", {
       c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
     );
     return c.json({ ok: true });
+  },
+});
+
+/**
+ * GET /work/memory/profile — 当前用户的工作记忆与 OM extractor 结果。
+ * Extractors 按线程持久化在 thread.metadata.mastra.om.extracted,因此这里按
+ * 最近更新时间合并同一 resource 下的线程,并返回来源线程供设置页追溯。
+ */
+export const memoryProfileRoute = registerApiRoute("/work/memory/profile", {
+  method: "GET",
+  handler: async (c) => {
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) return c.json({ workingMemory: null, extractors: [] });
+
+    const memory = await getWorkMemory(c.get("requestContext"));
+    const { threads } = await memory.listThreads({
+      filter: { resourceId },
+      perPage: false,
+      orderBy: { field: "updatedAt", direction: "DESC" },
+    });
+    const config = await getMemoryConfig(resourceId);
+    const configuredExtractors = new Map(
+      config.omExtractors.map((extractor) => [extractor.name.toLowerCase(), extractor.name]),
+    );
+    const extracted = new Map<
+      string,
+      {
+        slug: string;
+        name: string;
+        value: unknown;
+        threadId: string;
+        threadTitle: string;
+        updatedAt: string;
+      }
+    >();
+
+    for (const thread of [...threads].sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    )) {
+      const values = getThreadOMMetadata(thread.metadata)?.extracted;
+      if (!values || typeof values !== "object") continue;
+      for (const [slug, value] of Object.entries(values)) {
+        if (value === null || value === "" || extracted.has(slug)) continue;
+        const configuredName = [...configuredExtractors.entries()].find(
+          ([name]) =>
+            slug ===
+            name
+              .replace(/[^a-z0-9]+/gi, "-")
+              .replace(/^-|-$/g, "")
+              .toLowerCase(),
+        )?.[1];
+        extracted.set(slug, {
+          slug,
+          name: configuredName ?? slug,
+          value,
+          threadId: thread.id,
+          threadTitle: thread.title?.trim() || "New Chat",
+          updatedAt: thread.updatedAt.toISOString(),
+        });
+      }
+    }
+
+    const workingMemory = threads[0]
+      ? await memory.getWorkingMemory({
+          threadId: threads[0].id,
+          resourceId,
+        })
+      : null;
+    return c.json({
+      workingMemory,
+      extractors: [...extracted.values()],
+      threadCount: threads.length,
+    });
   },
 });

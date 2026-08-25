@@ -47,6 +47,10 @@ function parseMetadata(value: string | undefined): Record<string, unknown> | und
   }
 }
 
+function toUiThread<T extends { title?: string }>(thread: T): T & { title: string } {
+  return { ...thread, title: thread.title?.trim() || "New Chat" };
+}
+
 // GET /work/threads?resourceId=xxx — 列出用户全部线程
 export const listThreadsRoute = registerApiRoute("/work/threads", {
   method: "GET",
@@ -82,7 +86,7 @@ export const listThreadsRoute = registerApiRoute("/work/threads", {
           }
         : {}),
     });
-    // Studio 直连/连接测试/工作记忆等路径产生的线程 metadata 可能为 null,
+    // Studio 直连/工作记忆等路径产生的线程 metadata 可能为 null,
     // 统一归一化成对象并结合底层 agent 状态探测线程是否在后台活跃运行中
     const threads = await Promise.all(
       result.threads.map(async (thread) => {
@@ -95,7 +99,7 @@ export const listThreadsRoute = registerApiRoute("/work/threads", {
           .profile;
         const activeRunId = agent.getActiveThreadRunId({ resourceId, threadId: thread.id }) ?? null;
         return {
-          ...thread,
+          ...toUiThread(thread),
           metadata: {
             ...metadata,
             ...(activeRunId ? { activeRunId, isWorking: true } : {}),
@@ -148,17 +152,15 @@ export const createThreadRoute = registerApiRoute("/work/threads", {
             );
             const cleaned = await memory.updateThread({
               id: candidate.id,
-              title: candidate.title,
               metadata,
             });
-            return c.json({ thread: cleaned });
+            return c.json({ thread: toUiThread(cleaned) });
           }
-          return c.json({ thread: candidate });
+          return c.json({ thread: toUiThread(candidate) });
         }
         // 有消息的 draft 是残留标记(如自动生成标题失败/未触发改名),清除后继续
         await memory.updateThread({
           id: candidate.id,
-          title: candidate.title,
           metadata: { ...candidate.metadata, draft: false },
         });
       }
@@ -166,10 +168,10 @@ export const createThreadRoute = registerApiRoute("/work/threads", {
     const thread = await memory.createThread({
       threadId: body.threadId,
       resourceId: body.resourceId,
-      title: body.title ?? "New Chat",
+      ...(body.title?.trim() ? { title: body.title } : {}),
       metadata: body.metadata ?? {},
     });
-    return c.json({ thread }, 201);
+    return c.json({ thread: toUiThread(thread) }, 201);
   },
 });
 
@@ -208,10 +210,10 @@ export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
     }
     const thread = await memory.updateThread({
       id: threadId,
-      title: body.title ?? existing.title,
+      ...(body.title !== undefined ? { title: body.title } : {}),
       metadata: { ...existing.metadata, ...body.metadata },
     });
-    return c.json({ thread });
+    return c.json({ thread: toUiThread(thread) });
   },
 });
 

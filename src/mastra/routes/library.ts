@@ -13,7 +13,7 @@ import Busboy from "@fastify/busboy";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import {
   cancelLibraryUploadSession,
   completeLibraryUploadSession,
@@ -232,7 +232,7 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
         );
       }
       throw workError("LIBRARY_FILE_TOO_LARGE", {
-        text: error instanceof Error ? error.message : "上传失败",
+        text: errorText(error, "上传失败"),
         cause: error,
       });
     }
@@ -268,7 +268,7 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
       return c.json({ session }, 201);
     } catch (error) {
       throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: error instanceof Error ? error.message : "创建上传会话失败",
+        text: errorText(error, "创建上传会话失败"),
         cause: error,
       });
     }
@@ -314,7 +314,7 @@ export const libraryUploadChunkRoute = registerApiRoute(
       } catch (error) {
         if (chunk) await rm(chunk.tempPath, { force: true }).catch(() => undefined);
         throw workError("LIBRARY_UPLOAD_FAILED", {
-          text: error instanceof Error ? error.message : "上传分片失败",
+          text: errorText(error, "上传分片失败"),
           cause: error,
         });
       }
@@ -336,7 +336,7 @@ export const completeLibraryUploadRoute = registerApiRoute(
         });
       } catch (error) {
         throw workError("LIBRARY_UPLOAD_FAILED", {
-          text: error instanceof Error ? error.message : "完成上传失败",
+          text: errorText(error, "完成上传失败"),
           cause: error,
         });
       }
@@ -412,7 +412,7 @@ export const reindexLibraryAssetRoute = registerApiRoute("/work/library/assets/:
       return c.json({ assetId: c.req.param("assetId"), status: "indexing" }, 202);
     } catch (error) {
       throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: error instanceof Error ? error.message : "重新索引失败",
+        text: errorText(error, "重新索引失败"),
         cause: error,
       });
     }
@@ -437,7 +437,7 @@ export const reindexFailedLibraryAssetsRoute = registerApiRoute("/work/library/r
       return c.json({ assetIds: retryable.map((asset) => asset.id), status: "indexing" }, 202);
     } catch (error) {
       throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: error instanceof Error ? error.message : "批量重新索引失败",
+        text: errorText(error, "批量重新索引失败"),
         cause: error,
       });
     }

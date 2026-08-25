@@ -1,4 +1,10 @@
-import type { FileUIPart, LanguageModelUsage, UIMessage } from "ai";
+import {
+  type FileUIPart,
+  getToolName as getAISDKToolName,
+  isToolUIPart,
+  type LanguageModelUsage,
+  type UIMessage,
+} from "ai";
 import type { ToolPart } from "@/components/ai-elements/tool";
 import type { PermissionPolicy, ToolCategory } from "@/features/session/session-policy";
 
@@ -87,21 +93,6 @@ export interface AgentToolState {
   toolCallId: string;
   name: string;
   status: "streaming_input" | "running" | "completed" | "error";
-}
-
-export interface MessageBranchVersion {
-  id: string;
-  role: "user" | "assistant";
-  createdAt: string;
-  message: WorkUIMessage;
-  /** 父子配对版本 id:切换本侧分支时,另一侧分支同步切到该版本。 */
-  pairVersionId?: string;
-}
-
-export interface MessageBranchRecord {
-  rootId: string;
-  currentVersionId: string;
-  versions: MessageBranchVersion[];
 }
 
 export type MessagePart = UIMessage["parts"][number];
@@ -797,14 +788,13 @@ export function parseSuspendedRuns(value: unknown): AgentInteraction[] {
 }
 
 export function getToolName(part: MessagePart): string | undefined {
-  if (part.type === "dynamic-tool") return part.toolName;
-  return part.type.startsWith("tool-") ? part.type.slice("tool-".length) : undefined;
+  return isToolUIPart(part) ? getAISDKToolName(part) : undefined;
 }
 
 export function getPlanDraft(messages: UIMessage[], path?: string): PlanDraft | undefined {
   for (const message of messages) {
     for (const part of message.parts) {
-      if (!isToolPart(part) || getToolName(part) !== "write_plan_draft") continue;
+      if (!isToolUIPart(part) || getToolName(part) !== "write_plan_draft") continue;
       const output = asRecord("output" in part ? part.output : undefined);
       if (!output) continue;
       const outputPath = asString(output.path);
@@ -823,7 +813,7 @@ export function getMessageInteractions(messages: UIMessage[]): AgentInteraction[
 
   for (const message of messages) {
     for (const part of message.parts) {
-      if (!isToolPart(part)) continue;
+      if (!isToolUIPart(part)) continue;
       if (
         part.state === "output-available" ||
         part.state === "output-error" ||
@@ -841,6 +831,7 @@ export function getMessageInteractions(messages: UIMessage[]): AgentInteraction[
       if (!data) continue;
       const type = asString(raw.type);
       if (type !== "data-tool-call-suspended" && type !== "data-tool-call-approval") continue;
+      if (data.resumed === true) continue;
 
       const runId = asString(data.runId);
       const toolName = asString(data.toolName);
@@ -860,6 +851,37 @@ export function getMessageInteractions(messages: UIMessage[]): AgentInteraction[
   }
 
   return interactions;
+}
+
+export function hasPendingInteraction(
+  messages: UIMessage[],
+  interaction: AgentInteraction,
+): boolean {
+  if (!interaction.toolCallId) return false;
+  return messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      message.parts.some((part) => {
+        if (isToolUIPart(part)) {
+          return (
+            part.toolCallId === interaction.toolCallId &&
+            (interaction.requiresApproval
+              ? part.state === "approval-requested"
+              : part.state !== "output-available" &&
+                part.state !== "output-error" &&
+                part.state !== "output-denied")
+          );
+        }
+        const raw = part as unknown as JsonRecord;
+        const data = asRecord(raw.data);
+        return (
+          (raw.type === "data-tool-call-suspended" || raw.type === "data-tool-call-approval") &&
+          data?.runId === interaction.runId &&
+          data.toolCallId === interaction.toolCallId &&
+          data.resumed !== true
+        );
+      }),
+  );
 }
 
 function parseTaskItems(value: unknown): AgentTask[] | undefined {
@@ -919,7 +941,7 @@ export function getTasksFromMessages(messages: UIMessage[]): AgentTask[] | undef
   for (const message of messages) {
     for (const part of message.parts) {
       const raw = part as unknown as JsonRecord;
-      if (isToolPart(part) && isTaskToolName(getToolName(part))) {
+      if (isToolUIPart(part) && isTaskToolName(getToolName(part))) {
         const nextTasks = parseTaskItems("output" in part ? part.output : undefined);
         if (nextTasks) latestTasks = nextTasks;
         continue;
@@ -944,7 +966,7 @@ export function getActiveToolsFromMessages(messages: UIMessage[]): AgentToolStat
   const tools = new Map<string, AgentToolState>();
   for (const message of messages) {
     for (const part of message.parts) {
-      if (!isToolPart(part)) continue;
+      if (!isToolUIPart(part)) continue;
       const toolName = getToolName(part);
       if (!toolName || toolName.startsWith("agent-")) continue;
       if (part.state === "input-streaming") {
@@ -978,7 +1000,7 @@ export function getSubagentsFromMessages(messages: UIMessage[]): AgentSubagentSt
         }
       | undefined;
     for (const part of message.parts) {
-      if (isToolPart(part)) {
+      if (isToolUIPart(part)) {
         const toolName = getToolName(part);
         if (toolName?.startsWith("agent-")) {
           const agentType = toolName.slice("agent-".length);
@@ -998,27 +1020,34 @@ export function getSubagentsFromMessages(messages: UIMessage[]): AgentSubagentSt
       }
 
       const raw = part as unknown as JsonRecord;
-      if (raw.type !== "data-tool-agent") continue;
+      if (raw.type !== "data-tool-agent" && raw.type !== "data-tool-agent-step") continue;
       const data = asRecord(raw.data);
       const runId = asString(raw.id);
       if (!runId) continue;
+      const step = asRecord(data?.step);
+      const previous = runs.get(runId);
       const agentId = asString(data?.id);
       const agentType =
         latestDelegation?.agentType ??
         (agentId?.startsWith("mastra-work-") ? agentId.slice("mastra-work-".length) : agentId) ??
+        previous?.agentType ??
         "subagent";
-      const status = data?.status;
+      const status = raw.type === "data-tool-agent-step" ? step?.status : data?.status;
+      const textDelta = asString(data?.text) ?? asString(step?.text) ?? previous?.textDelta;
       runs.set(runId, {
+        ...previous,
         agentType,
-        displayName: latestDelegation?.displayName,
-        task: latestDelegation?.task ?? "委托任务",
+        displayName: latestDelegation?.displayName ?? previous?.displayName,
+        task: latestDelegation?.task ?? previous?.task ?? "委托任务",
         status:
           status === "finished"
             ? "completed"
             : status === "error" || data?.finishReason === "error"
               ? "error"
-              : "running",
-        textDelta: asString(data?.text),
+              : previous?.status === "completed" || previous?.status === "error"
+                ? previous.status
+                : "running",
+        ...(textDelta ? { textDelta } : {}),
       });
     }
   }
@@ -1092,10 +1121,6 @@ export function mergeInteractions(
   return [...merged.values()];
 }
 
-export function isToolPart(part: MessagePart): part is ToolPart {
-  return part.type === "dynamic-tool" || part.type.startsWith("tool-");
-}
-
 /**
  * 文本是助手可见回复的边界。两个文本块之间紧邻的推理与工具调用属于同一条执行轨迹,
  * 既保留服务端发送顺序,也不会把最终文本塞进 ChainOfThoughtStep。
@@ -1136,7 +1161,7 @@ export function getAssistantSegments(
       return;
     }
 
-    if (isToolPart(part)) {
+    if (isToolUIPart(part)) {
       const interaction = getCompletedInteraction(messageId, part);
       if (interaction) {
         flushTrace();
@@ -1149,7 +1174,7 @@ export function getAssistantSegments(
     // 不再重复塞进消息里的 ChainOfThoughtStep;已完成的 ask_user / submit_plan
     // 通过上方的 interaction segment 在当前助手消息中只读回显。
     if (
-      isToolPart(part) &&
+      isToolUIPart(part) &&
       !isTaskToolName(getToolName(part)) &&
       !isPromptManagedToolName(getToolName(part))
     ) {

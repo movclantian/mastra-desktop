@@ -1,17 +1,18 @@
 /**
  * 会话压缩路由(Claude Code / Codex 式真压缩)。
  * @mastra/memory 的 summarizeThread() 只生成摘要("Nothing is written back
- * to memory"),不会改变后续注入模型的上下文;OM 观察记忆亦只是"附加注入"摘要
- * (getContext 的 systemMessage),从不减少消息注入。真压缩需自行重写线程:
+ * to memory"),不会改变后续注入模型的上下文。OM 自己会把已观察的原始消息
+ * 替换成 observations;这里额外提供一次性的物理压缩,把数据库中的旧消息折叠掉:
  * 1) summarizeThread 生成整线摘要
  * 2) 折叠消息的精简历史(id/role/text/createdAt)存入摘要消息 metadata(可回显)
  * 3) deleteMessages 删除被折叠的旧消息,saveMessages 将摘要消息插入线程头部
- * 此后 recall / Agent 上下文 = [摘要消息, ...保留的近期消息](受 lastMessages 窗口约束),
- * 实际发送 token 随即下降(metadata 不进入模型上下文);压缩详情持久化到线程
+ * 此后摘要正文与 OM observations/未观察消息共同组成 Agent 上下文;OM 开启时不再
+ * 受 lastMessages 条数控制。实际发送 token 随即下降(metadata 不进入模型上下文);
+ * 压缩详情持久化到线程
  * metadata.compaction,前端 Marker 可点击回看。
  */
 import { registerApiRoute } from "@mastra/core/server";
-import { workError } from "../../errors";
+import { errorText, workError } from "../../errors";
 import { getConfiguredMemoryExtractors, getMemoryConfig } from "../../memory";
 import { resolveRequestModel } from "../../models";
 import { getOwnedThread, getWorkMemoryForThread } from "./shared";
@@ -112,31 +113,49 @@ async function refreshObservationVectors(
   }
 }
 
-export async function rewriteObservationalMemoryReferences(
+type ObservationReferenceUpdate =
+  | { mode: "rewrite"; ids: string[]; summaryId: string }
+  | { mode: "remove"; ids: string[] };
+
+async function updateObservationalMemoryReferences(
   memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>,
   threadId: string,
   resourceId: string,
-  foldedIds: string[],
-  summaryId: string,
+  update: ObservationReferenceUpdate,
 ) {
   const om = await memory.omEngine;
   if (!om) return;
   const record = await om.getRecord(threadId, resourceId);
   if (!record) return;
-  const folded = new Set(foldedIds);
+  const affectedIds = new Set(update.ids);
   const bufferedReferences = (record.bufferedObservationChunks ?? []).some((chunk) =>
-    chunk.messageIds.some((id) => folded.has(id)),
+    chunk.messageIds.some((id) => affectedIds.has(id)),
   );
-  if (bufferedReferences || (record.bufferedMessageIds ?? []).some((id) => folded.has(id))) {
-    throw new Error("OM references buffered raw messages and cannot be safely compacted");
+  if (bufferedReferences || (record.bufferedMessageIds ?? []).some((id) => affectedIds.has(id))) {
+    throw new Error(
+      update.mode === "rewrite"
+        ? "OM references buffered raw messages and cannot be safely compacted"
+        : "OM references buffered raw messages and cannot be safely deleted",
+    );
   }
-  const observations = remapObservationRanges(record.activeObservations, folded, summaryId);
-  const observedMessageIds = record.observedMessageIds?.map((id) =>
-    folded.has(id) ? summaryId : id,
-  );
+  const observations =
+    update.mode === "rewrite"
+      ? remapObservationRanges(record.activeObservations, affectedIds, update.summaryId)
+      : record.activeObservations.replace(
+          /<observation-group\b([^>]*)>[\s\S]*?<\/observation-group>/g,
+          (group, attributes: string) => {
+            const range = attributes.match(/\brange="([^"]*)"/)?.[1] ?? "";
+            return rangeMessageIds(range).some((id) => affectedIds.has(id)) ? "" : group;
+          },
+        );
+  const observedMessageIds =
+    update.mode === "rewrite"
+      ? record.observedMessageIds?.map((id) => (affectedIds.has(id) ? update.summaryId : id))
+      : record.observedMessageIds?.filter((id) => !affectedIds.has(id));
   const hasChanged =
     observations !== record.activeObservations ||
-    JSON.stringify(observedMessageIds) !== JSON.stringify(record.observedMessageIds);
+    observedMessageIds?.length !== record.observedMessageIds?.length ||
+    observedMessageIds?.some((id, index) => id !== record.observedMessageIds?.[index]);
   if (!hasChanged) return;
   const storage = om.getStorage();
   await storage.updateActiveObservations({
@@ -181,75 +200,31 @@ export async function rewriteObservationalMemoryReferences(
   return restore;
 }
 
-/** Remove observation groups that still point at raw messages being deleted. */
+export async function rewriteObservationalMemoryReferences(
+  memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>,
+  threadId: string,
+  resourceId: string,
+  foldedIds: string[],
+  summaryId: string,
+) {
+  return updateObservationalMemoryReferences(memory, threadId, resourceId, {
+    mode: "rewrite",
+    ids: foldedIds,
+    summaryId,
+  });
+}
+
 export async function removeObservationalMemoryReferences(
   memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>,
   threadId: string,
   resourceId: string,
   deletedIds: string[],
 ) {
-  const om = await memory.omEngine;
-  if (!om || deletedIds.length === 0) return;
-  const record = await om.getRecord(threadId, resourceId);
-  if (!record) return;
-  const deleted = new Set(deletedIds);
-  const bufferedReferences = (record.bufferedObservationChunks ?? []).some((chunk) =>
-    chunk.messageIds.some((id) => deleted.has(id)),
-  );
-  if (bufferedReferences || (record.bufferedMessageIds ?? []).some((id) => deleted.has(id))) {
-    throw new Error("OM references buffered raw messages and cannot be safely deleted");
-  }
-  const observations = record.activeObservations.replace(
-    /<observation-group\b([^>]*)>[\s\S]*?<\/observation-group>/g,
-    (group, attributes: string) => {
-      const range = attributes.match(/\brange="([^"]*)"/)?.[1] ?? "";
-      return rangeMessageIds(range).some((id) => deleted.has(id)) ? "" : group;
-    },
-  );
-  const observedMessageIds = record.observedMessageIds?.filter((id) => !deleted.has(id));
-  const hasChanged =
-    observations !== record.activeObservations ||
-    JSON.stringify(observedMessageIds) !== JSON.stringify(record.observedMessageIds);
-  if (!hasChanged) return;
-  const storage = om.getStorage();
-  await storage.updateActiveObservations({
-    id: record.id,
-    observations,
-    tokenCount: record.observationTokenCount,
-    lastObservedAt: record.lastObservedAt ?? new Date(),
-    ...(observedMessageIds ? { observedMessageIds } : {}),
+  if (deletedIds.length === 0) return;
+  return updateObservationalMemoryReferences(memory, threadId, resourceId, {
+    mode: "remove",
+    ids: deletedIds,
   });
-  const restore = async () => {
-    await storage
-      .updateActiveObservations({
-        id: record.id,
-        observations: record.activeObservations,
-        tokenCount: record.observationTokenCount,
-        lastObservedAt: record.lastObservedAt ?? new Date(),
-        ...(record.observedMessageIds ? { observedMessageIds: record.observedMessageIds } : {}),
-      })
-      .catch(() => undefined);
-    await refreshObservationVectors(
-      memory,
-      threadId,
-      resourceId,
-      record.activeObservations,
-      record.lastObservedAt,
-    ).catch(() => undefined);
-  };
-  try {
-    await refreshObservationVectors(
-      memory,
-      threadId,
-      resourceId,
-      observations,
-      record.lastObservedAt,
-    );
-  } catch (error) {
-    await restore();
-    throw error;
-  }
-  return restore;
 }
 
 // POST /work/threads/:threadId/summarize
@@ -327,7 +302,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
     // later compaction physically contains the previous summary message, but
     // that message is only a container for its prior compactedHistory. Do not
     // turn the summary itself into a fake user message or older originals would
-    // become impossible to locate for a Clone Thread edit.
+    // become impossible to locate for a later message edit.
     const compactedHistory = folded.flatMap((m) => {
       const metadata = m.content.metadata;
       const previous = metadata?.compactedHistory;
@@ -421,7 +396,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
       await memory.deleteMessages([summaryMessageId]).catch(() => undefined);
       await memory.settled();
       throw workError("VALIDATION_FAILED", {
-        text: error instanceof Error ? error.message : "OM references cannot be safely compacted",
+        text: errorText(error, "OM references cannot be safely compacted"),
       });
     }
     try {

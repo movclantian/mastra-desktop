@@ -1,4 +1,4 @@
-import type { MessageBranchRecord, WorkUIMessage } from "../types";
+import type { WorkUIMessage } from "../types";
 
 // ---------------------------------------------------------------------------
 // 消息流展示层纯函数:把服务端按 response-boundary 拆分的助手行合并为用户视角
@@ -8,29 +8,20 @@ import type { MessageBranchRecord, WorkUIMessage } from "../types";
 export interface DisplayMessage {
   message: WorkUIMessage;
   sourceIds: string[];
-  sourceEndIndex: number;
 }
 
 /**
  * Mastra seals each response-boundary (reasoning/tool loop) as a separate
  * assistant memory row. That boundary is important to the model, but it is
  * not a conversation turn for the user. Keep all parts in order while making
- * consecutive assistant rows one visual message. Branch rows stay separate so
- * their selectors and pair metadata remain addressable by id.
+ * consecutive assistant rows one visual message.
  */
-export function buildDisplayMessages(
-  messages: WorkUIMessage[],
-  branchesByMessageId: Map<string, MessageBranchRecord>,
-): DisplayMessage[] {
+export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[] {
   const display: DisplayMessage[] = [];
 
-  for (const [index, message] of messages.entries()) {
-    const hasBranch = branchesByMessageId.has(message.id);
+  for (const message of messages) {
     const previous = display.at(-1);
     const previousMessage = previous?.message;
-    const previousHasBranch = previous
-      ? previous.sourceIds.some((id) => branchesByMessageId.has(id))
-      : false;
     const compacted = Boolean(
       (message.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
     );
@@ -42,8 +33,6 @@ export function buildDisplayMessages(
       message.role === "assistant" &&
       previousMessage?.role === "assistant" &&
       previous !== undefined &&
-      !hasBranch &&
-      !previousHasBranch &&
       !compacted &&
       !previousCompacted
     ) {
@@ -57,14 +46,12 @@ export function buildDisplayMessages(
         },
       };
       previous.sourceIds.push(message.id);
-      previous.sourceEndIndex = index;
       continue;
     }
 
     display.push({
       message,
       sourceIds: [message.id],
-      sourceEndIndex: index,
     });
   }
 
@@ -80,5 +67,27 @@ export function isTransientStreamError(error: unknown): boolean {
 
 export function streamErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return message.trim() || "流式响应意外中断";
+  const trimmed = message.trim();
+  if (!trimmed) return "流式响应意外中断";
+
+  // Hono/Mastra errors arrive through the AI SDK as a JSON-encoded Error
+  // message. Show the server's user-facing text instead of the entire envelope.
+  for (const candidate of [trimmed, trimmed.replace(/^Error:\s*/i, "")]) {
+    try {
+      const payload = JSON.parse(candidate) as {
+        error?: unknown;
+        text?: unknown;
+        details?: { text?: unknown };
+      };
+      if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
+      if (typeof payload.text === "string" && payload.text.trim()) return payload.text;
+      if (typeof payload.details?.text === "string" && payload.details.text.trim()) {
+        return payload.details.text;
+      }
+    } catch {
+      // Plain Error messages use the original text.
+    }
+  }
+
+  return trimmed;
 }

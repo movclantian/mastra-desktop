@@ -4,9 +4,7 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -14,11 +12,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import {
-  type getModelCapabilities,
-  getModelDisplayName,
-  type ProviderConfig,
-} from "@/features/providers";
+import type { getModelCapabilities, ProviderConfig } from "@/features/providers";
 
 // ---------------------------------------------------------------------------
 // 通用设置行:左侧标题+描述,右侧控件(shadcn 设置页典型样式)
@@ -57,7 +51,7 @@ export function SettingCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-all duration-200 hover:border-border/80">
       <header className="border-b border-border/60 bg-muted/40 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <p className="min-w-0 text-sm font-medium">{title}</p>
@@ -71,12 +65,8 @@ export function SettingCard({
 }
 
 // ---------------------------------------------------------------------------
-// 模型选择下拉(shadcn Select):列出全部已启用模型,按供应商分组。
-// 选项值为模型路由字符串(registryId/modelId 或 providerId/modelId)。
+// 当前对话模型路由辅助:用于显示和计算跟随当前模型的派生配置。
 // ---------------------------------------------------------------------------
-
-/** "跟随当前模型"哨兵值(Radix Select 不允许空串 value) */
-export const FOLLOW_CURRENT_MODEL = "__follow_current__";
 
 /** 当前对话所选模型的路由字符串(供"跟随当前模型"派生) */
 export function currentModelRouterString(
@@ -89,68 +79,6 @@ export function currentModelRouterString(
   return provider.registryId
     ? `${provider.registryId}/${modelSelection.modelId}`
     : `${provider.id}/${modelSelection.modelId}`;
-}
-
-export function getSelectedModelLabel(value: string, providers: ProviderConfig[]): string {
-  if (value === FOLLOW_CURRENT_MODEL) return "跟随当前模型";
-
-  for (const provider of providers) {
-    const prefix = `${provider.registryId ?? provider.id}/`;
-    if (!value.startsWith(prefix)) continue;
-    const modelId = value.slice(prefix.length);
-    const model = provider.enabledModels.find((candidate) => candidate.id === modelId);
-    return model ? getModelDisplayName(model) : modelId;
-  }
-
-  // 仅用于清理旧值或已移除供应商的展示,实际 value 仍保持完整路由。
-  return value.slice(value.lastIndexOf("/") + 1) || "选择模型";
-}
-
-export function ModelSelectDropdown({
-  providers,
-  value,
-  onChange,
-  allowFollow,
-}: {
-  providers: ProviderConfig[];
-  value: string;
-  onChange: (value: string) => void;
-  /** 顶部附加"跟随当前模型"选项 */
-  allowFollow?: boolean;
-}) {
-  const activeProviders = providers.filter((p) => !p.disabled && p.enabledModels.length > 0);
-  return (
-    <Select onValueChange={(v) => v !== null && onChange(v)} value={value}>
-      <SelectTrigger className="w-full">
-        <SelectValue placeholder="选择模型">
-          {(selectedValue) => getSelectedModelLabel(String(selectedValue ?? value), providers)}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {allowFollow ? (
-          <SelectGroup>
-            <SelectLabel>跟随</SelectLabel>
-            <SelectItem value={FOLLOW_CURRENT_MODEL}>跟随当前模型(对话所选模型)</SelectItem>
-          </SelectGroup>
-        ) : null}
-        {activeProviders.map((provider) => (
-          <SelectGroup key={provider.id}>
-            <SelectLabel>{provider.name}</SelectLabel>
-            {provider.enabledModels.map((model) => {
-              const router = provider.registryId
-                ? `${provider.registryId}/${model.id}`
-                : `${provider.id}/${model.id}`;
-              return (
-                <SelectItem key={router} value={router}>
-                  {getModelDisplayName(model)}
-                </SelectItem>
-              );
-            })}
-          </SelectGroup>
-        ))}
-      </SelectContent>
-    </Select>
-  );
 }
 
 /** scope 选择下拉(thread/resource) */

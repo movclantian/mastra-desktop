@@ -4,7 +4,6 @@ import {
   BotIcon,
   ExternalLinkIcon,
   Globe2Icon,
-  LoaderCircleIcon,
   RefreshCwIcon,
   SquareIcon,
 } from "lucide-react";
@@ -16,6 +15,7 @@ import {
   WebPreviewUrl,
 } from "@/components/ai-elements/web-preview";
 import { Button } from "@/components/ui/button";
+import { DotmCircular4 } from "@/components/ui/dotm-circular-4";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { cn } from "@/lib/utils";
 import type { BrowserState } from "../browser-api";
@@ -152,7 +152,7 @@ export function BrowserView({
           </div>
         ) : state.active ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <LoaderCircleIcon className="size-4 animate-spin" />
+            <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
             {frameState === "connecting" ? "正在连接实时画面" : "等待浏览器画面"}
           </div>
         ) : (

@@ -1,6 +1,7 @@
 import * as React from "react";
 import { validateAuthToken } from "@/api/auth-api";
 import { apiFetch, MASTRA_SERVER_URL } from "@/api/client";
+import { AuthContext } from "./auth-context";
 import {
   AUTH_AUTO_LOGIN_KEY,
   AUTH_SESSION_KEY,
@@ -10,14 +11,9 @@ import {
   rememberAccount,
   syncAuthCookie,
 } from "./auth-storage";
-import { LoginScreen } from "./login-screen";
-import type { AuthContextValue, AuthUser } from "./types";
+import type { AuthSession, AuthUser } from "./types";
 
-export { installAuthenticatedFetch } from "./auth-client";
 export type { AuthUser } from "./types";
-export const getAuthToken = getStoredToken;
-
-const AuthContext = React.createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const rememberedSession = getStoredSession();
@@ -71,6 +67,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [token]);
 
+  const setSession = React.useCallback(
+    (session: AuthSession, remember: boolean, autoLoginEnabled: boolean) => {
+      sessionStorage.setItem(AUTH_TOKEN_KEY, session.token);
+      if (remember) {
+        rememberAccount(session.user);
+        if (autoLoginEnabled) localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
+      } else {
+        localStorage.removeItem(AUTH_SESSION_KEY);
+      }
+      localStorage.setItem(AUTH_AUTO_LOGIN_KEY, String(Boolean(remember && autoLoginEnabled)));
+      syncAuthCookie(session.token);
+      setToken(session.token);
+      setUser(session.user);
+    },
+    [],
+  );
+
   const signOut = React.useCallback(() => {
     const currentToken = getStoredToken();
     if (currentToken) {
@@ -88,38 +101,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setReady(true);
   }, []);
 
-  const value = React.useMemo(() => ({ user, token, signOut }), [signOut, token, user]);
-  if (!ready) return null;
-  return (
-    <AuthContext.Provider value={value}>
-      {user && token ? (
-        children
-      ) : (
-        <LoginScreen
-          onAuthenticated={(session, remember, autoLoginEnabled) => {
-            sessionStorage.setItem(AUTH_TOKEN_KEY, session.token);
-            if (remember) {
-              rememberAccount(session.user);
-              if (autoLoginEnabled) localStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(session));
-            } else {
-              localStorage.removeItem(AUTH_SESSION_KEY);
-            }
-            localStorage.setItem(
-              AUTH_AUTO_LOGIN_KEY,
-              String(Boolean(remember && autoLoginEnabled)),
-            );
-            syncAuthCookie(session.token);
-            setToken(session.token);
-            setUser(session.user);
-          }}
-        />
-      )}
-    </AuthContext.Provider>
+  const value = React.useMemo(
+    () => ({ user, token, signOut, setSession }),
+    [setSession, signOut, token, user],
   );
-}
-
-export function useAuth(): AuthContextValue {
-  const context = React.useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within AuthProvider");
-  return context;
+  if (!ready) return null;
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

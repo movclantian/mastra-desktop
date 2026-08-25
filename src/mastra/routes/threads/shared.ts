@@ -6,7 +6,6 @@ import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";
-import { OM_MODELS_CONTEXT_KEY } from "../../memory";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
 
@@ -54,40 +53,12 @@ export async function getWorkMemory(requestContext: RequestContext): Promise<Mem
   return memory as Memory;
 }
 
-/**
- * Resolve the Memory instance for a thread after loading its thread-level OM
- * model overrides. The first lookup is only used to read metadata; the second
- * lookup receives the populated RequestContext and is the instance that must
- * be used for lifecycle barriers and mutations.
- */
+/** Resolve the Memory instance used by thread routes. OM follows the request model. */
 export async function getWorkMemoryForThread(
   requestContext: RequestContext,
-  threadId: string,
-  resourceId: string,
+  _threadId: string,
+  _resourceId: string,
 ): Promise<Memory> {
-  // Thread metadata is the only source of per-thread OM model overrides.
-  // Clear a prior route/agent selection before the storage lookup so a reused
-  // RequestContext cannot accidentally select another thread's Memory.
-  requestContext.deleteRaw(OM_MODELS_CONTEXT_KEY);
-  const baseMemory = await getWorkMemory(requestContext);
-  const thread = await baseMemory.getThreadById({ threadId });
-  if (!thread || thread.resourceId !== resourceId) return baseMemory;
-
-  const metadata = (thread.metadata ?? {}) as {
-    observerModelId?: unknown;
-    reflectorModelId?: unknown;
-  };
-  const observerModelId =
-    typeof metadata.observerModelId === "string" && metadata.observerModelId.trim()
-      ? metadata.observerModelId.trim()
-      : undefined;
-  const reflectorModelId =
-    typeof metadata.reflectorModelId === "string" && metadata.reflectorModelId.trim()
-      ? metadata.reflectorModelId.trim()
-      : undefined;
-  if (!observerModelId && !reflectorModelId) return baseMemory;
-
-  requestContext.set(OM_MODELS_CONTEXT_KEY, { observerModelId, reflectorModelId });
   return getWorkMemory(requestContext);
 }
 

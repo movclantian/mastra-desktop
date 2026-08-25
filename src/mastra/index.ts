@@ -45,6 +45,15 @@ import { requestShutdown } from "./routes/shutdown";
 import { appStorage } from "./storage";
 import { getThreadsRoot, getThreadWorkspace, getWorkspaceConfig } from "./workspace";
 
+// `mastra dev` sets MASTRA_DEV=true in the runtime child process. That flag is
+// intended for Mastra's standalone development playground; this Electron
+// service already has its own desktop lifecycle and auth boundary. Clear the
+// CLI flag so local auth does not enter Mastra's EE development warning path.
+if (process.env.MASTRA_DESKTOP_RUNTIME === "true") {
+  process.env.MASTRA_DEV = "false";
+  process.env.NODE_ENV = "production";
+}
+
 // ---------------------------------------------------------------------------
 // 出站请求走代理(Node 原生 fetch 不读代理设置)。
 // 受限网络下 models.dev 目录、网关 /models、聊天请求直连会全部超时;这里给全局

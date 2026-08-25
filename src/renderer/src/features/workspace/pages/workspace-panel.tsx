@@ -19,7 +19,6 @@ import {
   FolderPlusIcon,
   FolderTreeIcon,
   Globe2Icon,
-  LoaderCircleIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
   PlayIcon,
@@ -53,6 +52,8 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { Dotm3x3_11 } from "@/components/ui/dotm-3x3-11";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -67,8 +68,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { FlickeringGrid } from "@/components/ui/flickering-grid";
+import { GridPattern } from "@/components/ui/grid-pattern";
 import { Input } from "@/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { Ripple } from "@/components/ui/ripple";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { PanelHeader, PanelSurface } from "@/features/app-shell/primitives";
 import { TerminalSession } from "@/features/terminal/terminal-panel";
@@ -202,7 +206,9 @@ function CodeEditor({
       const from = token?.from ?? position;
       const documentText = context.state.doc.toString();
       const controller = new AbortController();
-      context.addEventListener("abort", () => controller.abort(), { onDocChange: true });
+      context.addEventListener("abort", () => controller.abort(), {
+        onDocChange: true,
+      });
       let payload: { text?: unknown } | null;
       try {
         payload = await fetchInlineCompletion({
@@ -313,7 +319,11 @@ function CodeEditor({
           throw new Error("选区已变化,未应用模型结果");
         }
         current.dispatch({
-          changes: { from: currentSelection.from, to: currentSelection.to, insert: replacement },
+          changes: {
+            from: currentSelection.from,
+            to: currentSelection.to,
+            insert: replacement,
+          },
           selection: {
             anchor: currentSelection.from,
             head: currentSelection.from + replacement.length,
@@ -364,11 +374,19 @@ function CodeEditor({
         },
         {
           key: "Mod-d",
-          run: (view) => selectNextOccurrence({ state: view.state, dispatch: view.dispatch }),
+          run: (view) =>
+            selectNextOccurrence({
+              state: view.state,
+              dispatch: view.dispatch,
+            }),
         },
         {
           key: "Mod-Shift-l",
-          run: (view) => selectSelectionMatches({ state: view.state, dispatch: view.dispatch }),
+          run: (view) =>
+            selectSelectionMatches({
+              state: view.state,
+              dispatch: view.dispatch,
+            }),
         },
       ]),
       EditorView.theme({
@@ -456,7 +474,11 @@ function CodeEditor({
                 type="submit"
                 variant="ghost"
               >
-                {aiBusy ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}
+                {aiBusy ? (
+                  <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+                ) : (
+                  <SparklesIcon />
+                )}
               </Button>
             </form>
           ) : (
@@ -479,7 +501,11 @@ function CodeEditor({
             title={activeThreadId ? "使用当前线程和模型修改选中内容" : "请先选择会话"}
             variant="ghost"
           >
-            {aiBusy ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}
+            {aiBusy ? (
+              <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+            ) : (
+              <SparklesIcon />
+            )}
           </Button>
           <span
             className="max-w-36 truncate border-l px-1.5 text-[10px] text-muted-foreground"
@@ -1076,19 +1102,29 @@ function FilesWorkspace({ active }: { active: boolean }) {
 
   if (!activeThread?.metadata.workspacePath) {
     return (
-      <Empty className="h-full">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <FolderTreeIcon />
-          </EmptyMedia>
-          <EmptyTitle>{!activeThread ? "尚未选择会话" : "未绑定工作区"}</EmptyTitle>
-          <EmptyDescription>
-            {!activeThread
-              ? "选择或创建一个会话后,这里会显示它的工作区。"
-              : "发送首条消息后,这里会显示该会话绑定的工作区。"}
-          </EmptyDescription>
-        </EmptyHeader>
-      </Empty>
+      /* 等待绑定 = 呼吸涟漪。背景层与 Empty 同级,不塞进 Empty 内部,
+         否则会顶开 EmptyMedia 的居中定位 */
+      <div className="relative flex h-full min-h-0 items-center justify-center overflow-hidden">
+        <Ripple
+          className="pointer-events-none opacity-60"
+          mainCircleSize={140}
+          mainCircleOpacity={0.14}
+          numCircles={6}
+        />
+        <Empty className="relative z-10 h-full bg-transparent">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <FolderTreeIcon />
+            </EmptyMedia>
+            <EmptyTitle>{!activeThread ? "尚未选择会话" : "未绑定工作区"}</EmptyTitle>
+            <EmptyDescription>
+              {!activeThread
+                ? "选择或创建一个会话后,这里会显示它的工作区。"
+                : "发送首条消息后,这里会显示该会话绑定的工作区。"}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </div>
     );
   }
 
@@ -1130,7 +1166,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
                 variant="ghost"
               >
                 {savingPaths.has(activeFile.path) ? (
-                  <LoaderCircleIcon className="animate-spin" />
+                  <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
                 ) : (
                   <SaveIcon />
                 )}
@@ -1216,7 +1252,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
           <div className="min-h-0 flex-1 overflow-hidden">
             {loadingPaths.size > 0 && !activeFile ? (
               <div className="flex size-full items-center justify-center text-muted-foreground">
-                <LoaderCircleIcon className="size-5 animate-spin" />
+                <Dotm3x3_1 size={20} dotSize={3} colorPreset="solid-theme" />
               </div>
             ) : activeFile ? (
               <div className="relative size-full">
@@ -1259,14 +1295,22 @@ function FilesWorkspace({ active }: { active: boolean }) {
                 ) : null}
               </div>
             ) : (
-              <Empty className="h-full">
-                <EmptyHeader>
-                  <EmptyMedia variant="icon">
-                    <FileCode2Icon />
-                  </EmptyMedia>
-                  <EmptyTitle>尚未打开文件</EmptyTitle>
-                </EmptyHeader>
-              </Empty>
+              /* 代码编辑区空态 = 网格底纹,暗示这是等待填入代码的画布 */
+              <div className="relative flex h-full min-h-0 items-center justify-center overflow-hidden">
+                <GridPattern
+                  className="pointer-events-none [mask-image:radial-gradient(ellipse_at_center,white,transparent_72%)] opacity-45"
+                  width={28}
+                  height={28}
+                />
+                <Empty className="relative z-10 h-full bg-transparent">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <FileCode2Icon />
+                    </EmptyMedia>
+                    <EmptyTitle>尚未打开文件</EmptyTitle>
+                  </EmptyHeader>
+                </Empty>
+              </div>
             )}
           </div>
         </PanelSurface>
@@ -1475,15 +1519,28 @@ function CodeChangesWorkspace({ active }: { active: boolean }) {
               </EmptyHeader>
             </Empty>
           ) : orderedChanges.length === 0 ? (
-            <Empty className="py-12 text-muted-foreground">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Code2Icon />
-                </EmptyMedia>
-                <EmptyTitle>还没有代码更改</EmptyTitle>
-                <EmptyDescription>Agent 或编辑器保存文件后，历史记录会出现在这里</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            /* 变更历史空态 = 闪烁点阵网格,像一块待写入的终端屏幕 */
+            <div className="relative overflow-hidden rounded-lg">
+              <FlickeringGrid
+                className="pointer-events-none absolute inset-0 [mask-image:radial-gradient(ellipse_at_center,white,transparent_78%)]"
+                squareSize={3}
+                gridGap={7}
+                flickerChance={0.14}
+                maxOpacity={0.22}
+                color="var(--primary)"
+              />
+              <Empty className="relative z-10 bg-transparent py-12 text-muted-foreground">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <Code2Icon />
+                  </EmptyMedia>
+                  <EmptyTitle>还没有代码更改</EmptyTitle>
+                  <EmptyDescription>
+                    Agent 或编辑器保存文件后，历史记录会出现在这里
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
           ) : (
             changeGroups.map((group) => (
               <WorkspaceCodeChangeGroup

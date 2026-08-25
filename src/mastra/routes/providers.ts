@@ -7,8 +7,14 @@
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { workError } from "../errors";
-import { getProvidersConfig, saveProvidersConfig } from "../models";
+import { generateText } from "ai";
+import { errorText, workError } from "../errors";
+import {
+  getProvidersConfig,
+  parseModelSelection,
+  resolveConfiguredModel,
+  saveProvidersConfig,
+} from "../models";
 
 // ---------------------------------------------------------------------------
 // 内置供应商注册表(随 @mastra/core 打包)
@@ -99,7 +105,7 @@ async function refreshModelsDevCatalog(): Promise<Catalog> {
  * 设置面板必须看到这一层,才能区分"代理问题"和"Base URL 写错了"。
  */
 function describeFetchError(error: unknown): string {
-  if (!(error instanceof Error)) return String(error);
+  if (!(error instanceof Error)) return errorText(error, "请求失败");
   if (error.name === "TimeoutError" || error.name === "AbortError") {
     return "请求超时（通常是被墙，或代理未生效）";
   }
@@ -235,6 +241,40 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
     return c.json({
       models,
     });
+  },
+});
+
+// POST /work/providers/test — 直接测试单个模型,不创建线程或写入 Memory。
+export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
+  method: "POST",
+  handler: async (c) => {
+    try {
+      const payload = (await c.req.json()) as { providerId?: unknown; modelId?: unknown };
+      const selection = parseModelSelection(payload);
+      if (!selection) throw workError("MODEL_SELECTION_REQUIRED");
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      const model = await resolveConfiguredModel(
+        selection.providerId,
+        selection.modelId,
+        resourceId,
+      );
+      if (!model) throw workError("MODEL_NOT_CONFIGURED");
+      const result = await generateText({
+        model,
+        prompt: "Reply a short greeting `hi`.",
+        maxOutputTokens: 32,
+        abortSignal: c.req.raw.signal,
+      });
+      return c.json({ ok: true, reply: result.text.trim().slice(0, 120) });
+    } catch (error) {
+      return c.json(
+        {
+          ok: false,
+          error: errorText(error, "模型连接测试失败"),
+        },
+        400,
+      );
+    }
   },
 });
 

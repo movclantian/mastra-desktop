@@ -54,7 +54,6 @@ export interface AgentMemberDefinition {
   profession: string;
   description: string;
   instructions: string;
-  model?: { providerId: string; modelId: string };
   skills: string[];
   memoryScope: "thread" | "resource";
 }
@@ -67,7 +66,6 @@ export interface AgentProfile {
   profession: string;
   description: string;
   instructions: string;
-  model?: { providerId: string; modelId: string };
   skills: string[];
   members: AgentMemberDefinition[];
   workflow?: AgentWorkflowDefinition;
@@ -102,12 +100,15 @@ function normalizeProfile(
   raw: Partial<AgentProfile>,
   now = new Date().toISOString(),
 ): AgentProfile {
+  const { model: _obsoleteModel, ...profileFields } = raw as Partial<AgentProfile> & {
+    model?: unknown;
+  };
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
   const usedMemberIds = new Set<string>();
   return {
     ...DEFAULT_PROFILE,
-    ...raw,
+    ...profileFields,
     id,
     name,
     displayName:
@@ -136,11 +137,6 @@ function normalizeProfile(
               profession: typeof item.profession === "string" ? item.profession.trim() : "",
               description: typeof item.description === "string" ? item.description.trim() : "",
               instructions: typeof item.instructions === "string" ? item.instructions.trim() : "",
-              ...(item.model &&
-              typeof item.model.providerId === "string" &&
-              typeof item.model.modelId === "string"
-                ? { model: { providerId: item.model.providerId, modelId: item.model.modelId } }
-                : {}),
               skills: Array.isArray(item.skills)
                 ? item.skills.filter(
                     (skill): skill is string =>

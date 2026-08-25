@@ -14,6 +14,7 @@ export { type GatewayLanguageModel, WorkbenchGateway } from "./gateways";
 export {
   defaultModelFamily,
   getProvidersConfig,
+  parseModelSelection,
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveConfiguredModel,

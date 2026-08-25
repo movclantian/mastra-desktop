@@ -25,7 +25,10 @@ export async function generateAgentAssist(
 ): Promise<AgentAssistDraft> {
   const payload = await requestJson<{ draft: AgentAssistDraft }>(
     "/work/agents/assist",
-    { method: "POST", body: { type, description } },
+    {
+      method: "POST",
+      body: { type, description },
+    },
     "AI 创建失败",
   );
   return payload.draft;

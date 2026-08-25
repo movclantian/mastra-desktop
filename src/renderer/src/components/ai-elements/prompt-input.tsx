@@ -35,6 +35,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { DotmSquare3 } from "@/components/ui/dotm-square-3";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,7 +56,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -1440,7 +1440,8 @@ export const PromptInputSubmit = ({
   let Icon = <CornerDownLeftIcon className="size-4" />;
 
   if (status === "submitted") {
-    Icon = <Spinner />;
+    // 已提交、等首个 token:与消息流里的生成态用同一种点阵,视觉上连成一条链路
+    Icon = <DotmSquare3 size={16} dotSize={2} colorPreset="solid-theme" />;
   } else if (status === "streaming") {
     Icon = <SquareIcon className="size-4" />;
   } else if (status === "error") {

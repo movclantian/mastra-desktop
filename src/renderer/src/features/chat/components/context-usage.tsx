@@ -18,9 +18,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Dotm3x3_11 } from "@/components/ui/dotm-3x3-11";
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatModelContextWindow, getModelContextWindow } from "@/features/providers";
 import { useWorkbench } from "@/features/workbench";
@@ -138,7 +138,11 @@ export function ChatContextUsage({
                 size="sm"
                 variant="outline"
               >
-                {compacting ? <Spinner className="size-4" /> : <SparklesIcon />}
+                {compacting ? (
+                  <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+                ) : (
+                  <SparklesIcon />
+                )}
                 {compacting ? "正在压缩..." : "压缩上下文"}
               </Button>
             ) : null}

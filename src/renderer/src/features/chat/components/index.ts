@@ -1,4 +1,9 @@
-export type { BackgroundTaskAction, WorkflowRunAction } from "./agent-panels";
+export {
+  AgentMemberMessageView,
+  AgentMemberSwitcher,
+  getAgentMemberRuntimes,
+} from "./agent-member-stream";
+export type { WorkflowRunAction } from "./agent-panels";
 export {
   AgentInteractionHistory,
   AgentInteractionPanel,

@@ -5,7 +5,6 @@ import {
   CircleHelpIcon,
   CircleIcon,
   FileCheck2Icon,
-  LoaderCircleIcon,
   PauseCircleIcon,
   PlayIcon,
   RotateCcwIcon,
@@ -45,6 +44,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Dotm3x3_6 } from "@/components/ui/dotm-3x3-6";
+import { PulsatingButton } from "@/components/ui/pulsating-button";
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -63,12 +64,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { CATEGORY_META, type ToolCategory } from "@/features/session/session-policy";
 import {
   type AgentInteraction,
-  type AgentSubagentState,
   type AgentTask,
   type AgentToolState,
   asRecord,
   asString,
-  type BackgroundTaskState,
   getPlanDraft,
   type WorkflowRuntimeRun,
   type WorkflowRuntimeState,
@@ -99,7 +98,7 @@ function workflowStepIcon(status: string) {
     return <PauseCircleIcon className="size-3.5 text-amber-600" />;
   }
   if (status === "running") {
-    return <LoaderCircleIcon className="size-3.5 animate-spin text-primary" />;
+    return <Dotm3x3_6 size={13} dotSize={2} colorPreset="solid-theme" />;
   }
   return <CircleIcon className="size-3.5 text-muted-foreground" />;
 }
@@ -125,7 +124,6 @@ function workflowTimeLabel(value: string | undefined): string | undefined {
 }
 
 export type WorkflowRunAction = "resume" | "restart" | "cancel";
-export type BackgroundTaskAction = "restart" | "cancel" | "resume";
 
 function WorkflowRunCard({
   run,
@@ -153,17 +151,19 @@ function WorkflowRunCard({
       {onAction && onResume ? (
         <div className="mt-2 flex flex-wrap justify-end gap-1">
           {run.status === "suspended" ? (
-            <Button
+            /* 挂起的 Workflow 在等人操作 —— 脉冲扩散把"该你了"从一排同质按钮里拉出来 */
+            <PulsatingButton
               aria-label="恢复 Workflow"
-              className="h-6 px-2 text-[10px]"
+              className="h-6 gap-1 rounded-md px-2 text-[10px]"
+              duration="1.8s"
+              distance="5px"
               onClick={() => onResume(run)}
-              size="sm"
               title="恢复 Workflow"
-              variant="outline"
+              variant="ripple"
             >
-              <PlayIcon />
+              <PlayIcon className="size-3" />
               恢复
-            </Button>
+            </PulsatingButton>
           ) : null}
           {["failed", "tripwire", "canceled", "bailed"].includes(run.status) ? (
             <Button
@@ -357,34 +357,14 @@ export function WorkflowRunPanel({
 
 export function AgentQueuePanel({
   tasks,
-  subagents = [],
   activeTools = [],
-  backgroundTasks = [],
   queuedFollowUps = 0,
-  onBackgroundAction,
 }: {
   tasks: AgentTask[];
-  subagents?: AgentSubagentState[];
   activeTools?: AgentToolState[];
-  backgroundTasks?: BackgroundTaskState[];
   queuedFollowUps?: number;
-  onBackgroundAction?: (
-    task: BackgroundTaskState,
-    action: BackgroundTaskAction,
-    resumeData?: unknown,
-  ) => void;
 }) {
-  const [resumeTask, setResumeTask] = React.useState<BackgroundTaskState | null>(null);
-  const [resumeText, setResumeText] = React.useState("{}");
-  const [resumeError, setResumeError] = React.useState<string | null>(null);
-  if (
-    tasks.length === 0 &&
-    subagents.length === 0 &&
-    activeTools.length === 0 &&
-    backgroundTasks.length === 0 &&
-    queuedFollowUps === 0
-  )
-    return null;
+  if (tasks.length === 0 && activeTools.length === 0 && queuedFollowUps === 0) return null;
 
   return (
     <>
@@ -419,186 +399,6 @@ export function AgentQueuePanel({
                         {completed ? "已完成" : task.status === "in_progress" ? "进行中" : "待处理"}
                       </span>
                     </div>
-                  </QueueItem>
-                );
-              })}
-            </QueueList>
-          </QueueSectionContent>
-        </QueueSection>
-      ) : null}
-      {subagents.length > 0 ? (
-        <QueueSection defaultOpen>
-          <QueueSectionTrigger className="px-2 py-1">
-            <QueueSectionLabel
-              count={subagents.length}
-              label="子代理"
-              icon={<SparklesIcon className="size-4" />}
-            />
-          </QueueSectionTrigger>
-          <QueueSectionContent>
-            <QueueList className="mt-1">
-              {subagents.map((subagent) => (
-                <QueueItem className="px-2 py-1" key={`${subagent.agentType}:${subagent.task}`}>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <QueueItemIndicator
-                        completed={subagent.status === "completed"}
-                        className={
-                          subagent.status === "error"
-                            ? "border-destructive bg-destructive/10"
-                            : undefined
-                        }
-                      />
-                      <QueueItemContent className="line-clamp-2">
-                        {subagent.displayName ?? subagent.agentType}: {subagent.task}
-                      </QueueItemContent>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {subagent.status === "completed"
-                          ? "已完成"
-                          : subagent.status === "error"
-                            ? "失败"
-                            : "进行中"}
-                      </span>
-                    </div>
-                    {subagent.textDelta ? (
-                      <p className="mt-1 pl-6 text-xs text-muted-foreground">
-                        {subagent.textDelta}
-                      </p>
-                    ) : null}
-                  </div>
-                </QueueItem>
-              ))}
-            </QueueList>
-          </QueueSectionContent>
-        </QueueSection>
-      ) : null}
-      {backgroundTasks.length > 0 ? (
-        <QueueSection defaultOpen>
-          <QueueSectionTrigger className="px-2 py-1">
-            <QueueSectionLabel
-              count={backgroundTasks.length}
-              label="后台任务"
-              icon={<RotateCcwIcon className="size-4" />}
-            />
-          </QueueSectionTrigger>
-          <QueueSectionContent>
-            <QueueList className="mt-1">
-              {backgroundTasks.map((task) => {
-                const terminal = ["completed", "failed", "cancelled", "timed_out"].includes(
-                  task.status,
-                );
-                const failed = task.status === "failed" || task.status === "timed_out";
-                const outputText = workflowOutputPreview(task.result ?? task.output);
-                return (
-                  <QueueItem className="px-2 py-1" key={task.id}>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <QueueItemIndicator
-                        completed={task.status === "completed"}
-                        className={failed ? "border-destructive bg-destructive/10" : undefined}
-                      />
-                      <QueueItemContent className="line-clamp-1">{task.toolName}</QueueItemContent>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {task.status === "completed"
-                          ? "已完成"
-                          : task.status === "timed_out"
-                            ? "已超时"
-                            : failed
-                              ? "失败"
-                              : task.status === "suspended"
-                                ? "已暂停"
-                                : terminal
-                                  ? "已取消"
-                                  : "运行中"}
-                      </span>
-                    </div>
-                    {task.progress ? (
-                      <p className="mt-1 pl-6 text-xs text-muted-foreground">
-                        {task.progress.runningCount !== undefined
-                          ? `并行任务 ${task.progress.runningCount} 个`
-                          : "后台任务正在处理"}
-                        {task.progress.elapsedMs !== undefined
-                          ? ` · 已运行 ${Math.max(0, Math.round(task.progress.elapsedMs / 1000))} 秒`
-                          : ""}
-                      </p>
-                    ) : null}
-                    {task.status === "suspended" && task.suspendPayload !== undefined ? (
-                      <p className="mt-1 pl-6 text-xs text-amber-700 dark:text-amber-300">
-                        等待外部输入后继续
-                      </p>
-                    ) : null}
-                    {outputText && task.status === "completed" ? (
-                      <p
-                        className="mt-1 line-clamp-2 pl-6 text-xs text-muted-foreground"
-                        title={outputText}
-                      >
-                        {outputText}
-                      </p>
-                    ) : null}
-                    {onBackgroundAction &&
-                    (failed || task.status === "running" || task.status === "suspended") ? (
-                      <div className="mt-1 flex justify-end gap-1 pl-6">
-                        {failed ? (
-                          <Button
-                            aria-label="重试后台任务"
-                            className="h-6 px-2 text-[10px]"
-                            onClick={() => onBackgroundAction(task, "restart")}
-                            size="sm"
-                            title="重试后台任务"
-                            variant="outline"
-                          >
-                            <RotateCcwIcon />
-                            重试
-                          </Button>
-                        ) : null}
-                        {task.status === "suspended" ? (
-                          <Button
-                            aria-label="恢复后台任务"
-                            className="h-6 px-2 text-[10px]"
-                            onClick={() => {
-                              setResumeError(null);
-                              setResumeTask(task);
-                              setResumeText("{}");
-                            }}
-                            size="sm"
-                            title="恢复后台任务"
-                            variant="outline"
-                          >
-                            <PlayIcon />
-                            恢复
-                          </Button>
-                        ) : null}
-                        {task.status === "running" ? (
-                          <Button
-                            aria-label="取消后台任务"
-                            className="h-6 px-2 text-[10px]"
-                            onClick={() => onBackgroundAction(task, "cancel")}
-                            size="sm"
-                            title="取消后台任务"
-                            variant="ghost"
-                          >
-                            <XIcon />
-                            取消
-                          </Button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {task.retryCount !== undefined &&
-                    task.maxRetries !== undefined &&
-                    task.maxRetries > 0 ? (
-                      <p className="mt-1 pl-6 text-[10px] text-muted-foreground">
-                        已重试 {task.retryCount}/{task.maxRetries} 次
-                        {task.timeoutMs !== undefined
-                          ? ` · 超时 ${Math.round(task.timeoutMs / 1000)} 秒`
-                          : ""}
-                      </p>
-                    ) : task.timeoutMs !== undefined ? (
-                      <p className="mt-1 pl-6 text-[10px] text-muted-foreground">
-                        超时 {Math.round(task.timeoutMs / 1000)} 秒
-                      </p>
-                    ) : null}
-                    {task.error?.message ? (
-                      <p className="mt-1 pl-6 text-xs text-destructive">{task.error.message}</p>
-                    ) : null}
                   </QueueItem>
                 );
               })}
@@ -647,52 +447,6 @@ export function AgentQueuePanel({
           </QueueSectionTrigger>
         </QueueSection>
       ) : null}
-      <Dialog
-        open={resumeTask !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setResumeTask(null);
-            setResumeError(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>恢复后台任务</DialogTitle>
-            <DialogDescription>
-              {resumeTask?.suspendPayload
-                ? "填写工具挂起时要求的 JSON 数据。"
-                : "此任务已暂停,如无需额外数据可直接提交空对象。"}
-            </DialogDescription>
-          </DialogHeader>
-          <Textarea
-            className="min-h-28 font-mono text-xs"
-            onChange={(event) => setResumeText(event.target.value)}
-            value={resumeText}
-          />
-          {resumeError ? <p className="text-xs text-destructive">{resumeError}</p> : null}
-          <DialogFooter>
-            <Button onClick={() => setResumeTask(null)} variant="ghost">
-              取消
-            </Button>
-            <Button
-              onClick={() => {
-                if (!resumeTask || !onBackgroundAction) return;
-                try {
-                  onBackgroundAction(resumeTask, "resume", JSON.parse(resumeText));
-                  setResumeTask(null);
-                  setResumeError(null);
-                } catch {
-                  setResumeError("Resume data 必须是有效的 JSON。");
-                }
-              }}
-            >
-              <PlayIcon />
-              继续
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
@@ -1059,14 +813,17 @@ export function AgentApprovalPanel({
                 始终允许「{CATEGORY_META[category].label}」
               </Button>
             ) : null}
-            <Button
+            {/* 阻塞式审批:Agent 正停在这里等人点。脉冲把主操作从"拒绝/始终允许"里区分出来 */}
+            <PulsatingButton
+              className="h-8 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               disabled={busy}
+              duration="2s"
+              distance="6px"
               onClick={() => onResume({ approved: true })}
-              size="sm"
               type="button"
             >
               批准执行
-            </Button>
+            </PulsatingButton>
           </div>
         </div>
       </div>

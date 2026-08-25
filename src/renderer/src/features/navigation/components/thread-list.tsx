@@ -9,7 +9,6 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   FolderTreeIcon,
-  GitForkIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -51,6 +50,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ShineBorder } from "@/components/ui/shine-border";
 import {
   SidebarMenu,
   SidebarMenuAction,
@@ -96,7 +96,6 @@ function ThreadContextMenuItems({
     pinThread,
     setActiveThreadId,
     setTerminalPanelOpen,
-    cloneThread,
   } = useWorkbench();
   const [generating, setGenerating] = React.useState(false);
   const workspacePath = thread.metadata.workspacePath;
@@ -204,15 +203,6 @@ function ThreadContextMenuItems({
             </ContextMenuGroup>
           </ContextMenuSubContent>
         </ContextMenuSub>
-        <ContextMenuItem
-          onClick={async () => {
-            const cloned = await cloneThread(thread.id);
-            if (cloned) toast.success(`已克隆会话「${cloned.title}」`);
-          }}
-        >
-          <GitForkIcon className="text-muted-foreground" />
-          <span>克隆此会话</span>
-        </ContextMenuItem>
         <ContextMenuItem onClick={() => void archiveThread(thread.id, !thread.metadata.archivedAt)}>
           {thread.metadata.archivedAt ? (
             <ArchiveRestoreIcon className="text-muted-foreground" />
@@ -364,10 +354,19 @@ export function DirectThreadItem({
         <ContextMenu>
           <ContextMenuTrigger className="w-full">
             <SidebarMenuButton
+              className="relative"
               isActive={thread.id === activeThreadId}
               onClick={() => setActiveThreadId(thread.id)}
               tooltip={thread.title}
             >
+              {/* 当前会话的流动描边:长列表里快速定位"我在哪" */}
+              {thread.id === activeThreadId ? (
+                <ShineBorder
+                  borderWidth={1}
+                  duration={9}
+                  shineColor={["var(--primary)", "var(--accent)"]}
+                />
+              ) : null}
               <MessageCircleIcon />
               <span className="truncate">{thread.title}</span>
               {isWorking ? (
@@ -415,15 +414,25 @@ function WorkspaceThreadItem({
 }) {
   const { activeThreadId, setActiveThreadId, isThreadBusy } = useWorkbench();
   const isWorking = isThreadBusy(thread.id);
+  const isActive = thread.id === activeThreadId;
 
   return (
     <SidebarMenuSubItem>
       <ContextMenu>
         <ContextMenuTrigger className="w-full">
           <SidebarMenuSubButton
-            isActive={thread.id === activeThreadId}
+            className="relative"
+            isActive={isActive}
             onClick={() => setActiveThreadId(thread.id)}
           >
+            {/* 当前会话的流动描边:比单纯的背景高亮更容易在长列表里定位到"我在哪" */}
+            {isActive ? (
+              <ShineBorder
+                borderWidth={1}
+                duration={9}
+                shineColor={["var(--primary)", "var(--accent)"]}
+              />
+            ) : null}
             <MessageCircleIcon />
             <span className="truncate">{thread.title}</span>
             {isWorking ? (

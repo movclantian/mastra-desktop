@@ -5,17 +5,9 @@
  */
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import { registerApiRoute } from "@mastra/core/server";
-import type { UIMessage } from "ai";
-import { workError } from "../../errors";
-import { readMessageBranches, snapshot } from "./branches";
+import { errorText, workError } from "../../errors";
 import { removeObservationalMemoryReferences } from "./compact";
 import { getOwnedThread, getWorkMemoryForThread, normalizeChatHistoryMessages } from "./shared";
-import type {
-  MessageBranchRecord,
-  MessageBranchVersion,
-  PersistedUIMessage,
-  ThreadMetadata,
-} from "./types";
 
 const LIBRARY_SEARCH_TOOL_NAMES = new Set(["library_vector_search", "library_graph_search"]);
 
@@ -330,121 +322,6 @@ function restoreFileFilenames(
   });
 }
 
-function projectBranchMessages(
-  messages: ReturnType<typeof toAISdkMessages>,
-  branches: Record<string, MessageBranchRecord>,
-) {
-  if (Object.keys(branches).length === 0) return messages;
-  const branchByMessageId = new Map<string, MessageBranchRecord>();
-  for (const branch of Object.values(branches)) {
-    for (const item of branch.versions) {
-      const messageId = item.message?.id;
-      if (messageId) branchByMessageId.set(messageId, branch);
-    }
-  }
-
-  // 每行先决定 保留/快照替换/隐藏:
-  // - 行 id 与当前版本相同(用户编辑复用 id) → 原位换成当前版本快照;
-  // - 不同(助手重试/编辑产生的新行) → 隐藏,避免新旧两行同时显示。
-  // 第二步:当前版本的物理行已被删除(编辑时旧尾巴从 Memory 清掉了)的分支,
-  // 把当前版本快照插回最后一个隐藏行的位置 —— 否则切回旧版本时该条消息
-  // 会整行消失,而不是在原位显示旧内容。
-  const rows: (typeof messages)[] = [];
-  const selectedRowSeen = new Set<string>();
-  const lastHiddenRowByRoot = new Map<string, number>();
-  messages.forEach((message, index) => {
-    const branch = branchByMessageId.get(message.id);
-    if (!branch) {
-      rows[index] = [message];
-      return;
-    }
-    const selected = branch.versions.find((item) => item.id === branch.currentVersionId);
-    if (!selected?.message) {
-      rows[index] = [message];
-      return;
-    }
-    // User turns are timeline anchors. They must never disappear merely
-    // because an assistant branch has a different physical row after reload.
-    // Edits reuse the user message id in the normal path; the role fallback
-    // also handles older branch metadata whose converted ids no longer match
-    // the recalled row exactly.
-    if (message.role === "user" && selected.role === "user") {
-      if (!selectedRowSeen.has(branch.rootId)) {
-        selectedRowSeen.add(branch.rootId);
-        rows[index] = [selected.message as typeof message];
-      } else {
-        rows[index] = [message];
-      }
-      return;
-    }
-    if (selected.message.id === message.id) {
-      selectedRowSeen.add(branch.rootId);
-      rows[index] = [selected.message as typeof message];
-    } else {
-      lastHiddenRowByRoot.set(branch.rootId, index);
-      rows[index] = [];
-    }
-  });
-  // 第二步:当前版本的物理行已被删除(编辑/切换时旧时间线从 Memory 清掉了)
-  // 的分支,把 [当前版本快照 + 子树 tail] 整条插回 —— 分支作用于该节点之后
-  // 的全部消息,不只是这一对。助手分支的插入位置 = 其配对用户版本(父锚点)
-  // 所在行之后;找不到锚点(旧数据无配对)时退回最后一个隐藏行的位置。
-  for (const branch of Object.values(branches)) {
-    if (selectedRowSeen.has(branch.rootId)) continue;
-    const selected = branch.versions.find((item) => item.id === branch.currentVersionId);
-    if (!selected?.message) continue;
-    const injected = [selected.message, ...(selected.tail ?? [])] as (typeof messages)[number][];
-    const anchorId = findVersionById(branches, selected.pairVersionId)?.message?.id;
-    let anchorIndex = -1;
-    if (anchorId) {
-      anchorIndex = rows.findIndex((rowMessages) => rowMessages.some((m) => m.id === anchorId));
-    }
-    if (anchorIndex < 0) anchorIndex = lastHiddenRowByRoot.get(branch.rootId) ?? -1;
-    if (anchorIndex >= 0) {
-      rows[anchorIndex] = [...rows[anchorIndex], ...injected];
-    } else {
-      rows.push(injected);
-    }
-  }
-  // 投影必须幂等。第一步的快照替换与第二步的 [当前版本 + tail] 注入都可能与仍然
-  // 存在的物理行撞上同一个消息 id:tail 的物理删除是尽力而为的(deletePersistedTail
-  // 与分支切换都会吞掉删除异常,失败时尾巴留在 Memory 里),不同版本的 tail 也可能
-  // 覆盖同一段下游。重复 id 会被前端原样回传给 POST /chat,撞上增量校验的唯一性
-  // 检查(Duplicate message ids are not accepted),让整轮对话失败。
-  // 保留首次出现:注入插在锚点行之后,天然早于同 id 的残留物理行,分支时间线优先。
-  const seen = new Set<string>();
-  return rows.flat().filter((message) => {
-    if (seen.has(message.id)) return false;
-    seen.add(message.id);
-    return true;
-  });
-}
-
-function findVersionById(
-  branches: Record<string, MessageBranchRecord>,
-  versionId: string | undefined,
-): MessageBranchVersion | undefined {
-  if (!versionId) return undefined;
-  for (const branch of Object.values(branches)) {
-    const found = branch.versions.find((item) => item.id === versionId);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-function branchPayload(branches: Record<string, MessageBranchRecord>) {
-  // tail 是服务端子树快照,客户端切换器用不到,剥掉减小载荷
-  return Object.fromEntries(
-    Object.entries(branches).map(([rootId, branch]) => [
-      rootId,
-      {
-        ...branch,
-        versions: branch.versions.map(({ tail: _tail, ...version }) => version),
-      },
-    ]),
-  );
-}
-
 /**
  * 消息路由:历史拉取、删除、跨线程搜索。
  * 官方 API 参考 docs/en/reference/memory/{recall,deleteMessages}.mdx。
@@ -491,144 +368,15 @@ export const threadMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
         chatMessages as Array<{ id?: string; role: string; content?: unknown }>,
       ),
     );
-    const branches = readMessageBranches((thread.metadata ?? {}) as ThreadMetadata);
     return c.json({
       total: recalled.total,
       page: recalled.page,
       perPage: recalled.perPage,
       hasMore: recalled.hasMore,
-      messages: projectBranchMessages(ui_messages, branches),
-      branches: branchPayload(branches),
+      messages: ui_messages,
     });
   },
 });
-
-// PATCH /work/threads/:threadId/branches/:rootId — persist the selected branch.
-// 分支作用于整条时间线而非单对消息:切走 = 把当前版本行之后的下游消息快照进
-// 旧版本的 tail 并从 Memory 删除(隔离);切回 = GET 投影把 [当前版本 + tail]
-// 插回显示,下一次发消息时随请求物理落库。
-export const updateMessageBranchRoute = registerApiRoute(
-  "/work/threads/:threadId/branches/:rootId",
-  {
-    method: "PATCH",
-    handler: async (c) => {
-      const threadId = c.req.param("threadId");
-      const rootId = c.req.param("rootId");
-      const body = (await c.req.json()) as { resourceId?: string; currentVersionId?: string };
-      if (!body.resourceId || !body.currentVersionId) {
-        throw workError("VALIDATION_FAILED", {
-          text: "resourceId and currentVersionId are required",
-        });
-      }
-      const memory = await getWorkMemoryForThread(
-        c.get("requestContext"),
-        threadId,
-        body.resourceId,
-      );
-      const thread = await getOwnedThread(memory, threadId, body.resourceId);
-      if (!thread) throw workError("THREAD_NOT_FOUND");
-      const metadata = (thread.metadata ?? {}) as ThreadMetadata;
-      const branches = readMessageBranches(metadata);
-      const branch = branches[rootId];
-      const incoming = branch?.versions.find((item) => item.id === body.currentVersionId);
-      if (!branch || !incoming?.message) {
-        throw workError("MESSAGE_NOT_FOUND");
-      }
-
-      let rows: UIMessage[] = [];
-      try {
-        const recalled = await memory.recall({
-          threadId,
-          resourceId: body.resourceId,
-          perPage: false,
-        });
-        rows = toAISdkMessages(recalled.messages ?? [], { version: "v7" }) as UIMessage[];
-        const branchRowIds = new Set(
-          branch.versions
-            .map((item) => item.message?.id)
-            .filter((id): id is string => typeof id === "string"),
-        );
-        const position = rows.findIndex((message) => branchRowIds.has(message.id));
-        if (position >= 0) {
-          const tailRows = rows.slice(position + 1);
-          if (tailRows.length > 0) {
-            const tailIds = tailRows
-              .map((message) => message.id)
-              .filter((id): id is string => typeof id === "string");
-            await memory.settled();
-            let restoreObservations: (() => Promise<void>) | undefined;
-            try {
-              restoreObservations = await removeObservationalMemoryReferences(
-                memory,
-                threadId,
-                body.resourceId,
-                tailIds,
-              );
-              await memory.deleteMessages(tailIds);
-            } catch (error) {
-              await restoreObservations?.();
-              throw workError("VALIDATION_FAILED", {
-                text:
-                  error instanceof Error ? error.message : "OM references cannot be safely deleted",
-              });
-            }
-            await memory.settled();
-          }
-          // 尾巴归属旧时间线的助手版本:助手分支直接归当前旧版本;用户分支
-          // 的尾巴首行就是旧助手回复(由配对版本的 message 快照负责),其余
-          // 下游归"配对的那个助手版本"的 tail
-          const outgoing = branch.versions.find((item) => item.id === branch.currentVersionId);
-          const tailOwner =
-            incoming.role === "assistant"
-              ? outgoing
-              : findVersionById(branches, outgoing?.pairVersionId);
-          if (tailOwner?.message) {
-            const ownerRowIndex = tailRows.findIndex(
-              (message) => message.id === tailOwner.message?.id,
-            );
-            // 切换助手版本时 tailOwner 就是被切走的那一行(position),根本不在
-            // tailRows 里 —— 此时 tailRows 整段都是下游,起点必须是 0。写死成 1
-            // 会让被物理删除的 tailRows[0] 不归属任何 version.tail,切回来时那条
-            // 消息永久消失。
-            const subordinateStart = ownerRowIndex >= 0 ? ownerRowIndex + 1 : 0;
-            const subordinate = tailRows
-              .slice(subordinateStart)
-              .map((message) => snapshot(message))
-              .filter((item): item is PersistedUIMessage => !!item);
-            if (subordinate.length > 0) tailOwner.tail = subordinate;
-          }
-        }
-      } catch {
-        // 截断失败不阻断选择持久化:退化为旧行为(仅切换当前版本标记)
-      }
-
-      branches[rootId] = { ...branch, currentVersionId: incoming.id };
-      // Context 用量与当前分支时间线联动:投影出切换后的消息列表,取最后
-      // 一条助手消息的 usage 写回线程元数据 contextUsage —— 它是前端刷新/
-      // 重启后的用量回退源,不写回会一直停留在旧时间线的数值上
-      let branchContextUsage: unknown;
-      try {
-        const projected = projectBranchMessages(rows, branches);
-        const lastAssistant = [...projected]
-          .reverse()
-          .find((message) => message.role === "assistant");
-        branchContextUsage = (lastAssistant?.metadata as { usage?: unknown } | undefined)?.usage;
-      } catch {
-        // 投影失败不影响分支切换本身
-      }
-      await memory.updateThread({
-        id: threadId,
-        title: thread.title,
-        metadata: {
-          ...metadata,
-          messageBranches: branches,
-          ...(branchContextUsage ? { contextUsage: branchContextUsage } : {}),
-        },
-      });
-      return c.json({ ok: true, rootId, currentVersionId: incoming.id });
-    },
-  },
-);
 
 // DELETE /work/threads/:threadId/messages — 删除指定消息
 // 官方 API:Memory.deleteMessages()(docs/en/reference/memory/deleteMessages.mdx)
@@ -667,7 +415,7 @@ export const deleteMessagesRoute = registerApiRoute("/work/threads/:threadId/mes
       );
     } catch (error) {
       throw workError("VALIDATION_FAILED", {
-        text: error instanceof Error ? error.message : "OM references cannot be safely deleted",
+        text: errorText(error, "OM references cannot be safely deleted"),
       });
     }
     try {

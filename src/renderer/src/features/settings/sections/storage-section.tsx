@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
 import { useWorkbench } from "@/features/workbench";
 import { fetchStorageInfo, type StorageInfo } from "../api";
 import { SettingCard } from "../components/controls";
@@ -163,7 +163,11 @@ export function StorageSection() {
               disabled={picking || migrating}
               onClick={() => void pickDirectory()}
             >
-              {picking || migrating ? <Spinner className="size-4" /> : <HardDriveDownloadIcon />}
+              {picking || migrating ? (
+                <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
+              ) : (
+                <HardDriveDownloadIcon />
+              )}
               {migrating ? "迁移中..." : "更改位置"}
             </Button>
           </div>

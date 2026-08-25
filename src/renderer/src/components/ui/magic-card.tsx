@@ -1,10 +1,10 @@
 "use client";
 
 import { motion, useMotionTemplate, useMotionValue, useSpring } from "motion/react";
-import { useTheme } from "next-themes";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
+import { useTheme } from "@/features/theme/theme-provider";
 import { cn } from "@/lib/utils";
 
 interface MagicCardBaseProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -69,16 +69,11 @@ export function MagicCard(props: MagicCardProps) {
   const glowSize = isOrbMode(props) ? (props.glowSize ?? 420) : 420;
   const glowBlur = isOrbMode(props) ? (props.glowBlur ?? 60) : 60;
   const glowOpacity = isOrbMode(props) ? (props.glowOpacity ?? 0.9) : 0.9;
-  const { theme, systemTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => setMounted(true), []);
-
-  const isDarkTheme = useMemo(() => {
-    if (!mounted) return true;
-    const currentTheme = theme === "system" ? systemTheme : theme;
-    return currentTheme === "dark";
-  }, [theme, systemTheme, mounted]);
+  // 混合模式必须跟随真实主题:screen 在深色底上提亮,multiply 在浅色底上压暗。
+  // 取项目自己的 ThemeProvider —— 此前用的是 next-themes,而本项目从未挂载
+  // 它的 Provider,theme 恒为 undefined,导致暗色主题下始终走 multiply,
+  // 探照灯在深色卡片上几乎不可见。
+  const { isDark } = useTheme();
 
   const mouseX = useMotionValue(-gradientSize);
   const mouseY = useMotionValue(-gradientSize);
@@ -209,7 +204,7 @@ export function MagicCard(props: MagicCardProps) {
             opacity: orbVisible,
             background: `linear-gradient(${glowAngle}deg, ${glowFrom}, ${glowTo})`,
 
-            mixBlendMode: isDarkTheme ? "screen" : "multiply",
+            mixBlendMode: isDark ? "screen" : "multiply",
             willChange: "transform, opacity",
           }}
         />

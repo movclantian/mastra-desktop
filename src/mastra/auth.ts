@@ -238,10 +238,39 @@ function tokenFromRequest(token: string, request: MastraAuthRequest): string {
 
 // Only x-shutdown-token uses SimpleAuth's in-memory token map; user sessions use the DB.
 class DatabaseAuth extends SimpleAuth<AuthUser> {
+  override async signIn(email: string, password: string, _request: Request) {
+    const session = await loginAuthUser({ email, password });
+    return {
+      user: session.user,
+      token: session.token,
+      cookies: [
+        `mastra-token=${encodeURIComponent(session.token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`,
+      ],
+    };
+  }
+
   override async authenticateToken(token: string, request: MastraAuthRequest) {
     const internal = getRequestHeader(request, "x-shutdown-token");
     if (internal) return super.authenticateToken(token, request);
     return findUserBySessionToken(tokenFromRequest(token, request));
+  }
+
+  override async getCurrentUser(request: Request) {
+    if (getRequestHeader(request, "x-shutdown-token")) return super.getCurrentUser(request);
+    return findUserBySessionToken(tokenFromRequest("", request));
+  }
+
+  override async getUser(userId: string) {
+    if (userId === "__system__") return super.getUser(userId);
+    return findUserById(userId);
+  }
+
+  override async getUsers(userIds: string[]) {
+    return Promise.all(
+      userIds.map((userId) =>
+        userId === "__system__" ? super.getUser(userId) : findUserById(userId),
+      ),
+    );
   }
 
   override async authorizeUser(user: AuthUser, request: MastraAuthRequest) {

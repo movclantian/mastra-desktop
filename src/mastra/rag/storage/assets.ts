@@ -13,7 +13,7 @@ import {
   normalizeFilename,
   resolveMediaType,
 } from "../document/extract";
-import { reindexAsset, waitForAssetIndexing } from "../document/indexing";
+import { queueAssetIndex, waitForAssetIndexing } from "../document/indexing";
 import { getLibrarySettings } from "../settings";
 import { type LibraryAsset, MAX_LIBRARY_FILE_BYTES } from "../types";
 import { ensureLibrarySchema, getLatestLibraryIndexRuns, now, rowToAsset, withClient } from "./db";
@@ -127,7 +127,7 @@ export async function uploadAsset(
 
   if (extractable && !skipIndexing) {
     const settings = await getLibrarySettings(input.resourceId);
-    void reindexAsset(input.resourceId, id, settings).catch(() => undefined);
+    void queueAssetIndex(createdAsset, extracted ?? "", settings).catch(() => undefined);
   }
   return createdAsset;
 }

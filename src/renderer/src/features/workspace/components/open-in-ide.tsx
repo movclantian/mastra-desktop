@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth";
 import { useWorkbench } from "@/features/workbench";
 import { toastError } from "@/lib/errors";
 import { cn } from "@/lib/utils";

@@ -76,10 +76,6 @@ interface WorkbenchValue {
   deleteThread: (threadId: string) => Promise<void>;
   pinThread: (threadId: string, pinned: boolean) => Promise<void>;
   archiveThread: (threadId: string, archived: boolean) => Promise<void>;
-  cloneThread: (
-    threadId: string,
-    selection?: { messageIds?: string[] },
-  ) => Promise<WorkThread | null>;
   searchMessages: (query: string) => Promise<MessageSearchHit[]>;
   // 近期显式绑定的工作区目录(promptInput 选择器数据源)
   recentWorkspaces: RecentWorkspace[];
@@ -251,7 +247,6 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     deleteThread,
     pinThread,
     archiveThread,
-    cloneThread,
     searchMessages,
     activeThreadId,
     selectThread,
@@ -359,7 +354,6 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       deleteThread,
       pinThread,
       archiveThread,
-      cloneThread,
       searchMessages,
       recentWorkspaces,
       refreshRecentWorkspaces,
@@ -436,7 +430,6 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       deleteThread,
       pinThread,
       archiveThread,
-      cloneThread,
       searchMessages,
       recentWorkspaces,
       refreshRecentWorkspaces,

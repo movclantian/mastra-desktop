@@ -1,20 +1,12 @@
 import type { UIMessage } from "ai";
-import { CheckIcon, PencilIcon, XIcon } from "lucide-react";
 import * as React from "react";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
 import { Marker, MarkerContent } from "@/components/ui/marker";
-import {
-  Message,
-  MessageAvatar,
-  MessageContent,
-  MessageFooter,
-  MessageHeader,
-} from "@/components/ui/message";
+import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/components/ui/message";
 import { MessageScrollerItem } from "@/components/ui/message-scroller";
-import { Textarea } from "@/components/ui/textarea";
 import type { CompactedHistoryEntry } from "../types";
 import { AssistantAvatar, UserAvatar } from "./avatars";
 
@@ -26,15 +18,11 @@ import { AssistantAvatar, UserAvatar } from "./avatars";
 /** 展开的压缩历史使用普通消息气泡渲染,但不再参与当前会话请求。 */
 function CompactedHistoryMessage({
   entry,
-  onEdit,
   userId,
 }: {
   entry: CompactedHistoryEntry;
-  onEdit: (messageId: string, text: string) => void;
   userId: string;
 }) {
-  const [editing, setEditing] = React.useState(false);
-  const [text, setText] = React.useState(entry.text);
   if (entry.role === "user") {
     return (
       <Message align="end">
@@ -42,55 +30,10 @@ function CompactedHistoryMessage({
           <UserAvatar userId={userId} />
         </MessageAvatar>
         <MessageContent className="items-end">
-          {editing ? (
-            <div className="flex w-[min(100%,42rem)] max-w-full self-end flex-col items-end gap-2">
-              <Textarea
-                autoFocus
-                className="min-h-20 w-full resize-y"
-                onChange={(event) => setText(event.target.value)}
-                value={text}
-              />
-              <div className="flex justify-end gap-1">
-                <Button
-                  aria-label="取消编辑"
-                  onClick={() => setEditing(false)}
-                  size="icon-xs"
-                  type="button"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </Button>
-                <Button
-                  aria-label="从此消息创建修正分支"
-                  disabled={!text.trim()}
-                  onClick={() => {
-                    onEdit(entry.id, text.trim());
-                    setEditing(false);
-                  }}
-                  size="icon-xs"
-                  type="button"
-                >
-                  <CheckIcon />
-                </Button>
-              </div>
-            </div>
-          ) : entry.text ? (
+          {entry.text ? (
             <Bubble>
               <BubbleContent>{entry.text}</BubbleContent>
             </Bubble>
-          ) : null}
-          {!editing ? (
-            <MessageFooter className="pointer-events-none justify-end gap-1 px-0 opacity-0 transition-opacity duration-150 group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
-              <Button
-                aria-label="编辑已压缩消息"
-                onClick={() => setEditing(true)}
-                size="icon-xs"
-                type="button"
-                variant="ghost"
-              >
-                <PencilIcon />
-              </Button>
-            </MessageFooter>
           ) : null}
         </MessageContent>
       </Message>
@@ -120,15 +63,7 @@ function CompactedHistoryMessage({
  * 压缩摘要消息卡片:渲染在线程头部(时序正确),默认只显示摘要,
  * 可展开查看被折叠的原始消息 —— 历史不丢失,只是退出模型上下文。
  */
-export function CompactedMessageCard({
-  message,
-  onEdit,
-  userId,
-}: {
-  message: UIMessage;
-  onEdit: (messageId: string, text: string) => void;
-  userId: string;
-}) {
+export function CompactedMessageCard({ message, userId }: { message: UIMessage; userId: string }) {
   const history =
     (message.metadata as { compactedHistory?: CompactedHistoryEntry[] } | undefined)
       ?.compactedHistory ?? [];
@@ -146,12 +81,7 @@ export function CompactedMessageCard({
           {/* 展开时历史消息位于压缩边界之前,后续消息仍由外层 messages.map 按顺序渲染。 */}
           <CollapsibleContent className="flex flex-col gap-6">
             {history.map((entry) => (
-              <CompactedHistoryMessage
-                entry={entry}
-                key={entry.id}
-                onEdit={onEdit}
-                userId={userId}
-              />
+              <CompactedHistoryMessage entry={entry} key={entry.id} userId={userId} />
             ))}
           </CollapsibleContent>
           <Marker role="status" variant="separator">

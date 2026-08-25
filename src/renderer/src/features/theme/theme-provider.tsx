@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth";
 import { THEME_PRESETS } from "@/features/theme/presets";
 import type {
   ThemeColorTokens,

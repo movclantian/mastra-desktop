@@ -401,6 +401,11 @@ function ensureMastraRunning(): Promise<void> {
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
+        // The Mastra CLI sets MASTRA_DEV=true for its watcher child. The
+        // desktop runtime is production-like even in development, so the
+        // service entrypoint clears that CLI-only flag before constructing
+        // Mastra. This keeps auth capability checks out of the EE dev path.
+        MASTRA_DESKTOP_RUNTIME: "true",
         MASTRA_SHUTDOWN_TOKEN,
       };
 

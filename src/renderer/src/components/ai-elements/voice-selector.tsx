@@ -27,7 +27,7 @@ import {
   CommandShortcut,
 } from "@/components/ui/command";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { DotmSquare18 } from "@/components/ui/dotm-square-18";
 import { cn } from "@/lib/utils";
 
 interface VoiceSelectorContextValue {
@@ -455,7 +455,7 @@ export const VoiceSelectorPreview = ({
   let icon = <PlayIcon className="size-3" />;
 
   if (loading) {
-    icon = <Spinner className="size-3" />;
+    icon = <DotmSquare18 size={12} dotSize={1.4} colorPreset="solid-theme" />;
   } else if (playing) {
     icon = <PauseIcon className="size-3" />;
   }

@@ -53,7 +53,6 @@ export interface ThreadMetadata {
       reasoningEffort: string;
     }
   >;
-  subagentModels?: Record<string, string>;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;
@@ -135,7 +134,6 @@ export interface AgentMemberDefinition {
   profession: string;
   description: string;
   instructions: string;
-  model?: { providerId: string; modelId: string };
   skills: string[];
   memoryScope: "thread" | "resource";
 }
@@ -164,7 +162,6 @@ export interface AgentProfile {
   profession: string;
   description: string;
   instructions: string;
-  model?: { providerId: string; modelId: string };
   skills: string[];
   members: AgentMemberDefinition[];
   workflow?: AgentWorkflowDefinition;

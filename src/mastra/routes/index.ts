@@ -45,13 +45,14 @@ import {
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
-import { memoryConfigRoute, saveMemoryConfigRoute } from "./memory";
+import { memoryConfigRoute, memoryProfileRoute, saveMemoryConfigRoute } from "./memory";
 import {
   listProviderModelsRoute,
   modelsCatalogRoute,
   providerRegistryRoute,
   providersConfigRoute,
   saveProvidersConfigRoute,
+  testProviderModelRoute,
 } from "./providers";
 import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
@@ -133,11 +134,13 @@ export const workRoutes = [
   providerRegistryRoute,
   modelsCatalogRoute,
   listProviderModelsRoute,
+  testProviderModelRoute,
   providersConfigRoute,
   saveProvidersConfigRoute,
   storageInfoRoute,
   memoryConfigRoute,
   saveMemoryConfigRoute,
+  memoryProfileRoute,
   mcpConfigRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,

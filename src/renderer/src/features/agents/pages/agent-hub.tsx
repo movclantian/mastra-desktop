@@ -1,7 +1,6 @@
 import {
   BotIcon,
   CopyIcon,
-  LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -11,6 +10,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { AnimatedBeam } from "@/components/ui/animated-beam";
+import { AnimatedGradientText } from "@/components/ui/animated-gradient-text";
+import { AnimatedTabs } from "@/components/ui/animated-tabs";
 import { Badge } from "@/components/ui/badge";
 import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
@@ -39,12 +41,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { Dotm3x3_11 } from "@/components/ui/dotm-3x3-11";
 import { Input } from "@/components/ui/input";
+import { InteractiveHoverButton } from "@/components/ui/interactive-hover-button";
 import { MagicCard } from "@/components/ui/magic-card";
+import { NeonGradientCard } from "@/components/ui/neon-gradient-card";
+import { OrbitingCircles } from "@/components/ui/orbiting-circles";
+import { RainbowButton } from "@/components/ui/rainbow-button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { type AgentProfile, DEFAULT_AGENT_PROFILE, useWorkbench } from "@/features/workbench";
+import { cn } from "@/lib/utils";
 import { deleteAgent, generateAgentAssist, saveAgent } from "../api";
 
 type HubTab = "all" | "agent" | "team" | "mine";
@@ -123,7 +131,8 @@ function membersFromText(value: string): AgentProfile["members"] {
 }
 
 export function AgentHub() {
-  const { agents, refreshAgents, setAgentSelection, setActiveView } = useWorkbench();
+  const { agents, agentSelection, refreshAgents, setAgentSelection, setActiveView } =
+    useWorkbench();
   const [tab, setTab] = React.useState<HubTab>("all");
   const [query, setQuery] = React.useState("");
   const [editing, setEditing] = React.useState<AgentProfile | null>(null);
@@ -311,14 +320,14 @@ export function AgentHub() {
             placeholder="搜索 Agent、团队或职责"
           />
         </div>
-        <Button variant="outline" onClick={() => openAssist("agent")}>
+        <RainbowButton variant="outline" onClick={() => openAssist("agent")}>
           <SparklesIcon />
           AI 创建 Agent
-        </Button>
-        <Button onClick={() => openAssist("team")}>
+        </RainbowButton>
+        <RainbowButton onClick={() => openAssist("team")}>
           <SparklesIcon />
           AI 创建团队
-        </Button>
+        </RainbowButton>
         <Button
           variant="ghost"
           title="手动创建"
@@ -330,23 +339,28 @@ export function AgentHub() {
         </Button>
       </div>
 
-      <Tabs
-        value={tab}
-        onValueChange={(value) => setTab(value as HubTab)}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <TabsList className="mx-5 mt-3 w-fit">
-          <TabsTrigger value="all">全部</TabsTrigger>
-          <TabsTrigger value="agent">Agent</TabsTrigger>
-          <TabsTrigger value="team">Agent 团队</TabsTrigger>
-          <TabsTrigger value="mine">我的</TabsTrigger>
-        </TabsList>
+      <div className="flex min-h-0 flex-1 flex-col">
+        <AnimatedTabs
+          activeTab={tab}
+          onChange={(value) => setTab(value as HubTab)}
+          layoutId="agent-hub-filter"
+          variant="segmented"
+          aria-label="Agent 分类"
+          className="mx-5 mt-3 w-fit"
+          tabs={[
+            { id: "all", label: "全部" },
+            { id: "agent", label: "Agent" },
+            { id: "team", label: "Agent 团队" },
+            { id: "mine", label: "我的" },
+          ]}
+        />
         <ScrollArea className="min-h-0 flex-1">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3 p-5">
             {filtered.map((profile) => (
               <AgentCard
                 key={profile.id}
                 profile={profile}
+                active={profile.id === agentSelection.id}
                 onUse={async () => {
                   await setAgentSelection(profile);
                   setActiveView("chat");
@@ -357,7 +371,7 @@ export function AgentHub() {
             ))}
           </div>
         </ScrollArea>
-      </Tabs>
+      </div>
 
       <Dialog open={assistOpen} onOpenChange={setAssistOpen}>
         <DialogContent className="max-w-xl">
@@ -405,7 +419,11 @@ export function AgentHub() {
               onClick={() => void generateAssistDraft()}
               disabled={assisting || !assistDescription.trim()}
             >
-              {assisting ? <LoaderCircleIcon className="animate-spin" /> : <SparklesIcon />}
+              {assisting ? (
+                <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+              ) : (
+                <SparklesIcon />
+              )}
               {assisting ? "正在生成…" : "生成草稿"}
             </Button>
           </DialogFooter>
@@ -496,6 +514,10 @@ export function AgentHub() {
                       Workflows 策略会按配置生成显式 Mastra
                       Workflow；其中可使用分支、循环和人工审批节点。
                     </span>
+                    <TeamFlowPreview
+                      strategy={draft.workflowStrategy}
+                      members={membersFromText(draft.memberText).map((member) => member.name)}
+                    />
                   </fieldset>
                   <div className="grid gap-1.5 text-sm font-medium">
                     <label htmlFor="agent-team-members">团队成员</label>
@@ -537,7 +559,7 @@ export function AgentHub() {
               取消
             </Button>
             <Button disabled={saving} onClick={() => void save()}>
-              {saving ? <LoaderCircleIcon className="animate-spin" /> : null}
+              {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
               {saving ? "保存中…" : "保存并使用"}
             </Button>
           </DialogFooter>
@@ -547,88 +569,256 @@ export function AgentHub() {
   );
 }
 
+const FLOW_NODE_CLASS =
+  "z-10 flex size-8 shrink-0 items-center justify-center rounded-full border bg-background text-[10px] font-medium shadow-xs";
+
+/**
+ * 团队编排拓扑预览:把执行策略画成真实的连线动画,光束方向即数据流方向 ——
+ * supervisor 从中枢放射委派、handoff 顺序交接、council 并行评议后汇聚、
+ * workflow 按显式节点串联。改策略或改成员即时重画。
+ */
+function TeamFlowPreview({
+  strategy,
+  members,
+}: {
+  strategy: Draft["workflowStrategy"];
+  members: string[];
+}) {
+  const containerRef = React.useRef<HTMLDivElement>(null);
+  const hubRef = React.useRef<HTMLDivElement>(null);
+  const visible = members
+    .slice(0, 5)
+    .map((name, index) => ({ key: `${index}:${name}`, name, order: index + 1 }));
+  // 每个节点需要独立的 RefObject(AnimatedBeam 的入参形态)。只随节点数量重建,
+  // 否则每次输入都换掉 ref 身份,光束会不断重算路径而闪烁。
+  const nodeRefs = React.useRef<Array<{ current: HTMLDivElement | null }>>([]);
+  if (nodeRefs.current.length !== visible.length) {
+    nodeRefs.current = visible.map((_, index) => nodeRefs.current[index] ?? { current: null });
+  }
+
+  if (visible.length === 0) return null;
+
+  const chained = strategy === "handoff" || strategy === "workflow";
+  const hubLabel = strategy === "supervisor" ? "调度" : strategy === "council" ? "汇总" : null;
+  const hubFirst = strategy === "supervisor";
+
+  const beams = chained
+    ? visible.slice(0, -1).map((item, index) => ({
+        key: `chain:${item.key}`,
+        fromRef: nodeRefs.current[index],
+        toRef: nodeRefs.current[index + 1],
+        delay: index * 0.4,
+      }))
+    : visible.map((item, index) => ({
+        key: `hub:${item.key}`,
+        fromRef: hubFirst ? hubRef : nodeRefs.current[index],
+        toRef: hubFirst ? nodeRefs.current[index] : hubRef,
+        delay: index * 0.35,
+      }));
+
+  const hub = hubLabel ? (
+    <div ref={hubRef} className={cn(FLOW_NODE_CLASS, "border-primary/50 bg-primary/10")}>
+      {hubLabel}
+    </div>
+  ) : null;
+
+  const memberColumn = (
+    <div className={cn("flex min-w-0 gap-2", chained ? "flex-1 items-center" : "flex-col")}>
+      {visible.map((item) => (
+        <div
+          key={item.key}
+          className={cn("flex min-w-0 items-center gap-1.5", chained && "flex-1 justify-center")}
+        >
+          <div ref={nodeRefs.current[item.order - 1]} className={FLOW_NODE_CLASS} title={item.name}>
+            {item.order}
+          </div>
+          {!chained ? (
+            <span className="min-w-0 truncate text-xs text-muted-foreground">{item.name}</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative mt-1 flex w-full items-center gap-4 overflow-hidden rounded-lg border bg-muted/20 p-3"
+    >
+      {chained ? (
+        memberColumn
+      ) : hubFirst ? (
+        <>
+          {hub}
+          {memberColumn}
+        </>
+      ) : (
+        <>
+          {memberColumn}
+          {hub}
+        </>
+      )}
+
+      {beams.map((beam) => (
+        <AnimatedBeam
+          key={beam.key}
+          containerRef={containerRef}
+          fromRef={beam.fromRef}
+          toRef={beam.toRef}
+          duration={3}
+          delay={beam.delay}
+          pathColor="var(--border)"
+          pathWidth={1.5}
+          gradientStartColor="var(--primary)"
+          gradientStopColor="var(--accent)"
+        />
+      ))}
+
+      {members.length > visible.length ? (
+        <span className="z-10 shrink-0 text-xs text-muted-foreground">
+          +{members.length - visible.length}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 function AgentCard({
   profile,
+  active,
   onUse,
   onEdit,
   onDelete,
 }: {
   profile: AgentProfile;
+  active: boolean;
   onUse: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isTeam = profile.type === "team";
 
   const handleCopyInfo = () => {
     void navigator.clipboard.writeText(profile.displayName);
     toast.success("已复制专家名称");
   };
 
+  const card = (
+    <MagicCard
+      gradientSize={200}
+      gradientFrom="var(--primary)"
+      gradientTo="var(--accent)"
+      className="flex h-full min-h-52 flex-col rounded-xl border bg-card shadow-xs transition-colors duration-200 hover:border-primary/40"
+    >
+      <CardHeader className="pb-2">
+        <div className="flex items-start gap-3">
+          {/* 团队卡片:成员图标沿轨道环绕,一眼区分「单 Agent」与「多成员协作」 */}
+          {isTeam ? (
+            <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
+              <Icon className="size-5" />
+              <OrbitingCircles
+                className="size-2 border-none bg-transparent"
+                duration={12}
+                radius={17}
+                iconSize={7}
+                path={false}
+              >
+                {profile.members.slice(0, 3).map((member) => (
+                  <span
+                    key={member.id}
+                    className="block size-1.5 rounded-full bg-primary"
+                    title={member.name}
+                  />
+                ))}
+              </OrbitingCircles>
+            </div>
+          ) : (
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
+              <Icon className="size-5" />
+            </div>
+          )}
+          <div className="min-w-0">
+            <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
+            <CardDescription className="truncate">
+              {isTeam ? (
+                <AnimatedGradientText
+                  className="text-sm"
+                  colorFrom="var(--primary)"
+                  colorTo="var(--accent)"
+                >
+                  {profile.profession || "Agent 团队"}
+                </AnimatedGradientText>
+              ) : (
+                profile.profession || "Agent"
+              )}
+            </CardDescription>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1">
+        <p className="line-clamp-3 text-sm text-muted-foreground">
+          {profile.description || profile.instructions}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-1">
+          {profile.tags.slice(0, 4).map((tag) => (
+            <Badge key={tag} variant="secondary" className="text-[10px]">
+              {tag}
+            </Badge>
+          ))}
+          {isTeam ? (
+            <Badge variant="outline" className="text-[10px]">
+              {profile.members.length} 位成员
+            </Badge>
+          ) : null}
+        </div>
+      </CardContent>
+      <CardFooter className="gap-1.5">
+        <InteractiveHoverButton
+          className="min-w-0 flex-1 border-primary/30 px-4 py-1.5 text-sm"
+          onClick={onUse}
+        >
+          {active ? "使用中" : "使用"}
+        </InteractiveHoverButton>
+        {!isDefault ? (
+          <>
+            <Button size="icon-sm" variant="ghost" title="编辑" aria-label="编辑" onClick={onEdit}>
+              <PencilIcon />
+            </Button>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              title="删除"
+              aria-label="删除"
+              onClick={onDelete}
+            >
+              <Trash2Icon />
+            </Button>
+          </>
+        ) : null}
+      </CardFooter>
+    </MagicCard>
+  );
+
   return (
     <BlurFade duration={0.25} blur="4px" className="h-full">
       <ContextMenu>
-        <ContextMenuTrigger className="flex min-h-52 flex-col h-full">
-          <MagicCard className="flex min-h-52 flex-col h-full shadow-xs">
-            <CardHeader className="pb-2">
-              <div className="flex items-start gap-3">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
-                  <Icon className="size-5" />
-                </div>
-                <div className="min-w-0">
-                  <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
-                  <CardDescription className="truncate">
-                    {profile.profession || (profile.type === "team" ? "Agent 团队" : "Agent")}
-                  </CardDescription>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="min-h-0 flex-1">
-              <p className="line-clamp-3 text-sm text-muted-foreground">
-                {profile.description || profile.instructions}
-              </p>
-              <div className="mt-3 flex flex-wrap gap-1">
-                {profile.tags.slice(0, 4).map((tag) => (
-                  <Badge key={tag} variant="secondary" className="text-[10px]">
-                    {tag}
-                  </Badge>
-                ))}
-                {profile.type === "team" ? (
-                  <Badge variant="outline" className="text-[10px]">
-                    {profile.members.length} 位成员
-                  </Badge>
-                ) : null}
-              </div>
-            </CardContent>
-            <CardFooter className="gap-1.5">
-              <Button size="sm" className="flex-1" onClick={onUse}>
-                使用
-              </Button>
-              {!isDefault ? (
-                <>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    title="编辑"
-                    aria-label="编辑"
-                    onClick={onEdit}
-                  >
-                    <PencilIcon />
-                  </Button>
-                  <Button
-                    size="icon-sm"
-                    variant="ghost"
-                    title="删除"
-                    aria-label="删除"
-                    onClick={onDelete}
-                  >
-                    <Trash2Icon />
-                  </Button>
-                </>
-              ) : null}
-            </CardFooter>
-          </MagicCard>
+        <ContextMenuTrigger className="flex h-full min-h-52 flex-col">
+          {/* 当前激活的 Agent 才套霓虹外框 —— 它是常驻动画 + 双色 blur,
+              套满整个卡片网格既会掉帧,也让「激活」失去区分度 */}
+          {active ? (
+            <NeonGradientCard
+              borderRadius={12}
+              borderSize={1.5}
+              className="h-full w-full"
+              neonColors={{ firstColor: "var(--primary)", secondColor: "var(--accent)" }}
+            >
+              {card}
+            </NeonGradientCard>
+          ) : (
+            card
+          )}
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
           <ContextMenuGroup>

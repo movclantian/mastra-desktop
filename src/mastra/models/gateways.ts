@@ -34,6 +34,10 @@ export class WorkbenchGateway extends MastraModelGateway {
     );
   }
 
+  private async findProviderForModel(modelId: string): Promise<UserProviderConfig | undefined> {
+    return this.findProvider(splitRouterId(modelId).providerId);
+  }
+
   async fetchProviders(): Promise<Record<string, GatewayProviderConfig>> {
     const providers = usableProviders(await getProvidersConfig());
     return Object.fromEntries(
@@ -57,17 +61,17 @@ export class WorkbenchGateway extends MastraModelGateway {
   }
 
   async getApiKey(modelId: string): Promise<string> {
-    const { providerId } = splitRouterId(modelId);
-    const provider = await this.findProvider(providerId);
+    const provider = await this.findProviderForModel(modelId);
     if (!provider) {
-      throw new Error(`未在设置中找到供应商 ${providerId} 的 API Key,请先在「模型供应商」配置`);
+      throw new Error(
+        `未在设置中找到供应商 ${splitRouterId(modelId).providerId} 的 API Key,请先在「模型供应商」配置`,
+      );
     }
     return provider.apiKey;
   }
 
   async buildUrl(modelId: string): Promise<string | undefined> {
-    const { providerId } = splitRouterId(modelId);
-    const provider = await this.findProvider(providerId);
+    const provider = await this.findProviderForModel(modelId);
     return provider?.baseUrl || undefined;
   }
 
@@ -86,6 +90,7 @@ export class WorkbenchGateway extends MastraModelGateway {
         apiKey: args.apiKey,
         protocol,
         useResponses: provider?.useResponses,
+        providerName: provider?.name,
       });
     }
     return createGatewayModel({
@@ -94,6 +99,7 @@ export class WorkbenchGateway extends MastraModelGateway {
       baseUrl,
       protocol: provider?.protocol,
       useResponses: provider?.useResponses,
+      providerName: provider?.name,
     });
   }
 }

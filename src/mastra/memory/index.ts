@@ -8,10 +8,10 @@
  * - workingMemory{enabled,scope,template|schema} → working-memory.mdx
  *   schema 形态接受 Standard JSON Schema(Zod/Valibot/JSON Schema 均可,面板里
  *   直接编辑 JSON 文本),template 与 schema 互斥,分别对应 replace/merge 语义
- * - generateTitle{model,instructions}            → message-history.mdx
+ * - generateTitle                               → message-history.mdx
  * - observationalMemory(顶层 + observation/reflection 深层子项)
  *   → observational-memory.mdx:
- *   顶层 model|observation.model/reflection.model(互斥)、scope、temporalMarkers、
+ *   模型跟随当前请求、scope、temporalMarkers、
  *   retrieval{vector,scope};observation.instruction/threadTitle/manageWorkingMemory/
  *   observeAttachments/messageTokens/maxTokensPerBatch/modelSettings{temperature,
  *   maxOutputTokens}/bufferTokens;reflection.instruction/observationTokens。
@@ -24,7 +24,8 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
 import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
-import { resolveConfiguredModel, resolveDefaultLanguageModel, splitRouterId } from "../models";
+import { clampInt, clampNumber } from "../config/normalize";
+import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
 import {
   appStorage,
   getAppConfig,
@@ -35,9 +36,10 @@ import {
 } from "../storage";
 
 const MEMORY_CONFIG_KEY = "memory";
+const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
 
 export interface MemoryUserConfig {
-  /** options.lastMessages — 每次请求注入的最近消息数,默认 10 */
+  /** options.lastMessages — OM 关闭时每次请求注入的最近消息数,默认 20 */
   lastMessages: number;
   /** options.readOnly — 只读记忆(不保存新消息,不注册 updateWorkingMemory 工具) */
   readOnly: boolean;
@@ -66,18 +68,8 @@ export interface MemoryUserConfig {
   workingMemorySchema: string;
   /** options.generateTitle — 自动为新线程生成标题 */
   generateTitle: boolean;
-  /** options.generateTitle.model — 标题生成模型(路由字符串) */
-  generateTitleModel: string;
-  /** options.generateTitle.instructions — 标题生成附加指令 */
-  generateTitleInstructions: string;
   /** options.observationalMemory — 观察记忆(长上下文自动观察/反思) */
   observationalMemory: boolean;
-  /** 顶层 model(Observer/Reflector 共用);与子模型二选一,子模型设置时忽略 */
-  omModel: string;
-  /** observation.model — Observer 专属模型(与顶层 model 互斥) */
-  omObserverModel: string;
-  /** reflection.model — Reflector 专属模型(与顶层 model 互斥) */
-  omReflectionModel: string;
   /** options.observationalMemory.scope — thread / resource(跨线程共享) */
   omScope: "thread" | "resource";
   /** options.observationalMemory.temporalMarkers — ≥10min 间隔插入时间标记 */
@@ -92,7 +84,7 @@ export interface MemoryUserConfig {
   omManageWorkingMemory: boolean;
   /** observation.observeAttachments — 附件转发给 Observer:on / off / auto(按模型多模态能力) */
   omObserveAttachments: "auto" | "on" | "off";
-  /** observation.messageTokens — 触发观察的 token 阈值(0 = 库默认 30000) */
+  /** observation.messageTokens — 触发观察的 token 阈值(默认 16K;设置页按模型派生) */
   omMessageTokens: number;
   /** observation.maxTokensPerBatch — resource 侧多线程批量观察的批大小(0 = 库默认 10000) */
   omMaxTokensPerBatch: number;
@@ -166,38 +158,38 @@ const DEFAULT_WORKING_MEMORY_SCHEMA = `{
 `;
 
 const DEFAULT_CONFIG: MemoryUserConfig = {
-  // lastMessages:20 为项目自定(官方 memory-class.mdx 默认 10)。
+  // 短对话模式才使用 lastMessages;OM 开启时由 OM 自己管理原始消息窗口。
   lastMessages: 20,
+  // 默认保留完整的对话写入链路,仅关闭时才会影响持久化。
   readOnly: false,
+  // OM 已经提供长期记忆,默认关闭额外语义召回,避免两套召回叠加上下文。
   semanticRecall: false,
   // semanticRecallTopK:4 为官方默认值(memory-class.mdx: "Default topK is 4")。
   semanticRecallTopK: 4,
-  // messageRange before/after 为项目自定(官方默认 {before:1, after:1})。
-  semanticRecallMessageRangeBefore: 2,
-  semanticRecallMessageRangeAfter: 2,
+  // 命中消息各附带一条邻近消息,避免语义召回在 OM 之外重复扩大上下文。
+  semanticRecallMessageRangeBefore: 1,
+  semanticRecallMessageRangeAfter: 1,
   semanticRecallScope: "thread",
+  // 工作记忆适合保存小型稳定状态,默认开启。
   workingMemory: true,
   workingMemoryScope: "resource",
   workingMemoryFormat: "template",
   workingMemoryTemplate: DEFAULT_WORKING_MEMORY_TEMPLATE,
   workingMemorySchema: DEFAULT_WORKING_MEMORY_SCHEMA,
+  // 标题是独立的异步调用,默认开启以便线程列表可读。
   generateTitle: true,
-  // 空串 = 跟随当前模型(不显式指定,由库默认解析;前端下拉默认预填当前模型)
-  generateTitleModel: "",
-  generateTitleInstructions: "",
+  // 长对话默认启用 OM;由设置页按当前模型写入 messageTokens。
   observationalMemory: true,
-  omModel: "",
-  omObserverModel: "",
-  omReflectionModel: "",
   omScope: "thread",
-  omTemporalMarkers: false,
+  // 长时间间隔的时间标记成本很低,默认开启以避免跨天对话失去时间感。
+  omTemporalMarkers: true,
   omObserverInstruction: "",
   omReflectionInstruction: "",
   omThreadTitle: false,
   omManageWorkingMemory: false,
   omObserveAttachments: "auto",
-  // 0 = 不显式指定,由前端按模型上下文窗口自动派生后写入(25%,8K~250K)
-  omMessageTokens: 0,
+  // 已知模型时由前端按最小模型窗口派生约 50%;未知模型先使用安全的 16K 回退。
+  omMessageTokens: DEFAULT_OM_MESSAGE_TOKENS,
   omMaxTokensPerBatch: 0,
   // omTemperature:0.3 为官方默认值(observational-memory.mdx: observation.modelSettings.temperature defaultValue='0.3')。
   omTemperature: 0.3,
@@ -266,12 +258,7 @@ export async function saveMemoryConfig(next: MemoryUserConfig, resourceId?: stri
   memoryConfigByScope.set(memoryScopeKey(resourceId), normalized);
   const runtime = getMemoryRuntime(resourceId);
   runtime.cachedMemory = null;
-  runtime.memoryByOmModels.clear();
-}
-
-function finite(value: unknown, fallback: number, min = 0, max = Number.POSITIVE_INFINITY): number {
-  const number = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+  runtime.memoryByScope.clear();
 }
 
 function normalizeExtractor(value: unknown, index: number): OmExtractorUserConfig | null {
@@ -309,13 +296,19 @@ function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConf
   return {
     ...DEFAULT_CONFIG,
     ...stored,
-    lastMessages: Math.round(finite(merged.lastMessages, DEFAULT_CONFIG.lastMessages, 1, 500)),
-    semanticRecallTopK: Math.round(finite(merged.semanticRecallTopK, 4, 1, 50)),
-    semanticRecallMessageRangeBefore: Math.round(
-      finite(merged.semanticRecallMessageRangeBefore, 2, 0, 50),
+    lastMessages: clampInt(merged.lastMessages, DEFAULT_CONFIG.lastMessages, 1, 500),
+    semanticRecallTopK: clampInt(merged.semanticRecallTopK, 4, 1, 50),
+    semanticRecallMessageRangeBefore: clampInt(
+      merged.semanticRecallMessageRangeBefore,
+      DEFAULT_CONFIG.semanticRecallMessageRangeBefore,
+      0,
+      50,
     ),
-    semanticRecallMessageRangeAfter: Math.round(
-      finite(merged.semanticRecallMessageRangeAfter, 2, 0, 50),
+    semanticRecallMessageRangeAfter: clampInt(
+      merged.semanticRecallMessageRangeAfter,
+      DEFAULT_CONFIG.semanticRecallMessageRangeAfter,
+      0,
+      50,
     ),
     semanticRecallScope: merged.semanticRecallScope === "resource" ? "resource" : "thread",
     workingMemoryScope: merged.workingMemoryScope === "thread" ? "thread" : "resource",
@@ -325,12 +318,13 @@ function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConf
       merged.omObserveAttachments === "on" || merged.omObserveAttachments === "off"
         ? merged.omObserveAttachments
         : "auto",
-    omMessageTokens: Math.round(finite(merged.omMessageTokens, 0, 0, 2_000_000)),
-    omMaxTokensPerBatch: Math.round(finite(merged.omMaxTokensPerBatch, 0, 0, 2_000_000)),
-    omTemperature: finite(merged.omTemperature, 0.3, 0, 2),
-    omMaxOutputTokens: Math.round(finite(merged.omMaxOutputTokens, 0, 0, 500_000)),
-    omBufferTokens: finite(merged.omBufferTokens, 0.2, 0, 500_000),
-    omObservationTokens: Math.round(finite(merged.omObservationTokens, 0, 0, 2_000_000)),
+    // 页面派生值最多 250K;更大的值无法对常见模型提供可靠的窗口保护。
+    omMessageTokens: clampInt(merged.omMessageTokens, DEFAULT_OM_MESSAGE_TOKENS, 0, 250_000),
+    omMaxTokensPerBatch: clampInt(merged.omMaxTokensPerBatch, 0, 0, 2_000_000),
+    omTemperature: clampNumber(merged.omTemperature, 0.3, 0, 2),
+    omMaxOutputTokens: clampInt(merged.omMaxOutputTokens, 0, 0, 500_000),
+    omBufferTokens: clampNumber(merged.omBufferTokens, 0.2, 0, 500_000),
+    omObservationTokens: clampInt(merged.omObservationTokens, 0, 0, 2_000_000),
     omRetrievalScope: merged.omRetrievalScope === "thread" ? "thread" : "resource",
     omExtractors: extractors.filter((item) => {
       const key = `${item.stage}:${item.name.toLowerCase()}`;
@@ -416,7 +410,7 @@ export function getConfiguredMemoryExtractors(resourceId?: string): Extractor[] 
 
 interface MemoryRuntime {
   cachedMemory: Memory | null;
-  memoryByOmModels: Map<string, Memory>;
+  memoryByScope: Map<string, Memory>;
 }
 
 const memoryRuntimeByScope = new Map<string, MemoryRuntime>();
@@ -425,17 +419,13 @@ function getMemoryRuntime(resourceId?: string): MemoryRuntime {
   const scope = memoryScopeKey(resourceId);
   let runtime = memoryRuntimeByScope.get(scope);
   if (!runtime) {
-    runtime = { cachedMemory: null, memoryByOmModels: new Map() };
+    runtime = { cachedMemory: null, memoryByScope: new Map() };
     memoryRuntimeByScope.set(scope, runtime);
   }
   return runtime;
 }
 
-export const OM_MODELS_CONTEXT_KEY = "mastra-work:om-models";
-
-interface OmModelSelection {
-  observerModelId?: string;
-  reflectorModelId?: string;
+interface MemoryBuildOverrides {
   memoryScope?: "thread" | "resource";
 }
 
@@ -449,28 +439,11 @@ export function getMemory(options?: {
 }): Memory {
   const resourceId = resourceIdFromContext(options?.requestContext as RequestContextLike);
   const runtime = getMemoryRuntime(resourceId);
-  const selection = options?.requestContext?.get(OM_MODELS_CONTEXT_KEY) as
-    | OmModelSelection
-    | undefined;
-  const observerModelId = selection?.observerModelId?.trim() || undefined;
-  const reflectorModelId = selection?.reflectorModelId?.trim() || undefined;
-  if (observerModelId || reflectorModelId || options?.memoryScope) {
-    const key = JSON.stringify([
-      observerModelId ?? null,
-      reflectorModelId ?? null,
-      options?.memoryScope ?? null,
-    ]);
-    const existing = runtime.memoryByOmModels.get(key);
+  if (options?.memoryScope) {
+    const existing = runtime.memoryByScope.get(options.memoryScope);
     if (existing) return existing;
-    const memory = buildMemory(
-      {
-        observerModelId,
-        reflectorModelId,
-        memoryScope: options?.memoryScope,
-      },
-      resourceId,
-    );
-    runtime.memoryByOmModels.set(key, memory);
+    const memory = buildMemory({ memoryScope: options.memoryScope }, resourceId);
+    runtime.memoryByScope.set(options.memoryScope, memory);
     return memory;
   }
   if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory({}, resourceId);
@@ -482,36 +455,25 @@ export async function settleAllMemory(): Promise<void> {
   const instances = new Set<Memory>();
   for (const runtime of memoryRuntimeByScope.values()) {
     if (runtime.cachedMemory) instances.add(runtime.cachedMemory);
-    for (const memory of runtime.memoryByOmModels.values()) instances.add(memory);
+    for (const memory of runtime.memoryByScope.values()) instances.add(memory);
   }
   await Promise.allSettled([...instances].map((memory) => memory.settled()));
 }
 
-function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Memory {
+function buildMemory(overrides: MemoryBuildOverrides = {}, resourceId?: string): Memory {
   const config = currentConfig(resourceId);
-  // 官方约束:顶层 model 与 observation.model/reflection.model 互斥 ——
-  // 任一子模型配置时只传子模型,否则传顶层(或全部省略 = 跟随当前模型)。
-  const omObserverModel = overrides.observerModelId?.trim() || config.omObserverModel.trim();
-  const omReflectionModel = overrides.reflectorModelId?.trim() || config.omReflectionModel.trim();
-  const omTopModel = omObserverModel || omReflectionModel ? undefined : config.omModel.trim();
   const semanticRecallScope = overrides.memoryScope ?? config.semanticRecallScope;
   const workingMemoryScope = overrides.memoryScope ?? config.workingMemoryScope;
   const observationalMemoryScope = overrides.memoryScope ?? config.omScope;
-  // OM 的配置对象不能省略 model:Mastra 会把「未配置」静默解析为
-  // google/gemini-2.5-flash,这会让用户明明选择了自定义网关却在后台观察任务里
-  // 触发 Google 的环境变量检查。空配置必须动态跟随工作台当前模型,并在没有模型
-  // 时给出明确的配置错误;模型按 resourceId 直接解析为 LanguageModel。
-  const resolveConfiguredMemoryModel = async (modelId: string): Promise<MastraModelConfig> => {
-    const { providerId, modelId: selectedModelId } = splitRouterId(modelId);
-    const model = await resolveConfiguredModel(providerId, selectedModelId, resourceId);
-    if (!model) {
-      throw new Error("记忆配置中的模型不可用,请先在「模型供应商」中启用该模型");
-    }
-    return model;
-  };
-
-  const omFollowCurrentModel = async (): Promise<MastraModelConfig> => {
-    const model = await resolveDefaultLanguageModel(resourceId);
+  // OM 永远跟随当前主请求模型,避免 Observer/Reflector 使用另一套模型配置。
+  // 没有请求级模型的线程维护或后台任务使用当前资源的默认模型。
+  const resolveCurrentRequestModel = async (
+    requestContext: RequestContext,
+  ): Promise<MastraModelConfig> => {
+    const requestModel = requestContext.get(REQUEST_MODEL_CONTEXT_KEY) as
+      | MastraModelConfig
+      | undefined;
+    const model = requestModel ?? (await resolveDefaultLanguageModel(resourceId));
     if (!model) {
       throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
     }
@@ -528,10 +490,12 @@ function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Mem
     storage: appStorage as LibSQLStore,
     // semantic-recall.mdx:LibSQLVector 与 LibSQLStore 共用同一数据库文件
     vector: new LibSQLVector({ id: "mastra-vector", url: getStorageUrl() }),
-    embedder: fastembed.smallV2,
+    embedder: fastembed.small,
     options: {
-      // message-history.mdx:lastMessages 注入最近 N 条;readOnly 只读
-      lastMessages: config.lastMessages,
+      // observational-memory.mdx:启用 OM 后由 OM 处理未观察消息窗口,
+      // 不再同时注册 MessageHistory(lastMessages) 处理器,避免两套窗口策略叠加。
+      // OM 关闭时才使用 message-history 的最近消息条数。
+      lastMessages: config.observationalMemory ? false : config.lastMessages,
       ...(config.readOnly ? { readOnly: true } : {}),
       // semantic-recall.mdx:topK / messageRange(官方对象形态 {before, after})/ scope
       ...(config.semanticRecall
@@ -580,8 +544,9 @@ function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Mem
                   },
           }
         : {}),
-      // 标题由 routes/threads/title.ts 的单一 helper 负责；这里不再把
-      // generateTitle 传给官方 Memory，避免首轮消息产生两次标题生成。
+      // message-history.mdx:使用官方最小配置。标题模型和指令跟随 Agent,
+      // 不在应用层重复实现标题提示或第二次调用模型。
+      ...(config.generateTitle ? { generateTitle: true } : {}),
       // observational-memory.mdx:顶层 + observation/reflection 深层子项。
       // continuationHints(@mastra/memory 1.27)刻意关闭 <current-task> /
       // <suggested-response> 注入:本 Agent 自带控制流 —— TaskSignalProvider 的
@@ -590,13 +555,7 @@ function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Mem
       ...(config.observationalMemory
         ? {
             observationalMemory: {
-              ...(omObserverModel || omReflectionModel
-                ? {}
-                : {
-                    model: omTopModel
-                      ? () => resolveConfiguredMemoryModel(omTopModel)
-                      : omFollowCurrentModel,
-                  }),
+              model: ({ requestContext }) => resolveCurrentRequestModel(requestContext),
               scope: observationalMemoryScope,
               // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
               // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
@@ -616,9 +575,6 @@ function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Mem
                 : {}),
               observation: {
                 continuationHints: false,
-                ...(omObserverModel
-                  ? { model: () => resolveConfiguredMemoryModel(omObserverModel) }
-                  : {}),
                 ...(config.omObserverInstruction.trim()
                   ? { instruction: config.omObserverInstruction.trim() }
                   : {}),
@@ -647,9 +603,6 @@ function buildMemory(overrides: OmModelSelection = {}, resourceId?: string): Mem
               },
               reflection: {
                 continuationHints: false,
-                ...(omReflectionModel
-                  ? { model: () => resolveConfiguredMemoryModel(omReflectionModel) }
-                  : {}),
                 ...(config.omReflectionInstruction.trim()
                   ? { instruction: config.omReflectionInstruction.trim() }
                   : {}),

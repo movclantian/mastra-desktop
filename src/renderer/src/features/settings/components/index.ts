@@ -1,9 +1,6 @@
 export {
   CapabilityBadges,
   currentModelRouterString,
-  FOLLOW_CURRENT_MODEL,
-  getSelectedModelLabel,
-  ModelSelectDropdown,
   NumberRow,
   ScopeSelect,
   SelectRow,

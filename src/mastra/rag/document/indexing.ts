@@ -11,6 +11,7 @@ import { LibSQLVector } from "@mastra/libsql";
 import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
 import { nanoid } from "nanoid";
+import { errorText } from "../../errors";
 import { resolveDefaultLanguageModel } from "../../models";
 import { getStorageDirectory, getStorageUrl } from "../../storage";
 import { getLibrarySettings } from "../settings";
@@ -41,7 +42,7 @@ export async function getVector(): Promise<LibSQLVector> {
 }
 
 export function libraryEmbedder() {
-  return fastembed.smallV2;
+  return fastembed.small;
 }
 
 export function libraryIndexName(): string {
@@ -93,34 +94,18 @@ export async function chunkDocument(doc: MDocument, settings: LibrarySettings) {
     maxSize: settings.chunkSize,
     overlap: settings.chunkOverlap,
   };
-  switch (settings.chunkStrategy) {
-    case "character":
-      return doc.chunk({ strategy: "character", ...options });
-    case "token":
-      return doc.chunk({ strategy: "token", ...options });
-    case "markdown":
-      return doc.chunk({ strategy: "markdown", ...options });
-    case "html":
-      return doc.chunk({
-        strategy: "html",
-        headers: [
-          ["h1", "Header 1"],
-          ["h2", "Header 2"],
-          ["h3", "Header 3"],
-        ],
-        ...options,
-      });
-    case "json":
-      return doc.chunk({ strategy: "json", ...options });
-    case "latex":
-      return doc.chunk({ strategy: "latex", ...options });
-    case "sentence":
-      return doc.chunk({ strategy: "sentence", ...options });
-    case "semantic-markdown":
-      return doc.chunk({ strategy: "semantic-markdown", ...options });
-    default:
-      return doc.chunk({ strategy: "recursive", ...options });
+  if (settings.chunkStrategy === "html") {
+    return doc.chunk({
+      strategy: "html",
+      headers: [
+        ["h1", "Header 1"],
+        ["h2", "Header 2"],
+        ["h3", "Header 3"],
+      ],
+      ...options,
+    });
   }
+  return doc.chunk({ strategy: settings.chunkStrategy, ...options });
 }
 
 async function extractMetadata(
@@ -185,12 +170,12 @@ function emitIndexSettled(event: LibraryIndexSettledEvent): void {
   }
 }
 
-function queueAssetIndex(
+export function queueAssetIndex(
   asset: LibraryAsset,
   extractedText: string,
   settings: LibrarySettings,
 ): Promise<void> {
-  const key = JSON.stringify([asset.resourceId, asset.id]);
+  const key = `${asset.resourceId}\u0000${asset.id}`;
   const previous = indexingPromises.get(key) ?? Promise.resolve();
   const next = previous
     .catch(() => undefined)
@@ -288,7 +273,7 @@ function queueAssetIndex(
           chunkCount: chunks.length,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorText(error, "文档索引失败");
         await finishLibraryIndexRun(run.id, "failed", stage, message);
         await withClient((client) =>
           client.execute({
@@ -314,7 +299,7 @@ function queueAssetIndex(
 }
 
 export async function waitForAssetIndexing(resourceId: string, assetId: string): Promise<void> {
-  const promise = indexingPromises.get(JSON.stringify([resourceId, assetId]));
+  const promise = indexingPromises.get(`${resourceId}\u0000${assetId}`);
   if (promise) await promise;
 }
 

@@ -33,8 +33,7 @@ import {
   toolCategoryOf,
 } from "../agents/permissions";
 import { mergeWorkbenchState, workbenchStateSchema } from "../agents/processors";
-import { SUBAGENT_MODELS_CONTEXT_KEY } from "../agents/subagents";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import {
   isTerminalAgentChunk,
   SESSION_SCOPE_DEFAULT,
@@ -42,13 +41,11 @@ import {
   type WorkSession,
   workSessionHost,
 } from "../harness";
-import { OM_MODELS_CONTEXT_KEY } from "../memory";
 import {
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
   resolveConfiguredModel,
   resolveRequestModel,
-  splitRouterId,
   usesOpenAIResponses,
 } from "../models";
 import { LIBRARY_RESOURCE_CONTEXT_KEY } from "../rag";
@@ -152,15 +149,6 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     );
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
-  }
-  if (metadata.subagentModels) {
-    requestContext.set(SUBAGENT_MODELS_CONTEXT_KEY, metadata.subagentModels);
-  }
-  if (metadata.observerModelId || metadata.reflectorModelId) {
-    requestContext.set(OM_MODELS_CONTEXT_KEY, {
-      observerModelId: metadata.observerModelId,
-      reflectorModelId: metadata.reflectorModelId,
-    });
   }
   session.setExecutionDefaults({
     ...(mode.availableTools ? { activeTools: mode.availableTools } : {}),
@@ -567,10 +555,7 @@ export const updateSessionStateRoute = registerApiRoute(
         const state = result.session.setState(await c.req.json());
         return c.json({ state });
       } catch (error) {
-        return c.json(
-          { error: error instanceof Error ? error.message : "Invalid session state" },
-          400,
-        );
+        return c.json({ error: errorText(error, "Invalid session state") }, 400);
       }
     },
   },
@@ -788,69 +773,6 @@ export const workflowRunCancelRoute = registerApiRoute(
   },
 );
 
-export const sessionSubagentModelsRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/subagent-models",
-  {
-    method: "GET",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const metadata = (result.thread.metadata ?? {}) as {
-        subagentModels?: Record<string, string>;
-      };
-      return c.json({ subagentModels: metadata.subagentModels ?? {} });
-    },
-  },
-);
-
-export const updateSessionSubagentModelsRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/subagent-models",
-  {
-    method: "PATCH",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const body = (await c.req.json()) as { agentType?: unknown; modelId?: unknown };
-      if (typeof body.agentType !== "string" || !body.agentType.trim()) {
-        throw workError("VALIDATION_FAILED", { text: "agentType is required" });
-      }
-      const threadProfile = await getAgentProfile(
-        ((result.thread.metadata ?? {}) as ThreadMetadata).agentProfileId,
-        result.resourceId,
-      );
-      const supportedAgentTypes = new Set([
-        "default",
-        "explorer",
-        "reviewer",
-        ...threadProfile.members.map((member) => member.id),
-      ]);
-      if (!supportedAgentTypes.has(body.agentType)) {
-        throw workError("VALIDATION_FAILED", { text: "unsupported agentType" });
-      }
-      if (body.modelId !== null && typeof body.modelId !== "string") {
-        throw workError("VALIDATION_FAILED", { text: "modelId must be a string or null" });
-      }
-      const metadata = (result.thread.metadata ?? {}) as {
-        subagentModels?: Record<string, string>;
-      };
-      const next = { ...(metadata.subagentModels ?? {}) };
-      if (body.modelId === null || body.modelId.trim() === "") delete next[body.agentType];
-      else {
-        const routerId = body.modelId.trim();
-        const { providerId, modelId } = splitRouterId(routerId);
-        if (!(await resolveConfiguredModel(providerId, modelId, result.resourceId))) {
-          throw workError("MODEL_NOT_CONFIGURED");
-        }
-        next[body.agentType] = routerId;
-      }
-      const thread = await result.memory.updateThread({
-        id: result.threadId,
-        title: result.thread.title,
-        metadata: { ...result.thread.metadata, subagentModels: next },
-      });
-      return c.json({ subagentModels: next, thread });
-    },
-  },
-);
-
 export const sessionGrantRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/grants",
   {
@@ -983,10 +905,7 @@ export const sessionNotificationRoute = registerApiRoute(
           : (sent as { record?: { id?: string }; decision?: unknown });
         return c.json({ ok: true, id: first?.record?.id, decision: first?.decision });
       } catch (error) {
-        return c.json(
-          { error: error instanceof Error ? error.message : "Failed to record the notification" },
-          500,
-        );
+        return c.json({ error: errorText(error, "Failed to record the notification") }, 500);
       }
     },
   },
@@ -1012,8 +931,6 @@ export const sessionRoutes = [
   workflowRunResumeRoute,
   workflowRunRestartRoute,
   workflowRunCancelRoute,
-  sessionSubagentModelsRoute,
-  updateSessionSubagentModelsRoute,
   sessionGrantRoute,
   sessionGrantRevokeRoute,
   sessionToolGrantRoute,

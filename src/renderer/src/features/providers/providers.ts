@@ -96,11 +96,12 @@ export const GATEWAY_PROTOCOLS: { value: GatewayProtocol; label: string }[] = [
  * - 去首尾空白与尾部斜杠
  * - 无协议时补 https://
  * - 重复的版本段折叠(/v1/v1 → /v1)
- * - openai 协议且路径为空(裸域名/裸 IP)时补 /v1:服务端 createOpenAI 的
- *   baseURL 需含版本段(官方默认 https://api.openai.com/v1,SDK 只追加
- *   /chat/completions),业界客户端同样默认裸域名 → /v1
- * 已带路径的端点(如 /api/paas/v4、/api/coding/v3)原样保留;
- * anthropic/gemini 协议不补(其 SDK 自行追加 /v1/messages、/models/…)。
+ * - openai / anthropic 协议且路径为空(裸域名/裸 IP)时补 /v1:两家 SDK 的
+ *   自定义 baseURL 需含版本段(默认 …/v1,SDK 只追加 /chat/completions、
+ *   /messages,不会自行补 /v1;实测 @ai-sdk/anthropic 仅默认 URL 带 /v1)。
+ *   业界客户端同样默认裸域名 → /v1。已带路径的端点(如 /api/paas/v4、
+ *   /api/coding/v3)原样保留;gemini 协议不补(由 SDK 默认 baseURL 处理)。
+ * 后端 create-model.ts 的 normalizeGatewayBaseUrl 同款逻辑,两端保持一致。
  */
 export function normalizeGatewayUrl(input: string, protocol?: GatewayProtocol): string {
   let url = input.trim().replace(/[\\/]+$/, "");
@@ -559,101 +560,39 @@ function parseContextWindow(value: unknown): number {
 }
 
 // ---------------------------------------------------------------------------
-// 连接测试:复用官方 chat 路由(docs/en/reference/ai-sdk/chat-route.mdx)
-// 以真实对话链路发送 "hi",解析 data stream,测完删除临时线程。
-// 请求显式带 model → 服务端将其存入 REQUEST_MODEL_CONTEXT_KEY,不依赖
-// 全局默认选定模型,因此「未启用任何模型」也能准确测出连通性。
-// 测试通过 = 该供应商/模型/API Key 可用。
+// 连接测试:调用独立的 provider test 路由,只执行一次 generateText。
+// 不创建线程、不写入 Memory、不进入 WorkSession,所以测试请求不会出现在会话列表。
 // ---------------------------------------------------------------------------
 
 export async function testProviderModel(
   provider: ProviderConfig,
   modelId: string,
-  resourceId: string,
 ): Promise<{ ok: boolean; reply?: string; error?: string }> {
-  const threadId = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
-    // 聊天路由会先校验线程归属;连接测试也必须先在当前用户的租户下创建线程。
-    const createThreadResponse = await apiFetch(`${MASTRA_SERVER_URL}/work/threads`, {
+    const response = await apiFetch(`${MASTRA_SERVER_URL}/work/providers/test`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        resourceId,
-        threadId,
-        title: "连接测试",
-        metadata: { draft: true },
-      }),
-    });
-    if (!createThreadResponse.ok) {
-      const detail = await createThreadResponse.text().catch(() => "");
-      return {
-        ok: false,
-        error: `创建测试线程失败:HTTP ${createThreadResponse.status} ${detail.slice(0, 200)}`,
-      };
-    }
-
-    // memory 必须带:Agent 配置了 memory,不带 threadId 会被 Agent.stream 拒绝
-    const response = await apiFetch(`${MASTRA_SERVER_URL}/chat/mastra-work-agent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        messages: [
-          {
-            id: `test-msg-${Date.now()}`,
-            role: "user",
-            parts: [{ type: "text", text: "hi" }],
-          },
-        ],
-        model: buildRequestModel(provider, modelId),
-        memory: { resource: resourceId, thread: threadId },
+        providerId: provider.id,
+        modelId,
       }),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      return { ok: false, error: `HTTP ${response.status} ${detail.slice(0, 200)}` };
+      return {
+        ok: false,
+        error: `HTTP ${response.status} ${detail.slice(0, 200)}`,
+      };
     }
-    if (!response.body) {
-      return { ok: false, error: "响应无内容" };
-    }
-    // 解析 SSE data stream:收到首个 text-delta 即成功;error 事件即失败
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let reply = "";
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line.startsWith("data:")) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        let chunk: Record<string, unknown>;
-        try {
-          chunk = JSON.parse(payload) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (chunk.type === "error") {
-          return { ok: false, error: String(chunk.errorText ?? chunk.error ?? "流式响应错误") };
-        }
-        if (chunk.type === "text-delta") {
-          reply += String(chunk.delta ?? chunk.text ?? "");
-          if (reply.trim()) {
-            return { ok: true, reply: reply.trim().slice(0, 120) };
-          }
-        }
-      }
-    }
-    return reply.trim()
-      ? { ok: true, reply: reply.trim().slice(0, 120) }
-      : { ok: false, error: "未收到模型回复" };
+    const result = (await response.json()) as { ok?: boolean; reply?: string; error?: string };
+    return {
+      ok: result.ok === true,
+      ...(result.reply ? { reply: result.reply } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    };
   } catch (error) {
     const message =
       error instanceof Error && error.name === "AbortError"
@@ -662,11 +601,6 @@ export async function testProviderModel(
     return { ok: false, error: message };
   } finally {
     clearTimeout(timer);
-    // 清理测试线程,避免污染线程列表
-    void apiFetch(
-      `${MASTRA_SERVER_URL}/work/threads/${threadId}?resourceId=${encodeURIComponent(resourceId)}`,
-      { method: "DELETE" },
-    ).catch(() => {});
   }
 }
 

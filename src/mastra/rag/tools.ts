@@ -39,7 +39,7 @@ export const libraryVectorSearchTool = createTool({
   execute: async ({ query, threadId }, context) => {
     const resourceId =
       (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
-    const results = await searchLibrary(resourceId, query, threadId, undefined, false);
+    const results = await searchLibrary({ resourceId, query, threadId, graphRag: false });
     return { results };
   },
 });
@@ -66,7 +66,7 @@ export const libraryGraphSearchTool = createTool({
   execute: async ({ query, threadId }, context) => {
     const resourceId =
       (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
-    const results = await searchLibrary(resourceId, query, threadId, undefined, true);
+    const results = await searchLibrary({ resourceId, query, threadId, graphRag: true });
     return { results };
   },
 });

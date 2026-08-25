@@ -4,6 +4,7 @@ import * as React from "react";
 import { type Activity, ActivityCalendar } from "react-activity-calendar";
 import type { DateRange } from "react-day-picker";
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from "recharts";
+import { AnimatedTabs, AnimatedTabsPanel } from "@/components/ui/animated-tabs";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,8 +14,10 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { NumberTicker } from "@/components/ui/number-ticker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SlidingNumber } from "@/components/ui/sliding-number";
 import {
   Table,
   TableBody,
@@ -23,12 +26,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAuth } from "@/features/auth";
 import { formatCostUSD } from "@/features/providers";
 import { useTheme } from "@/features/theme/theme-provider";
 import { cn } from "@/lib/utils";
-import { fetchUsage } from "../api";
+import { fetchMemoryProfile, fetchUsage } from "../api";
+
+type UsageDetailTab = "requests" | "providers" | "models";
 
 interface UsageSummary {
   totals: {
@@ -81,6 +86,19 @@ interface UsageSummary {
   }>;
 }
 
+interface MemoryProfile {
+  workingMemory: string | null;
+  extractors: Array<{
+    slug: string;
+    name: string;
+    value: unknown;
+    threadId: string;
+    threadTitle: string;
+    updatedAt: string;
+  }>;
+  threadCount: number;
+}
+
 const chartConfig = {
   inputTokens: { label: "输入", color: "#f97316" },
   outputTokens: { label: "输出", color: "#22c55e" },
@@ -96,6 +114,38 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.floor((ms % 60_000) / 1000);
   return minutes ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`;
+}
+
+/**
+ * 时长指标:数值部分走 NumberTicker 弹簧滚动,单位跟着量级切换 ——
+ * 直接把 formatDuration 的成品字符串塞进数字组件会丢掉「分/秒/毫秒」的单位。
+ */
+function DurationTicker({ ms }: { ms: number }) {
+  if (ms < 1000) {
+    return (
+      <span className="inline-flex items-baseline gap-0.5">
+        <NumberTicker className="text-foreground" value={ms} />
+        <span className="text-xs font-normal text-muted-foreground">ms</span>
+      </span>
+    );
+  }
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes > 0) {
+    return (
+      <span className="inline-flex items-baseline gap-0.5">
+        <NumberTicker className="text-foreground" value={minutes} />
+        <span className="text-xs font-normal text-muted-foreground">分</span>
+        <NumberTicker className="text-foreground" value={Math.floor((ms % 60_000) / 1000)} />
+        <span className="text-xs font-normal text-muted-foreground">秒</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-baseline gap-0.5">
+      <NumberTicker className="text-foreground" decimalPlaces={1} value={ms / 1000} />
+      <span className="text-xs font-normal text-muted-foreground">秒</span>
+    </span>
+  );
 }
 
 function activityForRange(
@@ -122,13 +172,16 @@ function activityForRange(
 }
 
 export function UsageSection() {
+  const { user } = useAuth();
   const { isDark } = useTheme();
   const [range, setRange] = React.useState<DateRange>({
     from: subDays(new Date(), 30),
     to: new Date(),
   });
   const [summary, setSummary] = React.useState<UsageSummary | null>(null);
+  const [profile, setProfile] = React.useState<MemoryProfile | null>(null);
   const [loading, setLoading] = React.useState(true);
+  const [detailTab, setDetailTab] = React.useState<UsageDetailTab>("requests");
 
   const query = React.useMemo(() => {
     const from = range.from ? format(startOfDay(range.from), "yyyy-MM-dd") : "";
@@ -139,9 +192,15 @@ export function UsageSection() {
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      setSummary(await fetchUsage<UsageSummary>(query));
+      const [usage, memoryProfile] = await Promise.all([
+        fetchUsage<UsageSummary>(query),
+        fetchMemoryProfile<MemoryProfile>(),
+      ]);
+      setSummary(usage);
+      setProfile(memoryProfile);
     } catch {
       setSummary(null);
+      setProfile(null);
     } finally {
       setLoading(false);
     }
@@ -161,13 +220,46 @@ export function UsageSection() {
     totalCost: null,
   };
   const activity = activityForRange(range, summary?.activity ?? []);
+  const averageLatencyMs = totals.requests
+    ? Math.round(totals.totalLatencyMs / totals.requests)
+    : 0;
+  const activeDays = summary?.activity.filter((entry) => entry.count > 0).length ?? 0;
+  const formatProfileValue = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value) ?? "";
+    } catch {
+      return String(value);
+    }
+  };
+
+  /**
+   * 数值型指标走动态数字:Token 总量用 SlidingNumber(里程表逐位翻页,
+   * 与聊天页上下文用量同一种视觉语言),计数型用 NumberTicker 弹簧滚动。
+   * 费用保留 formatCostUSD —— 它有「未定价」「< $0.0001」等非数值分支,
+   * 塞进数字组件会丢掉这些语义。
+   */
+  const stats: Array<{ label: string; value: React.ReactNode }> = [
+    {
+      label: "累计 Token 数",
+      value: <SlidingNumber className="tabular-nums" number={totals.totalTokens} />,
+    },
+    {
+      label: "模型请求数",
+      value: <NumberTicker className="text-foreground" value={totals.requests} />,
+    },
+    { label: "预估总费用", value: formatCostUSD(totals.totalCost) },
+    { label: "平均响应时长", value: <DurationTicker ms={averageLatencyMs} /> },
+    { label: "最长聊天时长", value: <DurationTicker ms={totals.longestChatMs} /> },
+    { label: "活跃天数", value: <NumberTicker className="text-foreground" value={activeDays} /> },
+  ];
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-base font-semibold">用量统计</h2>
-          <p className="text-xs text-muted-foreground">仅显示当前登录用户的数据。</p>
+          <h2 className="text-base font-semibold">个人与用量</h2>
+          <p className="text-xs text-muted-foreground">当前账号、Agent 提取偏好和模型使用情况。</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Popover>
@@ -202,27 +294,87 @@ export function UsageSection() {
         </div>
       </div>
 
+      <Card>
+        <CardContent className="grid min-w-0 gap-4 p-4 md:grid-cols-[minmax(180px,0.8fr)_minmax(0,1.2fr)]">
+          <div className="min-w-0 space-y-2">
+            <p className="text-sm font-semibold">账号信息</p>
+            <div className="space-y-1 text-xs">
+              <p className="truncate" title={user?.name ?? user?.email}>
+                <span className="text-muted-foreground">名称：</span>
+                {user?.name || "未设置"}
+              </p>
+              <p className="truncate" title={user?.email}>
+                <span className="text-muted-foreground">邮箱：</span>
+                {user?.email || "未设置"}
+              </p>
+              <p className="text-muted-foreground">
+                已建立 {formatNumber(profile?.threadCount ?? 0)} 个会话
+              </p>
+            </div>
+            {profile?.workingMemory ? (
+              <div className="border-t border-border pt-2">
+                <p className="mb-1 text-xs font-medium">工作记忆</p>
+                <ScrollArea className="max-h-28 rounded border border-border/60 p-2">
+                  <pre className="whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+                    {profile.workingMemory}
+                  </pre>
+                </ScrollArea>
+              </div>
+            ) : null}
+          </div>
+          <div className="min-w-0 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold">Agent 提取的用户偏好</p>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {formatNumber(profile?.extractors.length ?? 0)} 项
+              </span>
+            </div>
+            {profile?.extractors.length ? (
+              <ScrollArea className="max-h-44">
+                <div className="space-y-2 pr-2">
+                  {profile.extractors.map((item) => (
+                    <div
+                      key={`${item.threadId}:${item.slug}`}
+                      className="min-w-0 border-b border-border/60 pb-2 last:border-0 last:pb-0"
+                    >
+                      <div className="flex min-w-0 items-baseline justify-between gap-2">
+                        <span className="truncate text-xs font-medium" title={item.name}>
+                          {item.name}
+                        </span>
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          {new Date(item.updatedAt).toLocaleDateString("zh-CN")}
+                        </span>
+                      </div>
+                      <p className="break-words text-xs text-muted-foreground">
+                        {formatProfileValue(item.value)}
+                      </p>
+                      <p
+                        className="truncate text-[10px] text-muted-foreground/70"
+                        title={item.threadTitle}
+                      >
+                        来源：{item.threadTitle}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                暂无提取结果。完成几轮对话并达到 OM 观察阈值后，这里会显示稳定偏好。
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-        {[
-          ["累计 Token 数", formatNumber(totals.totalTokens)],
-          ["模型请求数", formatNumber(totals.requests)],
-          ["预估总费用", formatCostUSD(totals.totalCost)],
-          [
-            "平均响应时长",
-            formatDuration(
-              totals.requests ? Math.round(totals.totalLatencyMs / totals.requests) : 0,
-            ),
-          ],
-          ["最长聊天时长", formatDuration(totals.longestChatMs)],
-          [
-            "活跃天数",
-            formatNumber(summary?.activity.filter((entry) => entry.count > 0).length ?? 0),
-          ],
-        ].map(([label, value]) => (
-          <Card key={label} className="min-w-0">
+        {stats.map((stat) => (
+          <Card key={stat.label} className="min-w-0">
             <CardContent className="flex min-w-0 flex-col gap-1 p-3">
-              <span className="truncate text-lg font-semibold tabular-nums">{value}</span>
-              <span className="truncate text-xs text-muted-foreground">{label}</span>
+              <span className="flex min-w-0 truncate text-lg font-semibold tabular-nums">
+                {stat.value}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">{stat.label}</span>
             </CardContent>
           </Card>
         ))}
@@ -314,13 +466,20 @@ export function UsageSection() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="requests" className="min-w-0">
-        <TabsList>
-          <TabsTrigger value="requests">请求日志</TabsTrigger>
-          <TabsTrigger value="providers">Provider 统计</TabsTrigger>
-          <TabsTrigger value="models">模型统计</TabsTrigger>
-        </TabsList>
-        <TabsContent value="requests" className="min-w-0">
+      <div className="flex min-w-0 flex-col gap-3">
+        <AnimatedTabs
+          activeTab={detailTab}
+          onChange={(value) => setDetailTab(value as UsageDetailTab)}
+          layoutId="usage-detail"
+          aria-label="用量明细"
+          className="w-fit"
+          tabs={[
+            { id: "requests", label: "请求日志" },
+            { id: "providers", label: "Provider 统计" },
+            { id: "models", label: "模型统计" },
+          ]}
+        />
+        <AnimatedTabsPanel activeTab={detailTab} value="requests" layoutId="usage-detail">
           <Card>
             <CardContent className="p-0">
               <ScrollArea className="max-h-[360px] w-full">
@@ -383,8 +542,8 @@ export function UsageSection() {
               </ScrollArea>
             </CardContent>
           </Card>
-        </TabsContent>
-        <TabsContent value="providers" className="min-w-0">
+        </AnimatedTabsPanel>
+        <AnimatedTabsPanel activeTab={detailTab} value="providers" layoutId="usage-detail">
           <StatsTable
             headers={["供应商", "请求数", "Tokens", "预估成本"]}
             rows={(summary?.providers ?? []).map((row) => {
@@ -396,8 +555,8 @@ export function UsageSection() {
               ];
             })}
           />
-        </TabsContent>
-        <TabsContent value="models" className="min-w-0">
+        </AnimatedTabsPanel>
+        <AnimatedTabsPanel activeTab={detailTab} value="models" layoutId="usage-detail">
           <StatsTable
             headers={["模型", "供应商", "请求数", "Tokens", "总成本", "单次平均成本"]}
             rows={(summary?.models ?? []).map((row) => {
@@ -411,8 +570,8 @@ export function UsageSection() {
               ];
             })}
           />
-        </TabsContent>
-      </Tabs>
+        </AnimatedTabsPanel>
+      </div>
     </div>
   );
 }

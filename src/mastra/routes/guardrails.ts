@@ -50,19 +50,13 @@ export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
 export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status", {
   method: "GET",
   handler: async (c) => {
-    const config = await getGuardrailsConfig(
-      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
-    );
     // 组合存储按 domain 路由:经 getStore('observability') 取观测域接口
     const observability = (await c.get("mastra").getStorage()?.getStore("observability")) as
       | { getMetricAggregate?: unknown }
       | undefined;
     return c.json({
       modelReady: Boolean(
-        config.model.trim() ||
-          (await resolveDefaultModelId(
-            c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
-          )),
+        await resolveDefaultModelId(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
       ),
       costMetricsReady: typeof observability?.getMetricAggregate === "function",
       workspaceReady: isWorkspaceEnabled(

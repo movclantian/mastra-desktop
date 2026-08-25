@@ -23,6 +23,7 @@ import {
   type WorkspaceToolConfig,
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
+import { clampInt, clampNumber, cleanStrings, stringRecord } from "../config/normalize";
 import {
   DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
@@ -256,21 +257,6 @@ export async function saveWorkspaceConfig(
   await Promise.allSettled(previous.map(async (workspace) => workspace.destroy()));
 }
 
-function boundedNumber(value: unknown, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
-}
-
-function cleanStrings(value: unknown, limit = 100): string[] {
-  return Array.isArray(value)
-    ? value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .slice(0, limit)
-    : [];
-}
-
 function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     return DEFAULT_CONFIG.tools;
@@ -315,7 +301,6 @@ function normalizeWorkspaceConfig(
 ): WorkspaceUserConfig {
   const defaults = defaultWorkspaceConfig(resourceId);
   const merged = { ...defaults, ...input };
-  const rawEnv = merged.sandboxEnv;
   return {
     ...defaults,
     enabled: merged.enabled !== false,
@@ -324,24 +309,15 @@ function normalizeWorkspaceConfig(
     allowedPaths: cleanStrings(merged.allowedPaths),
     readOnly: merged.readOnly === true,
     sandboxEnabled: merged.sandboxEnabled === true,
-    sandboxTimeoutMs: Math.round(boundedNumber(merged.sandboxTimeoutMs, 30_000, 1_000, 900_000)),
-    sandboxEnv:
-      typeof rawEnv === "object" && rawEnv !== null && !Array.isArray(rawEnv)
-        ? (Object.fromEntries(
-            Object.entries(rawEnv).filter(
-              ([key, value]) => key.trim() && typeof value === "string",
-            ),
-          ) as Record<string, string>)
-        : {},
+    sandboxTimeoutMs: clampInt(merged.sandboxTimeoutMs, 30_000, 1_000, 900_000),
+    sandboxEnv: stringRecord(merged.sandboxEnv),
     bm25: merged.bm25 === true,
-    bm25K1: boundedNumber(merged.bm25K1, 1.5, 0.1, 5),
-    bm25B: boundedNumber(merged.bm25B, 0.75, 0, 1),
+    bm25K1: clampNumber(merged.bm25K1, 1.5, 0.1, 5),
+    bm25B: clampNumber(merged.bm25B, 0.75, 0, 1),
     lsp: merged.lsp === true,
-    lspDiagnosticTimeoutMs: Math.round(
-      boundedNumber(merged.lspDiagnosticTimeoutMs, 5_000, 100, 120_000),
-    ),
-    lspInitTimeoutMs: Math.round(boundedNumber(merged.lspInitTimeoutMs, 15_000, 500, 300_000)),
-    lspMaxOpenClients: Math.round(boundedNumber(merged.lspMaxOpenClients, 8, 1, 100)),
+    lspDiagnosticTimeoutMs: clampInt(merged.lspDiagnosticTimeoutMs, 5_000, 100, 120_000),
+    lspInitTimeoutMs: clampInt(merged.lspInitTimeoutMs, 15_000, 500, 300_000),
+    lspMaxOpenClients: clampInt(merged.lspMaxOpenClients, 8, 1, 100),
     lspDisableServers: cleanStrings(merged.lspDisableServers),
     lspSearchPaths: cleanStrings(merged.lspSearchPaths),
     lspBinaryOverrides:
@@ -527,8 +503,8 @@ export function getThreadWorkspace(
  */
 export async function deleteThreadWorkspace(
   threadId: string,
-  metadata?: unknown,
-  resourceId?: string,
+  metadata: unknown,
+  resourceId: string,
 ): Promise<void> {
   const meta = metadata as { workspacePath?: string; workspaceExplicit?: boolean } | undefined;
   const implicitPath = implicitThreadWorkspacePath(threadId, resourceId);
@@ -555,5 +531,5 @@ export async function deleteThreadWorkspace(
       await rm(meta.workspacePath, { recursive: true, force: true }).catch(() => undefined);
     }
   }
-  await deleteWorkspaceChanges(threadId);
+  await deleteWorkspaceChanges(threadId, resourceId);
 }

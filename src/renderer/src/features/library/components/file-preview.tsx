@@ -10,9 +10,9 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import { FileViewer } from "@open-file-viewer/react";
-import { LoaderCircleIcon } from "lucide-react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
 import { useTheme } from "@/features/theme/theme-provider";
 import { fetchLibraryAssetBlob } from "../api";
 
@@ -63,7 +63,7 @@ export default function LibraryFilePreview({ asset }: { asset: PreviewLibraryAss
   if (fileUrl === undefined) {
     return (
       <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
-        <LoaderCircleIcon className="size-4 animate-spin" />
+        <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
         正在加载预览
       </div>
     );

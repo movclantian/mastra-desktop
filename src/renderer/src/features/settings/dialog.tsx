@@ -9,6 +9,7 @@ import {
   ShieldCheckIcon,
   WrenchIcon,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import type * as React from "react";
 import {
   Breadcrumb,
@@ -31,7 +32,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
 } from "@/components/ui/sidebar";
-import { useAuth } from "@/features/auth/auth-provider";
+import { useAuth } from "@/features/auth";
 import { useWorkbench } from "@/features/workbench";
 import {
   GuardrailsSection,
@@ -156,27 +157,40 @@ export function SettingsDialog() {
               </Breadcrumb>
             </header>
 
-            {section === "themes" ? (
-              <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-                <ThemeSection />
-              </div>
-            ) : (
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="flex min-w-0 flex-col">
-                  {section === "providers" ? <ProvidersSection /> : null}
-                  {section !== "providers" ? (
-                    <div className="flex min-w-0 flex-col gap-4 p-4">
-                      {section === "memory" ? <MemorySection /> : null}
-                      {section === "tools" ? <ToolsSection /> : null}
-                      {section === "guardrails" ? <GuardrailsSection /> : null}
-                      {section === "workspace" ? <WorkspaceSection /> : null}
-                      {section === "storage" ? <StorageSection /> : null}
-                      {section === "usage" ? <UsageSection /> : null}
+            <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={section}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  className="flex size-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                >
+                  {section === "themes" ? (
+                    <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
+                      <ThemeSection />
                     </div>
-                  ) : null}
-                </div>
-              </ScrollArea>
-            )}
+                  ) : (
+                    <ScrollArea className="min-h-0 flex-1">
+                      <div className="flex min-w-0 flex-col">
+                        {section === "providers" ? <ProvidersSection /> : null}
+                        {section !== "providers" ? (
+                          <div className="flex min-w-0 flex-col gap-4 p-4">
+                            {section === "memory" ? <MemorySection /> : null}
+                            {section === "tools" ? <ToolsSection /> : null}
+                            {section === "guardrails" ? <GuardrailsSection /> : null}
+                            {section === "workspace" ? <WorkspaceSection /> : null}
+                            {section === "storage" ? <StorageSection /> : null}
+                            {section === "usage" ? <UsageSection /> : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </ScrollArea>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           </main>
         </SidebarProvider>
       </DialogContent>

@@ -7,7 +7,7 @@
  *
  * 三组管线与 Agent 的三个数组一一对应:
  * - inputProcessors:模型调用之前(规范化 / 注入检测 / 语言 / 审核 / PII /
- *   Token 上限 / 成本上限 / 工具裁剪 / 响应缓存 / 供应商历史兼容 / 运行时搜索)
+ *   Token 上限 / 成本上限 / 工具裁剪 / 响应缓存 / 供应商历史兼容)
  * - outputProcessors:模型响应之后(流式批处理 / Token 上限 / PII / 审核 /
  *   系统提示词清洗)
  * - errorProcessors:供应商 API 报错时(prefill 恢复 / 瞬时流错误重试)
@@ -46,11 +46,10 @@ import {
   TokenCostControl,
   TokenLimiterProcessor,
   ToolCallFilter,
-  ToolSearchProcessor,
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { resolveConfiguredModel, resolveDefaultLanguageModel, splitRouterId } from "../models";
+import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
 import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
 import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
@@ -72,12 +71,8 @@ type CostScope = "run" | "resource" | "thread" | "user" | "organization" | "sess
 type CostWindow = "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
 type CostStrategy = "block" | "warn";
 type CacheScopeMode = "auto" | "none" | "custom";
-type ToolSearchStorage = "in-memory" | "context";
-
 export interface GuardrailsUserConfig {
   // --- 通用 ---------------------------------------------------------------
-  /** 护栏检测用模型(路由字符串,不带网关前缀);空 = 跟随当前默认模型 */
-  model: string;
   /**
    * 内部检测 agent 用「提示词注入 JSON」代替原生 structured output。
    * 第三方网关/兼容端点常不支持 response_format,关闭会让检测结果解析失败。
@@ -201,14 +196,6 @@ export interface GuardrailsUserConfig {
   // --- ProviderHistoryCompat(输入,processLLMRequest + processAPIError) ----
   providerCompat: boolean;
 
-  // --- ToolSearchProcessor(输入) ------------------------------------------
-  toolSearch: boolean;
-  toolSearchTopK: number;
-  toolSearchMinScore: number;
-  toolSearchAutoLoad: boolean;
-  toolSearchStorage: ToolSearchStorage;
-  toolSearchTtl: number;
-
   // --- SkillSearchProcessor(输入,需工作区) --------------------------------
   skillSearch: boolean;
   skillSearchTopK: number;
@@ -272,10 +259,9 @@ const INJECTION_TYPES = [
 /**
  * 默认值取向:零 LLM 成本、且不会改写正文的处理器默认开启;
  * 每轮都要额外调用模型的检测器(注入 / 审核 / PII / 语言)默认关闭,
- * 由用户按需开启并挑一个便宜模型 —— 与官方「Choose a fast model」建议一致。
+ * 由用户按需开启;启用后自动跟随当前请求模型。
  */
 const DEFAULT_CONFIG: GuardrailsUserConfig = {
-  model: "",
   jsonPromptInjection: true,
   maxProcessorRetries: 0,
 
@@ -375,13 +361,6 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
 
   providerCompat: true,
 
-  toolSearch: false,
-  toolSearchTopK: 5,
-  toolSearchMinScore: 0,
-  toolSearchAutoLoad: false,
-  toolSearchStorage: "context",
-  toolSearchTtl: 3_600_000,
-
   skillSearch: false,
   skillSearchTopK: 5,
   skillSearchMinScore: 0,
@@ -406,7 +385,7 @@ export async function getGuardrailsConfig(resourceId?: string): Promise<Guardrai
     return DEFAULT_CONFIG;
   }
   try {
-    const next = { ...DEFAULT_CONFIG, ...JSON.parse(raw) } as GuardrailsUserConfig;
+    const next = normalizeGuardrailsConfig(JSON.parse(raw) as Partial<GuardrailsUserConfig>);
     guardrailsConfigByScope.set(scope, next);
     return next;
   } catch {
@@ -420,12 +399,18 @@ export async function saveGuardrailsConfig(
   next: GuardrailsUserConfig,
   resourceId?: string,
 ): Promise<void> {
-  await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
-  guardrailsConfigByScope.set(scopeKey(resourceId), { ...DEFAULT_CONFIG, ...next });
+  const normalized = normalizeGuardrailsConfig(next);
+  await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
+  guardrailsConfigByScope.set(scopeKey(resourceId), normalized);
   invalidateCache(resourceId);
 }
 
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
+
+function normalizeGuardrailsConfig(input: Partial<GuardrailsUserConfig>): GuardrailsUserConfig {
+  const stored = Object.fromEntries(Object.entries(input).filter(([key]) => key in DEFAULT_CONFIG));
+  return { ...DEFAULT_CONFIG, ...stored } as GuardrailsUserConfig;
+}
 
 function scopeKey(resourceId?: string): string {
   return resourceId?.trim() || "__system__";
@@ -443,15 +428,11 @@ export function getGuardrailsRuntimeConfig(resourceId?: string): GuardrailsUserC
 // ---------------------------------------------------------------------------
 // 处理器实例缓存
 //
-// 检测类处理器在构造函数里就建好了内部 Agent(见 moderation.d.ts 的
-// private moderationAgent),ToolSearch 还会建索引 —— 每请求重建会白付初始化
-// 成本,因此按配置缓存一份,saveGuardrailsConfig 置空后下次请求重建。
+// 输入/输出处理器按请求模型即时构建;错误处理器可安全按配置缓存。
 // SkillSearch 依赖每线程 Workspace 实例,单独按工作区路径缓存。
 // ---------------------------------------------------------------------------
 
 interface GuardrailRuntime {
-  cachedInput: InputProcessorOrWorkflow[] | null;
-  cachedOutput: OutputProcessorOrWorkflow[] | null;
   cachedError: ErrorProcessorOrWorkflow[] | null;
   skillSearchCache: Map<string, SkillSearchProcessor>;
   responseCacheBackend: InMemoryServerCache | null;
@@ -464,8 +445,6 @@ function getRuntime(resourceId?: string): GuardrailRuntime {
   let runtime = runtimeByScope.get(key);
   if (!runtime) {
     runtime = {
-      cachedInput: null,
-      cachedOutput: null,
       cachedError: null,
       skillSearchCache: new Map(),
       responseCacheBackend: null,
@@ -477,26 +456,21 @@ function getRuntime(resourceId?: string): GuardrailRuntime {
 
 function invalidateCache(resourceId?: string): void {
   const runtime = getRuntime(resourceId);
-  runtime.cachedInput = null;
-  runtime.cachedOutput = null;
   runtime.cachedError = null;
   runtime.skillSearchCache.clear();
   runtime.responseCacheBackend = null;
 }
 
-/**
- * 护栏模型按当前资源直接解析为官方 LanguageModel,避免处理器后续通过
- * 不带 RequestContext 的 gateway 回读另一位用户的配置。未配置供应商时返回
- * undefined,需要 LLM 的处理器整体跳过 —— 不能让「没配模型」把整条请求打挂。
- */
+/** 护栏检测模型跟随当前请求模型;无请求上下文时使用当前资源默认模型。 */
 async function resolveGuardrailModel(
-  cfg: GuardrailsUserConfig = currentConfig(),
+  requestContext?: RequestContext,
   resourceId?: string,
 ): Promise<MastraModelConfig | undefined> {
-  const selected = cfg.model.trim();
-  if (!selected) return resolveDefaultLanguageModel(resourceId);
-  const { providerId, modelId } = splitRouterId(selected);
-  return resolveConfiguredModel(providerId, modelId, resourceId);
+  const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY);
+  if (typeof requestModel === "object" && requestModel !== null) {
+    return requestModel as MastraModelConfig;
+  }
+  return resolveDefaultLanguageModel(resourceId);
 }
 
 /** 内部检测 agent 的结构化输出形态(第三方网关不支持 response_format 时必需) */
@@ -599,9 +573,10 @@ function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetec
 async function buildInput(
   cfg = currentConfig(),
   resourceId?: string,
+  requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
   const processors: InputProcessorOrWorkflow[] = [];
-  const model = await resolveGuardrailModel(cfg, resourceId);
+  const model = await resolveGuardrailModel(requestContext, resourceId);
   const structuredOptions = structuredOutputOptions(cfg);
 
   if (cfg.unicode) {
@@ -687,24 +662,6 @@ async function buildInput(
     );
   }
 
-  if (cfg.toolSearch) {
-    processors.push(
-      new ToolSearchProcessor({
-        // 静态清单为空:本 Agent 的工具全部按请求解析(动态 tools 函数),
-        // 由 includeResolvedTools 索引它们并在加载前从提示词里扣掉
-        tools: {},
-        includeResolvedTools: true,
-        search: {
-          topK: cfg.toolSearchTopK,
-          minScore: cfg.toolSearchMinScore,
-          autoLoad: cfg.toolSearchAutoLoad,
-        },
-        storage: cfg.toolSearchStorage,
-        ttl: cfg.toolSearchTtl,
-      }),
-    );
-  }
-
   if (cfg.toolCallFilter) {
     processors.push(
       new ToolCallFilter({
@@ -743,9 +700,10 @@ async function buildInput(
 async function buildOutput(
   cfg = currentConfig(),
   resourceId?: string,
+  requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
   const processors: OutputProcessorOrWorkflow[] = [];
-  const model = await resolveGuardrailModel(cfg, resourceId);
+  const model = await resolveGuardrailModel(requestContext, resourceId);
 
   if (cfg.batchParts) {
     processors.push(
@@ -826,10 +784,10 @@ export async function buildGuardrailInputProcessors(
   const resourceId = resourceIdFromContext(requestContext);
   const cfg = currentConfig(resourceId);
   const runtime = getRuntime(resourceId);
-  runtime.cachedInput ??= await buildInput(cfg, resourceId);
-  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return runtime.cachedInput;
+  const input = await buildInput(cfg, resourceId, requestContext);
+  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return input;
   const workspacePath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
-  if (typeof workspacePath !== "string" || !workspacePath) return runtime.cachedInput;
+  if (typeof workspacePath !== "string" || !workspacePath) return input;
   let skillSearch = runtime.skillSearchCache.get(workspacePath);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({
@@ -839,15 +797,14 @@ export async function buildGuardrailInputProcessors(
     });
     runtime.skillSearchCache.set(workspacePath, skillSearch);
   }
-  return [...runtime.cachedInput, skillSearch];
+  return [...input, skillSearch];
 }
 
 export async function buildGuardrailOutputProcessors(
-  resourceId?: string,
+  requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
-  const runtime = getRuntime(resourceId);
-  runtime.cachedOutput ??= await buildOutput(currentConfig(resourceId), resourceId);
-  return runtime.cachedOutput;
+  const resourceId = resourceIdFromContext(requestContext);
+  return buildOutput(currentConfig(resourceId), resourceId, requestContext);
 }
 
 export function buildGuardrailErrorProcessors(resourceId?: string): ErrorProcessorOrWorkflow[] {

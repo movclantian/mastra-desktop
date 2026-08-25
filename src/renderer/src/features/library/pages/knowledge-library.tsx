@@ -7,7 +7,6 @@ import {
   FolderPenIcon,
   FolderPlusIcon,
   HardDriveIcon,
-  LoaderCircleIcon,
   MoreVerticalIcon,
   PanelLeftIcon,
   PencilIcon,
@@ -49,6 +48,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { Dotm3x3_11 } from "@/components/ui/dotm-3x3-11";
+import { DotmHex1 } from "@/components/ui/dotm-hex-1";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -402,6 +404,10 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                 <span className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
                   <span>{formatBytes(asset.byteSize)}</span>
                   <span>·</span>
+                  {/* 蜂巢点阵 = 正在切块/嵌入入库,把「索引中」这个后台过程画出来 */}
+                  {asset.status === "indexing" ? (
+                    <DotmHex1 size={12} dotSize={1.4} colorPreset="solid-theme" />
+                  ) : null}
                   <span className="truncate">
                     {statusLabel(asset.status)}
                     {(asset.status === "error" || asset.status === "indexing") && asset.indexStage
@@ -658,7 +664,11 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
                   />
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem disabled={uploading} onClick={() => openUpload(uploadTarget)}>
-                      {uploading ? <LoaderCircleIcon className="animate-spin" /> : <UploadIcon />}
+                      {uploading ? (
+                        <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+                      ) : (
+                        <UploadIcon />
+                      )}
                       <span>上传文件</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -1023,8 +1033,8 @@ export function KnowledgeLibrary({ settingsOpen, onSettingsOpenChange }: Knowled
             {selected ? (
               <React.Suspense
                 fallback={
-                  <div className="flex size-full items-center justify-center text-sm text-muted-foreground">
-                    <LoaderCircleIcon className="mr-2 size-4 animate-spin" />
+                  <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                    <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
                     正在加载预览器
                   </div>
                 }

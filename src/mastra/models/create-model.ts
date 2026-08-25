@@ -8,13 +8,13 @@
  * anthropic 走 Messages API、gemini 走原生 generateContent、
  * openai 按 useResponses 走 Responses 或 Chat Completions。
  *
- * OpenAI-compatible 网关使用 AI SDK 官方的 openai-compatible provider，
- * 原生支持 reasoning_content / reasoning、tool call 和标准 v4 stream。
+ * OpenAI-compatible 网关直接复用 createOpenAI 的官方 compatibility: "compatible"
+ * 模式(AI SDK 内置的兼容端点处理),原生支持 reasoning_content / reasoning、
+ * tool call 与标准 v4 stream,无需另起 createOpenAICompatible 实例。
  */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { GatewayLanguageModel } from "@mastra/core/llm";
 
 export type { GatewayLanguageModel };
@@ -45,11 +45,11 @@ export function normalizeGatewayBaseUrl(
   if (!baseUrl) return undefined;
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
   if (!trimmed) return undefined;
-  if (protocol === "anthropic") {
-    if (trimmed.endsWith("/v1")) return trimmed;
-    return `${trimmed}/v1`;
-  }
-  if (protocol === "openai") {
+  // openai / anthropic 的 SDK 把 baseURL 当作已含版本段的根(默认 …/v1),
+  // 只追加端点路径(/chat/completions、/messages),不会自行补 /v1。
+  // 故裸域名/裸 IP 时补 /v1;已带路径的端点(如 /api/paas/v4)原样保留,
+  // 与前端 normalizeGatewayUrl 行为一致。gemini 由 SDK 默认 baseURL 处理。
+  if (protocol === "openai" || protocol === "anthropic") {
     if (trimmed.endsWith("/v1")) return trimmed;
     try {
       const parsed = new URL(trimmed);
@@ -68,33 +68,36 @@ export function createGatewayModel(options: {
   baseUrl?: string;
   protocol: GatewayProtocol | undefined;
   useResponses?: boolean;
+  /** Display name used by AI SDK observability for custom gateways. */
+  providerName?: string;
 }): GatewayLanguageModel {
-  const { modelId, apiKey, protocol, useResponses } = options;
+  const { modelId, apiKey, protocol, useResponses, providerName } = options;
   const normalizedBaseUrl = normalizeGatewayBaseUrl(options.baseUrl, protocol);
+  const common = {
+    apiKey,
+    ...(providerName?.trim() ? { name: providerName.trim() } : {}),
+  };
   switch (protocol) {
     case "anthropic":
       return createAnthropic({
         ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
-        apiKey,
+        ...common,
       })(modelId);
     case "gemini":
       return createGoogleGenerativeAI({
         ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
-        apiKey,
+        ...common,
       })(modelId);
     default: {
+      // 自定义网关走 Chat Completions 端点时用官方 compatibility: "compatible"
+      // 模式;默认(无 baseURL)与 Responses 路径仍用 strict 默认。
+      const compatible = Boolean(normalizedBaseUrl) && !useResponses;
       const openai = createOpenAI({
         ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
-        apiKey,
+        ...(compatible ? { compatibility: "compatible" } : {}),
+        ...common,
       });
       if (useResponses) return openai.responses(modelId);
-      if (normalizedBaseUrl) {
-        return createOpenAICompatible({
-          name: "mastra-work-openai-compatible",
-          baseURL: normalizedBaseUrl,
-          apiKey,
-        }).chatModel(modelId);
-      }
       return openai.chat(modelId);
     }
   }

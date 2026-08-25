@@ -1,24 +1,19 @@
 /**
- * 线程自动起名与标题提炼 (Automatic Thread Title Generation)
+ * 显式线程标题生成。
  *
- * 机制：
- * 1. 首轮消息发送完毕后自动触发（或由侧边栏手动按需调用）。
- * 2. 优先使用当前配置的 LLM 模型进行短文本提炼（限制 10 字以内纯文本）；
- * 3. 具备 4 秒超时熔断与首句智能截断 Fallback，保证 100% 成功、零阻塞、零异常。
+ * 首轮消息的自动标题由 Agent 的 `options.generateTitle` 官方路径处理；
+ * 本路由只服务于用户从侧边栏手动触发的重新命名操作。
  */
 import type { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { generateText, type LanguageModel } from "ai";
 import { workError } from "../../errors";
 import { getMemoryConfig } from "../../memory";
-import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models";
 import { getOwnedThread, getWorkMemoryForThread } from "./shared";
 
 export async function generateThreadTitleHelper(options: {
   threadId: string;
   resourceId: string;
   userMessage?: string;
-  model?: unknown;
   force?: boolean;
   requestContext: RequestContext;
 }): Promise<string | null> {
@@ -30,15 +25,16 @@ export async function generateThreadTitleHelper(options: {
   await memory.settled();
   const thread = await getOwnedThread(memory, options.threadId, options.resourceId);
   if (!thread) return null;
+  const storedTitle = thread.title?.trim() || "";
 
   const memoryConfig = await getMemoryConfig(options.resourceId);
   if (!options.force && !memoryConfig.generateTitle) {
-    return thread.title ?? "New Chat";
+    return storedTitle || "New Chat";
   }
 
   // 非强制模式下，如果标题已被用户显式修改且不是草稿/默认标题，则跳过
-  if (!options.force && thread.title !== "New Chat" && !thread.metadata?.draft) {
-    return thread.title ?? "New Chat";
+  if (!options.force && storedTitle && storedTitle !== "New Chat" && !thread.metadata?.draft) {
+    return storedTitle;
   }
 
   let textContent = options.userMessage?.trim();
@@ -58,61 +54,28 @@ export async function generateThreadTitleHelper(options: {
     }
   }
 
-  if (!textContent) return thread.title ?? "New Chat";
+  if (!textContent) return storedTitle || "New Chat";
 
   let generatedTitle = "";
 
   try {
-    let modelInstance: LanguageModel | undefined;
-    const configuredModel = memoryConfig.generateTitleModel.trim();
-    const requestedModel =
-      options.model !== undefined ? options.model : configuredModel || undefined;
-    if (requestedModel !== undefined) {
-      const resolved = await resolveRequestModel(requestedModel, options.resourceId);
-      if (resolved && typeof resolved === "object" && "doGenerate" in resolved) {
-        modelInstance = resolved as unknown as LanguageModel;
-      }
-    }
-    if (!modelInstance) {
-      modelInstance = (await resolveDefaultLanguageModel(
-        options.resourceId,
-      )) as unknown as LanguageModel;
-    }
+    const { mastra } = await import("../../index");
+    const agent = mastra.getAgentById("mastra-work-agent");
+    const result = await agent.generateTitleFromUserMessage({
+      message: textContent.slice(0, 600),
+      requestContext: options.requestContext,
+    });
+    const raw = (result ?? "")
+      .replace(/^["'“”‘`]+|["'“”‘`]+$/g, "")
+      .replace(/^(标题|Title|主题)[:：]\s*/i, "")
+      .replace(/[。，！？,!?#\n\r]/g, "")
+      .trim();
 
-    if (modelInstance) {
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), 4000);
-
-      const promptInput = textContent.slice(0, 600);
-      const result = await generateText({
-        model: modelInstance,
-        abortSignal: abortController.signal,
-        system: [
-          "你是一个会话标题提炼专家。请根据用户发言内容，提炼一个简短、精准、高信息量的会话标题。",
-          "要求：",
-          "1. 中文不超过 10 个字，英文不超过 5 个单词；",
-          "2. 严禁出现标点符号、书名号、引号或前缀（如'标题：'）；",
-          "3. 纯文本单行输出。",
-          ...(memoryConfig.generateTitleInstructions.trim()
-            ? [`附加要求：${memoryConfig.generateTitleInstructions.trim()}`]
-            : []),
-        ].join("\n"),
-        prompt: promptInput,
-      });
-      clearTimeout(timeoutId);
-
-      const raw = result.text
-        .replace(/^["'“”‘`]+|["'“”‘`]+$/g, "")
-        .replace(/^(标题|Title|主题)[:：]\s*/i, "")
-        .replace(/[。，！？,!?#\n\r]/g, "")
-        .trim();
-
-      if (raw.length > 0) {
-        generatedTitle = raw.slice(0, 20);
-      }
+    if (raw.length > 0) {
+      generatedTitle = raw.slice(0, 20);
     }
   } catch {
-    // LLM 超时或出错时平滑回落
+    // 手动触发失败时继续使用确定性的首句标题。
   }
 
   // 兜底回退：取首行文字去除 Markdown 标记后前 15 字符
@@ -144,7 +107,6 @@ export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadI
     const threadId = c.req.param("threadId");
     const body = (await c.req.json()) as {
       resourceId?: string;
-      model?: unknown;
       force?: boolean;
     };
     if (!body.resourceId) {
@@ -153,7 +115,6 @@ export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadI
     const title = await generateThreadTitleHelper({
       threadId,
       resourceId: body.resourceId,
-      model: body.model,
       force: body.force ?? true,
       requestContext: c.get("requestContext"),
     });

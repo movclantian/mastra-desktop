@@ -4,7 +4,6 @@ import type { PermissionRules, WorkModeId } from "@/features/session";
 import type { MainView } from "@/features/workbench/navigation";
 import { ACTIVE_THREAD_KEY, readJson, userStorageKey } from "@/features/workbench/storage";
 import {
-  cloneThreadRequest,
   createThreadRequest,
   deleteThreadRequest,
   fetchThreads,
@@ -43,10 +42,6 @@ export interface ThreadState {
   deleteThread: (threadId: string) => Promise<void>;
   pinThread: (threadId: string, pinned: boolean) => Promise<void>;
   archiveThread: (threadId: string, archived: boolean) => Promise<void>;
-  cloneThread: (
-    threadId: string,
-    selection?: { messageIds?: string[] },
-  ) => Promise<WorkThread | null>;
   searchMessages: (query: string) => Promise<MessageSearchHit[]>;
   activeThreadId: string | null;
   selectThread: (threadId: string | null) => void;
@@ -125,16 +120,16 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
   );
 
   const createThread = useCallback(
-    (title = "New Chat") => {
+    (title?: string) => {
       if (createThreadRequestRef.current) return createThreadRequestRef.current;
       const request = (async () => {
         try {
           const { agentSelection, modeId, permissionRules, modelSelection } = getThreadDefaults();
           const thread = await createThreadRequest(resourceId, {
             threadId: nanoid(),
-            title,
+            ...(title ? { title } : {}),
             metadata: {
-              draft: title === "New Chat",
+              draft: !title || title === "New Chat",
               agentProfileId: agentSelection.id,
               modeId,
               permissionRules,
@@ -174,7 +169,7 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
     (threadId: string, title: string) =>
       patchThread(threadId, {
         title,
-        ...(title !== "New Chat" ? { metadata: { draft: false } } : {}),
+        ...(title ? { metadata: { draft: false } } : {}),
       }),
     [patchThread],
   );
@@ -214,21 +209,6 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
     [activeThreadId, refreshThreads, resourceId, selectThread],
   );
 
-  const cloneThread = useCallback(
-    async (threadId: string, selection?: { messageIds?: string[] }) => {
-      try {
-        const thread = await cloneThreadRequest(threadId, resourceId, selection);
-        if (!thread) return null;
-        await refreshThreads();
-        selectThread(thread.id);
-        return thread;
-      } catch {
-        return null;
-      }
-    },
-    [refreshThreads, resourceId, selectThread],
-  );
-
   const searchMessages = useCallback(
     (query: string) => searchMemory(resourceId, query),
     [resourceId],
@@ -244,7 +224,6 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
     deleteThread,
     pinThread,
     archiveThread,
-    cloneThread,
     searchMessages,
     activeThreadId,
     selectThread,

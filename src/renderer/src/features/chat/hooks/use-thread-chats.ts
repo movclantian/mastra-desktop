@@ -69,6 +69,8 @@ export function useThreadChats(
             // trigger / messageId 必须显式带上 —— 否则 regenerate() 到了服务端
             // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
             // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
+            // Memory 历史由服务端加载;官方 AI SDK UI 集成只发送本次请求的
+            // 最新消息,避免浏览器时间戳与数据库历史排序冲突。
             // 逐次调用传入的 body(如 resume 的 runId/resumeData)优先于公共字段。
             reconnectAttemptsRef.current.delete(threadId);
             const reconnectTimer = reconnectTimersRef.current.get(threadId);
@@ -83,7 +85,7 @@ export function useThreadChats(
               id,
               trigger,
               messageId,
-              messages,
+              messages: messages.length > 0 ? [messages[messages.length - 1]] : [],
             };
             return { body: payload };
           },

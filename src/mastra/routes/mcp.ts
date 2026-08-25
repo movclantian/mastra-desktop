@@ -5,7 +5,7 @@
 
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import {
   authenticateMcpServer,
   getMcpConfig,
@@ -39,7 +39,7 @@ export const saveMcpConfigRoute = registerApiRoute("/work/mcp", {
       return c.json({ server: summarizeMcpServer(server) }, 201);
     } catch (error) {
       throw workError("MCP_CONFIG_INVALID", {
-        text: error instanceof Error ? error.message : "保存 MCP 配置失败",
+        text: errorText(error, "保存 MCP 配置失败"),
         cause: error,
       });
     }
@@ -79,7 +79,7 @@ export const testMcpConfigRoute = registerApiRoute("/work/mcp/test", {
           ok: false,
           toolCount: 0,
           tools: [],
-          error: error instanceof Error ? error.message : "连接测试失败",
+          error: errorText(error, "连接测试失败"),
         },
         400,
       );
@@ -99,7 +99,7 @@ export const authenticateMcpConfigRoute = registerApiRoute("/work/mcp/:id/authen
       );
     } catch (error) {
       throw workError("MCP_CONNECTION_FAILED", {
-        text: error instanceof Error ? error.message : "MCP OAuth 授权失败",
+        text: errorText(error, "MCP OAuth 授权失败"),
         cause: error,
       });
     }

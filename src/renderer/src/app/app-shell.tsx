@@ -12,6 +12,7 @@ import { PanelFallback, TerminalDrawer, WorkspaceDrawer } from "@/features/app-s
 import { useHorizontalWheelScroll } from "@/features/app-shell/hooks/use-horizontal-wheel-scroll";
 import { useLinkRouting } from "@/features/app-shell/hooks/use-link-routing";
 import { useWindowMinWidth } from "@/features/app-shell/hooks/use-window-min-width";
+import { LoginScreen, useAuth } from "@/features/auth";
 import { ChatPanel } from "@/features/chat";
 import { AppSidebar } from "@/features/navigation";
 import { SettingsDialog } from "@/features/settings";
@@ -300,6 +301,18 @@ function AppShell() {
 }
 
 export default function App(): React.JSX.Element {
+  const { user, token, setSession } = useAuth();
+
+  if (!user || !token) {
+    return (
+      <TooltipProvider>
+        <LoginScreen onAuthenticated={setSession} />
+        <SmoothCursor />
+        <Toaster position="bottom-right" />
+      </TooltipProvider>
+    );
+  }
+
   return (
     <WorkbenchProvider>
       <TooltipProvider>

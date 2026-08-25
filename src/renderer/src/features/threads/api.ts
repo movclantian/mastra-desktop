@@ -101,27 +101,6 @@ export async function generateThreadTitle(
   return typeof payload.title === "string" ? payload.title : null;
 }
 
-export async function cloneThreadRequest(
-  threadId: string,
-  resourceId: string,
-  selection?: { messageIds?: string[] },
-): Promise<WorkThread | null> {
-  const payload = await requestJson<{ thread?: WorkThread }>(
-    `/work/threads/${encodeURIComponent(threadId)}/clone`,
-    {
-      method: "POST",
-      body: {
-        resourceId,
-        ...(selection?.messageIds
-          ? { options: { messageFilter: { messageIds: selection.messageIds } } }
-          : {}),
-      },
-    },
-    "复制任务失败",
-  );
-  return payload.thread ?? null;
-}
-
 export async function searchMemory(resourceId: string, query: string): Promise<MessageSearchHit[]> {
   const params = new URLSearchParams({
     agentId: MEMORY_AGENT_ID,

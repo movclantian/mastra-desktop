@@ -13,7 +13,6 @@ import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { BlurFade } from "@/components/ui/blur-fade";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
@@ -25,9 +24,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { DotmCircular4 } from "@/components/ui/dotm-circular-4";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MagicCard } from "@/components/ui/magic-card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Select,
@@ -36,8 +36,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShimmerButton } from "@/components/ui/shimmer-button";
-import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import {
   type EnabledModel,
@@ -317,7 +315,11 @@ export function AddProviderDialog({
             取消
           </Button>
           <Button disabled={submitting} onClick={() => void handleSubmit()}>
-            {submitting ? <Spinner className="size-4" /> : <PlusIcon />}
+            {submitting ? (
+              <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
+            ) : (
+              <PlusIcon />
+            )}
             {editProvider ? "保存修改" : "添加供应商"}
           </Button>
         </DialogFooter>
@@ -400,12 +402,7 @@ export function ProviderItem({
   };
 
   return (
-    <MagicCard
-      gradientSize={220}
-      gradientFrom="var(--primary)"
-      gradientTo="var(--accent)"
-      className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-colors"
-    >
+    <div className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-colors hover:border-border/80">
       <section className="w-full">
         {/* 头部:名称 + 操作(禁用 / 编辑 / 展开 / 删除) */}
         <div
@@ -463,7 +460,8 @@ export function ProviderItem({
             <div className="border-t border-border/60 bg-muted/20">
               {loadingModels ? (
                 <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-                  <Spinner className="size-4" />
+                  {/* 雷达点阵 = 正在向远端拉取,与本地保存态的螺旋点阵区分 */}
+                  <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
                   正在拉取模型列表...
                 </div>
               ) : models ? (
@@ -485,7 +483,7 @@ export function ProviderItem({
           </CollapsibleContent>
         </Collapsible>
       </section>
-    </MagicCard>
+    </div>
   );
 }
 
@@ -501,7 +499,7 @@ export function ModelListSection({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  const { providers, setProviders, catalog, user } = useWorkbench();
+  const { providers, setProviders, catalog } = useWorkbench();
   const [models, setModels] = React.useState(initialModels);
   const [query, setQuery] = React.useState("");
   const [testingId, setTestingId] = React.useState<string | null>(null);
@@ -558,7 +556,7 @@ export function ModelListSection({
     setTestingId(modelId);
     const startedAt = performance.now();
     try {
-      const result = await testProviderModel(provider, modelId, user.id);
+      const result = await testProviderModel(provider, modelId);
       const elapsed = Math.round(performance.now() - startedAt);
       if (result.ok) {
         toast.success(`${modelId} 连接成功(${elapsed}ms):${result.reply ?? ""}`);
@@ -628,7 +626,11 @@ export function ModelListSection({
                   onClick={() => void runTest(model.id)}
                   aria-label={`测试 ${model.id}`}
                 >
-                  {testingId === model.id ? <Spinner className="size-4" /> : <FlaskConicalIcon />}
+                  {testingId === model.id ? (
+                    <DotmCircular4 size={15} dotSize={1.7} colorPreset="solid-theme" />
+                  ) : (
+                    <FlaskConicalIcon />
+                  )}
                 </Button>
                 <Switch
                   checked={enabled}
@@ -677,10 +679,10 @@ export function ProvidersSection() {
         <p className="text-sm text-muted-foreground">
           预选 Mastra 内置供应商填入你的 Key,或接入自定义网关。
         </p>
-        <ShimmerButton className="h-8 px-3 text-xs shadow-xs" onClick={() => setAddOpen(true)}>
+        <Button size="sm" onClick={() => setAddOpen(true)}>
           <PlusIcon className="size-3.5 mr-1" />
           添加供应商
-        </ShimmerButton>
+        </Button>
       </div>
 
       <AddProviderDialog registry={registry} open={addOpen} onOpenChange={setAddOpen} />
@@ -699,14 +701,13 @@ export function ProvidersSection() {
             还没有供应商,点击「添加」开始。
           </p>
         ) : (
-          providers.map((provider, index) => (
-            <BlurFade delay={0.04 * index} duration={0.2} blur="3px" key={provider.id}>
-              <ProviderItem
-                provider={provider}
-                registry={registry}
-                onEdit={() => setEditingProvider(provider)}
-              />
-            </BlurFade>
+          providers.map((provider) => (
+            <ProviderItem
+              key={provider.id}
+              provider={provider}
+              registry={registry}
+              onEdit={() => setEditingProvider(provider)}
+            />
           ))
         )}
       </div>

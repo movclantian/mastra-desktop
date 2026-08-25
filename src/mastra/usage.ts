@@ -1,3 +1,4 @@
+import { getProvidersConfig, routerPrefix, type UserProviderConfig } from "./models/providers";
 import { appStorage } from "./storage";
 
 const INPUT_TOKENS_METRIC = "mastra_model_total_input_tokens";
@@ -97,6 +98,35 @@ function dateKey(value: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+const PROVIDER_KIND_SUFFIX =
+  /\.(?:chat|responses|messages|generateContent|completion|embedding|textEmbedding|image|audio)$/i;
+
+/** Convert an AI SDK provider namespace into the name configured by the user. */
+function providerLabel(
+  rawValue: string | null | undefined,
+  configuredProviders: UserProviderConfig[],
+): string {
+  const raw = rawValue?.trim() || "unknown";
+  const namespace = raw.replace(PROVIDER_KIND_SUFFIX, "");
+  const configured = configuredProviders.find(
+    (provider) =>
+      provider.name.trim() === raw ||
+      provider.name.trim() === namespace ||
+      provider.id === namespace ||
+      provider.registryId === namespace ||
+      routerPrefix(provider) === namespace,
+  );
+  if (configured) return configured.name;
+
+  // Older custom gateway metrics used this fixed namespace. It is only
+  // unambiguous when the resource has one custom gateway configured.
+  if (namespace === "mastra-work-openai-compatible") {
+    const customProviders = configuredProviders.filter((provider) => provider.baseUrl);
+    if (customProviders.length === 1) return customProviders[0].name;
+  }
+  return namespace;
 }
 
 function buildFilters(resourceId: string, from: number, to: number): MetricFilters {
@@ -212,6 +242,7 @@ export async function getUsageSummary(
     listModelMetrics(INPUT_TOKENS_METRIC, filters),
     listModelMetrics(OUTPUT_TOKENS_METRIC, filters),
   ]);
+  const configuredProviders = (await getProvidersConfig(resourceId)).providers;
 
   const outputByRequest = new Map(outputs.map((metric) => [metricKey(metric), metric]));
   const durationByRequest = new Map(durations.map((metric) => [metricKey(metric), metric]));
@@ -227,7 +258,10 @@ export async function getUsageSummary(
     return {
       id: key,
       createdAt: new Date(input.timestamp).toISOString(),
-      provider: input.provider || output?.provider || duration?.provider || "unknown",
+      provider: providerLabel(
+        input.provider || output?.provider || duration?.provider,
+        configuredProviders,
+      ),
       model: input.model || output?.model || duration?.model || "unknown",
       inputTokens: inputValue,
       outputTokens: outputValue,
@@ -272,25 +306,27 @@ export async function getUsageSummary(
       )?.value,
     );
   const providers = providerTokens.groups.map((group) => {
-    const provider = String(group.dimensions.provider ?? "unknown");
+    const rawProvider = String(group.dimensions.provider ?? "unknown");
+    const provider = providerLabel(rawProvider, configuredProviders);
     const requestGroup = providerRequests.groups.find(
-      (item) => String(item.dimensions.provider ?? "unknown") === provider,
+      (item) => String(item.dimensions.provider ?? "unknown") === rawProvider,
     );
     return {
       provider,
       requests: asNumber(requestGroup?.value),
-      inputTokens: groupValue(providerInput.groups, { provider }),
-      outputTokens: groupValue(providerOutput.groups, { provider }),
+      inputTokens: groupValue(providerInput.groups, { provider: rawProvider }),
+      outputTokens: groupValue(providerOutput.groups, { provider: rawProvider }),
       tokens: asNumber(group.value),
       cost: group.estimatedCost ?? null,
     };
   });
   const models = modelTokens.groups.map((group) => {
-    const provider = String(group.dimensions.provider ?? "unknown");
+    const rawProvider = String(group.dimensions.provider ?? "unknown");
+    const provider = providerLabel(rawProvider, configuredProviders);
     const model = String(group.dimensions.model ?? "unknown");
     const requestGroup = modelRequests.groups.find(
       (item) =>
-        String(item.dimensions.provider ?? "unknown") === provider &&
+        String(item.dimensions.provider ?? "unknown") === rawProvider &&
         String(item.dimensions.model ?? "unknown") === model,
     );
     const cost = group.estimatedCost ?? null;
@@ -299,8 +335,8 @@ export async function getUsageSummary(
       model,
       provider,
       requests: requestCount,
-      inputTokens: groupValue(modelInput.groups, { provider, model }),
-      outputTokens: groupValue(modelOutput.groups, { provider, model }),
+      inputTokens: groupValue(modelInput.groups, { provider: rawProvider, model }),
+      outputTokens: groupValue(modelOutput.groups, { provider: rawProvider, model }),
       tokens: asNumber(group.value),
       cost,
       averageCost: cost !== null && requestCount > 0 ? cost / requestCount : null,

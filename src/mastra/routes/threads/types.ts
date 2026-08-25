@@ -1,6 +1,6 @@
 /**
  * 线程业务 metadata 类型:工作区绑定 / 模式 / 权限规则 / 模型快照 /
- * 子代理与 OM 模型覆盖(draft 标记见 createThreadRoute)。
+ * 子代理(draft 标记见 createThreadRoute)。
  */
 export type ThreadMetadata = {
   /** 当前线程使用的 Agent 或 Agent 团队 profile。缺省为 mastra-work-agent。 */
@@ -34,10 +34,6 @@ export type ThreadMetadata = {
       reasoningEffort: string;
     }
   >;
-  subagentModels?: Record<string, string>;
-  /** Session-style per-thread observational-memory role selections. */
-  observerModelId?: string;
-  reflectorModelId?: string;
   /**
    * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
    * - 显式绑定:用户在 promptInput 选择器选定的本地目录
@@ -63,42 +59,4 @@ export type ThreadMetadata = {
     windowEnd?: string;
   };
   contextUsage?: Record<string, unknown>;
-  /**
-   * AI SDK message branch manifest. The active message remains in the normal
-   * Memory history; older versions are kept as JSON snapshots so editing or
-   * regenerating never destroys a version that the user may want to revisit.
-   */
-  messageBranches?: Record<string, MessageBranchRecord>;
-};
-
-export type PersistedUIMessage = {
-  id: string;
-  role: "user" | "assistant";
-  parts: unknown[];
-  metadata?: Record<string, unknown>;
-};
-
-export type MessageBranchVersion = {
-  id: string;
-  role: "user" | "assistant";
-  message?: PersistedUIMessage;
-  createdAt: string;
-  /**
-   * 父子配对版本 id:编辑流程 = 同一轮生成的对侧版本(用户↔助手);
-   * 重试流程 = 触发重试的父用户版本。客户端切换一侧分支时按它同步另一侧。
-   */
-  pairVersionId?: string;
-  /**
-   * 子树快照(仅助手版本使用):该版本作为当前版本期间,它所在行之后的
-   * 全部下游消息。分支作用于整条时间线而非单对消息 —— 切走时把下游
-   * 快照进当前版本的 tail 并从 Memory 删除;切回时由消息投影插回显示,
-   * 下一次发消息时随请求物理落库。
-   */
-  tail?: PersistedUIMessage[];
-};
-
-export type MessageBranchRecord = {
-  rootId: string;
-  currentVersionId: string;
-  versions: MessageBranchVersion[];
 };
