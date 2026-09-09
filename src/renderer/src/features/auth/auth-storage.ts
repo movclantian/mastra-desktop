@@ -1,4 +1,4 @@
-import type { AuthSession, AuthUser } from "@/api/auth-api";
+import type { AuthSession, AuthUser } from "./auth-api";
 import type { RememberedAccount } from "./types";
 
 export const AUTH_TOKEN_KEY = "mastra-work:auth-token";

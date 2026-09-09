@@ -1,6 +1,6 @@
 import * as React from "react";
-import { validateAuthToken } from "@/api/auth-api";
-import { apiFetch, MASTRA_SERVER_URL } from "@/api/client";
+import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { validateAuthToken } from "./auth-api";
 import { AuthContext } from "./auth-context";
 import {
   AUTH_AUTO_LOGIN_KEY,

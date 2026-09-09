@@ -5,9 +5,8 @@
  * - library_document_chunker:MDocument 分块(调试 / 预处理用)
  */
 import { createTool } from "@mastra/core/tools";
-import { MDocument } from "@mastra/rag";
 import { z } from "zod";
-import { chunkDocument } from "./document/indexing";
+import { chunkDocument, createDocument } from "./document/indexing";
 import { searchLibrary } from "./retrieval/search";
 import { getLibrarySettings } from "./settings";
 import {
@@ -104,7 +103,15 @@ export const libraryDocumentChunkerTool = createTool({
       ...(chunkSize ? { chunkSize } : {}),
       ...(chunkOverlap !== undefined ? { chunkOverlap } : {}),
     };
-    const doc = MDocument.fromText(text);
+    const format =
+      strategy === "markdown"
+        ? "text/markdown"
+        : strategy === "html"
+          ? "text/html"
+          : strategy === "json"
+            ? "application/json"
+            : "";
+    const doc = createDocument(text, "", format);
     const chunks = await chunkDocument(doc, settings);
     return {
       chunks: chunks.map((chunk, index) => ({

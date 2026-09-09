@@ -1,11 +1,11 @@
 import { ChevronDownIcon, LogInIcon, UserPlusIcon } from "lucide-react";
 import * as React from "react";
-import { submitAuth as submitAuthRequest } from "@/api/auth-api";
-import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Dotm3x3_1 } from "@/components/ui/dotm-3x3-1";
+import { useTheme } from "@/shared/theme";
+import { AnimatedThemeToggler } from "@/shared/ui/animated-theme-toggler";
+import { Button } from "@/shared/ui/button";
+import { Card, CardContent } from "@/shared/ui/card";
+import { Checkbox } from "@/shared/ui/checkbox";
+import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,14 +13,14 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { HyperText } from "@/components/ui/hyper-text";
-import { Input } from "@/components/ui/input";
-import { Meteors } from "@/components/ui/meteors";
-import { Particles } from "@/components/ui/particles";
-import { ShimmerButton } from "@/components/ui/shimmer-button";
-import { useTheme } from "@/features/theme/theme-provider";
+} from "@/shared/ui/dropdown-menu";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/shared/ui/field";
+import { HyperText } from "@/shared/ui/hyper-text";
+import { Input } from "@/shared/ui/input";
+import { Meteors } from "@/shared/ui/meteors";
+import { Particles } from "@/shared/ui/particles";
+import { ShimmerButton } from "@/shared/ui/shimmer-button";
+import { submitAuth as submitAuthRequest } from "./auth-api";
 import { AUTH_AUTO_LOGIN_KEY, getRememberedAccounts } from "./auth-storage";
 import type { AuthSession, RememberedAccount } from "./types";
 

@@ -49,6 +49,27 @@ export function libraryIndexName(): string {
   return "library_vectors_fastembed_small";
 }
 
+export function createDocument(text: string, filename = "", mediaType = ""): MDocument {
+  const extension = filename.includes(".")
+    ? filename.toLowerCase().slice(filename.lastIndexOf("."))
+    : "";
+  if (mediaType === "text/markdown" || extension === ".md" || extension === ".markdown") {
+    return MDocument.fromMarkdown(text);
+  }
+  if (
+    mediaType === "text/html" ||
+    mediaType === "application/xhtml+xml" ||
+    extension === ".html" ||
+    extension === ".htm"
+  ) {
+    return MDocument.fromHTML(text);
+  }
+  if (mediaType === "application/json" || extension === ".json") {
+    return MDocument.fromJSON(text);
+  }
+  return MDocument.fromText(text);
+}
+
 export function observedEmbeddingDimension(embeddings: readonly number[][]): number {
   const dimensions = new Set(embeddings.map((embedding) => embedding.length));
   if (dimensions.size !== 1 || dimensions.has(0)) {
@@ -90,22 +111,21 @@ async function ensureVectorIndex(vector: LibSQLVector, dimension: number): Promi
 }
 
 export async function chunkDocument(doc: MDocument, settings: LibrarySettings) {
-  const options = {
+  const params = {
+    strategy: settings.chunkStrategy,
     maxSize: settings.chunkSize,
     overlap: settings.chunkOverlap,
-  };
-  if (settings.chunkStrategy === "html") {
-    return doc.chunk({
-      strategy: "html",
-      headers: [
-        ["h1", "Header 1"],
-        ["h2", "Header 2"],
-        ["h3", "Header 3"],
-      ],
-      ...options,
-    });
-  }
-  return doc.chunk({ strategy: settings.chunkStrategy, ...options });
+    ...(settings.chunkStrategy === "html"
+      ? {
+          headers: [
+            ["h1", "Header 1"],
+            ["h2", "Header 2"],
+            ["h3", "Header 3"],
+          ],
+        }
+      : {}),
+  } as Parameters<MDocument["chunk"]>[0];
+  return doc.chunk(params);
 }
 
 async function extractMetadata(
@@ -186,7 +206,7 @@ export function queueAssetIndex(
         await ensureLibrarySchema();
         const vector = await getVector();
         const embedder = libraryEmbedder();
-        const doc = MDocument.fromText(extractedText);
+        const doc = createDocument(extractedText, asset.filename, asset.mediaType);
         await updateLibraryIndexRunStage(run.id, "chunk");
         await extractMetadata(doc, settings, undefined, asset.resourceId);
         const chunks = await chunkDocument(doc, settings);

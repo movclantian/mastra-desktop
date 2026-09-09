@@ -1,4 +1,4 @@
-import { MASTRA_SERVER_URL } from "@/api/client";
+import { MASTRA_SERVER_URL } from "@/shared/api";
 import { getStoredToken } from "./auth-storage";
 
 let fetchInstalled = false;

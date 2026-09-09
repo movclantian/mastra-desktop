@@ -1,4 +1,4 @@
-import type { AuthSession, AuthUser } from "@/api/auth-api";
+import type { AuthSession, AuthUser } from "./auth-api";
 
 export type { AuthSession, AuthUser };
 

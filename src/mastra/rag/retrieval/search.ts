@@ -57,7 +57,7 @@ export async function searchLibrary(options: {
     (item) => item.metadata?.assetId && allowedAssetIds.has(String(item.metadata.assetId)),
   );
   if (settings.rerank && allowed.length > 0) {
-    if (rerankModel) {
+    if (settings.rerankScorer === "mastra-agent" && rerankModel) {
       const rerankResult = await rerankWithScorer({
         results: allowed,
         query,
