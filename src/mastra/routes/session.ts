@@ -38,7 +38,6 @@ import {
   isTerminalAgentChunk,
   SESSION_SCOPE_DEFAULT,
   type WorkNotificationInput,
-  type WorkSession,
   workSessionHost,
 } from "../harness";
 import {
@@ -84,7 +83,7 @@ const notificationInputSchema = z.object({
 });
 
 interface SessionRouteResult {
-  session: WorkSession;
+  session: ReturnType<typeof workSessionHost.getOrCreate>;
   agent: Agent;
   memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>;
   resourceId: string;
@@ -129,7 +128,6 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     agent,
   });
   const mode = resolveMode(metadata.modeId);
-  session.setMode(mode.id);
   const requestContext = c.get("requestContext");
   requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
@@ -150,11 +148,6 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
   }
-  session.setExecutionDefaults({
-    ...(mode.availableTools ? { activeTools: mode.availableTools } : {}),
-    requestContext,
-    memory: { thread: threadId, resource: resourceId },
-  });
   return { session, agent, memory, resourceId, threadId, thread };
 }
 
@@ -177,7 +170,6 @@ async function sessionExecutionOptions(
     result.resourceId,
   );
   result.agent = registered.profile;
-  result.session.setAgent(result.agent);
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(
@@ -507,27 +499,6 @@ export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads
     return c.json({ ok: true, accepted: await accepted.accepted });
   },
 });
-
-export const sessionFollowUpRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/follow-up",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const body = (await c.req.json()) as SessionMessageBody;
-      if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
-      const execution = await sessionExecutionOptions(c, result, body);
-      const followUp = await result.session.followUp(
-        { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
-        execution,
-      );
-      if (followUp.action === "blocked") {
-        throw workError("SESSION_FOLLOW_UP_BLOCKED");
-      }
-      return c.json({ ok: true, ...followUp });
-    },
-  },
-);
 
 export const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/abort", {
   method: "POST",
@@ -915,7 +886,6 @@ export const sessionRoutes = [
   sessionStreamRoute,
   sessionMessageRoute,
   sessionSteerRoute,
-  sessionFollowUpRoute,
   sessionAbortRoute,
   sessionStateRoute,
   updateSessionStateRoute,

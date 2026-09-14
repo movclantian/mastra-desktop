@@ -1736,7 +1736,6 @@ export function WorkspaceDrawer() {
             return (
               <div
                 className="group relative flex h-7 shrink-0 items-center"
-                // biome-ignore lint/suspicious/noArrayIndexKey: 页面标签就是 state.tabs 的下标,Mastra 的 tabs API 也只按 index 寻址
                 key={`${index}:${tab.url}:${tab.title ?? ""}`}
                 role="presentation"
               >

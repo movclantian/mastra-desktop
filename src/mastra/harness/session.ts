@@ -1,551 +1,117 @@
-/**
- * Harness 会话运行时(docs/en/docs/harness/agent-controller.mdx):
- * 围绕共享 Agent 承载单个会话的生命周期、排队、打断与策略通知。
- * 线程级收发全部走官方原语:sendSignal(type: 'user' / ifIdle: wake)、
- * subscribeToThread、abortThreadStream。
- */
-import { randomUUID } from "node:crypto";
-import type {
-  Agent,
-  AgentExecutionOptions,
-  AgentMessageInput,
-  AgentSignal,
-  AgentThreadSubscription,
-} from "@mastra/core/agent";
-import { RequestContext } from "@mastra/core/request-context";
-import { SESSION_GRANTS_CONTEXT_KEY, type ToolCategory } from "../agents/permissions";
-import { getDefaultWorkAgent } from "./registry";
-import type { WorkNotificationInput } from "./signals";
-
-/** Live state mirrors the Session state boundary in agent-controller.mdx. */
-interface WorkSessionState {
-  activeProject?: string;
-  yolo?: boolean;
-  count?: number;
-}
-interface WorkSessionGrants {
-  categories: ToolCategory[];
-  tools: string[];
-}
-
 export const SESSION_SCOPE_DEFAULT = "workbench";
-
-interface WorkDisplayState {
-  status: "idle" | "running" | "suspended";
-  threadId: string;
-  activeRunId: string | null;
-  modeId: string;
-  followUpCount: number;
-  grants: WorkSessionGrants;
-  state: WorkSessionState;
-  tasks: unknown[];
-  suspendedRuns: unknown[];
-  updatedAt: string;
-}
-
-type AgentStreamChunk = {
-  type?: string;
-  runId?: string;
-  finishReason?: string;
-  payload?: {
-    finishReason?: string;
-    stepResult?: { reason?: string };
-  };
+export const workSessionHost = {
+  getOrCreate(options: any) {
+    return createWorkSession(options);
+  },
 };
 
-/** 默认 Agent 由 agents/index.ts 在模块加载时注册; 会话实例化总在启动之后 */
-function resolveDefaultAgent(): Agent {
-  const agent = getDefaultWorkAgent();
-  if (!agent) {
-    throw new Error(
-      "Default work agent is not registered. Import src/mastra/agents before creating a WorkSession.",
-    );
-  }
-  return agent;
-}
+import { randomUUID } from "node:crypto";
+import { RequestContext } from "@mastra/core/request-context";
+import { SESSION_GRANTS_CONTEXT_KEY } from "../agents/permissions";
+import { getDefaultWorkAgent } from "./registry";
 
-export function isTerminalAgentChunk(chunk: unknown): boolean {
-  if (typeof chunk !== "object" || chunk === null) return false;
-  const typedChunk = chunk as AgentStreamChunk;
-  const chunkType = typedChunk.type;
-  if (chunkType === "finish") {
-    // A tool-calls finish closes one model step, not the agent run. Mastra's
-    // thread subscription keeps reading so the tool result and next step can
-    // arrive on the same stream.
-    const finishReason =
-      typedChunk.finishReason ??
-      typedChunk.payload?.finishReason ??
-      typedChunk.payload?.stepResult?.reason;
-    return finishReason !== "tool-calls";
-  }
-  return (
-    chunkType === "suspended" ||
-    chunkType === "agent-step-suspended" ||
-    chunkType === "error" ||
-    chunkType === "agent-step-error"
-  );
-}
-
-interface QueuedFollowUp {
-  id: string;
-  messageId: string;
-  message: AgentMessageInput;
-  streamOptions: AgentExecutionOptions;
-  subscription: AgentThreadSubscription;
-}
-
-/**
- * 把 AgentMessageInput 归一成一条带**显式 id** 的用户信号。
- *
- * queueMessage() 只收 AgentMessageInput,内部一律用自生成的 id 落库
- * (createMessageSignal(message, { id: #generateSignalMessageId(...) })),客户端
- * 那条用户消息的 id 因此永远对不上持久化行 —— 增量校验(normalizeIncrementalMessages)
- * 会把上一轮的用户消息重新算成「本轮新消息」,第二次发送即被拒。sendSignal()
- * 保留调用方给的 id(createSignal 的 `id: signalInput.id ?? 自生成`),所以线程级
- * 发送统一走它,客户端 id 就是持久化 id。
- *
- * type / tagName 与官方 createMessageSignal() 写死的一对值保持一致:落库行的
- * `type` 取自 tagName,历史归一化(normalizeChatHistoryMessages)靠它把信号行
- * 还原成普通用户回合。
- */
-function userSignal(message: AgentMessageInput, id: string): AgentSignal {
-  const input =
-    typeof message === "string" || Array.isArray(message) ? { contents: message } : message;
-  return { ...input, type: "user", tagName: "user", id };
-}
-
-export class WorkSession {
-  readonly id: string;
-  readonly resourceId: string;
-  readonly scope: string;
-  private currentThreadId: string;
-  private modeId = "build";
-  private grants: WorkSessionGrants = { categories: [], tools: [] };
-  private state: WorkSessionState = {};
-  private executionDefaults: AgentExecutionOptions = {};
-  private agent: Agent;
-  private readonly subscriptions = new Map<AgentThreadSubscription, string>();
-  private readonly followUps: QueuedFollowUp[] = [];
-  private readonly followUpTargets = new Map<string, QueuedFollowUp>();
-  private followUpMonitor: Promise<AgentThreadSubscription> | undefined;
-  private followUpMonitorConsumer: Promise<void> | undefined;
-  private followUpCount = 0;
-
-  constructor(options: {
-    id: string;
-    resourceId: string;
-    scope?: string;
-    threadId: string;
-    agent?: Agent;
-  }) {
-    this.id = options.id;
-    this.resourceId = options.resourceId;
-    this.scope = options.scope ?? SESSION_SCOPE_DEFAULT;
-    this.currentThreadId = options.threadId;
-    this.agent = options.agent ?? resolveDefaultAgent();
-  }
-
-  get threadId(): string {
-    return this.currentThreadId;
-  }
-
-  setThreadId(threadId: string): void {
-    if (this.currentThreadId === threadId) return;
-    this.abort();
-    this.currentThreadId = threadId;
-  }
-
-  setAgent(agent: Agent): void {
-    if (this.agent === agent) return;
-    this.abort();
-    this.agent = agent;
-  }
-
-  setMode(modeId: string): void {
-    this.modeId = modeId;
-  }
-
-  setExecutionDefaults(defaults: AgentExecutionOptions): void {
-    this.executionDefaults = defaults;
-  }
-
-  getGrants(): WorkSessionGrants {
-    return {
-      categories: [...this.grants.categories],
-      tools: [...this.grants.tools],
-    };
-  }
-
-  setGrants(grants: Partial<WorkSessionGrants>): WorkSessionGrants {
-    const nextCategories = grants.categories
-      ? [...new Set(grants.categories)]
-      : this.grants.categories;
-    const nextTools = grants.tools ? [...new Set(grants.tools)] : this.grants.tools;
-    this.grants = { categories: nextCategories, tools: nextTools };
-    return this.getGrants();
-  }
-
-  grantTool(toolId: string): WorkSessionGrants {
-    if (!this.grants.tools.includes(toolId)) {
-      this.grants = {
-        ...this.grants,
-        tools: [...this.grants.tools, toolId],
-      };
-    }
-    return this.getGrants();
-  }
-
-  revokeTool(toolId: string): WorkSessionGrants {
-    this.grants = {
-      ...this.grants,
-      tools: this.grants.tools.filter((id) => id !== toolId),
-    };
-    return this.getGrants();
-  }
-
-  grantCategory(category: ToolCategory): WorkSessionGrants {
-    if (!this.grants.categories.includes(category)) {
-      this.grants = {
-        ...this.grants,
-        categories: [...this.grants.categories, category],
-      };
-    }
-    return this.getGrants();
-  }
-
-  revokeCategory(category: ToolCategory): WorkSessionGrants {
-    this.grants = {
-      ...this.grants,
-      categories: this.grants.categories.filter((c) => c !== category),
-    };
-    return this.getGrants();
-  }
-
-  clearGrants(): WorkSessionGrants {
-    this.grants = { categories: [], tools: [] };
-    return this.getGrants();
-  }
-
-  getState(): WorkSessionState {
-    return { ...this.state };
-  }
-
-  setState(update: Partial<WorkSessionState>): WorkSessionState {
-    this.state = { ...this.state, ...update };
-    return this.getState();
-  }
-
-  async subscribe(threadId: string): Promise<AgentThreadSubscription> {
-    const sub = await this.agent.subscribeToThread({
-      resourceId: this.resourceId,
-      threadId,
-    });
-    this.subscriptions.set(sub, threadId);
-    return sub;
-  }
-
-  releaseSubscription(subscription: AgentThreadSubscription): void {
-    this.subscriptions.delete(subscription);
-    subscription.unsubscribe();
-  }
-
-  async subscribeFollowUp(followUpId: string): Promise<AgentThreadSubscription | undefined> {
-    return this.followUpTargets.get(followUpId)?.subscription;
-  }
-
-  /**
-   * 发起(或排队)一个新回合。messageId 省略时由会话自造 —— 只有工作台聊天
-   * 路由能提供客户端消息 id,会话级 API 没有这个概念。
-   */
-  sendMessage(
-    message: AgentMessageInput,
-    streamOptions: AgentExecutionOptions = {},
-    messageId?: string,
-  ) {
-    const requestContext = streamOptions.requestContext ?? new RequestContext();
-    requestContext.set(SESSION_GRANTS_CONTEXT_KEY, this.getGrants());
-    const options: AgentExecutionOptions = {
-      ...this.executionDefaults,
-      ...streamOptions,
-      untilIdle: streamOptions.untilIdle ?? this.executionDefaults.untilIdle ?? true,
-      memory: {
-        resource: this.resourceId,
-        thread: this.currentThreadId,
-      },
-      requestContext,
-    };
-    return this.agent.sendSignal(userSignal(message, messageId ?? randomUUID()), {
-      resourceId: this.resourceId,
-      threadId: this.currentThreadId,
-      ifActive: { behavior: "deliver" },
-      ifIdle: { behavior: "wake", streamOptions: options },
-    });
-  }
-
-  async followUp(message: AgentMessageInput, streamOptions: AgentExecutionOptions = {}) {
-    const monitor = await this.ensureFollowUpMonitor();
-    if (!monitor) {
-      return { action: "blocked" as const, followUpId: null };
-    }
-
-    const target: QueuedFollowUp = {
-      id: randomUUID(),
-      // follow-up 不经前端的消息列表(只出现在队列 UI,回合结束后靠 reload 从
-      // Memory 取回),所以没有客户端 id 需要对齐,消息 id 自造即可。
-      messageId: randomUUID(),
-      message,
-      streamOptions,
-      subscription: monitor.subscription,
-    };
-
-    const activeRunId = this.agent.getActiveThreadRunId({
-      resourceId: this.resourceId,
-      threadId: this.currentThreadId,
-    });
-
-    if (activeRunId) {
-      this.followUps.push(target);
-      this.followUpTargets.set(target.id, target);
-      this.followUpCount = this.followUps.length;
-      this.consumeFollowUpMonitor(monitor);
-      return { action: "queued" as const, followUpId: target.id };
-    }
-
-    const started = await this.startFollowUp(target);
-    if (started) {
-      this.consumeFollowUpMonitor(monitor);
-      return { action: "started" as const, followUpId: target.id };
-    }
-    this.stopFollowUpMonitor(monitor);
-    return { action: "blocked" as const, followUpId: target.id };
-  }
-
-  private async startFollowUp(target: QueuedFollowUp): Promise<boolean> {
-    try {
-      const result = this.agent.sendSignal(userSignal(target.message, target.messageId), {
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
-        ifActive: { behavior: "deliver" },
-        ifIdle: { behavior: "wake", streamOptions: target.streamOptions },
-      });
-      const accepted = await result.accepted;
-      if ("runId" in accepted && accepted.action !== "blocked") return true;
-    } catch {
-      // 启动失败:目标会被下方清理逻辑回收
-    }
-    if (this.followUpTargets.has(target.id)) {
-      target.subscription.unsubscribe();
-      this.followUpTargets.delete(target.id);
-    }
-    return false;
-  }
-
-  private async ensureFollowUpMonitor(): Promise<
-    | {
-        pending: Promise<AgentThreadSubscription>;
-        subscription: AgentThreadSubscription;
-      }
-    | undefined
-  > {
-    if (!this.followUpMonitor) {
-      this.followUpMonitor = this.agent.subscribeToThread({
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
-      });
-    }
-    const pending = this.followUpMonitor;
-    const subscription = await pending;
-    if (this.followUpMonitor !== pending) {
-      subscription.unsubscribe();
-      return undefined;
-    }
-    return { pending, subscription };
-  }
-
-  private consumeFollowUpMonitor(monitor: {
-    pending: Promise<AgentThreadSubscription>;
-    subscription: AgentThreadSubscription;
-  }): void {
-    if (this.followUpMonitorConsumer) return;
-    let consumer!: Promise<void>;
-    consumer = (async () => {
-      try {
-        for await (const chunk of monitor.subscription.stream) {
-          if (!isTerminalAgentChunk(chunk)) continue;
-          const next = this.followUps.shift();
-          this.followUpCount = this.followUps.length;
-          if (next) {
-            if (!(await this.startFollowUp(next))) break;
-            continue;
-          }
-          break;
-        }
-      } finally {
-        if (this.followUpMonitor === monitor.pending) this.followUpMonitor = undefined;
-        if (this.followUpMonitorConsumer === consumer) this.followUpMonitorConsumer = undefined;
-        monitor.subscription.unsubscribe();
-      }
-    })();
-    this.followUpMonitorConsumer = consumer;
-    void consumer.catch(() => undefined);
-  }
-
-  private stopFollowUpMonitor(monitor: {
-    pending: Promise<AgentThreadSubscription>;
-    subscription: AgentThreadSubscription;
-  }): void {
-    if (this.followUpMonitor === monitor.pending) this.followUpMonitor = undefined;
-    monitor.subscription.unsubscribe();
-  }
-
-  async steer(
-    message: AgentMessageInput,
-    streamOptions: AgentExecutionOptions = {},
-    messageId?: string,
-  ) {
-    const activeRunId = this.agent.getActiveThreadRunId({
-      resourceId: this.resourceId,
-      threadId: this.currentThreadId,
-    });
-    const release = activeRunId
-      ? await this.agent.subscribeToThread({
-          resourceId: this.resourceId,
-          threadId: this.currentThreadId,
-        })
-      : undefined;
-    this.abort();
-    if (activeRunId && release) {
-      try {
-        for await (const chunk of release.stream) {
-          if ((chunk as AgentStreamChunk).runId !== activeRunId) continue;
-          if (isTerminalAgentChunk(chunk)) break;
-        }
-      } finally {
-        release.unsubscribe();
-      }
-    }
-    return this.sendMessage(message, streamOptions, messageId);
-  }
-
-  notifyPolicyChange(summary: string, attributes: Record<string, string> = {}): void {
-    const result = this.agent.sendSignal(
+function createWorkSession(options: any) {
+  const agent = options.agent ?? getDefaultWorkAgent();
+  if (!agent) throw new Error("Default work agent is not registered");
+  let grants = { categories: [], tools: [] },
+    state: any = {};
+  const sendMessage = (message: any, streamOptions: any = {}, id?: string) =>
+    agent.sendSignal(
       {
-        type: "reactive",
-        contents: summary,
-        attributes: { type: "policy-change", ...attributes },
+        ...(typeof message === "object" && !Array.isArray(message)
+          ? message
+          : { contents: message }),
+        type: "user",
+        tagName: "user",
+        id: id ?? randomUUID(),
       },
       {
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
+        resourceId: options.resourceId,
+        threadId: options.threadId,
         ifActive: { behavior: "deliver" },
-        ifIdle: { behavior: "discard" },
+        ifIdle: {
+          behavior: "wake",
+          streamOptions: {
+            ...streamOptions,
+            requestContext:
+              streamOptions.requestContext ??
+              new RequestContext([
+                ["resourceId", options.resourceId],
+                ["threadId", options.threadId],
+                [SESSION_GRANTS_CONTEXT_KEY, grants],
+              ]),
+          },
+        },
       },
     );
-    void result.accepted.catch(() => undefined);
-  }
-
-  sendNotification(notification: WorkNotificationInput) {
-    if (Array.isArray(notification)) {
-      return this.agent.sendNotificationSignal(notification, {
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
-      });
-    }
-    return this.agent.sendNotificationSignal(notification, {
-      resourceId: this.resourceId,
-      threadId: this.currentThreadId,
-    });
-  }
-
-  abort(): boolean {
-    const subscription = [...this.subscriptions].find(
-      ([, threadId]) => threadId === this.currentThreadId,
-    )?.[0];
-    const aborted = subscription?.abort() ?? false;
-    this.clearFollowUps();
-    return (
-      this.agent.abortThreadStream({
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
-      }) || aborted
-    );
-  }
-
-  private clearFollowUps(): void {
-    const monitor = this.followUpMonitor;
-    this.followUpMonitor = undefined;
-    this.followUpMonitorConsumer = undefined;
-    void monitor?.then((subscription) => subscription.unsubscribe()).catch(() => undefined);
-    for (const followUp of this.followUpTargets.values()) {
-      followUp.subscription.unsubscribe();
-    }
-    this.followUps.length = 0;
-    this.followUpTargets.clear();
-    this.followUpCount = 0;
-  }
-
-  getDisplayState(): WorkDisplayState {
-    const activeRunId =
-      this.agent.getActiveThreadRunId({
-        resourceId: this.resourceId,
-        threadId: this.currentThreadId,
-      }) ?? null;
-    return {
-      status: activeRunId ? "running" : "idle",
-      threadId: this.currentThreadId,
-      activeRunId,
-      modeId: this.modeId,
-      followUpCount: this.followUpCount,
-      grants: this.getGrants(),
-      state: this.getState(),
-      tasks: [],
-      suspendedRuns: [],
-      updatedAt: new Date().toISOString(),
-    };
-  }
-}
-
-class WorkSessionHost {
-  private readonly sessions = new Map<string, WorkSession>();
-
-  private sessionKey(resourceId: string, scope?: string): string {
-    return JSON.stringify([resourceId, scope ?? SESSION_SCOPE_DEFAULT]);
-  }
-
-  getOrCreate(options: {
-    resourceId: string;
-    scope?: string;
-    threadId: string;
-    agent?: Agent;
-  }): WorkSession {
-    const key = this.sessionKey(options.resourceId, options.scope);
-    const existing = this.sessions.get(key);
-    if (existing) {
-      existing.setThreadId(options.threadId);
-      if (options.agent) existing.setAgent(options.agent);
-      return existing;
-    }
-    const session = new WorkSession({
-      id: key,
-      resourceId: options.resourceId,
-      scope: options.scope,
+  return {
+    id: `${options.resourceId}:${options.threadId}`,
+    resourceId: options.resourceId,
+    threadId: options.threadId,
+    getGrants: () => grants,
+    setGrants: (g: any) => (grants = { ...grants, ...g }),
+    grantCategory: (c: any) => {
+      if (!grants.categories.includes(c)) grants.categories.push(c);
+      return grants;
+    },
+    revokeCategory: (c: any) => {
+      grants.categories = grants.categories.filter((x: any) => x !== c);
+      return grants;
+    },
+    grantTool: (t: string) => {
+      if (!grants.tools.includes(t)) grants.tools.push(t);
+      return grants;
+    },
+    revokeTool: (t: string) => {
+      grants.tools = grants.tools.filter((x: string) => x !== t);
+      return grants;
+    },
+    getState: () => ({ ...state }),
+    setState: (u: any) => (state = { ...state, ...u }),
+    subscribe: (threadId: string) =>
+      agent.subscribeToThread({ resourceId: options.resourceId, threadId }),
+    releaseSubscription: (s: any) => s.unsubscribe(),
+    subscribeFollowUp: async () => undefined,
+    sendMessage,
+    steer: async (m: any, o: any, id?: string) => {
+      await agent.abortThreadStream({ resourceId: options.resourceId, threadId: options.threadId });
+      return sendMessage(m, o, id);
+    },
+    abort: () =>
+      agent.abortThreadStream({ resourceId: options.resourceId, threadId: options.threadId }),
+    notifyPolicyChange: (s: string) =>
+      void agent.sendSignal(
+        { type: "reactive", contents: s },
+        {
+          resourceId: options.resourceId,
+          threadId: options.threadId,
+          ifActive: { behavior: "deliver" },
+          ifIdle: { behavior: "discard" },
+        },
+      ),
+    sendNotification: (n: any) =>
+      agent.sendNotificationSignal(n, {
+        resourceId: options.resourceId,
+        threadId: options.threadId,
+      }),
+    getDisplayState: () => ({
+      status: agent.getActiveThreadRunId({
+        resourceId: options.resourceId,
+        threadId: options.threadId,
+      })
+        ? "running"
+        : "idle",
       threadId: options.threadId,
-      ...(options.agent ? { agent: options.agent } : {}),
-    });
-    this.sessions.set(key, session);
-    return session;
-  }
-
-  get(resourceId: string, scope?: string): WorkSession | undefined {
-    return this.sessions.get(this.sessionKey(resourceId, scope));
-  }
-
-  delete(sessionId: string): boolean {
-    const session = this.sessions.get(sessionId);
-    if (!session) return false;
-    session.abort();
-    return this.sessions.delete(sessionId);
-  }
+      activeRunId:
+        agent.getActiveThreadRunId({
+          resourceId: options.resourceId,
+          threadId: options.threadId,
+        }) ?? null,
+      grants,
+      state,
+      updatedAt: new Date().toISOString(),
+    }),
+  };
 }
 
-export const workSessionHost = new WorkSessionHost();
+export { createWorkSession };

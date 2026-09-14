@@ -162,7 +162,6 @@ export function useWindowMinWidth({
     };
   }, [elementRef, report]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 需在 contentMinWidth / reservedWidth 变化时主动重新触发 report
   React.useEffect(() => {
     report();
   }, [report, contentMinWidth, reservedWidth]);

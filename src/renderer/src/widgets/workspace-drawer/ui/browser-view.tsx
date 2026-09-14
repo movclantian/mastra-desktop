@@ -126,7 +126,6 @@ export function BrowserView({
         className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-muted/30"
         onKeyDown={injectKey}
         role="application"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: The preview is the keyboard target for browser input injection.
         tabIndex={0}
       >
         {frame ? (

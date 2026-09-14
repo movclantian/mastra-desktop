@@ -123,11 +123,6 @@ export function buildReasoningRequest(
   return { modelSettings: { reasoning: effort } };
 }
 
-import * as React from "react";
-import { toast } from "sonner";
-import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
-import { readErrorPayload } from "@/shared/lib";
-
 /**
  * BYOK 模型供应商管理。
  * - 内置供应商列表来自 Mastra 随包携带的官方 registry,不依赖外网

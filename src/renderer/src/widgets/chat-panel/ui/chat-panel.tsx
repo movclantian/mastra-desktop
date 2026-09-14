@@ -400,7 +400,6 @@ export function ChatPanel() {
   // 否则 ask_user / submit_plan 刚挂起时会被下一条排队消息越过。
   // messages.length 是故意的触发器:消息条数变化(新一轮完成)时重读,
   // 而非每个流式 token 都触发
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 故意的额外依赖
   React.useEffect(() => {
     if (status !== "ready" && status !== "error") return;
     const version = ++interactionReloadVersion.current;
@@ -1134,7 +1133,6 @@ export function ChatPanel() {
   const sendingQueuedRequest = React.useRef(false);
   // queueDispatchVersion 是故意的重触发器:一条排队请求发送完毕后
   // 立即重新评估队列,即使其余依赖未变化
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 故意的额外依赖
   React.useEffect(() => {
     const workflowBlocksQueue = Boolean(workflow?.active);
     if (

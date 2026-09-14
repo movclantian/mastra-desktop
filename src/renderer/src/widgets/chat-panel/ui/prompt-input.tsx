@@ -378,7 +378,6 @@ function SkillAwareTextarea({
 
   return (
     <>
-      {/* biome-ignore lint/a11y/useSemanticElements: The inline contenteditable editor needs textbox semantics. */}
       <div
         aria-label="消息输入"
         aria-multiline="true"

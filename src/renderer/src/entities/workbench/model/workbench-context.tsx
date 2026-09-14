@@ -344,7 +344,6 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
 
   const clearPendingLibraryFiles = useCallback(() => setPendingLibraryFiles([]), []);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: Complete workbench context value bundle
   const value = useMemo<WorkbenchValue>(
     () => ({
       user,

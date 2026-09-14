@@ -46,7 +46,6 @@ export function getStoredToken(): string | null {
 
 export function syncAuthCookie(token: string | null): void {
   if (typeof document === "undefined") return;
-  // biome-ignore lint/suspicious/noDocumentCookie: cookie sync required for API authentication in Electron renderer
   document.cookie = token
     ? `${AUTH_COOKIE_KEY}=${token}; Path=/; SameSite=Lax`
     : `${AUTH_COOKIE_KEY}=; Path=/; Max-Age=0; SameSite=Lax`;

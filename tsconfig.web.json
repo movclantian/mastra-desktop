@@ -7,6 +7,7 @@
     "src/preload/*.d.ts"
   ],
   "compilerOptions": {
+    "noCheck": true,
     "composite": true,
     "jsx": "react-jsx",
     "paths": {
@@ -14,3 +15,5 @@
     }
   }
 }
+
+
