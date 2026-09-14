@@ -1,6 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
-import type { McpSummary, SkillDetail, SkillSection } from "@/entities/skill";
+import type { McpSummary, SkillDetail, SkillMetadata, SkillSection } from "@/entities/skill";
 import {
   authenticateMcpServer,
   deleteMcpServer,
@@ -9,7 +9,6 @@ import {
   installSkill as installSkillRequest,
   uploadSkillArchive,
 } from "@/entities/skill";
-import type { SkillMetadata } from "@/entities/workbench";
 import { toastError } from "@/shared/lib";
 
 interface UseSkillActionsOptions {

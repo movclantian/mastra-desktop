@@ -3,16 +3,15 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type { BackgroundProcessConfig } from "@mastra/core/workspace";
+import { atomicWrite, getStorageDirectory } from "../storage";
 import {
-  atomicWrite,
   type ContentObjectMetadata,
   contentObjectReference,
   deleteContentObject,
   getContentObjectMetadata,
-  getStorageDirectory,
   putContentObject,
   readContentObject,
-} from "../storage";
+} from "../storage/content-objects";
 
 export interface WorkspaceFilesystem {
   readFile(path: string, options?: { encoding?: string }): Promise<string | Buffer>;

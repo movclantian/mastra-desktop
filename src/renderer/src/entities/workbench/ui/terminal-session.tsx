@@ -11,8 +11,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { reportWorkbenchNotification } from "@/shared/api";
-import { cn, toastError } from "@/shared/lib";
-import { Button } from "@/shared/ui/button";
+import { toastError } from "@/shared/lib";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -24,6 +23,7 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
+import type { TerminalEvent } from "../../../../../shared/terminal-contract";
 import type { TerminalStatus } from "../model/terminal";
 import { getTerminalApi } from "../model/terminal";
 import type { TerminalRequest } from "../model/types";
@@ -81,7 +81,7 @@ export function commandForFile(path: string): string | undefined {
   return undefined;
 }
 
-const LONG_COMMAND_MS = 10_000;
+const LONG_SESSION_MS = 10_000;
 
 export function TerminalSession({
   sessionId,
@@ -100,68 +100,72 @@ export function TerminalSession({
   pendingRequest?: TerminalRequest | null;
   onHandledRequest?: () => void;
 }) {
+  const { user, activeThreadId, threads, reportTerminalSession } = useWorkbench();
+  const targetThreadId = threadId ?? activeThreadId;
+  const workingDirectory =
+    cwd ?? threads.find((thread) => thread.id === targetThreadId)?.metadata.workspacePath;
   const containerRef = React.useRef<HTMLDivElement>(null);
   const xtermRef = React.useRef<XtermTerminal | null>(null);
   const fitRef = React.useRef<FitAddon | null>(null);
-  const isStartedRef = React.useRef(false);
+  const ptyIdRef = React.useRef<string | null>(null);
   const activeRef = React.useRef(active);
   activeRef.current = active;
   const onTitleChangeRef = React.useRef(onTitleChange);
   onTitleChangeRef.current = onTitleChange;
-
-  const { registerTerminalSession, updateTerminalStatus } = useWorkbench();
-  const [status, setStatus] = React.useState<TerminalStatus>("idle");
-  const [lastCommand, setLastCommand] = React.useState<string | null>(null);
-  const [lastExitCode, setLastExitCode] = React.useState<number | null>(null);
-
-  const commandStartTimeRef = React.useRef<number | null>(null);
+  const handledRequestRef = React.useRef<number | null>(null);
+  const [restart, setRestart] = React.useState(0);
+  const [status, setStatus] = React.useState<TerminalStatus>("connecting");
+  const [title, setTitle] = React.useState("Terminal");
+  const [lastCommand, setLastCommand] = React.useState<string>();
+  const [lastExitCode, setLastExitCode] = React.useState<number>();
+  const [settledAt, setSettledAt] = React.useState<number>();
 
   React.useEffect(() => {
-    registerTerminalSession(sessionId, {
-      id: sessionId,
-      cwd,
-      threadId,
-      status,
-      lastCommand: lastCommand ?? undefined,
-      lastExitCode: lastExitCode ?? undefined,
-    });
-  }, [sessionId, cwd, threadId, status, lastCommand, lastExitCode, registerTerminalSession]);
+    reportTerminalSession(sessionId, { title, status, lastCommand, lastExitCode, settledAt });
+  }, [sessionId, title, status, lastCommand, lastExitCode, settledAt, reportTerminalSession]);
+
+  React.useEffect(
+    () => () => reportTerminalSession(sessionId, null),
+    [sessionId, reportTerminalSession],
+  );
 
   const fitTerminal = React.useCallback(() => {
     const term = xtermRef.current;
     const fit = fitRef.current;
     const api = getTerminalApi();
-    if (!term || !fit || !api) return;
-    try {
-      fit.fit();
-      if (term.cols > 0 && term.rows > 0) {
-        void api.resize(sessionId, term.cols, term.rows);
-      }
-    } catch {
-      // 容器 display:none 时 fit 会抛异常,忽略
+    if (!term || !fit || !api || !activeRef.current) return;
+    fit.fit();
+    const ptyId = ptyIdRef.current;
+    if (ptyId && term.cols > 0 && term.rows > 0) {
+      api.resize({ sessionId: ptyId, cols: term.cols, rows: term.rows });
     }
-  }, [sessionId]);
+  }, []);
 
   React.useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
+    let disposed = false;
+    let createdId: string | undefined;
+    let creating = true;
+    const earlyEvents: TerminalEvent[] = [];
+    const startedAt = Date.now();
+    setStatus("connecting");
+    setTitle("Terminal");
+    setLastCommand(undefined);
+    setLastExitCode(undefined);
+    setSettledAt(undefined);
     const term = new XtermTerminal({
       cursorBlink: true,
-      fontFamily:
-        'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       fontSize: 12,
       lineHeight: 1.25,
       theme: readTerminalTheme(),
-      allowProposedApi: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(el);
-
     xtermRef.current = term;
     fitRef.current = fit;
-
     const themeObserver = new MutationObserver(() => {
       term.options.theme = readTerminalTheme();
     });
@@ -169,166 +173,146 @@ export function TerminalSession({
       attributes: true,
       attributeFilter: ["class", "data-theme", "style"],
     });
-
+    const resizeObserver = new ResizeObserver(fitTerminal);
+    resizeObserver.observe(el);
     const api = getTerminalApi();
-    if (!api) {
-      term.writeln("\x1b[33m[PTY 不可用:运行在浏览器预览模式]\x1b[0m");
-      return () => {
-        themeObserver.disconnect();
-        term.dispose();
-      };
-    }
 
-    const unData = api.onData((id, data) => {
-      if (id === sessionId) term.write(data);
-    });
-    const unExit = api.onExit((id, code) => {
-      if (id !== sessionId) return;
-      setStatus("idle");
-      setLastExitCode(code);
-      updateTerminalStatus(sessionId, "idle", { exitCode: code });
-      if (commandStartTimeRef.current !== null) {
-        const elapsed = Date.now() - commandStartTimeRef.current;
-        if (elapsed >= LONG_COMMAND_MS) {
-          void reportWorkbenchNotification({
-            type: "terminal_long_command",
-            title: `终端任务已结束(耗时 ${Math.round(elapsed / 1000)}s)`,
-            body: `命令已退出,代码: ${code}`,
-            threadId,
-            level: code === 0 ? "info" : "error",
+    const receive = (event: TerminalEvent) => {
+      if (disposed || event.sessionId !== createdId) return;
+      if (event.type === "data") {
+        term.write(event.data);
+      } else if (event.type === "error") {
+        term.writeln(event.message);
+        setStatus("error");
+      } else {
+        ptyIdRef.current = null;
+        setStatus("exited");
+        setLastExitCode(event.exitCode);
+        setSettledAt(Date.now());
+        if (targetThreadId && Date.now() - startedAt >= LONG_SESSION_MS) {
+          reportWorkbenchNotification(targetThreadId, user.id, {
+            source: "terminal",
+            kind: "session-exited",
+            summary: "Terminal session exited",
+            payload: { sessionId: createdId, exitCode: event.exitCode },
           });
         }
-        commandStartTimeRef.current = null;
       }
+    };
+    // Subscribe before creation so fast shell output is retained until IPC returns its ID.
+    const unsubscribe = api?.subscribe((event) => {
+      if (creating) earlyEvents.push(event);
+      else receive(event);
     });
-    const unTitle = api.onTitle?.((id, title) => {
-      if (id === sessionId) onTitleChangeRef.current?.(title);
-    });
-
     const dataSub = term.onData((data) => {
-      void api.write(sessionId, data);
+      if (ptyIdRef.current) api?.write({ sessionId: ptyIdRef.current, data });
     });
-
-    if (!isStartedRef.current) {
-      isStartedRef.current = true;
-      requestAnimationFrame(() => {
-        fit.fit();
-        const cols = Math.max(term.cols || 80, 20);
-        const rows = Math.max(term.rows || 24, 5);
-        api
-          .create({ id: sessionId, cwd, cols, rows })
-          .then((res) => {
-            if (!res.ok) {
-              term.writeln(`\x1b[31m[创建终端失败:${res.error}]\x1b[0m`);
-              setStatus("error");
-              updateTerminalStatus(sessionId, "error");
-            }
-          })
-          .catch((err) => {
-            term.writeln(`\x1b[31m[创建终端异常:${String(err)}]\x1b[0m`);
-            setStatus("error");
-            updateTerminalStatus(sessionId, "error");
-          });
-      });
-    }
-
-    const resizeObserver = new ResizeObserver(() => {
-      if (activeRef.current) fitTerminal();
+    const titleSub = term.onTitleChange((nextTitle) => {
+      setTitle(nextTitle);
+      onTitleChangeRef.current?.(nextTitle);
     });
-    resizeObserver.observe(el);
+    const frame = requestAnimationFrame(() => {
+      if (!api) {
+        creating = false;
+        setStatus("error");
+        term.writeln("PTY unavailable");
+        return;
+      }
+      if (activeRef.current) fit.fit();
+      void api.create({ cwd: workingDirectory, cols: term.cols, rows: term.rows }).then(
+        ({ sessionId: id }) => {
+          if (disposed) {
+            api.close(id);
+            return;
+          }
+          createdId = id;
+          ptyIdRef.current = id;
+          creating = false;
+          setStatus("ready");
+          for (const event of earlyEvents) receive(event);
+          earlyEvents.length = 0;
+          fitTerminal();
+        },
+        (error: unknown) => {
+          if (disposed) return;
+          creating = false;
+          earlyEvents.length = 0;
+          term.writeln(String(error));
+          setStatus("error");
+        },
+      );
+    });
 
     return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      unsubscribe?.();
       resizeObserver.disconnect();
       themeObserver.disconnect();
       dataSub.dispose();
-      unData();
-      unExit();
-      unTitle?.();
+      titleSub.dispose();
+      if (createdId) api?.close(createdId);
+      ptyIdRef.current = null;
+      xtermRef.current = null;
+      fitRef.current = null;
       term.dispose();
     };
-  }, [sessionId, cwd, threadId, fitTerminal, updateTerminalStatus]);
+  }, [sessionId, workingDirectory, targetThreadId, user.id, restart, fitTerminal]);
 
   React.useEffect(() => {
-    if (active) {
-      const timer = setTimeout(fitTerminal, 50);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
+    if (!active) return;
+    const frame = requestAnimationFrame(fitTerminal);
+    return () => cancelAnimationFrame(frame);
   }, [active, fitTerminal]);
 
   React.useEffect(() => {
-    if (!pendingRequest) return;
+    if (!active || !pendingRequest || status !== "ready") return;
+    if (handledRequestRef.current === pendingRequest.id) return;
     const api = getTerminalApi();
-    if (!api) return;
-
-    if (pendingRequest.type === "run") {
-      setStatus("busy");
-      setLastCommand(pendingRequest.command);
-      setLastExitCode(null);
-      commandStartTimeRef.current = Date.now();
-      updateTerminalStatus(sessionId, "busy", { command: pendingRequest.command });
-      void api.write(sessionId, `${pendingRequest.command}\n`);
-      onHandledRequest?.();
-    } else if (pendingRequest.type === "interrupt") {
-      void api.interrupt(sessionId);
-      setStatus("idle");
-      updateTerminalStatus(sessionId, "idle");
-      onHandledRequest?.();
-    } else if (pendingRequest.type === "clear") {
-      xtermRef.current?.clear();
-      onHandledRequest?.();
+    const ptyId = ptyIdRef.current;
+    if (!api || !ptyId) return;
+    const command =
+      pendingRequest.command ??
+      (pendingRequest.filePath ? commandForFile(pendingRequest.filePath) : undefined);
+    handledRequestRef.current = pendingRequest.id;
+    if (command) {
+      api.write({ sessionId: ptyId, data: `${command}\r` });
+      setLastCommand(command);
+      setLastExitCode(undefined);
+      setSettledAt(undefined);
+    } else {
+      toast.error("Unsupported terminal command");
     }
-  }, [pendingRequest, sessionId, onHandledRequest, updateTerminalStatus]);
+    onHandledRequest?.();
+  }, [active, pendingRequest, status, onHandledRequest]);
 
   const handleCopySelection = () => {
     const text = xtermRef.current?.getSelection();
     if (text) {
-      void navigator.clipboard.writeText(text);
-      toast.success("已复制终端选中文本");
+      void navigator.clipboard.writeText(text).catch((error) => toastError(error, "Copy failed"));
     }
   };
 
   const handlePaste = async () => {
     try {
       const text = await navigator.clipboard.readText();
-      if (text) {
-        const api = getTerminalApi();
-        if (api) void api.write(sessionId, text);
-        else xtermRef.current?.paste(text);
-      }
-    } catch (err) {
-      toastError(err, "读取剪贴板失败");
+      if (text && ptyIdRef.current) xtermRef.current?.paste(text);
+    } catch (error) {
+      toastError(error, "Paste failed");
     }
   };
 
   const handleInterrupt = () => {
     const api = getTerminalApi();
-    if (api) void api.interrupt(sessionId);
-    setStatus("idle");
-    updateTerminalStatus(sessionId, "idle");
-  };
-
-  const handleClear = () => {
-    xtermRef.current?.clear();
-  };
-
-  const handleRestart = async () => {
-    const api = getTerminalApi();
-    if (!api) return;
-    try {
-      await api.destroy(sessionId);
-      xtermRef.current?.clear();
-      isStartedRef.current = false;
-      const term = xtermRef.current;
-      const cols = Math.max(term?.cols || 80, 20);
-      const rows = Math.max(term?.rows || 24, 5);
-      await api.create({ id: sessionId, cwd, cols, rows });
-      setStatus("idle");
-      updateTerminalStatus(sessionId, "idle");
-      toast.success("终端会话已重启");
-    } catch (err) {
-      toastError(err, "重启终端会话失败");
+    if (api && ptyIdRef.current) {
+      api.write({ sessionId: ptyIdRef.current, data: "\x03" });
     }
+  };
+
+  const handleClear = () => xtermRef.current?.clear();
+  const handleRestart = () => {
+    setStatus("connecting");
+    setRestart((value) => value + 1);
   };
 
   return (
@@ -336,13 +320,13 @@ export function TerminalSession({
       <ContextMenuTrigger className="size-full">
         <div className="relative size-full overflow-hidden bg-background">
           <div ref={containerRef} className="size-full px-2 py-1.5" />
-          {status === "busy" ? (
+          {status === "connecting" ? (
             <div
               className="pointer-events-none absolute right-3 bottom-2 flex items-center gap-1.5 rounded-md border border-border/60 bg-background/85 px-2 py-1 text-[11px] text-muted-foreground shadow-xs backdrop-blur-xs"
-              title="任务进行中"
+              title="连接终端"
             >
               <DotmSquare10 size={12} dotSize={2} colorPreset="solid-theme" />
-              <span>运行中</span>
+              <span>连接中</span>
             </div>
           ) : null}
         </div>
@@ -363,7 +347,7 @@ export function TerminalSession({
         </ContextMenuGroup>
         <ContextMenuSeparator />
         <ContextMenuGroup>
-          <ContextMenuItem onClick={handleInterrupt} disabled={status !== "busy"}>
+          <ContextMenuItem onClick={handleInterrupt} disabled={status !== "ready"}>
             <SquareIcon className="text-muted-foreground" />
             <span>中断 (Ctrl+C)</span>
             <ContextMenuShortcut>^C</ContextMenuShortcut>
@@ -373,7 +357,7 @@ export function TerminalSession({
             <span>清屏</span>
             <ContextMenuShortcut>⌘K</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem onClick={() => void handleRestart()}>
+          <ContextMenuItem onClick={handleRestart} disabled={status === "connecting"}>
             <RefreshCwIcon className="text-muted-foreground" />
             <span>重启会话</span>
           </ContextMenuItem>

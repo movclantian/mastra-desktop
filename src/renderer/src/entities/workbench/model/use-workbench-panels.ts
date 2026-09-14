@@ -75,6 +75,7 @@ export function useWorkbenchPanels({
   const [promptMinWidth, setPromptMinWidth] = useState(0);
 
   useEffect(() => {
+    if (!activeThreadId) return;
     reportWorkbenchState(activeThreadId, resourceId, {
       workbench: {
         workspacePanelOpen,
@@ -93,6 +94,7 @@ export function useWorkbenchPanels({
   ]);
 
   useEffect(() => {
+    if (!activeThreadId) return;
     void terminalSessionsVersion;
     const sessions = [...terminalSessionsRef.current.values()];
     if (sessions.length === 0) {

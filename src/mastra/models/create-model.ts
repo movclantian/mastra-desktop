@@ -15,6 +15,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { GatewayLanguageModel } from "@mastra/core/llm";
 
 export type { GatewayLanguageModel };
@@ -89,16 +90,21 @@ export function createGatewayModel(options: {
         ...common,
       })(modelId);
     default: {
-      // 自定义网关走 Chat Completions 端点时用官方 compatibility: "compatible"
-      // 模式;默认(无 baseURL)与 Responses 路径仍用 strict 默认。
-      const compatible = Boolean(normalizedBaseUrl) && !useResponses;
-      const openai = createOpenAI({
-        ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
-        ...(compatible ? { compatibility: "compatible" } : {}),
-        ...common,
-      });
-      if (useResponses) return openai.responses(modelId);
-      return openai.chat(modelId);
+      if (useResponses) {
+        const openai = createOpenAI({
+          ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
+          ...common,
+        });
+        return openai.responses(modelId);
+      }
+      if (normalizedBaseUrl) {
+        return createOpenAICompatible({
+          baseURL: normalizedBaseUrl,
+          name: providerName?.trim() || "openai-compatible",
+          apiKey,
+        }).chatModel(modelId);
+      }
+      return createOpenAI({ ...common }).chat(modelId);
     }
   }
 }

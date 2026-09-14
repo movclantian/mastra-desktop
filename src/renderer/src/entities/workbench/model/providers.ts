@@ -2,9 +2,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
-import { calculateCostUSD, formatCostUSD, readErrorPayload } from "@/shared/lib";
-
-export { calculateCostUSD, formatCostUSD };
+import { readErrorPayload } from "@/shared/lib";
 
 export interface RegistryProvider {
   id: string;

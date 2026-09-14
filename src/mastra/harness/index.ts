@@ -6,6 +6,7 @@
 
 export { setDefaultWorkAgent } from "./registry";
 export {
+  createWorkSession,
   isTerminalAgentChunk,
   SESSION_SCOPE_DEFAULT,
   type WorkSession,

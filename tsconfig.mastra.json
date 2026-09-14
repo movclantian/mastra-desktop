@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "noCheck": true,
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -14,5 +13,3 @@
   },
   "include": ["src/mastra/**/*.ts"]
 }
-
-

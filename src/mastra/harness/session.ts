@@ -1,21 +1,58 @@
+export function isTerminalAgentChunk(chunk: unknown): boolean {
+  if (typeof chunk !== "object" || chunk === null) return false;
+  const event = chunk as {
+    type?: string;
+    finishReason?: string;
+    payload?: { finishReason?: string; stepResult?: { reason?: string } };
+  };
+  // A tool-call finish ends a model step, while the agent continues running.
+  if (event.type === "finish") {
+    return (
+      (event.finishReason ?? event.payload?.finishReason ?? event.payload?.stepResult?.reason) !==
+      "tool-calls"
+    );
+  }
+  return (
+    typeof chunk === "object" &&
+    chunk !== null &&
+    ["finish", "error", "suspended", "agent-step-error", "agent-step-suspended"].includes(
+      (chunk as { type?: string }).type ?? "",
+    )
+  );
+}
 export const SESSION_SCOPE_DEFAULT = "workbench";
 export const workSessionHost = {
-  getOrCreate(options: any) {
-    return createWorkSession(options);
-  },
+  getOrCreate: createWorkSession,
 };
 
 import { randomUUID } from "node:crypto";
+import type {
+  Agent,
+  AgentExecutionOptions,
+  AgentMessageInput,
+  AgentThreadSubscription,
+} from "@mastra/core/agent";
 import { RequestContext } from "@mastra/core/request-context";
+import type { ToolCategory } from "../agents/permissions";
 import { SESSION_GRANTS_CONTEXT_KEY } from "../agents/permissions";
 import { getDefaultWorkAgent } from "./registry";
+import type { WorkNotificationInput } from "./signals";
 
-function createWorkSession(options: any) {
+function createWorkSession(options: {
+  resourceId: string;
+  threadId: string;
+  agent?: Agent;
+  scope?: string;
+}) {
   const agent = options.agent ?? getDefaultWorkAgent();
   if (!agent) throw new Error("Default work agent is not registered");
-  let grants = { categories: [], tools: [] },
-    state: any = {};
-  const sendMessage = (message: any, streamOptions: any = {}, id?: string) =>
+  let grants: { categories: ToolCategory[]; tools: string[] } = { categories: [], tools: [] },
+    state: Record<string, unknown> = {};
+  const sendMessage = (
+    message: AgentMessageInput,
+    streamOptions: AgentExecutionOptions = {},
+    id?: string,
+  ) =>
     agent.sendSignal(
       {
         ...(typeof message === "object" && !Array.isArray(message)
@@ -70,8 +107,7 @@ function createWorkSession(options: any) {
     setState: (u: any) => (state = { ...state, ...u }),
     subscribe: (threadId: string) =>
       agent.subscribeToThread({ resourceId: options.resourceId, threadId }),
-    releaseSubscription: (s: any) => s.unsubscribe(),
-    subscribeFollowUp: async () => undefined,
+    releaseSubscription: (s: AgentThreadSubscription) => s.unsubscribe(),
     sendMessage,
     steer: async (m: any, o: any, id?: string) => {
       await agent.abortThreadStream({ resourceId: options.resourceId, threadId: options.threadId });
@@ -79,9 +115,9 @@ function createWorkSession(options: any) {
     },
     abort: () =>
       agent.abortThreadStream({ resourceId: options.resourceId, threadId: options.threadId }),
-    notifyPolicyChange: (s: string) =>
+    notifyPolicyChange: (s: string, attributes?: Record<string, string>) =>
       void agent.sendSignal(
-        { type: "reactive", contents: s },
+        { type: "reactive", contents: s, attributes },
         {
           resourceId: options.resourceId,
           threadId: options.threadId,
@@ -89,11 +125,15 @@ function createWorkSession(options: any) {
           ifIdle: { behavior: "discard" },
         },
       ),
-    sendNotification: (n: any) =>
-      agent.sendNotificationSignal(n, {
+    sendNotification: (n: WorkNotificationInput) => {
+      const target = {
         resourceId: options.resourceId,
         threadId: options.threadId,
-      }),
+      };
+      return Array.isArray(n)
+        ? agent.sendNotificationSignal(n, target)
+        : agent.sendNotificationSignal(n, target);
+    },
     getDisplayState: () => ({
       status: agent.getActiveThreadRunId({
         resourceId: options.resourceId,
@@ -114,4 +154,5 @@ function createWorkSession(options: any) {
   };
 }
 
+export type WorkSession = ReturnType<typeof createWorkSession>;
 export { createWorkSession };

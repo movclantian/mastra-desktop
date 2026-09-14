@@ -854,13 +854,12 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         }
         requestContext.set(AGENT_PROFILE_CONTEXT_KEY, session.agentProfileId);
         if (body.memory.resource) {
-          const liveSession = workSessionHost.getOrCreate({
+          const _liveSession = workSessionHost.getOrCreate({
             resourceId: body.memory.resource,
             scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
             threadId: body.memory.thread,
             agent: profileAgent,
           });
-          liveSession.setMode(session.modeId);
         }
       }
     }
@@ -1029,14 +1028,12 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           } satisfies AgentExecutionOptions)
         : undefined;
     if (sessionExecutionOptions && body.memory?.thread && body.memory.resource) {
-      workSessionHost
-        .getOrCreate({
-          resourceId: body.memory.resource,
-          scope: sessionScope,
-          threadId: body.memory.thread,
-          agent: profileAgent,
-        })
-        .setExecutionDefaults(sessionExecutionOptions);
+      workSessionHost.getOrCreate({
+        resourceId: body.memory.resource,
+        scope: sessionScope,
+        threadId: body.memory.thread,
+        agent: profileAgent,
+      });
     }
     // 资料库片段只属于当前这一轮,所以交给 sendMessage/steer 而不写进 setExecutionDefaults ——
     // 会话默认值会被后续自动唤醒的 run 复用,那时旧检索结果已经是纯噪音。
@@ -1075,7 +1072,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         threadId: body.memory.thread,
         agent: profileAgent,
       });
-      session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       // 客户端消息 id 即持久化 id(见 WorkSession 的 userSignal):下一次请求的
       // 增量校验才能把这条插话认成已落库的历史,而不是又一条「本轮新消息」。
       const signal = await session.steer(
@@ -1122,7 +1118,6 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         threadId: sessionMemory.thread,
         agent: profileAgent,
       });
-      session.setMode(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).id);
       const subscription = await session.subscribe(sessionMemory.thread);
       // 落库沿用客户端消息 id(见 WorkSession 的 userSignal),否则前端本地的
       // 这条用户消息在下一轮请求里会被增量校验判成新消息。

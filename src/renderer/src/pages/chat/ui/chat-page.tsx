@@ -86,7 +86,7 @@ export function ChatPage({ userId }: { userId?: string }) {
         groupResizeBehavior="preserve-pixel-size"
         style={PANEL_CLIP}
       >
-        <TerminalDrawer open={terminalPanelOpen} minHeight={TERMINAL_MIN_HEIGHT} />
+        <TerminalDrawer />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

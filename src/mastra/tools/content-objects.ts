@@ -1,9 +1,9 @@
+import { resourceIdFromContext } from "../storage";
 import {
   type ContentObjectMetadata,
   contentObjectReference,
   putContentObject,
-  resourceIdFromContext,
-} from "../storage";
+} from "../storage/content-objects";
 import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
 export { contentObjectReference };

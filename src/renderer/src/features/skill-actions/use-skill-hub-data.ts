@@ -7,6 +7,7 @@ import type {
   McpSummary,
   SkillDetail,
   SkillMarketplace,
+  SkillMetadata,
   SkillSection,
 } from "@/entities/skill";
 import {
@@ -18,7 +19,6 @@ import {
   fetchSkillMarketplaces,
   fetchSkillsShList,
 } from "@/entities/skill";
-import type { SkillMetadata } from "@/entities/workbench";
 import { toastError } from "@/shared/lib";
 
 const DEFAULT_OFFICIAL_MAKERS: CuratedOwner[] = [

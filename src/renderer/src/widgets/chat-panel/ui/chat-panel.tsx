@@ -43,6 +43,8 @@ import {
   runWorkflowAction,
   summarizeThread,
 } from "../api/chat-api";
+import { persistAttachments as uploadAttachments } from "../lib/attachments";
+import { buildDisplayMessages } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import {
   type AgentInteraction,
@@ -76,13 +78,11 @@ import {
   AgentMemberSwitcher,
   AgentQueuePanel,
   AssistantAvatar,
-  buildDisplayMessages,
   ChatPromptInput,
   ChatWorkspaceSelector,
   getAgentMemberRuntimes,
   MessageItem,
   UserRequestQueuePanel,
-  persistAttachments as uploadAttachments,
   WorkflowRunPanel,
 } from "./";
 import type { WorkflowRunAction } from "./agent-panels";
@@ -662,7 +662,6 @@ export function ChatPanel() {
       profession: agentSelection.profession || "主 Agent",
       description: agentSelection.description,
       instructions: agentSelection.instructions,
-      ...(agentSelection.model ? { model: agentSelection.model } : {}),
       skills: agentSelection.skills,
       memoryScope: "thread",
     };

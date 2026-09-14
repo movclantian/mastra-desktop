@@ -64,6 +64,8 @@ export interface McpFormServer {
   id: string;
   name: string;
   type: "sse" | "stdio";
+  transport?: "http" | "stdio";
+  oauth?: { enabled: boolean };
   url?: string;
   command?: string;
   args?: string[];

@@ -1,3 +1,4 @@
+export { reportWorkbenchState } from "@/shared/api/reporting";
 export * from "./api/workbench-api";
 export * from "./model/providers";
 export * from "./model/search";

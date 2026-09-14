@@ -1,4 +1,3 @@
-import * as React from "react";
 import { Badge } from "@/shared/ui/badge";
 import type { getModelCapabilities } from "../model/providers";
 

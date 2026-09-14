@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { SkillMetadata } from "./types";
+import type { SkillMetadata } from "@/entities/skill";
 import { DEFAULT_MAIN_VIEW, type MainView } from "./types";
 
 export function useNavigationState() {

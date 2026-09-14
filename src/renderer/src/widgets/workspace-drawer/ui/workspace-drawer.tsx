@@ -837,7 +837,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
   // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)。
   // 只有激活实例上报 —— 见组件顶部关于 active 的说明。
   React.useEffect(() => {
-    if (!active) return;
+    if (!active || !activeThreadId) return;
     reportWorkbenchState(activeThreadId, user.id, {
       editor: {
         ...(activeThread?.metadata.workspacePath
@@ -1835,7 +1835,7 @@ export function WorkspaceDrawer() {
                 <CodeChangesWorkspace active={selected} />
               ) : (
                 <div className="size-full px-3 py-2">
-                  <TerminalSession active={selected} />
+                  <TerminalSession sessionId={tab.id} active={selected} />
                 </div>
               )}
             </div>

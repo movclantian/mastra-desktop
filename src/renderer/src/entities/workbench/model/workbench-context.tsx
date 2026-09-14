@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { SkillMetadata } from "@/entities/skill";
 
 import type { CatalogProvider, ProviderConfig } from "./providers";
 import {
@@ -36,7 +37,6 @@ import {
   type PendingJump,
   type RecentWorkspace,
   type SearchSelection,
-  type SkillMetadata,
   type TerminalRequest,
   type ToolsConfig,
   type TreeEntry,
@@ -346,7 +346,7 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
 
   const value = useMemo<WorkbenchValue>(
     () => ({
-      user,
+      user: currentUser,
       threads,
       threadsLoading,
       refreshThreads,

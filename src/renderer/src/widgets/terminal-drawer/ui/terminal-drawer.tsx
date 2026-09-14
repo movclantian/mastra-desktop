@@ -6,20 +6,16 @@ import { Button } from "@/shared/ui/button";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 
 export function TerminalPanel() {
-  const {
-    activeThreadId,
-    threads,
-    terminalPanelOpen,
-    setTerminalPanelOpen,
-    pendingTerminalRequest,
-    clearPendingTerminalRequest,
-  } = useWorkbench();
+  const { activeThreadId, threads, terminalPanelOpen, setTerminalPanelOpen, terminalRequest } =
+    useWorkbench();
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const activeWorkspacePath = activeThread?.metadata?.workspacePath;
 
   const [sessionIds, setSessionIds] = React.useState<string[]>(() => [nanoid(6)]);
   const [activeSessionId, setActiveSessionId] = React.useState<string>(sessionIds[0]);
+  const [handledRequestId, setHandledRequestId] = React.useState<number | null>(null);
+  const pendingRequest = terminalRequest?.id === handledRequestId ? null : terminalRequest;
 
   const addSession = React.useCallback(() => {
     const nextId = nanoid(6);
@@ -98,9 +94,11 @@ export function TerminalPanel() {
               sessionId={id}
               active={id === activeSessionId && terminalPanelOpen}
               cwd={activeWorkspacePath}
-              threadId={activeThreadId}
-              pendingRequest={id === activeSessionId ? pendingTerminalRequest : null}
-              onHandledRequest={clearPendingTerminalRequest}
+              threadId={activeThreadId ?? undefined}
+              pendingRequest={id === activeSessionId ? pendingRequest : null}
+              onHandledRequest={() => {
+                if (pendingRequest) setHandledRequestId(pendingRequest.id);
+              }}
             />
           </div>
         ))}

@@ -11,7 +11,6 @@ import { registerApiRoute } from "@mastra/core/server";
 import { workBrowser } from "../../agents";
 import { ensureProfileAgentsRegistered, getAgentProfile } from "../../agents/custom";
 import { workError } from "../../errors";
-import { workSessionHost } from "../../harness";
 import { deleteThreadWorkspace } from "../../workspace";
 import { removeObservationalMemoryReferences } from "./compact";
 import { getOwnedThread, getWorkMemory, getWorkMemoryForThread } from "./shared";
@@ -229,10 +228,16 @@ export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
     if (!thread) {
       throw workError("THREAD_NOT_FOUND");
     }
-    const session = workSessionHost.get(resourceId);
-    if (session?.threadId === threadId) {
-      workSessionHost.delete(resourceId);
-    }
+    const profile = await getAgentProfile(
+      (thread.metadata as ThreadMetadata)?.agentProfileId,
+      resourceId,
+    );
+    const { profile: agent } = await ensureProfileAgentsRegistered(
+      c.get("mastra"),
+      profile,
+      resourceId,
+    );
+    await agent.abortThreadStream({ resourceId, threadId });
     if (workBrowser.hasThreadSession(threadId)) {
       await workBrowser.closeThreadSession(threadId);
     }

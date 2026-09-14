@@ -449,16 +449,8 @@ export const sessionStreamRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      const followUpId = c.req.query("followUpId");
-      const followUpSubscription = followUpId
-        ? await result.session.subscribeFollowUp(followUpId)
-        : undefined;
-      if (followUpId && !followUpSubscription) return new Response(null, { status: 204 });
-      if (!followUpSubscription && !result.session.getDisplayState().activeRunId) {
-        return new Response(null, { status: 204 });
-      }
-      const subscription =
-        followUpSubscription ?? (await result.session.subscribe(result.threadId));
+      if (!result.agent.getActiveThreadRunId(result)) return new Response(null, { status: 204 });
+      const subscription = await result.agent.subscribeToThread(result);
       const stream = subscriptionStream(subscription, () =>
         result.session.releaseSubscription(subscription),
       );
@@ -543,7 +535,6 @@ export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/
       title: result.thread.title,
       metadata: { ...result.thread.metadata, modeId: mode.id },
     });
-    result.session.setMode(mode.id);
     result.session.notifyPolicyChange(
       `The user switched the session mode to "${mode.id}". Its instructions and tool restrictions take effect immediately — re-plan if your current approach relied on the previous mode.`,
       { change: "mode", modeId: mode.id },

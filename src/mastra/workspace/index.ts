@@ -27,10 +27,10 @@ import { clampInt, clampNumber, cleanStrings, stringRecord } from "../config/nor
 import {
   DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
-  getContentObjectAccessPaths,
   getStorageDirectory,
   setAppConfig,
 } from "../storage";
+import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
   createWorkspaceChangeHooks,
   createWorkspaceOutputArchiveHooks,

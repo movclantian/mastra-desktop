@@ -206,5 +206,3 @@ export async function deleteAppConfig(key: string, resourceId?: string): Promise
     args: [scopedConfigKey(key, resourceId)],
   });
 }
-
-export * from "./content-objects";
