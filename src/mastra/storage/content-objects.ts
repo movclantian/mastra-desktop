@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite, getStorageDirectory, resourceIdFromContext } from "./index";
@@ -132,6 +133,10 @@ export function getContentObjectAccessPaths(userId?: string, threadId?: string):
   if (threadId?.trim()) {
     paths.push(join(root, "threads", pathSegment(threadId, "threadId")));
   }
+  // LocalFilesystem enumerates allowed paths directly. On a fresh user/thread
+  // scope, an unused content kind has no object directory yet; make that an
+  // empty, valid scope instead of surfacing ENOENT to the Agent.
+  for (const path of paths) mkdirSync(path, { recursive: true });
   return paths;
 }
 
