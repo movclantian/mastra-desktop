@@ -1,21 +1,18 @@
 import * as React from "react";
 import { toast } from "sonner";
-import {
-  formatModelContextWindow,
-  getModelContextWindow,
-  useWorkbench,
-} from "@/entities/workbench";
 import { Field, FieldContent, FieldDescription, FieldError, FieldTitle } from "@/shared/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
 import { Textarea } from "@/shared/ui/textarea";
 import { fetchMemoryConfig, saveMemoryConfig } from "../../api/settings-api";
 import {
-  currentModelRouterString,
+  NumberRow,
   ScopeSelect,
+  SelectRow,
   SettingCard,
   SettingRow,
   SliderRow,
+  TextAreaRow,
 } from "../controls";
 
 const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
@@ -134,26 +131,13 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
 };
 
 export function MemorySection() {
-  const { providers, catalog, modelSelection } = useWorkbench();
   const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
+  const [extractorText, setExtractorText] = React.useState(() =>
+    JSON.stringify(DEFAULT_MEMORY_DRAFT.omExtractors, null, 2),
+  );
   const [loaded, setLoaded] = React.useState(false);
 
-  // OM 预算只按当前 promptInput 模型窗口派生,Observer/Reflector 不再单独选模型。
-  const derivedMessageTokens = React.useMemo(() => {
-    const model = currentModelRouterString(providers, modelSelection);
-    const idx = model.indexOf("/");
-    if (idx <= 0) return DEFAULT_OM_MESSAGE_TOKENS;
-    const provider = providers.find((p) => (p.registryId ?? p.id) === model.slice(0, idx));
-    const window = provider
-      ? getModelContextWindow(provider, model.slice(idx + 1), catalog)
-      : undefined;
-    if (!window || window <= 0) return DEFAULT_OM_MESSAGE_TOKENS;
-    const minimum = Math.max(2_000, Math.floor(window * 0.4));
-    return Math.min(250_000, Math.max(minimum, Math.round(window * 0.5)));
-  }, [providers, modelSelection, catalog]);
-
-  // Observer/Reflector 的调度、抽取器和线程级阈值保持代码级默认，避免用户误配上下文预算。
-  const showAdvancedMemorySettings = false;
+  const showAdvancedMemorySettings = true;
 
   // schema 形态实时校验:非法 JSON / 非对象时后端会回落 template,这里给即时提示
   const workingMemorySchemaValid = React.useMemo(() => {
@@ -170,9 +154,9 @@ export function MemorySection() {
     if (loaded) return;
     fetchMemoryConfig<Partial<MemoryDraft>>()
       .then((config) => {
-        setDraft((prev) => {
-          return { ...prev, ...config } as MemoryDraft;
-        });
+        const merged = { ...DEFAULT_MEMORY_DRAFT, ...config } as MemoryDraft;
+        setDraft(merged);
+        setExtractorText(JSON.stringify(merged.omExtractors, null, 2));
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
@@ -188,7 +172,7 @@ export function MemorySection() {
     const timer = window.setTimeout(() => {
       void saveMemoryConfig({
         ...draft,
-        omMessageTokens: derivedMessageTokens > 0 ? derivedMessageTokens : draft.omMessageTokens,
+        omMessageTokens: draft.omMessageTokens,
       })
         .then(() => {
           const before = prevSavedRef.current;
@@ -214,7 +198,7 @@ export function MemorySection() {
         .catch(() => toast.error("记忆配置自动保存失败,请确认 Mastra 服务已启动"));
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draft, loaded, derivedMessageTokens]);
+  }, [draft, loaded]);
 
   return (
     <>
@@ -436,16 +420,15 @@ export function MemorySection() {
                 跟随当前模型
               </span>
             </SettingRow>
-            <SettingRow
-              title="自动记忆预算"
-              description="自动保留约一半窗口给系统提示、工具和输出,无需手动配置"
-            >
-              <span className="shrink-0 text-sm font-medium tabular-nums">
-                {derivedMessageTokens > 0
-                  ? `${formatModelContextWindow(derivedMessageTokens)}（自动）`
-                  : "跟随模型"}
-              </span>
-            </SettingRow>
+            <NumberRow
+              description="Observer 触发观察前保留的消息 token 数"
+              max={250_000}
+              min={0}
+              onChange={(v) => setDraft({ ...draft, omMessageTokens: v })}
+              suffix="token"
+              title="消息阈值(messageTokens)"
+              value={draft.omMessageTokens}
+            />
             <SettingRow
               description="对话间隔 ≥10 分钟时插入时间标记,帮助模型感知时间跨度"
               title="时间标记(temporalMarkers)"
@@ -457,6 +440,139 @@ export function MemorySection() {
             </SettingRow>
             {showAdvancedMemorySettings ? (
               <>
+                <SettingRow
+                  description="Observer 与 Reflector 共享 thread 或跨线程资源记忆"
+                  title="观察范围(scope)"
+                >
+                  <ScopeSelect
+                    onChange={(v) => setDraft({ ...draft, omScope: v })}
+                    resourceLabel="resource(跨线程)"
+                    threadLabel="thread(当前线程)"
+                    value={draft.omScope}
+                  />
+                </SettingRow>
+                <SettingRow
+                  description="Observer 顺手维护线程标题"
+                  title="Observer 维护线程标题(threadTitle)"
+                >
+                  <Switch
+                    checked={draft.omThreadTitle}
+                    onCheckedChange={(v) => setDraft({ ...draft, omThreadTitle: v })}
+                  />
+                </SettingRow>
+                <SettingRow
+                  description="允许 Observer 直接管理工作记忆"
+                  title="Observer 管理工作记忆(manageWorkingMemory)"
+                >
+                  <Switch
+                    checked={draft.omManageWorkingMemory}
+                    onCheckedChange={(v) => setDraft({ ...draft, omManageWorkingMemory: v })}
+                  />
+                </SettingRow>
+                <SelectRow
+                  description="按模型多模态能力自动决定是否观察附件"
+                  onChange={(omObserveAttachments) => setDraft({ ...draft, omObserveAttachments })}
+                  options={[
+                    { value: "auto" as const, label: "auto(跟随模型)" },
+                    { value: "on" as const, label: "on(启用)" },
+                    { value: "off" as const, label: "off(关闭)" },
+                  ]}
+                  title="观察附件(observeAttachments)"
+                  value={draft.omObserveAttachments}
+                />
+                <NumberRow
+                  description="resource 范围批量观察的最大 token 数;0 使用默认"
+                  max={2_000_000}
+                  min={0}
+                  onChange={(v) => setDraft({ ...draft, omMaxTokensPerBatch: v })}
+                  suffix="token"
+                  title="批量上限(maxTokensPerBatch)"
+                  value={draft.omMaxTokensPerBatch}
+                />
+                <NumberRow
+                  description="Observer 模型温度"
+                  max={2}
+                  min={0}
+                  onChange={(v) => setDraft({ ...draft, omTemperature: v })}
+                  title="Observer 温度(temperature)"
+                  value={draft.omTemperature}
+                />
+                <NumberRow
+                  description="Observer 单次输出上限;0 使用默认"
+                  max={500_000}
+                  min={0}
+                  onChange={(v) => setDraft({ ...draft, omMaxOutputTokens: v })}
+                  suffix="token"
+                  title="Observer 输出(maxOutputTokens)"
+                  value={draft.omMaxOutputTokens}
+                />
+                <NumberRow
+                  description="异步观察缓冲频率;小于 1 表示 messageTokens 比例"
+                  max={500_000}
+                  min={0}
+                  onChange={(v) => setDraft({ ...draft, omBufferTokens: v })}
+                  title="缓冲频率(bufferTokens)"
+                  value={draft.omBufferTokens}
+                />
+                <SettingRow description="关闭后不使用异步缓冲" title="启用异步缓冲(bufferEnabled)">
+                  <Switch
+                    checked={draft.omBufferEnabled}
+                    onCheckedChange={(v) => setDraft({ ...draft, omBufferEnabled: v })}
+                  />
+                </SettingRow>
+                <NumberRow
+                  description="Reflector 触发反思的观察 token 数;0 使用默认"
+                  max={2_000_000}
+                  min={0}
+                  onChange={(v) => setDraft({ ...draft, omObservationTokens: v })}
+                  suffix="token"
+                  title="反思阈值(observationTokens)"
+                  value={draft.omObservationTokens}
+                />
+                <TextAreaRow
+                  description="追加到 Observer 系统提示的指令"
+                  onChange={(omObserverInstruction) =>
+                    setDraft({ ...draft, omObserverInstruction })
+                  }
+                  rows={3}
+                  title="Observer 指令(instruction)"
+                  value={draft.omObserverInstruction}
+                />
+                <TextAreaRow
+                  description="追加到 Reflector 系统提示的指令"
+                  onChange={(omReflectionInstruction) =>
+                    setDraft({ ...draft, omReflectionInstruction })
+                  }
+                  rows={3}
+                  title="Reflector 指令(instruction)"
+                  value={draft.omReflectionInstruction}
+                />
+                <Field className="space-y-2 py-3">
+                  <FieldContent className="space-y-1">
+                    <FieldTitle className="text-sm leading-none font-medium">
+                      自定义抽取器(extract)
+                    </FieldTitle>
+                    <FieldDescription className="text-xs text-muted-foreground">
+                      每个抽取器使用 name、instructions、stage、enabled 字段;保存为 JSON 数组
+                    </FieldDescription>
+                  </FieldContent>
+                  <Textarea
+                    className="min-h-32 font-mono text-xs"
+                    onChange={(e) => {
+                      setExtractorText(e.target.value);
+                      try {
+                        const value = JSON.parse(e.target.value) as unknown;
+                        if (Array.isArray(value))
+                          setDraft({ ...draft, omExtractors: value as OmExtractorDraft[] });
+                      } catch {
+                        // Keep the last valid draft while the user is typing.
+                      }
+                    }}
+                    rows={8}
+                    spellCheck={false}
+                    value={extractorText}
+                  />
+                </Field>
                 <SettingRow
                   description="为 Agent 注册 recall 工具,可回查观察背后的原始消息"
                   title="原始消息回查"

@@ -28,6 +28,7 @@ import {
   BatchPartsProcessor,
   type ErrorProcessorOrWorkflow,
   type InputProcessorOrWorkflow,
+  isBadRequestError,
   isProcessorWorkflow,
   LanguageDetector,
   ModerationProcessor,
@@ -46,12 +47,13 @@ import {
   TokenCostControl,
   TokenLimiterProcessor,
   ToolCallFilter,
+  ToolSearchProcessor,
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
 import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
-import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import { getThreadWorkspace, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
 
@@ -71,6 +73,7 @@ type CostScope = "run" | "resource" | "thread" | "user" | "organization" | "sess
 type CostWindow = "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
 type CostStrategy = "block" | "warn";
 type CacheScopeMode = "auto" | "none" | "custom";
+type ToolSearchStorage = "in-memory" | "context";
 export interface GuardrailsUserConfig {
   // --- 通用 ---------------------------------------------------------------
   /**
@@ -201,6 +204,14 @@ export interface GuardrailsUserConfig {
   skillSearchTopK: number;
   skillSearchMinScore: number;
   skillSearchTtl: number;
+
+  // --- ToolSearchProcessor(输入,动态工具发现) -------------------------------
+  toolSearch: boolean;
+  toolSearchTopK: number;
+  toolSearchMinScore: number;
+  toolSearchAutoLoad: boolean;
+  toolSearchStorage: ToolSearchStorage;
+  toolSearchTtl: number;
 
   // --- errorProcessors ----------------------------------------------------
   prefillErrorHandler: boolean;
@@ -366,12 +377,19 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   skillSearchMinScore: 0,
   skillSearchTtl: 3_600_000,
 
+  toolSearch: false,
+  toolSearchTopK: 5,
+  toolSearchMinScore: 0,
+  toolSearchAutoLoad: false,
+  toolSearchStorage: "context",
+  toolSearchTtl: 3_600_000,
+
   prefillErrorHandler: true,
   streamErrorRetry: true,
   streamErrorRetryMax: 2,
   streamErrorRetryDelayMs: 1_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
-  streamErrorRetryUnknown: false,
+  streamErrorRetryUnknown: true,
 };
 
 /** 读取护栏配置(app_config 表 key="guardrails";无记录或损坏时回落默认值) */
@@ -674,6 +692,22 @@ async function buildInput(
     );
   }
 
+  if (cfg.toolSearch) {
+    processors.push(
+      new ToolSearchProcessor({
+        tools: {},
+        includeResolvedTools: true,
+        search: {
+          topK: cfg.toolSearchTopK,
+          minScore: cfg.toolSearchMinScore,
+          autoLoad: cfg.toolSearchAutoLoad,
+        },
+        storage: cfg.toolSearchStorage,
+        ttl: cfg.toolSearchTtl,
+      }),
+    );
+  }
+
   if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
 
   if (cfg.responseCache) {
@@ -767,9 +801,30 @@ function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
         delayMs: cfg.streamErrorRetryDelayMs,
         maxRetryAfterMs: cfg.streamErrorRetryMaxRetryAfterMs,
         retryUnknownErrors: cfg.streamErrorRetryUnknown,
+        matchers: [
+          { match: isBadRequestError, maxRetries: 1, delayMs: 2_000 },
+          {
+            match: (error) => {
+              if (!error) return false;
+              const code = typeof error === "object" && "code" in error ? error.code : undefined;
+              const message = error instanceof Error ? error.message : "";
+              return (
+                (typeof code === "string" && code.toUpperCase() === "ECONNRESET") ||
+                /econnreset|socket hang up/i.test(message)
+              );
+            },
+            maxRetries: cfg.streamErrorRetryMax,
+            delayMs: ({ retryCount }) =>
+              Math.min(
+                cfg.streamErrorRetryDelayMs * 2 ** retryCount,
+                cfg.streamErrorRetryMaxRetryAfterMs,
+              ),
+          },
+        ],
       }),
     );
   }
+  if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
   return processors;
 }
 
@@ -785,9 +840,10 @@ export async function buildGuardrailInputProcessors(
   const cfg = currentConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const input = await buildInput(cfg, resourceId, requestContext);
-  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return input;
-  const workspacePath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
-  if (typeof workspacePath !== "string" || !workspacePath) return input;
+  if (!cfg.skillSearch) return input;
+  const contextPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
+  const workspacePath =
+    typeof contextPath === "string" && contextPath ? contextPath : process.cwd();
   let skillSearch = runtime.skillSearchCache.get(workspacePath);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({
@@ -826,8 +882,9 @@ export async function getConfiguredProcessorRegistry(): Promise<{
 }> {
   const input = await buildGuardrailInputProcessors();
   const output = await buildGuardrailOutputProcessors();
+  const error = buildGuardrailErrorProcessors();
   const processors = new Map<string, Processor>();
-  for (const candidate of [...input, ...output]) {
+  for (const candidate of [...input, ...output, ...error]) {
     if (isProcessorWorkflow(candidate) || typeof candidate.id !== "string") continue;
     processors.set(candidate.id, candidate as Processor);
   }

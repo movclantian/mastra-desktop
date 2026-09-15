@@ -24,7 +24,6 @@ import {
 } from "../tools";
 import {
   getThreadWorkspace,
-  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
@@ -66,12 +65,11 @@ function createSubagentModelResolver() {
 function resolveSubagentWorkspace(requestContext: RequestContextLike) {
   const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
   const scopedResourceId = typeof resourceId === "string" ? resourceId : undefined;
-  if (!isWorkspaceEnabled(scopedResourceId)) return undefined;
   const path = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
-  if (typeof path !== "string" || !path) return undefined;
+  const workspacePath = typeof path === "string" && path ? path : process.cwd();
   const threadId = requestContext.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
   return getThreadWorkspace(
-    path,
+    workspacePath,
     typeof threadId === "string" ? threadId : undefined,
     scopedResourceId,
   );

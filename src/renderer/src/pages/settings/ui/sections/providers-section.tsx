@@ -158,6 +158,7 @@ export function ProvidersSection() {
           <RegistryIntro
             key={selectedRegistryProvider.id}
             registryProvider={selectedRegistryProvider}
+            registry={registry}
             listOpen={listOpen}
             onToggleList={toggleList}
             onAdded={(id) => setSelected({ kind: "provider", id })}
@@ -245,94 +246,96 @@ function ProviderListSidebar({
       data-collapsible={open ? "" : "icon"}
       data-slot="sidebar"
       data-sidebar="sidebar"
+      style={{ transition: "width 200ms cubic-bezier(0.4, 0, 0.2, 1)" }}
       className={cn(
-        "group/sidebar relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar transition-[width] duration-200 ease-out",
+        "group/sidebar relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar transition-all duration-200 ease-out",
         open ? "w-60" : "w-12",
       )}
     >
-      <div className="flex h-full w-full min-h-0 flex-col">
-        {/* Command 提供 cmdk 检索 context,header 与列表都要在内部 */}
-        <Command className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {/* 顶栏 h-12 与其余两列 header 对齐:检索框 + 添加自定义网关;
-            水平分割线统一 border-border,与设置菜单列/详情列一致 */}
-          <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
-            {open ? (
-              <div className="min-w-0 flex-1 [&>div]:p-0!">
-                <CommandInput placeholder="搜索供应商..." />
+      {/* Command 提供 cmdk 检索 context, 清除默认 popover 卡片边框与内边距以保证三列顶栏对齐 */}
+      <Command
+        data-slot="command-flat"
+        className="flex size-full min-h-0 flex-1 flex-col overflow-hidden rounded-none! border-0! bg-transparent p-0! shadow-none!"
+      >
+        {/* 顶栏 h-12 与其余两列 header 对齐:检索框 + 添加自定义网关;
+          水平分割线统一 border-border,与设置菜单列/详情列一致 */}
+        <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
+          {open ? (
+            <div className="min-w-0 flex-1 [&>div]:p-0!">
+              <CommandInput placeholder="搜索供应商..." />
+            </div>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="mx-auto"
+              title="展开供应商列表"
+              aria-label="展开供应商列表"
+              onClick={onToggle}
+            >
+              <SearchIcon />
+            </Button>
+          )}
+          {open ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title="添加自定义网关"
+              aria-label="添加自定义网关"
+              onClick={onAddGateway}
+            >
+              <PlusIcon />
+            </Button>
+          ) : null}
+        </div>
+        <CommandList className="min-h-0 max-h-none flex-1 p-1.5 group-data-[collapsible=icon]/sidebar:p-1">
+          <CommandEmpty className="group-data-[collapsible=icon]/sidebar:hidden">
+            没有匹配的供应商
+          </CommandEmpty>
+          {providers.length > 0 ? (
+            <>
+              <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                已配置
               </div>
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="mx-auto"
-                title="展开供应商列表"
-                aria-label="展开供应商列表"
-                onClick={onToggle}
-              >
-                <SearchIcon />
-              </Button>
-            )}
-            {open ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                title="添加自定义网关"
-                aria-label="添加自定义网关"
-                onClick={onAddGateway}
-              >
-                <PlusIcon />
-              </Button>
-            ) : null}
-          </div>
-          <CommandList className="min-h-0 max-h-none flex-1 p-1.5 group-data-[collapsible=icon]/sidebar:p-1">
-            <CommandEmpty className="group-data-[collapsible=icon]/sidebar:hidden">
-              没有匹配的供应商
-            </CommandEmpty>
-            {providers.length > 0 ? (
-              <>
-                <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                  已配置
-                </div>
-                <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
-                  {providers.map((provider) =>
-                    renderItem(
-                      provider.id,
-                      provider.registryId ?? "custom",
-                      provider.name,
-                      `${provider.name} ${provider.registryId ?? ""} ${provider.baseUrl ?? ""}`,
-                      selected?.kind === "provider" && selected.id === provider.id,
-                      true,
-                      provider.disabled,
-                      () => onSelect({ kind: "provider", id: provider.id }),
-                    ),
-                  )}
-                </CommandGroup>
-              </>
-            ) : null}
-            {unconfigured.length > 0 ? (
-              <>
-                <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                  全部供应商
-                </div>
-                <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
-                  {unconfigured.map((r) =>
-                    renderItem(
-                      r.id,
-                      r.id,
-                      r.name,
-                      `${r.name} ${r.id}`,
-                      selected?.kind === "registry" && selected.id === r.id,
-                      false,
-                      undefined,
-                      () => onSelect({ kind: "registry", id: r.id }),
-                    ),
-                  )}
-                </CommandGroup>
-              </>
-            ) : null}
-          </CommandList>
-        </Command>
-      </div>
+              <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
+                {providers.map((provider) =>
+                  renderItem(
+                    provider.id,
+                    provider.registryId ?? "custom",
+                    provider.name,
+                    `${provider.name} ${provider.registryId ?? ""} ${provider.baseUrl ?? ""}`,
+                    selected?.kind === "provider" && selected.id === provider.id,
+                    true,
+                    provider.disabled,
+                    () => onSelect({ kind: "provider", id: provider.id }),
+                  ),
+                )}
+              </CommandGroup>
+            </>
+          ) : null}
+          {unconfigured.length > 0 ? (
+            <>
+              <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                全部供应商
+              </div>
+              <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
+                {unconfigured.map((r) =>
+                  renderItem(
+                    r.id,
+                    r.id,
+                    r.name,
+                    `${r.name} ${r.id}`,
+                    selected?.kind === "registry" && selected.id === r.id,
+                    false,
+                    undefined,
+                    () => onSelect({ kind: "registry", id: r.id }),
+                  ),
+                )}
+              </CommandGroup>
+            </>
+          ) : null}
+        </CommandList>
+      </Command>
     </aside>
   );
 }
@@ -356,17 +359,18 @@ function EmptyDetail() {
 
 function RegistryIntro({
   registryProvider,
+  registry,
   listOpen,
   onToggleList,
   onAdded,
 }: {
   registryProvider: RegistryProvider;
+  registry: RegistryProvider[];
   listOpen: boolean;
   onToggleList: () => void;
   onAdded: (providerId: string) => void;
 }) {
   const { providers, setProviders, openBrowserUrl } = useWorkbench();
-  const registry = useRegistry();
   const [apiKey, setApiKey] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 

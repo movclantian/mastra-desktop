@@ -147,6 +147,13 @@ export interface GuardrailsDraft {
   skillSearchMinScore: number;
   skillSearchTtl: number;
 
+  toolSearch: boolean;
+  toolSearchTopK: number;
+  toolSearchMinScore: number;
+  toolSearchAutoLoad: boolean;
+  toolSearchStorage: "in-memory" | "context";
+  toolSearchTtl: number;
+
   prefillErrorHandler: boolean;
   streamErrorRetry: boolean;
   streamErrorRetryMax: number;
@@ -293,12 +300,19 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   skillSearchMinScore: 0,
   skillSearchTtl: 3_600_000,
 
+  toolSearch: false,
+  toolSearchTopK: 5,
+  toolSearchMinScore: 0,
+  toolSearchAutoLoad: false,
+  toolSearchStorage: "context",
+  toolSearchTtl: 3_600_000,
+
   prefillErrorHandler: true,
   streamErrorRetry: true,
   streamErrorRetryMax: 2,
   streamErrorRetryDelayMs: 1_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
-  streamErrorRetryUnknown: false,
+  streamErrorRetryUnknown: true,
 };
 
 // --- 枚举选项(值为库接受的字面量,标签为中文说明) -------------------------
@@ -496,6 +510,20 @@ export function GuardrailsSection() {
         description="模型调用前后加一层内置处理器管线:输入侧规范化与检测,输出侧过滤与清洗,报错时恢复(guardrails.mdx / processors.mdx)。历史消息、语义召回、工作记忆三个处理器由记忆模块自动接入,在「记忆」页配置。"
         title="通用"
       >
+        <SwitchRow
+          checked={draft.jsonPromptInjection}
+          description="检测器使用 JSON 提示词代替 provider response_format"
+          onChange={(v) => patch({ jsonPromptInjection: v })}
+          title="兼容 JSON 检测输出"
+        />
+        <NumberRow
+          description="输入/输出处理器触发 retry 时的最大重试数;0 表示不显式设置"
+          max={50}
+          min={0}
+          onChange={(v) => patch({ maxProcessorRetries: v })}
+          title="处理器重试上限"
+          value={draft.maxProcessorRetries}
+        />
         <SettingRow
           description="注入、语言、审核、PII 与清洗检测器自动使用当前 promptInput 选择或请求的模型"
           title="护栏检测模型"
@@ -515,8 +543,28 @@ export function GuardrailsSection() {
           title="启用文本规范化"
         />
         <p className="px-1 pb-2 text-xs text-muted-foreground">
-          控制字符清理、表情保留和首尾空白处理由系统安全基线管理。
+          控制字符清理、表情保留和首尾空白处理按官方 UnicodeNormalizer 参数执行。
         </p>
+        <SwitchRow
+          checked={draft.unicodeStripControlChars}
+          onChange={(v) => patch({ unicodeStripControlChars: v })}
+          title="移除控制字符(stripControlChars)"
+        />
+        <SwitchRow
+          checked={draft.unicodePreserveEmojis}
+          onChange={(v) => patch({ unicodePreserveEmojis: v })}
+          title="保留表情(preserveEmojis)"
+        />
+        <SwitchRow
+          checked={draft.unicodeCollapseWhitespace}
+          onChange={(v) => patch({ unicodeCollapseWhitespace: v })}
+          title="折叠连续空白(collapseWhitespace)"
+        />
+        <SwitchRow
+          checked={draft.unicodeTrim}
+          onChange={(v) => patch({ unicodeTrim: v })}
+          title="裁剪首尾空白(trim)"
+        />
       </SettingCard>
 
       <SettingCard
@@ -548,6 +596,30 @@ export function GuardrailsSection() {
               ]}
               title="命中策略(strategy)"
               value={draft.regexStrategy}
+            />
+            <SelectRow
+              description="仅输入、仅输出或输入输出两侧都运行"
+              onChange={(regexPhase) => patch({ regexPhase })}
+              options={[
+                { value: "all" as const, label: "all(输入+输出)" },
+                { value: "input" as const, label: "input(输入)" },
+                { value: "output" as const, label: "output(输出)" },
+              ]}
+              title="执行阶段(phase)"
+              value={draft.regexPhase}
+            />
+            <SwitchRow
+              checked={draft.regexIncludeRedactedValues}
+              onChange={(v) => patch({ regexIncludeRedactedValues: v })}
+              title="保留脱敏原值(includeRedactedValues)"
+            />
+            <NumberRow
+              description="流式块之间保留的匹配窗口字符数"
+              max={10_000}
+              min={0}
+              onChange={(v) => patch({ regexStreamCarryoverSize: v })}
+              title="流式匹配窗口(streamCarryoverSize)"
+              value={draft.regexStreamCarryoverSize}
             />
             <TextAreaRow
               description={
@@ -606,6 +678,23 @@ export function GuardrailsSection() {
               title="命中策略(strategy)"
               value={draft.injectionStrategy}
             />
+            <SwitchRow
+              checked={draft.injectionLastMessageOnly}
+              onChange={(v) => patch({ injectionLastMessageOnly: v })}
+              title="仅检测最新消息(lastMessageOnly)"
+            />
+            <SwitchRow
+              checked={draft.injectionIncludeScores}
+              onChange={(v) => patch({ injectionIncludeScores: v })}
+              title="返回检测分数(includeScores)"
+            />
+            <TextAreaRow
+              description="覆盖检测器默认判断说明"
+              onChange={(injectionInstructions) => patch({ injectionInstructions })}
+              rows={3}
+              title="检测指令(instructions)"
+              value={draft.injectionInstructions}
+            />
           </>
         ) : null}
       </SettingCard>
@@ -660,6 +749,31 @@ export function GuardrailsSection() {
                 title="保留原文(preserveOriginal)"
               />
             ) : null}
+            <NumberRow
+              description="短于该字符数的文本跳过检测"
+              max={10_000}
+              min={0}
+              onChange={(v) => patch({ languageMinTextLength: v })}
+              title="最小文本长度(minTextLength)"
+              value={draft.languageMinTextLength}
+            />
+            <SwitchRow
+              checked={draft.languageLastMessageOnly}
+              onChange={(v) => patch({ languageLastMessageOnly: v })}
+              title="仅检测最新消息(lastMessageOnly)"
+            />
+            <SwitchRow
+              checked={draft.languageIncludeDetails}
+              onChange={(v) => patch({ languageIncludeDetails: v })}
+              title="返回检测详情(includeDetectionDetails)"
+            />
+            <TextAreaRow
+              description="覆盖语言检测器默认判断说明"
+              onChange={(languageInstructions) => patch({ languageInstructions })}
+              rows={3}
+              title="检测指令(instructions)"
+              value={draft.languageInstructions}
+            />
           </>
         ) : null}
       </SettingCard>
@@ -709,6 +823,31 @@ export function GuardrailsSection() {
               ]}
               title="命中策略(strategy)"
               value={draft.moderationStrategy}
+            />
+            <SwitchRow
+              checked={draft.moderationLastMessageOnly}
+              onChange={(v) => patch({ moderationLastMessageOnly: v })}
+              title="仅检测最新消息(lastMessageOnly)"
+            />
+            <SwitchRow
+              checked={draft.moderationIncludeScores}
+              onChange={(v) => patch({ moderationIncludeScores: v })}
+              title="返回检测分数(includeScores)"
+            />
+            <NumberRow
+              description="输出流审核使用的块窗口;0 使用库默认"
+              max={100}
+              min={0}
+              onChange={(v) => patch({ moderationChunkWindow: v })}
+              title="输出块窗口(chunkWindow)"
+              value={draft.moderationChunkWindow}
+            />
+            <TextAreaRow
+              description="覆盖审核器默认判断说明"
+              onChange={(moderationInstructions) => patch({ moderationInstructions })}
+              rows={3}
+              title="审核指令(instructions)"
+              value={draft.moderationInstructions}
             />
           </>
         ) : null}
@@ -775,6 +914,28 @@ export function GuardrailsSection() {
                 value={draft.piiRedactionMethod}
               />
             ) : null}
+            <SwitchRow
+              checked={draft.piiPreserveFormat}
+              onChange={(v) => patch({ piiPreserveFormat: v })}
+              title="保留原格式(preserveFormat)"
+            />
+            <SwitchRow
+              checked={draft.piiLastMessageOnly}
+              onChange={(v) => patch({ piiLastMessageOnly: v })}
+              title="仅检测最新消息(lastMessageOnly)"
+            />
+            <SwitchRow
+              checked={draft.piiIncludeDetections}
+              onChange={(v) => patch({ piiIncludeDetections: v })}
+              title="返回检测详情(includeDetections)"
+            />
+            <TextAreaRow
+              description="覆盖 PII 检测器默认判断说明"
+              onChange={(piiInstructions) => patch({ piiInstructions })}
+              rows={3}
+              title="检测指令(instructions)"
+              value={draft.piiInstructions}
+            />
           </>
         ) : null}
       </SettingCard>
@@ -825,6 +986,67 @@ export function GuardrailsSection() {
               title="自定义识别模式(customPatterns)"
               value={listText.scrubberCustomPatterns}
             />
+            <TextAreaRow
+              description="命中时使用的占位文本"
+              onChange={(scrubberPlaceholderText) => patch({ scrubberPlaceholderText })}
+              rows={2}
+              title="占位文本(placeholderText)"
+              value={draft.scrubberPlaceholderText}
+            />
+            <SwitchRow
+              checked={draft.scrubberIncludeDetections}
+              onChange={(v) => patch({ scrubberIncludeDetections: v })}
+              title="返回检测详情(includeDetections)"
+            />
+            <SwitchRow
+              checked={draft.scrubberLastMessageOnly}
+              onChange={(v) => patch({ scrubberLastMessageOnly: v })}
+              title="仅检测最新消息(lastMessageOnly)"
+            />
+            <TextAreaRow
+              description="覆盖提示词清洗器默认判断说明"
+              onChange={(scrubberInstructions) => patch({ scrubberInstructions })}
+              rows={3}
+              title="清洗指令(instructions)"
+              value={draft.scrubberInstructions}
+            />
+          </>
+        ) : null}
+      </SettingCard>
+
+      <SettingCard
+        description="把连续的小型流式片段合并后再发送,减少网络事件和输出侧检测次数(batch-parts-processor.mdx)。"
+        title="流式片段合并(BatchPartsProcessor)"
+      >
+        <SwitchRow
+          checked={draft.batchParts}
+          onChange={(v) => patch({ batchParts: v })}
+          title="启用片段合并"
+        />
+        {draft.batchParts ? (
+          <>
+            <NumberRow
+              description="累计多少个片段后发出"
+              max={100}
+              min={1}
+              onChange={(v) => patch({ batchPartsSize: v })}
+              title="批大小(batchSize)"
+              value={draft.batchPartsSize}
+            />
+            <NumberRow
+              description="等待更多片段的最大时间;0 表示仅按批大小触发"
+              max={10_000}
+              min={0}
+              onChange={(v) => patch({ batchPartsMaxWaitTime: v })}
+              suffix="ms"
+              title="最大等待(maxWaitTime)"
+              value={draft.batchPartsMaxWaitTime}
+            />
+            <SwitchRow
+              checked={draft.batchPartsEmitOnNonText}
+              onChange={(v) => patch({ batchPartsEmitOnNonText: v })}
+              title="非文本块立即发出(emitOnNonText)"
+            />
           </>
         ) : null}
       </SettingCard>
@@ -840,16 +1062,28 @@ export function GuardrailsSection() {
           title="限制输入上下文"
         />
         {draft.tokenLimitInput ? (
-          <NumberRow
-            description="送入模型的消息总 token 上限"
-            max={2_000_000}
-            min={1_000}
-            onChange={(v) => patch({ tokenLimitInputValue: v })}
-            step={1_000}
-            suffix="token"
-            title="上下文上限(limit)"
-            value={draft.tokenLimitInputValue}
-          />
+          <>
+            <NumberRow
+              description="送入模型的消息总 token 上限"
+              max={2_000_000}
+              min={1_000}
+              onChange={(v) => patch({ tokenLimitInputValue: v })}
+              step={1_000}
+              suffix="token"
+              title="上下文上限(limit)"
+              value={draft.tokenLimitInputValue}
+            />
+            <SelectRow
+              description="best-fit 尽量填满窗口;contiguous 保留连续消息"
+              onChange={(tokenLimitTrimMode) => patch({ tokenLimitTrimMode })}
+              options={[
+                { value: "contiguous" as const, label: "contiguous(连续)" },
+                { value: "best-fit" as const, label: "best-fit(尽量填满)" },
+              ]}
+              title="输入裁剪模式(trimMode)"
+              value={draft.tokenLimitTrimMode}
+            />
+          </>
         ) : null}
         <SwitchRow
           checked={draft.tokenLimitOutput}
@@ -878,6 +1112,16 @@ export function GuardrailsSection() {
               ]}
               title="超限策略(strategy)"
               value={draft.tokenLimitOutputStrategy}
+            />
+            <SelectRow
+              description="cumulative 按整轮累计;part 按单个输出块"
+              onChange={(tokenLimitOutputCountMode) => patch({ tokenLimitOutputCountMode })}
+              options={[
+                { value: "cumulative" as const, label: "cumulative(累计)" },
+                { value: "part" as const, label: "part(分块)" },
+              ]}
+              title="输出计数模式(countMode)"
+              value={draft.tokenLimitOutputCountMode}
             />
           </>
         ) : null}
@@ -960,6 +1204,11 @@ export function GuardrailsSection() {
               title="软阈值(warnAtPercent %)"
               value={draft.tokenCostWarnAtPercent}
             />
+            <SwitchRow
+              checked={draft.tokenCostIncludeBreakdown}
+              onChange={(v) => patch({ tokenCostIncludeBreakdown: v })}
+              title="返回费用明细(includeBreakdown)"
+            />
           </>
         ) : null}
       </SettingCard>
@@ -974,6 +1223,190 @@ export function GuardrailsSection() {
           onChange={(v) => patch({ providerCompat: v })}
           title="启用历史兼容"
         />
+      </SettingCard>
+
+      <SettingCard
+        description="裁剪历史中的工具调用与结果,把上下文预算留给当前任务(tool-call-filter.mdx)。"
+        title="工具调用裁剪(ToolCallFilter)"
+      >
+        <SwitchRow
+          checked={draft.toolCallFilter}
+          onChange={(v) => patch({ toolCallFilter: v })}
+          title="启用工具调用裁剪"
+        />
+        {draft.toolCallFilter ? (
+          <>
+            <TextAreaRow
+              description="一行一个工具名;留空表示全部工具调用都可裁剪"
+              onChange={(text) => patchList("toolCallFilterExclude", text)}
+              rows={3}
+              title="排除工具(exclude)"
+              value={listText.toolCallFilterExclude}
+            />
+            <NumberRow
+              description="保留最近 N 个产生工具调用的步骤; -1 表示不裁剪当前循环"
+              max={100}
+              min={-1}
+              onChange={(v) => patch({ toolCallFilterAfterToolSteps: v })}
+              title="当前循环裁剪起点(filterAfterToolSteps)"
+              value={draft.toolCallFilterAfterToolSteps}
+            />
+            <SwitchRow
+              checked={draft.toolCallFilterPreserveModelOutput}
+              onChange={(v) => patch({ toolCallFilterPreserveModelOutput: v })}
+              title="保留模型输出(preserveModelOutput)"
+            />
+          </>
+        ) : null}
+      </SettingCard>
+
+      <SettingCard
+        description="缓存已经完成的模型步骤,相同的模型、提示词和工具循环可直接复用(response-cache.mdx)。"
+        title="响应缓存(ResponseCache)"
+      >
+        <SwitchRow
+          checked={draft.responseCache}
+          onChange={(v) => patch({ responseCache: v })}
+          title="启用响应缓存"
+        />
+        {draft.responseCache ? (
+          <>
+            <NumberRow
+              description="缓存条目存活时间"
+              max={86_400}
+              min={0}
+              onChange={(v) => patch({ responseCacheTtl: v })}
+              suffix="s"
+              title="缓存 TTL(ttl)"
+              value={draft.responseCacheTtl}
+            />
+            <SelectRow
+              description="auto 按资源隔离;none 全局共享;custom 使用固定作用域"
+              onChange={(responseCacheScopeMode) => patch({ responseCacheScopeMode })}
+              options={[
+                { value: "auto" as const, label: "auto(按资源)" },
+                { value: "none" as const, label: "none(全局)" },
+                { value: "custom" as const, label: "custom(自定义)" },
+              ]}
+              title="缓存作用域(scope)"
+              value={draft.responseCacheScopeMode}
+            />
+            {draft.responseCacheScopeMode === "custom" ? (
+              <TextAreaRow
+                description="同一作用域共享缓存"
+                onChange={(responseCacheScopeValue) => patch({ responseCacheScopeValue })}
+                rows={2}
+                title="自定义作用域(scopeValue)"
+                value={draft.responseCacheScopeValue}
+              />
+            ) : null}
+          </>
+        ) : null}
+      </SettingCard>
+
+      <SettingCard
+        action={
+          <ReadyBadge blockedText="需要工作区" ready={status.workspaceReady} readyText="可用" />
+        }
+        description="在模型需要技能时从工作区索引中召回相关 SKILL.md(skill-search-processor.mdx)。"
+        title="技能搜索(SkillSearchProcessor)"
+      >
+        <SwitchRow
+          checked={draft.skillSearch}
+          disabled={!status.workspaceReady}
+          onChange={(v) => patch({ skillSearch: v })}
+          title="启用技能搜索"
+        />
+        {draft.skillSearch ? (
+          <>
+            <SliderRow
+              description="每次最多召回的技能数"
+              max={20}
+              min={1}
+              onChange={(v) => patch({ skillSearchTopK: v })}
+              step={1}
+              title="召回数量(topK)"
+              value={draft.skillSearchTopK}
+            />
+            <SliderRow
+              description="最低相关性分数"
+              max={1}
+              min={0}
+              onChange={(v) => patch({ skillSearchMinScore: Math.round(v * 100) / 100 })}
+              step={0.05}
+              title="最低分数(minScore)"
+              value={draft.skillSearchMinScore}
+            />
+            <NumberRow
+              description="技能搜索结果缓存时间"
+              max={86_400_000}
+              min={0}
+              onChange={(v) => patch({ skillSearchTtl: v })}
+              suffix="ms"
+              title="缓存 TTL(ttl)"
+              value={draft.skillSearchTtl}
+            />
+          </>
+        ) : null}
+      </SettingCard>
+
+      <SettingCard
+        description="从动态工具集合中按需搜索并加载工具,减少每轮发送的工具定义上下文(tool-search-processor.mdx)。"
+        title="按需工具发现(ToolSearchProcessor)"
+      >
+        <SwitchRow
+          checked={draft.toolSearch}
+          description="启用 search_tools / load_tool 元工具"
+          onChange={(v) => patch({ toolSearch: v })}
+          title="启用工具搜索"
+        />
+        {draft.toolSearch ? (
+          <>
+            <SliderRow
+              description="每次搜索最多返回的工具数"
+              max={20}
+              min={1}
+              onChange={(v) => patch({ toolSearchTopK: v })}
+              step={1}
+              title="返回数量(topK)"
+              value={draft.toolSearchTopK}
+            />
+            <SliderRow
+              description="最低相关性分数"
+              max={1}
+              min={0}
+              onChange={(v) => patch({ toolSearchMinScore: Math.round(v * 100) / 100 })}
+              step={0.05}
+              title="最低分数(minScore)"
+              value={draft.toolSearchMinScore}
+            />
+            <SwitchRow
+              checked={draft.toolSearchAutoLoad}
+              description="搜索结果直接激活,省掉 load_tool 一步"
+              onChange={(v) => patch({ toolSearchAutoLoad: v })}
+              title="自动加载(autoLoad)"
+            />
+            <SelectRow
+              description="context 随消息持久化,适合线程和重启恢复"
+              onChange={(toolSearchStorage) => patch({ toolSearchStorage })}
+              options={[
+                { value: "context" as const, label: "context(随消息)" },
+                { value: "in-memory" as const, label: "in-memory(进程内)" },
+              ]}
+              title="状态存储(storage)"
+              value={draft.toolSearchStorage}
+            />
+            <NumberRow
+              description="仅 in-memory 模式生效;0 表示不清理"
+              max={86_400_000}
+              min={0}
+              onChange={(v) => patch({ toolSearchTtl: v })}
+              suffix="ms"
+              title="状态 TTL(ttl)"
+              value={draft.toolSearchTtl}
+            />
+          </>
+        ) : null}
       </SettingCard>
 
       <SettingCard
@@ -992,9 +1425,38 @@ export function GuardrailsSection() {
           onChange={(v) => patch({ streamErrorRetry: v })}
           title="流式错误重试"
         />
-        <p className="px-1 pb-2 text-xs text-muted-foreground">
-          重试次数、退避间隔和未知错误判定由系统稳定性基线管理。
-        </p>
+        <NumberRow
+          description="每类瞬时错误允许的最大重试次数"
+          max={10}
+          min={0}
+          onChange={(v) => patch({ streamErrorRetryMax: v })}
+          title="最大重试次数(maxRetries)"
+          value={draft.streamErrorRetryMax}
+        />
+        <NumberRow
+          description="普通错误首次重试等待时间"
+          max={120_000}
+          min={0}
+          onChange={(v) => patch({ streamErrorRetryDelayMs: v })}
+          suffix="ms"
+          title="初始退避(delayMs)"
+          value={draft.streamErrorRetryDelayMs}
+        />
+        <NumberRow
+          description="遵守 Retry-After 时允许的最大等待时间"
+          max={600_000}
+          min={0}
+          onChange={(v) => patch({ streamErrorRetryMaxRetryAfterMs: v })}
+          suffix="ms"
+          title="Retry-After 上限(maxRetryAfterMs)"
+          value={draft.streamErrorRetryMaxRetryAfterMs}
+        />
+        <SwitchRow
+          checked={draft.streamErrorRetryUnknown}
+          description="对未匹配到专用策略的流错误也进行重试"
+          onChange={(v) => patch({ streamErrorRetryUnknown: v })}
+          title="重试未知错误(retryUnknownErrors)"
+        />
       </SettingCard>
     </>
   );

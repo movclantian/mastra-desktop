@@ -64,7 +64,7 @@ const processorRegistry = {
   "editor-state": editorStateProcessor as Processor,
   "terminal-state": terminalStateProcessor as Processor,
   "workbench-state": workbenchStateProcessor as Processor,
-  "agents-md": agentsMdProcessor as Processor,
+  "agents-md-injector": agentsMdProcessor as Processor,
   ...configuredProcessorRegistry.processors,
 };
 

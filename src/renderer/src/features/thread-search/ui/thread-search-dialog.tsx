@@ -11,13 +11,7 @@ import {
   CommandList,
 } from "@/shared/ui/command";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/shared/ui/empty";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 
 /**
  * 线程消息检索弹窗(官方 Memory.recall 语义召回,服务端文本匹配兜底)。

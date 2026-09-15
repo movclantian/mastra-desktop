@@ -847,9 +847,7 @@ export function hasPendingInteraction(
             part.toolCallId === interaction.toolCallId &&
             (interaction.requiresApproval
               ? part.state === "approval-requested"
-              : part.state !== "output-available" &&
-                part.state !== "output-error" &&
-                part.state !== "output-denied")
+              : part.state !== "output-error" && part.state !== "output-denied")
           );
         }
         const raw = part as unknown as JsonRecord;

@@ -5,15 +5,15 @@
  * 工作区绑定都是线程级状态,经 context 传入(见 routes/chat.ts)。
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
-import {
+import type {
   Agent,
-  type AgentExecutionOptions,
-  type DelegationConfig,
-  type MastraDBMessage,
-  type ToolsInput,
+  AgentExecutionOptions,
+  DelegationConfig,
+  MastraDBMessage,
+  ToolsInput,
 } from "@mastra/core/agent";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { TaskSignalProvider } from "@mastra/core/signals";
+import { createCodingAgent } from "@mastra/core/coding-agent";
+import { MASTRA_RESOURCE_ID_KEY, type RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
 import { workPollingSignals, workWebhookSignals } from "../harness";
 import { getMemory } from "../memory";
@@ -34,7 +34,6 @@ import {
 import {
   getManagedSkillsDirectory,
   getThreadWorkspace,
-  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
@@ -218,7 +217,17 @@ function createWorkAgent(
   member?: AgentMemberDefinition,
   resourceScope?: string,
 ): Agent {
-  return new Agent<string, ToolsInput, undefined>({
+  const workspace = async ({ requestContext }: { requestContext?: RequestContext }) => {
+    const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
+    const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
+    return getThreadWorkspace(
+      path || process.cwd(),
+      typeof threadId === "string" ? threadId : undefined,
+      resourceScopeFromRequestContext(requestContext),
+    );
+  };
+
+  return createCodingAgent({
     id: member
       ? profileAgentRuntimeId(fixedProfile as AgentProfile, member.id, resourceScope)
       : fixedProfile
@@ -318,12 +327,7 @@ function createWorkAgent(
       buildGuardrailErrorProcessors(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
       ),
-    signals: [
-      new TaskSignalProvider(),
-      workWebhookSignals,
-      workPollingSignals,
-      libraryIndexSignals,
-    ],
+    signals: [workWebhookSignals, workPollingSignals, libraryIndexSignals],
     agents: async ({ requestContext }) => {
       const profile =
         fixedProfile ??
@@ -368,18 +372,7 @@ function createWorkAgent(
       ),
       waitTimeoutMs: 900_000,
     },
-    workspace: async ({ requestContext }) => {
-      const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
-      if (!isWorkspaceEnabled(resourceId)) return undefined;
-      const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
-      if (!path) return undefined;
-      const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-      return getThreadWorkspace(
-        path,
-        typeof threadId === "string" ? threadId : undefined,
-        resourceScopeFromRequestContext(requestContext),
-      );
-    },
+    ...(fixedProfile || member ? { workspace } : {}),
     tools: async ({ requestContext }) => {
       const tools = await resolveSharedTools(requestContext);
       if (!isCodeModeAvailable(requestContext)) delete tools.execute_typescript;

@@ -57,11 +57,7 @@ import {
 } from "@/shared/ui/empty";
 import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from "@/shared/ui/input-group";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
 import { InteractiveHoverButton } from "@/shared/ui/interactive-hover-button";
 import { MagicCard } from "@/shared/ui/magic-card";
 import { NeonGradientCard } from "@/shared/ui/neon-gradient-card";

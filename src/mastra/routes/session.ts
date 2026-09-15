@@ -48,6 +48,7 @@ import {
   WEB_SEARCH_CONTEXT_KEY,
 } from "../tools";
 import {
+  getThreadWorkspace,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -114,11 +115,17 @@ export async function getWorkbenchSession(
   const controller = c.get("mastra").getAgentController("workbench");
   if (!controller) throw new Error("Workbench AgentController is not registered");
   await controller.init();
+  const workspacePath = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
+  const workspace =
+    typeof workspacePath === "string" && workspacePath
+      ? getThreadWorkspace(workspacePath, threadId, resourceId)
+      : undefined;
   const session = await controller.createSession({
     resourceId,
     threadId,
     scope: JSON.stringify([scopeOf(scope), threadId]),
     requestContext,
+    ...(workspace ? { workspace } : {}),
   });
   requestContext.set(SESSION_TOOL_POLICY_CONTEXT_KEY, (toolName: string) =>
     session.resolveToolApproval(toolName),
@@ -437,7 +444,7 @@ function isTerminalAgentChunk(chunk: { type: string }): boolean {
 
 /** Wait for the native run to stop before any destructive history operation. */
 export async function abortWorkbenchSession(session: ControllerSession) {
-  session.followUps.clear();
+  session.suspensions.clear();
   session.abort();
   const timeout = AbortSignal.timeout(10_000);
   while (session.stream.isActive() || session.run.getRunId() !== null) {
@@ -461,6 +468,7 @@ export async function streamWorkbenchSession(
   session: ControllerSession,
   action?: () => Promise<unknown>,
   discardCurrentSegment = false,
+  resumeTool?: { runId: string; toolCallId: string; toolName: string; args?: unknown },
 ) {
   const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(session);
   const threadId = session.thread.getId();
@@ -484,6 +492,21 @@ export async function streamWorkbenchSession(
       unsubscribeEvents = session.subscribe((event) => {
         if (event.type === "error") fail(event.error);
       });
+      // A resumed suspended tool emits its result from a fresh Agent stream.
+      // Seed the UI stream with the original call so AI SDK can apply that result
+      // even when the client restored the history from persisted tool output.
+      if (resumeTool) {
+        controller.enqueue({
+          type: "tool-call",
+          runId: resumeTool.runId,
+          from: "AGENT",
+          payload: {
+            toolCallId: resumeTool.toolCallId,
+            toolName: resumeTool.toolName,
+            args: resumeTool.args ?? {},
+          },
+        });
+      }
       void (async () => {
         let automaticApproval = false;
         for await (const chunk of subscription.stream) {

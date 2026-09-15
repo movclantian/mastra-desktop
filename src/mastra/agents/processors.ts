@@ -5,10 +5,8 @@
  *   docs/en/docs/harness/signals.mdx「State signals」)
  * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
  */
-import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
-import type { MastraDBMessage } from "@mastra/core/agent";
-import type { InputProcessor } from "@mastra/core/processors";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { AgentsMDInjector, type InputProcessor } from "@mastra/core/processors";
 import { z } from "zod";
 import {
   getAssetContext,
@@ -18,7 +16,6 @@ import {
   LIBRARY_RESOURCE_CONTEXT_KEY,
 } from "../rag";
 import { appStorage } from "../storage";
-import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 
 /**
  * 资料库附件输入处理器 (docs/en/docs/agents/processors.mdx):
@@ -229,79 +226,17 @@ export const [
   },
 }));
 
-// ---------------------------------------------------------------------------
-// AGENTS.md 自动加载 (docs/en/docs/harness/signals.mdx)
-// ---------------------------------------------------------------------------
-
-const AGENTS_FILE = "AGENTS.md";
-const MAX_AGENTS_MD_CHARACTERS = 24_000;
-
-async function readAgentsMd(path: string): Promise<string | undefined> {
-  try {
-    const contents = await readFile(path, "utf8");
-    const trimmed = contents.trim();
-    if (!trimmed) return undefined;
-    return trimmed.length > MAX_AGENTS_MD_CHARACTERS
-      ? `${trimmed.slice(0, MAX_AGENTS_MD_CHARACTERS)}\n\n[AGENTS.md truncated]`
-      : trimmed;
-  } catch {
-    return undefined;
-  }
-}
-
-function hasSentAgentsMd(messages: MastraDBMessage[], path: string): boolean {
-  return messages.some((message) => {
-    const metadata = message.content.metadata;
-    if (!metadata || typeof metadata !== "object") return false;
-    const signal = metadata.signal;
-    if (!signal || typeof signal !== "object" || Array.isArray(signal)) return false;
-    const attributes = (signal as { attributes?: unknown }).attributes;
-    if (!attributes || typeof attributes !== "object" || Array.isArray(attributes)) return false;
-    const record = attributes as { type?: unknown; path?: unknown };
-    return record.type === "dynamic-agents-md" && record.path === path;
-  });
-}
-
-function agentsMdPathsFromStep(step: unknown): string[] {
-  const calls = (step as { toolCalls?: Array<{ input?: unknown }> } | undefined)?.toolCalls ?? [];
-  const paths: string[] = [];
-  for (const call of calls) {
-    if (!call.input || typeof call.input !== "object") continue;
-    for (const value of Object.values(call.input as Record<string, unknown>)) {
-      if (typeof value === "string" && value.endsWith(AGENTS_FILE) && isAbsolute(value)) {
-        paths.push(value);
-      }
+// Official instruction discovery scans AGENTS.md, CLAUDE.md, and CONTEXT.md
+// in the ancestry of paths returned by completed workspace tool calls.
+export const agentsMdProcessor: InputProcessor = new AgentsMDInjector({
+  maxTokens: 1_000,
+  pathExists: (path) => existsSync(path),
+  isDirectory: (path) => {
+    try {
+      return statSync(path).isDirectory();
+    } catch {
+      return false;
     }
-  }
-  return paths;
-}
-
-export const agentsMdProcessor: InputProcessor = {
-  id: "agents-md",
-  async processInputStep({ messageList, requestContext, sendSignal, stepNumber, steps }) {
-    if (!sendSignal) return messageList;
-
-    const candidates = new Set<string>();
-    if (stepNumber === 0) {
-      const workspacePath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
-      if (workspacePath) candidates.add(join(workspacePath, AGENTS_FILE));
-    } else {
-      for (const path of agentsMdPathsFromStep(steps.at(-1))) candidates.add(path);
-    }
-    if (candidates.size === 0) return messageList;
-
-    const messages = messageList.get.all.db();
-    for (const path of candidates) {
-      if (hasSentAgentsMd(messages, path)) continue;
-      const contents = await readAgentsMd(path);
-      if (!contents) continue;
-      await sendSignal({
-        type: "reactive",
-        contents,
-        attributes: { type: "dynamic-agents-md", path },
-        metadata: { path },
-      });
-    }
-    return messageList;
   },
-};
+  readFile: (path) => readFileSync(path, "utf8"),
+});
