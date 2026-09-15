@@ -4,6 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import {
   type AgentProfile,
+  agentWorkflowSchema,
   deleteAgentProfile,
   ensureProfileAgentsRegistered,
   listAgentProfiles,
@@ -22,36 +23,7 @@ const agentProfileInputSchema = z.object({
   description: z.string().optional(),
   instructions: z.string().min(1),
   skills: z.array(z.string()).optional(),
-  workflow: z
-    .object({
-      strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
-      steps: z.array(
-        z.object({
-          id: z.string(),
-          memberId: z.string().optional(),
-          kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
-          prompt: z.string().optional(),
-          retries: z.number().int().min(0).max(5).optional(),
-          condition: z
-            .object({
-              operator: z.enum(["contains", "equals", "not_contains"]),
-              value: z.string(),
-            })
-            .optional(),
-          branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
-          loop: z
-            .object({
-              mode: z.enum(["until", "while", "foreach"]),
-              maxIterations: z.number().int().min(1).max(20),
-              concurrency: z.number().int().min(1).max(8).optional(),
-            })
-            .optional(),
-          approval: z.object({ title: z.string(), description: z.string() }).optional(),
-        }),
-      ),
-      synthesis: z.boolean(),
-    })
-    .optional(),
+  workflow: agentWorkflowSchema.optional(),
   members: z
     .array(
       z.object({
@@ -152,33 +124,7 @@ const agentDraftSchema = z.object({
   profession: z.string(),
   description: z.string(),
   instructions: z.string(),
-  workflow: z
-    .object({
-      strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
-      steps: z.array(
-        z.object({
-          id: z.string(),
-          memberId: z.string().optional(),
-          kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
-          prompt: z.string().optional(),
-          retries: z.number().int().min(0).max(5).optional(),
-          condition: z
-            .object({ operator: z.enum(["contains", "equals", "not_contains"]), value: z.string() })
-            .optional(),
-          branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
-          loop: z
-            .object({
-              mode: z.enum(["until", "while", "foreach"]),
-              maxIterations: z.number().int().min(1).max(20),
-              concurrency: z.number().int().min(1).max(8).optional(),
-            })
-            .optional(),
-          approval: z.object({ title: z.string(), description: z.string() }).optional(),
-        }),
-      ),
-      synthesis: z.boolean(),
-    })
-    .optional(),
+  workflow: agentWorkflowSchema.optional(),
   members: z.array(
     z.object({
       name: z.string(),

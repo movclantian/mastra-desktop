@@ -14,6 +14,7 @@ import { Checkbox } from "@/shared/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -21,9 +22,11 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
 
 export interface McpFormServer {
   id: string;
@@ -239,28 +242,25 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                   选择服务的连接协议与通信介质。
                 </p>
               </div>
-              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="传输方式">
-                <Button
-                  aria-pressed={form.transport === "http"}
-                  className="h-9 justify-start text-xs font-medium"
-                  type="button"
-                  variant={form.transport === "http" ? "default" : "outline"}
-                  onClick={() => update({ transport: "http" })}
-                >
+              <ToggleGroup
+                aria-label="传输方式"
+                className="grid w-full grid-cols-2 gap-2"
+                variant="outline"
+                value={[form.transport]}
+                onValueChange={(next) => {
+                  const value = next[0];
+                  if (value === "http" || value === "stdio") update({ transport: value });
+                }}
+              >
+                <ToggleGroupItem className="h-9 justify-start text-xs font-medium" value="http">
                   <Globe2Icon className="size-3.5" />
                   Streamable HTTP / SSE
-                </Button>
-                <Button
-                  aria-pressed={form.transport === "stdio"}
-                  className="h-9 justify-start text-xs font-medium"
-                  type="button"
-                  variant={form.transport === "stdio" ? "default" : "outline"}
-                  onClick={() => update({ transport: "stdio" })}
-                >
+                </ToggleGroupItem>
+                <ToggleGroupItem className="h-9 justify-start text-xs font-medium" value="stdio">
                   <SquareTerminalIcon className="size-3.5" />
                   本地命令 / stdio
-                </Button>
-              </div>
+                </ToggleGroupItem>
+              </ToggleGroup>
             </section>
 
             {form.transport === "http" ? (
@@ -295,16 +295,13 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                     />
                     <CheckField
                       id="mcp-oauth"
+                      title="使用 OAuth 授权"
+                      description="需要登录时，保存后可从 MCP 服务卡片启动授权流程。"
                       checked={form.oauth?.enabled === true}
                       onCheckedChange={(checked) =>
                         update({ oauth: { ...(form.oauth ?? {}), enabled: checked } })
                       }
-                    >
-                      <span className="font-medium text-xs">使用 OAuth 授权</span>
-                      <span className="text-[11px] text-muted-foreground">
-                        需要登录时，保存后可从 MCP 服务卡片启动授权流程。
-                      </span>
-                    </CheckField>
+                    />
                   </CollapsibleContent>
                 </Collapsible>
               </section>
@@ -340,11 +337,10 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                     />
                     <CheckField
                       id="mcp-inherit-env"
+                      title="继承 MCP SDK 默认环境变量"
                       checked={form.inheritDefaultEnv ?? true}
                       onCheckedChange={(checked) => update({ inheritDefaultEnv: checked })}
-                    >
-                      <span className="text-xs">继承 MCP SDK 默认环境变量</span>
-                    </CheckField>
+                    />
                   </CollapsibleContent>
                 </Collapsible>
               </section>
@@ -353,21 +349,17 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
             <section className="grid gap-2.5 rounded-lg border bg-muted/20 p-3">
               <CheckField
                 id="mcp-enabled"
+                title="保存后立即启用"
                 checked={form.enabled}
                 onCheckedChange={(checked) => update({ enabled: checked })}
-              >
-                <span className="font-medium text-xs">保存后立即启用</span>
-              </CheckField>
+              />
               <CheckField
                 id="mcp-approval"
+                title="调用工具前要求批准"
+                description="推荐开启，避免高危或自动化工具被静默调用。"
                 checked={form.requireToolApproval ?? true}
                 onCheckedChange={(checked) => update({ requireToolApproval: checked })}
-              >
-                <span className="font-medium text-xs">调用工具前要求批准</span>
-                <span className="text-[11px] text-muted-foreground">
-                  推荐开启，避免高危或自动化工具被静默调用。
-                </span>
-              </CheckField>
+              />
             </section>
           </div>
         </ScrollArea>
@@ -382,14 +374,13 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
             {testing ? "测试中…" : "测试连接"}
           </Button>
           <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              disabled={testing || saving}
-              onClick={() => onOpenChange(false)}
-              variant="ghost"
-            >
-              取消
-            </Button>
+            <DialogClose
+              render={
+                <Button size="sm" disabled={testing || saving} variant="ghost">
+                  取消
+                </Button>
+              }
+            />
             <Button size="sm" disabled={saving || testing} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
               {saving ? "保存中…" : "保存 MCP"}
@@ -417,11 +408,11 @@ function TextField({
   required?: boolean;
 }) {
   return (
-    <label className="grid gap-1.5 text-sm" htmlFor={id}>
-      <span className="font-medium">
+    <Field>
+      <FieldLabel htmlFor={id}>
         {label}
         {required ? <span className="ml-1 text-destructive">*</span> : null}
-      </span>
+      </FieldLabel>
       <Input
         id={id}
         autoComplete="off"
@@ -430,7 +421,7 @@ function TextField({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
       />
-    </label>
+    </Field>
   );
 }
 
@@ -449,8 +440,8 @@ function TextAreaField({
 }) {
   const fieldId = React.useId();
   return (
-    <label className="grid gap-1.5 text-sm" htmlFor={fieldId}>
-      <span className="font-medium">{label}</span>
+    <Field>
+      <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
       <Textarea
         id={fieldId}
         className="min-h-20 resize-y font-mono text-xs"
@@ -459,32 +450,41 @@ function TextAreaField({
         value={value}
         spellCheck={false}
       />
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
-    </label>
+      {hint ? (
+        <FieldDescription className="text-xs text-muted-foreground">{hint}</FieldDescription>
+      ) : null}
+    </Field>
   );
 }
 
 function CheckField({
   id,
+  title,
+  description,
   checked,
   onCheckedChange,
-  children,
 }: {
   id: string;
+  title: string;
+  description?: string;
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
-  children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-3">
+    <Field orientation="horizontal" className="gap-3">
       <Checkbox
         id={id}
         checked={checked}
         onCheckedChange={(value) => onCheckedChange(value === true)}
       />
-      <label className="grid cursor-pointer gap-0.5 text-sm leading-5" htmlFor={id}>
-        {children}
-      </label>
-    </div>
+      <FieldContent>
+        <FieldLabel htmlFor={id} className="cursor-pointer text-xs font-medium">
+          {title}
+        </FieldLabel>
+        {description ? (
+          <FieldDescription className="text-[11px] leading-normal">{description}</FieldDescription>
+        ) : null}
+      </FieldContent>
+    </Field>
   );
 }

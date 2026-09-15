@@ -18,9 +18,7 @@ import { Queue } from "@/shared/ui/ai-elements/queue";
 import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
 import { BlurFade } from "@/shared/ui/blur-fade";
 import { DotPattern } from "@/shared/ui/dot-pattern";
-import { Dotm3x3_11 } from "@/shared/ui/dotm-3x3-11";
 import { DotmSquare3 } from "@/shared/ui/dotm-square-3";
-import { Marker, MarkerContent, MarkerIcon } from "@/shared/ui/marker";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
 import {
   MessageScroller,
@@ -29,6 +27,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "@/shared/ui/message-scroller";
 import { Meteors } from "@/shared/ui/meteors";
 import { SparklesText } from "@/shared/ui/sparkles-text";
@@ -41,7 +40,6 @@ import {
   fetchThreadMessages as fetchThreadMessagesRequest,
   grantToolCategory,
   runWorkflowAction,
-  summarizeThread,
 } from "../api/chat-api";
 import { persistAttachments as uploadAttachments } from "../lib/attachments";
 import { buildDisplayMessages } from "../lib/display";
@@ -51,7 +49,6 @@ import {
   type AgentTask,
   areTasksEqual,
   type BackgroundTaskState,
-  type CompressResult,
   getActiveToolsFromMessages,
   getBackgroundTasksFromMessages,
   getMessageInteractions,
@@ -88,34 +85,49 @@ import {
 import type { WorkflowRunAction } from "./agent-panels";
 
 // ---------------------------------------------------------------------------
-// 会话面板
+// 官方 MessageScroller 命令式滚动驱动器 (负责跨会话/搜索结果跳转)
 // ---------------------------------------------------------------------------
 
-type CompactionBoundary = {
-  id: string;
-  beforeMessages: WorkUIMessage[];
-  status: "running" | "complete";
-};
+function ChatPanelScrollerController({
+  pendingJump,
+  activeThreadId,
+  messagesCount,
+  onClearPendingJump,
+}: {
+  pendingJump: { threadId: string; messageId: string } | null;
+  activeThreadId: string | null;
+  messagesCount: number;
+  onClearPendingJump: () => void;
+}) {
+  const { scrollToMessage } = useMessageScroller();
 
-function isCompactionSummaryMessage(message: WorkUIMessage): boolean {
-  const metadata = message.metadata as { compactedHistory?: unknown } | undefined;
-  return Array.isArray(metadata?.compactedHistory);
+  React.useEffect(() => {
+    if (!pendingJump || !activeThreadId || pendingJump.threadId !== activeThreadId) return;
+    if (messagesCount === 0) return;
+    const queuedOrHandled = scrollToMessage(pendingJump.messageId, {
+      align: "center",
+      behavior: "smooth",
+    });
+    if (queuedOrHandled) {
+      onClearPendingJump();
+      const el = document.querySelector(`[data-message-id="${pendingJump.messageId}"]`);
+      if (el) {
+        el.classList.add("ring-2", "ring-primary/60", "rounded-xl");
+        const timer = window.setTimeout(() => {
+          el.classList.remove("ring-2", "ring-primary/60", "rounded-xl");
+        }, 2000);
+        return () => window.clearTimeout(timer);
+      }
+    }
+    return undefined;
+  }, [pendingJump, activeThreadId, messagesCount, scrollToMessage, onClearPendingJump]);
+
+  return null;
 }
 
-function CompactionMarker({ status }: { status: CompactionBoundary["status"] }) {
-  return status === "running" ? (
-    <Marker role="status">
-      <MarkerIcon>
-        <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
-      </MarkerIcon>
-      <MarkerContent className="shimmer">Compacting conversation</MarkerContent>
-    </Marker>
-  ) : (
-    <Marker role="status" variant="separator">
-      <MarkerContent>Conversation compacted</MarkerContent>
-    </Marker>
-  );
-}
+// ---------------------------------------------------------------------------
+// 会话面板
+// ---------------------------------------------------------------------------
 
 export function ChatPanel() {
   const {
@@ -142,11 +154,6 @@ export function ChatPanel() {
   // 工作区选定(promptInput 顶部选择器):随未锁定线程的首条消息以
   // body.workspacePath 上传,服务端绑定后选择器隐藏(会话目录不可中途更换)
   const [pendingWorkspacePath, setPendingWorkspacePath] = React.useState<string | null>(null);
-  const [compacting, setCompacting] = React.useState(false);
-  const [compactionBoundary, setCompactionBoundary] = React.useState<CompactionBoundary | null>(
-    null,
-  );
-  const [compressResult, setCompressResult] = React.useState<CompressResult | null>(null);
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [taskSnapshotLoaded, setTaskSnapshotLoaded] = React.useState(false);
   const [queuedRequests, setQueuedRequests] = React.useState<QueuedRequest[]>([]);
@@ -259,7 +266,7 @@ export function ChatPanel() {
   // useChat 的 onError:「本轮生成失败」+ 流式中断。
   //
   // 50ms(20fps)对流式文字已足够顺滑,同时把这条对话树的重渲染次数压到原来的几十分之一。
-  const { addToolApprovalResponse, messages, setMessages, status, stop } = useChat({
+  const { messages, setMessages, status, stop } = useChat({
     chat: activeChat,
     resume: Boolean(activeThreadId),
     throttle: 50,
@@ -386,7 +393,6 @@ export function ChatPanel() {
     displayStateRequestId.current += 1;
     setQueuedRequests([]);
     setQueueCanDispatch(false);
-    setCompactionBoundary(null);
     setPersistedInteractions([]);
     setBackgroundTasks([]);
     setWorkflowRuns([]);
@@ -414,32 +420,24 @@ export function ChatPanel() {
   /**
    * 重试:重生成**指定**的那条助手消息,而不是永远重生成最后一条。
    * regenerate({ messageId }) 会以 trigger: 'regenerate-message' 发送,
-   * handleChatStream 据此把那条助手消息从输入里切掉再重跑(见 transport 的注释)。
+   * toAISdkStream 据此把那条助手消息从输入里切掉再重跑(见 transport 的注释)。
    */
   const handleRetry = React.useCallback(
     (messageId: string) => {
-      if (compacting) {
-        toast.info("压缩完成后才能重新生成消息");
-        return;
-      }
       setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
       void activeChat.regenerate({ messageId });
     },
-    [activeChat, compacting],
+    [activeChat],
   );
 
   const handleEdit = React.useCallback(
     (messageId: string, text: string) => {
-      if (compacting) {
-        toast.info("压缩完成后才能编辑消息");
-        return;
-      }
       setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
       void activeChat.sendMessage({ text, messageId });
     },
-    [activeChat, compacting],
+    [activeChat],
   );
 
   // Refresh once after an edit/regenerate stream completes.
@@ -461,61 +459,9 @@ export function ChatPanel() {
     if (threadId) {
       await abortThread(threadId, user.id).catch(() => undefined);
     }
-    setQueuedRequests((current) => current.filter((request) => !request.followUpId));
+    setQueuedRequests((current) => current.filter((request) => !request.queuedOnServer));
     await stop();
   }, [stop, user.id]);
-
-  // 手动压缩上下文(真压缩):服务端重写线程 —— 折叠删除旧消息并把摘要注入线程头部,
-  // 此后模型只接收「摘要 + 近期消息」。完成后刷新线程列表与消息流,并弹窗展示压缩详情。
-  const runCompress = async () => {
-    if (
-      !activeThreadId ||
-      !selectedProvider ||
-      !modelSelection ||
-      compacting ||
-      status !== "ready"
-    ) {
-      return;
-    }
-    // Compression rewrites the persisted history. Keep queued requests local
-    // until the rewritten timeline has been loaded into the active Chat.
-    setCompactionBoundary({
-      id: nanoid(),
-      beforeMessages: messages.map((message) => ({
-        ...message,
-        parts: [...message.parts],
-        ...(message.metadata ? { metadata: { ...message.metadata } } : {}),
-      })),
-      status: "running",
-    });
-    setQueueCanDispatch(false);
-    setCompacting(true);
-    try {
-      const result = await summarizeThread(
-        activeThreadId,
-        user.id,
-        buildRequestModel(selectedProvider, modelSelection.modelId),
-      );
-      setCompressResult(result);
-      // 线程已被服务端重写(折叠删除 + 摘要消息 + 元数据),刷新列表与消息流
-      const [, reloaded] = await Promise.all([refreshThreads(), reloadMessages()]);
-      if (!reloaded) throw new Error("压缩后的消息历史加载失败");
-      setCompactionBoundary((current) => (current ? { ...current, status: "complete" } : current));
-    } catch (error) {
-      setCompactionBoundary(null);
-      toast.error(
-        error instanceof Error && error.message
-          ? error.message
-          : "压缩上下文失败,请确认 Mastra 服务已启动",
-      );
-    } finally {
-      setCompacting(false);
-      // Release the local queue only after summarizeThread and the canonical
-      // history reload have both settled. The queue effect also checks
-      // `compacting`, so no request can slip into the rewrite window.
-      setQueueCanDispatch(true);
-    }
-  };
 
   const isBusy = status === "submitted" || status === "streaming";
   React.useEffect(() => {
@@ -739,21 +685,6 @@ export function ChatPanel() {
     [messages, persistedInteractions, resolvedInteractionKeys],
   );
   const displayMessages = React.useMemo(() => buildDisplayMessages(messages), [messages]);
-  const compactionTimeline = React.useMemo(() => {
-    if (!compactionBoundary) return null;
-    const beforeIds = new Set(compactionBoundary.beforeMessages.map((message) => message.id));
-    const after =
-      compactionBoundary.status === "running"
-        ? []
-        : messages.filter(
-            (message) => !beforeIds.has(message.id) && !isCompactionSummaryMessage(message),
-          );
-    return {
-      before: buildDisplayMessages(compactionBoundary.beforeMessages),
-      after: buildDisplayMessages(after),
-    };
-  }, [compactionBoundary, messages]);
-
   const [resumingKeys, setResumingKeys] = React.useState<Set<string>>(new Set());
   const resumingKeysRef = React.useRef(new Set<string>());
 
@@ -796,39 +727,12 @@ export function ChatPanel() {
           return;
         }
 
-        // Native AI SDK approvals use approval-responded parts. The official
-        // handleChatStream adapter extracts those parts and resumes the exact
-        // run/tool-call pair; suspended tools keep the explicit Mastra resume
-        // payload path below.
         const decision =
           typeof resumeData === "object" && resumeData !== null
             ? (resumeData as { approved?: unknown; reason?: unknown })
             : undefined;
-        const approvalPart = chat.messages
-          .flatMap((message) => message.parts)
-          .find(
-            (
-              part,
-            ): part is Extract<WorkUIMessage["parts"][number], { state: "approval-requested" }> =>
-              isToolUIPart(part) &&
-              part.toolCallId === interaction.toolCallId &&
-              part.state === "approval-requested",
-          );
-        const approvalId = approvalPart?.approval.id;
-        const normalizedApprovalId = typeof approvalId === "string" ? approvalId : undefined;
-        if (interaction.requiresApproval && !normalizedApprovalId) {
-          throw new Error("工具审批消息缺少 AI SDK approval id");
-        }
-        if (interaction.requiresApproval && normalizedApprovalId) {
-          if (typeof decision?.approved !== "boolean") {
-            throw new Error("工具审批响应缺少 approved 字段");
-          }
-          await addToolApprovalResponse({
-            id: normalizedApprovalId,
-            approved: decision.approved,
-            ...(typeof decision.reason === "string" ? { reason: decision.reason } : {}),
-          });
-        }
+        if (interaction.requiresApproval && typeof decision?.approved !== "boolean")
+          throw new Error("工具审批响应缺少 approved 字段");
 
         // 先从输入区移除已提交的交互,避免旧历史 part 在 resume 流期间继续覆盖 PromptInput。
         setQueueCanDispatch(false);
@@ -837,25 +741,13 @@ export function ChatPanel() {
           next.add(interaction.key);
           return next;
         });
-        if (interaction.requiresApproval) {
-          // approval-responded parts are consumed by handleChatStream's
-          // official native approval adapter.
-          await chat.sendMessage(undefined, {
-            body: {
-              runId: interaction.runId,
-              ...(interaction.toolCallId ? { toolCallId: interaction.toolCallId } : {}),
-            },
-          });
-        } else {
-          // Mastra suspend() tools use the official Chat.resumeStream API.
-          await chat.resumeStream({
-            body: {
-              runId: interaction.runId,
-              ...(interaction.toolCallId ? { toolCallId: interaction.toolCallId } : {}),
-              resumeData,
-            },
-          });
-        }
+        await chat.sendMessage(undefined, {
+          body: {
+            runId: interaction.runId,
+            toolCallId: interaction.toolCallId,
+            ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
+          },
+        });
         await reloadMessages();
         // 计划获批时服务端会按 transitionsTo 切模式,重新采纳线程设置让选择器跟上
         if (interaction.toolName === "submit_plan") await refreshThreadSettings();
@@ -877,7 +769,6 @@ export function ChatPanel() {
     },
     [
       activeThreadId,
-      addToolApprovalResponse,
       fetchSuspendedInteractions,
       getThreadChat,
       refreshThreadSettings,
@@ -931,26 +822,6 @@ export function ChatPanel() {
   const streamingMessageId =
     status === "streaming" && lastMessage?.role === "assistant" ? lastMessage.id : undefined;
 
-  // 搜索结果跳转:消息加载完成后滚动到目标气泡并短暂高亮
-  React.useEffect(() => {
-    if (!pendingJump || !activeThreadId) return;
-    if (pendingJump.threadId !== activeThreadId) return;
-    // 等待本线程消息渲染完成
-    if (messages.length === 0) return;
-    const timer = window.setTimeout(() => {
-      const el = document.querySelector(`[data-message-id="${pendingJump.messageId}"]`);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-        el.classList.add("ring-2", "ring-primary/60", "rounded-xl");
-        window.setTimeout(() => {
-          el.classList.remove("ring-2", "ring-primary/60", "rounded-xl");
-        }, 2000);
-      }
-      setPendingJump(null);
-    }, 120);
-    return () => window.clearTimeout(timer);
-  }, [pendingJump, activeThreadId, messages.length, setPendingJump]);
-
   const handleSubmit = async (
     message: {
       text: string;
@@ -964,17 +835,16 @@ export function ChatPanel() {
     const files = message.files ?? [];
     if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
 
-    // Compression has its own history rewrite window. It must never share the
-    // server request path with a new prompt; keep the request local until the
-    // compressed timeline has been reloaded and the queue dispatcher is opened.
-    if (isBusy || compacting) {
+    if (isBusy) {
       const threadId = activeThreadIdRef.current;
       if (!threadId) return;
       try {
         const persistedFiles = await persistAttachments(files, threadId);
-        let followUpId: string | undefined;
-        const onlyNativeFollowUps = queuedRequests.every((request) => Boolean(request.followUpId));
-        if (!compacting && text && persistedFiles.length === 0 && onlyNativeFollowUps) {
+        let queuedOnServer = false;
+        const onlyNativeFollowUps = queuedRequests.every((request) =>
+          Boolean(request.queuedOnServer),
+        );
+        if (text && persistedFiles.length === 0 && onlyNativeFollowUps) {
           const payload = await enqueueFollowUp(threadId, user.id, {
             content: text,
             ...(selectedProvider && modelSelection
@@ -992,7 +862,7 @@ export function ChatPanel() {
               fileReferences: message.fileReferences ?? [],
             },
           });
-          followUpId = payload.followUpId;
+          queuedOnServer = payload.queued;
         }
         setQueuedRequests((current) => [
           ...current,
@@ -1002,7 +872,7 @@ export function ChatPanel() {
             files: persistedFiles,
             skills: message.skills,
             fileReferences: message.fileReferences,
-            followUpId,
+            queuedOnServer,
           },
         ]);
       } catch (error) {
@@ -1083,12 +953,12 @@ export function ChatPanel() {
   //
   // 服务端 session.steer() 会 abort 当前 run 并 clearFollowUps(),因此已被
   // 服务端会话接受的 native follow-up 全部作废 —— 前端必须同步
-  // 清掉它们(带 followUpId 的项),否则界面上会留下永远不会被执行的幽灵项。
+  // 清掉它们(带 queuedOnServer 的项),否则界面上会留下永远不会被执行的幽灵项。
   // 纯本地排队项不受影响,继续按顺序等下一回合。
   const steerQueuedRequestNow = React.useCallback(
     (request: QueuedRequest) => {
       const targetThreadId = activeThreadIdRef.current;
-      if (!targetThreadId || compacting || sendingQueuedRequest.current) return;
+      if (!targetThreadId || sendingQueuedRequest.current) return;
       if (request.files.length > 0) {
         toast.error("带附件的排队请求会在当前回合结束后发送");
         return;
@@ -1096,7 +966,7 @@ export function ChatPanel() {
       sendingQueuedRequest.current = true;
       setQueueCanDispatch(false);
       setQueuedRequests((current) =>
-        current.filter((item) => item.id !== request.id && !item.followUpId),
+        current.filter((item) => item.id !== request.id && !item.queuedOnServer),
       );
       void (async () => {
         await getThreadChat(targetThreadId).stop();
@@ -1126,7 +996,7 @@ export function ChatPanel() {
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [agentSelection.id, compacting, getThreadChat],
+    [agentSelection.id, getThreadChat],
   );
 
   const sendingQueuedRequest = React.useRef(false);
@@ -1137,7 +1007,6 @@ export function ChatPanel() {
     if (
       status !== "ready" ||
       !activeThreadId ||
-      compacting ||
       !queueCanDispatch ||
       interactions.length > 0 ||
       workflowBlocksQueue ||
@@ -1151,10 +1020,8 @@ export function ChatPanel() {
     if (!nextRequest) return;
     sendingQueuedRequest.current = true;
     setQueueCanDispatch(false);
-    const request = nextRequest.followUpId
-      ? getThreadChat(activeThreadId).resumeStream({
-          body: { followUpId: nextRequest.followUpId },
-        })
+    const request = nextRequest.queuedOnServer
+      ? getThreadChat(activeThreadId).resumeStream()
       : (() => {
           selectedSkillNamesRef.current = nextRequest.skills ?? [];
           return getThreadChat(activeThreadId).sendMessage(
@@ -1178,7 +1045,7 @@ export function ChatPanel() {
         })();
     void request
       .then(async () => {
-        if (nextRequest.followUpId) await reloadMessages();
+        if (nextRequest.queuedOnServer) await reloadMessages();
         setQueuedRequests((current) => current.filter((queued) => queued.id !== nextRequest.id));
       })
       .catch(() => {
@@ -1191,7 +1058,6 @@ export function ChatPanel() {
       });
   }, [
     activeThreadId,
-    compacting,
     getThreadChat,
     interactions.length,
     queueCanDispatch,
@@ -1221,12 +1087,12 @@ export function ChatPanel() {
             <UserRequestQueuePanel
               onRemove={removeQueuedRequest}
               onReorder={reorderQueuedRequests}
-              onSteerNow={compacting ? undefined : steerQueuedRequestNow}
+              onSteerNow={steerQueuedRequestNow}
               requests={queuedRequests}
             />
             <AgentQueuePanel
               activeTools={activeTools}
-              queuedFollowUps={queuedRequests.filter((request) => request.followUpId).length}
+              queuedFollowUps={queuedRequests.filter((request) => request.queuedOnServer).length}
               tasks={visibleTasks}
             />
           </Queue>
@@ -1270,10 +1136,6 @@ export function ChatPanel() {
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}
-              compacting={compacting}
-              onCompress={runCompress}
-              compressResult={compressResult}
-              onCompressResultClose={() => setCompressResult(null)}
               attachmentTokenBudget={attachmentTokenBudget}
               attachmentCapabilities={selectedCapabilities}
             />
@@ -1288,7 +1150,17 @@ export function ChatPanel() {
     // 用户气泡锚定在视口顶部、回复在下方流入,长过视口后交接为跟随底部;
     // 任何方式上滚(滚轮/触摸/键盘/滚动条)后位置稳定,跳转按钮回底并恢复
     // 跟随(滚动条拖动的解除由 ui/message-scroller 包装层补偿)。
-    <MessageScrollerProvider autoScroll>
+    <MessageScrollerProvider
+      autoScroll
+      defaultScrollPosition="last-anchor"
+      scrollPreviousItemPeek={48}
+    >
+      <ChatPanelScrollerController
+        pendingJump={pendingJump}
+        activeThreadId={activeThreadId}
+        messagesCount={messages.length}
+        onClearPendingJump={() => setPendingJump(null)}
+      />
       <div className="flex size-full min-h-0 flex-col">
         {/* 空态判定必须同步:切到有历史的线程时,messages 在历史 fetch 完成前
             是空数组,仅凭 messages.length===0 判空会先闪一帧居中的新会话布局。
@@ -1411,37 +1283,6 @@ export function ChatPanel() {
                         agentMemberRuntimes[activeMember.id] ?? { status: "idle", entries: [] }
                       }
                     />
-                  ) : compactionTimeline && compactionBoundary ? (
-                    <>
-                      {compactionTimeline.before.map(({ message, sourceIds }) => (
-                        <MessageItem
-                          key={`${compactionBoundary?.id}:before:${sourceIds[0]}`}
-                          message={message}
-                          isStreaming={false}
-                          onEdit={handleEdit}
-                          userId={user.id}
-                          onRetry={handleRetry}
-                          readOnly
-                        />
-                      ))}
-                      <MessageScrollerItem
-                        key={`${compactionBoundary.id}:marker`}
-                        messageId={`${compactionBoundary.id}:marker`}
-                        scrollAnchor
-                      >
-                        <CompactionMarker status={compactionBoundary.status} />
-                      </MessageScrollerItem>
-                      {compactionTimeline.after.map(({ message, sourceIds }) => (
-                        <MessageItem
-                          key={`${compactionBoundary?.id}:after:${sourceIds[0]}`}
-                          message={message}
-                          isStreaming={sourceIds.includes(streamingMessageId ?? "")}
-                          onEdit={handleEdit}
-                          userId={user.id}
-                          onRetry={handleRetry}
-                        />
-                      ))}
-                    </>
                   ) : (
                     displayMessages.map(({ message, sourceIds }) => (
                       // key 取合并组的**首条**源消息 id:每跨一个工具/推理边界,Mastra 就再封

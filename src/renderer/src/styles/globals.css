@@ -136,7 +136,6 @@
   --animate-shimmer: shimmer 2s linear infinite;
   --animate-shimmer-slide: shimmer-slide var(--speed, 3s) ease-in-out infinite alternate;
   --animate-spin-around: spin-around calc(var(--speed, 3s) * 2) infinite linear;
-  --animate-meteor-effect: meteor 5s linear infinite;
   --animate-ripple: ripple var(--duration, 2s) ease calc(var(--i, 0) * 0.2s) infinite;
   --animate-orbit: orbit calc(var(--duration, 20) * 1s) linear infinite;
   --animate-background-position-spin: background-position-spin 3000ms infinite linear;
@@ -590,8 +589,7 @@
 [data-slot="dialog-content"],
 [data-slot="popover-content"],
 [data-slot="dropdown-menu-content"],
-[data-slot="select-content"],
-[data-slot="tabs-list"] {
+[data-slot="select-content"] {
   border-width: var(--theme-border-width, 1px);
   border-color: var(--border);
 }

@@ -1,5 +1,4 @@
 import {
-  ArrowLeftIcon,
   ArrowUpRightIcon,
   AwardIcon,
   BookOpenIcon,
@@ -28,6 +27,7 @@ import {
   XIcon,
 } from "lucide-react";
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import type {
   LeaderboardView,
@@ -66,6 +66,7 @@ import {
 } from "@/shared/ui/context-menu";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -80,6 +81,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { Field, FieldGroup, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { InteractiveHoverButton } from "@/shared/ui/interactive-hover-button";
 import { MagicCard } from "@/shared/ui/magic-card";
@@ -222,10 +224,6 @@ export function SkillHubPage() {
         detailError={detailError}
         detailLoading={detailLoading}
         installed={skills.some((skill) => skill.name === activeSkill.name)}
-        onBack={() => {
-          setActiveSkill(null);
-          setDetail(null);
-        }}
         onInstall={() => void installBuiltin(activeSkill)}
         onRemove={() => void removeSkill()}
         onUsePrompt={(prompt) => {
@@ -283,7 +281,7 @@ export function SkillHubPage() {
           </header>
 
           {/* 已安装快捷栏 */}
-          <section className="mt-6">
+          <section className="mt-2">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-foreground/90">
                 已启用技能
@@ -323,16 +321,15 @@ export function SkillHubPage() {
           {/* 官方精选滚动带:被动浏览发现新技能 —— 悬停暂停后仍可点击进详情。
               与上方「已启用技能」的手动横滚分工明确:那边是找我装过的,这里是逛新的。 */}
           {officialSkills.length > 0 ? (
-            <section className="mt-5">
+            <section className="mt-2">
               <div className="flex items-center justify-between">
                 <AnimatedGradientText
                   className="text-sm font-semibold tracking-tight"
                   colorFrom="var(--primary)"
                   colorTo="var(--accent)"
                 >
-                  官方精选推荐
+                  精选推荐
                 </AnimatedGradientText>
-                <span className="text-xs text-muted-foreground">悬停暂停 · 点击查看</span>
               </div>
               <Marquee className="mt-2 [--duration:52s] [--gap:0.625rem]" pauseOnHover repeat={3}>
                 {officialSkills.slice(0, 14).map((skill, index) => (
@@ -359,7 +356,7 @@ export function SkillHubPage() {
           ) : null}
 
           {/* 一级功能标签切换 (探索市场 / 个人管理 / MCP 外部能力) */}
-          <div className="mt-6 flex items-center justify-between border-b pb-1">
+          <div className="mt-2 flex items-center justify-between border-b pb-1">
             <AnimatedTabs
               activeTab={section}
               onChange={(value) => setSection(value as SkillSection)}
@@ -397,16 +394,6 @@ export function SkillHubPage() {
                 },
               ]}
             />
-            {section === "mcp" ? (
-              <Button
-                onClick={() => setMcpOpen(true)}
-                size="sm"
-                className="gap-1.5 h-8 font-medium"
-              >
-                <PlusIcon className="size-3.5" />
-                添加 MCP
-              </Button>
-            ) : null}
           </div>
 
           {/* 市场 / 个人 / MCP 内容区域 */}
@@ -415,7 +402,6 @@ export function SkillHubPage() {
               mcpServers={mcpServers}
               onDelete={(server) => void removeMcp(server)}
               onAuthenticate={(server) => void authenticateMcp(server)}
-              onBackToMarket={() => setSection("public")}
               onAddMcp={() => setMcpOpen(true)}
             />
           ) : section === "personal" ? (
@@ -426,7 +412,7 @@ export function SkillHubPage() {
               onExploreMarket={() => setSection("public")}
             />
           ) : (
-            <div className="mt-6 space-y-4">
+            <div className="mt-2 space-y-4">
               {/* 1. 市场类目与厂商导航栏 (排版：社区排行榜 -> 原厂认证与各厂商标签 -> Mastra 内置 -> GitHub 市场) */}
               <ScrollArea className="w-full whitespace-nowrap">
                 <div className="flex items-center gap-2 pb-1">
@@ -709,7 +695,7 @@ export function SkillHubPage() {
 
               {/* 6. 完整分页控制栏 */}
               {totalPages > 1 ? (
-                <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-5">
+                <div className="mt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-5">
                   <span className="text-xs text-muted-foreground">
                     共 {totalSkillsCount} 个技能 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条
                   </span>
@@ -959,7 +945,7 @@ function InstalledSection({
   onExploreMarket?: () => void;
 }) {
   return (
-    <div className="mt-6">
+    <div className="mt-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-xl font-semibold">个人技能库</h2>
@@ -988,7 +974,7 @@ function InstalledSection({
             你可以在「探索市场」中直接一键安装社区或官方认证技能，也可以导入本地包含 SKILL.md 的 ZIP
             技能包。
           </p>
-          <div className="mt-5 flex items-center gap-3">
+          <div className="mt-2 flex items-center gap-3">
             {onExploreMarket ? (
               <Button size="sm" onClick={onExploreMarket} className="gap-1.5 cursor-pointer">
                 <StoreIcon className="size-3.5" />
@@ -1072,25 +1058,18 @@ function McpSection({
   mcpServers,
   onDelete,
   onAuthenticate,
-  onBackToMarket,
   onAddMcp,
 }: {
   mcpServers: McpSummary[];
   onDelete: (server: McpSummary) => void;
   onAuthenticate: (server: McpSummary) => void;
-  onBackToMarket?: () => void;
   onAddMcp?: () => void;
 }) {
   return (
-    <div className="mt-6">
+    <div className="mt-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            {onBackToMarket ? (
-              <Button size="icon-sm" variant="ghost" onClick={onBackToMarket} title="返回探索市场">
-                <ArrowLeftIcon className="size-4" />
-              </Button>
-            ) : null}
             <h2 className="text-xl font-semibold">MCP 外部能力</h2>
             <Badge variant="secondary">{mcpServers.length} 个服务</Badge>
           </div>
@@ -1099,19 +1078,8 @@ function McpSection({
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {onBackToMarket ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onBackToMarket}
-              className="gap-1.5 cursor-pointer"
-            >
-              <StoreIcon className="size-3.5" />
-              返回探索市场
-            </Button>
-          ) : null}
           {onAddMcp ? (
-            <Button size="sm" onClick={onAddMcp} className="gap-1.5 cursor-pointer">
+            <Button size="sm" onClick={onAddMcp} className="gap-1.5 h-8 cursor-pointer">
               <PlusIcon className="size-3.5" />
               添加 MCP
             </Button>
@@ -1182,13 +1150,72 @@ function McpSection({
   );
 }
 
+function SkillTopBarActions({
+  visible,
+  installed,
+  installing,
+  onInstall,
+  onRemove,
+}: {
+  visible: boolean;
+  installed: boolean;
+  installing: boolean;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
+  const [container, setContainer] = React.useState<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    setContainer(document.getElementById("app-top-bar-actions"));
+  }, []);
+
+  if (!container) return null;
+
+  return createPortal(
+    <div
+      className={cn(
+        "flex items-center gap-2 transition-all duration-200 ease-out",
+        visible
+          ? "opacity-100 translate-y-0 pointer-events-auto"
+          : "opacity-0 -translate-y-1 pointer-events-none",
+      )}
+    >
+      {installed ? (
+        <Button
+          onClick={onRemove}
+          variant="outline"
+          size="sm"
+          className="h-7 cursor-pointer gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+        >
+          <Trash2Icon className="size-3.5 text-destructive" />
+          移除技能
+        </Button>
+      ) : (
+        <Button
+          onClick={onInstall}
+          size="sm"
+          disabled={installing}
+          className="h-7 cursor-pointer gap-1 px-2.5 text-xs"
+        >
+          {installing ? (
+            <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
+          ) : (
+            <PlusIcon className="size-3.5" />
+          )}
+          {installing ? "正在安装…" : "安装技能"}
+        </Button>
+      )}
+    </div>,
+    container,
+  );
+}
+
 function SkillDetailPage({
   detail,
   detailError,
   detailLoading,
   installed,
   installing,
-  onBack,
   onInstall,
   onRemove,
   onUsePrompt,
@@ -1198,11 +1225,36 @@ function SkillDetailPage({
   detailLoading: boolean;
   installed: boolean;
   installing: boolean;
-  onBack: () => void;
   onInstall: () => void;
   onRemove: () => void;
   onUsePrompt: (prompt: string) => void;
 }) {
+  const [showTopBarButton, setShowTopBarButton] = React.useState(false);
+  const heroActionRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    setShowTopBarButton(false);
+  }, [detail?.name]);
+
+  React.useEffect(() => {
+    const el = heroActionRef.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // 当页面主体内的操作按钮完全滑出顶栏下沿视野时，才在顶栏出现
+        setShowTopBarButton(!entry.isIntersecting);
+      },
+      {
+        threshold: 0,
+        rootMargin: "-48px 0px 0px 0px", // 避开 48px 高度的 AppTopBar
+      },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [detail?.name]);
+
   const examplePrompts = [
     "把我的笔记整理成一份排版好的文档",
     "把这份 PDF 里的表格提取成电子表格",
@@ -1210,12 +1262,26 @@ function SkillDetailPage({
   ];
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
-      <ScrollArea className="min-h-0 flex-1">
-        <main className="mx-auto w-full max-w-6xl px-5 py-7 sm:px-8 lg:px-12">
-          <Button className="mb-6" onClick={onBack} variant="ghost" size="sm">
-            <ArrowLeftIcon className="size-4 mr-1" />
-            返回技能市场
-          </Button>
+      {/* 传送顶栏操作按钮至主外壳 PanelHeader (AppTopBar)，仅在页面内按钮滚出视野后显现 */}
+      <SkillTopBarActions
+        visible={showTopBarButton}
+        installed={installed}
+        installing={installing}
+        onInstall={onInstall}
+        onRemove={onRemove}
+      />
+      <ScrollArea
+        className="min-h-0 flex-1"
+        onScrollCapture={(e) => {
+          const target = e.target as HTMLElement;
+          if (target && typeof target.scrollTop === "number") {
+            if (target.scrollTop === 0) {
+              setShowTopBarButton(false);
+            }
+          }
+        }}
+      >
+        <main className="mx-auto w-full max-w-6xl px-5 pt-6 pb-12 sm:px-8 lg:px-12">
           {detail ? (
             <>
               <header className="flex flex-wrap items-start justify-between gap-5">
@@ -1262,20 +1328,32 @@ function SkillDetailPage({
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                {/* 页面主操作按钮 */}
+                <div ref={heroActionRef} className="flex items-center gap-2 shrink-0 sm:self-start">
                   {installed ? (
-                    <Button onClick={onRemove} variant="outline">
-                      <Trash2Icon className="size-4 mr-1 text-destructive" />
+                    <Button
+                      onClick={onRemove}
+                      variant="outline"
+                      size="sm"
+                      className="cursor-pointer gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+                    >
+                      <Trash2Icon className="size-4 text-destructive" />
                       移除技能
                     </Button>
                   ) : (
-                    <Button disabled={installing} onClick={onInstall}>
+                    <Button
+                      disabled={installing}
+                      onClick={onInstall}
+                      size="sm"
+                      className="cursor-pointer gap-1.5"
+                    >
                       {installing ? (
-                        <Dotm3x3_11 size={15} dotSize={2.2} colorPreset="solid-theme" />
+                        <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
                       ) : (
-                        <PlusIcon className="size-4 mr-1" />
+                        <PlusIcon className="size-4" />
                       )}
-                      安装技能
+                      {installing ? "正在安装…" : "安装技能"}
                     </Button>
                   )}
                 </div>
@@ -1283,7 +1361,7 @@ function SkillDetailPage({
 
               {/* 官方认证说明横幅 */}
               {detail.isOfficial ? (
-                <div className="mt-6 flex items-center gap-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-xs text-emerald-800 dark:text-emerald-300">
+                <div className="mt-2 flex items-center gap-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-xs text-emerald-800 dark:text-emerald-300">
                   <ShieldCheckIcon className="size-5 shrink-0 text-emerald-500" />
                   <span>
                     <strong>技术原厂权威认证</strong>
@@ -1294,7 +1372,7 @@ function SkillDetailPage({
 
               {/* 安全审计卡片区 */}
               {detail.audits && detail.audits.length > 0 ? (
-                <section className="mt-8">
+                <section className="mt-2">
                   <h2 className="text-lg font-semibold flex items-center gap-2">
                     <ShieldCheckIcon className="size-5 text-emerald-500" />
                     多维度安全审计
@@ -1334,7 +1412,7 @@ function SkillDetailPage({
               ) : null}
 
               {/* 示例提示词 */}
-              <section className="mt-8 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
+              <section className="mt-2 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
                 <div className="grid min-w-0 gap-3">
                   <div>
                     <p className="text-xs font-medium text-muted-foreground">使用示例</p>
@@ -1366,7 +1444,7 @@ function SkillDetailPage({
               </section>
 
               {/* 技能说明与系统提示词 */}
-              <section className="mt-8 w-full min-w-0">
+              <section className="mt-2 w-full min-w-0">
                 <h2 className="text-lg font-semibold">技能指令与执行说明</h2>
                 <div className="mt-3 min-w-0 rounded-xl border bg-muted/30 p-4">
                   <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
@@ -1376,7 +1454,7 @@ function SkillDetailPage({
               </section>
 
               {/* 关联文件与资源包 */}
-              <section className="mt-8">
+              <section className="mt-2">
                 <h2 className="text-lg font-semibold">
                   技能关联文件{" "}
                   {detail.references.length + detail.scripts.length + detail.assets.length > 0 ? (
@@ -1579,9 +1657,7 @@ function SkillAddDialog({
         </div>
 
         <DialogFooter className="mt-2 flex items-center justify-between sm:justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
+          <DialogClose render={<Button variant="ghost" size="sm" />}>取消</DialogClose>
           <Button
             size="sm"
             disabled={uploading || !selectedFile}
@@ -1762,17 +1838,17 @@ function MarketplacesDialog({
         <Separator />
 
         {/* 添加/编辑表单 */}
-        <div className="grid gap-3">
+        <FieldGroup className="gap-3">
           <div>
             <span className="text-xs font-semibold text-foreground/90">
               {editing ? "编辑市场源" : "添加新市场源"}
             </span>
           </div>
 
-          <div className="grid gap-1.5">
-            <label className="text-xs font-medium text-muted-foreground" htmlFor="market-url">
+          <Field>
+            <FieldLabel htmlFor="market-url" className="text-xs">
               GitHub 仓库地址 <span className="text-destructive">*</span>
-            </label>
+            </FieldLabel>
             <Input
               id="market-url"
               className="w-full text-xs font-mono"
@@ -1780,13 +1856,13 @@ function MarketplacesDialog({
               placeholder="https://github.com/owner/repository"
               value={url}
             />
-          </div>
+          </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_8rem] gap-2.5">
-            <div className="grid gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground" htmlFor="market-name">
+            <Field>
+              <FieldLabel htmlFor="market-name" className="text-xs">
                 市场显示名称
-              </label>
+              </FieldLabel>
               <Input
                 id="market-name"
                 className="text-xs"
@@ -1794,11 +1870,11 @@ function MarketplacesDialog({
                 placeholder="例如：Anthropic 官方技能"
                 value={name}
               />
-            </div>
-            <div className="grid gap-1.5">
-              <label className="text-xs font-medium text-muted-foreground" htmlFor="market-branch">
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="market-branch" className="text-xs">
                 分支 (Branch)
-              </label>
+              </FieldLabel>
               <Input
                 id="market-branch"
                 className="text-xs font-mono"
@@ -1806,16 +1882,18 @@ function MarketplacesDialog({
                 placeholder="main"
                 value={branch}
               />
-            </div>
+            </Field>
           </div>
-        </div>
+        </FieldGroup>
 
         <DialogFooter className="mt-1 flex items-center justify-between sm:justify-end gap-2">
           {editing ? (
             <Button onClick={reset} variant="ghost" size="sm">
               取消编辑
             </Button>
-          ) : null}
+          ) : (
+            <DialogClose render={<Button variant="ghost" size="sm" />}>关闭</DialogClose>
+          )}
           <Button
             size="sm"
             disabled={saving || !url.trim()}

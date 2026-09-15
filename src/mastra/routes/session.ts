@@ -5,7 +5,8 @@
  * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
  */
 import { toAISdkStream, workflowSnapshotToStream } from "@mastra/ai-sdk";
-import type { Agent, AgentExecutionOptions, AgentThreadSubscription } from "@mastra/core/agent";
+import type { Agent, AgentExecutionOptions } from "@mastra/core/agent";
+import type { Session as ControllerSession } from "@mastra/core/agent-controller";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import type { MastraModelOutput } from "@mastra/core/stream";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
@@ -16,30 +17,22 @@ import {
 } from "@mastra/core/workflows";
 import { createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
-import { SKILL_NAMES_CONTEXT_KEY } from "../agents";
+import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   ensureProfileAgentsRegistered,
   getAgentProfile,
 } from "../agents/custom";
-import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
+import { resolveMode } from "../agents/modes";
 import {
-  applySessionGrants,
-  PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
-  resolveToolPolicy,
+  SESSION_TOOL_POLICY_CONTEXT_KEY,
   TOOL_CATEGORIES,
   type ToolCategory,
   toolCategoryOf,
 } from "../agents/permissions";
 import { mergeWorkbenchState, workbenchStateSchema } from "../agents/processors";
 import { errorText, workError } from "../errors";
-import {
-  isTerminalAgentChunk,
-  SESSION_SCOPE_DEFAULT,
-  type WorkNotificationInput,
-  workSessionHost,
-} from "../harness";
 import {
   REQUEST_MODEL_CONTEXT_KEY,
   requestModelFamily,
@@ -63,7 +56,7 @@ import { getOwnedThread, getWorkMemoryForThread, type OwnedThread } from "./thre
 import type { ThreadMetadata } from "./threads/types";
 
 function scopeOf(value: string | undefined): string {
-  return value?.trim() || SESSION_SCOPE_DEFAULT;
+  return value?.trim() || "workbench";
 }
 
 /**
@@ -83,7 +76,7 @@ const notificationInputSchema = z.object({
 });
 
 interface SessionRouteResult {
-  session: ReturnType<typeof workSessionHost.getOrCreate>;
+  controllerSession: ControllerSession;
   agent: Agent;
   memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>;
   resourceId: string;
@@ -107,6 +100,38 @@ interface SessionMessageBody {
   agentProfileId?: unknown;
 }
 
+/** Resolve the single official Session for a workbench thread. */
+export async function getWorkbenchSession(
+  c: ContextWithMastra,
+  threadId: string,
+  resourceId: string,
+  scope?: string,
+) {
+  const requestContext = c.get("requestContext");
+  const memory = await getWorkMemoryForThread(requestContext, threadId, resourceId);
+  const thread = await getOwnedThread(memory, threadId, resourceId);
+  if (!thread) throw workError("THREAD_NOT_FOUND");
+  const controller = c.get("mastra").getAgentController("workbench");
+  if (!controller) throw new Error("Workbench AgentController is not registered");
+  await controller.init();
+  const session = await controller.createSession({
+    resourceId,
+    threadId,
+    scope: JSON.stringify([scopeOf(scope), threadId]),
+    requestContext,
+  });
+  requestContext.set(SESSION_TOOL_POLICY_CONTEXT_KEY, (toolName: string) =>
+    session.resolveToolApproval(toolName),
+  );
+  const mode = resolveMode(thread.metadata?.currentModeId);
+  if (session.mode.get() !== mode.id) await session.mode.switch({ modeId: mode.id });
+  const rules = parsePermissionRules(thread.metadata?.permissionRules);
+  if (JSON.stringify(session.permissions.getRules()) !== JSON.stringify(rules)) {
+    await session.state.set({ permissionRules: rules });
+  }
+  return session;
+}
+
 async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   const threadId = c.req.param("threadId");
   const resourceId = c.req.query("resourceId");
@@ -120,21 +145,13 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   }
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const profile = await getAgentProfile(metadata.agentProfileId, resourceId);
-  const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId)).profile;
-  const session = workSessionHost.getOrCreate({
-    resourceId,
-    scope,
-    threadId,
-    agent,
-  });
-  const mode = resolveMode(metadata.modeId);
+  await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId);
+  const mode = resolveMode(metadata.currentModeId);
   const requestContext = c.get("requestContext");
   requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
   requestContext.set(LIBRARY_RESOURCE_CONTEXT_KEY, resourceId);
-  requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  requestContext.set(PERMISSION_RULES_CONTEXT_KEY, metadata.permissionRules);
   if (metadata.workspacePath) {
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, metadata.workspacePath);
   }
@@ -148,7 +165,10 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
   }
-  return { session, agent, memory, resourceId, threadId, thread };
+  const controllerSession = await getWorkbenchSession(c, threadId, resourceId, scope);
+  const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(controllerSession);
+  if (!agent) throw new Error("Workbench AgentController is not registered");
+  return { controllerSession, agent, memory, resourceId, threadId, thread };
 }
 
 async function sessionExecutionOptions(
@@ -164,12 +184,7 @@ async function sessionExecutionOptions(
     result.resourceId,
   );
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  const registered = await ensureProfileAgentsRegistered(
-    c.get("mastra"),
-    profile,
-    result.resourceId,
-  );
-  result.agent = registered.profile;
+  await ensureProfileAgentsRegistered(c.get("mastra"), profile, result.resourceId);
   const skillNames = body.metadata?.skillNames;
   if (Array.isArray(skillNames)) {
     requestContext.set(
@@ -204,9 +219,7 @@ async function sessionExecutionOptions(
         },
       }
     : rawProviderOptions;
-  const mode = resolveMode((result.thread.metadata as ThreadMetadata | undefined)?.modeId);
-  return {
-    ...(mode.availableTools ? { activeTools: mode.availableTools } : {}),
+  const execution = {
     ...(typeof body.modelSettings === "object" && body.modelSettings !== null
       ? { modelSettings: body.modelSettings as AgentExecutionOptions["modelSettings"] }
       : {}),
@@ -216,6 +229,10 @@ async function sessionExecutionOptions(
     ...(body.versions !== undefined ? { versions: body.versions } : {}),
     ...(body.scorers !== undefined ? { scorers: body.scorers } : {}),
     ...(body.isTaskComplete !== undefined ? { isTaskComplete: body.isTaskComplete } : {}),
+  };
+  requestContext.set(SESSION_EXECUTION_CONTEXT_KEY, execution);
+  return {
+    ...execution,
     requestContext,
     untilIdle: true,
     memory: { thread: result.threadId, resource: result.resourceId },
@@ -313,7 +330,7 @@ function workflowResumeTarget(
 }
 
 async function persistentDisplayState(c: ContextWithMastra, result: SessionRouteResult) {
-  const displayState = result.session.getDisplayState();
+  const displayState = result.controllerSession.displayState.get();
   const threadState = await appStorage.getStore("threadState");
   const tasks = await threadState?.getState<TaskItem[]>({
     threadId: result.threadId,
@@ -377,17 +394,6 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())
       .slice(0, 12);
   })();
-  const policyMetadata = (result.thread.metadata ?? {}) as {
-    modeId?: string;
-    permissionRules?: unknown;
-  };
-  const rules = applyModeToRules(
-    applySessionGrants(parsePermissionRules(policyMetadata.permissionRules), {
-      ...result.session.getGrants(),
-      yolo: result.session.getState().yolo === true,
-    }),
-    resolveMode(policyMetadata.modeId),
-  );
   const backgroundSuspended = backgroundTasks.some((task) => task.status === "suspended");
   const workflowSuspended = workflowRuns.some((run) =>
     ["suspended", "paused"].includes(run.status ?? ""),
@@ -397,7 +403,11 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   );
   return {
     ...displayState,
-    status: displayState.activeRunId
+    threadId: result.threadId,
+    state: result.controllerSession.state.get(),
+    grants: result.controllerSession.getGrants(),
+    activeRunId: result.agent.getActiveThreadRunId(result),
+    status: result.agent.getActiveThreadRunId(result)
       ? "running"
       : runs.length > 0 || backgroundSuspended || workflowSuspended
         ? "suspended"
@@ -411,7 +421,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       toolCalls: run.toolCalls.map((toolCall) => ({
         ...toolCall,
         category: toolCategoryOf(toolCall.toolName ?? ""),
-        policy: resolveToolPolicy(rules, toolCall.toolName ?? ""),
+        policy: result.controllerSession.resolveToolApproval(toolCall.toolName ?? ""),
       })),
     })),
     backgroundTasks,
@@ -419,27 +429,105 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   };
 }
 
-function subscriptionStream(subscription: AgentThreadSubscription, onClose: () => void) {
+// `finish` closes one native stream segment, including approval suspensions.
+// Model steps use `step-finish`; they must never close the HTTP stream.
+function isTerminalAgentChunk(chunk: { type: string }): boolean {
+  return chunk.type === "finish" || chunk.type === "error" || chunk.type === "abort";
+}
+
+/** Wait for the native run to stop before any destructive history operation. */
+export async function abortWorkbenchSession(session: ControllerSession) {
+  session.followUps.clear();
+  session.abort();
+  const timeout = AbortSignal.timeout(10_000);
+  while (session.stream.isActive() || session.run.getRunId() !== null) {
+    timeout.throwIfAborted();
+    const waiter = new AbortController();
+    const signal = AbortSignal.any([timeout, waiter.signal]);
+    try {
+      await Promise.race([
+        session.stream.waitForTeardown(signal),
+        session.run.waitForTeardown(signal),
+      ]);
+    } finally {
+      waiter.abort();
+    }
+  }
+}
+
+/** Session owns the run; the official Agent subscription supplies AI SDK transport chunks. */
+export async function streamWorkbenchSession(
+  c: ContextWithMastra,
+  session: ControllerSession,
+  action?: () => Promise<unknown>,
+  discardCurrentSegment = false,
+) {
+  const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(session);
+  const threadId = session.thread.getId();
+  if (!agent || !threadId) throw new Error("Workbench Session has no bound Agent/thread");
+  const subscription = await agent.subscribeToThread({
+    threadId,
+    resourceId: session.identity.getResourceId(),
+  });
+  let discardReplay = discardCurrentSegment && subscription.activeRunId() !== null;
+  let closed = false;
+  let unsubscribeEvents: (() => void) | undefined;
   const fullStream = new ReadableStream({
-    async start(controller) {
-      try {
+    start(controller) {
+      const fail = (error: unknown) => {
+        if (closed) return;
+        closed = true;
+        subscription.unsubscribe();
+        unsubscribeEvents?.();
+        controller.error(error);
+      };
+      unsubscribeEvents = session.subscribe((event) => {
+        if (event.type === "error") fail(event.error);
+      });
+      void (async () => {
+        let automaticApproval = false;
         for await (const chunk of subscription.stream) {
+          if (closed) break;
+          // A subscription replays the parked segment before the resumed one.
+          // The client already holds that message; discard through its boundary.
+          if (discardReplay) {
+            if (isTerminalAgentChunk(chunk)) discardReplay = false;
+            continue;
+          }
+          if (chunk.type === "start") automaticApproval = false;
+          if (chunk.type === "tool-call-approval") {
+            automaticApproval = session.resolveToolApproval(chunk.payload.toolName) !== "ask";
+            if (automaticApproval) continue;
+          }
+          // Controller auto-approval resumes the same run. Keep this subscription open.
+          if (chunk.type === "finish" && automaticApproval) {
+            automaticApproval = false;
+            continue;
+          }
           controller.enqueue(chunk);
           if (isTerminalAgentChunk(chunk)) break;
         }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      } finally {
-        onClose();
-      }
+        if (!closed) {
+          closed = true;
+          controller.close();
+          subscription.unsubscribe();
+          unsubscribeEvents?.();
+        }
+      })().catch(fail);
+      if (action) void action().catch(fail);
     },
-    cancel: onClose,
+    cancel() {
+      closed = true;
+      subscription.unsubscribe();
+      unsubscribeEvents?.();
+    },
   });
   return toAISdkStream({ fullStream } as unknown as MastraModelOutput, {
     from: "agent",
     version: "v7",
     sendReasoning: true,
+    messageMetadata: ({ part }) =>
+      part.type === "finish" ? { usage: part.totalUsage } : undefined,
   });
 }
 
@@ -449,12 +537,10 @@ export const sessionStreamRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      if (!result.agent.getActiveThreadRunId(result)) return new Response(null, { status: 204 });
-      const subscription = await result.agent.subscribeToThread(result);
-      const stream = subscriptionStream(subscription, () =>
-        result.session.releaseSubscription(subscription),
-      );
-      return createUIMessageStreamResponse({ stream });
+      if (!result.controllerSession.stream.isActive()) return new Response(null, { status: 204 });
+      return createUIMessageStreamResponse({
+        stream: await streamWorkbenchSession(c, result.controllerSession),
+      });
     },
   },
 );
@@ -468,11 +554,11 @@ export const sessionMessageRoute = registerApiRoute(
       const body = (await c.req.json()) as SessionMessageBody;
       if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
       const execution = await sessionExecutionOptions(c, result, body);
-      const accepted = result.session.sendMessage(
-        { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
-        execution,
-      );
-      return c.json({ ok: true, accepted: await accepted.accepted });
+      await result.controllerSession.sendMessage({
+        content: body.content.trim(),
+        requestContext: execution.requestContext,
+      });
+      return c.json({ ok: true });
     },
   },
 );
@@ -484,19 +570,39 @@ export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads
     const body = (await c.req.json()) as SessionMessageBody;
     if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
     const execution = await sessionExecutionOptions(c, result, body);
-    const accepted = await result.session.steer(
-      { contents: body.content.trim(), ...(body.metadata ? { metadata: body.metadata } : {}) },
-      execution,
-    );
-    return c.json({ ok: true, accepted: await accepted.accepted });
+    await result.controllerSession.steer({
+      content: body.content.trim(),
+      requestContext: execution.requestContext,
+    });
+    return c.json({ ok: true });
   },
 });
+
+export const sessionFollowUpRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/follow-up",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const result = await sessionFor(c);
+      const body = await c.req.json<SessionMessageBody>();
+      if (typeof body.content !== "string" || !body.content.trim())
+        throw workError("SESSION_INPUT_REQUIRED");
+      const execution = await sessionExecutionOptions(c, result, body);
+      await result.controllerSession.followUp({
+        content: body.content.trim(),
+        requestContext: execution.requestContext,
+      });
+      return c.json({ queued: true });
+    },
+  },
+);
 
 export const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/abort", {
   method: "POST",
   handler: async (c) => {
     const result = await sessionFor(c);
-    return c.json({ aborted: result.session.abort() });
+    await abortWorkbenchSession(result.controllerSession);
+    return c.json({ aborted: true });
   },
 });
 
@@ -504,7 +610,7 @@ export const sessionStateRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "GET",
   handler: async (c) => {
     const result = await sessionFor(c);
-    return c.json({ state: result.session.getState() });
+    return c.json({ state: result.controllerSession.state.get() });
   },
 });
 
@@ -515,7 +621,9 @@ export const updateSessionStateRoute = registerApiRoute(
     handler: async (c) => {
       const result = await sessionFor(c);
       try {
-        const state = result.session.setState(await c.req.json());
+        const updates = z.record(z.string(), z.unknown()).parse(await c.req.json());
+        await result.controllerSession.state.set(updates);
+        const state = result.controllerSession.state.get();
         return c.json({ state });
       } catch (error) {
         return c.json({ error: errorText(error, "Invalid session state") }, 400);
@@ -530,15 +638,8 @@ export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/
     const result = await sessionFor(c);
     const body = (await c.req.json()) as { modeId?: unknown };
     const mode = resolveMode(body.modeId);
-    const thread = await result.memory.updateThread({
-      id: result.threadId,
-      title: result.thread.title,
-      metadata: { ...result.thread.metadata, modeId: mode.id },
-    });
-    result.session.notifyPolicyChange(
-      `The user switched the session mode to "${mode.id}". Its instructions and tool restrictions take effect immediately — re-plan if your current approach relied on the previous mode.`,
-      { change: "mode", modeId: mode.id },
-    );
+    await result.controllerSession.mode.switch({ modeId: mode.id });
+    const thread = await result.memory.getThreadById({ threadId: result.threadId });
     return c.json({ modeId: mode.id, mode, thread });
   },
 });
@@ -551,7 +652,9 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
       modeId?: unknown;
       selection?: unknown;
     };
-    const mode = resolveMode(body.modeId ?? (result.thread.metadata as ThreadMetadata)?.modeId);
+    const mode = resolveMode(
+      body.modeId ?? (result.thread.metadata as ThreadMetadata)?.currentModeId,
+    );
     if (body.selection === null) {
       const modelSelectionByMode = {
         ...((result.thread.metadata as ThreadMetadata)?.modelSelectionByMode ?? {}),
@@ -606,7 +709,7 @@ export const sessionPermissionsRoute = registerApiRoute(
       const rules = parsePermissionRules(
         (result.thread.metadata as ThreadMetadata | undefined)?.permissionRules,
       );
-      return c.json({ rules, grants: result.session.getGrants() });
+      return c.json({ rules, grants: result.controllerSession.getGrants() });
     },
   },
 );
@@ -618,16 +721,13 @@ export const updateSessionPermissionsRoute = registerApiRoute(
     handler: async (c) => {
       const result = await sessionFor(c);
       const rules = parsePermissionRules(await c.req.json());
+      await result.controllerSession.state.set({ permissionRules: rules });
       const thread = await result.memory.updateThread({
         id: result.threadId,
         title: result.thread.title,
         metadata: { ...result.thread.metadata, permissionRules: rules },
       });
-      result.session.notifyPolicyChange(
-        "The user rewrote this session's tool approval rules. Some tools may have become available and others withheld — check what a tool returns rather than assuming the previous policy still holds.",
-        { change: "permission-rules" },
-      );
-      return c.json({ rules, grants: result.session.getGrants(), thread });
+      return c.json({ rules, grants: result.controllerSession.getGrants(), thread });
     },
   },
 );
@@ -745,27 +845,8 @@ export const sessionGrantRoute = registerApiRoute(
       if (!TOOL_CATEGORIES.includes(body.category as ToolCategory)) {
         throw workError("VALIDATION_FAILED", { text: "unsupported grant category" });
       }
-      result.session.grantCategory(body.category as ToolCategory);
-      result.session.notifyPolicyChange(
-        `The user granted the "${body.category}" tool category for the rest of this session. Those tools no longer need per-call approval — proceed without asking again.`,
-        { change: "grant-category", category: String(body.category) },
-      );
-      return c.json({ grants: result.session.getGrants() });
-    },
-  },
-);
-
-export const sessionGrantRevokeRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/grants/:category",
-  {
-    method: "DELETE",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const category = c.req.param("category") as ToolCategory;
-      if (!TOOL_CATEGORIES.includes(category))
-        throw workError("VALIDATION_FAILED", { text: "unsupported grant category" });
-      result.session.revokeCategory(category);
-      return c.json({ grants: result.session.getGrants() });
+      result.controllerSession.grantCategory(body.category as ToolCategory);
+      return c.json({ grants: result.controllerSession.getGrants() });
     },
   },
 );
@@ -780,26 +861,8 @@ export const sessionToolGrantRoute = registerApiRoute(
       if (typeof body.toolName !== "string" || !body.toolName.trim()) {
         throw workError("VALIDATION_FAILED", { text: "toolName is required" });
       }
-      result.session.grantTool(body.toolName.trim());
-      result.session.notifyPolicyChange(
-        `The user granted the "${body.toolName.trim()}" tool for the rest of this session. It no longer needs per-call approval.`,
-        { change: "grant-tool", toolName: body.toolName.trim() },
-      );
-      return c.json({ grants: result.session.getGrants() });
-    },
-  },
-);
-
-export const sessionToolGrantRevokeRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/grants/tools/:toolName",
-  {
-    method: "DELETE",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const toolName = c.req.param("toolName").trim();
-      if (!toolName) throw workError("VALIDATION_FAILED", { text: "toolName is required" });
-      result.session.revokeTool(toolName);
-      return c.json({ grants: result.session.getGrants() });
+      result.controllerSession.grantTool(body.toolName.trim());
+      return c.json({ grants: result.controllerSession.getGrants() });
     },
   },
 );
@@ -851,20 +914,7 @@ export const sessionNotificationRoute = registerApiRoute(
         });
       }
       try {
-        const sent = (await result.session.sendNotification(
-          parsed.data as WorkNotificationInput,
-        )) as
-          | Array<{
-              record?: { id?: string };
-              decision?: unknown;
-            }>
-          | {
-              record?: { id?: string };
-              decision?: unknown;
-            };
-        const first = Array.isArray(sent)
-          ? sent[0]
-          : (sent as { record?: { id?: string }; decision?: unknown });
+        const first = await result.controllerSession.sendNotificationSignal(parsed.data);
         return c.json({ ok: true, id: first?.record?.id, decision: first?.decision });
       } catch (error) {
         return c.json({ error: errorText(error, "Failed to record the notification") }, 500);
@@ -877,6 +927,7 @@ export const sessionRoutes = [
   sessionStreamRoute,
   sessionMessageRoute,
   sessionSteerRoute,
+  sessionFollowUpRoute,
   sessionAbortRoute,
   sessionStateRoute,
   updateSessionStateRoute,
@@ -893,7 +944,5 @@ export const sessionRoutes = [
   workflowRunRestartRoute,
   workflowRunCancelRoute,
   sessionGrantRoute,
-  sessionGrantRevokeRoute,
   sessionToolGrantRoute,
-  sessionToolGrantRevokeRoute,
 ];

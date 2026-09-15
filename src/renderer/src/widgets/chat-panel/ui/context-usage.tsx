@@ -1,10 +1,6 @@
 import type { LanguageModelUsage } from "ai";
-import { InfoIcon, SparklesIcon } from "lucide-react";
-import {
-  formatModelContextWindow,
-  getModelContextWindow,
-  useWorkbench,
-} from "@/entities/workbench";
+import { InfoIcon } from "lucide-react";
+import { getModelContextWindow, useWorkbench } from "@/entities/workbench";
 import {
   Context,
   ContextContent,
@@ -16,18 +12,7 @@ import {
   type ContextUsageBreakdown,
 } from "@/shared/ui/ai-elements/context";
 import { Button } from "@/shared/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/ui/dialog";
-import { Dotm3x3_11 } from "@/shared/ui/dotm-3x3-11";
-import { Marker, MarkerContent, MarkerIcon } from "@/shared/ui/marker";
-import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import type { CompressResult } from "../model/types";
 
 function estimateContextBreakdown(
   usedTokens: number,
@@ -90,19 +75,11 @@ export function ContextUnavailable({
 export function ChatContextUsage({
   usage,
   estimatedUsedTokens,
-  compacting,
-  onCompress,
-  compressResult,
-  onCompressResultClose,
 }: {
   usage: LanguageModelUsage | undefined;
   estimatedUsedTokens?: number;
-  compacting: boolean;
-  onCompress: () => void;
-  compressResult: CompressResult | null;
-  onCompressResultClose: () => void;
 }) {
-  const { providers, catalog, catalogStatus, modelSelection, activeThreadId } = useWorkbench();
+  const { providers, catalog, catalogStatus, modelSelection } = useWorkbench();
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   if (!selectedProvider || !modelSelection) {
     return null;
@@ -117,85 +94,22 @@ export function ChatContextUsage({
   }
   const breakdown = estimateContextBreakdown(usedTokens, estimatedUsedTokens);
   return (
-    <>
-      <Context
-        usedTokens={usedTokens}
-        maxTokens={maxTokens}
-        usage={usage}
-        breakdown={breakdown}
-        modelId={modelSelection.modelId}
-        catalog={catalog}
-      >
-        <ContextTrigger />
-        <ContextContent>
-          <ContextContentHeader />
-          <ContextContentBody>
-            <ContextContentBreakdown />
-            {/* 手动压缩上下文(summarizeConversation.mdx / summarizeThread.mdx)。
-                进行中/完成状态由消息流尾部 Marker 展示(marker-status / marker-shimmer)。 */}
-            {activeThreadId ? (
-              <Button
-                className="mt-2 w-full"
-                disabled={compacting}
-                onClick={onCompress}
-                size="sm"
-                variant="outline"
-              >
-                {compacting ? (
-                  <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
-                ) : (
-                  <SparklesIcon />
-                )}
-                {compacting ? "正在压缩..." : "压缩上下文"}
-              </Button>
-            ) : null}
-          </ContextContentBody>
-          <ContextContentFooter />
-        </ContextContent>
-      </Context>
-
-      {/* 压缩结果弹窗 */}
-      <Dialog
-        onOpenChange={(open) => !open && onCompressResultClose()}
-        open={compressResult !== null}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>上下文已压缩</DialogTitle>
-            <DialogDescription>
-              早期消息已折叠为摘要并注入线程头部;此后模型只接收「摘要 + 近期消息」,
-              真正降低上下文窗口占用。
-            </DialogDescription>
-          </DialogHeader>
-
-          {compressResult?.summary ? (
-            <ScrollArea className="max-h-72 rounded-md border p-3">
-              <p className="text-sm whitespace-pre-wrap">{compressResult.summary}</p>
-            </ScrollArea>
-          ) : null}
-
-          {compressResult?.extracted && Object.keys(compressResult.extracted).length > 0 ? (
-            <ScrollArea className="max-h-40 rounded-md border p-3">
-              <p className="mb-1 text-xs font-medium text-muted-foreground">本次压缩抽取结果</p>
-              <pre className="text-xs whitespace-pre-wrap">
-                {JSON.stringify(compressResult.extracted, null, 2)}
-              </pre>
-            </ScrollArea>
-          ) : null}
-
-          {/* marker-demo 图标 + shimmer 变体:压缩前后上下文对比 */}
-          <Marker role="status">
-            <MarkerIcon>
-              <SparklesIcon />
-            </MarkerIcon>
-            <MarkerContent className="shimmer">
-              折叠 {compressResult?.deletedMessages ?? 0} 条消息 · 上下文约{" "}
-              {formatModelContextWindow(compressResult?.inputTokens ?? 0)} →{" "}
-              {formatModelContextWindow(compressResult?.estimatedContextTokens ?? 0)} tokens
-            </MarkerContent>
-          </Marker>
-        </DialogContent>
-      </Dialog>
-    </>
+    <Context
+      usedTokens={usedTokens}
+      maxTokens={maxTokens}
+      usage={usage}
+      breakdown={breakdown}
+      modelId={modelSelection.modelId}
+      catalog={catalog}
+    >
+      <ContextTrigger />
+      <ContextContent>
+        <ContextContentHeader />
+        <ContextContentBody>
+          <ContextContentBreakdown />
+        </ContextContentBody>
+        <ContextContentFooter />
+      </ContextContent>
+    </Context>
   );
 }

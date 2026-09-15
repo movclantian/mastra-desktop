@@ -25,14 +25,6 @@ const ERROR_TRANSLATIONS: Record<string, { title: string; hint?: string }> = {
   // 线程与记忆
   THREAD_NOT_FOUND: { title: "会话不存在或已被删除", hint: "请回到会话列表重新打开" },
   MESSAGE_NOT_FOUND: { title: "消息不存在或已被删除" },
-  MESSAGE_EDIT_COMPACTED_ONLY: {
-    title: "只能编辑压缩历史里的用户消息",
-    hint: "请选择未压缩的普通消息重试",
-  },
-  MESSAGE_NOT_LATEST_COMPACTED: {
-    title: "这条消息不在最新的压缩历史里",
-    hint: "压缩记录已更新,请刷新会话后重试",
-  },
   WORKING_MEMORY_REQUIRED: { title: "缺少工作记忆内容" },
 
   // 会话运行时

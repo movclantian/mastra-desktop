@@ -1,8 +1,7 @@
-import { ChevronDownIcon, LogInIcon, UserPlusIcon } from "lucide-react";
+import { ChevronDownIcon, EyeIcon, EyeOffIcon, LogInIcon, UserPlusIcon } from "lucide-react";
 import * as React from "react";
 import { useTheme } from "@/shared/theme";
 import { AnimatedThemeToggler } from "@/shared/ui/animated-theme-toggler";
-import { Button } from "@/shared/ui/button";
 import { Card, CardContent } from "@/shared/ui/card";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
@@ -14,9 +13,15 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/shared/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/shared/ui/field";
 import { HyperText } from "@/shared/ui/hyper-text";
 import { Input } from "@/shared/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/shared/ui/input-group";
 import { Meteors } from "@/shared/ui/meteors";
 import { Particles } from "@/shared/ui/particles";
 import { ShimmerButton } from "@/shared/ui/shimmer-button";
@@ -41,6 +46,8 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
   );
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
 
   const { setMode: setThemeMode, isDark, activePreset } = useTheme();
 
@@ -128,10 +135,9 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
 
                 <Field>
                   <FieldLabel htmlFor="auth-email">邮箱</FieldLabel>
-                  <div className="relative flex min-w-0">
-                    <Input
+                  <InputGroup>
+                    <InputGroupInput
                       id="auth-email"
-                      className="pr-10"
                       type="email"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
@@ -140,53 +146,65 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                       required
                     />
                     {mode === "login" && rememberedAccounts.length > 0 ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              className="absolute top-1/2 right-1 -translate-y-1/2"
-                              aria-label="选择记住的账户"
-                            />
-                          }
-                        >
-                          <ChevronDownIcon />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-64">
-                          <DropdownMenuGroup>
-                            <DropdownMenuLabel>记住的账户</DropdownMenuLabel>
-                            {rememberedAccounts.map((account) => (
-                              <DropdownMenuItem
-                                key={account.email}
-                                onClick={() => selectAccount(account)}
-                              >
-                                <span className="flex min-w-0 flex-col">
-                                  <span className="truncate">{account.name}</span>
-                                  <span className="truncate text-xs text-muted-foreground">
-                                    {account.email}
+                      <InputGroupAddon align="inline-end">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            render={
+                              <InputGroupButton
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label="选择记住的账户"
+                              />
+                            }
+                          >
+                            <ChevronDownIcon />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-64">
+                            <DropdownMenuGroup>
+                              <DropdownMenuLabel>记住的账户</DropdownMenuLabel>
+                              {rememberedAccounts.map((account) => (
+                                <DropdownMenuItem
+                                  key={account.email}
+                                  onClick={() => selectAccount(account)}
+                                >
+                                  <span className="flex min-w-0 flex-col">
+                                    <span className="truncate">{account.name}</span>
+                                    <span className="truncate text-xs text-muted-foreground">
+                                      {account.email}
+                                    </span>
                                   </span>
-                                </span>
-                              </DropdownMenuItem>
-                            ))}
-                          </DropdownMenuGroup>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                                </DropdownMenuItem>
+                              ))}
+                            </DropdownMenuGroup>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </InputGroupAddon>
                     ) : null}
-                  </div>
+                  </InputGroup>
                 </Field>
 
                 <Field>
                   <FieldLabel htmlFor="auth-password">密码</FieldLabel>
-                  <Input
-                    id="auth-password"
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                    required
-                  />
+                  <InputGroup>
+                    <InputGroupInput
+                      id="auth-password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete={mode === "login" ? "current-password" : "new-password"}
+                      required
+                    />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupButton
+                        aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                        size="icon-xs"
+                        variant="ghost"
+                        onClick={() => setShowPassword((show) => !show)}
+                      >
+                        {showPassword ? <EyeIcon /> : <EyeOffIcon />}
+                      </InputGroupButton>
+                    </InputGroupAddon>
+                  </InputGroup>
                   {mode === "register" ? (
                     <FieldDescription>密码长度至少为 8 个字符。</FieldDescription>
                   ) : null}
@@ -195,23 +213,32 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                 {mode === "register" ? (
                   <Field>
                     <FieldLabel htmlFor="auth-confirm-password">确认密码</FieldLabel>
-                    <Input
-                      id="auth-confirm-password"
-                      type="password"
-                      value={confirmPassword}
-                      onChange={(event) => setConfirmPassword(event.target.value)}
-                      autoComplete="new-password"
-                      required
-                    />
+                    <InputGroup>
+                      <InputGroupInput
+                        id="auth-confirm-password"
+                        type={showConfirmPassword ? "text" : "password"}
+                        value={confirmPassword}
+                        onChange={(event) => setConfirmPassword(event.target.value)}
+                        autoComplete="new-password"
+                        required
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupButton
+                          aria-label={showConfirmPassword ? "隐藏密码" : "显示密码"}
+                          size="icon-xs"
+                          variant="ghost"
+                          onClick={() => setShowConfirmPassword((show) => !show)}
+                        >
+                          {showConfirmPassword ? <EyeIcon /> : <EyeOffIcon />}
+                        </InputGroupButton>
+                      </InputGroupAddon>
+                    </InputGroup>
                   </Field>
                 ) : null}
 
                 {mode === "login" ? (
                   <div className="flex flex-wrap items-center justify-center gap-x-20 gap-y-2">
-                    <label
-                      className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
-                      htmlFor="remember-login"
-                    >
+                    <Field orientation="horizontal">
                       <Checkbox
                         id="remember-login"
                         checked={remember}
@@ -220,12 +247,11 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                           if (!checked) setAutoLogin(false);
                         }}
                       />
-                      记住我
-                    </label>
-                    <label
-                      className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground"
-                      htmlFor="auto-login"
-                    >
+                      <FieldLabel htmlFor="remember-login" className="font-normal">
+                        记住我
+                      </FieldLabel>
+                    </Field>
+                    <Field orientation="horizontal">
                       <Checkbox
                         id="auto-login"
                         checked={autoLogin}
@@ -235,16 +261,14 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                           if (next) setRemember(true);
                         }}
                       />
-                      自动登录
-                    </label>
+                      <FieldLabel htmlFor="auto-login" className="font-normal">
+                        自动登录
+                      </FieldLabel>
+                    </Field>
                   </div>
                 ) : null}
 
-                {error ? (
-                  <p className="text-sm text-destructive" role="alert">
-                    {error}
-                  </p>
-                ) : null}
+                {error ? <FieldError className="text-center">{error}</FieldError> : null}
                 {/* 首要 CTA:金属扫光。颜色全部走主题 token,不用组件默认的黑底白字 */}
                 <ShimmerButton
                   type="submit"

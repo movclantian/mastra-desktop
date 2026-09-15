@@ -38,7 +38,7 @@ export function ChatSearchSelector() {
     searchSelection,
     setSearchSelection,
     toolsConfig,
-    setSettingsOpen,
+    openSettings,
     providers,
     modelSelection,
   } = useWorkbench();
@@ -99,7 +99,7 @@ export function ChatSearchSelector() {
               if (ready) {
                 setSearchSelection({ engine, depth: searchSelection?.depth ?? "balanced" });
               } else if (blockedBy === "key") {
-                setSettingsOpen(true);
+                openSettings("tools");
               }
             };
             return (
@@ -173,7 +173,7 @@ export function ChatSearchSelector() {
                         的内置供应商模型(自定义网关不支持)。
                       </DropdownMenuLabel>
                     ) : (
-                      <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                      <DropdownMenuItem onClick={() => openSettings("tools")}>
                         <SettingsIcon />
                         去设置填写 API Key
                       </DropdownMenuItem>

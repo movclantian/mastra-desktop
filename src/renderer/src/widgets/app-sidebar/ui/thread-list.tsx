@@ -497,7 +497,7 @@ export function WorkspaceGroup({
       <SidebarMenuItem>
         <ContextMenu>
           <ContextMenuTrigger className="w-full">
-            <CollapsibleTrigger render={<SidebarMenuButton tooltip={path} />}>
+            <CollapsibleTrigger render={<SidebarMenuButton tooltip={path} className="!pr-2" />}>
               <FolderTypeIcon name={dirName(path)} open={open} />
               <span className="truncate">{dirName(path)}</span>
               {sorted.length > 0 ? (
@@ -614,7 +614,7 @@ export function ThreadFolder({
       className="group/collapsible"
     >
       <SidebarMenuItem>
-        <CollapsibleTrigger render={<SidebarMenuButton />}>
+        <CollapsibleTrigger render={<SidebarMenuButton className="!pr-2" />}>
           <Icon className="size-4 shrink-0" />
           <span>{name}</span>
           {sorted.length > 0 ? (

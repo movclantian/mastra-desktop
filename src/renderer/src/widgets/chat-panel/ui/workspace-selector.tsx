@@ -1,6 +1,7 @@
 import { CheckIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, XIcon } from "lucide-react";
 import { dirName, type RecentWorkspace, useWorkbench } from "@/entities/workbench";
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,9 +49,10 @@ export function ChatWorkspaceSelector({
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
-            <button
-              type="button"
-              className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            <Button
+              variant="ghost"
+              size="xs"
+              className="h-7 min-w-0 gap-2 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
               title={value ?? "为新会话选择工作区目录(可选)"}
             />
           }
@@ -109,15 +111,16 @@ export function ChatWorkspaceSelector({
         </DropdownMenuContent>
       </DropdownMenu>
       {value ? (
-        <button
-          type="button"
-          className="mr-1 ml-auto flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+        <Button
+          variant="ghost"
+          size="xs"
+          className="mr-1 ml-auto h-6 shrink-0 gap-1 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
           onClick={() => onChange(null)}
           title="清除选择(改为默认目录)"
         >
           <XIcon className="size-3" />
           清除
-        </button>
+        </Button>
       ) : null}
     </div>
   );

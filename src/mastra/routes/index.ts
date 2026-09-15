@@ -1,3 +1,4 @@
+import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit";
 /**
  * MastraWork 工作台 API 路由汇总。
  * 注意:Mastra 保留 /api 前缀给内置路由,自定义路由统一使用 /work/*。
@@ -45,7 +46,13 @@ import {
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
-import { memoryConfigRoute, memoryProfileRoute, saveMemoryConfigRoute } from "./memory";
+import {
+  memoryConfigRoute,
+  memoryProfileRoute,
+  observationalMemoryConfigRoute,
+  saveMemoryConfigRoute,
+  updateObservationalMemoryConfigRoute,
+} from "./memory";
 import {
   listProviderModelsRoute,
   modelsCatalogRoute,
@@ -97,6 +104,8 @@ import {
 } from "./workspace";
 
 export const workRoutes = [
+  inlineCompletionRoute,
+  inlineEditRoute,
   authLoginRoute,
   authRegisterRoute,
   authLogoutRoute,
@@ -139,6 +148,8 @@ export const workRoutes = [
   saveProvidersConfigRoute,
   storageInfoRoute,
   memoryConfigRoute,
+  observationalMemoryConfigRoute,
+  updateObservationalMemoryConfigRoute,
   saveMemoryConfigRoute,
   memoryProfileRoute,
   mcpConfigRoute,

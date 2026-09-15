@@ -67,7 +67,6 @@ import {
 } from "./";
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
-import { CompactedMessageCard } from "./compacted-messages";
 
 function AssistantPendingIndicator({
   variant = "initial",
@@ -122,6 +121,7 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
   const isImage = file.mediaType?.startsWith("image/") ?? false;
   const title = file.filename ?? "未命名附件";
   const [resolvedUrl, setResolvedUrl] = React.useState(file.url);
+  const [loadState, setLoadState] = React.useState<"processing" | "error" | "done">("done");
 
   React.useEffect(() => {
     let disposed = false;
@@ -134,14 +134,24 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
     } catch {
       // External and malformed URLs stay on their original value.
     }
-    if (!isMastraResource) return () => undefined;
+    if (!isMastraResource) {
+      setLoadState("done");
+      return () => undefined;
+    }
+    setLoadState("processing");
     void fetchChatAssetBlob(file.url)
       .then((blob) => {
         objectUrl = URL.createObjectURL(blob);
-        if (disposed) URL.revokeObjectURL(objectUrl);
-        else setResolvedUrl(objectUrl);
+        if (disposed) {
+          URL.revokeObjectURL(objectUrl);
+        } else {
+          setResolvedUrl(objectUrl);
+          setLoadState("done");
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!disposed) setLoadState("error");
+      });
     return () => {
       disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -149,15 +159,25 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
   }, [file.url]);
 
   return (
-    <Attachment size="sm" className="max-w-[min(100%,18rem)]">
+    <Attachment size="sm" state={loadState} className="max-w-[min(100%,18rem)]">
       <AttachmentMedia variant={isImage ? "image" : "icon"}>
-        {isImage ? <img src={resolvedUrl} alt={title} /> : <FileTextIcon aria-hidden="true" />}
+        {isImage && loadState === "done" && resolvedUrl ? (
+          <img src={resolvedUrl} alt={title} />
+        ) : (
+          <FileTextIcon aria-hidden="true" />
+        )}
       </AttachmentMedia>
       <AttachmentContent>
         <AttachmentTitle>{title}</AttachmentTitle>
-        <AttachmentDescription>{file.mediaType || "文件"}</AttachmentDescription>
+        <AttachmentDescription>
+          {loadState === "error"
+            ? "加载失败"
+            : loadState === "processing"
+              ? "加载中..."
+              : file.mediaType || "文件"}
+        </AttachmentDescription>
       </AttachmentContent>
-      {resolvedUrl ? (
+      {loadState === "done" && resolvedUrl ? (
         <AttachmentTrigger
           render={
             <a href={resolvedUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${title}`} />
@@ -217,8 +237,6 @@ export const MessageItem = React.memo(function MessageItem({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [editText, setEditText] = React.useState("");
-  const [editWidth, setEditWidth] = React.useState<number | null>(null);
-  const bubbleRef = React.useRef<HTMLDivElement | null>(null);
   const isUser = message.role === "user";
   const text = message.parts
     .filter((part) => part.type === "text")
@@ -229,10 +247,6 @@ export const MessageItem = React.memo(function MessageItem({
   React.useEffect(() => {
     if (!editing) setEditText(text);
   }, [editing, text]);
-
-  if ((message.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory) {
-    return <CompactedMessageCard message={message} userId={userId} />;
-  }
 
   const assistantSegments = isUser ? [] : getAssistantSegments(message.parts, message.id);
   const skillNames = Array.isArray(
@@ -254,8 +268,6 @@ export const MessageItem = React.memo(function MessageItem({
     toast.success("已复制到剪贴板");
   };
   const startEditing = () => {
-    const width = bubbleRef.current?.offsetWidth;
-    setEditWidth(width ? Math.max(width, 256) : null);
     setEditText(text);
     setEditing(true);
   };
@@ -295,10 +307,7 @@ export const MessageItem = React.memo(function MessageItem({
             </MessageAvatar>
             <MessageContent className="items-end">
               {editing ? (
-                <div
-                  className="flex max-w-full self-end flex-col items-end gap-2"
-                  style={{ width: editWidth ? `${editWidth}px` : "min(100%, 42rem)" }}
-                >
+                <div className="flex w-full max-w-2xl self-end flex-col items-end gap-2">
                   <Textarea
                     autoFocus
                     className="min-h-20 w-full resize-y"
@@ -328,7 +337,7 @@ export const MessageItem = React.memo(function MessageItem({
                   {text ? (
                     <ContextMenu>
                       <ContextMenuTrigger className="max-w-full">
-                        <Bubble className="max-w-full" ref={bubbleRef}>
+                        <Bubble align="end" className="max-w-full">
                           <BubbleContent>{text}</BubbleContent>
                         </Bubble>
                       </ContextMenuTrigger>

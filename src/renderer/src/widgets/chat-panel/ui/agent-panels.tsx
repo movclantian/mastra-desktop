@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { CATEGORY_META, type ToolCategory } from "@/entities/workbench";
+import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
   Plan,
@@ -51,12 +52,13 @@ import {
   Questionnaire,
   QuestionnaireActions,
   QuestionnaireChoice,
+  QuestionnaireChoiceDescription,
   QuestionnaireChoices,
   QuestionnaireDescription,
   QuestionnaireError,
   QuestionnaireInput,
   QuestionnaireItem,
-  QuestionnaireProgress,
+  QuestionnaireSkip,
   QuestionnaireSubmit,
   QuestionnaireTitle,
 } from "@/shared/ui/questionnaire";
@@ -472,6 +474,15 @@ export function AgentQuestionnairePanel({
         return label ? [{ label, description: asString(record?.description) }] : [];
       })
     : [];
+
+  const outputRecord = asRecord(interaction.output);
+  const answerValue = outputRecord?.answer ?? interaction.output;
+  const answers = Array.isArray(answerValue)
+    ? answerValue.flatMap((value) => (asString(value) ? [value] : []))
+    : asString(answerValue)
+      ? [answerValue]
+      : [];
+
   // items 声明须与 JSX 组合完全一致(库会校验 required/disabled 并告警):
   // 已完成视图的选项只读展示,choices 需同步声明 disabled
   const items = [
@@ -489,53 +500,6 @@ export function AgentQuestionnairePanel({
     },
   ];
 
-  if (completed) {
-    const outputRecord = asRecord(interaction.output);
-    const answerValue = outputRecord?.answer ?? interaction.output;
-    const answers = Array.isArray(answerValue)
-      ? answerValue.flatMap((value) => (asString(value) ? [value] : []))
-      : asString(answerValue)
-        ? [answerValue]
-        : [];
-    return (
-      <div className="rounded-lg border bg-background/60 p-3">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-muted-foreground">
-          <CircleHelpIcon className="size-4 text-primary" />
-          已回答
-        </div>
-        <Questionnaire items={items}>
-          <QuestionnaireProgress />
-          <QuestionnaireItem multiple={selectionMode === "multi_select"} name="answer" required>
-            <QuestionnaireTitle>{question}</QuestionnaireTitle>
-            <QuestionnaireChoices>
-              {options.length > 0 ? (
-                options.map((option) => (
-                  <QuestionnaireChoice
-                    defaultChecked={answers.includes(option.label)}
-                    disabled
-                    key={option.label}
-                    value={option.label}
-                  >
-                    {option.label}
-                    {option.description ? (
-                      <span className="text-muted-foreground">{option.description}</span>
-                    ) : null}
-                  </QuestionnaireChoice>
-                ))
-              ) : (
-                <QuestionnaireInput
-                  aria-label="已回答内容"
-                  defaultValue={formatInteractionValue(answerValue)}
-                  disabled
-                />
-              )}
-            </QuestionnaireChoices>
-          </QuestionnaireItem>
-        </Questionnaire>
-      </div>
-    );
-  }
-
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -545,54 +509,71 @@ export function AgentQuestionnairePanel({
   };
 
   return (
-    <div className="mb-2 rounded-xl border bg-background p-3 shadow-xs">
-      <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+    <div
+      className={cn(
+        "mb-2 rounded-xl border p-3 shadow-xs",
+        completed ? "border-border/60 bg-background/60" : "bg-background",
+      )}
+    >
+      <div
+        className={cn(
+          "mb-3 flex items-center gap-2 text-sm font-medium",
+          completed ? "text-muted-foreground" : "text-foreground",
+        )}
+      >
         <CircleHelpIcon className="size-4 text-primary" />
-        Agent 正在等待你的回答
+        {completed ? "已回答" : "Agent 正在等待你的回答"}
       </div>
       <Questionnaire
         items={items}
-        onSubmit={handleSubmit}
-        shortcuts={options.length > 0 ? "letters" : undefined}
+        onSubmit={completed ? undefined : handleSubmit}
+        shortcuts={!completed && options.length > 0 ? "letters" : undefined}
       >
-        <QuestionnaireProgress />
         <QuestionnaireItem multiple={selectionMode === "multi_select"} name="answer" required>
           <QuestionnaireTitle>{question}</QuestionnaireTitle>
-          {options.length > 0 ? (
+          {!completed && options.length > 0 ? (
             <QuestionnaireDescription>
               {selectionMode === "multi_select" ? "可选择多个选项" : "请选择一个选项"}
             </QuestionnaireDescription>
           ) : null}
           <QuestionnaireChoices>
-            {options.map((option) => (
-              <QuestionnaireChoice key={option.label} value={option.label}>
-                {option.label}
-                {option.description ? (
-                  <span className="text-muted-foreground">{option.description}</span>
-                ) : null}
-              </QuestionnaireChoice>
-            ))}
-            {options.length === 0 ? (
-              <QuestionnaireInput aria-label="回答 Agent 的问题" placeholder="输入你的回答..." />
-            ) : null}
+            {options.length > 0 ? (
+              options.map((option) => (
+                <QuestionnaireChoice
+                  defaultChecked={completed ? answers.includes(option.label) : undefined}
+                  disabled={completed}
+                  key={option.label}
+                  value={option.label}
+                >
+                  <span className="font-medium">{option.label}</span>
+                  {option.description ? (
+                    <QuestionnaireChoiceDescription>
+                      {option.description}
+                    </QuestionnaireChoiceDescription>
+                  ) : null}
+                </QuestionnaireChoice>
+              ))
+            ) : (
+              <QuestionnaireInput
+                aria-label={completed ? "已回答内容" : "回答 Agent 的问题"}
+                defaultValue={completed ? formatInteractionValue(answerValue) : undefined}
+                disabled={completed}
+                placeholder={completed ? undefined : "输入你的回答..."}
+              />
+            )}
           </QuestionnaireChoices>
-          <QuestionnaireError />
+          {!completed ? <QuestionnaireError /> : null}
         </QuestionnaireItem>
-        <QuestionnaireActions>
-          <Button
-            className="col-start-2 row-start-1 min-h-11 sm:min-h-0"
-            disabled={busy}
-            onClick={() => onResume("")}
-            size="default"
-            type="button"
-            variant="outline"
-          >
-            取消
-          </Button>
-          <QuestionnaireSubmit disabled={busy}>
-            {busy ? "正在提交..." : "提交回答"}
-          </QuestionnaireSubmit>
-        </QuestionnaireActions>
+        {!completed ? (
+          <QuestionnaireActions>
+            <QuestionnaireSkip disabled={busy} onClick={() => onResume("")} type="button">
+              取消
+            </QuestionnaireSkip>
+            <QuestionnaireSubmit disabled={busy}>
+              {busy ? "正在提交..." : "提交回答"}
+            </QuestionnaireSubmit>
+          </QuestionnaireActions>
+        ) : null}
       </Questionnaire>
     </div>
   );

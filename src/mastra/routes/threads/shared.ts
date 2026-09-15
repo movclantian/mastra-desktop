@@ -9,6 +9,20 @@ import type { Memory } from "@mastra/memory";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
 
+/** Invalidate derived observations before rewriting the source history. */
+export async function deleteThreadMessages(
+  memory: Memory,
+  threadId: string,
+  resourceId: string,
+  messageIds: string[],
+): Promise<void> {
+  if (messageIds.length === 0) return;
+  await memory.settled();
+  await (await memory.omEngine)?.clear(threadId, resourceId);
+  await memory.deleteMessages(messageIds);
+  await memory.settled();
+}
+
 /** Restore session user signals to ordinary chat turns before conversion. */
 export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): MastraDBMessage[] {
   return messages.flatMap<MastraDBMessage>((message) => {
@@ -40,7 +54,7 @@ export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): Mastr
  * (index.ts 注册路由 → 路由取 mastra 实例)。
  *
  * agent.getMemory() 的静态返回类型是基类 MastraMemory,缺少 @mastra/memory 独有的
- * settled() / summarizeThread() 等方法;实例本身就是 Memory(见 src/mastra/memory),
+ * settled() 等方法;实例本身就是 Memory(见 src/mastra/memory),
  * 因此在此处一次性收窄,调用方不必各自断言。
  */
 export async function getWorkMemory(requestContext: RequestContext): Promise<Memory> {

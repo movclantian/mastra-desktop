@@ -42,7 +42,9 @@ function useDrawerTransition() {
 function drawerHandleProps(open: boolean) {
   return {
     disabled: !open,
-    className: open ? "transition-colors hover:bg-primary" : "pointer-events-none opacity-0",
+    className: open
+      ? "transition-colors hover:bg-primary"
+      : "pointer-events-none !h-0 !border-0 opacity-0",
   };
 }
 

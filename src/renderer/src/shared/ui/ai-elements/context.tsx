@@ -170,11 +170,12 @@ const ContextIcon = () => {
   return (
     <svg
       aria-label="Model context usage"
-      height="20"
+      className="size-3.5 shrink-0"
+      height="16"
       role="img"
       style={{ color: "currentcolor" }}
       viewBox={`0 0 ${ICON_VIEWBOX} ${ICON_VIEWBOX}`}
-      width="20"
+      width="16"
     >
       <circle
         cx={ICON_CENTER}
@@ -204,15 +205,24 @@ const ContextIcon = () => {
 
 export type ContextTriggerProps = ComponentProps<typeof Button>;
 
-export const ContextTrigger = ({ children, ...props }: ContextTriggerProps) => {
+export const ContextTrigger = ({ children, className, ...props }: ContextTriggerProps) => {
   const { usedTokens, maxTokens } = useContextValue();
   const percentNumber = getUsagePercent(usedTokens, maxTokens);
 
   return (
     <HoverCardTrigger closeDelay={0} delay={0}>
       {children ?? (
-        <Button type="button" variant="ghost" {...props}>
-          <span className="flex items-center gap-0.5 font-medium tabular-nums text-muted-foreground">
+        <Button
+          className={cn(
+            "h-7 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground",
+            className,
+          )}
+          size="sm"
+          type="button"
+          variant="ghost"
+          {...props}
+        >
+          <span className="flex items-center gap-0.5 font-medium tabular-nums">
             <SlidingNumber number={percentNumber} decimalPlaces={1} />%
           </span>
           <ContextIcon />
@@ -226,7 +236,10 @@ export type ContextContentProps = ComponentProps<typeof HoverCardContent>;
 
 export const ContextContent = ({ className, ...props }: ContextContentProps) => (
   <HoverCardContent
-    className={cn("w-72 min-w-60 max-w-[calc(100vw-2rem)] divide-y overflow-hidden p-0", className)}
+    className={cn(
+      "w-64 min-w-56 max-w-[calc(100vw-2rem)] divide-y divide-border/60 overflow-hidden p-0 text-xs shadow-lg",
+      className,
+    )}
     {...props}
   />
 );
@@ -245,16 +258,18 @@ export const ContextContentHeader = ({
   const cachePercent = formatUsagePercent(getUsagePercent(input.cacheRead, input.total));
 
   return (
-    <div className={cn("w-full space-y-2.5 p-3", className)} {...props}>
+    <div className={cn("w-full space-y-2 p-3", className)} {...props}>
       {children ?? (
         <>
-          <h3 className="text-base font-semibold">上下文用量</h3>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">上下文用量</span>
+          </div>
           <div className="flex items-baseline justify-between gap-3">
-            <p className="flex items-baseline gap-0.5 text-xl font-semibold tabular-nums">
+            <p className="flex items-baseline gap-0.5 text-lg font-bold tabular-nums text-foreground">
               <SlidingNumber number={percentNumber} decimalPlaces={1} />
-              <span className="text-sm">%</span>
+              <span className="text-xs font-semibold">%</span>
             </p>
-            <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground tabular-nums">
+            <p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
               <span>已使用</span>
               <span>{formatCompactTokens(usedTokens)}</span>
               <span>/</span>
@@ -268,7 +283,7 @@ export const ContextContentHeader = ({
             aria-valuemax={PERCENT_MAX}
             aria-valuemin={0}
             aria-valuenow={percentNumber}
-            className="flex h-2 w-full gap-px overflow-hidden rounded-sm bg-muted"
+            className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted"
             role="progressbar"
           >
             {metrics.map((metric) => {
@@ -294,8 +309,8 @@ export type ContextContentBodyProps = ComponentProps<"div">;
 
 export const ContextContentBody = ({ children, className, ...props }: ContextContentBodyProps) => (
   <div className={cn("w-full", className)} {...props}>
-    <ScrollArea className="max-h-[min(32rem,calc(100svh-12rem))]">
-      <div className="w-full space-y-3 p-4">{children}</div>
+    <ScrollArea className="max-h-[min(24rem,calc(100svh-12rem))]">
+      <div className="w-full space-y-2 p-3">{children}</div>
     </ScrollArea>
   </div>
 );
@@ -307,28 +322,28 @@ export const ContextContentBreakdown = ({ className, ...props }: ContextContentB
   const metrics = getContextUsageMetrics(usedTokens, breakdown);
 
   return (
-    <div className={cn("w-full space-y-2.5", className)} role="list" {...props}>
+    <div className={cn("w-full space-y-1.5", className)} role="list" {...props}>
       {metrics.map((metric) => {
         const percent = getUsagePercent(metric.tokens, maxTokens);
         return (
           <div
-            className="flex min-w-0 items-center justify-between gap-3"
+            className="flex min-w-0 items-center justify-between gap-3 text-xs"
             key={metric.id}
             role="listitem"
           >
-            <span className="flex min-w-0 items-center gap-2 text-sm">
+            <span className="flex min-w-0 items-center gap-2">
               <span
                 aria-hidden="true"
                 className={cn(
-                  "size-2.5 shrink-0 rounded-full",
+                  "size-2 shrink-0 rounded-full",
                   CONTEXT_USAGE_COLOR_CLASSES[metric.color],
                 )}
               />
-              <span className="truncate">{metric.label}</span>
+              <span className="truncate text-foreground/90">{metric.label}</span>
             </span>
-            <span className="flex shrink-0 items-baseline gap-2 font-mono text-xs tabular-nums">
+            <span className="flex shrink-0 items-baseline gap-2 font-mono text-[11px] tabular-nums">
               <span className="text-muted-foreground">{formatCompactTokens(metric.tokens)}</span>
-              <span className="font-semibold text-foreground">{formatUsagePercent(percent)}</span>
+              <span className="font-medium text-foreground">{formatUsagePercent(percent)}</span>
             </span>
           </div>
         );
@@ -355,7 +370,7 @@ export const ContextContentFooter = ({
   return (
     <div
       className={cn(
-        "flex w-full items-center justify-between gap-3 bg-secondary p-3 text-xs",
+        "flex w-full items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-xs",
         className,
       )}
       {...props}
@@ -363,7 +378,7 @@ export const ContextContentFooter = ({
       {children ?? (
         <>
           <span className="text-muted-foreground">总费用</span>
-          <span className="font-semibold tabular-nums text-foreground">{formattedCost}</span>
+          <span className="font-medium tabular-nums text-foreground">{formattedCost}</span>
         </>
       )}
     </div>

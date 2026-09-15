@@ -6,6 +6,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MastraLanguageModel } from "@mastra/core/agent";
+import { SignalProvider } from "@mastra/core/signals";
 import { fastembed } from "@mastra/fastembed";
 import { LibSQLVector } from "@mastra/libsql";
 import { MDocument } from "@mastra/rag";
@@ -160,9 +161,7 @@ async function extractMetadata(
 /**
  * 索引终态事件。
  *
- * 依赖反转的注册点:本模块不能 import agents/ —— agent 的检索工具反过来
- * 依赖这里。由顶层 src/mastra/index.ts 注册处理器,在那里把事件转成
- * agent.sendNotificationSignal() 的收件箱记录(docs/en/docs/harness/signals.mdx)。
+ * LibraryIndexSignalProvider 在 start/stop 中订阅事件并写入官方通知收件箱。
  */
 export interface LibraryIndexSettledEvent {
   resourceId: string;
@@ -177,8 +176,11 @@ export interface LibraryIndexSettledEvent {
 
 let indexSettledHandler: ((event: LibraryIndexSettledEvent) => void) | undefined;
 
-export function onLibraryIndexSettled(handler: (event: LibraryIndexSettledEvent) => void): void {
+function onLibraryIndexSettled(handler: (event: LibraryIndexSettledEvent) => void): () => void {
   indexSettledHandler = handler;
+  return () => {
+    if (indexSettledHandler === handler) indexSettledHandler = undefined;
+  };
 }
 
 function emitIndexSettled(event: LibraryIndexSettledEvent): void {
@@ -395,3 +397,51 @@ export async function recoverInterruptedLibraryIndexes(): Promise<void> {
     })().catch(() => undefined);
   }
 }
+
+/** Native provider lifecycle owns recovery and library notifications. */
+class LibraryIndexSignalProvider extends SignalProvider {
+  readonly id = "library-index-signals";
+  private listenerCleanup?: () => void;
+
+  async start(): Promise<void> {
+    this.listenerCleanup?.();
+    this.listenerCleanup = onLibraryIndexSettled((event) => {
+      const summary =
+        event.outcome === "succeeded"
+          ? `Library indexing finished for "${event.filename}" (${event.chunkCount ?? 0} chunks). It is now retrievable.`
+          : event.outcome === "unsupported"
+            ? `Library indexing skipped "${event.filename}": no usable text could be extracted.`
+            : `Library indexing failed for "${event.filename}"${event.error ? `: ${event.error}` : "."}`;
+      for (const threadId of event.threadIds) {
+        void this.notify(
+          {
+            source: "library",
+            kind: `index-${event.outcome}`,
+            priority: event.outcome === "succeeded" ? "low" : "medium",
+            summary,
+            payload: {
+              assetId: event.assetId,
+              filename: event.filename,
+              outcome: event.outcome,
+              chunkCount: event.chunkCount,
+              error: event.error,
+            },
+            dedupeKey: `library:index:${event.assetId}`,
+          },
+          { resourceId: event.resourceId, threadId },
+        ).catch((error) => {
+          this.mastra?.getLogger().error("Library notification failed", { error, threadId });
+        });
+      }
+    });
+    await recoverInterruptedLibraryIndexes();
+  }
+
+  stop(): void {
+    this.listenerCleanup?.();
+    this.listenerCleanup = undefined;
+    super.stop();
+  }
+}
+
+export const libraryIndexSignals = new LibraryIndexSignalProvider();

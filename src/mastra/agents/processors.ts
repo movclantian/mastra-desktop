@@ -4,12 +4,11 @@
  * - editor / terminal / workbench 三条 state lane(computeStateSignal,
  *   docs/en/docs/harness/signals.mdx「State signals」)
  * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
- * - promptCacheProcessor:Anthropic 前缀缓存断点(必须挂在处理器链末尾)
  */
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { MastraDBMessage } from "@mastra/core/agent";
-import type { InputProcessor, ProcessorActiveStateSignal } from "@mastra/core/processors";
+import type { InputProcessor } from "@mastra/core/processors";
 import { z } from "zod";
 import {
   getAssetContext,
@@ -169,8 +168,6 @@ export const workbenchStateSchema = z.object({
 });
 
 type WorkbenchState = z.infer<typeof workbenchStateSchema>;
-type StateLaneId = keyof WorkbenchState;
-type StateLaneValue<K extends StateLaneId> = NonNullable<WorkbenchState[K]>;
 
 const WORKBENCH_STATE_TYPE = "workbench";
 const workbenchWrites = new Map<string, Promise<unknown>>();
@@ -217,185 +214,20 @@ async function readWorkbenchState(
   });
 }
 
-function stateSignalValue<K extends StateLaneId>(
-  signal: ProcessorActiveStateSignal | undefined,
-): StateLaneValue<K> | undefined {
-  const value = signal?.metadata?.value;
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as StateLaneValue<K>;
-  }
-  return undefined;
-}
-
-function mostRecentStateValue<K extends StateLaneId>(
-  signals: ProcessorActiveStateSignal[],
-): StateLaneValue<K> | undefined {
-  for (let index = signals.length - 1; index >= 0; index -= 1) {
-    const value = stateSignalValue<K>(signals[index]);
-    if (value) return value;
-  }
-  return undefined;
-}
-
-function changedFields<T extends Record<string, unknown>>(
-  previous: T | undefined,
-  next: T,
-): Partial<T> {
-  if (!previous) return { ...next };
-  const changed: Partial<T> = {};
-  for (const key of new Set([...Object.keys(previous), ...Object.keys(next)])) {
-    const field = key as keyof T;
-    if (previous[field] !== next[field]) changed[field] = next[field];
-  }
-  return changed;
-}
-
-function stableCacheKey(laneId: string, value: Record<string, unknown>): string {
-  const fields = Object.keys(value)
-    .sort()
-    .map((key) => `${key}=${String(value[key])}`);
-  return `${laneId}:${fields.join("|")}`;
-}
-
-function createStateLaneProcessor<K extends StateLaneId>(options: {
-  stateId: K;
-  snapshot: (value: StateLaneValue<K>) => string;
-  delta: (changed: Partial<StateLaneValue<K>>, value: StateLaneValue<K>) => string;
-}): InputProcessor {
-  return {
-    id: `${options.stateId}-state`,
-    stateId: options.stateId,
-    async computeStateSignal(args) {
-      const value = (await readWorkbenchState(args.resourceId, args.threadId))?.[options.stateId] as
-        | StateLaneValue<K>
-        | undefined;
-      if (!value) return;
-
-      const shouldRefreshSnapshot = Boolean(args.lastSnapshot && !args.contextWindow.hasSnapshot);
-      const previous =
-        mostRecentStateValue<K>(args.activeStateSignals) ?? stateSignalValue<K>(args.lastSnapshot);
-      const changed = changedFields(previous, value);
-      if (previous && Object.keys(changed).length === 0 && !shouldRefreshSnapshot) return;
-
-      const isDelta = Boolean(previous && !shouldRefreshSnapshot);
-      return {
-        id: options.stateId,
-        cacheKey: stableCacheKey(options.stateId, value),
-        mode: isDelta ? "delta" : "snapshot",
-        tagName: "state",
-        contents: isDelta ? options.delta(changed, value) : options.snapshot(value),
-        value,
-        ...(isDelta ? { delta: changed } : {}),
-        attributes: { type: options.stateId, updated: new Date().toISOString() },
-        metadata: { value },
-      };
-    },
-  };
-}
-
-export const editorStateProcessor = createStateLaneProcessor({
-  stateId: "editor",
-  snapshot: (value) => {
-    const parts = [
-      value.openPath
-        ? `The user has ${value.openPath} open in the workspace editor${value.dirty ? " with unsaved changes" : ""}.`
-        : "No file is open in the workspace editor.",
-    ];
-    if (value.selectedPath && value.selectedPath !== value.openPath) {
-      parts.push(`File tree selection: ${value.selectedPath}.`);
-    }
-    if (value.workspacePath) parts.push(`Workspace root: ${value.workspacePath}.`);
-    return parts.join(" ");
+export const [
+  editorStateProcessor,
+  terminalStateProcessor,
+  workbenchStateProcessor,
+]: InputProcessor[] = (["editor", "terminal", "workbench"] as const).map((stateId) => ({
+  id: `${stateId}-state`,
+  stateId,
+  async computeStateSignal({ resourceId, threadId }) {
+    const value = (await readWorkbenchState(resourceId, threadId))?.[stateId];
+    if (!value) return;
+    const contents = JSON.stringify(value);
+    return { mode: "snapshot", cacheKey: contents, contents, value };
   },
-  delta: (changed, value) => {
-    const parts: string[] = [];
-    if ("openPath" in changed) {
-      parts.push(
-        value.openPath
-          ? `The user switched the editor to ${value.openPath}.`
-          : "The user closed the open editor file.",
-      );
-    }
-    if ("dirty" in changed) {
-      parts.push(
-        value.dirty
-          ? `${value.openPath ?? "The open file"} now has unsaved changes.`
-          : `${value.openPath ?? "The open file"} has been saved.`,
-      );
-    }
-    if ("selectedPath" in changed) {
-      parts.push(
-        value.selectedPath
-          ? `File tree selection: ${value.selectedPath}.`
-          : "File tree selection cleared.",
-      );
-    }
-    if ("workspacePath" in changed) parts.push(`Workspace root: ${value.workspacePath ?? "none"}.`);
-    return parts.join(" ");
-  },
-});
-
-function describeTerminalCommand(value: StateLaneValue<"terminal">): string | undefined {
-  if (!value.lastCommand) return undefined;
-  const exit =
-    typeof value.lastExitCode === "number" ? ` (exit code ${value.lastExitCode})` : " (running)";
-  return `Last command the user ran in the terminal: ${value.lastCommand}${exit}.`;
-}
-
-export const terminalStateProcessor = createStateLaneProcessor({
-  stateId: "terminal",
-  snapshot: (value) => {
-    const parts = [
-      value.open
-        ? `The terminal panel is open with ${value.sessionCount} session(s)${
-            value.activeTitle ? `, active "${value.activeTitle}"` : ""
-          }${value.activeStatus ? ` (${value.activeStatus})` : ""}.`
-        : "The terminal panel is closed.",
-    ];
-    const command = describeTerminalCommand(value);
-    if (command) parts.push(command);
-    return parts.join(" ");
-  },
-  delta: (changed, value) => {
-    const parts: string[] = [];
-    if ("open" in changed) {
-      parts.push(
-        value.open ? "The user opened the terminal panel." : "The user closed the terminal panel.",
-      );
-    }
-    if ("sessionCount" in changed) parts.push(`Terminal sessions: ${value.sessionCount}.`);
-    if ("activeTitle" in changed || "activeStatus" in changed) {
-      parts.push(
-        `Active terminal: ${value.activeTitle ?? "none"}${
-          value.activeStatus ? ` (${value.activeStatus})` : ""
-        }.`,
-      );
-    }
-    if ("lastCommand" in changed || "lastExitCode" in changed) {
-      const command = describeTerminalCommand(value);
-      if (command) parts.push(command);
-    }
-    return parts.join(" ");
-  },
-});
-
-function describeOpenPanels(value: StateLaneValue<"workbench">): string {
-  const open: string[] = [];
-  if (value.workspacePanelOpen) {
-    open.push(`the workspace panel (${value.workspacePanelTab ?? "files"} tab)`);
-  }
-  if (value.terminalPanelOpen) open.push("the terminal panel");
-  if (value.libraryOpen) open.push("the library");
-  return open.length
-    ? `The user currently has ${open.join(", ")} open.`
-    : "The user has no side panels open.";
-}
-
-export const workbenchStateProcessor = createStateLaneProcessor({
-  stateId: "workbench",
-  snapshot: describeOpenPanels,
-  delta: (_changed, value) => describeOpenPanels(value),
-});
+}));
 
 // ---------------------------------------------------------------------------
 // AGENTS.md 自动加载 (docs/en/docs/harness/signals.mdx)
@@ -471,70 +303,5 @@ export const agentsMdProcessor: InputProcessor = {
       });
     }
     return messageList;
-  },
-};
-
-// ---------------------------------------------------------------------------
-// 前缀缓存断点 (docs/en/reference/processors/processor-interface.mdx 的 processLLMRequest)
-// ---------------------------------------------------------------------------
-
-/**
- * Anthropic 是三家供应商里唯一需要**显式**声明缓存边界的:OpenAI 与 Gemini 只要前缀
- * 逐字节一致就自动命中,Anthropic 要在内容块上打 cache_control 断点。
- *
- * 渲染顺序是 tools → system → messages,按稳定性分三段(上限 4 个,还留一个余量):
- * 1. **第一条** system 消息 —— Mastra 的 getAllSystemMessages() 是
- *    [...untagged, ...tagged],Agent 的 instructions 数组在前、memory(OM 观察 /
- *    working memory)在后,所以第一条就是最稳定的 BASE_INSTRUCTIONS。工具定义排在
- *    它前面,一并进这段前缀:换模式改了后面的 mode/skills 文案、OM 折叠了观察,
- *    这一段仍然命中。
- * 2. **最后一条** system 消息 —— 兜住 mode / 技能 / OM 那些易变的 system 段。
- * 3. prompt 的最后一条消息 —— agentic loop 每步都在尾部追加,本步写入、下一步命中。
- *
- * 多打断点不会多付写入费:命中的前缀算 read(0.1x)并顺带刷新 TTL,写入只发生在
- * 「最后一次命中之后到最末断点」这一段 —— 断点只是把命中边界切得更细。
- *
- * 上限 4 个由 @ai-sdk/anthropic 的 CacheControlValidator 兜底(超出只警告不报错)。
- *
- * 必须注册在 inputProcessors 的**最后**:guardrails 里的 ProviderHistoryCompat 等同样在
- * processLLMRequest 改写 prompt,晚改写的一方会覆盖早先挂上的 providerOptions。
- */
-function providerNamespace(model: { provider?: string }): string {
-  // 与 @ai-sdk/anthropic 的 providerOptionsName 同一套规则:取第一个点之前的部分
-  // ('anthropic.messages' → 'anthropic'),供应商包正是按这个键读 providerOptions。
-  const provider = typeof model.provider === "string" ? model.provider : "";
-  const dotIndex = provider.indexOf(".");
-  return dotIndex === -1 ? provider : provider.slice(0, dotIndex);
-}
-
-export const promptCacheProcessor: InputProcessor = {
-  id: "prompt-cache-breakpoints",
-  processLLMRequest({ model, prompt }) {
-    if (providerNamespace(model) !== "anthropic") return;
-    if (prompt.length === 0) return;
-
-    // Set 去重:只有一条 system 消息、或整个 prompt 只有 system 时索引会重合
-    const breakpoints = new Set<number>([prompt.length - 1]);
-    const firstSystemIndex = prompt.findIndex((message) => message.role === "system");
-    if (firstSystemIndex >= 0) {
-      breakpoints.add(firstSystemIndex);
-      breakpoints.add(prompt.findLastIndex((message) => message.role === "system"));
-    }
-
-    const next = [...prompt];
-    for (const index of breakpoints) {
-      const message = next[index];
-      next[index] = {
-        ...message,
-        providerOptions: {
-          ...message.providerOptions,
-          anthropic: {
-            ...message.providerOptions?.anthropic,
-            cacheControl: { type: "ephemeral" },
-          },
-        },
-      };
-    }
-    return { prompt: next };
   },
 };

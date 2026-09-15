@@ -1,33 +1,17 @@
-/**
- * 会话模式(plan → build → review),叠加在 Agent 请求上下文上实现。
- * 模式指令作为系统消息追加在 Agent 的 shared instructions 之后
- * (官方 Agent 的 instructions 是系统消息数组,可静态或按请求解析,
- * 见 docs/en/reference/agents/agent.mdx);工具收回不用单独机制 ——
- * 模式经 deniedCategories 把权限类别压成 deny,与 permissions.ts 的
- * 用户规则走同一套执行点(自注入工具不注入、工作区工具经 beforeToolCall 拒绝)。
- */
-import type { ToolsInput } from "@mastra/core/agent";
-import { type PermissionRules, type ToolCategory, withCategoryPolicy } from "./permissions";
+/** Official Controller modes shared by the workbench and agent request handlers. */
+import type { AgentControllerMode } from "@mastra/core/agent-controller";
+import { READ_ONLY_TOOL_NAMES } from "./permissions";
 
 export type WorkModeId = "plan" | "build" | "review";
 
-export interface WorkMode {
+export type WorkMode = AgentControllerMode & {
   id: WorkModeId;
   name: string;
   /** 前端菜单里的一句话说明(与 src/renderer/src/lib/session-policy.ts 对应) */
   description: string;
-  metadata?: { default?: boolean };
   /** 叠加到 Agent instructions 之后的模式指令 */
   instructions: string;
-  /** Tools layered into this mode in addition to the shared Agent tools. */
-  additionalTools?: ToolsInput;
-  /** Optional allow-list applied after the shared tool set is resolved. */
-  availableTools?: string[];
-  /** 该模式强制拒绝的权限类别(线程规则之上的叠加,用户无法在该模式下放开) */
-  deniedCategories?: ToolCategory[];
-  /** 计划获批后自动切换到的模式(官方 transitionsTo) */
-  transitionsTo?: WorkModeId;
-}
+};
 
 const WORK_MODES: WorkMode[] = [
   {
@@ -55,13 +39,17 @@ Do not silently widen the scope beyond the approved plan — if new work is requ
     id: "review",
     name: "复查",
     description: "只读复查已有变更并报告问题,写入与执行类工具被收回",
-    deniedCategories: ["edit", "execute"],
+    availableTools: READ_ONLY_TOOL_NAMES,
     instructions: `MODE: REVIEW.
 Inspect the current state of the workspace and report findings. You have no write or command-execution tools in this mode — do not claim to have changed anything.
 Ground every finding in a file and line you actually read. Order findings by severity and state, for each one, the concrete input or state that would make it fail.
 If a finding needs a change, describe the change; the user will switch to another mode to apply it.`,
   },
 ];
+
+export function listWorkModes(): WorkMode[] {
+  return WORK_MODES.map((mode) => ({ ...mode }));
+}
 
 export const DEFAULT_MODE_ID: WorkModeId =
   WORK_MODES.find((mode) => mode.metadata?.default)?.id ?? "plan";
@@ -73,17 +61,4 @@ export const MODE_ID_CONTEXT_KEY = "mastra-work:mode-id";
 export function resolveMode(modeId: unknown): WorkMode {
   const found = WORK_MODES.find((mode) => mode.id === modeId);
   return found ?? WORK_MODES.find((mode) => mode.id === DEFAULT_MODE_ID) ?? WORK_MODES[0];
-}
-
-/**
- * 线程规则叠加模式约束后的生效规则。
- * 模式的 deniedCategories 覆盖线程规则 —— review 模式下即使用户把 edit 设成 allow
- * 也依然拒绝,否则「只读复查」这个承诺就不成立。
- */
-export function applyModeToRules(rules: PermissionRules, mode: WorkMode): PermissionRules {
-  if (!mode.deniedCategories?.length) return rules;
-  return mode.deniedCategories.reduce(
-    (current, category) => withCategoryPolicy(current, category, "deny"),
-    rules,
-  );
 }

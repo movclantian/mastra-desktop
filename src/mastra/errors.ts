@@ -12,7 +12,8 @@
  *   ErrorCategory 对齐 USER(请求侧问题)/ SYSTEM(服务侧问题)/
  *   THIRD_PARTY(上游服务问题)。
  */
-import { ErrorCategory, ErrorDomain, MastraError } from "@mastra/core/error";
+import { ErrorCategory, ErrorDomain, getErrorFromUnknown, MastraError } from "@mastra/core/error";
+import type { ContextWithMastra } from "@mastra/core/server";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 interface WorkErrorDefinition {
@@ -87,18 +88,6 @@ export const WORK_ERRORS = {
     category: ErrorCategory.USER,
     status: 404,
     text: "Message not found",
-  },
-  MESSAGE_EDIT_COMPACTED_ONLY: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 400,
-    text: "Only compacted user messages can be edited",
-  },
-  MESSAGE_NOT_LATEST_COMPACTED: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "Message is not part of the latest compacted history",
   },
   WORKING_MEMORY_REQUIRED: {
     domain: ErrorDomain.MASTRA_MEMORY,
@@ -407,4 +396,33 @@ export function workError(
   options: { text?: string; details?: Record<string, unknown>; cause?: unknown } = {},
 ): WorkApiError {
   return new WorkApiError(code, options);
+}
+
+export function handleWorkError(err: Error, c: ContextWithMastra) {
+  if (err instanceof WorkApiError) {
+    return c.json(
+      {
+        error: err.message,
+        code: err.id,
+        domain: err.domain,
+        category: err.category,
+        ...(err.details ? { details: err.details } : {}),
+      },
+      err.status,
+    );
+  }
+  const wrapped = getErrorFromUnknown(err);
+  c.get("mastra").getLogger().error(`[work-api] ${c.req.method} ${c.req.path} 未处理错误`, {
+    message: wrapped.message,
+    stack: wrapped.stack,
+  });
+  return c.json(
+    {
+      error: wrapped.message,
+      code: "INTERNAL_ERROR",
+      domain: "MASTRA_SERVER",
+      category: "SYSTEM",
+    },
+    500,
+  );
 }

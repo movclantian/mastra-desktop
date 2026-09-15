@@ -38,6 +38,7 @@ import {
 } from "@/shared/ui/context-menu";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -46,7 +47,21 @@ import {
 } from "@/shared/ui/dialog";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
 import { Dotm3x3_11 } from "@/shared/ui/dotm-3x3-11";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/shared/ui/empty";
+import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/shared/ui/input-group";
 import { InteractiveHoverButton } from "@/shared/ui/interactive-hover-button";
 import { MagicCard } from "@/shared/ui/magic-card";
 import { NeonGradientCard } from "@/shared/ui/neon-gradient-card";
@@ -54,6 +69,7 @@ import { OrbitingCircles } from "@/shared/ui/orbiting-circles";
 import { RainbowButton } from "@/shared/ui/rainbow-button";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
 
 type HubTab = "all" | "agent" | "team" | "mine";
 type DraftField =
@@ -74,6 +90,13 @@ type Draft = {
   memberText: string;
   workflowStepsJson: string;
 };
+
+const STRATEGY_OPTIONS = [
+  { value: "supervisor", label: "Supervisors · 智能委派" },
+  { value: "handoff", label: "Handoffs · 顺序交接" },
+  { value: "workflow", label: "Workflows · 显式编排" },
+  { value: "council", label: "Council · 并行评议" },
+] as const;
 
 const createEmptyDraft = (type: AgentProfile["type"] = "agent"): Draft => ({
   type,
@@ -311,15 +334,16 @@ export function AgentHubPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex flex-wrap items-center gap-2 border-b px-5 py-3">
-        <div className="relative min-w-52 flex-1">
-          <SearchIcon className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
+        <InputGroup className="min-w-52 flex-1">
+          <InputGroupAddon align="inline-start">
+            <SearchIcon className="size-4 text-muted-foreground" />
+          </InputGroupAddon>
+          <InputGroupInput
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索 Agent、团队或职责"
           />
-        </div>
+        </InputGroup>
         <RainbowButton variant="outline" onClick={() => openAssist("agent")}>
           <SparklesIcon />
           AI 创建 Agent
@@ -356,19 +380,53 @@ export function AgentHubPage() {
         />
         <ScrollArea className="min-h-0 flex-1">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3 p-5">
-            {filtered.map((profile) => (
-              <AgentCard
-                key={profile.id}
-                profile={profile}
-                active={profile.id === agentSelection.id}
-                onUse={async () => {
-                  await setAgentSelection(profile);
-                  setActiveView("chat");
-                }}
-                onEdit={() => openEdit(profile)}
-                onDelete={() => void remove(profile)}
-              />
-            ))}
+            {filtered.length === 0 ? (
+              <Empty className="col-span-full">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <SearchIcon />
+                  </EmptyMedia>
+                  <EmptyTitle>
+                    {query.trim() ? "没有匹配的 Agent" : "当前分类还没有 Agent"}
+                  </EmptyTitle>
+                  <EmptyDescription>
+                    {query.trim()
+                      ? "换个关键词试试，或者清空搜索查看全部 Agent。"
+                      : "手动创建一个 Agent，或者用 AI 根据一句话描述生成。"}
+                  </EmptyDescription>
+                </EmptyHeader>
+                <EmptyContent className="flex-row justify-center gap-2">
+                  {query.trim() ? (
+                    <Button variant="outline" onClick={() => setQuery("")}>
+                      <SearchIcon />
+                      清空搜索
+                    </Button>
+                  ) : null}
+                  <Button onClick={() => openCreate("agent")}>
+                    <PlusIcon />
+                    手动创建
+                  </Button>
+                  <Button variant="outline" onClick={() => openAssist("agent")}>
+                    <SparklesIcon />
+                    AI 创建
+                  </Button>
+                </EmptyContent>
+              </Empty>
+            ) : (
+              filtered.map((profile) => (
+                <AgentCard
+                  key={profile.id}
+                  profile={profile}
+                  active={profile.id === agentSelection.id}
+                  onUse={async () => {
+                    await setAgentSelection(profile);
+                    setActiveView("chat");
+                  }}
+                  onEdit={() => openEdit(profile)}
+                  onDelete={() => void remove(profile)}
+                />
+              ))
+            )}
           </div>
         </ScrollArea>
       </div>
@@ -384,23 +442,27 @@ export function AgentHubPage() {
           <div className="grid gap-4">
             <fieldset className="grid gap-2 border-0 p-0">
               <legend className="text-sm font-medium">创建类型</legend>
-              <div className="flex gap-2">
-                {(["agent", "team"] as const).map((type) => (
-                  <Button
-                    key={type}
-                    type="button"
-                    variant={assistType === type ? "secondary" : "outline"}
-                    aria-pressed={assistType === type}
-                    onClick={() => setAssistType(type)}
-                  >
-                    {type === "team" ? <UsersRoundIcon /> : <BotIcon />}
-                    {type === "team" ? "Agent 团队" : "Agent"}
-                  </Button>
-                ))}
-              </div>
+              <ToggleGroup
+                className="flex w-fit gap-2"
+                variant="outline"
+                value={[assistType]}
+                onValueChange={(next) => {
+                  const value = next[0];
+                  if (value === "agent" || value === "team") setAssistType(value);
+                }}
+              >
+                <ToggleGroupItem value="agent">
+                  <BotIcon />
+                  Agent
+                </ToggleGroupItem>
+                <ToggleGroupItem value="team">
+                  <UsersRoundIcon />
+                  Agent 团队
+                </ToggleGroupItem>
+              </ToggleGroup>
             </fieldset>
-            <div className="grid gap-2 text-sm font-medium">
-              <label htmlFor="agent-assist-description">你想让它负责什么?</label>
+            <Field>
+              <FieldLabel htmlFor="agent-assist-description">你想让它负责什么?</FieldLabel>
               <Textarea
                 id="agent-assist-description"
                 autoFocus
@@ -409,12 +471,16 @@ export function AgentHubPage() {
                 onChange={(event) => setAssistDescription(event.target.value)}
                 placeholder="例如: 审查 React 项目的性能和安全问题,输出按优先级排序的修改建议。"
               />
-            </div>
+            </Field>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAssistOpen(false)} disabled={assisting}>
-              取消
-            </Button>
+            <DialogClose
+              render={
+                <Button variant="outline" disabled={assisting}>
+                  取消
+                </Button>
+              }
+            />
             <Button
               onClick={() => void generateAssistDraft()}
               disabled={assisting || !assistDescription.trim()}
@@ -449,67 +515,71 @@ export function AgentHubPage() {
           <ScrollArea className="min-h-0 flex-1 pr-3">
             <div className="grid gap-4 py-2">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="grid gap-1.5 text-sm font-medium">
-                  <label htmlFor="agent-display-name">名称</label>
+                <Field>
+                  <FieldLabel htmlFor="agent-display-name">名称</FieldLabel>
                   <Input
                     id="agent-display-name"
                     value={draft.displayName}
                     onChange={(event) => updateDraft("displayName", event.target.value)}
                   />
-                </div>
-                <div className="grid gap-1.5 text-sm font-medium">
-                  <label htmlFor="agent-profession">定位</label>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="agent-profession">定位</FieldLabel>
                   <Input
                     id="agent-profession"
                     value={draft.profession}
                     onChange={(event) => updateDraft("profession", event.target.value)}
                   />
-                </div>
+                </Field>
               </div>
-              <div className="grid gap-1.5 text-sm font-medium">
-                <label htmlFor="agent-description">简介</label>
+              <Field>
+                <FieldLabel htmlFor="agent-description">简介</FieldLabel>
                 <Textarea
                   id="agent-description"
                   className="min-h-20 resize-y"
                   value={draft.description}
                   onChange={(event) => updateDraft("description", event.target.value)}
                 />
-              </div>
-              <div className="grid gap-1.5 text-sm font-medium">
-                <label htmlFor="agent-instructions">工作指令</label>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="agent-instructions">工作指令</FieldLabel>
                 <Textarea
                   id="agent-instructions"
                   className="min-h-32 resize-y"
                   value={draft.instructions}
                   onChange={(event) => updateDraft("instructions", event.target.value)}
                 />
-              </div>
+              </Field>
               {draft.type === "team" ? (
                 <>
                   <fieldset className="grid gap-2 border-0 p-0 text-sm font-medium">
                     <legend>执行策略</legend>
-                    <div className="flex flex-wrap gap-2">
-                      {(["supervisor", "handoff", "workflow", "council"] as const).map(
-                        (strategy) => (
-                          <Button
-                            key={strategy}
-                            type="button"
-                            size="sm"
-                            variant={draft.workflowStrategy === strategy ? "secondary" : "outline"}
-                            aria-pressed={draft.workflowStrategy === strategy}
-                            onClick={() => updateDraft("workflowStrategy", strategy)}
-                          >
-                            {strategy === "supervisor"
-                              ? "Supervisors · 智能委派"
-                              : strategy === "handoff"
-                                ? "Handoffs · 顺序交接"
-                                : strategy === "workflow"
-                                  ? "Workflows · 显式编排"
-                                  : "Council · 并行评议"}
-                          </Button>
-                        ),
-                      )}
-                    </div>
+                    <ToggleGroup
+                      className="flex w-full flex-wrap gap-2"
+                      variant="outline"
+                      value={[draft.workflowStrategy]}
+                      onValueChange={(next) => {
+                        const value = next[0];
+                        if (
+                          value === "supervisor" ||
+                          value === "handoff" ||
+                          value === "workflow" ||
+                          value === "council"
+                        ) {
+                          updateDraft("workflowStrategy", value);
+                        }
+                      }}
+                    >
+                      {STRATEGY_OPTIONS.map((option) => (
+                        <ToggleGroupItem
+                          key={option.value}
+                          value={option.value}
+                          className="h-8 px-3 text-xs"
+                        >
+                          {option.label}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
                     <span className="text-xs font-normal text-muted-foreground">
                       Workflows 策略会按配置生成显式 Mastra
                       Workflow；其中可使用分支、循环和人工审批节点。
@@ -519,8 +589,8 @@ export function AgentHubPage() {
                       members={membersFromText(draft.memberText).map((member) => member.name)}
                     />
                   </fieldset>
-                  <div className="grid gap-1.5 text-sm font-medium">
-                    <label htmlFor="agent-team-members">团队成员</label>
+                  <Field>
+                    <FieldLabel htmlFor="agent-team-members">团队成员</FieldLabel>
                     <Textarea
                       id="agent-team-members"
                       className="min-h-28 resize-y"
@@ -528,13 +598,13 @@ export function AgentHubPage() {
                       value={draft.memberText}
                       onChange={(event) => updateDraft("memberText", event.target.value)}
                     />
-                    <span className="text-xs font-normal text-muted-foreground">
+                    <FieldDescription className="text-xs text-muted-foreground">
                       每位成员都会注册为独立 Mastra Agent,并按上方策略执行。
-                    </span>
-                  </div>
+                    </FieldDescription>
+                  </Field>
                   {draft.workflowStrategy === "workflow" ? (
-                    <div className="grid gap-1.5 text-sm font-medium">
-                      <label htmlFor="agent-workflow-steps">编排节点(JSON)</label>
+                    <Field>
+                      <FieldLabel htmlFor="agent-workflow-steps">编排节点(JSON)</FieldLabel>
                       <Textarea
                         id="agent-workflow-steps"
                         className="min-h-40 resize-y font-mono text-xs"
@@ -544,20 +614,24 @@ export function AgentHubPage() {
                           '[{"id":"review","kind":"approval","approval":{"title":"确认发布","description":"请确认后继续"}}]'
                         }
                       />
-                      <span className="text-xs font-normal text-muted-foreground">
+                      <FieldDescription className="text-xs text-muted-foreground">
                         节点 kind 支持 agent、approval、branch、loop；branch 使用
                         branch.onTrueMemberId/onFalseMemberId，loop 使用 loop.mode/maxIterations。
-                      </span>
-                    </div>
+                      </FieldDescription>
+                    </Field>
                   ) : null}
                 </>
               ) : null}
             </div>
           </ScrollArea>
           <DialogFooter>
-            <Button variant="outline" onClick={closeEditor} disabled={saving}>
-              取消
-            </Button>
+            <DialogClose
+              render={
+                <Button variant="outline" disabled={saving}>
+                  取消
+                </Button>
+              }
+            />
             <Button disabled={saving} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
               {saving ? "保存中…" : "保存并使用"}

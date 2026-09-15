@@ -37,6 +37,7 @@ import {
 } from "@/shared/ui/context-menu";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -57,6 +58,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { Field, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import {
   Sidebar,
@@ -93,11 +95,7 @@ function SidebarHeaderBrand() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton
-          className="data-[slot=sidebar-menu-button]:p-1.5!"
-          tooltip="收起侧边栏"
-          onClick={toggleSidebar}
-        >
+        <SidebarMenuButton size="sm" tooltip="收起侧边栏" onClick={toggleSidebar}>
           <div className="flex aspect-square size-6 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
             <WaypointsIcon className="size-3.5" />
           </div>
@@ -566,18 +564,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <DialogTitle>重命名会话</DialogTitle>
             <DialogDescription>为这个会话线程输入新名称。</DialogDescription>
           </DialogHeader>
-          <Input
-            autoFocus
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleRenameSubmit();
-            }}
-          />
+          <Field>
+            <FieldLabel htmlFor="rename-thread-input" className="sr-only">
+              会话名称
+            </FieldLabel>
+            <Input
+              id="rename-thread-input"
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleRenameSubmit();
+              }}
+            />
+          </Field>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRenaming(null)}>
-              取消
-            </Button>
+            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
             <Button onClick={handleRenameSubmit}>保存</Button>
           </DialogFooter>
         </DialogContent>

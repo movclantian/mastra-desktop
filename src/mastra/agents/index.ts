@@ -7,6 +7,7 @@
  */
 import {
   Agent,
+  type AgentExecutionOptions,
   type DelegationConfig,
   type MastraDBMessage,
   type ToolsInput,
@@ -14,15 +15,15 @@ import {
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { TaskSignalProvider } from "@mastra/core/signals";
 import type { AnyWorkflow } from "@mastra/core/workflows";
-import { setDefaultWorkAgent, workPollingSignals, workWebhookSignals } from "../harness";
+import { workPollingSignals, workWebhookSignals } from "../harness";
 import { getMemory } from "../memory";
 import {
   type GatewayLanguageModel,
   REQUEST_MODEL_CONTEXT_KEY,
   resolveDefaultLanguageModel,
 } from "../models";
+import { libraryIndexSignals } from "../rag/document/indexing";
 import {
-  CODE_MODE_EXTERNAL_TOOL_NAMES,
   codeMode,
   MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
@@ -56,67 +57,16 @@ import {
   buildGuardrailOutputProcessors,
   getGuardrailsRuntimeConfig,
 } from "./guardrails";
-import { applyModeToRules, MODE_ID_CONTEXT_KEY, resolveMode, type WorkMode } from "./modes";
 import {
-  applySessionGrants,
-  isFullyAllowed,
-  isToolApprovalRequired,
-  isToolDenied,
-  PERMISSION_RULES_CONTEXT_KEY,
-  type PermissionRules,
-  parsePermissionRules,
-  resolveToolPolicy,
-  SESSION_GRANTS_CONTEXT_KEY,
-} from "./permissions";
-import { buildInputPipeline, resolveSharedTools } from "./shared";
-import { workSubagents } from "./subagents";
+  buildInputPipeline,
+  isCodeModeAvailable,
+  resolveSharedTools,
+  workSubagents,
+} from "./subagents";
 
 export { workBrowser } from "./browser";
 
-/**
- * 本请求生效的模式与审批规则。
- */
-function resolveSessionPolicy(
-  rawModeId: unknown,
-  rawRules: unknown,
-  rawGrants?: unknown,
-): { mode: WorkMode; rules: PermissionRules } {
-  const mode = resolveMode(rawModeId);
-  return {
-    mode,
-    rules: applyModeToRules(applySessionGrants(parsePermissionRules(rawRules), rawGrants), mode),
-  };
-}
-
-/** 丢掉被策略拒绝的工具:用户或模式 deny 的工具,模型完全看不见 */
-function withoutDeniedTools(tools: ToolsInput, rules: PermissionRules): ToolsInput {
-  const allowed: ToolsInput = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if (!isToolDenied(rules, name)) allowed[name] = tool;
-  }
-  return allowed;
-}
-
-/** Allow-all must also override tool-local approval flags on dynamic tools (for example MCP). */
-function withoutToolLevelApprovals(tools: ToolsInput, rules: PermissionRules): ToolsInput {
-  if (!isFullyAllowed(rules)) return tools;
-  const output: ToolsInput = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    if (typeof tool !== "object" || tool === null || !("requireApproval" in tool)) {
-      output[name] = tool;
-      continue;
-    }
-    output[name] = { ...tool, requireApproval: false };
-  }
-  return output;
-}
-
-function isCodeModeAvailable(rules: PermissionRules): boolean {
-  if (isToolDenied(rules, "execute_typescript")) return false;
-  return CODE_MODE_EXTERNAL_TOOL_NAMES.every(
-    (toolName) => resolveToolPolicy(rules, toolName) === "allow",
-  );
-}
+export const SESSION_EXECUTION_CONTEXT_KEY = "mastra-work:execution-options";
 
 const BASE_INSTRUCTIONS = `You are MastraWork, a helpful personal AI work assistant.
 
@@ -268,7 +218,7 @@ function createWorkAgent(
   member?: AgentMemberDefinition,
   resourceScope?: string,
 ): Agent {
-  return new Agent({
+  return new Agent<string, ToolsInput, undefined>({
     id: member
       ? profileAgentRuntimeId(fixedProfile as AgentProfile, member.id, resourceScope)
       : fixedProfile
@@ -277,11 +227,6 @@ function createWorkAgent(
     name: member?.name ?? fixedProfile?.displayName ?? "MastraWork",
     ...(member ? { description: member.description || member.profession } : {}),
     instructions: async ({ requestContext }) => {
-      const { mode, rules } = resolveSessionPolicy(
-        requestContext?.get(MODE_ID_CONTEXT_KEY),
-        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-      );
       const selection = parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY));
       const profile =
         fixedProfile ??
@@ -297,8 +242,7 @@ function createWorkAgent(
           ]
         : [
             BASE_INSTRUCTIONS,
-            ...(isCodeModeAvailable(rules) ? [codeMode.instructions] : []),
-            mode.instructions,
+            ...(isCodeModeAvailable(requestContext) ? [codeMode.instructions] : []),
             profile.instructions,
           ].filter(Boolean);
       if (selection) {
@@ -356,24 +300,30 @@ function createWorkAgent(
         requestContext,
         ...(member ? { memoryScope: member.memoryScope } : {}),
       }),
-    skills: fixedProfile
-      ? async ({ requestContext }) =>
-          resolveManagedSkillPaths(
-            member?.skills ?? fixedProfile.skills,
-            requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-          )
-      : ({ requestContext }) => [
-          getManagedSkillsDirectory(
-            requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-          ),
-        ],
+    skills: async ({ requestContext }) => {
+      const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+      const profile =
+        fixedProfile ??
+        (await getAgentProfile(
+          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          resourceId,
+        ));
+      return profile.id === DEFAULT_AGENT_PROFILE_ID
+        ? [getManagedSkillsDirectory(resourceId)]
+        : resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
+    },
     inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
     outputProcessors: async ({ requestContext }) => buildGuardrailOutputProcessors(requestContext),
     errorProcessors: async ({ requestContext }) =>
       buildGuardrailErrorProcessors(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
       ),
-    signals: [new TaskSignalProvider(), workWebhookSignals, workPollingSignals],
+    signals: [
+      new TaskSignalProvider(),
+      workWebhookSignals,
+      workPollingSignals,
+      libraryIndexSignals,
+    ],
     agents: async ({ requestContext }) => {
       const profile =
         fixedProfile ??
@@ -394,6 +344,7 @@ function createWorkAgent(
       };
     },
     workflows: async ({ requestContext }): Promise<Record<string, AnyWorkflow>> => {
+      if (member) return {};
       const profile =
         fixedProfile ??
         (await getAgentProfile(
@@ -430,57 +381,24 @@ function createWorkAgent(
       );
     },
     tools: async ({ requestContext }) => {
-      const { mode, rules } = resolveSessionPolicy(
-        requestContext?.get(MODE_ID_CONTEXT_KEY),
-        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-      );
-      const sharedTools = await resolveSharedTools(requestContext);
-      if (!isCodeModeAvailable(rules)) delete sharedTools.execute_typescript;
-      const tools: ToolsInput = {
-        ...mode.additionalTools,
-        ...sharedTools,
-      };
-      const approvalSafeTools = withoutToolLevelApprovals(tools, rules);
-      const visibleTools = mode.availableTools
-        ? Object.fromEntries(
-            Object.entries(approvalSafeTools).filter(([name]) =>
-              mode.availableTools?.includes(name),
-            ),
-          )
-        : approvalSafeTools;
-      return withoutDeniedTools(visibleTools, rules);
+      const tools = await resolveSharedTools(requestContext);
+      if (!isCodeModeAvailable(requestContext)) delete tools.execute_typescript;
+      return tools;
     },
     defaultOptions: async ({ requestContext }) => {
-      const { rules } = resolveSessionPolicy(
-        requestContext?.get(MODE_ID_CONTEXT_KEY),
-        requestContext?.get(PERMISSION_RULES_CONTEXT_KEY),
-        requestContext?.get(SESSION_GRANTS_CONTEXT_KEY),
-      );
       const retries = getGuardrailsRuntimeConfig(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
       ).maxProcessorRetries;
-      const processorRetries = retries > 0 ? { maxProcessorRetries: retries } : {};
-      if (isFullyAllowed(rules)) {
-        return {
-          ...processorRetries,
-          delegation: WORK_DELEGATION,
-        };
-      }
+      const processorRetries = {
+        ...(requestContext?.get(SESSION_EXECUTION_CONTEXT_KEY) as
+          | AgentExecutionOptions<undefined>
+          | undefined),
+        ...(retries > 0 ? { maxProcessorRetries: retries } : {}),
+      };
       return {
         ...processorRetries,
         delegation: WORK_DELEGATION,
-        requireToolApproval: ({ toolName }: { toolName: string }) =>
-          isToolApprovalRequired(rules, toolName),
-        hooks: {
-          beforeToolCall: ({ toolName }: { toolName: string }) =>
-            isToolDenied(rules, toolName)
-              ? {
-                  proceed: false as const,
-                  output: `Tool "${toolName}" is blocked by the current session policy (mode or permission rules). Do not retry it; tell the user which capability you need and let them change the policy.`,
-                }
-              : undefined,
-        },
+        requireToolApproval: true,
       };
     },
   });
@@ -496,6 +414,3 @@ export const createProfileMemberAgent = (
 ): Agent => createWorkAgent(profile, member, resourceScope);
 
 setProfileAgentFactories({ profile: createProfileAgent, member: createProfileMemberAgent });
-
-/** 注册默认 Agent, 供 harness 会话层通过 registry 懒取(避免循环依赖) */
-setDefaultWorkAgent(mastraWorkAgent);

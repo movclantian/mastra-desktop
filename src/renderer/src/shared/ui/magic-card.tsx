@@ -50,15 +50,20 @@ function isOrbMode(props: MagicCardProps): props is MagicCardOrbProps {
 }
 
 export function MagicCard(props: MagicCardProps) {
+  // 混合模式与光晕基色跟随真实主题：在深色卡片上柔和提亮，在浅色底上提供温润微透的品牌色光泽，杜绝突兀的大黑斑
+  const { isDark } = useTheme();
+
   const {
     children,
     className,
     gradientSize = 200,
-    gradientColor = "#262626",
-    gradientOpacity = 0.8,
-    gradientFrom = "#9E7AFF",
-    gradientTo = "#FE8BBB",
+    gradientFrom = "var(--primary)",
+    gradientTo = "var(--accent)",
     mode = "gradient",
+    gradientColor = isDark
+      ? `color-mix(in srgb, ${gradientFrom} 15%, transparent)`
+      : `color-mix(in srgb, ${gradientFrom} 6%, transparent)`,
+    gradientOpacity = 1,
     ...restProps
   } = props;
 
@@ -68,11 +73,6 @@ export function MagicCard(props: MagicCardProps) {
   const glowSize = isOrbMode(props) ? (props.glowSize ?? 420) : 420;
   const glowBlur = isOrbMode(props) ? (props.glowBlur ?? 60) : 60;
   const glowOpacity = isOrbMode(props) ? (props.glowOpacity ?? 0.9) : 0.9;
-  // 混合模式必须跟随真实主题:screen 在深色底上提亮,multiply 在浅色底上压暗。
-  // 取项目自己的 ThemeProvider —— 此前用的是 next-themes,而本项目从未挂载
-  // 它的 Provider,theme 恒为 undefined,导致暗色主题下始终走 multiply,
-  // 探照灯在深色卡片上几乎不可见。
-  const { isDark } = useTheme();
 
   const mouseX = useMotionValue(-gradientSize);
   const mouseY = useMotionValue(-gradientSize);
@@ -173,16 +173,18 @@ export function MagicCard(props: MagicCardProps) {
       {mode === "gradient" && (
         <motion.div
           suppressHydrationWarning
-          className="pointer-events-none absolute inset-px z-30 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-100"
-          style={{
-            background: useMotionTemplate`
-              radial-gradient(${gradientSize}px circle at ${mouseX}px ${mouseY}px,
-                ${gradientColor},
-                transparent 100%
-              )
-            `,
-            opacity: gradientOpacity,
-          }}
+          className="pointer-events-none absolute inset-px z-30 rounded-[inherit] opacity-0 transition-opacity duration-300 group-hover:opacity-[var(--gradient-opacity,1)]"
+          style={
+            {
+              "--gradient-opacity": gradientOpacity,
+              background: useMotionTemplate`
+                radial-gradient(${gradientSize}px circle at ${mouseX}px ${mouseY}px,
+                  ${gradientColor},
+                  transparent 100%
+                )
+              `,
+            } as any
+          }
         />
       )}
 

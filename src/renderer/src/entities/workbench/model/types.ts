@@ -9,7 +9,7 @@ export interface WorkUser {
   email: string;
 }
 
-export const MAIN_VIEWS = ["chat", "agents", "skills", "library"] as const;
+export const MAIN_VIEWS = ["chat", "agents", "skills", "library", "settings"] as const;
 export type MainView = (typeof MAIN_VIEWS)[number];
 export const DEFAULT_MAIN_VIEW: MainView = "chat";
 
@@ -17,7 +17,7 @@ export interface ThreadMetadata {
   agentProfileId?: string;
   workspacePath?: string;
   workspaceExplicit?: boolean;
-  modeId?: string;
+  currentModeId?: string;
   permissionRules?: PermissionRules;
   modelSelectionByMode?: Record<
     string,
@@ -31,17 +31,6 @@ export interface ThreadMetadata {
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;
-  compactedAt?: string | null;
-  compaction?: {
-    summary: string;
-    extracted?: Record<string, unknown>;
-    extractionFailures?: Array<{ slug: string; error: string }>;
-    inputTokens?: number;
-    outputTokens?: number;
-    estimatedContextTokens?: number;
-    deletedMessages?: number;
-    compactedAt: string;
-  };
   contextUsage?: Record<string, unknown>;
   isWorking?: boolean;
   activeRunId?: string | null;
@@ -292,8 +281,6 @@ export interface WorkbenchValue {
   setSearchSelection: (selection: SearchSelection | null) => void;
   toolsConfig: ToolsConfig | null;
   refreshToolsConfig: () => Promise<void>;
-  settingsOpen: boolean;
-  setSettingsOpen: (open: boolean) => void;
   settingsSection: string;
   setSettingsSection: (section: string) => void;
   openSettings: (section?: string) => void;

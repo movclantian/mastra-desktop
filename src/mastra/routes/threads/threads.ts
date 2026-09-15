@@ -1,271 +1,178 @@
-/**
- * 线程 CRUD 路由。
- * 线程操作参考 docs/en/docs/memory/message-history.mdx
- * (listThreads / createThread / updateThread / deleteThread)。
- *
- * 多用户隔离:所有线程操作以 resourceId(用户 ID)为过滤条件;
- * 工作区绑定通过 thread.metadata.workspacePath 实现(首条消息时锁定)。
- */
-import { existsSync, statSync } from "node:fs";
-import { registerApiRoute } from "@mastra/core/server";
+/** Desktop thread lifecycle hooks around the built-in Memory API. */
+import type { MastraDBMessage } from "@mastra/core/agent";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
+import { z } from "zod";
 import { workBrowser } from "../../agents";
-import { ensureProfileAgentsRegistered, getAgentProfile } from "../../agents/custom";
 import { workError } from "../../errors";
+import { workPollingSignals, workWebhookSignals } from "../../harness";
+import { appStorage } from "../../storage";
 import { deleteThreadWorkspace } from "../../workspace";
-import { removeObservationalMemoryReferences } from "./compact";
-import { getOwnedThread, getWorkMemory, getWorkMemoryForThread } from "./shared";
-import type { ThreadMetadata } from "./types";
+import { workbenchMessages } from "./messages";
+import { getOwnedThread, getWorkMemoryForThread, normalizeChatHistoryMessages } from "./shared";
 
-function parsePage(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const page = Number(value);
-  if (!Number.isInteger(page) || page < 0) {
-    throw workError("VALIDATION_FAILED", { text: "page must be a non-negative integer" });
-  }
-  return page;
-}
-
-function parsePerPage(value: string | undefined): number | false | undefined {
-  if (value === undefined) return undefined;
-  if (value === "false") return false;
-  const perPage = Number(value);
-  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 500) {
-    throw workError("VALIDATION_FAILED", { text: "perPage must be 1..500 or false" });
-  }
-  return perPage;
-}
-
-function parseMetadata(value: string | undefined): Record<string, unknown> | undefined {
-  if (!value) return undefined;
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error();
-    return parsed as Record<string, unknown>;
-  } catch {
-    throw workError("VALIDATION_FAILED", { text: "metadata must be a JSON object" });
-  }
-}
-
-function toUiThread<T extends { title?: string }>(thread: T): T & { title: string } {
-  return { ...thread, title: thread.title?.trim() || "New Chat" };
-}
-
-// GET /work/threads?resourceId=xxx — 列出用户全部线程
-export const listThreadsRoute = registerApiRoute("/work/threads", {
-  method: "GET",
-  handler: async (c) => {
-    const resourceId = c.req.query("resourceId");
-    if (!resourceId) {
-      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
-    }
-    const memory = await getWorkMemory(c.get("requestContext"));
-    const orderField = c.req.query("orderBy");
-    const direction = c.req.query("direction");
-    if (direction && !orderField) {
-      throw workError("VALIDATION_FAILED", { text: "direction requires orderBy" });
-    }
-    if (orderField && orderField !== "createdAt" && orderField !== "updatedAt") {
-      throw workError("VALIDATION_FAILED", { text: "orderBy must be createdAt or updatedAt" });
-    }
-    if (direction && direction !== "ASC" && direction !== "DESC") {
-      throw workError("VALIDATION_FAILED", { text: "direction must be ASC or DESC" });
-    }
-    const page = parsePage(c.req.query("page"));
-    const perPage = parsePerPage(c.req.query("perPage"));
-    const result = await memory.listThreads({
-      filter: { resourceId, metadata: parseMetadata(c.req.query("metadata")) },
-      ...(page !== undefined ? { page } : {}),
-      ...(perPage !== undefined ? { perPage } : { perPage: false }),
-      ...(orderField
-        ? {
-            orderBy: {
-              field: orderField as "createdAt" | "updatedAt",
-              ...(direction ? { direction: direction as "ASC" | "DESC" } : {}),
-            },
-          }
-        : {}),
-    });
-    // Studio 直连/工作记忆等路径产生的线程 metadata 可能为 null,
-    // 统一归一化成对象并结合底层 agent 状态探测线程是否在后台活跃运行中
-    const threads = await Promise.all(
-      result.threads.map(async (thread) => {
-        const metadata = (thread.metadata ?? {}) as Record<string, unknown>;
-        const profile = await getAgentProfile(
-          typeof metadata.agentProfileId === "string" ? metadata.agentProfileId : undefined,
-          resourceId,
-        );
-        const agent = (await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId))
-          .profile;
-        const activeRunId = agent.getActiveThreadRunId({ resourceId, threadId: thread.id }) ?? null;
-        return {
-          ...toUiThread(thread),
-          metadata: {
-            ...metadata,
-            ...(activeRunId ? { activeRunId, isWorking: true } : {}),
-          },
-        };
-      }),
-    );
-    return c.json({ ...result, threads });
-  },
-});
-
-// POST /work/threads — 创建线程 { resourceId, threadId?, title?, metadata? }
-export const createThreadRoute = registerApiRoute("/work/threads", {
+// Automatic titles use Memory.generateTitle; this route handles an explicit user request.
+export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadId/generate-title", {
   method: "POST",
   handler: async (c) => {
-    const body = (await c.req.json()) as {
-      resourceId: string;
-      threadId?: string;
-      title?: string;
-      metadata?: ThreadMetadata;
-    };
-    if (!body.resourceId) {
-      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
-    }
-    const memory = await getWorkMemory(c.get("requestContext"));
-    if (body.metadata?.draft) {
-      // 新会话线程唯一:draft 线程必须"没有任何历史消息"才可复用,
-      // 只看 draft 标记会把发过消息但未改名的线程误判为新线程。
-      const { threads } = await memory.listThreads({
-        filter: { resourceId: body.resourceId },
-        perPage: false,
-      });
-      const candidates = threads.filter(
-        (thread) => thread.metadata?.draft === true && !thread.metadata?.archivedAt,
-      );
-      for (const candidate of candidates) {
-        const { messages } = await memory.recall({
-          threadId: candidate.id,
-          resourceId: body.resourceId,
-          perPage: false,
-        });
-        if ((messages ?? []).length === 0) {
-          // 草稿线程只是输入占位,不会继承目录归属。旧版本可能在发送前
-          // 提前写过 workspacePath,这里在复用空草稿时清掉它。
-          if (candidate.metadata?.workspacePath || candidate.metadata?.workspaceExplicit) {
-            const metadata = Object.fromEntries(
-              Object.entries(candidate.metadata ?? {}).filter(
-                ([key]) => key !== "workspacePath" && key !== "workspaceExplicit",
-              ),
-            );
-            const cleaned = await memory.updateThread({
-              id: candidate.id,
-              metadata,
-            });
-            return c.json({ thread: toUiThread(cleaned) });
-          }
-          return c.json({ thread: toUiThread(candidate) });
-        }
-        // 有消息的 draft 是残留标记(如自动生成标题失败/未触发改名),清除后继续
-        await memory.updateThread({
-          id: candidate.id,
-          metadata: { ...candidate.metadata, draft: false },
-        });
-      }
-    }
-    const thread = await memory.createThread({
-      threadId: body.threadId,
-      resourceId: body.resourceId,
-      ...(body.title?.trim() ? { title: body.title } : {}),
-      metadata: body.metadata ?? {},
-    });
-    return c.json({ thread: toUiThread(thread) }, 201);
-  },
-});
-
-// PATCH /work/threads/:threadId — 更新 { title?, metadata? }
-export const updateThreadRoute = registerApiRoute("/work/threads/:threadId", {
-  method: "PATCH",
-  handler: async (c) => {
+    const { resourceId } = z.object({ resourceId: z.string().min(1) }).parse(await c.req.json());
     const threadId = c.req.param("threadId");
-    const body = (await c.req.json()) as {
-      resourceId: string;
-      title?: string;
-      metadata?: ThreadMetadata;
-    };
-    if (!body.resourceId) {
-      throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
-    }
-    const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, body.resourceId);
-    const existing = await memory.getThreadById({ threadId });
-    if (!existing || existing.resourceId !== body.resourceId) {
-      throw workError("THREAD_NOT_FOUND");
-    }
-    if (body.metadata?.workspaceExplicit === true) {
-      const workspacePath = body.metadata.workspacePath;
-      let validDirectory = false;
-      try {
-        validDirectory =
-          typeof workspacePath === "string" &&
-          existsSync(workspacePath) &&
-          statSync(workspacePath).isDirectory();
-      } catch {
-        validDirectory = false;
-      }
-      if (!validDirectory) {
-        throw workError("WORKSPACE_PATH_REQUIRED");
-      }
-    }
-    const thread = await memory.updateThread({
-      id: threadId,
-      ...(body.title !== undefined ? { title: body.title } : {}),
-      metadata: { ...existing.metadata, ...body.metadata },
-    });
-    return c.json({ thread: toUiThread(thread) });
-  },
-});
-
-// DELETE /work/threads/:threadId — 删除线程
-export const deleteThreadRoute = registerApiRoute("/work/threads/:threadId", {
-  method: "DELETE",
-  handler: async (c) => {
-    const threadId = c.req.param("threadId");
-    const resourceId = c.req.query("resourceId");
-    if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
     const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
+    await memory.settled();
     const thread = await getOwnedThread(memory, threadId, resourceId);
-    if (!thread) {
-      throw workError("THREAD_NOT_FOUND");
-    }
-    const profile = await getAgentProfile(
-      (thread.metadata as ThreadMetadata)?.agentProfileId,
-      resourceId,
+    if (!thread) throw workError("THREAD_NOT_FOUND");
+    const recalled = await memory.recall({ threadId, resourceId, perPage: false });
+    const message = normalizeChatHistoryMessages(recalled.messages).find(
+      (entry) => entry.role === "user",
     );
-    const { profile: agent } = await ensureProfileAgentsRegistered(
-      c.get("mastra"),
-      profile,
-      resourceId,
-    );
-    await agent.abortThreadStream({ resourceId, threadId });
-    if (workBrowser.hasThreadSession(threadId)) {
-      await workBrowser.closeThreadSession(threadId);
-    }
-    // 物理清理本地工作区目录及释放 Workspace 内存实例
-    await deleteThreadWorkspace(threadId, thread.metadata, resourceId);
-
-    await memory.settled();
-    const { messages } = await memory.recall({
-      threadId,
-      resourceId,
-      perPage: false,
+    if (!message) throw workError("SESSION_INPUT_REQUIRED");
+    const text = message.content.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ");
+    const title = await c
+      .get("mastra")
+      .getAgentById("mastra-work-agent")
+      .generateTitleFromUserMessage({
+        message: text,
+        requestContext: c.get("requestContext"),
+      });
+    await memory.updateThread({
+      id: threadId,
+      title,
+      metadata: { ...thread.metadata, draft: false },
     });
-    let restoreObservations: (() => Promise<void>) | undefined;
-    try {
-      restoreObservations = await removeObservationalMemoryReferences(
-        memory,
-        threadId,
-        resourceId,
-        (messages ?? []).map((message) => message.id),
-      );
-      await memory.deleteThread(threadId);
-    } catch (error) {
-      await restoreObservations?.();
-      throw error;
-    }
-    // settled.mdx(@mastra/memory 1.27 起随 latest 发布):等待 deleteThread 触发的
-    // 后台向量清理与仍在进行的观察记忆写入落盘,响应返回即代表线程已彻底清理。
-    await memory.settled();
-    return c.json({ ok: true });
+    return c.json({ title });
   },
 });
+
+export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
+  const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+  if (c.req.path === "/api/memory/messages/delete" && c.req.method === "POST") {
+    if (!resourceId) throw workError("AUTH_REQUIRED");
+    const body = z
+      .object({
+        messageIds: z.union([
+          z.string().min(1),
+          z.object({ id: z.string().min(1) }),
+          z.array(z.union([z.string().min(1), z.object({ id: z.string().min(1) })])).min(1),
+        ]),
+      })
+      .parse(await c.req.raw.clone().json());
+    const ids = (Array.isArray(body.messageIds) ? body.messageIds : [body.messageIds]).map((id) =>
+      typeof id === "string" ? id : id.id,
+    );
+    const store = await appStorage.getStore("memory");
+    if (!store) throw new Error("Memory storage is not configured");
+    const { messages } = await store.listMessagesById({ messageIds: ids });
+    if (new Set(messages.map((message) => message.id)).size !== new Set(ids).size)
+      throw workError("MESSAGE_NOT_FOUND");
+    const memory = await getWorkMemoryForThread(c.get("requestContext"), "", resourceId);
+    const threadIds = [...new Set(messages.map((message) => message.threadId))];
+    for (const threadId of threadIds) {
+      if (!threadId || !(await getOwnedThread(memory, threadId, resourceId)))
+        throw workError("THREAD_NOT_FOUND");
+    }
+    await memory.settled();
+    for (const threadId of threadIds) {
+      if (!threadId) throw workError("THREAD_NOT_FOUND");
+      for (const agent of Object.values(c.get("mastra").listAgents())) {
+        await agent.abortThreadStream({ resourceId, threadId });
+      }
+      await memory.settled();
+      await (await memory.omEngine)?.clear(threadId, resourceId);
+    }
+    await next();
+    await memory.settled();
+    return;
+  }
+  const match = c.req.path.match(/^\/api\/memory\/threads(?:\/([^/]+))?(\/messages)?$/);
+  if (!match) return next();
+  if (!resourceId) throw workError("AUTH_REQUIRED");
+  const threadId = match[1] ? decodeURIComponent(match[1]) : undefined;
+  const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId ?? "", resourceId);
+  const thread = threadId ? await getOwnedThread(memory, threadId, resourceId) : undefined;
+  if (threadId && !thread) throw workError("THREAD_NOT_FOUND");
+  const include = c.req.query("include");
+  if (match[2] && include) {
+    const includes = z
+      .array(z.object({ id: z.string(), threadId: z.string().optional() }))
+      .parse(JSON.parse(include));
+    const store = await appStorage.getStore("memory");
+    if (!store) throw new Error("Memory storage is not configured");
+    const { messages } = await store.listMessagesById({
+      messageIds: includes.map((item) => item.id),
+    });
+    for (const id of new Set([
+      ...includes.map((item) => item.threadId).filter(Boolean),
+      ...messages.map((item) => item.threadId),
+    ])) {
+      if (!id || !(await getOwnedThread(memory, id, resourceId)))
+        throw workError("THREAD_NOT_FOUND");
+    }
+  }
+  if (!match[2] && (c.req.method === "POST" || c.req.method === "PATCH")) {
+    const body = z
+      .object({ metadata: z.record(z.string(), z.unknown()).optional() })
+      .parse(await c.req.raw.clone().json());
+    const metadata = body.metadata;
+    // Workspace identity is set by the first chat turn, never by generic CRUD.
+    for (const key of ["workspacePath", "workspaceExplicit"]) {
+      if (metadata && metadata[key] !== thread?.metadata?.[key]) {
+        throw workError("VALIDATION_FAILED", {
+          text: "Workspace binding is owned by the first chat turn",
+        });
+      }
+    }
+  }
+  if (threadId && c.req.method === "DELETE") {
+    for (const agent of Object.values(c.get("mastra").listAgents())) {
+      await agent.abortThreadStream({ resourceId, threadId });
+    }
+    await c
+      .get("mastra")
+      .getAgentController("workbench")
+      ?.deleteSession({
+        resourceId,
+        scope: JSON.stringify(["workbench", threadId]),
+      });
+    await memory.settled();
+  }
+  await next();
+  if (!c.res.ok) return;
+  if (match[2] && c.req.method === "GET") {
+    const payload = (await c.res.clone().json()) as { messages: MastraDBMessage[] };
+    c.res = c.json({ ...payload, uiMessages: workbenchMessages(payload.messages) });
+  }
+  if (threadId && thread && c.req.method === "DELETE") {
+    await memory.settled();
+    if (workBrowser.hasThreadSession(threadId)) await workBrowser.closeThreadSession(threadId);
+    await Promise.all([
+      workWebhookSignals.removeThread({ threadId, resourceId }),
+      workPollingSignals.removeThread({ threadId, resourceId }),
+      deleteThreadWorkspace(threadId, thread.metadata, resourceId),
+    ]);
+  }
+  if (!threadId && c.req.method === "GET") {
+    const payload = (await c.res.clone().json()) as {
+      threads: Array<{ id: string; metadata?: Record<string, unknown> }>;
+    };
+    const runs = Object.values(c.get("mastra").listAgents()).flatMap((agent) =>
+      agent.listActiveThreadRuns(),
+    );
+    const active = new Map(
+      runs.filter((run) => run.resourceId === resourceId).map((run) => [run.threadId, run.runId]),
+    );
+    c.res = c.json({
+      ...payload,
+      threads: payload.threads.map((item: { id: string; metadata?: Record<string, unknown> }) => ({
+        ...item,
+        metadata: {
+          ...item.metadata,
+          isWorking: active.has(item.id),
+          activeRunId: active.get(item.id) ?? null,
+        },
+      })),
+    });
+  }
+}

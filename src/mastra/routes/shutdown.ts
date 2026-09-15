@@ -57,3 +57,17 @@ export const shutdownRoute = registerApiRoute("/work/shutdown", {
     return c.json({ ok: true });
   },
 });
+
+/** Bind desktop process shutdown signals once at the composition root. */
+export function registerShutdownHandlers(): void {
+  process.on("message", (message: unknown) => {
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      (message as { type?: unknown }).type === "mastra-work:shutdown"
+    )
+      void requestShutdown();
+  });
+  process.on("SIGTERM", () => void requestShutdown());
+  process.on("SIGINT", () => void requestShutdown());
+}

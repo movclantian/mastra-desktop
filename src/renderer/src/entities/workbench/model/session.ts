@@ -26,27 +26,22 @@ export const WORK_MODE_META: Record<
     label: string;
     description: string;
     hint: string;
-    /** 该模式强制拒绝的类别(与 src/mastra/agents/modes.ts 的 deniedCategories 一致) */
-    deniedCategories: ToolCategory[];
   }
 > = {
   plan: {
     label: "计划",
     description: "先调研、写计划文件并提交审批",
     hint: "批准计划后自动切到「执行」",
-    deniedCategories: [],
   },
   build: {
     label: "执行",
     description: "执行已批准的计划,工具全量开放",
     hint: "写入与命令执行仍按下方审批策略逐次确认",
-    deniedCategories: [],
   },
   review: {
     label: "复查",
     description: "只读复查已有变更并报告问题",
     hint: "写入与执行类工具在本模式下被收回,模型改不了任何文件",
-    deniedCategories: ["edit", "execute"],
   },
 };
 

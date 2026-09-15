@@ -121,9 +121,7 @@ interface WorkbenchValue {
   /** 三个引擎的 API Key 配置(设置面板「工具」标签写入),null = 尚未取到 */
   toolsConfig: ToolsConfig | null;
   refreshToolsConfig: () => Promise<void>;
-  // 设置弹窗
-  settingsOpen: boolean;
-  setSettingsOpen: (open: boolean) => void;
+  // 设置页(独立视图)
   settingsSection: string;
   setSettingsSection: (section: string) => void;
   openSettings: (section?: string) => void;
@@ -189,13 +187,7 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
     email: "guest@example.com",
   };
   const userObj = currentUser;
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("themes");
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
-  const openSettings = useCallback((section?: string) => {
-    if (section) setSettingsSection(section);
-    setSettingsOpen(true);
-  }, []);
   const [busyThreadIds, setBusyThreadIds] = useState<Record<string, boolean>>({});
 
   const setThreadBusy = useCallback((threadId: string, busy: boolean) => {
@@ -221,6 +213,13 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
     setActiveAgentBusy(busy);
   }, []);
   const { activeView, setActiveView, activeSkill, setActiveSkill } = useNavigationState();
+  const openSettings = useCallback(
+    (section?: string) => {
+      if (section) setSettingsSection(section);
+      setActiveView("settings");
+    },
+    [setActiveView],
+  );
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
   const [pendingLibraryFiles, setPendingLibraryFiles] = useState<
     Array<FileUIPart & { byteSize?: number }>
@@ -238,7 +237,6 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
     resourceId: userObj.id,
     getThreadDefaults,
     setActiveView,
-    closeSettings,
   });
   const {
     threads,
@@ -385,8 +383,6 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
       setSearchSelection,
       toolsConfig,
       refreshToolsConfig,
-      settingsOpen,
-      setSettingsOpen,
       settingsSection,
       setSettingsSection,
       openSettings,
@@ -460,7 +456,6 @@ export function WorkbenchProvider({ children, user }: { children: ReactNode; use
       setSearchSelection,
       toolsConfig,
       refreshToolsConfig,
-      settingsOpen,
       settingsSection,
       openSettings,
       busyThreadIds,

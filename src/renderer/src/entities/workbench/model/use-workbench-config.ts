@@ -266,7 +266,7 @@ export function useWorkbenchConfig({
     if (!thread || agents.length === 0) return;
     adoptedThreadRef.current = activeThreadId;
     const metadata = thread.metadata;
-    if (metadata.modeId !== undefined) setModeIdState(parseModeId(metadata.modeId));
+    if (metadata.currentModeId !== undefined) setModeIdState(parseModeId(metadata.currentModeId));
     if (metadata.permissionRules !== undefined) {
       setPermissionRulesState(parsePermissionRules(metadata.permissionRules));
     }
@@ -274,7 +274,7 @@ export function useWorkbenchConfig({
       const profile = agents.find((item) => item.id === metadata.agentProfileId);
       if (profile) setAgentSelectionState(profile);
     }
-    const snapshot = metadata.modelSelectionByMode?.[parseModeId(metadata.modeId)];
+    const snapshot = metadata.modelSelectionByMode?.[parseModeId(metadata.currentModeId)];
     if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
       setModelSelectionState({
         providerId: snapshot.providerId,

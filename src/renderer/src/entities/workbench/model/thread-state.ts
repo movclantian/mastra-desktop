@@ -29,7 +29,6 @@ export interface UseThreadStateOptions {
     modelSelection: ModelSelection | null;
   };
   setActiveView: (view: MainView) => void;
-  closeSettings: () => void;
 }
 
 export interface ThreadState {
@@ -51,7 +50,7 @@ export interface ThreadState {
 }
 
 export function useThreadState(options: UseThreadStateOptions): ThreadState {
-  const { resourceId, getThreadDefaults, setActiveView, closeSettings } = options;
+  const { resourceId, getThreadDefaults, setActiveView } = options;
   const [threads, setThreads] = useState<WorkThread[]>([]);
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [activeThreadId, setActiveThreadIdState] = useState<string | null>(() =>
@@ -65,10 +64,9 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
   const selectThread = useCallback(
     (threadId: string | null) => {
       setActiveView("chat");
-      closeSettings();
       setActiveThreadIdState(threadId);
     },
-    [closeSettings, setActiveView],
+    [setActiveView],
   );
 
   useEffect(() => {
@@ -131,7 +129,7 @@ export function useThreadState(options: UseThreadStateOptions): ThreadState {
             metadata: {
               draft: !title || title === "New Chat",
               agentProfileId: agentSelection.id,
-              modeId,
+              currentModeId: modeId,
               permissionRules,
               ...(modelSelection ? { modelSelectionByMode: { [modeId]: modelSelection } } : {}),
             },

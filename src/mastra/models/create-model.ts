@@ -17,6 +17,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { GatewayLanguageModel } from "@mastra/core/llm";
+import { defaultSettingsMiddleware, wrapLanguageModel } from "ai";
 
 export type { GatewayLanguageModel };
 
@@ -80,10 +81,15 @@ export function createGatewayModel(options: {
   };
   switch (protocol) {
     case "anthropic":
-      return createAnthropic({
-        ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
-        ...common,
-      })(modelId);
+      return wrapLanguageModel({
+        model: createAnthropic({
+          ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
+          ...common,
+        })(modelId),
+        middleware: defaultSettingsMiddleware({
+          settings: { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
+        }),
+      });
     case "gemini":
       return createGoogleGenerativeAI({
         ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),

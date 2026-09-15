@@ -1,6 +1,6 @@
 /**
  * 线程业务 metadata 类型:工作区绑定 / 模式 / 权限规则 / 模型快照 /
- * 子代理(draft 标记见 createThreadRoute)。
+ * 子代理与草稿标记。
  */
 export type ThreadMetadata = {
   /** 当前线程使用的 Agent 或 Agent 团队 profile。缺省为 mastra-work-agent。 */
@@ -12,7 +12,7 @@ export type ThreadMetadata = {
    * 会话模式(plan / build / review,见 src/mastra/agents/modes.ts)。
    * 缺省视为默认模式;非法值由 resolveMode 回落,故不需要在路由层校验。
    */
-  modeId?: string;
+  currentModeId?: string;
   /**
    * 工具审批规则(官方 PermissionRules 形状,见 src/mastra/agents/permissions.ts)。
    * 缺省视为默认规则(只读放行、写/执行需批准)。
@@ -42,21 +42,5 @@ export type ThreadMetadata = {
   workspacePath?: string;
   /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录(两者都可浏览) */
   workspaceExplicit?: boolean;
-  /** 手动压缩上下文完成时间(真压缩:折叠消息已删除并替换为摘要消息) */
-  compactedAt?: string | null;
-  /** 最近一次压缩详情(摘要 + token 统计,由 summarize 路由写入,前端 Marker 点击回看) */
-  compaction?: {
-    summary: string;
-    extracted?: Record<string, unknown>;
-    extractionFailures?: Array<{ slug: string; error: string }>;
-    inputTokens?: number;
-    outputTokens?: number;
-    estimatedContextTokens?: number;
-    deletedMessages?: number;
-    compactedAt: string;
-    compactionId?: string;
-    windowStart?: string;
-    windowEnd?: string;
-  };
   contextUsage?: Record<string, unknown>;
 };

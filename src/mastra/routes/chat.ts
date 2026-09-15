@@ -1,42 +1,32 @@
 /**
  * 工作台聊天主路由(POST /chat/:agentId)。
  * 官方文档:docs/en/reference/ai-sdk/chat-route.mdx(body 结构 messages + memory)、
- * docs/en/reference/ai-sdk/handle-chat-stream.mdx(handleChatStream / toAISdkStream)。
+ * docs/en/reference/ai-sdk/to-ai-sdk-stream.mdx。
  * 职责:解析请求级上下文(模型 / 检索引擎 / 附件预算 / 技能),准备线程会话
  * (工作区绑定 / 模式跃迁 / 模型快照,见 prepareThreadSession),再按运行形态
- * 分流 —— harness session 订阅流(新回合 / steer)或官方 handleChatStream。
+ * 由官方 Session 执行，并通过 toAISdkStream 输出 AI SDK v7 流。
  */
 import { existsSync, statSync } from "node:fs";
-import { handleChatStream, toAISdkStream } from "@mastra/ai-sdk";
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
-import type {
-  AgentExecutionOptions,
-  AgentMessageInput,
-  AgentSignalContents,
-  AgentThreadSubscription,
-  MastraLanguageModel,
-} from "@mastra/core/agent";
+import type { AgentExecutionOptions, AgentSignal, MastraLanguageModel } from "@mastra/core/agent";
 import type { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import type { MastraModelOutput } from "@mastra/core/stream";
 import type { Memory } from "@mastra/memory";
 import {
   createUIMessageStreamResponse,
   type LanguageModelUsage,
-  type TextStreamPart,
-  type ToolSet,
+  safeValidateUIMessages,
   type UIMessage,
 } from "ai";
-import { SKILL_NAMES_CONTEXT_KEY } from "../agents";
+import { z } from "zod";
+import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   ensureProfileAgentsRegistered,
   getAgentProfile,
 } from "../agents/custom";
-import { MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
-import { PERMISSION_RULES_CONTEXT_KEY } from "../agents/permissions";
+import { resolveMode } from "../agents/modes";
 import { workError } from "../errors";
-import { isTerminalAgentChunk, workSessionHost } from "../harness";
 import {
   defaultModelFamily,
   REQUEST_MODEL_CONTEXT_KEY,
@@ -53,6 +43,7 @@ import {
   LIBRARY_THREAD_CONTEXT_KEY,
   searchLibrary,
 } from "../rag";
+import { appStorage } from "../storage";
 import {
   MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
@@ -67,9 +58,10 @@ import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
+import { abortWorkbenchSession, getWorkbenchSession, streamWorkbenchSession } from "./session";
 import { getWorkMemory } from "./threads";
-import { removeObservationalMemoryReferences } from "./threads/compact";
 import {
+  deleteThreadMessages,
   getOwnedThread,
   getWorkMemoryForThread,
   normalizeChatHistoryMessages,
@@ -137,14 +129,10 @@ async function truncateHistoryForRewrite(options: {
     resourceId: options.resourceId,
     perPage: false,
   });
-  const messages = recalled.messages ?? [];
+  const messages = normalizeChatHistoryMessages(recalled.messages ?? []);
   const targetIndex = messages.findIndex((message) => message.id === options.messageId);
   const target = targetIndex >= 0 ? messages[targetIndex] : undefined;
   if (!target) throw workError("MESSAGE_NOT_FOUND");
-  // AI SDK uses the last assistant message id when sendMessage(undefined)
-  // submits an approval response. That is a native approval resume, not a
-  // user edit, so its persisted history must remain untouched.
-  if (options.trigger === "submit-message" && target.role === "assistant") return;
   if (
     (options.trigger === "regenerate-message" && target.role !== "assistant") ||
     (options.trigger === "submit-message" && target.role !== "user")
@@ -152,52 +140,13 @@ async function truncateHistoryForRewrite(options: {
     throw workError("MESSAGE_NOT_FOUND");
   }
 
-  const startIndex = options.trigger === "regenerate-message" ? targetIndex : targetIndex + 1;
-  const messageIds = messages.slice(startIndex).map((message) => message.id);
+  // Remove the edited user too: its replacement must invalidate derived OM even
+  // when no assistant reply was saved. Include signals after the rewrite boundary.
+  const startIndex = recalled.messages.findIndex((message) => message.id === options.messageId);
+  const messageIds = recalled.messages.slice(startIndex).map((message) => message.id);
   if (messageIds.length === 0) return;
 
-  await options.memory.settled();
-  let restoreObservations: (() => Promise<void>) | undefined;
-  try {
-    restoreObservations = await removeObservationalMemoryReferences(
-      options.memory,
-      options.threadId,
-      options.resourceId,
-      messageIds,
-    );
-    await options.memory.deleteMessages(messageIds);
-  } catch (error) {
-    await restoreObservations?.();
-    throw error;
-  }
-  await options.memory.settled();
-}
-
-function userMessageInput(message: WorkUIMessage): AgentMessageInput | undefined {
-  type AgentMessageContents = Exclude<AgentSignalContents, string>;
-  const contents = message.parts.reduce<AgentMessageContents>((result, part) => {
-    if (part.type === "text" && part.text.trim()) {
-      result.push({ type: "text", text: part.text });
-      return result;
-    }
-    if (part.type !== "file") return result;
-    try {
-      result.push({
-        type: "file",
-        data: new URL(part.url),
-        mediaType: part.mediaType,
-        ...(part.filename ? { filename: part.filename } : {}),
-      });
-    } catch {
-      return result;
-    }
-    return result;
-  }, []);
-  if (contents.length === 0) return undefined;
-  return {
-    contents,
-    ...(message.metadata ? { metadata: message.metadata as Record<string, unknown> } : {}),
-  };
+  await deleteThreadMessages(options.memory, options.threadId, options.resourceId, messageIds);
 }
 
 async function normalizeIncrementalMessages(options: {
@@ -207,23 +156,22 @@ async function normalizeIncrementalMessages(options: {
   messages: WorkUIMessage[];
   trigger?: unknown;
   messageId?: unknown;
-  runId?: unknown;
-  toolCallId?: unknown;
-  resumeData?: unknown;
+  isResume: boolean;
 }): Promise<WorkUIMessage[]> {
   if (!Array.isArray(options.messages)) {
     throw workError("VALIDATION_FAILED", { text: "messages must be an array" });
   }
-  const persisted = await options.memory.recall({
+  // The Agent's persisted suspended run validates resumes; client history is
+  // neither needed nor trusted (including recovery before history has loaded).
+  if (options.isResume) return [];
+  await options.memory.settled();
+  const recalled = await options.memory.recall({
     threadId: options.threadId,
     resourceId: options.resourceId,
     perPage: false,
   });
+  const persisted = { messages: normalizeChatHistoryMessages(recalled.messages ?? []) };
   const persistedIds = new Set((persisted.messages ?? []).map((message) => message.id));
-  const persistedChatMessages = toAISdkMessages(
-    normalizeChatHistoryMessages(persisted.messages ?? []),
-    { version: "v7" },
-  ) as WorkUIMessage[];
   const unique = new Map<string, WorkUIMessage>();
   for (const message of options.messages) {
     if (!message || typeof message.id !== "string" || !message.id.trim()) {
@@ -237,6 +185,9 @@ async function normalizeIncrementalMessages(options: {
 
   const trigger = options.trigger;
   const targetId = typeof options.messageId === "string" ? options.messageId : undefined;
+  if (trigger === "regenerate-message" && !targetId) {
+    throw workError("VALIDATION_FAILED", { text: "Regeneration requires a messageId" });
+  }
   if (trigger === "regenerate-message" && targetId) {
     // AI SDK removes the target assistant from the request before sending it.
     // Resolve it from Memory and use the preceding persisted user turn as the
@@ -266,36 +217,24 @@ async function normalizeIncrementalMessages(options: {
     return [canonicalUser];
   }
 
-  if (trigger === "submit-message" && targetId && !persistedIds.has(targetId)) {
-    throw workError("MESSAGE_NOT_FOUND");
+  if (trigger === "submit-message" && targetId) {
+    const target = persisted.messages.find((message) => message.id === targetId);
+    if (target?.role !== "user") throw workError("MESSAGE_NOT_FOUND");
+    const replacement = unique.get(targetId);
+    if (replacement?.role !== "user" || options.messages.at(-1)?.id !== targetId) {
+      throw workError("VALIDATION_FAILED", {
+        text: "An edit must end with the replacement user message",
+      });
+    }
+    if (options.messages.some((message) => !persistedIds.has(message.id))) {
+      throw workError("VALIDATION_FAILED", {
+        text: "An edit cannot also submit a new message",
+      });
+    }
+    return [replacement];
   }
 
   const current = options.messages.filter((message) => !persistedIds.has(message.id));
-  if (options.resumeData !== undefined) {
-    if (current.length > 0) {
-      throw workError("VALIDATION_FAILED", {
-        text: "Tool resume responses may only reference persisted messages",
-      });
-    }
-    const runId = typeof options.runId === "string" ? options.runId.trim() : "";
-    const toolCallId = typeof options.toolCallId === "string" ? options.toolCallId.trim() : "";
-    if (!runId || !toolCallId) {
-      throw workError("VALIDATION_FAILED", {
-        text: "runId and toolCallId are required for tool resume responses",
-      });
-    }
-    const latest = options.messages.at(-1);
-    if (!latest || !persistedIds.has(latest.id) || latest.role !== "assistant") {
-      throw workError("VALIDATION_FAILED", {
-        text: "A persisted tool interaction message is required",
-      });
-    }
-    const persistedLatest = persistedChatMessages.find((message) => message.id === latest.id);
-    if (!persistedLatest) {
-      throw workError("MESSAGE_NOT_FOUND");
-    }
-    return [persistedLatest];
-  }
 
   // 未落库的消息一律只能是用户回合:客户端伪造的助手历史到此为止,永远进不了
   // Memory。多于一条则取最后一条 —— 上一轮生成失败(模型报错 / 断流)时 AI SDK
@@ -306,52 +245,17 @@ async function normalizeIncrementalMessages(options: {
     throw workError("VALIDATION_FAILED", { text: "The new message must be a user message" });
   }
   const newestUser = current.at(-1);
-  if (newestUser) return [newestUser];
-
-  // Edits reuse the persisted user message id; send only the replacement to the run.
-  if (trigger === "submit-message" && targetId) {
-    const replacement = unique.get(targetId);
-    if (replacement?.role === "user") return [replacement];
-  }
-
-  // Native approval responses reuse the persisted assistant row. The request
-  // target came from listSuspendedRuns(); Mastra's handleChatStream owns the
-  // UI-message approval conversion and resume operation.
-  const latest = options.messages.at(-1);
-  const nativeApprovalTarget =
-    typeof options.runId === "string" &&
-    options.runId.trim() &&
-    typeof options.toolCallId === "string" &&
-    options.toolCallId.trim();
-  if (latest && persistedIds.has(latest.id) && nativeApprovalTarget) {
-    return [latest];
+  if (newestUser) {
+    const store = await appStorage.getStore("memory");
+    if (!store) throw new Error("Memory storage is not configured");
+    const { messages } = await store.listMessagesById({ messageIds: [newestUser.id] });
+    if (messages.length) {
+      throw workError("VALIDATION_FAILED", { text: "Message id is already in use" });
+    }
+    return [newestUser];
   }
 
   throw workError("VALIDATION_FAILED", { text: "A new user message is required" });
-}
-
-function subscribedAgentStream(
-  subscription: AgentThreadSubscription,
-  targetRunId: string,
-  onClose: () => void,
-) {
-  return new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const chunk of subscription.stream) {
-          if ((chunk as { runId?: unknown }).runId !== targetRunId) continue;
-          controller.enqueue(chunk);
-          if (isTerminalAgentChunk(chunk)) break;
-        }
-        controller.close();
-      } catch (error) {
-        controller.error(error);
-      } finally {
-        onClose();
-      }
-    },
-    cancel: onClose,
-  });
 }
 
 const TASK_TOOL_NAMES = new Set(["task_write", "task_update", "task_complete", "task_check"]);
@@ -413,7 +317,7 @@ function dataChunk<C>(type: string, id: string, data: unknown): C {
  * 不会自动成为 UI data part。追加一个轻量快照,
  * 让输入区能在同一轮流式响应中立即刷新,同时仍保留普通 tool part 的持久化。
  *
- * 对 chunk 类型泛型化(而不是写死成某个具体 chunk 类型):handleChatStream 的
+ * 对 chunk 类型泛型化(而不是写死成某个具体 chunk 类型):toAISdkStream 的
  * v7 重载返回的是它自己内置的那份 AI SDK v7 类型副本,与我们从 `ai` 导入的
  * 同名类型并非同一处声明,写死会在这里被判为不兼容;泛型让调用点的真实类型
  * 原样贯穿,下游读 messageMetadata.usage 也就还有类型。
@@ -564,14 +468,11 @@ async function prepareThreadSession(options: {
   resourceId: string;
   requestedWorkspacePath?: string;
   modelSnapshot?: NonNullable<ThreadMetadata["modelSelectionByMode"]>[string];
-  planApproved: boolean;
   agentProfileId?: string;
   requestContext: RequestContext;
 }): Promise<
   | {
       workspacePath?: string;
-      modeId: string;
-      permissionRules: unknown;
       agentProfileId: string;
     }
   | undefined
@@ -592,7 +493,7 @@ async function prepareThreadSession(options: {
   if (metadata.agentProfileId !== profile.id && options.agentProfileId)
     patch.agentProfileId = profile.id;
 
-  const workspaceEnabled = isWorkspaceEnabled();
+  const workspaceEnabled = isWorkspaceEnabled(options.resourceId);
   let workspacePath = workspaceEnabled ? metadata.workspacePath : undefined;
   if (workspaceEnabled && !workspacePath) {
     const requested = options.requestedWorkspacePath;
@@ -600,10 +501,10 @@ async function prepareThreadSession(options: {
       workspacePath = requested;
       patch.workspacePath = requested;
       patch.workspaceExplicit = true;
-      await addRecentWorkspace(requested);
+      await addRecentWorkspace(requested, options.resourceId);
     } else {
       // 隐式绑定:使用线程专属默认目录,同样作为用户可浏览的工作区
-      const implicitPath = implicitThreadWorkspacePath(options.threadId);
+      const implicitPath = implicitThreadWorkspacePath(options.threadId, options.resourceId);
       ensureDirectory(implicitPath);
       workspacePath = implicitPath;
       patch.workspacePath = implicitPath;
@@ -611,12 +512,7 @@ async function prepareThreadSession(options: {
     }
   }
 
-  const mode = resolveMode(metadata.modeId);
-  let modeId: string = mode.id;
-  if (options.planApproved && mode.transitionsTo) {
-    modeId = mode.transitionsTo;
-    patch.modeId = modeId;
-  }
+  const modeId = resolveMode(metadata.currentModeId).id;
 
   const snapshot = options.modelSnapshot;
   if (snapshot) {
@@ -643,8 +539,6 @@ async function prepareThreadSession(options: {
 
   return {
     workspacePath,
-    modeId,
-    permissionRules: metadata.permissionRules,
     agentProfileId: profile.id,
   };
 }
@@ -664,35 +558,62 @@ function parseModelSnapshot(
   };
 }
 
-/** submit_plan 的批准判定(resume 形状见 docs/en/reference/tools/submit-plan-tool.mdx) */
-function isPlanApproval(resumeData: unknown): boolean {
-  if (typeof resumeData !== "object" || resumeData === null) return false;
-  return (resumeData as { action?: unknown }).action === "approved";
-}
-
 export const workChatRoute = registerApiRoute("/chat/:agentId", {
   method: "POST",
   handler: async (c) => {
-    // chatRoute() is the convenience wrapper around this same adapter. We keep
-    // the lower-level handler here because the workbench must prepare request
-    // context and transform UI data chunks per thread before returning the
-    // standard AI SDK response; the stream protocol itself remains official.
     // body 结构参考 docs/en/reference/ai-sdk/chat-route.mdx
     // (messages + memory: { thread, resource })
-    const body = (await c.req.json()) as {
-      messages: WorkUIMessage[];
-      // AgentMemoryOption.thread 必填(string 或 { id } 对象)
-      memory?: { thread: string; resource?: string };
-      /** 首条消息时用户显式选定的工作区目录(promptInput 选择器,发送后锁定) */
-      workspacePath?: string;
-      attachmentTokenBudget?: number;
-      attachmentCapabilities?: { vision?: boolean; audio?: boolean };
-      skillNames?: string[];
-      sessionScope?: string;
-      sessionAction?: "steer";
-      agentProfileId?: string;
-      [key: string]: unknown;
-    };
+    const parsed = z
+      .object({
+        messages: z.unknown(),
+        memory: z.object({ thread: z.string().trim().min(1), resource: z.string().optional() }),
+        workspacePath: z.string().optional(),
+        attachmentTokenBudget: z.number().finite().nonnegative().optional(),
+        attachmentCapabilities: z
+          .object({ vision: z.boolean().optional(), audio: z.boolean().optional() })
+          .optional(),
+        skillNames: z.array(z.string()).max(4).optional(),
+        sessionScope: z.string().optional(),
+        sessionAction: z.literal("steer").optional(),
+        agentProfileId: z.string().optional(),
+        trigger: z.enum(["submit-message", "regenerate-message"]).optional(),
+        messageId: z.string().min(1).optional(),
+        runId: z.string().trim().min(1).optional(),
+        toolCallId: z.string().trim().min(1).optional(),
+        approval: z.object({ approved: z.boolean(), reason: z.string().optional() }).optional(),
+        resumeData: z.unknown().optional(),
+        model: z.unknown().optional(),
+        modelSelection: z.unknown().optional(),
+        modelSettings: z.record(z.string(), z.unknown()).optional(),
+        providerOptions: z.record(z.string(), z.unknown()).optional(),
+        webSearch: z.unknown().optional(),
+        versions: z.unknown().optional(),
+        scorers: z.unknown().optional(),
+        isTaskComplete: z.unknown().optional(),
+      })
+      .safeParse(await c.req.json());
+    if (!parsed.success)
+      throw workError("VALIDATION_FAILED", {
+        text: "Invalid chat request",
+        details: { issues: parsed.error.issues },
+      });
+    const validatedMessages = await safeValidateUIMessages<WorkUIMessage>({
+      messages: parsed.data.messages,
+    });
+    if (!validatedMessages.success)
+      throw workError("VALIDATION_FAILED", { text: validatedMessages.error.message });
+    const body = { ...parsed.data, messages: validatedMessages.data };
+    const isResume = body.approval !== undefined || body.resumeData !== undefined;
+    if (
+      isResume !== Boolean(body.runId && body.toolCallId) ||
+      Boolean(body.runId) !== Boolean(body.toolCallId) ||
+      (body.approval !== undefined && body.resumeData !== undefined) ||
+      (isResume && (body.trigger === "regenerate-message" || body.sessionAction))
+    ) {
+      throw workError("VALIDATION_FAILED", {
+        text: "Resume requires exactly one response and a run/tool-call pair",
+      });
+    }
     const authenticatedUser = c.get("requestContext")?.get("user") as { id?: unknown } | undefined;
     const authenticatedResourceId =
       typeof authenticatedUser?.id === "string" ? authenticatedUser.id : undefined;
@@ -701,6 +622,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     if (!body.memory?.thread) {
       throw workError("VALIDATION_FAILED", { text: "memory.thread is required" });
     }
+    const threadId = body.memory.thread;
     body.memory.resource = authenticatedResourceId;
     if (
       !(await getOwnedThread(
@@ -723,16 +645,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       messages: body.messages,
       trigger: body.trigger,
       messageId: body.messageId,
-      runId: body.runId,
-      toolCallId: body.toolCallId,
-      resumeData: body.resumeData,
-    });
-    await truncateHistoryForRewrite({
-      memory: requestMemory,
-      threadId: body.memory.thread,
-      resourceId: authenticatedResourceId,
-      trigger: body.trigger,
-      messageId: body.messageId,
+      isResume,
     });
     const mastra = c.get("mastra");
     if (body.memory?.resource) {
@@ -790,9 +703,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const requestedAgentProfileId =
       typeof rawAgentProfileId === "string" ? rawAgentProfileId : undefined;
     let profile = await getAgentProfile(requestedAgentProfileId, authenticatedResourceId);
-    let profileAgent = (
-      await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId)
-    ).profile;
+    await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId);
+    const profileAgent = mastra.getAgentById("mastra-work-agent");
     requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     requestContext.set(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY, {
       vision: attachmentCapabilities?.vision === true,
@@ -832,15 +744,12 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         resourceId: authenticatedResourceId,
         requestedWorkspacePath: rawWorkspacePath,
         modelSnapshot: parseModelSnapshot(rawModelSelection),
-        planApproved: isPlanApproval(body.resumeData),
         agentProfileId: requestedAgentProfileId,
         requestContext,
       });
       if (session) {
         profile = await getAgentProfile(session.agentProfileId, authenticatedResourceId);
-        profileAgent = (
-          await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId)
-        ).profile;
+        await ensureProfileAgentsRegistered(mastra, profile, authenticatedResourceId);
         if (session.workspacePath) {
           requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, session.workspacePath);
         }
@@ -848,19 +757,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         if (body.memory.resource) {
           requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, body.memory.resource);
         }
-        requestContext.set(MODE_ID_CONTEXT_KEY, session.modeId);
-        if (session.permissionRules !== undefined) {
-          requestContext.set(PERMISSION_RULES_CONTEXT_KEY, session.permissionRules);
-        }
         requestContext.set(AGENT_PROFILE_CONTEXT_KEY, session.agentProfileId);
-        if (body.memory.resource) {
-          const _liveSession = workSessionHost.getOrCreate({
-            resourceId: body.memory.resource,
-            scope: typeof body.sessionScope === "string" ? body.sessionScope : undefined,
-            threadId: body.memory.thread,
-            agent: profileAgent,
-          });
-        }
       }
     }
     const explicitResumeTarget =
@@ -949,20 +846,10 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     }
     // version:'v7' 让流与消息直接使用 AI SDK v7 类型,路由边界零类型转换
     // (docs/en/reference/ai-sdk/handle-chat-stream.mdx)。
-    const handlerOptions = {
-      mastra,
-      agentId: profileAgent.id,
-      version: "v7" as const,
-      sendReasoning: true,
-      // params 里没有 context 字段,本轮资料库片段只能走 defaultOptions(AgentExecutionOptions)
-      ...(libraryContext.length > 0 ? { defaultOptions: { context: libraryContext } } : {}),
-      messageMetadata: ({ part }: { part: TextStreamPart<ToolSet> }) =>
-        part.type === "finish" ? { usage: part.totalUsage } : undefined,
-    };
     // Responses 网关的推理只回加密块(reasoningEncryptedContent),请求
     // reasoningSummary 让上游输出明文摘要 —— 前端展示与 Memory 落库才有推理文本。
     // 与 body 自带的 providerOptions(如 max effort 的 reasoningEffort)合并且不覆盖。
-    const reasoningSummary = await usesOpenAIResponses(rawModel);
+    const reasoningSummary = await usesOpenAIResponses(rawModel, authenticatedResourceId);
     const rawProviderOptions =
       typeof bodyRest.providerOptions === "object" && bodyRest.providerOptions !== null
         ? (bodyRest.providerOptions as Record<string, unknown>)
@@ -978,69 +865,34 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         ? { promptCacheKey: body.memory.thread }
         : {}),
     };
-    const params = {
-      ...bodyRest,
-      ...(model !== undefined ? { model } : {}),
-      ...(resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools !== undefined
-        ? { activeTools: resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).availableTools }
-        : {}),
-      ...(Object.keys(openaiProviderOptions).length > 0
-        ? { providerOptions: { ...rawProviderOptions, openai: openaiProviderOptions } }
-        : {}),
-      messages: body.messages,
-      requestContext,
-      untilIdle: true,
-    };
-    const sessionExecutionOptions =
-      body.memory?.thread && body.memory.resource
-        ? ({
-            ...(params.activeTools ? { activeTools: params.activeTools } : {}),
-            ...(typeof rawModelSettings === "object" && rawModelSettings !== null
-              ? { modelSettings: rawModelSettings as AgentExecutionOptions["modelSettings"] }
-              : {}),
-            ...(typeof params.providerOptions === "object" && params.providerOptions !== null
-              ? {
-                  providerOptions:
-                    params.providerOptions as AgentExecutionOptions["providerOptions"],
-                }
-              : {}),
-            ...((bodyRest as Record<string, unknown>).versions !== undefined
-              ? {
-                  versions: (bodyRest as Record<string, unknown>)
-                    .versions as AgentExecutionOptions["versions"],
-                }
-              : {}),
-            ...((bodyRest as Record<string, unknown>).scorers !== undefined
-              ? {
-                  scorers: (bodyRest as Record<string, unknown>)
-                    .scorers as AgentExecutionOptions["scorers"],
-                }
-              : {}),
-            ...((bodyRest as Record<string, unknown>).isTaskComplete !== undefined
-              ? {
-                  isTaskComplete: (bodyRest as Record<string, unknown>)
-                    .isTaskComplete as AgentExecutionOptions["isTaskComplete"],
-                }
-              : {}),
-            requestContext,
-            untilIdle: true,
-            memory: { thread: body.memory.thread, resource: body.memory.resource },
-          } satisfies AgentExecutionOptions)
-        : undefined;
-    if (sessionExecutionOptions && body.memory?.thread && body.memory.resource) {
-      workSessionHost.getOrCreate({
-        resourceId: body.memory.resource,
-        scope: sessionScope,
-        threadId: body.memory.thread,
-        agent: profileAgent,
-      });
+    requestContext.set(SESSION_EXECUTION_CONTEXT_KEY, {
+      context: libraryContext,
+      modelSettings: rawModelSettings,
+      providerOptions: { ...rawProviderOptions, openai: openaiProviderOptions },
+      ...(body.versions ? { versions: body.versions } : {}),
+      ...(body.scorers ? { scorers: body.scorers } : {}),
+      ...(body.isTaskComplete ? { isTaskComplete: body.isTaskComplete } : {}),
+    });
+    if (!isResume) {
+      const message = body.messages.at(-1);
+      if (
+        message?.role !== "user" ||
+        !message.parts.some(
+          (part) => (part.type === "text" && part.text.trim()) || part.type === "file",
+        )
+      ) {
+        throw workError("SESSION_INPUT_REQUIRED");
+      }
+      if (message.parts.some((part) => part.type !== "text" && part.type !== "file")) {
+        throw workError("VALIDATION_FAILED", { text: "User input must contain text or files" });
+      }
     }
-    // 资料库片段只属于当前这一轮,所以交给 sendMessage/steer 而不写进 setExecutionDefaults ——
-    // 会话默认值会被后续自动唤醒的 run 复用,那时旧检索结果已经是纯噪音。
-    const turnExecutionOptions =
-      sessionExecutionOptions && libraryContext.length > 0
-        ? ({ ...sessionExecutionOptions, context: libraryContext } satisfies AgentExecutionOptions)
-        : sessionExecutionOptions;
+    const controllerSession = await getWorkbenchSession(
+      c,
+      body.memory.thread,
+      authenticatedResourceId,
+      sessionScope,
+    );
     const librarySources = requestContext.get("libraryCitationSources") as
       | LibraryCitationSource[]
       | undefined;
@@ -1056,99 +908,104 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           );
         },
       });
-    if (sessionAction === "steer" && body.memory?.thread && body.memory.resource) {
-      const latestUser = [...body.messages].reverse().find((message) => message.role === "user");
-      const content = latestUser?.parts
-        .filter((part) => part.type === "text")
-        .map((part) => ("text" in part ? part.text : ""))
-        .join(" ")
-        .trim();
-      if (!latestUser || !content) {
-        throw workError("VALIDATION_FAILED", { text: "A text message is required" });
+    const action = async () => {
+      if (explicitResumeTarget) {
+        const { runs } = await profileAgent.listSuspendedRuns({
+          threadId: threadId,
+          resourceId: authenticatedResourceId,
+        });
+        const tool = runs
+          .find((run) => run.runId === explicitResumeTarget.runId)
+          ?.toolCalls.find((call) => call.toolCallId === explicitResumeTarget.toolCallId);
+        if (!tool)
+          throw workError("VALIDATION_FAILED", { text: "Tool interaction is no longer pending" });
+        if (tool.requiresApproval !== (body.approval !== undefined)) {
+          throw workError("VALIDATION_FAILED", {
+            text: "Response does not match the pending interaction type",
+          });
+        }
+        if (body.approval !== undefined) {
+          const approval = body.approval as { approved?: unknown; reason?: unknown };
+          if (typeof approval.approved !== "boolean") throw workError("VALIDATION_FAILED");
+          if (controllerSession.approval.isArmed()) {
+            controllerSession.respondToToolApproval({
+              toolCallId: tool.toolCallId,
+              decision: approval.approved ? "approve" : "decline",
+              requestContext,
+              declineContext:
+                typeof approval.reason === "string" ? { message: approval.reason } : undefined,
+            });
+            return;
+          }
+          controllerSession.run.setRunId({ runId: explicitResumeTarget.runId });
+          if (approval.approved) {
+            await controllerSession.approveToolCall({
+              toolCallId: tool.toolCallId,
+              requestContext,
+            });
+          } else {
+            await controllerSession.declineToolCall({
+              toolCallId: tool.toolCallId,
+              requestContext,
+              declineContext:
+                typeof approval.reason === "string" ? { message: approval.reason } : undefined,
+            });
+          }
+          return;
+        }
+        controllerSession.suspensions.register({
+          ...explicitResumeTarget,
+          toolName: tool.toolName ?? "",
+        });
+        await controllerSession.respondToToolSuspension({
+          toolCallId: tool.toolCallId,
+          resumeData: body.resumeData,
+          requestContext,
+        });
+        return;
       }
-      const session = workSessionHost.getOrCreate({
-        resourceId: body.memory.resource,
-        scope: sessionScope,
-        threadId: body.memory.thread,
-        agent: profileAgent,
-      });
-      // 客户端消息 id 即持久化 id(见 WorkSession 的 userSignal):下一次请求的
-      // 增量校验才能把这条插话认成已落库的历史,而不是又一条「本轮新消息」。
-      const signal = await session.steer(
-        {
-          contents: content,
-          ...(latestUser.metadata
-            ? { metadata: latestUser.metadata as Record<string, unknown> }
-            : {}),
+      const message = body.messages.at(-1);
+      if (message?.role !== "user") throw workError("SESSION_INPUT_REQUIRED");
+      if (sessionAction === "steer") await abortWorkbenchSession(controllerSession);
+      if (
+        body.messageId &&
+        (body.trigger === "submit-message" || body.trigger === "regenerate-message")
+      ) {
+        await abortWorkbenchSession(controllerSession);
+        await truncateHistoryForRewrite({
+          memory: requestMemory,
+          threadId,
+          resourceId: authenticatedResourceId,
+          trigger: body.trigger,
+          messageId: body.messageId,
+        });
+      }
+      const contents = message.parts.flatMap<Exclude<AgentSignal["contents"], string>[number]>(
+        (part) => {
+          if (part.type === "text") return [{ type: "text" as const, text: part.text }];
+          if (part.type === "file")
+            return [
+              {
+                type: "file" as const,
+                data: part.url,
+                mediaType: part.mediaType,
+                filename: part.filename,
+              },
+            ];
+          return [];
         },
-        turnExecutionOptions,
-        latestUser.id,
       );
-      const accepted = await signal.accepted;
-      if (accepted.action !== "wake") {
-        throw workError("SESSION_RUN_ACTIVE");
-      }
-      const stream = toAISdkStream(accepted.output, {
-        from: "agent",
-        version: "v7",
-        sendReasoning: true,
-        messageMetadata: ({ part }) =>
-          part.type === "finish" ? { usage: part.totalUsage } : undefined,
-      });
-      return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
-    }
-    const latestMessage = body.messages.at(-1);
-    const sessionMemory = body.memory;
-    const startsNewSessionTurn = Boolean(
-      body.trigger === "submit-message" &&
-        typeof body.messageId !== "string" &&
-        body.runId === undefined &&
-        body.resumeData === undefined &&
-        latestMessage?.role === "user" &&
-        sessionMemory?.thread &&
-        sessionMemory.resource,
+      await controllerSession.sendSignal(
+        { type: "user", id: message.id, contents, metadata: { ...message.metadata } },
+        { requestContext, requireDelivery: true },
+      ).accepted;
+    };
+    const stream = await streamWorkbenchSession(
+      c,
+      controllerSession,
+      action,
+      Boolean(explicitResumeTarget || body.messageId) || sessionAction === "steer",
     );
-    if (startsNewSessionTurn && latestMessage && sessionMemory?.thread && sessionMemory.resource) {
-      const input = userMessageInput(latestMessage);
-      if (!input)
-        throw workError("VALIDATION_FAILED", { text: "A text or file message is required" });
-      const session = workSessionHost.getOrCreate({
-        resourceId: sessionMemory.resource,
-        scope: sessionScope,
-        threadId: sessionMemory.thread,
-        agent: profileAgent,
-      });
-      const subscription = await session.subscribe(sessionMemory.thread);
-      // 落库沿用客户端消息 id(见 WorkSession 的 userSignal),否则前端本地的
-      // 这条用户消息在下一轮请求里会被增量校验判成新消息。
-      const signal = session.sendMessage(input, turnExecutionOptions, latestMessage.id);
-      const accepted = await signal.accepted;
-      if (!("runId" in accepted) || accepted.action === "blocked") {
-        session.releaseSubscription(subscription);
-        throw workError("SESSION_MESSAGE_REJECTED");
-      }
-      const fullStream = subscribedAgentStream(subscription, accepted.runId, () =>
-        session.releaseSubscription(subscription),
-      );
-      const stream = toAISdkStream({ fullStream } as unknown as MastraModelOutput, {
-        from: "agent",
-        version: "v7",
-        sendReasoning: true,
-        messageMetadata: ({ part }) =>
-          part.type === "finish" ? { usage: part.totalUsage } : undefined,
-      });
-      return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
-    }
-    // 刻意**不传** abortSignal: c.req.raw.signal —— 客户端断连(刷新窗口、切走)不等于
-    // 用户要求中止生成。不传之后:断连时下面的监控分支仍会把流读完,Agent 跑到结束并
-    // 由 Memory 落库,重新打开线程就能看到完整回复,长任务不会因为一次刷新白跑。
-    // 真正的「停止」走会话 abort 端点(Agent.abortThreadStream),
-    // 与 AI SDK 的 resumable-stream 指南同一分工:disconnect ≠ explicit stop。
-    // 不再配置 structuredOutput(jsonPromptInjection 会把报告 schema 注入提示词,
-    // 第三方网关模型会把它当正文打印在回复末尾);联网引用由检索工具输出直接
-    // 驱动(buildCitationEntries 的工具输出通路)。
-    const stream = await handleChatStream({ ...handlerOptions, params });
-
     return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
   },
 });

@@ -100,15 +100,14 @@ function normalizeProfile(
   raw: Partial<AgentProfile>,
   now = new Date().toISOString(),
 ): AgentProfile {
-  const { model: _obsoleteModel, ...profileFields } = raw as Partial<AgentProfile> & {
-    model?: unknown;
-  };
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
   const usedMemberIds = new Set<string>();
   return {
     ...DEFAULT_PROFILE,
-    ...profileFields,
+    type: raw.type === "team" ? "team" : "agent",
+    categoryId: raw.categoryId,
+    avatar: raw.avatar,
     id,
     name,
     displayName:
@@ -147,7 +146,7 @@ function normalizeProfile(
             };
           })
       : [],
-    workflow: normalizeWorkflow(raw.workflow),
+    workflow: raw.workflow === undefined ? undefined : agentWorkflowSchema.parse(raw.workflow),
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((item): item is string => typeof item === "string")
       : [],
@@ -160,115 +159,34 @@ function normalizeProfile(
   };
 }
 
-function normalizeWorkflow(value: unknown): AgentWorkflowDefinition | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  const usedStepIds = new Set<string>();
-  const steps: AgentWorkflowStep[] = Array.isArray(raw.steps)
-    ? raw.steps.flatMap((item, index) => {
-        if (!item || typeof item !== "object") return [];
-        const step = item as Record<string, unknown>;
-        const memberId = typeof step.memberId === "string" ? step.memberId.trim() : undefined;
-        const rawCondition =
-          typeof step.condition === "object" && step.condition !== null
-            ? (step.condition as Record<string, unknown>)
-            : undefined;
-        const rawBranch =
-          typeof step.branch === "object" && step.branch !== null
-            ? (step.branch as Record<string, unknown>)
-            : undefined;
-        const rawLoop =
-          typeof step.loop === "object" && step.loop !== null
-            ? (step.loop as Record<string, unknown>)
-            : undefined;
-        const rawApproval =
-          typeof step.approval === "object" && step.approval !== null
-            ? (step.approval as Record<string, unknown>)
-            : undefined;
-        const kind: AgentWorkflowStepKind =
-          step.kind === "approval" || step.kind === "branch" || step.kind === "loop"
-            ? step.kind
-            : "agent";
-        if ((kind === "agent" || kind === "loop") && !memberId) return [];
-        const baseId =
-          typeof step.id === "string" && step.id.trim() ? step.id.trim() : `step-${index + 1}`;
-        let id = baseId;
-        let suffix = 2;
-        while (usedStepIds.has(id)) id = `${baseId}-${suffix++}`;
-        usedStepIds.add(id);
-        return [
-          {
-            id,
-            ...(memberId ? { memberId } : {}),
-            kind,
-            ...(typeof step.prompt === "string" && step.prompt.trim()
-              ? { prompt: step.prompt.trim() }
-              : {}),
-            ...(typeof step.retries === "number" && Number.isFinite(step.retries)
-              ? { retries: Math.max(0, Math.min(5, Math.floor(step.retries))) }
-              : {}),
-            ...(rawCondition
-              ? {
-                  condition: {
-                    operator:
-                      rawCondition.operator === "equals" || rawCondition.operator === "not_contains"
-                        ? rawCondition.operator
-                        : "contains",
-                    value: typeof rawCondition.value === "string" ? rawCondition.value : "",
-                  },
-                }
-              : {}),
-            ...(kind === "branch" && rawBranch
-              ? {
-                  branch: {
-                    onTrueMemberId:
-                      typeof rawBranch.onTrueMemberId === "string" ? rawBranch.onTrueMemberId : "",
-                    onFalseMemberId:
-                      typeof rawBranch.onFalseMemberId === "string"
-                        ? rawBranch.onFalseMemberId
-                        : "",
-                  },
-                }
-              : {}),
-            ...(kind === "loop" && rawLoop
-              ? {
-                  loop: {
-                    mode:
-                      rawLoop.mode === "while" || rawLoop.mode === "foreach"
-                        ? rawLoop.mode
-                        : "until",
-                    maxIterations:
-                      typeof rawLoop.maxIterations === "number"
-                        ? Math.max(1, Math.min(20, Math.floor(rawLoop.maxIterations)))
-                        : 3,
-                    ...(typeof rawLoop.concurrency === "number"
-                      ? { concurrency: Math.max(1, Math.min(8, Math.floor(rawLoop.concurrency))) }
-                      : {}),
-                  },
-                }
-              : {}),
-            ...(kind === "approval" && rawApproval
-              ? {
-                  approval: {
-                    title: typeof rawApproval.title === "string" ? rawApproval.title : "人工审批",
-                    description:
-                      typeof rawApproval.description === "string"
-                        ? rawApproval.description
-                        : "请确认是否继续工作流。",
-                  },
-                }
-              : {}),
-          },
-        ];
-      })
-    : [];
-  if (steps.length === 0) return undefined;
-  const strategy =
-    raw.strategy === "handoff" || raw.strategy === "workflow" || raw.strategy === "council"
-      ? raw.strategy
-      : "supervisor";
-  return { strategy, steps, synthesis: raw.synthesis !== false };
-}
+export const agentWorkflowSchema = z.object({
+  strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
+  steps: z.array(
+    z.object({
+      id: z.string(),
+      memberId: z.string().optional(),
+      kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
+      prompt: z.string().optional(),
+      retries: z.number().int().min(0).max(5).optional(),
+      condition: z
+        .object({
+          operator: z.enum(["contains", "equals", "not_contains"]),
+          value: z.string(),
+        })
+        .optional(),
+      branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
+      loop: z
+        .object({
+          mode: z.enum(["until", "while", "foreach"]),
+          maxIterations: z.number().int().min(1).max(20),
+          concurrency: z.number().int().min(1).max(8).optional(),
+        })
+        .optional(),
+      approval: z.object({ title: z.string(), description: z.string() }).optional(),
+    }),
+  ),
+  synthesis: z.boolean(),
+});
 
 export async function listAgentProfiles(resourceId?: string): Promise<AgentProfile[]> {
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
@@ -339,6 +257,30 @@ export async function upsertAgentProfile(
     },
     existing?.createdAt ?? now,
   );
+  if (profile.type === "team" && profile.workflow?.strategy !== "supervisor" && profile.workflow) {
+    const { strategy, steps } = profile.workflow;
+    if (!steps.length) throw new Error("团队工作流至少需要一个步骤");
+    const ids = new Set<string>();
+    const members = new Set(profile.members.map((member) => member.id));
+    for (const step of steps) {
+      if (!step.id.trim() || ids.has(step.id)) throw new Error("工作流步骤 ID 必须非空且唯一");
+      ids.add(step.id);
+      const kind = step.kind ?? "agent";
+      if (strategy !== "workflow" && kind !== "agent")
+        throw new Error("交接和并行评议只接受 Agent 步骤");
+      const targets =
+        kind === "branch"
+          ? [step.branch?.onTrueMemberId, step.branch?.onFalseMemberId]
+          : kind === "approval"
+            ? []
+            : [step.memberId];
+      if (targets.some((id) => !id || !members.has(id)))
+        throw new Error(`步骤 ${step.id} 引用了不存在的成员`);
+      if (kind === "branch" && !step.condition) throw new Error(`分支 ${step.id} 缺少条件`);
+      if (kind === "loop" && (!step.loop || (step.loop.mode !== "foreach" && !step.condition)))
+        throw new Error(`循环 ${step.id} 缺少循环设置或条件`);
+    }
+  }
   await saveProfiles([...current.filter((item) => item.id !== profile.id), profile], resourceId);
   return profile;
 }
@@ -634,15 +576,16 @@ export async function loadManagedSkill(
   };
 }
 
-function conditionMatches(input: unknown, condition?: AgentWorkflowCondition): boolean {
+// Every team stage carries the original request and its latest result. In particular,
+// native loops feed their output back into the same input schema on every iteration.
+const teamStageSchema = z.object({ request: z.string(), text: z.string() });
+type TeamStage = z.infer<typeof teamStageSchema>;
+
+function conditionMatches(text: string, condition?: AgentWorkflowCondition): boolean {
   if (!condition) return true;
-  const record =
-    typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
-  const text = String(record.text ?? record.prompt ?? input ?? "");
   if (condition.operator === "equals") return text.trim() === condition.value.trim();
-  if (condition.operator === "not_contains")
-    return !text.toLowerCase().includes(condition.value.toLowerCase());
-  return text.toLowerCase().includes(condition.value.toLowerCase());
+  const contains = text.toLowerCase().includes(condition.value.toLowerCase());
+  return condition.operator === "not_contains" ? !contains : contains;
 }
 
 function createApprovalWorkflowStep(step: AgentWorkflowStep) {
@@ -650,277 +593,157 @@ function createApprovalWorkflowStep(step: AgentWorkflowStep) {
   const description = step.approval?.description || "请确认是否继续工作流。";
   return createStep({
     id: step.id,
-    inputSchema: z.object({ text: z.string() }),
-    outputSchema: z.object({ text: z.string() }),
+    inputSchema: teamStageSchema,
+    outputSchema: teamStageSchema,
     resumeSchema: z.object({ approved: z.boolean(), feedback: z.string().optional() }),
     suspendSchema: z.object({ title: z.string(), description: z.string() }),
     execute: async ({ inputData, resumeData, suspend, bail }) => {
       if (!resumeData) return await suspend({ title, description });
-      if (!resumeData.approved) return bail({ text: inputData.text });
-      return { text: inputData.text };
+      if (!resumeData.approved) return bail(inputData);
+      return inputData;
     },
   });
 }
 
-/** Build a team workflow from the authenticated user's profile and its scoped member Agents. */
+/** Compose native Workflow steps; no application run loop or workflow state machine. */
 export async function buildProfileWorkflow(
   profile: AgentProfile,
   resourceScope?: string,
 ): Promise<{ workflow: AnyWorkflow } | undefined> {
-  if (
-    profile.type !== "team" ||
-    !profile.workflow ||
-    profile.workflow.strategy === "supervisor" ||
-    profile.members.length === 0
-  )
+  const definition = profile.workflow;
+  if (profile.type !== "team" || !definition || definition.strategy === "supervisor")
     return undefined;
-  const memberIds = new Set(profile.members.map((member) => member.id));
-  const steps = profile.workflow.steps.filter(
-    (step) =>
-      (step.kind === "approval" ||
-        (step.memberId && memberIds.has(step.memberId)) ||
-        (step.kind === "branch" &&
-          step.branch &&
-          memberIds.has(step.branch.onTrueMemberId) &&
-          memberIds.has(step.branch.onFalseMemberId))) === true,
-  );
-  if (steps.length === 0) return undefined;
-
+  if (definition.steps.length === 0) throw new Error("Team workflow requires at least one step");
   const members = await resolveProfileMembers(profile, resourceScope);
-  if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
-  const makeAgentStep = (memberId: string | undefined, id: string, retries?: number) => {
-    if (!memberId) return undefined;
-    const member = members[memberId];
-    if (!member) return undefined;
-    const created = retries ? createStep(member, { retries }) : createStep(member);
-    return cloneStep(created, { id });
+  const workflowId = `team-${profileAgentRegistryKey(profile, resourceScope)}`;
+  const stage = (step: AgentWorkflowStep, memberId = step.memberId, id = step.id) => {
+    const member = memberId ? members[memberId] : undefined;
+    if (!member) throw new Error(`Workflow step "${step.id}" references a missing member`);
+    return createWorkflow({
+      id: `${workflowId}-${id}`,
+      inputSchema: teamStageSchema,
+      outputSchema: teamStageSchema,
+    })
+      .map(
+        async ({ inputData }) => ({
+          prompt: `${step.prompt || "继续处理这个任务"}: ${inputData.request}\n\n上一步结果: ${inputData.text}`,
+        }),
+        { id: "input" },
+      )
+      .then(cloneStep(createStep(member, { retries: step.retries ?? 0 }), { id: "agent" }))
+      .map(
+        async ({ inputData, getInitData }) => ({
+          request: getInitData<TeamStage>().request,
+          text: inputData.text,
+        }),
+        { id: "result" },
+      )
+      .commit();
   };
-
-  const workflow = createWorkflow({
-    id: `agent-team-${profile.id}`,
-    description: `${profile.displayName} 的可执行协作流程`,
-    inputSchema: z.object({ request: z.string() }),
-    outputSchema: z.object({ text: z.string() }),
+  const mergeResults = async ({
+    inputData,
+    getInitData,
+  }: {
+    inputData: Record<string, TeamStage | undefined> | TeamStage[];
+    getInitData: () => { request: string };
+  }): Promise<TeamStage> => ({
+    request: getInitData().request,
+    text: Object.values(inputData)
+      .flatMap((result) => (result ? [result.text] : []))
+      .join("\n\n"),
   });
-  let flow: AnyWorkflow = workflow.map(
-    async ({ inputData }: { inputData: { request: string } }) => ({ prompt: inputData.request }),
-    { id: "workflow-input" },
-  );
+  let flow: AnyWorkflow = createWorkflow({
+    id: workflowId,
+    description: `${profile.displayName} 的可执行协作流程`,
+    inputSchema: z.object({ request: z.string().min(1) }),
+    outputSchema: z.object({ text: z.string() }),
+  }).map(async ({ inputData }) => ({ request: inputData.request, text: inputData.request }), {
+    id: "workflow-input",
+  });
 
-  if (profile.workflow.strategy === "council") {
-    const resolvedAgentSteps = steps
-      .map((step) => makeAgentStep(step.memberId, step.id, step.retries))
-      .filter((step): step is NonNullable<typeof step> => Boolean(step));
-    if (resolvedAgentSteps.length !== steps.length) return undefined;
-    flow = flow.parallel(resolvedAgentSteps);
-    if (profile.workflow.synthesis) {
-      flow = flow.map(
-        async ({
-          inputData,
-          getInitData,
-        }: {
-          inputData: Record<string, { text: string }>;
-          getInitData: () => { request: string };
-        }) => ({
-          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${Object.values(
-            inputData,
-          )
-            .map((result) => result.text)
-            .join("\n\n")}`,
-        }),
-        { id: "synthesis-input" },
-      );
-      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
-        id: "synthesis",
-      });
-      flow = flow.then(synthesis);
-    } else {
-      flow = flow.map(
-        async ({ inputData }: { inputData: Record<string, { text: string }> }) => ({
-          text: Object.values(inputData)
-            .map((result) => result.text)
-            .join("\n\n"),
-        }),
-        { id: "parallel-result" },
-      );
-    }
-  } else if (profile.workflow.strategy === "workflow") {
-    for (const step of steps) {
-      const kind = step.kind ?? "agent";
-      if (kind === "approval") {
-        flow = flow.map(
-          async ({ inputData }: { inputData: { text?: string; prompt?: string } }) => ({
-            text: inputData.text ?? inputData.prompt ?? "",
-          }),
-          { id: `${step.id}-input` },
-        );
-        flow = flow.then(createApprovalWorkflowStep(step));
-        continue;
-      }
-      const loop =
-        step.kind === "loop"
-          ? (step.loop ?? { mode: "until" as const, maxIterations: 3 })
-          : undefined;
-      if (loop?.mode === "foreach") {
-        const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
-        if (!agentStep) return undefined;
-        flow = flow.map(
-          async ({
-            inputData,
-            getInitData,
-          }: {
-            inputData: { text?: string; prompt?: string };
-            getInitData: () => { request: string };
-          }) => {
-            const request = getInitData().request;
-            const prompts = request
-              .split(/\r?\n/)
-              .map((prompt) => prompt.trim())
-              .filter(Boolean);
-            const previous = inputData.text ?? inputData.prompt ?? "";
-            return (prompts.length > 0 ? prompts : [request.trim()]).map((prompt) => ({
-              prompt: [
-                `${step.prompt ?? "继续处理这个任务"}: ${prompt}`,
-                `上一步结果: ${previous}`,
-              ].join("\n\n"),
-            }));
-          },
-          { id: `${step.id}-items` },
-        );
-        flow = flow.foreach(agentStep, { concurrency: loop.concurrency ?? 1 });
-        flow = flow.map(
-          async ({ inputData }: { inputData: Array<{ text: string }> }) => ({
-            text: inputData.map((result) => result.text).join("\n\n"),
-          }),
-          { id: `${step.id}-merge` },
-        );
-        continue;
-      }
-      flow = flow.map(
-        async ({
-          inputData,
-          getInitData,
-        }: {
-          inputData: { text?: string; prompt?: string };
-          getInitData: () => { request: string };
-        }) => ({
-          prompt: `${step.prompt ?? "继续处理这个任务"}: ${getInitData().request}\n\n上一步结果: ${
-            inputData.text ?? inputData.prompt ?? ""
-          }`,
-          text: inputData.text ?? inputData.prompt ?? "",
-        }),
-        { id: `${step.id}-input` },
-      );
-      if (kind === "branch" && step.branch) {
-        const onTrue = makeAgentStep(step.branch.onTrueMemberId, `${step.id}-true`, step.retries);
-        const onFalse = makeAgentStep(
-          step.branch.onFalseMemberId,
-          `${step.id}-false`,
-          step.retries,
-        );
-        if (!onTrue || !onFalse) return undefined;
-        flow = flow.branch([
-          [
-            async ({ inputData }: { inputData: { prompt: string; text?: string } }) =>
-              conditionMatches(inputData.text ?? inputData.prompt, step.condition),
-            onTrue,
-          ],
-          [async () => true, onFalse],
-        ]);
-        flow = flow.map(
-          async ({ inputData }: { inputData: Record<string, { text: string }> }) => ({
-            text: Object.values(inputData)[0]?.text ?? "",
-          }),
-          { id: `${step.id}-merge` },
-        );
-        continue;
-      }
-      const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
-      if (!agentStep) return undefined;
-      if (kind === "loop" && loop) {
-        const condition = async ({
-          inputData,
-          iterationCount,
-        }: {
-          inputData: unknown;
-          iterationCount: number;
-        }) => {
-          const matches = conditionMatches(inputData, step.condition);
-          return loop.mode === "while"
-            ? matches && iterationCount < loop.maxIterations
-            : matches || iterationCount >= loop.maxIterations;
-        };
-        flow =
-          loop.mode === "while"
-            ? flow.dowhile(agentStep, condition)
-            : flow.dountil(agentStep, condition);
-      } else {
-        flow = flow.then(agentStep);
-      }
-    }
-    if (profile.workflow.synthesis) {
-      flow = flow.map(
-        async ({
-          inputData,
-          getInitData,
-        }: {
-          inputData: { text: string };
-          getInitData: () => { request: string };
-        }) => ({
-          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${inputData.text}`,
-        }),
-        { id: "synthesis-input" },
-      );
-      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
-        id: "synthesis",
-      });
-      flow = flow.then(synthesis);
-    }
+  if (definition.strategy === "council") {
+    flow = flow
+      .parallel(definition.steps.map((step) => stage(step)))
+      .map(mergeResults, { id: "parallel-result" });
   } else {
-    // Official Handoffs pattern: each specialist receives the previous
-    // specialist's result and owns the next stage of the task.
-    let hasInvalidStep = false;
-    steps.forEach((step, index) => {
-      const agentStep = makeAgentStep(step.memberId, step.id, step.retries);
-      if (!agentStep) {
-        hasInvalidStep = true;
-        return;
-      }
-      if (index > 0) {
-        flow = flow.map(
-          async ({
+    for (const step of definition.steps) {
+      const kind = definition.strategy === "handoff" ? "agent" : (step.kind ?? "agent");
+      if (kind === "approval") {
+        flow = flow.then(createApprovalWorkflowStep(step));
+      } else if (kind === "branch") {
+        if (!step.branch || !step.condition)
+          throw new Error(`Branch "${step.id}" requires targets and a condition`);
+        flow = flow
+          .branch([
+            [
+              async ({ inputData }: { inputData: TeamStage }) =>
+                conditionMatches(inputData.text, step.condition),
+              stage(step, step.branch.onTrueMemberId, `${step.id}-true`),
+            ],
+            [
+              async ({ inputData }: { inputData: TeamStage }) =>
+                !conditionMatches(inputData.text, step.condition),
+              stage(step, step.branch.onFalseMemberId, `${step.id}-false`),
+            ],
+          ])
+          .map(mergeResults, { id: `${step.id}-merge` });
+      } else if (kind === "loop") {
+        const loop = step.loop;
+        if (!loop) throw new Error(`Loop "${step.id}" requires loop settings`);
+        const body = stage(step);
+        if (loop.mode === "foreach") {
+          flow = flow
+            .map(
+              async ({ inputData }: { inputData: TeamStage }) =>
+                inputData.request
+                  .split(/\r?\n/)
+                  .map((request) => request.trim())
+                  .filter(Boolean)
+                  .map((request) => ({ request, text: inputData.text })),
+              { id: `${step.id}-items` },
+            )
+            .foreach(body, { concurrency: loop.concurrency ?? 1 })
+            .map(mergeResults, { id: `${step.id}-merge` });
+        } else {
+          if (!step.condition) throw new Error(`Loop "${step.id}" requires a condition`);
+          const condition = async ({
             inputData,
-            getInitData,
+            iterationCount,
           }: {
-            inputData: { text: string };
-            getInitData: () => { request: string };
-          }) => ({
-            prompt: `${step.prompt ?? "继续处理这个任务"}: ${getInitData().request}\n\n上一步结果: ${inputData.text}`,
-          }),
-          { id: `${step.id}-input` },
-        );
+            inputData: TeamStage;
+            iterationCount: number;
+          }) =>
+            loop.mode === "while"
+              ? conditionMatches(inputData.text, step.condition) &&
+                iterationCount < loop.maxIterations
+              : conditionMatches(inputData.text, step.condition) ||
+                iterationCount >= loop.maxIterations;
+          flow =
+            loop.mode === "while" ? flow.dowhile(body, condition) : flow.dountil(body, condition);
+        }
+      } else {
+        flow = flow.then(stage(step));
       }
-      flow = flow.then(agentStep);
-    });
-    if (hasInvalidStep) return undefined;
-    if (profile.workflow.synthesis) {
-      flow = flow.map(
-        async ({
-          inputData,
-          getInitData,
-        }: {
-          inputData: { text: string };
-          getInitData: () => { request: string };
-        }) => ({
-          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${getInitData().request}\n\n团队结果: ${inputData.text}`,
-        }),
-        { id: "synthesis-input" },
-      );
-      const synthesis = cloneStep(createStep(profileAgentFactory(profile, resourceScope)), {
-        id: "synthesis",
-      });
-      flow = flow.then(synthesis);
     }
   }
-  return { workflow: flow.commit() as AnyWorkflow };
+  if (definition.synthesis) {
+    if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
+    // The synthesizer must not expose the same workflow recursively.
+    const synthesizer = profileAgentFactory({ ...profile, workflow: undefined }, resourceScope);
+    flow = flow
+      .map(
+        async ({ inputData }: { inputData: TeamStage }) => ({
+          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${inputData.request}\n\n团队结果: ${inputData.text}`,
+        }),
+        { id: "synthesis-input" },
+      )
+      .then(cloneStep(createStep(synthesizer), { id: "synthesis" }));
+  }
+  return {
+    workflow: flow
+      .map(async ({ inputData }: { inputData: { text: string } }) => ({ text: inputData.text }), {
+        id: "workflow-result",
+      })
+      .commit(),
+  };
 }

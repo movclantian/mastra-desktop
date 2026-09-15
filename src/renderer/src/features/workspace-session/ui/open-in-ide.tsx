@@ -7,6 +7,7 @@ import { useWorkbench } from "@/entities/workbench";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { cn, toastError } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
+import { ButtonGroup } from "@/shared/ui/button-group";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,7 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Separator } from "@/shared/ui/separator";
 
 // ==========================================
 // 本地桌面 IDE / 工具支持 (打开当前会话工作区目录)
@@ -229,16 +229,11 @@ export function OpenInIde({ className }: { className?: string }) {
   const systemOptions = detectedIdes.filter((i) => i.category === "system");
 
   return (
-    <div
-      className={cn(
-        "inline-flex items-center rounded-md border border-input bg-background/80 shadow-xs h-7.5",
-        className,
-      )}
-    >
+    <ButtonGroup className={cn("h-7.5", className)} aria-label="打开工作区">
       <Button
-        variant="ghost"
+        variant="outline"
         size="sm"
-        className="h-full px-2.5 text-xs font-normal gap-1.5 rounded-r-none hover:bg-muted/80"
+        className="h-full gap-1.5 px-2.5 text-xs font-normal"
         onClick={() => currentIde && handleOpen(currentIde)}
         title={currentIde ? `在 ${currentIde.name} 中打开工作区` : "打开工作区"}
       >
@@ -246,14 +241,13 @@ export function OpenInIde({ className }: { className?: string }) {
         {currentIde?.icon}
         <span className="text-muted-foreground">中打开</span>
       </Button>
-      <Separator orientation="vertical" className="h-4" />
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger
           render={
             <Button
-              variant="ghost"
+              variant="outline"
               size="icon-sm"
-              className="size-7.5 rounded-l-none px-1 hover:bg-muted/80 text-muted-foreground hover:text-foreground"
+              className="size-7.5 px-1 text-muted-foreground hover:text-foreground"
               aria-label="选择本地打开工具"
             >
               {open ? (
@@ -301,6 +295,6 @@ export function OpenInIde({ className }: { className?: string }) {
           })}
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </ButtonGroup>
   );
 }

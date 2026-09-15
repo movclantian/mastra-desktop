@@ -47,7 +47,6 @@ import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import {
-  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -67,6 +66,7 @@ import {
 } from "@/shared/ui/context-menu";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -83,6 +83,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { Progress } from "@/shared/ui/progress";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -1063,19 +1072,23 @@ export function KnowledgeLibraryPage({
                 : "用文件夹组织长期资料；会话附件会另外按线程自动归类。"}
             </DialogDescription>
           </DialogHeader>
-          <Input
-            autoFocus
-            value={folderName}
-            onChange={(event) => setFolderName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void createFolder();
-            }}
-            placeholder="文件夹名称"
-          />
+          <Field>
+            <FieldLabel htmlFor="create-folder-name" className="sr-only">
+              文件夹名称
+            </FieldLabel>
+            <Input
+              id="create-folder-name"
+              autoFocus
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void createFolder();
+              }}
+              placeholder="文件夹名称"
+            />
+          </Field>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFolderDialog(false)}>
-              取消
-            </Button>
+            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
             <Button onClick={() => void createFolder()}>创建</Button>
           </DialogFooter>
         </DialogContent>
@@ -1094,18 +1107,22 @@ export function KnowledgeLibraryPage({
             </DialogTitle>
             <DialogDescription>名称只影响资料库显示，不会改变已保存的文件内容。</DialogDescription>
           </DialogHeader>
-          <Input
-            autoFocus
-            value={renameValue}
-            onChange={(event) => setRenameValue(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void saveRename();
-            }}
-          />
+          <Field>
+            <FieldLabel htmlFor="rename-target-name" className="sr-only">
+              新名称
+            </FieldLabel>
+            <Input
+              id="rename-target-name"
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveRename();
+              }}
+            />
+          </Field>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRenameTarget(null)}>
-              取消
-            </Button>
+            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
             <Button onClick={() => void saveRename()}>保存</Button>
           </DialogFooter>
         </DialogContent>
@@ -1120,10 +1137,10 @@ export function KnowledgeLibraryPage({
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 max-h-[min(32rem,calc(100svh-12rem))] pr-3">
-            <div className="grid gap-4">
+            <FieldGroup className="gap-4">
               <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5 text-sm">
-                  <span>分块策略</span>
+                <Field>
+                  <FieldLabel htmlFor="settings-chunk-strategy">分块策略</FieldLabel>
                   <Select
                     value={settings.chunkStrategy}
                     onValueChange={(value) =>
@@ -1133,7 +1150,7 @@ export function KnowledgeLibraryPage({
                       }))
                     }
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger id="settings-chunk-strategy" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1154,10 +1171,11 @@ export function KnowledgeLibraryPage({
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <span>分块大小</span>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="settings-chunk-size">分块大小</FieldLabel>
                   <Input
+                    id="settings-chunk-size"
                     type="number"
                     min={300}
                     max={4000}
@@ -1169,10 +1187,11 @@ export function KnowledgeLibraryPage({
                       }))
                     }
                   />
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <span>重叠字符数</span>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="settings-chunk-overlap">重叠字符数</FieldLabel>
                   <Input
+                    id="settings-chunk-overlap"
                     type="number"
                     min={0}
                     max={800}
@@ -1184,10 +1203,11 @@ export function KnowledgeLibraryPage({
                       }))
                     }
                   />
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <span>召回数量</span>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="settings-top-k">召回数量</FieldLabel>
                   <Input
+                    id="settings-top-k"
                     type="number"
                     min={1}
                     max={30}
@@ -1196,10 +1216,11 @@ export function KnowledgeLibraryPage({
                       setSettings((current) => ({ ...current, topK: Number(event.target.value) }))
                     }
                   />
-                </div>
-                <div className="space-y-1.5 text-sm">
-                  <span>最低相似度</span>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="settings-min-score">最低相似度</FieldLabel>
                   <Input
+                    id="settings-min-score"
                     type="number"
                     min={0}
                     max={1}
@@ -1212,27 +1233,29 @@ export function KnowledgeLibraryPage({
                       }))
                     }
                   />
-                </div>
+                </Field>
               </div>
-              <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-                <span>
-                  <span className="block text-sm font-medium">Graph RAG</span>
-                  <span className="block text-xs text-muted-foreground">
-                    为相关分块建立关联图并扩展检索结果
-                  </span>
-                </span>
+              <Field orientation="horizontal" className="justify-between rounded-lg border p-3">
+                <FieldContent>
+                  <FieldLabel htmlFor="settings-graph-rag" className="cursor-pointer font-medium">
+                    Graph RAG
+                  </FieldLabel>
+                  <FieldDescription>为相关分块建立关联图并扩展检索结果</FieldDescription>
+                </FieldContent>
                 <Switch
+                  id="settings-graph-rag"
                   checked={settings.graphRag}
                   onCheckedChange={(checked) =>
                     setSettings((current) => ({ ...current, graphRag: checked }))
                   }
                 />
-              </div>
+              </Field>
               {settings.graphRag ? (
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1.5 text-sm">
-                    <span>图阈值</span>
+                  <Field>
+                    <FieldLabel htmlFor="settings-graph-threshold">图阈值</FieldLabel>
                     <Input
+                      id="settings-graph-threshold"
                       type="number"
                       min={0.4}
                       max={0.9}
@@ -1245,10 +1268,11 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
-                  <div className="space-y-1.5 text-sm">
-                    <span>随机游走步数</span>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="settings-graph-walk-steps">随机游走步数</FieldLabel>
                     <Input
+                      id="settings-graph-walk-steps"
                       type="number"
                       min={10}
                       max={500}
@@ -1260,10 +1284,11 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
-                  <div className="space-y-1.5 text-sm">
-                    <span>重启概率</span>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="settings-graph-restart-prob">重启概率</FieldLabel>
                     <Input
+                      id="settings-graph-restart-prob"
                       type="number"
                       min={0.01}
                       max={0.9}
@@ -1276,27 +1301,30 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
+                  </Field>
                 </div>
               ) : null}
-              <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-                <span>
-                  <span className="block text-sm font-medium">模型重排</span>
-                  <span className="block text-xs text-muted-foreground">
+              <Field orientation="horizontal" className="justify-between rounded-lg border p-3">
+                <FieldContent>
+                  <FieldLabel htmlFor="settings-rerank" className="cursor-pointer font-medium">
+                    模型重排
+                  </FieldLabel>
+                  <FieldDescription>
                     当前请求模型可直接调用时，对向量召回结果进行语义重排，会增加一次模型调用
-                  </span>
-                </span>
+                  </FieldDescription>
+                </FieldContent>
                 <Switch
+                  id="settings-rerank"
                   checked={settings.rerank}
                   onCheckedChange={(checked) =>
                     setSettings((current) => ({ ...current, rerank: checked }))
                   }
                 />
-              </div>
+              </Field>
               {settings.rerank ? (
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-3 space-y-1.5 text-sm">
-                    <span>重排评分器</span>
+                  <Field className="col-span-3">
+                    <FieldLabel htmlFor="settings-rerank-scorer">重排评分器</FieldLabel>
                     <Select
                       value={settings.rerankScorer}
                       onValueChange={(value) =>
@@ -1306,7 +1334,7 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     >
-                      <SelectTrigger className="w-full">
+                      <SelectTrigger id="settings-rerank-scorer" className="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1314,10 +1342,11 @@ export function KnowledgeLibraryPage({
                         <SelectItem value="mastra-agent">MastraAgentRelevanceScorer</SelectItem>
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="space-y-1.5 text-sm">
-                    <span>语义权重</span>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="settings-rerank-semantic-weight">语义权重</FieldLabel>
                     <Input
+                      id="settings-rerank-semantic-weight"
                       type="number"
                       min={0}
                       max={1}
@@ -1330,10 +1359,11 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
-                  <div className="space-y-1.5 text-sm">
-                    <span>向量权重</span>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="settings-rerank-vector-weight">向量权重</FieldLabel>
                     <Input
+                      id="settings-rerank-vector-weight"
                       type="number"
                       min={0}
                       max={1}
@@ -1346,10 +1376,11 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
-                  <div className="space-y-1.5 text-sm">
-                    <span>位置权重</span>
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor="settings-rerank-position-weight">位置权重</FieldLabel>
                     <Input
+                      id="settings-rerank-position-weight"
                       type="number"
                       min={0}
                       max={1}
@@ -1362,59 +1393,69 @@ export function KnowledgeLibraryPage({
                         }))
                       }
                     />
-                  </div>
+                  </Field>
                 </div>
               ) : null}
-              <div className="rounded-lg border p-3">
-                <p className="text-sm font-medium">元数据抽取</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+              <FieldSet className="rounded-lg border p-3">
+                <FieldLegend variant="label">元数据抽取</FieldLegend>
+                <FieldDescription>
                   索引时使用当前选定模型生成可检索的标题、摘要、问题与关键词。
-                </p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <div className="flex items-center gap-2 text-sm">
+                </FieldDescription>
+                <div className="mt-1 grid grid-cols-2 gap-3">
+                  <Field orientation="horizontal" className="items-center">
                     <Switch
+                      id="settings-extract-title"
                       checked={settings.extractTitle}
                       onCheckedChange={(checked) =>
                         setSettings((current) => ({ ...current, extractTitle: checked }))
                       }
                     />
-                    标题
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
+                    <FieldLabel htmlFor="settings-extract-title" className="cursor-pointer">
+                      标题
+                    </FieldLabel>
+                  </Field>
+                  <Field orientation="horizontal" className="items-center">
                     <Switch
+                      id="settings-extract-summary"
                       checked={settings.extractSummary}
                       onCheckedChange={(checked) =>
                         setSettings((current) => ({ ...current, extractSummary: checked }))
                       }
                     />
-                    摘要
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
+                    <FieldLabel htmlFor="settings-extract-summary" className="cursor-pointer">
+                      摘要
+                    </FieldLabel>
+                  </Field>
+                  <Field orientation="horizontal" className="items-center">
                     <Switch
+                      id="settings-extract-questions"
                       checked={settings.extractQuestions}
                       onCheckedChange={(checked) =>
                         setSettings((current) => ({ ...current, extractQuestions: checked }))
                       }
                     />
-                    问题
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
+                    <FieldLabel htmlFor="settings-extract-questions" className="cursor-pointer">
+                      问题
+                    </FieldLabel>
+                  </Field>
+                  <Field orientation="horizontal" className="items-center">
                     <Switch
+                      id="settings-extract-keywords"
                       checked={settings.extractKeywords}
                       onCheckedChange={(checked) =>
                         setSettings((current) => ({ ...current, extractKeywords: checked }))
                       }
                     />
-                    关键词
-                  </div>
+                    <FieldLabel htmlFor="settings-extract-keywords" className="cursor-pointer">
+                      关键词
+                    </FieldLabel>
+                  </Field>
                 </div>
-              </div>
-            </div>
+              </FieldSet>
+            </FieldGroup>
           </ScrollArea>
           <DialogFooter className="shrink-0">
-            <Button variant="outline" onClick={() => onSettingsOpenChange(false)}>
-              取消
-            </Button>
+            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
             <Button onClick={() => void saveSettings()}>保存</Button>
           </DialogFooter>
         </DialogContent>
@@ -1430,46 +1471,44 @@ export function KnowledgeLibraryPage({
         description="按文件名快速定位资料库中的文件"
         className="sm:max-w-xl"
       >
-        <Command>
-          <CommandInput
-            autoFocus
-            placeholder="搜索文件名…"
-            value={fileSearchQuery}
-            onValueChange={setFileSearchQuery}
-          />
-          <CommandList className="max-h-[min(60vh,32rem)]">
-            {loading ? (
-              <CommandEmpty>正在读取文件…</CommandEmpty>
-            ) : assets.length === 0 ? (
-              <CommandEmpty>资料库中还没有文件</CommandEmpty>
-            ) : (
-              <CommandGroup heading="文件">
-                {assets.map((asset) => (
-                  <CommandItem
-                    key={asset.id}
-                    value={`${asset.filename} ${asset.status}`}
-                    onSelect={() => {
-                      setSelectedId(asset.id);
-                      setView("search");
-                      setFolderId(null);
-                      setQuery("");
-                      setFileSearchOpen(false);
-                    }}
-                    className="h-auto py-2"
-                  >
-                    <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{asset.filename}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {formatBytes(asset.byteSize)} · {statusLabel(asset.status)}
-                      </span>
+        <CommandInput
+          autoFocus
+          placeholder="搜索文件名…"
+          value={fileSearchQuery}
+          onValueChange={setFileSearchQuery}
+        />
+        <CommandList className="max-h-[min(60vh,32rem)]">
+          {loading ? (
+            <CommandEmpty>正在读取文件…</CommandEmpty>
+          ) : assets.length === 0 ? (
+            <CommandEmpty>资料库中还没有文件</CommandEmpty>
+          ) : (
+            <CommandGroup heading="文件">
+              {assets.map((asset) => (
+                <CommandItem
+                  key={asset.id}
+                  value={`${asset.filename} ${asset.status}`}
+                  onSelect={() => {
+                    setSelectedId(asset.id);
+                    setView("search");
+                    setFolderId(null);
+                    setQuery("");
+                    setFileSearchOpen(false);
+                  }}
+                  className="h-auto py-2"
+                >
+                  <FileTypeIcon mediaType={asset.mediaType} name={asset.filename} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm">{asset.filename}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {formatBytes(asset.byteSize)} · {statusLabel(asset.status)}
                     </span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-          </CommandList>
-        </Command>
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          )}
+        </CommandList>
       </CommandDialog>
     </>
   );

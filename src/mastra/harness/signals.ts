@@ -5,91 +5,31 @@ import {
   type SendNotificationSignalInput,
 } from "@mastra/core/notifications";
 import {
-  SignalProvider,
   type SignalProviderTarget,
   type SignalSubscription,
   WebhookSignalProvider,
 } from "@mastra/core/signals";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { appStorage, getAppConfig, setAppConfig } from "../storage";
+import { appStorage, getLibsqlClient } from "../storage";
 import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
-const SIGNAL_REGISTRY_SCOPE = "__mastra_signal_registry__";
-const WEBHOOK_SUBSCRIPTIONS_KEY = "signals:webhook:subscriptions";
-const POLLING_SUBSCRIPTIONS_KEY = "signals:polling:subscriptions";
-
-type PersistedSubscription = {
-  id: string;
-  providerId: string;
-  threadId: string;
-  resourceId: string;
-  externalResourceId: string;
-  subscribedAt: string;
-  metadata: Record<string, unknown>;
-};
-
-const subscriptionWrites = new Map<string, Promise<unknown>>();
-
-async function readSubscriptions(key: string): Promise<PersistedSubscription[]> {
-  const raw = await getAppConfig(key, SIGNAL_REGISTRY_SCOPE);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is PersistedSubscription => {
-      if (!item || typeof item !== "object") return false;
-      const value = item as Record<string, unknown>;
-      return (
-        typeof value.id === "string" &&
-        typeof value.providerId === "string" &&
-        typeof value.threadId === "string" &&
-        typeof value.resourceId === "string" &&
-        typeof value.externalResourceId === "string" &&
-        typeof value.subscribedAt === "string" &&
-        typeof value.metadata === "object" &&
-        value.metadata !== null &&
-        !Array.isArray(value.metadata)
-      );
-    });
-  } catch {
-    return [];
-  }
-}
-
-async function mutateSubscriptions(
-  key: string,
-  update: (subscriptions: PersistedSubscription[]) => PersistedSubscription[],
-): Promise<PersistedSubscription[]> {
-  const previous = subscriptionWrites.get(key) ?? Promise.resolve();
-  const next = previous.then(async () => {
-    const subscriptions = await readSubscriptions(key);
-    const updated = update(subscriptions);
-    await setAppConfig(key, JSON.stringify(updated), SIGNAL_REGISTRY_SCOPE);
-    return updated;
-  });
-  subscriptionWrites.set(key, next);
-  try {
-    return await next;
-  } finally {
-    if (subscriptionWrites.get(key) === next) subscriptionWrites.delete(key);
-  }
-}
-
-function toPersisted(subscription: SignalSubscription): PersistedSubscription {
-  return {
-    id: subscription.id,
-    providerId: subscription.providerId,
-    threadId: subscription.threadId,
-    resourceId: subscription.resourceId,
-    externalResourceId: subscription.externalResourceId,
-    subscribedAt: subscription.subscribedAt.toISOString(),
-    metadata: subscription.metadata,
-  };
-}
-
-function fromPersisted(subscription: PersistedSubscription): SignalSubscription {
-  return { ...subscription, subscribedAt: new Date(subscription.subscribedAt) };
+// The database owns durable subscriptions; the official registry handles delivery.
+let subscriptionsReady: Promise<void> | undefined;
+async function subscriptionStore() {
+  const client = await getLibsqlClient();
+  subscriptionsReady ??= client
+    .execute(`CREATE TABLE IF NOT EXISTS signal_subscriptions (
+    provider_id TEXT NOT NULL,
+    resource_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    external_resource_id TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    PRIMARY KEY (provider_id, resource_id, thread_id, external_resource_id)
+  )`)
+    .then(() => undefined);
+  await subscriptionsReady;
+  return client;
 }
 
 function publicSubscription(subscription: SignalSubscription): SignalSubscription {
@@ -108,66 +48,81 @@ function publicSubscription(subscription: SignalSubscription): SignalSubscriptio
 }
 
 export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
-  async hydrate(): Promise<void> {
-    const subscriptions = await readSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY);
-    for (const subscription of subscriptions) {
-      super.subscribeThread(
-        { threadId: subscription.threadId, resourceId: subscription.resourceId },
-        subscription.externalResourceId,
-        subscription.metadata,
-      );
-    }
+  private mutations: Promise<unknown> = Promise.resolve();
+
+  // Serialize DB + registry changes together. A failed write must not poison later writes.
+  private update<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.mutations.then(operation);
+    this.mutations = next.catch(() => undefined);
+    return next;
   }
 
   async start(): Promise<void> {
-    await this.hydrate();
-    await super.start?.();
+    await this.update(async () => {
+      const result = await (await subscriptionStore()).execute({
+        sql: "SELECT resource_id, thread_id, external_resource_id, metadata FROM signal_subscriptions WHERE provider_id = ?",
+        args: [this.id],
+      });
+      for (const row of result.rows) {
+        super.subscribeThread(
+          { resourceId: String(row.resource_id), threadId: String(row.thread_id) },
+          String(row.external_resource_id),
+          z.record(z.string(), z.unknown()).parse(JSON.parse(String(row.metadata))),
+        );
+      }
+    });
   }
 
   async subscribePersistent(
     target: SignalProviderTarget,
     externalResourceId: string,
-    metadata?: Record<string, unknown>,
-  ) {
-    const subscription = super.subscribeThread(target, externalResourceId, metadata);
-    await mutateSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY, (subscriptions) => [
-      ...subscriptions.filter(
-        (item) =>
-          item.providerId !== this.id ||
-          item.threadId !== target.threadId ||
-          item.resourceId !== target.resourceId ||
-          item.externalResourceId !== externalResourceId,
-      ),
-      toPersisted(subscription),
-    ]);
-    return subscription;
+    metadata: Record<string, unknown> = {},
+  ): Promise<SignalSubscription> {
+    return this.update(async () => {
+      await (await subscriptionStore()).execute({
+        sql: `INSERT INTO signal_subscriptions
+          (provider_id, resource_id, thread_id, external_resource_id, metadata)
+          VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider_id, resource_id, thread_id, external_resource_id)
+          DO UPDATE SET metadata = excluded.metadata`,
+        args: [
+          this.id,
+          target.resourceId,
+          target.threadId,
+          externalResourceId,
+          JSON.stringify(metadata),
+        ],
+      });
+      return super.subscribeThread(target, externalResourceId, metadata);
+    });
   }
 
   async unsubscribePersistent(
     target: SignalProviderTarget,
     externalResourceId: string,
   ): Promise<boolean> {
-    const removed = super.unsubscribeThread(target, externalResourceId);
-    await mutateSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY, (subscriptions) =>
-      subscriptions.filter(
-        (item) =>
-          item.providerId !== this.id ||
-          item.threadId !== target.threadId ||
-          item.resourceId !== target.resourceId ||
-          item.externalResourceId !== externalResourceId,
-      ),
-    );
-    return removed;
+    return this.update(async () => {
+      const result = await (await subscriptionStore()).execute({
+        sql: "DELETE FROM signal_subscriptions WHERE provider_id = ? AND resource_id = ? AND thread_id = ? AND external_resource_id = ?",
+        args: [this.id, target.resourceId, target.threadId, externalResourceId],
+      });
+      super.unsubscribeThread(target, externalResourceId);
+      return result.rowsAffected > 0;
+    });
+  }
+
+  async removeThread(target: SignalProviderTarget): Promise<void> {
+    await this.update(async () => {
+      await (await subscriptionStore()).execute({
+        sql: "DELETE FROM signal_subscriptions WHERE provider_id = ? AND resource_id = ? AND thread_id = ?",
+        args: [this.id, target.resourceId, target.threadId],
+      });
+      this.unsubscribeAll(target);
+    });
   }
 
   async listPersistent(resourceId: string): Promise<SignalSubscription[]> {
-    return (await readSubscriptions(WEBHOOK_SUBSCRIPTIONS_KEY))
-      .filter((item) => item.providerId === this.id && item.resourceId === resourceId)
-      .map(fromPersisted);
-  }
-
-  async handleWebhookPersistent(request: Parameters<WebhookSignalProvider["handleWebhook"]>[0]) {
-    return this.handleWebhook(request);
+    await this.mutations;
+    return this.getSubscriptions().filter((item) => item.resourceId === resourceId);
   }
 
   getTools() {
@@ -177,86 +132,57 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
 
 type PollingSubscriptionMetadata = { url: string; headers?: Record<string, string> };
 
-export class PersistentPollingSignalProvider extends SignalProvider<"mastra-polling-signals"> {
-  readonly id = "mastra-polling-signals" as const;
-  readonly name = "Mastra Polling Signals";
+export class PersistentPollingSignalProvider extends PersistentWebhookSignalProvider {
   readonly pollInterval = 30_000;
   private fingerprints = new Map<string, string>();
 
-  async hydrate(): Promise<void> {
-    const subscriptions = await readSubscriptions(POLLING_SUBSCRIPTIONS_KEY);
-    for (const subscription of subscriptions) {
-      super.subscribe(
-        { threadId: subscription.threadId, resourceId: subscription.resourceId },
-        subscription.externalResourceId,
-        subscription.metadata,
-      );
-    }
-  }
-
-  async start(): Promise<void> {
-    await this.hydrate();
-    await super.start?.();
+  constructor() {
+    super({ id: "mastra-polling-signals", name: "Mastra Polling Signals" });
   }
 
   async subscribePersistent(
     target: SignalProviderTarget,
     externalResourceId: string,
-    metadata: PollingSubscriptionMetadata,
-  ): Promise<SignalSubscription> {
-    const url = new URL(metadata.url);
-    if (!/^https?:$/.test(url.protocol)) throw new Error("Polling source must use HTTP or HTTPS");
-    const subscription = super.subscribe(target, externalResourceId, metadata);
-    await mutateSubscriptions(POLLING_SUBSCRIPTIONS_KEY, (subscriptions) => [
-      ...subscriptions.filter(
-        (item) =>
-          item.providerId !== this.id ||
-          item.threadId !== target.threadId ||
-          item.resourceId !== target.resourceId ||
-          item.externalResourceId !== externalResourceId,
-      ),
-      toPersisted(subscription),
-    ]);
-    return subscription;
+    metadata: Record<string, unknown> = {},
+  ) {
+    const parsed = z
+      .object({
+        url: z.url({ protocol: /^https?$/ }),
+        headers: z.record(z.string(), z.string()).optional(),
+      })
+      .parse(metadata);
+    return super.subscribePersistent(target, externalResourceId, parsed);
   }
 
-  async unsubscribePersistent(
-    target: SignalProviderTarget,
-    externalResourceId: string,
-  ): Promise<boolean> {
-    const removed = super.unsubscribe(target, externalResourceId);
-    await mutateSubscriptions(POLLING_SUBSCRIPTIONS_KEY, (subscriptions) =>
-      subscriptions.filter(
-        (item) =>
-          item.providerId !== this.id ||
-          item.threadId !== target.threadId ||
-          item.resourceId !== target.resourceId ||
-          item.externalResourceId !== externalResourceId,
-      ),
-    );
-    return removed;
-  }
-
-  async listPersistent(resourceId: string): Promise<SignalSubscription[]> {
-    return (await readSubscriptions(POLLING_SUBSCRIPTIONS_KEY))
-      .filter((item) => item.providerId === this.id && item.resourceId === resourceId)
-      .map(fromPersisted);
+  stop(): void {
+    this.fingerprints.clear();
+    super.stop();
   }
 
   async poll(subscriptions: SignalSubscription[]): Promise<void> {
+    const active = new Set(subscriptions.map((subscription) => subscription.id));
+    for (const id of this.fingerprints.keys()) {
+      if (!active.has(id)) this.fingerprints.delete(id);
+    }
     await Promise.all(
       subscriptions.map(async (subscription) => {
         const metadata = subscription.metadata as Partial<PollingSubscriptionMetadata>;
         if (typeof metadata.url !== "string") return;
         try {
-          const response = await fetch(metadata.url, { headers: metadata.headers });
+          const response = await fetch(metadata.url, {
+            headers: metadata.headers,
+            signal: AbortSignal.timeout(this.pollInterval),
+          });
           if (!response.ok) throw new Error(`Polling source returned ${response.status}`);
           const body = await response.text();
           const fingerprint = createHash("sha256").update(body).digest("hex");
-          const key = `${subscription.resourceId}:${subscription.threadId}:${subscription.externalResourceId}`;
+          const key = subscription.id;
           const previous = this.fingerprints.get(key);
-          this.fingerprints.set(key, fingerprint);
-          if (!previous || previous === fingerprint) return;
+          if (!previous) {
+            this.fingerprints.set(key, fingerprint);
+            return;
+          }
+          if (previous === fingerprint) return;
           await this.notify(
             {
               source: "polling",
@@ -268,6 +194,7 @@ export class PersistentPollingSignalProvider extends SignalProvider<"mastra-poll
             },
             { threadId: subscription.threadId, resourceId: subscription.resourceId },
           );
+          this.fingerprints.set(key, fingerprint);
         } catch (error) {
           await this.notify(
             {

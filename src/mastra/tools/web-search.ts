@@ -18,7 +18,7 @@ import {
   contentObjectReference,
   contentReferenceText,
   contentSummary,
-} from "./content-objects";
+} from "../storage/content-objects";
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];

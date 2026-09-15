@@ -74,7 +74,7 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
 export const webhookSignalRoute = registerApiRoute("/work/signals/webhook", {
   method: "POST",
   handler: async (c) => {
-    const result = await workWebhookSignals.handleWebhookPersistent({
+    const result = await workWebhookSignals.handleWebhook({
       body: await c.req.json(),
       headers: Object.fromEntries(c.req.raw.headers.entries()),
       params: {},

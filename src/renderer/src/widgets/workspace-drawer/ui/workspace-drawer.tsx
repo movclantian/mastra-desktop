@@ -20,6 +20,7 @@ import {
   FolderTreeIcon,
   Globe2Icon,
   MoreHorizontalIcon,
+  PanelRightCloseIcon,
   PencilLineIcon,
   PlayIcon,
   PlusIcon,
@@ -74,10 +75,25 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/shared/ui/empty";
 import { FlickeringGrid } from "@/shared/ui/flickering-grid";
 import { GridPattern } from "@/shared/ui/grid-pattern";
 import { Input } from "@/shared/ui/input";
+import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/shared/ui/item";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { Ripple } from "@/shared/ui/ripple";
@@ -1809,15 +1825,17 @@ export function WorkspaceDrawer() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
+        {/* 收起工作区按钮:面板展开时从顶栏迁移至此,占据原关闭按钮位置 ——
+            收起与关闭语义合一,按钮在屏幕上始终贴近右缘 */}
         <Button
-          aria-label="关闭右侧面板"
+          aria-label="收起工作区面板"
           className="shrink-0"
           onClick={() => setWorkspacePanelOpen(false)}
           size="icon-sm"
-          title="关闭右侧面板"
+          title="收起工作区面板"
           variant="ghost"
         >
-          <XIcon />
+          <PanelRightCloseIcon />
         </Button>
       </PanelHeader>
       {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
@@ -1845,87 +1863,95 @@ export function WorkspaceDrawer() {
           <BrowserView onCloseBrowser={closeBrowserAndReturnToLocalTab} session={browserSession} />
         </div>
         {isWelcomeActive ? (
-          <div className="flex size-full flex-col items-center justify-center p-8 select-none">
-            <div className="w-full max-w-sm space-y-6">
-              <div className="text-sm font-normal text-muted-foreground">从这里开始</div>
-              <div className="space-y-1">
-                {/* 1. 文件浏览器 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    addPanelTab("files");
-                  }}
-                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring cursor-pointer"
-                >
-                  <FolderTreeIcon className="size-4 shrink-0 text-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-medium text-foreground">文件浏览器</span>
-                      <span className="text-xs text-muted-foreground truncate">
+          <div className="flex size-full flex-col items-center justify-center p-6 select-none">
+            <Empty className="max-w-sm w-full p-0">
+              <EmptyHeader className="space-y-1 pb-4">
+                <EmptyTitle className="text-base font-semibold">从这里开始</EmptyTitle>
+                <EmptyDescription className="text-xs">选择功能快速启动工作区任务</EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent className="w-full">
+                <ItemGroup className="w-full gap-1.5">
+                  <Item
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer transition-colors hover:bg-muted/70"
+                    render={<button type="button" onClick={() => addPanelTab("files")} />}
+                  >
+                    <ItemMedia variant="icon">
+                      <FolderTreeIcon className="size-4 text-foreground" />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0 flex-1">
+                      <ItemTitle className="text-xs font-medium">文件浏览器</ItemTitle>
+                      <ItemDescription className="truncate text-xs text-muted-foreground">
                         浏览及管理工作区目录与代码文件
-                      </span>
-                    </div>
-                  </div>
-                </button>
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
 
-                {/* 2. 浏览器 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    activatePanelTab({
-                      kind: "browser",
-                      index: state.tabs.length,
-                    });
-                    void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
-                  }}
-                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <Globe2Icon className="size-4 shrink-0 text-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-medium text-foreground">浏览器</span>
-                      <span className="text-xs text-muted-foreground truncate">浏览及调试网页</span>
-                    </div>
-                  </div>
-                </button>
+                  <Item
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer transition-colors hover:bg-muted/70"
+                    render={
+                      <button
+                        type="button"
+                        onClick={() => {
+                          activatePanelTab({
+                            kind: "browser",
+                            index: state.tabs.length,
+                          });
+                          void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                        }}
+                      />
+                    }
+                  >
+                    <ItemMedia variant="icon">
+                      <Globe2Icon className="size-4 text-foreground" />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0 flex-1">
+                      <ItemTitle className="text-xs font-medium">浏览器</ItemTitle>
+                      <ItemDescription className="truncate text-xs text-muted-foreground">
+                        浏览及调试网页
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
 
-                {/* 3. 终端 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    addPanelTab("terminal");
-                  }}
-                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <TerminalIcon className="size-4 shrink-0 text-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-medium text-foreground">终端</span>
-                      <span className="text-xs text-muted-foreground truncate">运行命令及脚本</span>
-                    </div>
-                  </div>
-                </button>
+                  <Item
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer transition-colors hover:bg-muted/70"
+                    render={<button type="button" onClick={() => addPanelTab("terminal")} />}
+                  >
+                    <ItemMedia variant="icon">
+                      <TerminalIcon className="size-4 text-foreground" />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0 flex-1">
+                      <ItemTitle className="text-xs font-medium">终端</ItemTitle>
+                      <ItemDescription className="truncate text-xs text-muted-foreground">
+                        运行命令及脚本
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
 
-                {/* 4. 代码更改 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    addPanelTab("changes");
-                  }}
-                  className="group flex w-full items-center gap-3.5 rounded-lg p-2.5 text-left transition-colors hover:bg-muted/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <FileDiffIcon className="size-4 shrink-0 text-foreground" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-xs font-medium text-foreground">代码更改</span>
-                      <span className="truncate text-xs text-muted-foreground">
+                  <Item
+                    variant="outline"
+                    size="sm"
+                    className="cursor-pointer transition-colors hover:bg-muted/70"
+                    render={<button type="button" onClick={() => addPanelTab("changes")} />}
+                  >
+                    <ItemMedia variant="icon">
+                      <FileDiffIcon className="size-4 text-foreground" />
+                    </ItemMedia>
+                    <ItemContent className="min-w-0 flex-1">
+                      <ItemTitle className="text-xs font-medium">代码更改</ItemTitle>
+                      <ItemDescription className="truncate text-xs text-muted-foreground">
                         查看本会话线程的文件更改历史
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              </div>
-            </div>
+                      </ItemDescription>
+                    </ItemContent>
+                  </Item>
+                </ItemGroup>
+              </EmptyContent>
+            </Empty>
           </div>
         ) : null}
       </div>

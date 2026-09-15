@@ -36,7 +36,7 @@ import { HyperText } from "@/shared/ui/hyper-text";
 // ---------------------------------------------------------------------------
 
 export function ChatModelSelector() {
-  const { providers, catalog, catalogStatus, modelSelection, setModelSelection, setSettingsOpen } =
+  const { providers, catalog, catalogStatus, modelSelection, setModelSelection, openSettings } =
     useWorkbench();
 
   const activeProviders = providers.filter((p) => !p.disabled && p.enabledModels.length > 0);
@@ -120,7 +120,7 @@ export function ChatModelSelector() {
         {activeProviders.length === 0 ? (
           <DropdownMenuItem
             onClick={() => {
-              setSettingsOpen(true);
+              openSettings("providers");
             }}
           >
             <SettingsIcon />

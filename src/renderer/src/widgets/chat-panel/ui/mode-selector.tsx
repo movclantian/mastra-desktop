@@ -26,7 +26,7 @@ import { ApprovalMenuItems } from "./approval-selector";
 // ---------------------------------------------------------------------------
 // 会话模式选择器(plan → build → review)
 // 模式切到哪就写进 thread.metadata.modeId,chat 路由每次请求据此叠加模式指令、
-// 并按模式的 deniedCategories 收回工具(src/mastra/agents/modes.ts)。
+// 并按 Controller 的 availableTools/权限策略收回工具。
 // 计划获批后由服务端自动切到 transitionsTo,前端刷新线程即可看到。
 // ---------------------------------------------------------------------------
 

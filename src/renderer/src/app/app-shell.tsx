@@ -4,6 +4,7 @@ import { useWorkbench, WorkbenchProvider } from "@/entities/workbench";
 import { LoginScreen, useAuth } from "@/features/auth";
 import { AgentHubPage } from "@/pages/agents";
 import { ChatPage } from "@/pages/chat";
+import { SettingsPage } from "@/pages/settings";
 import { SkillHubPage } from "@/pages/skills";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
@@ -16,7 +17,6 @@ import { Toaster } from "@/shared/ui/sonner";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
-import { SettingsDialog } from "@/widgets/settings-dialog";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
 const KnowledgeLibraryPage = React.lazy(() =>
@@ -37,7 +37,7 @@ function WorkspaceDrawerContainer({ open, minWidth }: { open: boolean; minWidth:
       style={{ minWidth }}
       className={cn(
         "flex h-full min-h-0 w-full flex-col bg-background transition-opacity duration-200 ease-linear",
-        open ? "border-l opacity-100" : "opacity-0 pointer-events-none",
+        open ? "opacity-100" : "opacity-0 pointer-events-none",
       )}
     >
       <WorkspaceDrawer />
@@ -80,7 +80,9 @@ function useDrawerTransition() {
 function drawerHandleProps(open: boolean) {
   return {
     disabled: !open,
-    className: open ? "transition-colors hover:bg-primary" : "pointer-events-none opacity-0",
+    className: open
+      ? "transition-colors hover:bg-primary"
+      : "pointer-events-none !w-0 !border-0 opacity-0",
   };
 }
 
@@ -123,6 +125,12 @@ function AppShell() {
     if (wantsWorkspace) panel.expand();
     else panel.collapse();
   }, [wantsWorkspace, workspaceRef]);
+
+  // 设置是全局页面:脱离主应用壳(主侧边栏/顶栏/工作台抽屉),占满整屏,
+  // 通过设置菜单 sidebar 顶部的「返回应用」回到 chat
+  if (activeView === "settings") {
+    return <SettingsPage />;
+  }
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
@@ -177,7 +185,6 @@ function AppShell() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
-      <SettingsDialog />
     </SidebarProvider>
   );
 }

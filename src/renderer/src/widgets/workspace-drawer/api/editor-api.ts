@@ -24,8 +24,8 @@ export async function fetchInlineCompletion({
   ...body
 }: InlineCompletionRequest): Promise<{ text?: unknown } | null> {
   const response = await apiFetch(
-    `/work/threads/${encodeURIComponent(threadId)}/inline-completion?resourceId=${encodeURIComponent(resourceId)}`,
-    { method: "POST", body, signal },
+    `/work/workspace/threads/${encodeURIComponent(threadId)}/inline-completion?resourceId=${encodeURIComponent(resourceId)}`,
+    { method: "POST", body: { ...body, resourceId }, signal },
   );
   if (!response.ok) return null;
   return (await response.json().catch(() => null)) as { text?: unknown } | null;
@@ -51,8 +51,8 @@ export async function requestInlineEdit({
   ...body
 }: InlineEditRequest): Promise<{ text?: unknown; error?: unknown }> {
   const response = await apiFetch(
-    `/work/threads/${encodeURIComponent(threadId)}/inline-edit?resourceId=${encodeURIComponent(resourceId)}`,
-    { method: "POST", body, signal },
+    `/work/workspace/threads/${encodeURIComponent(threadId)}/inline-edit?resourceId=${encodeURIComponent(resourceId)}`,
+    { method: "POST", body: { ...body, resourceId }, signal },
   );
   const payload = (await response.json().catch(() => null)) as {
     text?: unknown;

@@ -2,7 +2,6 @@ import type { FileUIPart } from "ai";
 import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import type {
   BackgroundTaskState,
-  CompressResult,
   LibraryFilePart,
   MessageFileReference,
   WorkDisplayState,
@@ -85,11 +84,17 @@ export async function fetchThreadMessages(
   threadId: string,
   resourceId: string,
 ): Promise<{ messages: WorkUIMessage[] }> {
-  return requestJson(
-    `/work/threads/${encodeURIComponent(threadId)}/messages?${resourceQuery(resourceId)}`,
-    {},
-    "加载消息失败",
-  );
+  const messages: WorkUIMessage[] = [];
+  const orderBy = encodeURIComponent(JSON.stringify({ field: "createdAt", direction: "ASC" }));
+  for (let page = 0; ; page += 1) {
+    const result = await requestJson<{ uiMessages: WorkUIMessage[]; hasMore: boolean }>(
+      `/api/memory/threads/${encodeURIComponent(threadId)}/messages?${resourceQuery(resourceId)}&agentId=mastra-work-agent&page=${page}&perPage=100&orderBy=${orderBy}`,
+      {},
+      "加载消息失败",
+    );
+    messages.push(...result.uiMessages);
+    if (!result.hasMore) return { messages };
+  }
 }
 
 export type DisplayStatePayload = Omit<WorkDisplayState, "suspendedRuns"> & {
@@ -114,18 +119,6 @@ export async function abortThread(threadId: string, resourceId: string): Promise
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/abort?${resourceQuery(resourceId)}`,
     { method: "POST" },
     "停止任务失败",
-  );
-}
-
-export async function summarizeThread(
-  threadId: string,
-  resourceId: string,
-  model: unknown,
-): Promise<CompressResult> {
-  return requestJson(
-    `/work/threads/${encodeURIComponent(threadId)}/summarize`,
-    { method: "POST", body: { model, resourceId } },
-    "压缩上下文失败",
   );
 }
 
@@ -187,12 +180,12 @@ export async function enqueueFollowUp(
     agentProfileId: string;
     metadata: { skillNames: string[]; fileReferences: MessageFileReference[] };
   },
-): Promise<{ followUpId: string }> {
-  const payload = await requestJson<{ followUpId?: string }>(
+): Promise<{ queued: true }> {
+  const payload = await requestJson<{ queued?: boolean }>(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/follow-up?${resourceQuery(resourceId)}`,
     { method: "POST", body },
     "排队消息未被 Agent 接受",
   );
-  if (!payload.followUpId) throw new Error("排队消息未被 Agent 接受");
-  return { followUpId: payload.followUpId };
+  if (!payload.queued) throw new Error("排队消息未被 Agent 接受");
+  return { queued: true };
 }

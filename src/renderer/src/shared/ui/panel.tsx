@@ -7,7 +7,7 @@ export function PanelHeader({ className, ...props }: React.ComponentProps<"heade
     <header
       data-slot="panel-header"
       className={cn(
-        "bg-muted/40 border-b border-border flex h-12 shrink-0 items-center gap-2 px-3",
+        "bg-muted/40 border-b border-border flex h-12 w-full shrink-0 items-center gap-2 px-3",
         className,
       )}
       {...props}
@@ -32,7 +32,7 @@ export function PanelFooter({ className, ...props }: React.ComponentProps<"div">
     <div
       data-slot="panel-footer"
       className={cn(
-        "bg-muted/40 border-t border-border text-muted-foreground mt-auto flex h-7 shrink-0 items-center gap-2 px-3 text-[11px]",
+        "bg-muted/40 border-t border-border text-muted-foreground mt-auto flex h-7 w-full shrink-0 items-center gap-2 px-3 text-[11px]",
         className,
       )}
       {...props}

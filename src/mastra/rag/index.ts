@@ -10,7 +10,7 @@
 
 export {
   type LibraryIndexSettledEvent,
-  onLibraryIndexSettled,
+  libraryIndexSignals,
   recoverInterruptedLibraryIndexes,
   reindexAsset,
 } from "./document/indexing";

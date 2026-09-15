@@ -4,6 +4,7 @@ import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { Avatar, AvatarBadge, AvatarFallback } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
+import { Bubble, BubbleContent } from "@/shared/ui/bubble";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
 import type {
@@ -305,9 +306,9 @@ export function AgentMemberMessageView({
         <Message align="end" key={request.id}>
           <MessageContent className="max-w-[85%]">
             <MessageHeader className="justify-end px-0">当前请求</MessageHeader>
-            <div className="rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground">
-              {request.text}
-            </div>
+            <Bubble align="end">
+              <BubbleContent className="text-sm">{request.text}</BubbleContent>
+            </Bubble>
           </MessageContent>
         </Message>
       ))}
@@ -325,16 +326,18 @@ export function AgentMemberMessageView({
             <MessageHeader className="px-0">
               {member.name} · {entry.label}
             </MessageHeader>
-            <div className="rounded-2xl border bg-background px-3 py-2 text-sm">
-              {entry.text ? (
-                <MessageResponse>{entry.text}</MessageResponse>
-              ) : (
-                <span className="flex items-center gap-2 text-muted-foreground">
-                  {statusIcon(entry.status)}
-                  {entry.status === "running" ? "正在流式输出…" : statusLabel(entry.status)}
-                </span>
-              )}
-            </div>
+            <Bubble variant="outline">
+              <BubbleContent className="text-sm">
+                {entry.text ? (
+                  <MessageResponse>{entry.text}</MessageResponse>
+                ) : (
+                  <span className="flex items-center gap-2 text-muted-foreground">
+                    {statusIcon(entry.status)}
+                    {entry.status === "running" ? "正在流式输出…" : statusLabel(entry.status)}
+                  </span>
+                )}
+              </BubbleContent>
+            </Bubble>
           </MessageContent>
         </Message>
       ))}
@@ -350,9 +353,11 @@ export function AgentMemberMessageView({
           </MessageAvatar>
           <MessageContent>
             <MessageHeader className="px-0">{member.name}</MessageHeader>
-            <div className="rounded-2xl border bg-background px-3 py-2 text-sm text-muted-foreground">
-              {isBusy && latestRequest ? "等待该成员接收任务…" : "该成员尚未产生输出"}
-            </div>
+            <Bubble variant="outline">
+              <BubbleContent className="text-sm text-muted-foreground">
+                {isBusy && latestRequest ? "等待该成员接收任务…" : "该成员尚未产生输出"}
+              </BubbleContent>
+            </Bubble>
           </MessageContent>
         </Message>
       ) : null}

@@ -1,8 +1,19 @@
 import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import type { MastraAuthRequest } from "@mastra/core/server";
-import { getRequestHeader, SimpleAuth } from "@mastra/core/server";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import type {
+  ContextWithMastra,
+  ICredentialsProvider,
+  IUserProvider,
+  MastraAuthRequest,
+} from "@mastra/core/server";
+import { getRequestHeader, getWebRequest, MastraAuthProvider } from "@mastra/core/server";
+import { getGuardrailsConfig } from "./agents/guardrails";
+import { getMcpConfig } from "./connections/mcp";
 import { workError } from "./errors";
+import { getMemoryConfig } from "./memory";
+import { getLibrarySettings } from "./rag/settings";
 import { getLibsqlClient } from "./storage";
+import { getWorkspaceConfig } from "./workspace";
 
 export interface AuthUser {
   id: string;
@@ -236,9 +247,35 @@ function tokenFromRequest(token: string, request: MastraAuthRequest): string {
   }
 }
 
-// Only x-shutdown-token uses SimpleAuth's in-memory token map; user sessions use the DB.
-class DatabaseAuth extends SimpleAuth<AuthUser> {
-  override async signIn(email: string, password: string, _request: Request) {
+const systemUser: AuthUser = {
+  id: "__system__",
+  name: "Mastra system",
+  email: "system@mastra-work.app",
+  role: "admin",
+};
+
+function isShutdownRequest(request: MastraAuthRequest): boolean {
+  const expected = process.env.MASTRA_SHUTDOWN_TOKEN;
+  const supplied = getRequestHeader(request, "x-shutdown-token");
+  const raw = getWebRequest(request);
+  if (
+    !expected ||
+    !supplied ||
+    !raw ||
+    raw.method !== "POST" ||
+    new URL(raw.url).pathname !== "/work/shutdown"
+  )
+    return false;
+  const actual = Buffer.from(supplied);
+  const secret = Buffer.from(expected);
+  return actual.length === secret.length && timingSafeEqual(actual, secret);
+}
+
+class DatabaseAuth
+  extends MastraAuthProvider<AuthUser>
+  implements ICredentialsProvider<AuthUser>, IUserProvider<AuthUser>
+{
+  async signIn(email: string, password: string, _request: Request) {
     const session = await loginAuthUser({ email, password });
     return {
       user: session.user,
@@ -250,49 +287,45 @@ class DatabaseAuth extends SimpleAuth<AuthUser> {
   }
 
   override async authenticateToken(token: string, request: MastraAuthRequest) {
-    const internal = getRequestHeader(request, "x-shutdown-token");
-    if (internal) return super.authenticateToken(token, request);
+    if (getRequestHeader(request, "x-shutdown-token")) {
+      return isShutdownRequest(request) ? systemUser : null;
+    }
     return findUserBySessionToken(tokenFromRequest(token, request));
   }
 
-  override async getCurrentUser(request: Request) {
-    if (getRequestHeader(request, "x-shutdown-token")) return super.getCurrentUser(request);
-    return findUserBySessionToken(tokenFromRequest("", request));
+  async getCurrentUser(request: Request) {
+    return this.authenticateToken("", request);
   }
 
-  override async getUser(userId: string) {
-    if (userId === "__system__") return super.getUser(userId);
-    return findUserById(userId);
+  async getUser(userId: string) {
+    return userId === systemUser.id ? systemUser : findUserById(userId);
   }
 
-  override async getUsers(userIds: string[]) {
-    return Promise.all(
-      userIds.map((userId) =>
-        userId === "__system__" ? super.getUser(userId) : findUserById(userId),
-      ),
-    );
+  async getUsers(userIds: string[]) {
+    return Promise.all(userIds.map((userId) => this.getUser(userId)));
+  }
+
+  async signUp(): Promise<never> {
+    throw workError("AUTH_VALIDATION", { text: "请通过桌面登录页注册" });
+  }
+
+  isSignUpEnabled() {
+    return false;
+  }
+
+  getClearSessionHeaders() {
+    return { "Set-Cookie": "mastra-token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0" };
   }
 
   override async authorizeUser(user: AuthUser, request: MastraAuthRequest) {
-    if (getRequestHeader(request, "x-shutdown-token")) return user.id === "__system__";
+    if (user.id === systemUser.id) return isShutdownRequest(request);
+    if (getRequestHeader(request, "x-shutdown-token")) return false;
     return Boolean(await findUserById(user.id));
   }
 }
 
-const shutdownUsers: Record<string, AuthUser> = {};
-const internalToken = process.env.MASTRA_SHUTDOWN_TOKEN?.trim();
-if (internalToken) {
-  shutdownUsers[internalToken] = {
-    id: "__system__",
-    name: "Mastra system",
-    email: "system@mastra-work.app",
-    role: "admin",
-  };
-}
-
 export const workAuth = new DatabaseAuth({
-  tokens: shutdownUsers,
-  headers: ["x-shutdown-token"],
+  name: "database-auth",
   mapUserToResourceId: (user) => user.id,
   protected: ["/api/*", "/chat/*", "/work/*"],
   public: ["/work/auth/login", "/work/auth/register"],
@@ -302,4 +335,112 @@ export function authUserFromContext(value: unknown): AuthUser | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
   return rowUser(row);
+}
+
+const RESOURCE_OWNERSHIP_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+type ResourceOwnershipContext = {
+  req: {
+    method: string;
+    query: (name: string) => string | undefined;
+    header: (name: string) => string | undefined;
+    raw: Request;
+  };
+};
+
+function jsonResourceIds(body: unknown): unknown[] {
+  if (!body || typeof body !== "object") return [];
+
+  const record = body as Record<string, unknown>;
+  const resourceIds: unknown[] = [];
+  if ("resourceId" in record) resourceIds.push(record.resourceId);
+
+  const memory = record.memory;
+  if (memory && typeof memory === "object" && "resource" in memory) {
+    resourceIds.push((memory as Record<string, unknown>).resource);
+  }
+  return resourceIds.filter((value) => value !== undefined);
+}
+
+async function readJsonResourceIds(request: Request): Promise<unknown[] | undefined> {
+  try {
+    return jsonResourceIds(await request.clone().json());
+  } catch {
+    // Let the route perform its canonical JSON validation.
+    return undefined;
+  }
+}
+
+async function readFormResourceIds(request: Request): Promise<string[] | undefined> {
+  try {
+    const resource = (await request.clone().formData()).get("resourceId");
+    return typeof resource === "string" ? [resource] : [];
+  } catch {
+    // Let the route perform its canonical multipart validation.
+    return undefined;
+  }
+}
+
+async function assertResourceIdOwnership(
+  c: ResourceOwnershipContext,
+  user: AuthUser,
+): Promise<boolean> {
+  const queryResource = c.req.query("resourceId");
+  if (queryResource && queryResource !== user.id) return false;
+  if (!RESOURCE_OWNERSHIP_METHODS.has(c.req.method)) return true;
+
+  const contentType = c.req.header("content-type") ?? "";
+  let resourceIds: unknown[] | undefined;
+  if (contentType.includes("multipart/form-data")) {
+    resourceIds = await readFormResourceIds(c.req.raw);
+  } else {
+    resourceIds = await readJsonResourceIds(c.req.raw);
+  }
+
+  if (!resourceIds) return true;
+  return resourceIds.every((resourceId) => resourceId === user.id);
+}
+
+export async function workRequestContextMiddleware(
+  c: ContextWithMastra,
+  next: () => Promise<void>,
+) {
+  const isWorkRoute = c.req.path.startsWith("/work/");
+  const isPublicWorkRoute =
+    c.req.path === "/work/auth/login" || c.req.path === "/work/auth/register";
+  const requestContext = c.get("requestContext");
+  let user = requestContext?.get("user") as AuthUser | undefined;
+  if (!user) {
+    try {
+      user = (await workAuth.authenticateToken("", c.req.raw)) ?? undefined;
+      if (user) requestContext?.set("user", user);
+    } catch {
+      // Treat failed token lookup as anonymous; protected work routes reject below.
+    }
+  }
+  if (!user) {
+    if ((isWorkRoute && !isPublicWorkRoute) || c.req.path.startsWith("/api/memory/")) {
+      throw workError("AUTH_REQUIRED");
+    }
+    await next();
+    return;
+  }
+
+  // The authenticated principal is the only tenant authority. Reject
+  // client-supplied ids before any route can query storage with them.
+  if (!(await assertResourceIdOwnership(c, user))) {
+    return c.json({ error: "resourceId does not belong to the authenticated user" }, 403);
+  }
+
+  requestContext.set("user", user);
+  requestContext.set("userId", user.id);
+  requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
+  await Promise.all([
+    getWorkspaceConfig(user.id),
+    getMemoryConfig(user.id),
+    getGuardrailsConfig(user.id),
+    getMcpConfig(user.id),
+    getLibrarySettings(user.id),
+  ]);
+  await next();
 }

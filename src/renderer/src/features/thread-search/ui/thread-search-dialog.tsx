@@ -1,9 +1,8 @@
-import { MessageCircleIcon, SparklesIcon } from "lucide-react";
+import { MessageCircleIcon, SearchIcon, SparklesIcon } from "lucide-react";
 import * as React from "react";
 import { type MessageSearchHit, useWorkbench } from "@/entities/workbench";
 import { Badge } from "@/shared/ui/badge";
 import {
-  Command,
   CommandDialog,
   CommandEmpty,
   CommandGroup,
@@ -12,6 +11,13 @@ import {
   CommandList,
 } from "@/shared/ui/command";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/shared/ui/empty";
 
 /**
  * 线程消息检索弹窗(官方 Memory.recall 语义召回,服务端文本匹配兜底)。
@@ -83,58 +89,85 @@ export function ThreadSearchDialog({
       title="检索线程消息"
       description="搜索全部会话中的消息"
       className="sm:max-w-2xl"
+      commandProps={{ shouldFilter: false }}
     >
-      <Command shouldFilter={false}>
-        <CommandInput
-          autoFocus
-          placeholder="输入消息内容，即时搜索…"
-          value={query}
-          onValueChange={setQuery}
-        />
-        <CommandList className="max-h-[min(60vh,32rem)]">
-          {searching ? (
-            <CommandEmpty className="flex items-center justify-center gap-2">
-              <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
-              正在搜索…
-            </CommandEmpty>
-          ) : hits === null ? (
-            <CommandEmpty>输入内容后会自动搜索</CommandEmpty>
-          ) : hits.length === 0 ? (
-            <CommandEmpty>没有匹配的消息</CommandEmpty>
-          ) : (
-            <CommandGroup heading="消息结果">
-              {hits.map((hit) => (
-                <CommandItem
-                  key={`${hit.threadId}-${hit.messageId}`}
-                  value={`${hit.threadTitle} ${hit.role} ${hit.text}`}
-                  onSelect={() => jumpTo(hit)}
-                  className="h-auto items-start gap-3 py-2.5"
-                >
-                  <MessageCircleIcon className="mt-0.5 size-4 text-muted-foreground" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                      <span className="min-w-0 truncate font-medium text-foreground">
-                        {hit.threadTitle}
-                      </span>
-                      <span className="shrink-0">{hit.role === "user" ? "我" : "助手"}</span>
-                      {hit.semantic ? (
-                        <Badge variant="secondary" className="h-4 shrink-0 gap-1 px-1 text-[10px]">
-                          <SparklesIcon className="size-2.5" />
-                          语义
-                        </Badge>
-                      ) : null}
-                      <span className="ml-auto shrink-0">
-                        {new Date(hit.createdAt).toLocaleString()}
-                      </span>
+      <CommandInput
+        autoFocus
+        placeholder="输入消息内容，即时搜索…"
+        value={query}
+        onValueChange={setQuery}
+      />
+      <CommandList className="max-h-[min(60vh,32rem)]">
+        {searching ? (
+          <CommandEmpty className="py-10">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <DotmCircular4 size={16} dotSize={2} colorPreset="solid-theme" />
+                </EmptyMedia>
+                <EmptyTitle>正在搜索会话历史…</EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          </CommandEmpty>
+        ) : hits === null ? (
+          <CommandEmpty className="py-10">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <SearchIcon />
+                </EmptyMedia>
+                <EmptyTitle>搜索会话消息</EmptyTitle>
+                <EmptyDescription>输入内容后会自动搜索全部会话中的消息。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </CommandEmpty>
+        ) : hits.length === 0 ? (
+          <CommandEmpty className="py-10">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <SearchIcon />
+                </EmptyMedia>
+                <EmptyTitle>没有匹配的消息</EmptyTitle>
+                <EmptyDescription>尝试更换关键词或语义表述。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </CommandEmpty>
+        ) : (
+          <CommandGroup heading={`消息结果 (${hits.length})`}>
+            {hits.map((hit) => (
+              <CommandItem
+                key={`${hit.threadId}-${hit.messageId}`}
+                value={`${hit.threadTitle} ${hit.role} ${hit.text}`}
+                onSelect={() => jumpTo(hit)}
+                className="h-auto items-start gap-3 py-2.5 cursor-pointer"
+              >
+                <MessageCircleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate text-xs font-medium text-foreground">
+                      {hit.threadTitle}
                     </span>
-                    <span className="mt-1 line-clamp-2 text-sm text-foreground">{hit.text}</span>
-                  </span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          )}
-        </CommandList>
-      </Command>
+                    <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px]">
+                      {hit.role === "user" ? "我" : "助手"}
+                    </Badge>
+                    {hit.semantic ? (
+                      <Badge variant="secondary" className="h-4 shrink-0 gap-1 px-1 text-[10px]">
+                        <SparklesIcon className="size-2.5" />
+                        语义
+                      </Badge>
+                    ) : null}
+                    <time className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {new Date(hit.createdAt).toLocaleString()}
+                    </time>
+                  </div>
+                  <p className="line-clamp-2 text-sm text-foreground/90">{hit.text}</p>
+                </div>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
     </CommandDialog>
   );
 }

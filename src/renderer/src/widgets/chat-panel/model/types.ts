@@ -119,7 +119,7 @@ export interface QueuedRequest {
   skills?: string[];
   fileReferences?: MessageFileReference[];
   /** Server session queue id; its run is consumed through AI SDK resumeStream(). */
-  followUpId?: string;
+  queuedOnServer?: boolean;
 }
 
 export type LibraryFilePart = FileUIPart & { byteSize?: number };
@@ -711,26 +711,6 @@ export function getBackgroundTasksFromMessages(messages: UIMessage[]): Backgroun
     }
   }
   return [...tasks.values()];
-}
-
-/** 折叠历史精简记录(服务端压缩时存入摘要消息 metadata.compactedHistory) */
-export interface CompactedHistoryEntry {
-  id: string;
-  role: string;
-  text: string;
-  createdAt: string;
-  compactionId?: string;
-}
-
-/** 手动压缩结果(服务端 summarize 路由返回 / 线程 metadata.compaction 回看) */
-export interface CompressResult {
-  summary: string;
-  extracted?: Record<string, unknown>;
-  extractionFailures?: Array<{ slug: string; error: string }>;
-  inputTokens?: number;
-  outputTokens?: number;
-  estimatedContextTokens?: number;
-  deletedMessages?: number;
 }
 
 export const TASK_TOOL_NAMES = new Set([

@@ -22,19 +22,10 @@ export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[
   for (const message of messages) {
     const previous = display.at(-1);
     const previousMessage = previous?.message;
-    const compacted = Boolean(
-      (message.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
-    );
-    const previousCompacted = Boolean(
-      (previousMessage?.metadata as { compactedHistory?: unknown } | undefined)?.compactedHistory,
-    );
-
     if (
       message.role === "assistant" &&
       previousMessage?.role === "assistant" &&
-      previous !== undefined &&
-      !compacted &&
-      !previousCompacted
+      previous !== undefined
     ) {
       previous.message = {
         ...previousMessage,

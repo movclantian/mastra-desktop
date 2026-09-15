@@ -387,27 +387,6 @@ function dedupeExtractors(
   return extractors;
 }
 
-/**
- * Extractors used by one-shot/manual summarization. OM attaches extractors to
- * separate observer/reflection stages, while summarizeThread accepts one flat
- * list; preserve configuration order and remove duplicate names globally.
- */
-export function getConfiguredMemoryExtractors(resourceId?: string): Extractor[] {
-  const config = currentConfig(resourceId);
-  const seen = new Set<string>();
-  const extractors: Extractor[] = [];
-  for (const item of config.omExtractors) {
-    if (item.enabled === false) continue;
-    const name = item.name.trim();
-    const instructions = item.instructions.trim();
-    const key = name.toLowerCase();
-    if (!name || !instructions || seen.has(key)) continue;
-    seen.add(key);
-    extractors.push(instantiateExtractor(item));
-  }
-  return extractors;
-}
-
 interface MemoryRuntime {
   cachedMemory: Memory | null;
   memoryByScope: Map<string, Memory>;

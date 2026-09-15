@@ -1,8 +1,27 @@
+import type { ToolsInput } from "@mastra/core/agent";
 /** 子 Agent 与主 Agent 共用当前请求模型。 */
 import { Agent } from "@mastra/core/agent";
+import type { InputProcessorOrWorkflow } from "@mastra/core/processors";
+import type { RequestContext } from "@mastra/core/request-context";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import { askUserTool, submitPlanTool } from "@mastra/core/tools";
+import { getNotificationInboxTool } from "../harness";
 import { getMemory } from "../memory";
 import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models/providers";
+import {
+  libraryDocumentChunkerTool,
+  libraryGraphSearchTool,
+  libraryVectorSearchTool,
+} from "../rag";
+import {
+  CODE_MODE_EXTERNAL_TOOL_NAMES,
+  codeMode,
+  getConfiguredMcpTools,
+  MODEL_FAMILY_CONTEXT_KEY,
+  parseWebSearchSelection,
+  resolveWebSearchTools,
+  WEB_SEARCH_CONTEXT_KEY,
+} from "../tools";
 import {
   getThreadWorkspace,
   isWorkspaceEnabled,
@@ -12,10 +31,18 @@ import {
 import { workBrowser } from "./browser";
 import {
   buildGuardrailErrorProcessors,
+  buildGuardrailInputProcessors,
   buildGuardrailOutputProcessors,
   getGuardrailsRuntimeConfig,
 } from "./guardrails";
-import { buildInputPipeline, type RequestContextLike, resolveSharedTools } from "./shared";
+import { type PermissionPolicy, SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
+import {
+  agentsMdProcessor,
+  editorStateProcessor,
+  libraryAttachmentProcessor,
+  terminalStateProcessor,
+  workbenchStateProcessor,
+} from "./processors";
 
 type ResolvedModel = Awaited<ReturnType<typeof resolveDefaultLanguageModel>>;
 
@@ -71,7 +98,10 @@ const explorerAgent = new Agent({
     const maxProcessorRetries = getGuardrailsRuntimeConfig(
       requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
     ).maxProcessorRetries;
-    return maxProcessorRetries > 0 ? { maxProcessorRetries } : {};
+    return {
+      ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
+      requireToolApproval: true,
+    };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
   browser: workBrowser,
@@ -98,7 +128,10 @@ const reviewerAgent = new Agent({
     const maxProcessorRetries = getGuardrailsRuntimeConfig(
       requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
     ).maxProcessorRetries;
-    return maxProcessorRetries > 0 ? { maxProcessorRetries } : {};
+    return {
+      ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
+      requireToolApproval: true,
+    };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
   browser: workBrowser,
@@ -108,3 +141,51 @@ export const workSubagents = {
   explorer: explorerAgent,
   reviewer: reviewerAgent,
 };
+
+export type RequestContextLike = { get: (key: string) => unknown };
+
+export function isCodeModeAvailable(requestContext?: RequestContextLike): boolean {
+  const policy = requestContext?.get(SESSION_TOOL_POLICY_CONTEXT_KEY) as
+    | ((toolName: string) => PermissionPolicy)
+    | undefined;
+  return Boolean(
+    policy &&
+      policy("execute_typescript") !== "deny" &&
+      CODE_MODE_EXTERNAL_TOOL_NAMES.every((name) => policy(name) === "allow"),
+  );
+}
+
+/** Tools available to both the primary agent and its built-in subagents. */
+export async function resolveSharedTools(requestContext?: RequestContextLike): Promise<ToolsInput> {
+  return {
+    ask_user: askUserTool,
+    submit_plan: submitPlanTool,
+    ...(isCodeModeAvailable(requestContext) ? { execute_typescript: codeMode.tool } : {}),
+    library_vector_search: libraryVectorSearchTool,
+    library_graph_search: libraryGraphSearchTool,
+    library_document_chunker: libraryDocumentChunkerTool,
+    notification_inbox: await getNotificationInboxTool(),
+    ...(await resolveWebSearchTools(
+      parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
+      requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+      requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+    )),
+    ...(await getConfiguredMcpTools(
+      requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+    )),
+  };
+}
+
+/** Resolve attachments before processing model input. */
+export async function buildInputPipeline(
+  requestContext?: RequestContextLike,
+): Promise<InputProcessorOrWorkflow[]> {
+  return [
+    libraryAttachmentProcessor,
+    editorStateProcessor,
+    terminalStateProcessor,
+    workbenchStateProcessor,
+    agentsMdProcessor,
+    ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),
+  ];
+}

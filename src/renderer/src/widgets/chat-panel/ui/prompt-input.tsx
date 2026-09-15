@@ -73,12 +73,7 @@ import {
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
-import {
-  type CompressResult,
-  type MessageFileReference,
-  type QueuedRequest,
-  referenceBadgeClass,
-} from "../model/types";
+import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
 import { ChatAgentSelector } from "./agent-selector";
 import { ChatContextUsage } from "./context-usage";
 import { ChatModeSelector } from "./mode-selector";
@@ -513,7 +508,7 @@ function SortableRequestItem({
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div className="flex min-w-0 items-start gap-1">
-        {!request.followUpId ? (
+        {!request.queuedOnServer ? (
           <Button
             aria-label="拖动请求调整顺序"
             className="mt-0.5 shrink-0 text-muted-foreground"
@@ -552,7 +547,7 @@ function SortableRequestItem({
               <WaypointsIcon />
             </QueueItemAction>
           ) : null}
-          {!request.followUpId ? (
+          {!request.queuedOnServer ? (
             <QueueItemAction
               aria-label="编辑排队请求"
               className="opacity-100"
@@ -561,7 +556,7 @@ function SortableRequestItem({
               <PencilIcon />
             </QueueItemAction>
           ) : null}
-          {!request.followUpId ? (
+          {!request.queuedOnServer ? (
             <QueueItemAction
               aria-label="移除排队请求"
               className="opacity-100"
@@ -650,10 +645,6 @@ export function ChatPromptInput({
   onSubmit,
   status,
   onStop,
-  compacting,
-  onCompress,
-  compressResult,
-  onCompressResultClose,
   attachmentTokenBudget,
   attachmentCapabilities,
 }: {
@@ -676,10 +667,6 @@ export function ChatPromptInput({
    * 「点按钮停止」两个动作互不干扰。
    */
   onStop: () => void | Promise<void>;
-  compacting: boolean;
-  onCompress: () => void;
-  compressResult: CompressResult | null;
-  onCompressResultClose: () => void;
   /** 当前模型在预留输出空间后可用于附件的 token 预算。 */
   attachmentTokenBudget?: number;
   attachmentCapabilities?: { vision: boolean; audio: boolean };
@@ -908,14 +895,7 @@ export function ChatPromptInput({
           <div className="ml-auto flex min-w-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
-              <ChatContextUsage
-                usage={usage}
-                estimatedUsedTokens={estimatedUsedTokens}
-                compacting={compacting}
-                onCompress={onCompress}
-                compressResult={compressResult}
-                onCompressResultClose={onCompressResultClose}
-              />
+              <ChatContextUsage usage={usage} estimatedUsedTokens={estimatedUsedTokens} />
             </div>
             <ChatModeSelector />
             <ChatModelSelector />

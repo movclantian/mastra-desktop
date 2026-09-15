@@ -1,14 +1,19 @@
 import {
-  ArrowLeftIcon,
   PanelBottomCloseIcon,
   PanelBottomOpenIcon,
-  PanelRightCloseIcon,
   PanelRightOpenIcon,
-  PlusIcon,
   Settings2Icon,
 } from "lucide-react";
 import { useWorkbench } from "@/entities/workbench";
 import { OpenInIde } from "@/features/workspace-session";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { Button } from "@/shared/ui/button";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { PanelHeader } from "@/shared/ui/panel";
@@ -19,9 +24,7 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
   const {
     threads,
     activeThreadId,
-    createThread,
     activeView,
-    setActiveView,
     activeSkill,
     setActiveSkill,
     workspacePanelOpen,
@@ -45,37 +48,43 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
     <PanelHeader className="relative z-10 px-4">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <SidebarTrigger className="-ml-1" />
-        {activeView === "skills" && activeSkill ? (
-          <>
-            <Separator orientation="vertical" className="mx-1 h-4" />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setActiveSkill(null)}
-              className="h-7 cursor-pointer gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeftIcon className="size-3.5" />
-              返回插件市场
-            </Button>
-            <Separator orientation="vertical" className="mx-1 h-4" />
-            <p className="truncate text-sm font-medium">{activeSkill.name}</p>
-          </>
-        ) : (
-          <>
-            <Separator orientation="vertical" className="mx-1 h-4" />
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="truncate text-sm font-medium">{title}</p>
-              {isCurrentThreadBusy && activeView === "chat" ? (
-                <span
-                  className="flex shrink-0 items-center text-primary"
-                  title="当前会话正在运行中…"
-                >
-                  <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
-                </span>
-              ) : null}
-            </div>
-          </>
-        )}
+        <Separator orientation="vertical" className="mx-1 h-4" />
+        <Breadcrumb className="min-w-0">
+          <BreadcrumbList className="flex-nowrap text-xs sm:text-sm">
+            {activeView === "skills" && activeSkill ? (
+              <>
+                <BreadcrumbItem className="shrink-0">
+                  <BreadcrumbLink
+                    className="cursor-pointer"
+                    render={<button type="button" onClick={() => setActiveSkill(null)} />}
+                  >
+                    技能套件
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                <BreadcrumbItem className="min-w-0">
+                  <BreadcrumbPage className="max-w-64 truncate font-medium">
+                    {activeSkill.name}
+                  </BreadcrumbPage>
+                </BreadcrumbItem>
+              </>
+            ) : (
+              <BreadcrumbItem className="min-w-0">
+                <BreadcrumbPage className="flex min-w-0 items-center gap-2 font-medium">
+                  <span className="truncate">{title}</span>
+                  {isCurrentThreadBusy && activeView === "chat" ? (
+                    <span
+                      className="flex shrink-0 items-center text-primary"
+                      title="当前会话正在运行中…"
+                    >
+                      <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
+                    </span>
+                  ) : null}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            )}
+          </BreadcrumbList>
+        </Breadcrumb>
       </div>
       {activeView === "chat" ? (
         <>
@@ -91,27 +100,20 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
           >
             {terminalPanelOpen ? <PanelBottomCloseIcon /> : <PanelBottomOpenIcon />}
           </Button>
-          <Button
-            aria-label={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
-            aria-pressed={workspacePanelOpen}
-            onClick={() => setWorkspacePanelOpen(!workspacePanelOpen)}
-            size="icon-sm"
-            title={workspacePanelOpen ? "收起工作区面板" : "展开工作区面板"}
-            variant={workspacePanelOpen ? "secondary" : "ghost"}
-          >
-            {workspacePanelOpen ? <PanelRightCloseIcon /> : <PanelRightOpenIcon />}
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => {
-              setActiveView("chat");
-              void createThread();
-            }}
-          >
-            <PlusIcon />
-            新建会话
-          </Button>
+          {/* 工作区开关随容器迁移:面板展开后,收起按钮迁移到工作区面板头部
+              (原关闭按钮位置);顶栏只在面板收起时承载展开入口 —— 按钮在屏幕上
+              始终贴近右缘,展开/收起前后位置相对不变 */}
+          {!workspacePanelOpen ? (
+            <Button
+              aria-label="展开工作区面板"
+              onClick={() => setWorkspacePanelOpen(true)}
+              size="icon-sm"
+              title="展开工作区面板"
+              variant="ghost"
+            >
+              <PanelRightOpenIcon />
+            </Button>
+          ) : null}
         </>
       ) : null}
       {activeView === "library" ? (
@@ -125,6 +127,8 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
           <Settings2Icon />
         </Button>
       ) : null}
+      {/* 动态页面动作插槽: 供当前页面或详情模式挂载顶栏快捷按钮 */}
+      <div id="app-top-bar-actions" className="flex items-center gap-2 shrink-0" />
     </PanelHeader>
   );
 }

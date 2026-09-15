@@ -22,26 +22,51 @@ function resourceQuery(resourceId: string): string {
 
 const MEMORY_AGENT_ID = "mastra-work-agent";
 
+type MemoryThread = Omit<WorkThread, "title" | "metadata"> & {
+  title?: string;
+  metadata?: WorkThread["metadata"] | null;
+};
+function workThread(thread: MemoryThread): WorkThread {
+  return { ...thread, title: thread.title?.trim() || "New Chat", metadata: thread.metadata ?? {} };
+}
+
 export async function fetchThreads(resourceId: string): Promise<WorkThread[]> {
-  const payload = await requestJson<{ threads?: WorkThread[] }>(
-    `/work/threads?${resourceQuery(resourceId)}`,
-    {},
-    "加载任务列表失败",
-  );
-  return Array.isArray(payload.threads) ? payload.threads : [];
+  const threads: WorkThread[] = [];
+  for (let page = 0; ; page += 1) {
+    const payload = await requestJson<{ threads: MemoryThread[]; hasMore: boolean }>(
+      `/api/memory/threads?${resourceQuery(resourceId)}&agentId=${MEMORY_AGENT_ID}&page=${page}&perPage=100`,
+      {},
+      "加载任务列表失败",
+    );
+    threads.push(...payload.threads.map(workThread));
+    if (!payload.hasMore) return threads;
+  }
 }
 
 export async function createThreadRequest(
   resourceId: string,
   body: Record<string, unknown>,
 ): Promise<WorkThread> {
-  const payload = await requestJson<{ thread?: WorkThread }>(
-    "/work/threads",
-    { method: "POST", body: { ...body, resourceId } },
-    "创建任务失败",
+  if ((body.metadata as { draft?: boolean } | undefined)?.draft) {
+    const drafts = (await fetchThreads(resourceId)).filter(
+      (thread) => thread.metadata.draft && !thread.metadata.archivedAt,
+    );
+    for (const draft of drafts) {
+      const history = await requestJson<{ messages: unknown[] }>(
+        `/api/memory/threads/${encodeURIComponent(draft.id)}/messages?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}&perPage=1`,
+        {},
+        "读取草稿失败",
+      );
+      if (history.messages.length === 0) return draft;
+    }
+  }
+  return workThread(
+    await requestJson<MemoryThread>(
+      `/api/memory/threads?agentId=${MEMORY_AGENT_ID}`,
+      { method: "POST", body: { ...body, resourceId } },
+      "创建任务失败",
+    ),
   );
-  if (!payload.thread) throw new Error("创建任务失败：服务端未返回任务");
-  return payload.thread;
 }
 
 export async function updateThread(
@@ -49,16 +74,27 @@ export async function updateThread(
   resourceId: string,
   body: Record<string, unknown>,
 ): Promise<void> {
+  const path = `/api/memory/threads/${encodeURIComponent(threadId)}?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}`;
+  const current = await requestJson<MemoryThread>(path, {}, "读取任务失败");
   await requestJson(
-    `/work/threads/${encodeURIComponent(threadId)}?${resourceQuery(resourceId)}`,
-    { method: "PATCH", body },
+    path,
+    {
+      method: "PATCH",
+      body: {
+        ...body,
+        resourceId,
+        ...(body.metadata
+          ? { metadata: { ...current.metadata, ...(body.metadata as Record<string, unknown>) } }
+          : {}),
+      },
+    },
     "更新任务失败",
   );
 }
 
 export async function deleteThreadRequest(threadId: string, resourceId: string): Promise<void> {
   await requestJson(
-    `/work/threads/${encodeURIComponent(threadId)}?${resourceQuery(resourceId)}`,
+    `/api/memory/threads/${encodeURIComponent(threadId)}?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}`,
     { method: "DELETE" },
     "删除任务失败",
   );
@@ -110,7 +146,7 @@ export async function generateThreadTitle(
 ): Promise<string | null> {
   const payload = await requestJson<{ title?: string }>(
     `/work/threads/${encodeURIComponent(threadId)}/generate-title`,
-    { method: "POST", body: { resourceId, force: true } },
+    { method: "POST", body: { resourceId } },
     "生成任务标题失败",
   );
   return typeof payload.title === "string" ? payload.title : null;

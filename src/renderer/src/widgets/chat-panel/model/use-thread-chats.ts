@@ -56,18 +56,13 @@ export function useThreadChats(
         id: threadId,
         transport: new DefaultChatTransport<WorkUIMessage>({
           api: `${MASTRA_SERVER_URL}/chat/mastra-work-agent`,
-          prepareReconnectToStreamRequest: ({ body }) => {
-            const followUpId = typeof body?.followUpId === "string" ? body.followUpId : undefined;
-            return {
-              api: `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/stream?resourceId=${encodeURIComponent(userId)}${
-                followUpId ? `&followUpId=${encodeURIComponent(followUpId)}` : ""
-              }`,
-            };
-          },
+          prepareReconnectToStreamRequest: () => ({
+            api: `${MASTRA_SERVER_URL}/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/stream?resourceId=${encodeURIComponent(userId)}`,
+          }),
           prepareSendMessagesRequest: ({ messages, body, trigger, messageId, id }) => {
             // 自定义 prepareSendMessagesRequest 会**整体替换**默认 body,所以
             // trigger / messageId 必须显式带上 —— 否则 regenerate() 到了服务端
-            // 不再是 'regenerate-message',handleChatStream 就不会把待重生成的
+            // 不再是 'regenerate-message',toAISdkStream 就不会把待重生成的
             // 那条助手消息从输入里切掉(见 @mastra/ai-sdk 的 messagesToSend)。
             // Memory 历史由服务端加载;官方 AI SDK UI 集成只发送本次请求的
             // 最新消息,避免浏览器时间戳与数据库历史排序冲突。

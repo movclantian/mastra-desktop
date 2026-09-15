@@ -6,7 +6,6 @@ export * from "./assistant-trace";
 export * from "./avatars";
 export * from "./chat-panel";
 export * from "./citations";
-export * from "./compacted-messages";
 export * from "./context-usage";
 export * from "./message-list";
 export * from "./mode-selector";
