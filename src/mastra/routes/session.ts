@@ -23,7 +23,7 @@ import {
   ensureProfileAgentsRegistered,
   getAgentProfile,
 } from "../agents/custom";
-import { resolveMode } from "../agents/modes";
+import { MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
 import {
   parsePermissionRules,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
@@ -49,7 +49,6 @@ import {
 } from "../tools";
 import {
   getThreadWorkspace,
-  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -115,23 +114,25 @@ export async function getWorkbenchSession(
   if (!thread) throw workError("THREAD_NOT_FOUND");
   const controller = c.get("mastra").getAgentController("workbench");
   if (!controller) throw new Error("Workbench AgentController is not registered");
+  const mode = resolveMode(thread.metadata?.currentModeId);
+  requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
   await controller.init();
   const workspacePath = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
-  const workspace =
-    isWorkspaceEnabled(resourceId) && typeof workspacePath === "string" && workspacePath
-      ? getThreadWorkspace(workspacePath, threadId, resourceId)
-      : undefined;
+  const workspace = getThreadWorkspace(
+    typeof workspacePath === "string" && workspacePath ? workspacePath : process.cwd(),
+    threadId,
+    resourceId,
+  );
   const session = await controller.createSession({
     resourceId,
     threadId,
     scope: JSON.stringify([scopeOf(scope), threadId]),
     requestContext,
-    ...(workspace ? { workspace } : {}),
+    workspace,
   });
   requestContext.set(SESSION_TOOL_POLICY_CONTEXT_KEY, (toolName: string) =>
     session.resolveToolApproval(toolName),
   );
-  const mode = resolveMode(thread.metadata?.currentModeId);
   if (session.mode.get() !== mode.id) await session.mode.switch({ modeId: mode.id });
   const rules = parsePermissionRules(thread.metadata?.permissionRules);
   if (JSON.stringify(session.permissions.getRules()) !== JSON.stringify(rules)) {
@@ -437,15 +438,25 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   };
 }
 
-// `finish` closes one native stream segment, including approval suspensions.
-// Model steps use `step-finish`; they must never close the HTTP stream.
-function isTerminalAgentChunk(chunk: { type: string }): boolean {
-  return chunk.type === "finish" || chunk.type === "error" || chunk.type === "abort";
+// A tool-call finish hands control back to the agent loop. Only a non-tool
+// finish closes the subscribed run; `step-finish` is never terminal.
+function isTerminalAgentChunk(chunk: {
+  type: string;
+  finishReason?: unknown;
+  payload?: unknown;
+}): boolean {
+  if (chunk.type === "error" || chunk.type === "abort" || chunk.type === "tool-call-suspended")
+    return true;
+  if (chunk.type !== "finish") return false;
+  const payload =
+    typeof chunk.payload === "object" && chunk.payload !== null
+      ? (chunk.payload as { finishReason?: unknown; stepResult?: { reason?: unknown } })
+      : undefined;
+  const finishReason = chunk.finishReason ?? payload?.finishReason;
+  return finishReason !== "tool-calls" && payload?.stepResult?.reason !== "tool-calls";
 }
 
-type StreamReplayMode =
-  | { kind: "approval"; toolCallId: string }
-  | { kind: "terminal" };
+type StreamReplayMode = { kind: "approval"; toolCallId: string } | { kind: "terminal" };
 
 /** Wait for the native run to stop before any destructive history operation. */
 export async function abortWorkbenchSession(session: ControllerSession) {
@@ -473,6 +484,8 @@ export async function streamWorkbenchSession(
   session: ControllerSession,
   action?: () => Promise<unknown>,
   replayMode?: StreamReplayMode,
+  resumeTool?: { runId: string; toolCallId: string; toolName: string; args?: unknown },
+  keepUntilIdle = false,
 ) {
   const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(session);
   const threadId = session.thread.getId();
@@ -496,8 +509,24 @@ export async function streamWorkbenchSession(
       unsubscribeEvents = session.subscribe((event) => {
         if (event.type === "error") fail(event.error);
       });
+      // A resumed suspended tool emits its result from a fresh Agent stream.
+      // Seed the UI stream with the original call so AI SDK can apply that result
+      // even when the client restored the history from persisted tool output.
+      if (resumeTool) {
+        controller.enqueue({
+          type: "tool-call",
+          runId: resumeTool.runId,
+          from: "AGENT",
+          payload: {
+            toolCallId: resumeTool.toolCallId,
+            toolName: resumeTool.toolName,
+            args: resumeTool.args ?? {},
+          },
+        });
+      }
       void (async () => {
         let automaticApproval = false;
+        const backgroundTasks = new Set<string>();
         for await (const chunk of subscription.stream) {
           if (closed) break;
           // A subscription replays the parked segment before the resumed one.
@@ -506,7 +535,10 @@ export async function streamWorkbenchSession(
             const reachesApprovalBoundary =
               replayMode?.kind === "approval" &&
               chunk.type === "tool-call-approval" &&
-              chunk.payload.toolCallId === replayMode.toolCallId;
+              "payload" in chunk &&
+              typeof chunk.payload === "object" &&
+              chunk.payload !== null &&
+              (chunk.payload as { toolCallId?: unknown }).toolCallId === replayMode.toolCallId;
             const reachesTerminalBoundary = replayMode?.kind === "terminal" && isTerminalAgentChunk(chunk);
             if (reachesApprovalBoundary || reachesTerminalBoundary) discardReplay = false;
             continue;
@@ -516,13 +548,39 @@ export async function streamWorkbenchSession(
             automaticApproval = session.resolveToolApproval(chunk.payload.toolName) !== "ask";
             if (automaticApproval) continue;
           }
-          // Controller auto-approval resumes the same run. Keep this subscription open.
           if (chunk.type === "finish" && automaticApproval) {
             automaticApproval = false;
             continue;
           }
+          if (keepUntilIdle && typeof chunk.type === "string") {
+            const payload =
+              "payload" in chunk && typeof chunk.payload === "object" && chunk.payload !== null
+                ? (chunk.payload as { taskId?: unknown })
+                : undefined;
+            const taskId = typeof payload?.taskId === "string" ? payload.taskId : undefined;
+            if (
+              taskId &&
+              [
+                "background-task-started",
+                "background-task-running",
+                "background-task-resumed",
+              ].includes(chunk.type)
+            ) {
+              backgroundTasks.add(taskId);
+            } else if (
+              taskId &&
+              [
+                "background-task-completed",
+                "background-task-failed",
+                "background-task-cancelled",
+                "background-task-suspended",
+              ].includes(chunk.type)
+            ) {
+              backgroundTasks.delete(taskId);
+            }
+          }
           controller.enqueue(chunk);
-          if (isTerminalAgentChunk(chunk)) break;
+          if (isTerminalAgentChunk(chunk) && (!keepUntilIdle || backgroundTasks.size === 0)) break;
         }
         if (!closed) {
           closed = true;

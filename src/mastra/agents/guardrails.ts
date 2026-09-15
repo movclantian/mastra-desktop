@@ -54,7 +54,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import { clampNumber, cleanStrings } from "../config/normalize";
 import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
 import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
-import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import { getThreadWorkspace, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
 import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
@@ -1044,10 +1044,10 @@ export async function buildGuardrailInputProcessors(
   const cfg = currentConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const input = await buildInput(cfg, resourceId, requestContext);
-  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return input;
+  if (!cfg.skillSearch) return input;
   const contextPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspacePath =
-    typeof contextPath === "string" && contextPath ? contextPath : process.cwd();
+    typeof contextPath === "string" && contextPath.trim() ? contextPath.trim() : process.cwd();
   let skillSearch = runtime.skillSearchCache.get(workspacePath);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({

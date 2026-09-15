@@ -75,10 +75,10 @@ export function SettingsPage() {
           <SidebarMenuButton
             onClick={() => setActiveView("chat")}
             tooltip="返回应用"
-            className="h-12 rounded-none px-3 text-xs"
+            className="h-12 rounded-none px-3 text-sm font-medium"
           >
             <ArrowLeftIcon />
-            <span className="font-medium">返回应用</span>
+            <span>返回应用</span>
           </SidebarMenuButton>
         </SidebarHeader>
         <SidebarContent>
@@ -90,7 +90,6 @@ export function SettingsPage() {
                     <SidebarMenuButton
                       isActive={section === s.id}
                       onClick={() => setSettingsSection(s.id)}
-                      className="text-xs font-normal"
                     >
                       <s.icon />
                       <span>{s.label}</span>
@@ -106,12 +105,12 @@ export function SettingsPage() {
           <div className="flex size-full min-w-0 items-center justify-between gap-1.5">
             <div className="flex min-w-0 flex-col">
               <span
-                className="truncate text-xs font-medium text-sidebar-foreground"
+                className="truncate text-sm font-medium text-sidebar-foreground"
                 title={user?.name ?? user?.email}
               >
                 {user?.name || "用户"}
               </span>
-              <span className="truncate text-[10px] text-muted-foreground" title={user?.email}>
+              <span className="truncate text-xs text-muted-foreground" title={user?.email}>
                 {user?.email}
               </span>
             </div>

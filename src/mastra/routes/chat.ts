@@ -53,7 +53,6 @@ import {
   addRecentWorkspace,
   ensureDirectory,
   implicitThreadWorkspacePath,
-  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -493,9 +492,8 @@ async function prepareThreadSession(options: {
   if (metadata.agentProfileId !== profile.id && options.agentProfileId)
     patch.agentProfileId = profile.id;
 
-  const workspaceEnabled = isWorkspaceEnabled(options.resourceId);
-  let workspacePath = workspaceEnabled ? metadata.workspacePath : undefined;
-  if (workspaceEnabled && !workspacePath) {
+  let workspacePath = metadata.workspacePath;
+  if (!workspacePath) {
     const requested = options.requestedWorkspacePath;
     if (requested && existsSync(requested) && statSync(requested).isDirectory()) {
       workspacePath = requested;
@@ -764,8 +762,11 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       typeof body.runId === "string" && typeof body.toolCallId === "string"
         ? { runId: body.runId.trim(), toolCallId: body.toolCallId.trim() }
         : undefined;
+    let resumeTool:
+      | { runId: string; toolCallId: string; toolName: string; args?: unknown }
+      | undefined;
     const resumeTargets = explicitResumeTarget ? [explicitResumeTarget] : [];
-    if (resumeTargets.length > 0 && body.memory?.thread && body.memory.resource) {
+    if (explicitResumeTarget && body.memory?.thread && body.memory.resource) {
       // Mastra storage is the source of truth for suspended tools. Message
       // parts are only the AI SDK transport representation and must not be
       // reinterpreted here.
@@ -782,6 +783,17 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         throw workError("VALIDATION_FAILED", {
           text: "The requested tool interaction is no longer pending",
         });
+      }
+      const suspendedTool = runs
+        .find((run) => run.runId === explicitResumeTarget.runId)
+        ?.toolCalls.find((toolCall) => toolCall.toolCallId === explicitResumeTarget.toolCallId);
+      if (suspendedTool?.toolName && suspendedTool.toolCallId) {
+        resumeTool = {
+          runId: explicitResumeTarget.runId,
+          toolCallId: suspendedTool.toolCallId,
+          toolName: suspendedTool.toolName,
+          ...(suspendedTool.args === undefined ? {} : { args: suspendedTool.args }),
+        };
       }
     }
     // 检索到的资料库片段以「本轮专属的对话消息」下发(AgentExecutionOptions.context,
@@ -997,7 +1009,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       );
       await controllerSession.sendSignal(
         { type: "user", id: message.id, contents, metadata: { ...message.metadata } },
-        { requestContext, requireDelivery: true },
+        { requestContext, requireDelivery: true, untilIdle: true },
       ).accepted;
     };
     const stream = await streamWorkbenchSession(
@@ -1009,6 +1021,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         : explicitResumeTarget || body.messageId || sessionAction === "steer"
           ? { kind: "terminal" }
           : undefined,
+      resumeTool,
+      true,
     );
     return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
   },

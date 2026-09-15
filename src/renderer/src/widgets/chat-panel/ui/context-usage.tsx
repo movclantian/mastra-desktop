@@ -75,9 +75,11 @@ export function ContextUnavailable({
 export function ChatContextUsage({
   usage,
   estimatedUsedTokens,
+  estimatedBreakdown,
 }: {
   usage: LanguageModelUsage | undefined;
   estimatedUsedTokens?: number;
+  estimatedBreakdown?: ContextUsageBreakdown;
 }) {
   const { providers, catalog, catalogStatus, modelSelection } = useWorkbench();
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
@@ -92,7 +94,7 @@ export function ChatContextUsage({
   if (!maxTokens) {
     return <ContextUnavailable catalogStatus={catalogStatus} />;
   }
-  const breakdown = estimateContextBreakdown(usedTokens, estimatedUsedTokens);
+  const breakdown = estimatedBreakdown ?? estimateContextBreakdown(usedTokens, estimatedUsedTokens);
   return (
     <Context
       usedTokens={usedTokens}

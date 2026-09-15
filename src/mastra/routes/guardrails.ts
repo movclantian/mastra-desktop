@@ -15,7 +15,6 @@ import {
   saveGuardrailsConfig,
 } from "../agents/guardrails";
 import { resolveDefaultModelId } from "../models";
-import { getWorkspaceConfig } from "../workspace";
 
 // GET /work/guardrails — 读取当前护栏配置
 export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
@@ -45,7 +44,7 @@ export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
  * 面板据此提示「为什么某个护栏不会生效」,而不是等到用户发消息才发现:
  * - modelReady:需要 LLM 的检测器(注入/语言/审核/PII/清洗)是否有模型可用
  * - costMetricsReady:TokenCostControl 依赖观测存储的 getMetricAggregate
- * - workspaceReady:工作区开启时官方默认 Workspace 以 process.cwd() 为兜底
+ * - workspaceReady:每条线程始终绑定 Workspace,无显式路径时以 process.cwd() 为兜底
  */
 export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status", {
   method: "GET",
@@ -59,9 +58,7 @@ export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status",
         await resolveDefaultModelId(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
       ),
       costMetricsReady: typeof observability?.getMetricAggregate === "function",
-      workspaceReady: (
-        await getWorkspaceConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string)
-      ).enabled,
+      workspaceReady: true,
     });
   },
 });

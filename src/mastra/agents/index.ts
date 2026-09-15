@@ -5,6 +5,8 @@
  * 工作区绑定都是线程级状态,经 context 传入(见 routes/chat.ts)。
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
+import { readFileSync } from "node:fs";
+import { basename, join, resolve } from "node:path";
 import type {
   Agent,
   AgentExecutionOptions,
@@ -12,7 +14,7 @@ import type {
   MastraDBMessage,
   ToolsInput,
 } from "@mastra/core/agent";
-import { createCodingAgent } from "@mastra/core/coding-agent";
+import { buildBasePrompt, createCodingAgent } from "@mastra/core/coding-agent";
 import { MASTRA_RESOURCE_ID_KEY, type RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
 import { workPollingSignals, workWebhookSignals } from "../harness";
@@ -34,7 +36,6 @@ import {
 import {
   getManagedSkillsDirectory,
   getThreadWorkspace,
-  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
@@ -57,6 +58,7 @@ import {
   buildGuardrailOutputProcessors,
   getGuardrailsRuntimeConfig,
 } from "./guardrails";
+import { MODE_ID_CONTEXT_KEY, resolveMode } from "./modes";
 import {
   buildInputPipeline,
   isCodeModeAvailable,
@@ -68,15 +70,97 @@ export { workBrowser } from "./browser";
 
 export const SESSION_EXECUTION_CONTEXT_KEY = "mastra-work:execution-options";
 
-const BASE_INSTRUCTIONS = `You are MastraWork, a helpful personal AI work assistant.
+const PRODUCT_NAME = "MastraWork";
+const CO_AUTHOR_NAME = "MastraWork[bot]";
+const CO_AUTHOR_EMAIL = "mastrawork[bot]@users.noreply.github.com";
+
+const gitBranchCache = new Map<string, { value?: string; expiresAt: number }>();
+
+function currentGitBranch(projectPath: string): string | undefined {
+  const cached = gitBranchCache.get(projectPath);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  let value: string | undefined;
+  try {
+    let headPath = join(projectPath, ".git", "HEAD");
+    try {
+      const gitFile = readFileSync(join(projectPath, ".git"), "utf8").trim();
+      if (gitFile.startsWith("gitdir:")) {
+        headPath = resolve(projectPath, gitFile.slice("gitdir:".length).trim(), "HEAD");
+      }
+    } catch {
+      // Normal repositories use .git/HEAD; worktrees use a gitdir pointer file.
+    }
+    const head = readFileSync(headPath, "utf8").trim();
+    const refPrefix = "ref: refs/heads/";
+    value = head.startsWith(refPrefix) ? head.slice(refPrefix.length) || undefined : undefined;
+  } catch {
+    value = undefined;
+  }
+  gitBranchCache.set(projectPath, { value, expiresAt: Date.now() + 15_000 });
+  return value;
+}
+
+function modelIdFromRequestContext(requestContext?: RequestContext): string | undefined {
+  const model = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
+    | { id?: unknown; modelId?: unknown; provider?: unknown }
+    | string
+    | undefined;
+  if (typeof model === "string") return model;
+  if (typeof model?.modelId === "string" && model.modelId.trim()) return model.modelId;
+  if (typeof model?.id === "string" && model.id.trim()) return model.id;
+  if (typeof model?.provider === "string" && model.provider.trim()) return model.provider;
+  return undefined;
+}
+
+function codingAgentBasePrompt(requestContext?: RequestContext): string {
+  const controller = requestContext?.get("controller") as
+    | { session?: { modeId?: unknown; modelId?: unknown } }
+    | undefined;
+  const rawPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
+  const projectPath =
+    typeof rawPath === "string" && rawPath.trim() ? resolve(rawPath) : process.cwd();
+  const workspaceGuidance =
+    "Use mastra_workspace_read_file, mastra_workspace_list_files, and mastra_workspace_grep to inspect repository files; use mastra_workspace_search and mastra_workspace_execute_command only when those configured tools are exposed. Read or search before editing, keep paths inside the active workspace, and use the smallest operation that proves the next step.";
+  const mode = resolveMode(
+    controller?.session?.modeId ?? requestContext?.get(MODE_ID_CONTEXT_KEY),
+  ).id;
+  const modelId = modelIdFromRequestContext(requestContext);
+
+  return buildBasePrompt({
+    projectPath,
+    projectName: basename(projectPath) || PRODUCT_NAME,
+    gitBranch: currentGitBranch(projectPath),
+    platform: process.platform,
+    date: new Date().toDateString(),
+    mode,
+    modelId:
+      modelId ??
+      (typeof controller?.session?.modelId === "string" && controller.session.modelId.trim()
+        ? controller.session.modelId
+        : undefined),
+    // Resume payloads are client input; without a persisted server-validated plan,
+    // injecting them here would turn untrusted text into system instructions.
+    activePlan: null,
+    toolGuidance: [
+      workspaceGuidance,
+      "Use tools to inspect current state instead of guessing. Keep tool results focused and pass only relevant evidence across agent boundaries.",
+    ].join("\n"),
+    hasSubagents: true,
+    productName: PRODUCT_NAME,
+    coAuthorName: CO_AUTHOR_NAME,
+    coAuthorEmail: CO_AUTHOR_EMAIL,
+  });
+}
+
+const BASE_INSTRUCTIONS = `You are MastraWork's workbench assistant.
 
 You support multi-user, workspace-scoped conversations:
-- Every conversation belongs to a workspace (or no workspace)
+- Every conversation belongs to a workspace; when no directory is selected, use the thread workspace or process.cwd() fallback
 - Keep answers relevant to the user's current workspace context
 - Be concise but informative, respond in the user's language
 
 For work that has multiple concrete steps, create and maintain a task list with task_write, task_update, task_complete, and task_check. Keep exactly one task in progress.
-Delegate focused investigation to explorer and independent correctness review to reviewer when either specialization improves the result. Synthesize subagent results yourself and never delegate the entire user request unchanged.
+Use explorer and reviewer only for multiple focused investigations that can run in parallel. Synthesize subagent results yourself and never delegate the entire user request unchanged.
 Use ask_user when a missing decision blocks reliable progress. Provide short options when choices are known.
 Code Mode is an ordinary optional tool, not a workflow mode. Use execute_typescript when several read-only library operations should be composed in one TypeScript program, such as running vector and graph retrieval in parallel and deduplicating the results. Do not use it as a replacement for task tools, Plan/Build/Review, file writes, command execution, or network access.
 When library_vector_search or library_graph_search returns useful evidence, cite it with a standard GFM footnote using that result's citationId, for example [^library-id]. Use only the returned URL and never invent a library URL.
@@ -220,11 +304,10 @@ function createWorkAgent(
 ): Agent {
   const workspace = async ({ requestContext }: { requestContext?: RequestContext }) => {
     const resolvedResourceId = resourceScope ?? resourceScopeFromRequestContext(requestContext);
-    if (!isWorkspaceEnabled(resolvedResourceId)) return undefined;
     const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
     const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
     return getThreadWorkspace(
-      path || process.cwd(),
+      typeof path === "string" && path.trim() ? path.trim() : process.cwd(),
       typeof threadId === "string" ? threadId : undefined,
       resolvedResourceId,
     );
@@ -248,11 +331,13 @@ function createWorkAgent(
         ));
       const instructions = member
         ? [
+            codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
             member.instructions ||
               `你是团队成员 ${member.name},负责${member.profession || "完成分配的专业任务"}。`,
           ]
         : [
+            codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
             ...(isCodeModeAvailable(requestContext) ? [codeMode.instructions] : []),
             profile.instructions,
@@ -314,7 +399,6 @@ function createWorkAgent(
       }),
     skills: async ({ requestContext }) => {
       const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
-      if (!isWorkspaceEnabled(resourceId)) return [];
       const profile =
         fixedProfile ??
         (await getAgentProfile(

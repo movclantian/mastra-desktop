@@ -13,6 +13,7 @@ import {
   useWorkbench,
 } from "@/entities/workbench";
 import { readErrorPayload, toastError } from "@/shared/lib";
+import type { ContextUsageBreakdown } from "@/shared/ui/ai-elements/context";
 import { PromptInputProvider } from "@/shared/ui/ai-elements/prompt-input";
 import { Queue } from "@/shared/ui/ai-elements/queue";
 import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
@@ -44,7 +45,6 @@ import {
 } from "../api/chat-api";
 import { persistAttachments as uploadAttachments } from "../lib/attachments";
 import { buildDisplayMessages } from "../lib/display";
-import { approvalResumeKey } from "../model/approval-state";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import {
   type AgentInteraction,
@@ -59,7 +59,6 @@ import {
   getToolName,
   getWorkflowStateFromDisplayState,
   getWorkflowStateFromMessages,
-  hasPendingInteraction,
   type LibraryFilePart,
   type MessageFileReference,
   mergeInteractions,
@@ -694,41 +693,24 @@ export function ChatPanel() {
     async (interaction: AgentInteraction, resumeData: unknown) => {
       const threadId = activeThreadId;
       if (!threadId) return;
-      const resumeKey = approvalResumeKey(threadId, interaction.key);
+      const resumeKey = `${threadId}:${interaction.key}`;
       if (resumingKeysRef.current.has(resumeKey)) return;
       // State updates are asynchronous and cannot be used as a same-tick mutex.
       // The ref closes the gap between two rapid approval clicks or duplicate UI events.
       resumingKeysRef.current.add(resumeKey);
       setResumingKeys((current) => new Set(current).add(resumeKey));
-      // 审批卡来自持久化快照,但 AI SDK 恢复只读取当前 Chat 实例的内存消息。
-      // 先并行重新拉取两份 canonical 状态,再让同一个 Chat 实例持有审批 part。
+      // 恢复目标以服务端挂起运行列表为准；不要在恢复前刷新 Chat 内存消息。
+      // 刷新会替换 AI SDK 的 tool invocation，导致恢复时找不到 toolCallId。
       try {
-        const [messageReload, pendingReload] = await Promise.allSettled([
-          reloadMessages(),
-          fetchSuspendedInteractions(threadId),
-        ]);
-        if (messageReload.status !== "fulfilled" || !messageReload.value) {
-          toast.error("无法加载这条审批消息,请刷新线程后重试");
-          return;
-        }
-        if (pendingReload.status !== "fulfilled") {
-          toast.error("无法确认这条审批是否仍在等待,请稍后重试");
-          return;
-        }
-        const pending = pendingReload.value;
+        const pending = await fetchSuspendedInteractions(threadId);
         const stillPending = pending.some(
           (item) => item.runId === interaction.runId && item.toolCallId === interaction.toolCallId,
         );
         const chat = getThreadChat(threadId);
-        const hasCanonicalPart = hasPendingInteraction(chat.messages, interaction);
-        if (!stillPending || !hasCanonicalPart) {
+        if (!stillPending) {
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
           setPersistedInteractions(pending);
-          toast.error(
-            stillPending
-              ? "审批消息已重新加载,但找不到对应工具调用,请刷新线程后重试"
-              : "这次工具交互已过期(可能已在别处处理),已从待办中移除",
-          );
+          toast.error("这次工具交互已过期(可能已在别处处理),已从待办中移除");
           return;
         }
 
@@ -807,16 +789,57 @@ export function ChatPanel() {
   const latestUsage = streamedUsage ?? persistedUsage;
   React.useEffect(() => {
     if (status === "submitted" || status === "streaming") return;
-    const serializedCharacters = messages.reduce(
-      (total, message) => total + JSON.stringify(message.parts).length,
+    const conversationCharacters = messages.reduce(
+      (total, message) =>
+        total +
+        message.parts.reduce((partTotal, part) => {
+          if (part.type === "text") return partTotal + part.text.length;
+          if (part.type === "file") return partTotal + 512;
+          return partTotal;
+        }, 0),
       0,
     );
-    setEstimatedContextTokens(Math.ceil(serializedCharacters / 4));
+    setEstimatedContextTokens(Math.ceil(conversationCharacters / 4));
   }, [messages, status]);
   const usedContextTokens =
     latestUsage?.inputTokens && latestUsage.inputTokens > 0
       ? latestUsage.inputTokens
       : Math.max(latestUsage?.totalTokens ?? 0, estimatedContextTokens);
+  const estimatedContextBreakdown = React.useMemo<ContextUsageBreakdown>(() => {
+    const totals: Required<ContextUsageBreakdown> = {
+      "system-prompt": 0,
+      "tools-and-subagents": 0,
+      conversation: 0,
+      mcp: 0,
+      skills: 0,
+    };
+    for (const message of messages) {
+      for (const part of message.parts) {
+        const chars =
+          part.type === "text"
+            ? part.text.length
+            : part.type === "file"
+              ? 512
+              : (JSON.stringify(part)?.length ?? 0);
+        const tokens = Math.ceil(chars / 4);
+        if (isToolUIPart(part)) {
+          const toolName = getToolName(part) ?? "";
+          if (toolName.startsWith("mcp_") || toolName.includes("_mcp_")) totals.mcp += tokens;
+          else totals["tools-and-subagents"] += tokens;
+        } else {
+          totals.conversation += tokens;
+        }
+      }
+      const skillNames = (message.metadata as { skillNames?: unknown } | undefined)?.skillNames;
+      if (Array.isArray(skillNames)) {
+        totals.skills += skillNames.reduce(
+          (sum, skill) => sum + (typeof skill === "string" ? Math.ceil(skill.length / 4) : 0),
+          0,
+        );
+      }
+    }
+    return totals;
+  }, [messages]);
   const responseReserve = Math.min(8_192, Math.floor((selectedContextWindow ?? 32_000) * 0.1));
   const attachmentTokenBudget = Math.max(
     0,
@@ -1087,6 +1110,16 @@ export function ChatPanel() {
           做的任务。
           外层 max-w-3xl 容器与下方输入框同宽基准,w-[96%] 才是"略窄于输入框"
           (工作区卡片同规格,见 workspace-selector.tsx)。 */}
+      {hasMultiAgentActivity ? (
+        <div className="mx-auto mb-1 w-full max-w-3xl px-1">
+          <AgentMemberSwitcher
+            activeMemberId={activeMemberId}
+            members={multiAgentMembers}
+            onSelect={setActiveMemberId}
+            runtimes={agentMemberRuntimes}
+          />
+        </div>
+      ) : null}
       {hasQueueCard ? (
         <div className="mx-auto w-full max-w-3xl">
           <Queue className="mx-auto w-[96%] rounded-b-none border-b-0 px-2 pt-1 pb-1">
@@ -1118,16 +1151,6 @@ export function ChatPanel() {
         />
         {interactions.length === 0 ? (
           <>
-            {hasMultiAgentActivity ? (
-              <div className="mx-auto mb-1 w-full max-w-3xl px-1">
-                <AgentMemberSwitcher
-                  activeMemberId={activeMemberId}
-                  members={multiAgentMembers}
-                  onSelect={setActiveMemberId}
-                  runtimes={agentMemberRuntimes}
-                />
-              </div>
-            ) : null}
             {/* 工作区卡片与输入框相接;上方还有 Queue 卡片时去掉顶边连成一体 */}
             {!workspaceLocked ? (
               <ChatWorkspaceSelector
@@ -1140,6 +1163,7 @@ export function ChatPanel() {
               activeThread={Boolean(activeThread)}
               usage={latestUsage}
               estimatedUsedTokens={estimatedContextTokens}
+              estimatedBreakdown={estimatedContextBreakdown}
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}

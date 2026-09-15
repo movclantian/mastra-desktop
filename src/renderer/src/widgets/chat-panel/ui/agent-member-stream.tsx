@@ -3,7 +3,6 @@ import type { AgentProfile } from "@/entities/workbench";
 import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { Avatar, AvatarBadge, AvatarFallback } from "@/shared/ui/avatar";
-import { Badge } from "@/shared/ui/badge";
 import { Bubble, BubbleContent } from "@/shared/ui/bubble";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
@@ -13,6 +12,7 @@ import type {
   WorkflowRuntimeState,
   WorkUIMessage,
 } from "../model/types";
+import { AssistantAvatar } from "./avatars";
 
 export type AgentMemberRuntimeStatus = "idle" | "running" | "completed" | "error";
 
@@ -266,55 +266,33 @@ export function AgentMemberMessageView({
   messages: WorkUIMessage[];
   isBusy: boolean;
 }) {
-  const requests = messages
+  const latestRequest = messages
     .filter((message) => message.role === "user")
     .flatMap((message) =>
       message.parts
         .map((part) => (part.type === "text" ? { id: message.id, text: part.text.trim() } : null))
         .filter((item): item is { id: string; text: string } => Boolean(item?.text)),
     )
-    .slice(-6);
-  const entries = runtime.entries.slice(-8);
-  const latestRequest = requests.at(-1);
+    .at(-1);
+  const latestEntry = runtime.entries.at(-1);
   return (
     <div className="flex w-full flex-col gap-4 py-6" data-agent-member-view>
-      <div className="flex items-center gap-3 border-b pb-3">
-        <Avatar size="default">
-          <AvatarFallback className="bg-primary/15 text-primary">
-            {memberInitials(member.name)}
-          </AvatarFallback>
-          <AvatarBadge className={memberStatusClass(runtime.status)}>
-            {statusIcon(runtime.status, "size-2.5")}
-          </AvatarBadge>
-        </Avatar>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold">{member.name}</p>
-          <p className="truncate text-xs text-muted-foreground">
-            {member.profession || "团队成员"}
-          </p>
-        </div>
-        <Badge
-          className="shrink-0 gap-1 text-[10px]"
-          variant={runtime.status === "error" ? "destructive" : "secondary"}
-        >
-          {statusIcon(runtime.status, "size-3")}
-          {statusLabel(runtime.status)}
-        </Badge>
-      </div>
-
-      {requests.map((request) => (
-        <Message align="end" key={request.id}>
+      {latestRequest ? (
+        <Message align="end" key={latestRequest.id}>
+          <MessageAvatar className="self-start">
+            <AssistantAvatar />
+          </MessageAvatar>
           <MessageContent className="max-w-[85%]">
-            <MessageHeader className="justify-end px-0">当前请求</MessageHeader>
+            <MessageHeader className="justify-end px-0">MastraWork</MessageHeader>
             <Bubble align="end">
-              <BubbleContent className="text-sm">{request.text}</BubbleContent>
+              <BubbleContent className="text-sm">{latestRequest.text}</BubbleContent>
             </Bubble>
           </MessageContent>
         </Message>
-      ))}
+      ) : null}
 
-      {entries.map((entry) => (
-        <Message key={entry.id}>
+      {latestEntry ? (
+        <Message key={latestEntry.id}>
           <MessageAvatar className="self-start">
             <Avatar size="sm">
               <AvatarFallback className="bg-primary/15 text-primary">
@@ -324,38 +302,20 @@ export function AgentMemberMessageView({
           </MessageAvatar>
           <MessageContent>
             <MessageHeader className="px-0">
-              {member.name} · {entry.label}
+              {member.name} · {latestEntry.label}
             </MessageHeader>
             <Bubble variant="outline">
               <BubbleContent className="text-sm">
-                {entry.text ? (
-                  <MessageResponse>{entry.text}</MessageResponse>
+                {latestEntry.text ? (
+                  <MessageResponse>{latestEntry.text}</MessageResponse>
                 ) : (
                   <span className="flex items-center gap-2 text-muted-foreground">
-                    {statusIcon(entry.status)}
-                    {entry.status === "running" ? "正在流式输出…" : statusLabel(entry.status)}
+                    {statusIcon(latestEntry.status)}
+                    {latestEntry.status === "running"
+                      ? "正在流式输出…"
+                      : statusLabel(latestEntry.status)}
                   </span>
                 )}
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
-      ))}
-
-      {entries.length === 0 ? (
-        <Message>
-          <MessageAvatar className="self-start">
-            <Avatar size="sm">
-              <AvatarFallback className="bg-primary/15 text-primary">
-                {memberInitials(member.name)}
-              </AvatarFallback>
-            </Avatar>
-          </MessageAvatar>
-          <MessageContent>
-            <MessageHeader className="px-0">{member.name}</MessageHeader>
-            <Bubble variant="outline">
-              <BubbleContent className="text-sm text-muted-foreground">
-                {isBusy && latestRequest ? "等待该成员接收任务…" : "该成员尚未产生输出"}
               </BubbleContent>
             </Bubble>
           </MessageContent>

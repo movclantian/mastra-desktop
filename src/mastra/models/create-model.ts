@@ -16,7 +16,7 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { GatewayLanguageModel } from "@mastra/core/llm";
+import { type GatewayLanguageModel, getProviderConfig } from "@mastra/core/llm";
 import { defaultSettingsMiddleware, wrapLanguageModel } from "ai";
 
 export type { GatewayLanguageModel };
@@ -25,19 +25,15 @@ export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export const WORKBENCH_GATEWAY_ID = "mastra-work";
 
-/** Mastra registry provider id 到实际 API 协议的唯一映射。 */
+/** Resolve the SDK protocol from Mastra's provider registry metadata. */
 export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
-  switch (registryId) {
-    case "anthropic":
-      return "anthropic";
-    case "google":
-    case "gemini":
-      return "gemini";
-    case "openai":
-      return "openai";
-    default:
-      return undefined;
-  }
+  const provider = getProviderConfig(registryId.trim());
+  if (!provider) return undefined;
+  const npm = provider.npm?.toLowerCase() ?? "";
+  if (npm.includes("anthropic")) return "anthropic";
+  if (npm.includes("google") || npm.includes("gemini")) return "gemini";
+  if (provider.url || npm.includes("openai")) return "openai";
+  return undefined;
 }
 
 export function normalizeGatewayBaseUrl(

@@ -36,14 +36,6 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/shared/ui/command";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -58,6 +50,7 @@ import { PanelHeader } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Separator } from "@/shared/ui/separator";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Switch } from "@/shared/ui/switch";
 import { CapabilityBadges } from "../controls";
 
@@ -65,7 +58,7 @@ import { CapabilityBadges } from "../controls";
 // 模型供应商(BYOK):三列布局,水平分割线统一对齐(所有列 header h-12)
 // - 第一列(设置菜单由 settings-page 提供):供应商列表,参考资料库二级侧栏的
 //   手写 aside 嵌套模式(relative 布局不逃逸),可折叠为 48px 图标列,
-//   顶部 Command 检索,已配置置顶 + 状态点
+//   顶部搜索检索,已配置置顶 + 状态角标(收起展开均显示状态且填 Key 后转绿)
 // - 右侧详情:未配置 → 简介卡 +「添加 API Key」;已配置 → 模型管理
 // - 连接配置(填 Key / 自定义网关 / 编辑连接)统一走弹窗,不直接平铺
 // ---------------------------------------------------------------------------
@@ -79,18 +72,27 @@ function ProviderLogo({ provider, className }: { provider: string; className?: s
   return <ModelSelectorLogo provider={provider} className={cn("size-4.5", className)} />;
 }
 
-/** 状态点:实心绿 = 已配置 Key,灰 = 已配置但禁用,空心 = 未配置 */
-function StatusDot({ configured, disabled }: { configured: boolean; disabled?: boolean }) {
+/** 状态角标点:实心绿 = 已配置且启用(已填 Key),灰 = 已配置但禁用,浅灰 = 未配置 */
+function StatusDot({
+  configured,
+  disabled,
+  className,
+}: {
+  configured: boolean;
+  disabled?: boolean;
+  className?: string;
+}) {
   return (
     <span
-      title={configured ? (disabled ? "已配置(已禁用)" : "已配置") : "未配置"}
+      title={configured ? (disabled ? "已配置(已禁用)" : "已启用") : "未配置"}
       className={cn(
-        "size-1.5 shrink-0 rounded-full",
+        "size-2 shrink-0 rounded-full transition-colors",
         configured
           ? disabled
-            ? "bg-muted-foreground/50"
-            : "bg-emerald-500 dark:bg-emerald-400"
-          : "border border-muted-foreground/50",
+            ? "bg-muted-foreground/50 ring-2 ring-sidebar"
+            : "bg-emerald-500 dark:bg-emerald-400 ring-2 ring-sidebar"
+          : "bg-muted-foreground/30 ring-2 ring-sidebar",
+        className,
       )}
     />
   );
@@ -164,7 +166,7 @@ export function ProvidersSection() {
             onAdded={(id) => setSelected({ kind: "provider", id })}
           />
         ) : (
-          <EmptyDetail />
+          <EmptyDetail listOpen={listOpen} onToggleList={toggleList} />
         )}
       </main>
 
@@ -204,66 +206,91 @@ function ProviderListSidebar({
   open: boolean;
   onToggle: () => void;
 }) {
+  const [search, setSearch] = React.useState("");
+
+  const q = search.trim().toLowerCase();
+  const filteredProviders = q
+    ? providers.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          p.registryId?.toLowerCase().includes(q) ||
+          p.baseUrl?.toLowerCase().includes(q),
+      )
+    : providers;
+
+  const filteredUnconfigured = q
+    ? unconfigured.filter((r) => r.name.toLowerCase().includes(q) || r.id.toLowerCase().includes(q))
+    : unconfigured;
+
   const renderItem = (
     key: string,
     logoId: string,
     name: string,
-    value: string,
     isActive: boolean,
     configured: boolean,
     disabled: boolean | undefined,
     onSelectItem: () => void,
   ) => (
-    <CommandItem
-      key={key}
-      value={value}
-      onSelect={onSelectItem}
-      className={cn(
-        "gap-2.5 rounded-md px-2 py-1.5",
-        // cmdk 尾部 CheckIcon 的 data-checked 永远不会被置 true,只会白占行尾空间,隐藏掉
-        "[&>svg:last-child]:hidden",
-        isActive && "bg-sidebar-accent text-sidebar-accent-foreground",
-        // 折叠态:瞬时收敛为 36px 方块居中(属性切换即时生效),
-        // 动画期间只剩 aside 宽度在过渡,内容零重排才顺滑
-        "group-data-[collapsible=icon]/sidebar:mx-auto group-data-[collapsible=icon]/sidebar:size-9 group-data-[collapsible=icon]/sidebar:justify-center group-data-[collapsible=icon]/sidebar:gap-0 group-data-[collapsible=icon]/sidebar:px-0 group-data-[collapsible=icon]/sidebar:py-0",
-      )}
-    >
-      <ProviderLogo provider={logoId} />
-      <span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]/sidebar:hidden">
-        {name}
-      </span>
-      <span className="group-data-[collapsible=icon]/sidebar:hidden">
-        <StatusDot configured={configured} disabled={disabled} />
-      </span>
-    </CommandItem>
+    <SidebarMenuItem key={key}>
+      <SidebarMenuButton
+        isActive={isActive}
+        onClick={onSelectItem}
+        tooltip={name}
+        className="h-9 gap-2.5 px-2"
+      >
+        <div className="relative flex shrink-0 items-center justify-center">
+          <ProviderLogo provider={logoId} />
+          <StatusDot
+            configured={configured}
+            disabled={disabled}
+            className="absolute -bottom-0.5 -right-0.5"
+          />
+        </div>
+        <span className="min-w-0 flex-1 truncate group-data-[collapsible=icon]/sidebar:hidden">
+          {name}
+        </span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 
   return (
     // 资料库二级侧栏同款结构:data-state/data-collapsible 驱动折叠,
-    // 纯 relative 布局,绝对不逃逸出当前容器
+    // 纯 relative 布局,绝对不逃逸出当前容器,transition-[width] 驱动原生平滑滑入滑出
     <aside
       data-state={open ? "expanded" : "collapsed"}
       data-collapsible={open ? "" : "icon"}
       data-slot="sidebar"
       data-sidebar="sidebar"
-      style={{ transition: "width 200ms cubic-bezier(0.4, 0, 0.2, 1)" }}
       className={cn(
-        "group/sidebar relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar transition-all duration-200 ease-out",
+        "group/sidebar group relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-r border-border bg-sidebar transition-[width] duration-200 ease-linear",
         open ? "w-60" : "w-12",
       )}
     >
-      {/* Command 提供 cmdk 检索 context, 清除默认 popover 卡片边框与内边距以保证三列顶栏对齐 */}
-      <Command
-        data-slot="command-flat"
-        className="flex size-full min-h-0 flex-1 flex-col overflow-hidden rounded-none! border-0! bg-transparent p-0! shadow-none!"
-      >
-        {/* 顶栏 h-12 与其余两列 header 对齐:检索框 + 添加自定义网关;
-          水平分割线统一 border-border,与设置菜单列/详情列一致 */}
+      <div className="flex h-full w-full min-h-0 shrink-0 flex-col">
+        {/* 顶栏 h-12 与其余两列 header 对齐:检索框 + 添加自定义网关; 水平分割线统一 border-border */}
         <div className="flex h-12 shrink-0 items-center gap-1 border-b border-border px-2 py-1.5">
           {open ? (
-            <div className="min-w-0 flex-1 [&>div]:p-0!">
-              <CommandInput placeholder="搜索供应商..." />
-            </div>
+            <>
+              <div className="relative min-w-0 flex-1">
+                <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="搜索供应商..."
+                  className="h-8 bg-transparent pl-8 pr-2 text-xs shadow-none"
+                />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0"
+                title="添加自定义网关"
+                aria-label="添加自定义网关"
+                onClick={onAddGateway}
+              >
+                <PlusIcon />
+              </Button>
+            </>
           ) : (
             <Button
               variant="ghost"
@@ -276,78 +303,84 @@ function ProviderListSidebar({
               <SearchIcon />
             </Button>
           )}
-          {open ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title="添加自定义网关"
-              aria-label="添加自定义网关"
-              onClick={onAddGateway}
-            >
-              <PlusIcon />
-            </Button>
-          ) : null}
         </div>
-        <CommandList className="min-h-0 max-h-none flex-1 p-1.5 group-data-[collapsible=icon]/sidebar:p-1">
-          <CommandEmpty className="group-data-[collapsible=icon]/sidebar:hidden">
-            没有匹配的供应商
-          </CommandEmpty>
-          {providers.length > 0 ? (
-            <>
+
+        <ScrollArea className="min-h-0 flex-1 p-1.5 group-data-[collapsible=icon]/sidebar:p-1">
+          {filteredProviders.length === 0 && filteredUnconfigured.length === 0 ? (
+            <div className="py-6 text-center text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+              没有匹配的供应商
+            </div>
+          ) : null}
+
+          {filteredProviders.length > 0 ? (
+            <div className="mb-2">
               <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
                 已配置
               </div>
-              <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
-                {providers.map((provider) =>
+              <SidebarMenu>
+                {filteredProviders.map((provider) =>
                   renderItem(
                     provider.id,
                     provider.registryId ?? "custom",
                     provider.name,
-                    `${provider.name} ${provider.registryId ?? ""} ${provider.baseUrl ?? ""}`,
                     selected?.kind === "provider" && selected.id === provider.id,
                     true,
                     provider.disabled,
                     () => onSelect({ kind: "provider", id: provider.id }),
                   ),
                 )}
-              </CommandGroup>
-            </>
+              </SidebarMenu>
+            </div>
           ) : null}
-          {unconfigured.length > 0 ? (
-            <>
+
+          {filteredUnconfigured.length > 0 ? (
+            <div>
               <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
                 全部供应商
               </div>
-              <CommandGroup className="group-data-[collapsible=icon]/sidebar:p-0">
-                {unconfigured.map((r) =>
+              <SidebarMenu>
+                {filteredUnconfigured.map((r) =>
                   renderItem(
                     r.id,
                     r.id,
                     r.name,
-                    `${r.name} ${r.id}`,
                     selected?.kind === "registry" && selected.id === r.id,
                     false,
                     undefined,
                     () => onSelect({ kind: "registry", id: r.id }),
                   ),
                 )}
-              </CommandGroup>
-            </>
+              </SidebarMenu>
+            </div>
           ) : null}
-        </CommandList>
-      </Command>
+        </ScrollArea>
+      </div>
     </aside>
   );
 }
 
-function EmptyDetail() {
+function EmptyDetail({ listOpen, onToggleList }: { listOpen: boolean; onToggleList: () => void }) {
   return (
-    <div className="flex size-full items-center justify-center p-8">
-      <div className="flex max-w-md flex-col items-center gap-2 text-center">
-        <ServerIcon className="size-8 text-muted-foreground/50" />
-        <p className="text-sm text-muted-foreground">
-          从左侧选择一个供应商填入 API Key,或添加自定义网关。
-        </p>
+    <div className="flex size-full flex-col">
+      <PanelHeader className="px-4">
+        <Button
+          size="icon-sm"
+          variant="ghost"
+          className="-ml-1"
+          title={listOpen ? "收起供应商列表" : "展开供应商列表"}
+          aria-label={listOpen ? "收起供应商列表" : "展开供应商列表"}
+          onClick={onToggleList}
+        >
+          <PanelLeftIcon />
+        </Button>
+      </PanelHeader>
+      <div className="flex size-full flex-1 items-center justify-center p-8">
+        <div className="flex max-w-md flex-col items-center gap-2 text-center">
+          <ServerIcon className="size-8 text-muted-foreground/50" />
+          <p className="text-sm text-muted-foreground">
+            从左侧选择一个供应商填入 API Key,或添加自定义网关。
+          </p>
+        </div>
       </div>
     </div>
   );

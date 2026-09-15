@@ -228,6 +228,13 @@ export function KnowledgeLibraryPage({
   }, [selectedId, visibleAssets]);
 
   const selected = visibleAssets.find((asset) => asset.id === selectedId) ?? null;
+  const previewAsset = React.useMemo(() => {
+    if (!selected) return null;
+    return {
+      ...selected,
+      url: libraryAssetContentUrl(selected.id, user.id),
+    };
+  }, [selected, user.id]);
   const documentTree = React.useMemo<LibraryTreeEntry[]>(() => {
     const entries: LibraryTreeEntry[] = [];
     const children = new Map<string | null, LibraryFolder[]>();
@@ -572,9 +579,8 @@ export function KnowledgeLibraryPage({
           data-collapsible={directoryOpen ? "" : "icon"}
           data-slot="sidebar"
           data-sidebar="sidebar"
-          style={{ transition: "width 200ms cubic-bezier(0.4, 0, 0.2, 1)" }}
           className={cn(
-            "group/sidebar relative flex h-full min-h-0 flex-col border-r bg-sidebar transition-all duration-200 ease-out overflow-hidden shrink-0",
+            "group/sidebar group relative flex h-full min-h-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-linear overflow-hidden shrink-0",
             directoryOpen ? "w-64 md:w-72" : "w-12",
           )}
         >
@@ -1037,7 +1043,7 @@ export function KnowledgeLibraryPage({
             </div>
           ) : null}
           <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
-            {selected ? (
+            {previewAsset ? (
               <React.Suspense
                 fallback={
                   <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -1046,12 +1052,7 @@ export function KnowledgeLibraryPage({
                   </div>
                 }
               >
-                <LibraryFilePreview
-                  asset={{
-                    ...selected,
-                    url: libraryAssetContentUrl(selected.id, user.id),
-                  }}
-                />
+                <LibraryFilePreview asset={previewAsset} />
               </React.Suspense>
             ) : (
               <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">

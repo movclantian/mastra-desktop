@@ -22,7 +22,6 @@ import { SettingCard, SettingRow, SliderRow } from "../controls";
 // ---------------------------------------------------------------------------
 
 export interface WorkspaceDraft {
-  enabled: boolean;
   threadsRoot: string;
   readOnly: boolean;
   allowedPaths: string[];
@@ -50,7 +49,6 @@ export interface WorkspaceDraft {
 }
 
 export const DEFAULT_WORKSPACE_DRAFT: WorkspaceDraft = {
-  enabled: true,
   threadsRoot: "",
   readOnly: false,
   allowedPaths: [],
@@ -361,7 +359,6 @@ export function EnvEntryList({
  * 纯文本编辑(路径内容/变量值输入)返回 null,保存时静默不弹 toast。
  */
 function structuralChangeLabel(before: WorkspaceDraft, after: WorkspaceDraft): string | null {
-  if (before.enabled !== after.enabled) return "工作区开关";
   if (before.threadsRoot !== after.threadsRoot) return "线程根目录";
   if (before.readOnly !== after.readOnly) return "只读模式";
   if (before.allowedPaths.length !== after.allowedPaths.length) return "额外目录";
@@ -387,7 +384,7 @@ export function WorkspaceSection() {
     if (loaded) return;
     fetchWorkspaceSettings<Partial<WorkspaceDraft>>()
       .then((config) => {
-        setDraft((prev) => ({ ...prev, ...config }) as WorkspaceDraft);
+        setDraft((prev) => ({ ...prev, ...config }));
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
@@ -434,20 +431,8 @@ export function WorkspaceSection() {
   return (
     <>
       <SettingCard
-        title="工作区(workspace)"
-        description="每条线程会话绑定一个工作目录:promptInput 选定(显式)或回落线程根目录(隐式);Agent 的文件读写、命令执行、搜索与技能能力均 contained 在该目录内(workspace-class.mdx)。"
-      >
-        <SettingRow
-          description="关闭后 Agent 不注入任何工作区工具(文件/命令/搜索/Skills)"
-          title="启用工作区"
-        >
-          <Switch checked={draft.enabled} onCheckedChange={(v) => patch({ enabled: v })} />
-        </SettingRow>
-      </SettingCard>
-
-      <SettingCard
         title="文件系统(LocalFilesystem)"
-        description="Agent 在会话绑定目录内读写文件;路径越界由容器策略阻止(local-filesystem.mdx)。"
+        description="工作区始终开启。每条线程会话绑定一个工作目录:promptInput 选定(显式)或回落线程根目录(隐式);Agent 在会话绑定目录内读写文件,路径越界由容器策略阻止(local-filesystem.mdx)。"
       >
         <Field className="space-y-2 py-4">
           <FieldContent className="space-y-1">

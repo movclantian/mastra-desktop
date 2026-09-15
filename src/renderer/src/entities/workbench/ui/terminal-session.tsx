@@ -82,6 +82,19 @@ export function commandForFile(path: string): string | undefined {
 }
 
 const LONG_SESSION_MS = 10_000;
+const TERMINAL_DEFAULT_COLS = 80;
+const TERMINAL_DEFAULT_ROWS = 24;
+
+function terminalDimension(value: number, fallback: number, maximum: number): number {
+  return Number.isFinite(value) && value >= 2 ? Math.min(maximum, Math.floor(value)) : fallback;
+}
+
+function terminalSize(term: XtermTerminal) {
+  return {
+    cols: terminalDimension(term.cols, TERMINAL_DEFAULT_COLS, 500),
+    rows: terminalDimension(term.rows, TERMINAL_DEFAULT_ROWS, 300),
+  };
+}
 
 export function TerminalSession({
   sessionId,
@@ -136,9 +149,7 @@ export function TerminalSession({
     if (!term || !fit || !api || !activeRef.current) return;
     fit.fit();
     const ptyId = ptyIdRef.current;
-    if (ptyId && term.cols > 0 && term.rows > 0) {
-      api.resize({ sessionId: ptyId, cols: term.cols, rows: term.rows });
-    }
+    if (ptyId) api.resize({ sessionId: ptyId, ...terminalSize(term) });
   }, []);
 
   React.useEffect(() => {
@@ -219,7 +230,7 @@ export function TerminalSession({
         return;
       }
       if (activeRef.current) fit.fit();
-      void api.create({ cwd: workingDirectory, cols: term.cols, rows: term.rows }).then(
+      void api.create({ cwd: workingDirectory, ...terminalSize(term) }).then(
         ({ sessionId: id }) => {
           if (disposed) {
             api.close(id);

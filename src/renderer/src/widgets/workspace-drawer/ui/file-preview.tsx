@@ -27,7 +27,16 @@ const fileViewerPlugins = [
   fallbackPlugin(),
 ];
 
-export function WorkspaceFilePreview({
+const DEFAULT_PREVIEW_TOOLBAR = {
+  zoom: true,
+  rotate: true,
+  download: true,
+  fullscreen: true,
+  print: true,
+  search: true,
+} as const;
+
+export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
   filePath,
   fileName,
   url,
@@ -42,8 +51,13 @@ export function WorkspaceFilePreview({
   isDraft?: boolean;
   mimeType?: string;
 }) {
-  const blobUrl = React.useMemo(() => {
-    if (!isDraft || content === undefined) return null;
+  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!isDraft || content === undefined) {
+      setBlobUrl(null);
+      return;
+    }
     const ext = getFileExtension(fileName);
     const type =
       mimeType ||
@@ -58,17 +72,18 @@ export function WorkspaceFilePreview({
               : ext === "csv"
                 ? "text/csv;charset=utf-8"
                 : "text/plain;charset=utf-8");
-    return URL.createObjectURL(new Blob([content], { type }));
+    const nextUrl = URL.createObjectURL(new Blob([content], { type }));
+    setBlobUrl(nextUrl);
+    return () => {
+      URL.revokeObjectURL(nextUrl);
+    };
   }, [content, fileName, isDraft, mimeType]);
 
-  React.useEffect(() => {
-    return () => {
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-    };
-  }, [blobUrl]);
-
-  const source = blobUrl || url;
+  const source = isDraft ? blobUrl : url;
   if (!source) {
+    if (isDraft && content !== undefined) {
+      return null;
+    }
     return (
       <Empty className="size-full justify-center">
         <EmptyHeader>
@@ -96,15 +111,8 @@ export function WorkspaceFilePreview({
         fallback="inline"
         locale="zh-CN"
         plugins={fileViewerPlugins}
-        toolbar={{
-          zoom: true,
-          rotate: true,
-          download: true,
-          fullscreen: true,
-          print: true,
-          search: true,
-        }}
+        toolbar={DEFAULT_PREVIEW_TOOLBAR}
       />
     </div>
   );
-}
+});

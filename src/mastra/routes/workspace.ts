@@ -130,7 +130,6 @@ async function ownedWorkspace(c: ContextWithMastra) {
   const threadId = c.req.param("threadId");
   const resourceId = c.req.query("resourceId");
   if (!threadId || !resourceId) return null;
-  if (!(await getWorkspaceConfig(resourceId)).enabled) return null;
   const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
   const thread = await getOwnedThread(memory, threadId, resourceId);
   const metadata = thread?.metadata as ThreadMetadata | undefined;

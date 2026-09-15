@@ -36,33 +36,49 @@ export interface PreviewLibraryAsset {
   url: string;
 }
 
-export default function LibraryFilePreview({ asset }: { asset: PreviewLibraryAsset }) {
+const LIBRARY_PREVIEW_TOOLBAR = {
+  zoom: true,
+  rotate: true,
+  download: true,
+  fullscreen: true,
+  print: true,
+  search: true,
+} as const;
+
+export default React.memo(function LibraryFilePreview({ asset }: { asset: PreviewLibraryAsset }) {
   const { theme } = useTheme();
-  const [fileUrl, setFileUrl] = React.useState<string | null | undefined>(undefined);
+  const [loadedState, setLoadedState] = React.useState<{
+    url: string;
+    objectUrl: string | null;
+  } | null>(null);
 
   React.useEffect(() => {
     let disposed = false;
     let objectUrl: string | undefined;
-    setFileUrl(undefined);
+
     void fetchLibraryAssetBlob(asset.url)
       .then((blob) => {
         objectUrl = URL.createObjectURL(blob);
         if (disposed) {
           URL.revokeObjectURL(objectUrl);
         } else {
-          setFileUrl(objectUrl);
+          setLoadedState({ url: asset.url, objectUrl });
         }
       })
       .catch(() => {
-        if (!disposed) setFileUrl(null);
+        if (!disposed) {
+          setLoadedState({ url: asset.url, objectUrl: null });
+        }
       });
+
     return () => {
       disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [asset.url]);
 
-  if (fileUrl === undefined) {
+  const isLoading = !loadedState || loadedState.url !== asset.url;
+  if (isLoading) {
     return (
       <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
@@ -70,6 +86,8 @@ export default function LibraryFilePreview({ asset }: { asset: PreviewLibraryAss
       </div>
     );
   }
+
+  const fileUrl = loadedState.objectUrl;
   if (!fileUrl) {
     return (
       <Empty className="size-full justify-center">
@@ -98,14 +116,7 @@ export default function LibraryFilePreview({ asset }: { asset: PreviewLibraryAss
       locale="zh-CN"
       plugins={plugins}
       theme={theme === "system" ? "auto" : theme}
-      toolbar={{
-        zoom: true,
-        rotate: true,
-        download: true,
-        fullscreen: true,
-        print: true,
-        search: true,
-      }}
+      toolbar={LIBRARY_PREVIEW_TOOLBAR}
     />
   );
-}
+});

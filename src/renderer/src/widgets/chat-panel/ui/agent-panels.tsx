@@ -64,7 +64,6 @@ import {
 } from "@/shared/ui/questionnaire";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
-import { isInteractionBusy } from "../model/approval-state";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -843,7 +842,7 @@ export function AgentInteractionPanel({
               }
             : interaction;
         const resume = (resumeData: unknown) => onResume(enriched, resumeData);
-        const busy = isInteractionBusy(busyKeys, threadId, interaction.key);
+        const busy = threadId !== null && busyKeys.has(`${threadId}:${interaction.key}`);
         if (interaction.toolName === "ask_user") {
           return (
             <AgentQuestionnairePanel

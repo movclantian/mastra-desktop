@@ -45,7 +45,7 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
   const isCurrentThreadBusy = activeThreadId ? isThreadBusy(activeThreadId) : false;
 
   return (
-    <PanelHeader className="relative z-10 px-4">
+    <PanelHeader className="relative z-10 pl-4 pr-2">
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mx-1 h-4" />
@@ -86,6 +86,8 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
           </BreadcrumbList>
         </Breadcrumb>
       </div>
+      {/* 动态页面动作插槽: 供当前页面或详情模式挂载顶栏快捷按钮 */}
+      <div id="app-top-bar-actions" className="flex items-center gap-2 shrink-0 empty:hidden" />
       {activeView === "chat" ? (
         <>
           <OpenInIde />
@@ -100,12 +102,13 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
           >
             {terminalPanelOpen ? <PanelBottomCloseIcon /> : <PanelBottomOpenIcon />}
           </Button>
-          {/* 工作区开关随容器迁移:面板展开后,收起按钮迁移到工作区面板头部
+          {/* 工作区面板显隐按钮随容器迁移:面板展开后,收起按钮迁移到工作区面板头部
               (原关闭按钮位置);顶栏只在面板收起时承载展开入口 —— 按钮在屏幕上
-              始终贴近右缘,展开/收起前后位置相对不变 */}
+              始终贴近右缘,展开/收起前后位置完全一致 */}
           {!workspacePanelOpen ? (
             <Button
               aria-label="展开工作区面板"
+              className="size-7 shrink-0"
               onClick={() => setWorkspacePanelOpen(true)}
               size="icon-sm"
               title="展开工作区面板"
@@ -127,8 +130,6 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
           <Settings2Icon />
         </Button>
       ) : null}
-      {/* 动态页面动作插槽: 供当前页面或详情模式挂载顶栏快捷按钮 */}
-      <div id="app-top-bar-actions" className="flex items-center gap-2 shrink-0" />
     </PanelHeader>
   );
 }

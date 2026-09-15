@@ -1,8 +1,9 @@
-import { MASTRA_SERVER_URL } from "@/shared/api";
+import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import type { BackgroundTaskState } from "./types";
 import { asRecord } from "./types";
 
 const BACKGROUND_TASK_EVENTS = [
+  "background-task-started",
   "background-task-running",
   "background-task-completed",
   "background-task-failed",
@@ -16,6 +17,7 @@ const STATUS_BY_EVENT: Record<
   (typeof BACKGROUND_TASK_EVENTS)[number],
   BackgroundTaskState["status"]
 > = {
+  "background-task-started": "running",
   "background-task-running": "running",
   "background-task-output": "running",
   "background-task-completed": "completed",
@@ -68,7 +70,11 @@ function taskFromChunk(
       : {}),
   };
 
-  if (chunkType === "background-task-running" || chunkType === "background-task-resumed") {
+  if (
+    chunkType === "background-task-started" ||
+    chunkType === "background-task-running" ||
+    chunkType === "background-task-resumed"
+  ) {
     task.error = undefined;
     task.suspendPayload = undefined;
   } else if (chunkType === "background-task-completed") {
@@ -86,14 +92,13 @@ export function subscribeBackgroundTaskStream(
   resourceId: string,
   onEvent: (task: BackgroundTaskState) => void,
 ): () => void {
-  const source = new EventSource(
-    `${MASTRA_SERVER_URL}/work/background-tasks/stream?threadId=${encodeURIComponent(threadId)}&resourceId=${encodeURIComponent(resourceId)}`,
-  );
   const tasks = new Map<string, BackgroundTaskState>();
+  const controller = new AbortController();
+  let stopped = false;
 
-  const handleEvent = (event: Event) => {
+  const handleEvent = (data: string) => {
     try {
-      const chunk = JSON.parse((event as MessageEvent).data) as BackgroundTaskChunk;
+      const chunk = JSON.parse(data) as BackgroundTaskChunk;
       const chunkType = typeof chunk.type === "string" ? chunk.type : "";
       if (!(BACKGROUND_TASK_EVENTS as readonly string[]).includes(chunkType)) return;
       const task = taskFromChunk(
@@ -111,11 +116,39 @@ export function subscribeBackgroundTaskStream(
     }
   };
 
-  for (const eventType of BACKGROUND_TASK_EVENTS) source.addEventListener(eventType, handleEvent);
-  return () => {
-    for (const eventType of BACKGROUND_TASK_EVENTS) {
-      source.removeEventListener(eventType, handleEvent);
+  const consume = async () => {
+    const url = `${MASTRA_SERVER_URL}/work/background-tasks/stream?threadId=${encodeURIComponent(threadId)}&resourceId=${encodeURIComponent(resourceId)}`;
+    while (!stopped) {
+      try {
+        const response = await apiFetch(url, { signal: controller.signal });
+        if (!response.ok || !response.body) return;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (!stopped) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const frames = buffer.split(/\r?\n\r?\n/);
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const data = frame
+              .split(/\r?\n/)
+              .filter((line) => line.startsWith("data:"))
+              .map((line) => line.slice(5).trimStart())
+              .join("\n");
+            if (data) handleEvent(data);
+          }
+        }
+      } catch {
+        if (stopped) return;
+      }
+      if (!stopped) await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
-    source.close();
+  };
+  void consume();
+  return () => {
+    stopped = true;
+    controller.abort();
   };
 }

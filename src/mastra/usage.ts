@@ -1,3 +1,4 @@
+import { getUsage } from "tokenlens";
 import { getProvidersConfig, routerPrefix, type UserProviderConfig } from "./models/providers";
 import { appStorage } from "./storage";
 
@@ -244,6 +245,26 @@ export async function getUsageSummary(
   ]);
   const configuredProviders = (await getProvidersConfig(resourceId)).providers;
 
+  function estimateFallbackCost(
+    modelId: string | null | undefined,
+    inputTokens: number,
+    outputTokens: number,
+  ): number | null {
+    if (!modelId) return null;
+    const cleanId = modelId.trim();
+    if (!cleanId) return null;
+    try {
+      const res = getUsage({
+        modelId: cleanId,
+        usage: { input: inputTokens, output: outputTokens },
+      });
+      if (res.costUSD?.totalUSD !== undefined && !Number.isNaN(res.costUSD.totalUSD)) {
+        return res.costUSD.totalUSD;
+      }
+    } catch {}
+    return null;
+  }
+
   const outputByRequest = new Map(outputs.map((metric) => [metricKey(metric), metric]));
   const durationByRequest = new Map(durations.map((metric) => [metricKey(metric), metric]));
   const requestRows = inputs.map((input) => {
@@ -255,6 +276,10 @@ export async function getUsageSummary(
     const costs = [input?.estimatedCost, output?.estimatedCost].filter(
       (value): value is number => typeof value === "number" && Number.isFinite(value),
     );
+    const model = input.model || output?.model || duration?.model || "unknown";
+    const telemetryCost = costs.length ? costs.reduce((sum, value) => sum + value, 0) : null;
+    const fallbackCost =
+      telemetryCost == null ? estimateFallbackCost(model, inputValue, outputValue) : null;
     return {
       id: key,
       createdAt: new Date(input.timestamp).toISOString(),
@@ -262,14 +287,14 @@ export async function getUsageSummary(
         input.provider || output?.provider || duration?.provider,
         configuredProviders,
       ),
-      model: input.model || output?.model || duration?.model || "unknown",
+      model,
       inputTokens: inputValue,
       outputTokens: outputValue,
       totalTokens: inputValue + outputValue,
       latencyMs: asNumber(duration?.value),
       status: duration?.labels?.status === "error" ? 500 : 200,
       source: "observability" as const,
-      cost: costs.length ? costs.reduce((sum, value) => sum + value, 0) : null,
+      cost: telemetryCost ?? fallbackCost,
     };
   });
 
@@ -305,21 +330,7 @@ export async function getUsageSummary(
         ),
       )?.value,
     );
-  const providers = providerTokens.groups.map((group) => {
-    const rawProvider = String(group.dimensions.provider ?? "unknown");
-    const provider = providerLabel(rawProvider, configuredProviders);
-    const requestGroup = providerRequests.groups.find(
-      (item) => String(item.dimensions.provider ?? "unknown") === rawProvider,
-    );
-    return {
-      provider,
-      requests: asNumber(requestGroup?.value),
-      inputTokens: groupValue(providerInput.groups, { provider: rawProvider }),
-      outputTokens: groupValue(providerOutput.groups, { provider: rawProvider }),
-      tokens: asNumber(group.value),
-      cost: group.estimatedCost ?? null,
-    };
-  });
+
   const models = modelTokens.groups.map((group) => {
     const rawProvider = String(group.dimensions.provider ?? "unknown");
     const provider = providerLabel(rawProvider, configuredProviders);
@@ -329,26 +340,46 @@ export async function getUsageSummary(
         String(item.dimensions.provider ?? "unknown") === rawProvider &&
         String(item.dimensions.model ?? "unknown") === model,
     );
-    const cost = group.estimatedCost ?? null;
+    const inTokens = groupValue(modelInput.groups, { provider: rawProvider, model });
+    const outTokens = groupValue(modelOutput.groups, { provider: rawProvider, model });
+    const fallbackCost =
+      group.estimatedCost == null ? estimateFallbackCost(model, inTokens, outTokens) : null;
+    const cost = group.estimatedCost ?? fallbackCost;
     const requestCount = asNumber(requestGroup?.value);
     return {
       model,
       provider,
       requests: requestCount,
-      inputTokens: groupValue(modelInput.groups, { provider: rawProvider, model }),
-      outputTokens: groupValue(modelOutput.groups, { provider: rawProvider, model }),
+      inputTokens: inTokens,
+      outputTokens: outTokens,
       tokens: asNumber(group.value),
       cost,
       averageCost: cost !== null && requestCount > 0 ? cost / requestCount : null,
     };
   });
-  const totalCost = modelTokens.groups.reduce(
-    (sum, group) => (group.estimatedCost == null ? sum : sum + group.estimatedCost),
-    0,
-  );
-  const hasCost = modelTokens.groups.some(
-    (group) => typeof group.estimatedCost === "number" && Number.isFinite(group.estimatedCost),
-  );
+
+  const providers = providerTokens.groups.map((group) => {
+    const rawProvider = String(group.dimensions.provider ?? "unknown");
+    const provider = providerLabel(rawProvider, configuredProviders);
+    const requestGroup = providerRequests.groups.find(
+      (item) => String(item.dimensions.provider ?? "unknown") === rawProvider,
+    );
+    const matchingModels = models.filter((m) => m.provider === provider);
+    const modelsCost = matchingModels.some((m) => m.cost !== null)
+      ? matchingModels.reduce((sum, m) => sum + (m.cost ?? 0), 0)
+      : null;
+    return {
+      provider,
+      requests: asNumber(requestGroup?.value),
+      inputTokens: groupValue(providerInput.groups, { provider: rawProvider }),
+      outputTokens: groupValue(providerOutput.groups, { provider: rawProvider }),
+      tokens: asNumber(group.value),
+      cost: group.estimatedCost ?? modelsCost,
+    };
+  });
+
+  const totalCost = models.reduce((sum, m) => (m.cost == null ? sum : sum + m.cost), 0);
+  const hasCost = models.some((m) => typeof m.cost === "number" && Number.isFinite(m.cost));
 
   return {
     totals: {

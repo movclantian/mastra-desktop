@@ -239,9 +239,8 @@ export function ThemeSection() {
         data-collapsible={sidebarOpen ? "" : "icon"}
         data-slot="sidebar"
         data-sidebar="sidebar"
-        style={{ transition: "width 200ms cubic-bezier(0.4, 0, 0.2, 1)" }}
         className={cn(
-          "group/sidebar relative flex h-full min-h-0 flex-col border-r bg-sidebar transition-all duration-200 ease-out overflow-hidden shrink-0",
+          "group/sidebar group relative flex h-full min-h-0 flex-col border-r bg-sidebar transition-[width] duration-200 ease-linear overflow-hidden shrink-0",
           sidebarOpen ? "w-56 md:w-64" : "w-12",
         )}
       >

@@ -18,7 +18,6 @@ import { join, resolve } from "node:path";
 import {
   LocalFilesystem,
   LocalSandbox,
-  type ToolConfigContext,
   type ToolConfigWithArgsContext,
   Workspace,
   type WorkspaceToolConfig,
@@ -89,8 +88,6 @@ function defaultThreadsRoot(resourceId?: string): string {
 }
 
 export interface WorkspaceUserConfig {
-  /** 工作区总开关:关闭时不向 Agent 注入任何 workspace 工具 */
-  enabled: boolean;
   /** 线程工作区根目录:隐式绑定线程的目录为 <threadsRoot>/<threadId>/ */
   threadsRoot: string;
   /** 只读文件系统(禁用写入/编辑/删除/建目录工具) */
@@ -192,7 +189,6 @@ function getWorkspaceToolsConfig(resourceId?: string): WorkspaceToolsConfig {
 }
 
 const DEFAULT_CONFIG: WorkspaceUserConfig = {
-  enabled: true,
   threadsRoot: DEFAULT_THREADS_ROOT,
   readOnly: false,
   allowedPaths: [],
@@ -304,7 +300,6 @@ function normalizeWorkspaceConfig(
   const merged = { ...defaults, ...input };
   return {
     ...defaults,
-    enabled: merged.enabled !== false,
     threadsRoot:
       typeof merged.threadsRoot === "string" ? merged.threadsRoot.trim() : defaults.threadsRoot,
     allowedPaths: cleanStrings(merged.allowedPaths),
@@ -387,11 +382,6 @@ function getRuntime(resourceId?: string): WorkspaceRuntime {
   return runtime;
 }
 
-/** 工作区总开关(Agent 动态 workspace 函数先查再解析,避免禁用时建目录) */
-export function isWorkspaceEnabled(resourceId?: string): boolean {
-  return getRuntime(resourceId).config.enabled;
-}
-
 /** 线程工作区根目录(隐式绑定的父目录) */
 export function getThreadsRoot(resourceId?: string): string {
   return getRuntime(resourceId).config.threadsRoot;
@@ -447,13 +437,6 @@ export function getThreadWorkspace(
   const outputArchive = createWorkspaceOutputArchiveHooks();
   // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
   const workspaceTools = getWorkspaceToolsConfig(resourceId);
-  const configuredEnabled = workspaceTools.enabled;
-  workspaceTools.enabled = async ({ requestContext, workspace }: ToolConfigContext) => {
-    if (!isWorkspaceEnabled(resourceId)) return false;
-    return typeof configuredEnabled === "function"
-      ? configuredEnabled({ requestContext, workspace })
-      : (configuredEnabled ?? true);
-  };
   const executeConfig = workspaceTools.mastra_workspace_execute_command;
   workspaceTools.mastra_workspace_execute_command = {
     ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),

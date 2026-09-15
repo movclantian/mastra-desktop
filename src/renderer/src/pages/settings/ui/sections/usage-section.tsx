@@ -4,7 +4,7 @@ import * as React from "react";
 import { type Activity, ActivityCalendar } from "react-activity-calendar";
 import type { DateRange } from "react-day-picker";
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from "recharts";
-import { formatCostUSD } from "@/entities/workbench";
+import { calculateCostUSD, formatCostUSD, useModelCatalog } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
@@ -19,6 +19,15 @@ import {
   ChartTooltipContent,
 } from "@/shared/ui/chart";
 import { NumberTicker } from "@/shared/ui/number-ticker";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/shared/ui/pagination";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SlidingNumber } from "@/shared/ui/sliding-number";
@@ -172,6 +181,8 @@ function activityForRange(
   return result;
 }
 
+const PAGE_SIZE = 10;
+
 export function UsageSection() {
   const { user } = useAuth();
   const { isDark } = useTheme();
@@ -183,12 +194,22 @@ export function UsageSection() {
   const [profile, setProfile] = React.useState<MemoryProfile | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [detailTab, setDetailTab] = React.useState<UsageDetailTab>("requests");
+  const catalog = useModelCatalog();
+  const [requestsPage, setRequestsPage] = React.useState(1);
+  const [providersPage, setProvidersPage] = React.useState(1);
+  const [modelsPage, setModelsPage] = React.useState(1);
 
   const query = React.useMemo(() => {
     const from = range.from ? format(startOfDay(range.from), "yyyy-MM-dd") : "";
     const to = range.to ? format(addDays(startOfDay(range.to), 1), "yyyy-MM-dd") : "";
     return `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
   }, [range.from, range.to]);
+
+  React.useEffect(() => {
+    setRequestsPage(1);
+    setProvidersPage(1);
+    setModelsPage(1);
+  }, [query]);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -211,7 +232,49 @@ export function UsageSection() {
     void load();
   }, [load]);
 
-  const totals = summary?.totals ?? {
+  const augmentedSummary = React.useMemo(() => {
+    if (!summary) return null;
+
+    const requests = summary.requests.map((req) => {
+      const cost =
+        req.cost ?? calculateCostUSD(req.model, req.inputTokens, req.outputTokens, catalog);
+      return { ...req, cost };
+    });
+
+    const models = summary.models.map((m) => {
+      const cost = m.cost ?? calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
+      const averageCost = cost !== null && m.requests > 0 ? cost / m.requests : null;
+      return { ...m, cost, averageCost };
+    });
+
+    const providers = summary.providers.map((p) => {
+      const providerModels = models.filter((m) => m.provider === p.provider);
+      const hasAnyCost = providerModels.some((m) => m.cost !== null);
+      const modelsCost = hasAnyCost
+        ? providerModels.reduce((acc, m) => acc + (m.cost ?? 0), 0)
+        : null;
+      const cost = p.cost ?? modelsCost;
+      return { ...p, cost };
+    });
+
+    const hasAnyCost = models.some((m) => m.cost !== null);
+    const totalCost =
+      summary.totals.totalCost ??
+      (hasAnyCost ? models.reduce((acc, m) => acc + (m.cost ?? 0), 0) : null);
+
+    return {
+      ...summary,
+      totals: {
+        ...summary.totals,
+        totalCost,
+      },
+      providers,
+      models,
+      requests,
+    };
+  }, [summary, catalog]);
+
+  const totals = augmentedSummary?.totals ?? {
     requests: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -220,11 +283,18 @@ export function UsageSection() {
     longestChatMs: 0,
     totalCost: null,
   };
-  const activity = activityForRange(range, summary?.activity ?? []);
+  const activity = activityForRange(range, augmentedSummary?.activity ?? []);
   const averageLatencyMs = totals.requests
     ? Math.round(totals.totalLatencyMs / totals.requests)
     : 0;
-  const activeDays = summary?.activity.filter((entry) => entry.count > 0).length ?? 0;
+  const activeDays = augmentedSummary?.activity.filter((entry) => entry.count > 0).length ?? 0;
+  const requestsList = augmentedSummary?.requests ?? [];
+  const requestsTotalPages = Math.ceil(requestsList.length / PAGE_SIZE) || 1;
+  const safeRequestsPage = Math.min(Math.max(1, requestsPage), requestsTotalPages);
+  const paginatedRequests = React.useMemo(() => {
+    const start = (safeRequestsPage - 1) * PAGE_SIZE;
+    return requestsList.slice(start, start + PAGE_SIZE);
+  }, [requestsList, safeRequestsPage]);
   const formatProfileValue = (value: unknown): string => {
     if (typeof value === "string") return value;
     try {
@@ -428,7 +498,7 @@ export function UsageSection() {
           <ChartContainer config={chartConfig} className="h-[240px] w-full">
             <AreaChart
               accessibilityLayer
-              data={summary?.trend ?? []}
+              data={augmentedSummary?.trend ?? []}
               margin={{ left: 4, right: 8, top: 8 }}
             >
               <CartesianGrid vertical={false} />
@@ -501,7 +571,7 @@ export function UsageSection() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!summary?.requests?.length ? (
+                    {!requestsList.length ? (
                       <TableRow>
                         <TableCell
                           colSpan={10}
@@ -511,7 +581,7 @@ export function UsageSection() {
                         </TableCell>
                       </TableRow>
                     ) : (
-                      summary.requests.map((request) => {
+                      paginatedRequests.map((request) => {
                         const requestCost = request.cost;
                         return (
                           <TableRow key={request.id}>
@@ -555,6 +625,12 @@ export function UsageSection() {
                   </TableBody>
                 </Table>
               </ScrollArea>
+              <TablePagination
+                currentPage={safeRequestsPage}
+                totalPages={requestsTotalPages}
+                totalItems={requestsList.length}
+                onPageChange={setRequestsPage}
+              />
             </CardContent>
           </Card>
         </AnimatedTabsPanel>
@@ -562,7 +638,7 @@ export function UsageSection() {
           <StatsTable
             caption="供应商用量统计"
             headers={["供应商", "请求数", "Tokens", "预估成本"]}
-            rows={(summary?.providers ?? []).map((row) => {
+            rows={(augmentedSummary?.providers ?? []).map((row) => {
               return [
                 row.provider,
                 formatNumber(row.requests),
@@ -570,13 +646,16 @@ export function UsageSection() {
                 formatCostUSD(row.cost),
               ];
             })}
+            page={providersPage}
+            onPageChange={setProvidersPage}
+            pageSize={PAGE_SIZE}
           />
         </AnimatedTabsPanel>
         <AnimatedTabsPanel activeTab={detailTab} value="models" layoutId="usage-detail">
           <StatsTable
             caption="模型用量统计"
             headers={["模型", "供应商", "请求数", "Tokens", "总成本", "单次平均成本"]}
-            rows={(summary?.models ?? []).map((row) => {
+            rows={(augmentedSummary?.models ?? []).map((row) => {
               return [
                 row.model,
                 row.provider,
@@ -586,9 +665,109 @@ export function UsageSection() {
                 formatCostUSD(row.averageCost),
               ];
             })}
+            page={modelsPage}
+            onPageChange={setModelsPage}
+            pageSize={PAGE_SIZE}
           />
         </AnimatedTabsPanel>
       </div>
+    </div>
+  );
+}
+
+function getPageNumbers(currentPage: number, totalPages: number): (number | "ellipsis")[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "ellipsis", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [
+      1,
+      "ellipsis",
+      totalPages - 4,
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ];
+  }
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
+}
+
+function TablePagination({
+  currentPage,
+  totalPages,
+  totalItems,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalItems === 0) return null;
+
+  return (
+    <div className="flex items-center justify-between border-t border-border px-4 py-2 bg-background/50">
+      <span className="text-xs text-muted-foreground">
+        {totalPages > 1
+          ? `第 ${currentPage} / ${totalPages} 页 · 共 ${totalItems} 条`
+          : `共 ${totalItems} 条数据`}
+      </span>
+      {totalPages > 1 ? (
+        <Pagination className="mx-0 w-auto">
+          <PaginationContent>
+            <PaginationItem>
+              <PaginationPrevious
+                text="上一页"
+                className={cn(
+                  "h-7 cursor-pointer text-xs",
+                  currentPage <= 1 && "pointer-events-none opacity-40",
+                )}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (currentPage > 1) onPageChange(currentPage - 1);
+                }}
+              />
+            </PaginationItem>
+            {getPageNumbers(currentPage, totalPages).map((item, idx) =>
+              item === "ellipsis" ? (
+                <PaginationItem key={`ellipsis-${idx}`}>
+                  <PaginationEllipsis className="size-7" />
+                </PaginationItem>
+              ) : (
+                <PaginationItem key={item}>
+                  <PaginationLink
+                    isActive={currentPage === item}
+                    className="size-7 cursor-pointer text-xs"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onPageChange(item);
+                    }}
+                  >
+                    {item}
+                  </PaginationLink>
+                </PaginationItem>
+              ),
+            )}
+            <PaginationItem>
+              <PaginationNext
+                text="下一页"
+                className={cn(
+                  "h-7 cursor-pointer text-xs",
+                  currentPage >= totalPages && "pointer-events-none opacity-40",
+                )}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (currentPage < totalPages) onPageChange(currentPage + 1);
+                }}
+              />
+            </PaginationItem>
+          </PaginationContent>
+        </Pagination>
+      ) : null}
     </div>
   );
 }
@@ -597,49 +776,69 @@ function StatsTable({
   caption,
   headers,
   rows,
+  page = 1,
+  onPageChange,
+  pageSize = PAGE_SIZE,
 }: {
   caption?: string;
   headers: string[];
   rows: string[][];
+  page?: number;
+  onPageChange?: (page: number) => void;
+  pageSize?: number;
 }) {
+  const totalPages = Math.ceil(rows.length / pageSize) || 1;
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const paginatedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
     <Card>
       <CardContent className="p-0">
-        <Table>
-          {caption ? <TableCaption className="sr-only">{caption}</TableCaption> : null}
-          <TableHeader>
-            <TableRow>
-              {headers.map((header) => (
-                <TableHead key={header}>{header}</TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 ? (
+        <ScrollArea className="max-h-[360px] w-full">
+          <Table>
+            {caption ? <TableCaption className="sr-only">{caption}</TableCaption> : null}
+            <TableHeader>
               <TableRow>
-                <TableCell
-                  colSpan={headers.length}
-                  className="h-24 text-center text-xs text-muted-foreground"
-                >
-                  暂无统计数据
-                </TableCell>
+                {headers.map((header) => (
+                  <TableHead key={header}>{header}</TableHead>
+                ))}
               </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow key={row.join(":")}>
-                  {row.map((cell, cellIndex) => (
-                    <TableCell
-                      key={`${headers[cellIndex] ?? cellIndex}:${cell}`}
-                      className={cellIndex > 1 ? "tabular-nums" : "font-mono text-xs"}
-                    >
-                      {cell}
-                    </TableCell>
-                  ))}
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={headers.length}
+                    className="h-24 text-center text-xs text-muted-foreground"
+                  >
+                    暂无统计数据
+                  </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+              ) : (
+                paginatedRows.map((row) => (
+                  <TableRow key={row.join(":")}>
+                    {row.map((cell, cellIndex) => (
+                      <TableCell
+                        key={`${headers[cellIndex] ?? cellIndex}:${cell}`}
+                        className={cellIndex > 1 ? "tabular-nums" : "font-mono text-xs"}
+                      >
+                        {cell}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </ScrollArea>
+        {onPageChange ? (
+          <TablePagination
+            currentPage={safePage}
+            totalPages={totalPages}
+            totalItems={rows.length}
+            onPageChange={onPageChange}
+          />
+        ) : null}
       </CardContent>
     </Card>
   );

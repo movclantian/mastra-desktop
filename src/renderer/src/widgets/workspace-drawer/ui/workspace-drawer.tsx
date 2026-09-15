@@ -18,6 +18,7 @@ import {
   FilePlus2Icon,
   FolderPlusIcon,
   FolderTreeIcon,
+  FoldVerticalIcon,
   Globe2Icon,
   MoreHorizontalIcon,
   PanelRightCloseIcon,
@@ -28,9 +29,11 @@ import {
   SaveIcon,
   SparklesIcon,
   TerminalIcon,
+  UnfoldVerticalIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
+import { usePanelRef } from "react-resizable-panels";
 import { toast } from "sonner";
 import {
   createWorkspaceEntry,
@@ -98,6 +101,16 @@ import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { Ripple } from "@/shared/ui/ripple";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
+
+function treeHandleProps(open: boolean) {
+  return {
+    disabled: !open,
+    className: open
+      ? "transition-colors hover:bg-primary"
+      : "pointer-events-none !w-0 !border-0 opacity-0",
+  };
+}
+
 import { fetchInlineCompletion, requestInlineEdit } from "../api/editor-api";
 import { groupWorkspaceChanges } from "../lib/changes";
 import {
@@ -783,6 +796,25 @@ type OpenWorkspaceFile = WorkspaceFilePayload & {
   viewMode: "edit" | "preview";
 };
 
+function areTreeEntriesEqual(a: TreeEntry[] | undefined, b: TreeEntry[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ai = a[i];
+    const bi = b[i];
+    if (
+      ai.name !== bi.name ||
+      ai.path !== bi.path ||
+      ai.type !== bi.type ||
+      ai.hidden !== bi.hidden
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * 文件树 + 编辑器。可多开 —— 每个标签一个独立实例,各自持有展开态与打开的文件。
  *
@@ -815,6 +847,18 @@ function FilesWorkspace({ active }: { active: boolean }) {
   const openFilesRef = React.useRef(openFiles);
   const activeFile = openFiles.find((item) => item.path === activeFilePath);
   const dirty = activeFile ? activeFile.draft !== activeFile.content : false;
+  const [treeOpen, setTreeOpen] = React.useState(true);
+  const treePanelRef = usePanelRef();
+
+  React.useEffect(() => {
+    const panel = treePanelRef.current;
+    if (!panel) return;
+    if (treeOpen) {
+      if (panel.isCollapsed()) panel.expand();
+    } else {
+      if (!panel.isCollapsed()) panel.collapse();
+    }
+  }, [treeOpen]);
 
   React.useEffect(() => {
     openFilesRef.current = openFiles;
@@ -892,6 +936,26 @@ function FilesWorkspace({ active }: { active: boolean }) {
     [loadDirectory],
   );
 
+  const collapseAll = React.useCallback(() => {
+    setExpanded(new Set());
+  }, []);
+
+  const expandAll = React.useCallback(() => {
+    const allDirPaths = allEntries
+      .filter((entry) => entry.type === "dir")
+      .map((entry) => entry.path);
+    setExpanded(new Set(allDirPaths));
+    for (const dirPath of allDirPaths) loadDirectory(dirPath);
+  }, [allEntries, loadDirectory]);
+
+  const toggleExpandAll = React.useCallback(() => {
+    if (expanded.size > 0) {
+      collapseAll();
+    } else {
+      expandAll();
+    }
+  }, [collapseAll, expandAll, expanded.size]);
+
   // Agent tools, terminals, and external editors can change the workspace without
   // going through this component. Refresh only the root and currently expanded
   // directories so the tree stays current without collapsing the user's view.
@@ -908,13 +972,23 @@ function FilesWorkspace({ active }: { active: boolean }) {
       );
       if (requestId !== treeRefreshRequestRef.current) return;
       const rootEntries = visibleEntries.find(([path]) => path === "")?.[1];
-      if (rootEntries) setEntries(rootEntries);
+      if (rootEntries) {
+        setEntries((current) =>
+          areTreeEntriesEqual(current, rootEntries) ? current : rootEntries,
+        );
+      }
       setChildrenByPath((current) => {
+        let changed = false;
         const next = { ...current };
         for (const [path, nextEntries] of visibleEntries) {
-          if (path) next[path] = nextEntries;
+          if (path) {
+            if (!areTreeEntriesEqual(current[path], nextEntries)) {
+              next[path] = nextEntries;
+              changed = true;
+            }
+          }
         }
-        return next;
+        return changed ? next : current;
       });
     } catch {
       // Keep the last known tree when a transient filesystem request fails.
@@ -1139,7 +1213,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
     <ResizablePanelGroup className="min-h-0" orientation="horizontal">
       <ResizablePanel defaultSize="72%" minSize="42%">
         <PanelSurface>
-          <PanelHeader className="gap-2 px-3">
+          <PanelHeader className="h-10 gap-2 px-3">
             {activeFile ? (
               <FileTypeIcon name={activeFile.name} />
             ) : (
@@ -1218,44 +1292,38 @@ function FilesWorkspace({ active }: { active: boolean }) {
                 </Button>
               </div>
             ) : null}
+
+            {/* 关闭当前文件 */}
+            {activeFile ? (
+              <Button
+                aria-label="关闭文件"
+                className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+                onClick={() => closeFile(activeFile.path)}
+                size="icon-sm"
+                title="关闭文件"
+                variant="ghost"
+              >
+                <XIcon className="size-3.5" />
+              </Button>
+            ) : null}
+
+            {/* 展开/收起文件目录树面板 */}
+            <Button
+              aria-label={treeOpen ? "收起文件目录树" : "展开文件目录树"}
+              className={cn(
+                "size-7 shrink-0",
+                treeOpen
+                  ? "text-muted-foreground hover:text-foreground"
+                  : "bg-muted text-foreground font-medium shadow-xs",
+              )}
+              onClick={() => setTreeOpen((prev) => !prev)}
+              size="icon-sm"
+              title={treeOpen ? "收起文件目录树" : "展开文件目录树"}
+              variant="ghost"
+            >
+              <FolderTreeIcon className="size-3.5" />
+            </Button>
           </PanelHeader>
-          <ScrollArea className="shrink-0 border-b bg-muted/20">
-            <div className="flex min-w-max items-center gap-1 px-2 py-1">
-              {openFiles.map((item) => (
-                <div className="group relative flex h-7 shrink-0 items-center" key={item.path}>
-                  <button
-                    className={cn(
-                      "flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md px-2 pr-7 text-xs",
-                      item.path === activeFilePath
-                        ? "bg-background font-medium text-foreground shadow-xs"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                    onClick={() => {
-                      setActiveFilePath(item.path);
-                      setSelectedPath(item.path);
-                    }}
-                    title={item.path}
-                    type="button"
-                  >
-                    <FileTypeIcon name={item.name} />
-                    <span className="truncate">{item.name}</span>
-                    {item.draft !== item.content ? (
-                      <span className="size-1.5 rounded-full bg-amber-500" />
-                    ) : null}
-                  </button>
-                  <button
-                    aria-label={`关闭${item.name}`}
-                    className="absolute right-1 rounded p-0.5 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"
-                    onClick={() => closeFile(item.path)}
-                    type="button"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
           <div className="min-h-0 flex-1 overflow-hidden">
             {loadingPaths.size > 0 && !activeFile ? (
               <div className="flex size-full items-center justify-center text-muted-foreground">
@@ -1322,10 +1390,20 @@ function FilesWorkspace({ active }: { active: boolean }) {
           </div>
         </PanelSurface>
       </ResizablePanel>
-      <ResizableHandle />
-      <ResizablePanel defaultSize="28%" minSize="22%" maxSize="46%">
-        <aside className="flex size-full min-w-0 flex-col bg-muted/20">
-          <PanelHeader className="bg-muted/60 px-3 text-xs font-medium">
+      <ResizableHandle {...treeHandleProps(treeOpen)} />
+      <ResizablePanel
+        panelRef={treePanelRef}
+        collapsible
+        collapsedSize={0}
+        defaultSize="28%"
+        minSize="20%"
+        maxSize="46%"
+        groupResizeBehavior="preserve-pixel-size"
+        onCollapse={() => setTreeOpen(false)}
+        onExpand={() => setTreeOpen(true)}
+      >
+        <aside className={cn("flex size-full min-w-0 flex-col bg-muted/20", !treeOpen && "hidden")}>
+          <PanelHeader className="h-10 bg-muted/60 px-3 text-xs font-medium">
             <FolderTreeIcon className="size-4 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate" title={activeThread.metadata.workspacePath}>
               {activeThread.metadata.workspacePath
@@ -1334,6 +1412,23 @@ function FilesWorkspace({ active }: { active: boolean }) {
                 .filter(Boolean)
                 .at(-1)}
             </span>
+
+            {/* 全部折叠 / 全部展开 目录树节点快捷按钮 */}
+            <Button
+              aria-label={expanded.size > 0 ? "全部折叠目录" : "全部展开目录"}
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={toggleExpandAll}
+              size="icon-sm"
+              title={expanded.size > 0 ? "全部折叠" : "全部展开"}
+              variant="ghost"
+            >
+              {expanded.size > 0 ? (
+                <FoldVerticalIcon className="size-3.5" />
+              ) : (
+                <UnfoldVerticalIcon className="size-3.5" />
+              )}
+            </Button>
+
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -1371,12 +1466,33 @@ function FilesWorkspace({ active }: { active: boolean }) {
                   新建文件夹
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={collapseAll}>
+                  <FoldVerticalIcon />
+                  全部折叠
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={expandAll}>
+                  <UnfoldVerticalIcon />
+                  全部展开
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => void refreshTree()}>
                   <RefreshCwIcon className={cn(treeLoading && "animate-spin")} />
                   刷新
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* 收起文件目录树面板 */}
+            <Button
+              aria-label="收起文件目录树面板"
+              className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+              onClick={() => setTreeOpen(false)}
+              size="icon-sm"
+              title="收起文件目录树"
+              variant="ghost"
+            >
+              <PanelRightCloseIcon className="size-3.5" />
+            </Button>
           </PanelHeader>
           <ScrollArea className="min-h-0 flex-1">
             <FileTree
@@ -1635,11 +1751,11 @@ export function WorkspaceDrawer() {
 
   return (
     <PanelSurface>
-      <PanelHeader className="gap-1 bg-muted/40 px-1">
+      <PanelHeader className="h-12 justify-between border-b px-2 py-0">
         {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端 / 代码更改),
             后半是由服务端 state.tabs 派生的浏览器页面。支持横向滚轮与横向滚动条。 */}
         <div
-          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden"
+          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           data-horizontal-scroll="true"
         >
           {panelTabs.map((tab) => {
@@ -1648,139 +1764,162 @@ export function WorkspaceDrawer() {
               activePanelTab.kind !== "welcome" &&
               activePanelTab.id === tab.id;
             return (
-              <div
-                className="group relative flex h-7 shrink-0 items-center"
-                key={tab.id}
-                role="presentation"
-              >
-                <ContextMenu>
-                  <ContextMenuTrigger>
-                    <button
-                      className={cn(
-                        "flex h-7 max-w-44 min-w-0 flex-none items-center gap-1.5 rounded-md px-2 pr-7 text-xs transition-colors",
-                        isSelected
-                          ? "!bg-primary !font-semibold !text-primary-foreground shadow-sm"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                      )}
-                      onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
-                      title={tab.title}
-                      type="button"
+              <ContextMenu key={tab.id}>
+                <ContextMenuTrigger>
+                  <button
+                    className={cn(
+                      "group relative flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                      isSelected
+                        ? "border-border bg-background text-foreground shadow-xs font-medium"
+                        : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                    )}
+                    onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
+                    title={tab.title}
+                    type="button"
+                  >
+                    {tab.kind === "files" ? (
+                      <FolderTreeIcon
+                        className={cn(
+                          "size-3 shrink-0",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
+                    ) : tab.kind === "terminal" ? (
+                      <TerminalIcon
+                        className={cn(
+                          "size-3 shrink-0",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
+                    ) : (
+                      <FileDiffIcon
+                        className={cn(
+                          "size-3 shrink-0",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
+                    )}
+                    <span className="truncate">{tab.title}</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`关闭${tab.title}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closePanelTab(tab.id);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.stopPropagation();
+                          closePanelTab(tab.id);
+                        }
+                      }}
+                      className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                     >
-                      {tab.kind === "files" ? (
-                        <FolderTreeIcon className="size-3.5 shrink-0" />
-                      ) : tab.kind === "terminal" ? (
-                        <TerminalIcon className="size-3.5 shrink-0" />
-                      ) : (
-                        <FileDiffIcon className="size-3.5 shrink-0" />
-                      )}
-                      <span className="truncate">{tab.title}</span>
-                    </button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent className="w-48">
-                    <ContextMenuGroup>
-                      <ContextMenuLabel className="truncate max-w-44">{tab.title}</ContextMenuLabel>
-                      <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
-                        <XIcon className="text-muted-foreground" />
-                        <span>关闭标签</span>
-                        <ContextMenuShortcut>⌘W</ContextMenuShortcut>
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => {
-                          for (const other of panelTabs) {
-                            if (other.id !== tab.id) closePanelTab(other.id);
-                          }
-                        }}
-                      >
-                        <span>关闭其他标签</span>
-                      </ContextMenuItem>
-                    </ContextMenuGroup>
-                    <ContextMenuSeparator />
-                    <ContextMenuGroup>
-                      <ContextMenuSub>
-                        <ContextMenuSubTrigger>
-                          <PlusIcon className="text-muted-foreground" />
-                          <span>新建标签</span>
-                        </ContextMenuSubTrigger>
-                        <ContextMenuSubContent className="w-44">
-                          <ContextMenuGroup>
-                            <ContextMenuItem onClick={() => addPanelTab("files")}>
-                              <FolderTreeIcon className="text-muted-foreground" />
-                              <span>文件树</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem onClick={() => addPanelTab("terminal")}>
-                              <TerminalIcon className="text-muted-foreground" />
-                              <span>终端</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem onClick={() => addPanelTab("changes")}>
-                              <FileDiffIcon className="text-muted-foreground" />
-                              <span>代码更改</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem
-                              onClick={() => {
-                                activatePanelTab({
-                                  kind: "browser",
-                                  index: state.tabs.length,
-                                });
-                                void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
-                              }}
-                            >
-                              <Globe2Icon className="text-muted-foreground" />
-                              <span>浏览页面</span>
-                            </ContextMenuItem>
-                          </ContextMenuGroup>
-                        </ContextMenuSubContent>
-                      </ContextMenuSub>
-                    </ContextMenuGroup>
-                  </ContextMenuContent>
-                </ContextMenu>
-                <button
-                  aria-label={`关闭${tab.title}`}
-                  className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closePanelTab(tab.id);
-                  }}
-                  type="button"
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </div>
+                      <XIcon className="size-3" />
+                    </span>
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuGroup>
+                    <ContextMenuLabel className="max-w-44 truncate">{tab.title}</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
+                      <XIcon className="text-muted-foreground" />
+                      <span>关闭标签</span>
+                      <ContextMenuShortcut>⌘W</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => {
+                        for (const other of panelTabs) {
+                          if (other.id !== tab.id) closePanelTab(other.id);
+                        }
+                      }}
+                    >
+                      <span>关闭其他标签</span>
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                  <ContextMenuSeparator />
+                  <ContextMenuGroup>
+                    <ContextMenuSub>
+                      <ContextMenuSubTrigger>
+                        <PlusIcon className="text-muted-foreground" />
+                        <span>新建标签</span>
+                      </ContextMenuSubTrigger>
+                      <ContextMenuSubContent className="w-44">
+                        <ContextMenuGroup>
+                          <ContextMenuItem onClick={() => addPanelTab("files")}>
+                            <FolderTreeIcon className="text-muted-foreground" />
+                            <span>文件树</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => addPanelTab("terminal")}>
+                            <TerminalIcon className="text-muted-foreground" />
+                            <span>终端</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem onClick={() => addPanelTab("changes")}>
+                            <FileDiffIcon className="text-muted-foreground" />
+                            <span>代码更改</span>
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onClick={() => {
+                              activatePanelTab({
+                                kind: "browser",
+                                index: state.tabs.length,
+                              });
+                              void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                            }}
+                          >
+                            <Globe2Icon className="text-muted-foreground" />
+                            <span>浏览页面</span>
+                          </ContextMenuItem>
+                        </ContextMenuGroup>
+                      </ContextMenuSubContent>
+                    </ContextMenuSub>
+                  </ContextMenuGroup>
+                </ContextMenuContent>
+              </ContextMenu>
             );
           })}
           {state.tabs.map((tab, index) => {
             const isSelected = activePanelTab.kind === "browser" && activePanelTab.index === index;
             return (
-              <div
-                className="group relative flex h-7 shrink-0 items-center"
+              <button
                 key={`${index}:${tab.url}:${tab.title ?? ""}`}
-                role="presentation"
+                className={cn(
+                  "group relative flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                  isSelected
+                    ? "border-border bg-background text-foreground shadow-xs font-medium"
+                    : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                )}
+                onClick={() => openBrowserTab(index)}
+                title={tab.title || tab.url}
+                type="button"
               >
-                <button
+                <Globe2Icon
                   className={cn(
-                    "flex h-7 max-w-44 min-w-0 flex-none items-center gap-1.5 rounded-md px-2 pr-7 text-xs transition-colors",
-                    isSelected
-                      ? "!bg-primary !font-semibold !text-primary-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    "size-3 shrink-0",
+                    isSelected ? "text-primary" : "text-muted-foreground",
                   )}
-                  onClick={() => openBrowserTab(index)}
-                  title={tab.title || tab.url}
-                  type="button"
-                >
-                  <Globe2Icon className="size-3.5 shrink-0" />
-                  <span className="truncate">{tab.title || tab.url || "新标签页"}</span>
-                </button>
-                <button
+                />
+                <span className="truncate">{tab.title || tab.url || "新标签页"}</span>
+                <span
+                  role="button"
+                  tabIndex={0}
                   aria-label="关闭页面"
-                  className="absolute right-1 rounded p-0.5 opacity-0 hover:bg-muted-foreground/15 focus-visible:opacity-100 group-hover:opacity-100"
                   onClick={(event) => {
                     event.stopPropagation();
                     closeBrowserTab(index);
                   }}
-                  type="button"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.stopPropagation();
+                      closeBrowserTab(index);
+                    }
+                  }}
+                  className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                 >
                   <XIcon className="size-3" />
-                </button>
-              </div>
+                </span>
+              </button>
             );
           })}
           <DropdownMenu>
@@ -1788,15 +1927,15 @@ export function WorkspaceDrawer() {
               render={
                 <Button
                   aria-label="新建标签"
-                  className="size-7 shrink-0"
-                  size="icon-sm"
+                  className="size-6 shrink-0"
+                  size="icon-xs"
                   title="新建标签"
                   variant="ghost"
-                />
+                >
+                  <PlusIcon className="size-3.5" />
+                </Button>
               }
-            >
-              <PlusIcon />
-            </DropdownMenuTrigger>
+            />
             <DropdownMenuContent align="start">
               <DropdownMenuItem
                 onClick={() => {
@@ -1825,11 +1964,11 @@ export function WorkspaceDrawer() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        {/* 收起工作区按钮:面板展开时从顶栏迁移至此,占据原关闭按钮位置 ——
+        {/* 收起工作区面板按钮:面板展开时从顶栏迁移至此,占据原收起按钮位置 ——
             收起与关闭语义合一,按钮在屏幕上始终贴近右缘 */}
         <Button
           aria-label="收起工作区面板"
-          className="shrink-0"
+          className="size-7 shrink-0"
           onClick={() => setWorkspacePanelOpen(false)}
           size="icon-sm"
           title="收起工作区面板"

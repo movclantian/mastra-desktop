@@ -358,7 +358,7 @@ export function calculateCostUSD(
   outputTokens: number,
   catalog?: CatalogProvider[],
 ): number | null {
-  if (!modelId || (inputTokens === 0 && outputTokens === 0)) return null;
+  if (!modelId) return null;
   const cleanId = modelId.trim();
   const normId = cleanId.toLowerCase();
 

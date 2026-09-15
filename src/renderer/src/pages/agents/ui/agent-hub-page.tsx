@@ -1,6 +1,9 @@
 import {
   BotIcon,
+  CheckIcon,
   CopyIcon,
+  LayoutGridIcon,
+  ListIcon,
   PencilIcon,
   PlusIcon,
   SearchIcon,
@@ -20,12 +23,17 @@ import {
 } from "@/entities/workbench";
 import { cn } from "@/shared/lib";
 import { AnimatedBeam } from "@/shared/ui/animated-beam";
-import { AnimatedGradientText } from "@/shared/ui/animated-gradient-text";
 import { AnimatedTabs } from "@/shared/ui/animated-tabs";
 import { Badge } from "@/shared/ui/badge";
-import { BlurFade } from "@/shared/ui/blur-fade";
 import { Button } from "@/shared/ui/button";
-import { CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/shared/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/shared/ui/card";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -58,10 +66,15 @@ import {
 import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
-import { InteractiveHoverButton } from "@/shared/ui/interactive-hover-button";
-import { MagicCard } from "@/shared/ui/magic-card";
-import { NeonGradientCard } from "@/shared/ui/neon-gradient-card";
-import { OrbitingCircles } from "@/shared/ui/orbiting-circles";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/shared/ui/pagination";
 import { RainbowButton } from "@/shared/ui/rainbow-button";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
@@ -154,6 +167,8 @@ export function AgentHubPage() {
     useWorkbench();
   const [tab, setTab] = React.useState<HubTab>("all");
   const [query, setQuery] = React.useState("");
+  const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const [page, setPage] = React.useState(1);
   const [editing, setEditing] = React.useState<AgentProfile | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [draft, setDraft] = React.useState<Draft>(createEmptyDraft());
@@ -163,6 +178,10 @@ export function AgentHubPage() {
   const [assistDescription, setAssistDescription] = React.useState("");
   const [assisting, setAssisting] = React.useState(false);
 
+  React.useEffect(() => {
+    setPage(1);
+  }, [tab, query, viewMode]);
+
   const filtered = agents.filter((profile) => {
     if (tab === "agent" && profile.type !== "agent") return false;
     if (tab === "team" && profile.type !== "team") return false;
@@ -171,6 +190,14 @@ export function AgentHubPage() {
       `${profile.displayName} ${profile.profession} ${profile.description} ${profile.tags.join(" ")}`.toLowerCase();
     return haystack.includes(query.trim().toLowerCase());
   });
+
+  const pageSize = viewMode === "grid" ? 12 : 10;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginated = React.useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, safePage, pageSize]);
 
   const updateDraft = (field: DraftField, value: string) => {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -360,24 +387,51 @@ export function AgentHubPage() {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <AnimatedTabs
-          activeTab={tab}
-          onChange={(value) => setTab(value as HubTab)}
-          layoutId="agent-hub-filter"
-          variant="segmented"
-          aria-label="Agent 分类"
-          className="mx-5 mt-3 w-fit"
-          tabs={[
-            { id: "all", label: "全部" },
-            { id: "agent", label: "Agent" },
-            { id: "team", label: "Agent 团队" },
-            { id: "mine", label: "我的" },
-          ]}
-        />
+        <div className="mx-5 mt-3 flex items-center justify-between gap-4">
+          <AnimatedTabs
+            activeTab={tab}
+            onChange={(value) => {
+              setTab(value as HubTab);
+              setPage(1);
+            }}
+            layoutId="agent-hub-filter"
+            variant="segmented"
+            aria-label="Agent 分类"
+            className="w-fit"
+            tabs={[
+              { id: "all", label: "全部" },
+              { id: "agent", label: "Agent" },
+              { id: "team", label: "Agent 团队" },
+              { id: "mine", label: "我的" },
+            ]}
+          />
+          <div className="flex items-center gap-3">
+            <span className="hidden text-xs text-muted-foreground sm:inline">
+              共 {filtered.length} 个专家
+            </span>
+            <ToggleGroup
+              className="h-8"
+              variant="outline"
+              value={[viewMode]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "grid" || value === "list") setViewMode(value);
+              }}
+            >
+              <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+                <LayoutGridIcon className="size-3.5" />
+              </ToggleGroupItem>
+              <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+                <ListIcon className="size-3.5" />
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+        </div>
+
         <ScrollArea className="min-h-0 flex-1">
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-3 p-5">
-            {filtered.length === 0 ? (
-              <Empty className="col-span-full">
+          {filtered.length === 0 ? (
+            <div className="p-5">
+              <Empty>
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
                     <SearchIcon />
@@ -408,9 +462,11 @@ export function AgentHubPage() {
                   </Button>
                 </EmptyContent>
               </Empty>
-            ) : (
-              filtered.map((profile) => (
-                <AgentCard
+            </div>
+          ) : viewMode === "grid" ? (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3.5 p-5">
+              {paginated.map((profile) => (
+                <AgentGridCard
                   key={profile.id}
                   profile={profile}
                   active={profile.id === agentSelection.id}
@@ -421,21 +477,95 @@ export function AgentHubPage() {
                   onEdit={() => openEdit(profile)}
                   onDelete={() => void remove(profile)}
                 />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 p-5">
+              {paginated.map((profile) => (
+                <AgentListItem
+                  key={profile.id}
+                  profile={profile}
+                  active={profile.id === agentSelection.id}
+                  onUse={async () => {
+                    await setAgentSelection(profile);
+                    setActiveView("chat");
+                  }}
+                  onEdit={() => openEdit(profile)}
+                  onDelete={() => void remove(profile)}
+                />
+              ))}
+            </div>
+          )}
         </ScrollArea>
+
+        {totalPages > 1 ? (
+          <div className="flex items-center justify-between border-t px-5 py-2.5 bg-background/80 backdrop-blur-xs">
+            <span className="text-xs text-muted-foreground">
+              第 {safePage} / {totalPages} 页 · 共 {filtered.length} 项
+            </span>
+            <Pagination className="mx-0 w-auto">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    text="上一页"
+                    className={cn(
+                      "h-8 cursor-pointer text-xs",
+                      safePage <= 1 && "pointer-events-none opacity-40",
+                    )}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (safePage > 1) setPage((p) => p - 1);
+                    }}
+                  />
+                </PaginationItem>
+                {getPageNumbers(safePage, totalPages).map((item, idx) =>
+                  item === "ellipsis" ? (
+                    <PaginationItem key={`ellipsis-${idx}`}>
+                      <PaginationEllipsis className="size-8" />
+                    </PaginationItem>
+                  ) : (
+                    <PaginationItem key={item}>
+                      <PaginationLink
+                        isActive={safePage === item}
+                        className="size-8 cursor-pointer text-xs"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setPage(item);
+                        }}
+                      >
+                        {item}
+                      </PaginationLink>
+                    </PaginationItem>
+                  ),
+                )}
+                <PaginationItem>
+                  <PaginationNext
+                    text="下一页"
+                    className={cn(
+                      "h-8 cursor-pointer text-xs",
+                      safePage >= totalPages && "pointer-events-none opacity-40",
+                    )}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (safePage < totalPages) setPage((p) => p + 1);
+                    }}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          </div>
+        ) : null}
       </div>
 
       <Dialog open={assistOpen} onOpenChange={setAssistOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
+        <DialogContent className="max-w-xl sm:max-w-xl">
+          <DialogHeader className="pr-6">
             <DialogTitle>AI 创建{assistType === "team" ? " Agent 团队" : " Agent"}</DialogTitle>
             <DialogDescription>
               用一句话描述目标、专业领域和工作方式。生成的草稿会打开编辑器,你可以在保存前微调。
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+          <div className="grid gap-4 px-0.5 py-1">
             <fieldset className="grid gap-2 border-0 p-0">
               <legend className="text-sm font-medium">创建类型</legend>
               <ToggleGroup
@@ -496,8 +626,8 @@ export function AgentHubPage() {
         open={dialogOpen}
         onOpenChange={(open) => (open ? setDialogOpen(true) : closeEditor())}
       >
-        <DialogContent className="flex max-h-[min(90vh,52rem)] max-w-2xl flex-col">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[min(90vh,52rem)] max-w-2xl sm:max-w-2xl flex-col">
+          <DialogHeader className="pr-6">
             <DialogTitle>
               {editing ? "编辑" : "确认"}
               {draft.type === "team" ? " Agent 团队" : " Agent"}
@@ -508,8 +638,8 @@ export function AgentHubPage() {
                 : "AI 已填好基础配置,确认或微调后即可使用。"}
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="min-h-0 flex-1 pr-3">
-            <div className="grid gap-4 py-2">
+          <ScrollArea className="min-h-0 flex-1 px-1">
+            <div className="grid gap-4 px-1 py-2">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field>
                   <FieldLabel htmlFor="agent-display-name">名称</FieldLabel>
@@ -753,7 +883,86 @@ function TeamFlowPreview({
   );
 }
 
-function AgentCard({
+function getPageNumbers(currentPage: number, totalPages: number): (number | "ellipsis")[] {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, i) => i + 1);
+  }
+  if (currentPage <= 4) {
+    return [1, 2, 3, 4, 5, "ellipsis", totalPages];
+  }
+  if (currentPage >= totalPages - 3) {
+    return [
+      1,
+      "ellipsis",
+      totalPages - 4,
+      totalPages - 3,
+      totalPages - 2,
+      totalPages - 1,
+      totalPages,
+    ];
+  }
+  return [1, "ellipsis", currentPage - 1, currentPage, currentPage + 1, "ellipsis", totalPages];
+}
+
+function AgentContextMenuWrapper({
+  profile,
+  onUse,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  profile: AgentProfile;
+  onUse: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  children: React.ReactNode;
+}) {
+  const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+
+  const handleCopyInfo = () => {
+    void navigator.clipboard.writeText(profile.displayName);
+    toast.success("已复制专家名称");
+  };
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger className="block h-full">{children}</ContextMenuTrigger>
+      <ContextMenuContent className="w-48">
+        <ContextMenuGroup>
+          <ContextMenuLabel className="max-w-44 truncate">{profile.displayName}</ContextMenuLabel>
+          <ContextMenuItem onClick={onUse}>
+            <Icon className="text-muted-foreground" />
+            <span>立即使用此专家</span>
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleCopyInfo}>
+            <CopyIcon className="text-muted-foreground" />
+            <span>复制专家名称</span>
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        {!isDefault ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuGroup>
+              <ContextMenuItem onClick={onEdit}>
+                <PencilIcon className="text-muted-foreground" />
+                <span>编辑配置</span>
+                <ContextMenuShortcut>F2</ContextMenuShortcut>
+              </ContextMenuItem>
+              <ContextMenuItem variant="destructive" onClick={onDelete}>
+                <Trash2Icon className="text-muted-foreground" />
+                <span>删除专家</span>
+                <ContextMenuShortcut>⌫</ContextMenuShortcut>
+              </ContextMenuItem>
+            </ContextMenuGroup>
+          </>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+}
+
+function AgentGridCard({
   profile,
   active,
   onUse,
@@ -770,158 +979,241 @@ function AgentCard({
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
   const isTeam = profile.type === "team";
 
-  const handleCopyInfo = () => {
-    void navigator.clipboard.writeText(profile.displayName);
-    toast.success("已复制专家名称");
-  };
-
-  const card = (
-    <MagicCard
-      gradientSize={200}
-      gradientFrom="var(--primary)"
-      gradientTo="var(--accent)"
-      className="flex h-full min-h-52 flex-col rounded-xl border bg-card shadow-xs transition-colors duration-200 hover:border-primary/40"
-    >
-      <CardHeader className="pb-2">
-        <div className="flex items-start gap-3">
-          {/* 团队卡片:成员图标沿轨道环绕,一眼区分「单 Agent」与「多成员协作」 */}
-          {isTeam ? (
-            <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
-              <Icon className="size-5" />
-              <OrbitingCircles
-                className="size-2 border-none bg-transparent"
-                duration={12}
-                radius={17}
-                iconSize={7}
-                path={false}
-              >
-                {profile.members.slice(0, 3).map((member) => (
-                  <span
-                    key={member.id}
-                    className="block size-1.5 rounded-full bg-primary"
-                    title={member.name}
-                  />
-                ))}
-              </OrbitingCircles>
-            </div>
-          ) : (
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted">
-              <Icon className="size-5" />
-            </div>
-          )}
-          <div className="min-w-0">
-            <CardTitle className="truncate text-base">{profile.displayName}</CardTitle>
-            <CardDescription className="truncate">
-              {isTeam ? (
-                <AnimatedGradientText
-                  className="text-sm"
-                  colorFrom="var(--primary)"
-                  colorTo="var(--accent)"
-                >
-                  {profile.profession || "Agent 团队"}
-                </AnimatedGradientText>
-              ) : (
-                profile.profession || "Agent"
-              )}
-            </CardDescription>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent className="min-h-0 flex-1">
-        <p className="line-clamp-3 text-sm text-muted-foreground">
-          {profile.description || profile.instructions}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-1">
-          {profile.tags.slice(0, 4).map((tag) => (
-            <Badge key={tag} variant="secondary" className="text-[10px]">
-              {tag}
-            </Badge>
-          ))}
-          {isTeam ? (
-            <Badge variant="outline" className="text-[10px]">
-              {profile.members.length} 位成员
-            </Badge>
-          ) : null}
-        </div>
-      </CardContent>
-      <CardFooter className="gap-1.5">
-        <InteractiveHoverButton
-          className="min-w-0 flex-1 border-primary/30 px-4 py-1.5 text-sm"
-          onClick={onUse}
-        >
-          {active ? "使用中" : "使用"}
-        </InteractiveHoverButton>
-        {!isDefault ? (
-          <>
-            <Button size="icon-sm" variant="ghost" title="编辑" aria-label="编辑" onClick={onEdit}>
-              <PencilIcon />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              title="删除"
-              aria-label="删除"
-              onClick={onDelete}
-            >
-              <Trash2Icon />
-            </Button>
-          </>
-        ) : null}
-      </CardFooter>
-    </MagicCard>
-  );
-
   return (
-    <BlurFade duration={0.25} blur="4px" className="h-full">
-      <ContextMenu>
-        <ContextMenuTrigger className="flex h-full min-h-52 flex-col">
-          {/* 当前激活的 Agent 才套霓虹外框 —— 它是常驻动画 + 双色 blur,
-              套满整个卡片网格既会掉帧,也让「激活」失去区分度 */}
-          {active ? (
-            <NeonGradientCard
-              borderRadius={12}
-              borderSize={1.5}
-              className="h-full w-full"
-              neonColors={{ firstColor: "var(--primary)", secondColor: "var(--accent)" }}
-            >
-              {card}
-            </NeonGradientCard>
-          ) : (
-            card
-          )}
-        </ContextMenuTrigger>
-        <ContextMenuContent className="w-48">
-          <ContextMenuGroup>
-            <ContextMenuLabel className="truncate max-w-44">{profile.displayName}</ContextMenuLabel>
-            <ContextMenuItem onClick={onUse}>
-              <Icon className="text-muted-foreground" />
-              <span>立即使用此专家</span>
-            </ContextMenuItem>
-            <ContextMenuItem onClick={handleCopyInfo}>
-              <CopyIcon className="text-muted-foreground" />
-              <span>复制专家名称</span>
-            </ContextMenuItem>
-          </ContextMenuGroup>
+    <AgentContextMenuWrapper profile={profile} onUse={onUse} onEdit={onEdit} onDelete={onDelete}>
+      <Card
+        className={cn(
+          "group relative flex h-full min-h-56 flex-col justify-between rounded-xl border bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-xs",
+          active && "border-primary/60 ring-2 ring-primary/15 bg-primary/[0.015]",
+        )}
+      >
+        <CardHeader className="p-4 pb-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                className={cn(
+                  "flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-foreground transition-colors",
+                  active && "border-primary/30 bg-primary/10 text-primary",
+                )}
+              >
+                <Icon className="size-5" />
+              </div>
+              <div className="min-w-0">
+                <CardTitle className="truncate text-sm font-semibold tracking-tight">
+                  {profile.displayName}
+                </CardTitle>
+                <CardDescription className="truncate text-xs">
+                  {profile.profession || (isTeam ? "Agent 团队" : "通用 Agent")}
+                </CardDescription>
+              </div>
+            </div>
+            {active ? (
+              <Badge variant="default" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+                使用中
+              </Badge>
+            ) : isTeam ? (
+              <Badge
+                variant="outline"
+                className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground"
+              >
+                {profile.members.length} 人团队
+              </Badge>
+            ) : null}
+          </div>
+        </CardHeader>
+
+        <CardContent className="min-h-0 flex-1 p-4 pt-1">
+          <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
+            {profile.description || profile.instructions}
+          </p>
+          {profile.tags.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1">
+              {profile.tags.slice(0, 3).map((tag) => (
+                <Badge
+                  key={tag}
+                  variant="secondary"
+                  className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                >
+                  {tag}
+                </Badge>
+              ))}
+              {profile.tags.length > 3 ? (
+                <span className="self-center text-[10px] text-muted-foreground">
+                  +{profile.tags.length - 3}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+        </CardContent>
+
+        <CardFooter className="gap-1.5 border-t bg-muted/20 p-3">
+          <Button
+            size="sm"
+            variant={active ? "outline" : "default"}
+            className={cn(
+              "h-8 min-w-0 flex-1 text-xs font-medium",
+              active && "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10",
+            )}
+            onClick={onUse}
+          >
+            {active ? (
+              <>
+                <CheckIcon className="mr-1 size-3.5" />
+                使用中
+              </>
+            ) : (
+              "选用"
+            )}
+          </Button>
           {!isDefault ? (
             <>
-              <ContextMenuSeparator />
-              <ContextMenuGroup>
-                <ContextMenuItem onClick={onEdit}>
-                  <PencilIcon className="text-muted-foreground" />
-                  <span>编辑配置</span>
-                  <ContextMenuShortcut>F2</ContextMenuShortcut>
-                </ContextMenuItem>
-                <ContextMenuItem variant="destructive" onClick={onDelete}>
-                  <Trash2Icon className="text-muted-foreground" />
-                  <span>删除专家</span>
-                  <ContextMenuShortcut>⌫</ContextMenuShortcut>
-                </ContextMenuItem>
-              </ContextMenuGroup>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                title="编辑"
+                aria-label="编辑"
+                onClick={onEdit}
+              >
+                <PencilIcon className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                title="删除"
+                aria-label="删除"
+                onClick={onDelete}
+              >
+                <Trash2Icon className="size-3.5" />
+              </Button>
             </>
           ) : null}
-        </ContextMenuContent>
-      </ContextMenu>
-    </BlurFade>
+        </CardFooter>
+      </Card>
+    </AgentContextMenuWrapper>
+  );
+}
+
+function AgentListItem({
+  profile,
+  active,
+  onUse,
+  onEdit,
+  onDelete,
+}: {
+  profile: AgentProfile;
+  active: boolean;
+  onUse: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isTeam = profile.type === "team";
+
+  return (
+    <AgentContextMenuWrapper profile={profile} onUse={onUse} onEdit={onEdit} onDelete={onDelete}>
+      <div
+        className={cn(
+          "group flex items-center justify-between gap-4 rounded-xl border bg-card p-3 px-4 transition-all duration-150 hover:border-primary/40 hover:bg-muted/30",
+          active && "border-primary/60 ring-2 ring-primary/15 bg-primary/[0.015]",
+        )}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3.5">
+          <div
+            className={cn(
+              "flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-foreground transition-colors",
+              active && "border-primary/30 bg-primary/10 text-primary",
+            )}
+          >
+            <Icon className="size-4" />
+          </div>
+
+          <div className="w-48 min-w-0 shrink-0">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium">{profile.displayName}</span>
+              {active ? (
+                <Badge variant="default" className="h-4 shrink-0 px-1 py-0 text-[10px] font-normal">
+                  当前
+                </Badge>
+              ) : null}
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {profile.profession || (isTeam ? "Agent 团队" : "通用 Agent")}
+            </p>
+          </div>
+
+          <div className="hidden min-w-0 flex-1 md:block">
+            <p className="truncate text-xs text-muted-foreground">
+              {profile.description || profile.instructions}
+            </p>
+          </div>
+
+          <div className="hidden shrink-0 items-center gap-1 lg:flex">
+            {profile.tags.slice(0, 2).map((tag) => (
+              <Badge
+                key={tag}
+                variant="secondary"
+                className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+              >
+                {tag}
+              </Badge>
+            ))}
+            {isTeam ? (
+              <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
+                {profile.members.length} 人团队
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Button
+            size="sm"
+            variant={active ? "outline" : "default"}
+            className={cn(
+              "h-8 px-3 text-xs font-medium",
+              active && "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10",
+            )}
+            onClick={onUse}
+          >
+            {active ? (
+              <>
+                <CheckIcon className="mr-1 size-3" />
+                使用中
+              </>
+            ) : (
+              "选用"
+            )}
+          </Button>
+          {!isDefault ? (
+            <>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                title="编辑"
+                aria-label="编辑"
+                onClick={onEdit}
+              >
+                <PencilIcon className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                title="删除"
+                aria-label="删除"
+                onClick={onDelete}
+              >
+                <Trash2Icon className="size-3.5" />
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </AgentContextMenuWrapper>
   );
 }
 
