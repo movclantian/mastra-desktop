@@ -34,6 +34,7 @@ import {
 import {
   getManagedSkillsDirectory,
   getThreadWorkspace,
+  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
@@ -218,12 +219,14 @@ function createWorkAgent(
   resourceScope?: string,
 ): Agent {
   const workspace = async ({ requestContext }: { requestContext?: RequestContext }) => {
+    const resolvedResourceId = resourceScope ?? resourceScopeFromRequestContext(requestContext);
+    if (!isWorkspaceEnabled(resolvedResourceId)) return undefined;
     const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY) as string | undefined;
     const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
     return getThreadWorkspace(
       path || process.cwd(),
       typeof threadId === "string" ? threadId : undefined,
-      resourceScopeFromRequestContext(requestContext),
+      resolvedResourceId,
     );
   };
 
@@ -311,6 +314,7 @@ function createWorkAgent(
       }),
     skills: async ({ requestContext }) => {
       const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+      if (!isWorkspaceEnabled(resourceId)) return [];
       const profile =
         fixedProfile ??
         (await getAgentProfile(
@@ -372,7 +376,9 @@ function createWorkAgent(
       ),
       waitTimeoutMs: 900_000,
     },
-    ...(fixedProfile || member ? { workspace } : {}),
+    // Keep the official process.cwd() fallback while allowing the workspace
+    // setting to opt out explicitly by resolving `undefined`.
+    workspace,
     tools: async ({ requestContext }) => {
       const tools = await resolveSharedTools(requestContext);
       if (!isCodeModeAvailable(requestContext)) delete tools.execute_typescript;

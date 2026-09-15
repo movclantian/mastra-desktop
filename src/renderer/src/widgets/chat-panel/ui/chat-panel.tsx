@@ -19,6 +19,7 @@ import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
 import { BlurFade } from "@/shared/ui/blur-fade";
 import { DotPattern } from "@/shared/ui/dot-pattern";
 import { DotmSquare3 } from "@/shared/ui/dotm-square-3";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/shared/ui/item";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
 import {
   MessageScroller,
@@ -1214,7 +1215,7 @@ export function ChatPanel() {
 
             {/* 4 张快捷提示卡片 */}
             <div className="w-full max-w-2xl">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <ItemGroup className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {[
                   {
                     title: "🔍 分析当前工作区架构",
@@ -1245,23 +1246,29 @@ export function ChatPanel() {
                     blur="4px"
                     inView
                   >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        handleSubmit({ text: starter.prompt, files: [] }, () => undefined);
-                      }}
-                      className="flex h-full w-full cursor-pointer flex-col justify-between gap-1 rounded-xl border border-border bg-card/70 p-3 shadow-xs transition-all duration-200 hover:border-primary/40 hover:bg-card"
+                    <Item
+                      render={
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleSubmit({ text: starter.prompt, files: [] }, () => undefined);
+                          }}
+                        />
+                      }
+                      className="flex h-full w-full cursor-pointer flex-col items-start justify-between gap-1 rounded-xl border border-border bg-card/70 p-3 shadow-xs transition-all duration-200 hover:border-primary/40 hover:bg-card text-left"
                     >
-                      <span className="w-full truncate text-xs font-semibold text-foreground">
-                        {starter.title}
-                      </span>
-                      <p className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
-                        {starter.desc}
-                      </p>
-                    </button>
+                      <ItemContent className="w-full min-w-0">
+                        <ItemTitle className="w-full truncate text-xs font-semibold text-foreground">
+                          {starter.title}
+                        </ItemTitle>
+                        <ItemDescription className="line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
+                          {starter.desc}
+                        </ItemDescription>
+                      </ItemContent>
+                    </Item>
                   </BlurFade>
                 ))}
-              </div>
+              </ItemGroup>
             </div>
 
             <div className="w-full relative z-10">{promptArea}</div>

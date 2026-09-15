@@ -18,6 +18,7 @@ import { join, resolve } from "node:path";
 import {
   LocalFilesystem,
   LocalSandbox,
+  type ToolConfigContext,
   type ToolConfigWithArgsContext,
   Workspace,
   type WorkspaceToolConfig,
@@ -446,6 +447,13 @@ export function getThreadWorkspace(
   const outputArchive = createWorkspaceOutputArchiveHooks();
   // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
   const workspaceTools = getWorkspaceToolsConfig(resourceId);
+  const configuredEnabled = workspaceTools.enabled;
+  workspaceTools.enabled = async ({ requestContext, workspace }: ToolConfigContext) => {
+    if (!isWorkspaceEnabled(resourceId)) return false;
+    return typeof configuredEnabled === "function"
+      ? configuredEnabled({ requestContext, workspace })
+      : (configuredEnabled ?? true);
+  };
   const executeConfig = workspaceTools.mastra_workspace_execute_command;
   workspaceTools.mastra_workspace_execute_command = {
     ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),

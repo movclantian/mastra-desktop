@@ -10,11 +10,13 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import { FileViewer } from "@open-file-viewer/react";
+import { AlertCircleIcon } from "lucide-react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
 import { fetchLibraryAssetBlob } from "@/entities/library";
 import { useTheme } from "@/shared/theme";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 
 const plugins = [
   imagePlugin(),
@@ -64,15 +66,21 @@ export default function LibraryFilePreview({ asset }: { asset: PreviewLibraryAss
     return (
       <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
-        正在加载预览
+        <span>正在加载预览…</span>
       </div>
     );
   }
   if (!fileUrl) {
     return (
-      <div className="flex size-full items-center justify-center text-sm text-destructive">
-        文件加载失败
-      </div>
+      <Empty className="size-full justify-center">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <AlertCircleIcon className="text-destructive" />
+          </EmptyMedia>
+          <EmptyTitle className="text-destructive">文件加载失败</EmptyTitle>
+          <EmptyDescription>无法获取该资料库文件的预览内容（{asset.filename}）</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
 

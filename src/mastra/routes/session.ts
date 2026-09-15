@@ -49,6 +49,7 @@ import {
 } from "../tools";
 import {
   getThreadWorkspace,
+  isWorkspaceEnabled,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -117,7 +118,7 @@ export async function getWorkbenchSession(
   await controller.init();
   const workspacePath = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspace =
-    typeof workspacePath === "string" && workspacePath
+    isWorkspaceEnabled(resourceId) && typeof workspacePath === "string" && workspacePath
       ? getThreadWorkspace(workspacePath, threadId, resourceId)
       : undefined;
   const session = await controller.createSession({

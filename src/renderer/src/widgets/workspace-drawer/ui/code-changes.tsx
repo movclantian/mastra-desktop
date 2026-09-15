@@ -1,9 +1,19 @@
-import { CheckCircle2Icon, ChevronDownIcon, Code2Icon, FileDiffIcon, XIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  BinaryIcon,
+  CheckCircle2Icon,
+  ChevronDownIcon,
+  Code2Icon,
+  FileDiffIcon,
+  XIcon,
+} from "lucide-react";
 import * as React from "react";
 import type { WorkspaceFileChange } from "@/entities/workbench";
 import { cn } from "@/shared/lib";
 import { CodeComparison } from "@/shared/ui/code-comparison";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
+import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 import { changeLabel, changeLanguage, type WorkspaceChangeGroup } from "../lib/changes";
 
 type FetchChangeContent = (
@@ -101,13 +111,34 @@ export function CodeChangeRow({
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t p-2">
         {hasBinarySnapshot ? (
-          <div className="px-1 py-4 text-xs text-muted-foreground">
-            二进制快照已完整保存，可通过对象引用读取元数据
-          </div>
+          <Empty className="py-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <BinaryIcon />
+              </EmptyMedia>
+              <EmptyTitle className="text-xs">二进制快照</EmptyTitle>
+              <EmptyDescription className="text-[11px]">
+                二进制快照已完整保存，可通过对象引用读取元数据
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : contentLoading ? (
-          <div className="px-1 py-4 text-xs text-muted-foreground">正在读取完整快照...</div>
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+            <DotmCircular4 size={15} dotSize={1.8} colorPreset="solid-theme" />
+            <span>正在读取完整快照…</span>
+          </div>
         ) : contentError ? (
-          <div className="px-1 py-4 text-xs text-destructive">完整快照读取失败</div>
+          <Empty className="py-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <AlertCircleIcon className="text-destructive" />
+              </EmptyMedia>
+              <EmptyTitle className="text-xs text-destructive">快照读取失败</EmptyTitle>
+              <EmptyDescription className="text-[11px]">
+                无法载入该变更版本的完整历史快照
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <CodeComparison
             afterCode={after}

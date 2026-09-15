@@ -31,6 +31,7 @@ import {
 /** 纯文本/逐行列表字段:保存时静默,不弹撤回 toast(其余开关/滑块/下拉才弹) */
 const GUARDRAILS_TEXT_KEYS = new Set<string>([
   "regexRules",
+  "detectorProviderOptions",
   "injectionInstructions",
   "languageTargets",
   "languageInstructions",
@@ -45,6 +46,7 @@ const GUARDRAILS_TEXT_KEYS = new Set<string>([
 
 export interface GuardrailsDraft {
   jsonPromptInjection: boolean;
+  detectorProviderOptions: string;
   maxProcessorRetries: number;
 
   unicode: boolean;
@@ -98,6 +100,7 @@ export interface GuardrailsDraft {
   piiPreserveFormat: boolean;
   piiLastMessageOnly: boolean;
   piiIncludeDetections: boolean;
+  piiBufferSize: number;
   piiInstructions: string;
 
   scrubber: boolean;
@@ -146,10 +149,12 @@ export interface GuardrailsDraft {
   skillSearchTopK: number;
   skillSearchMinScore: number;
   skillSearchTtl: number;
+  skillSearchBlockingRefresh: boolean;
 
   toolSearch: boolean;
   toolSearchTopK: number;
   toolSearchMinScore: number;
+  toolSearchInjectCatalog: boolean;
   toolSearchAutoLoad: boolean;
   toolSearchStorage: "in-memory" | "context";
   toolSearchTtl: number;
@@ -165,6 +170,7 @@ export interface GuardrailsDraft {
 /** 与服务端 DEFAULT_CONFIG 保持一致;检测模型自动跟随当前请求模型。 */
 export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   jsonPromptInjection: true,
+  detectorProviderOptions: "{}",
   maxProcessorRetries: 0,
 
   unicode: true,
@@ -251,6 +257,7 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   piiPreserveFormat: true,
   piiLastMessageOnly: true,
   piiIncludeDetections: false,
+  piiBufferSize: 200,
   piiInstructions: "",
 
   scrubber: false,
@@ -299,10 +306,12 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   skillSearchTopK: 5,
   skillSearchMinScore: 0,
   skillSearchTtl: 3_600_000,
+  skillSearchBlockingRefresh: false,
 
   toolSearch: false,
   toolSearchTopK: 5,
   toolSearchMinScore: 0,
+  toolSearchInjectCatalog: false,
   toolSearchAutoLoad: false,
   toolSearchStorage: "context",
   toolSearchTtl: 3_600_000,
@@ -310,7 +319,7 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   prefillErrorHandler: true,
   streamErrorRetry: true,
   streamErrorRetryMax: 2,
-  streamErrorRetryDelayMs: 1_000,
+  streamErrorRetryDelayMs: 3_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
   streamErrorRetryUnknown: true,
 };
@@ -499,6 +508,15 @@ export function GuardrailsSection() {
     }
   }, [draft.regexRules]);
 
+  const detectorProviderOptionsValid = React.useMemo(() => {
+    try {
+      const parsed = JSON.parse(draft.detectorProviderOptions) as unknown;
+      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+    } catch {
+      return false;
+    }
+  }, [draft.detectorProviderOptions]);
+
   const llmBadge = (
     <ReadyBadge blockedText="需先选定模型" ready={status.modelReady} readyText="需调用模型" />
   );
@@ -530,6 +548,15 @@ export function GuardrailsSection() {
         >
           <span className="shrink-0 text-sm font-medium text-muted-foreground">跟随当前模型</span>
         </SettingRow>
+        <TextAreaRow
+          description="传给注入/语言/审核/PII 内部检测模型的 providerOptions JSON"
+          invalid={!detectorProviderOptionsValid}
+          invalidHint="必须是合法的 JSON 对象,否则不会传给检测模型"
+          onChange={(detectorProviderOptions) => patch({ detectorProviderOptions })}
+          rows={3}
+          title="检测模型参数(providerOptions)"
+          value={draft.detectorProviderOptions}
+        />
       </SettingCard>
 
       <SettingCard
@@ -928,6 +955,14 @@ export function GuardrailsSection() {
               checked={draft.piiIncludeDetections}
               onChange={(v) => patch({ piiIncludeDetections: v })}
               title="返回检测详情(includeDetections)"
+            />
+            <NumberRow
+              description="仅 LLM 类型 PII 的流式缓冲字符数,越大上下文更完整但延迟更高"
+              max={10_000}
+              min={1}
+              onChange={(v) => patch({ piiBufferSize: v })}
+              title="流式缓冲(bufferSize)"
+              value={draft.piiBufferSize}
             />
             <TextAreaRow
               description="覆盖 PII 检测器默认判断说明"
@@ -1346,6 +1381,12 @@ export function GuardrailsSection() {
               title="缓存 TTL(ttl)"
               value={draft.skillSearchTtl}
             />
+            <SwitchRow
+              checked={draft.skillSearchBlockingRefresh}
+              description="等待磁盘技能索引刷新后再开始首步,同轮看到最新文件"
+              onChange={(v) => patch({ skillSearchBlockingRefresh: v })}
+              title="阻塞刷新(blockingRefresh)"
+            />
           </>
         ) : null}
       </SettingCard>
@@ -1385,6 +1426,12 @@ export function GuardrailsSection() {
               description="搜索结果直接激活,省掉 load_tool 一步"
               onChange={(v) => patch({ toolSearchAutoLoad: v })}
               title="自动加载(autoLoad)"
+            />
+            <SwitchRow
+              checked={draft.toolSearchInjectCatalog}
+              description="把可发现工具目录摘要注入系统提示,减少一次搜索往返"
+              onChange={(v) => patch({ toolSearchInjectCatalog: v })}
+              title="注入工具目录(injectCatalog)"
             />
             <SelectRow
               description="context 随消息持久化,适合线程和重启恢复"

@@ -53,6 +53,10 @@ export interface MemoryUserConfig {
   semanticRecallMessageRangeAfter: number;
   /** options.semanticRecall.scope — thread(线程内)/ resource(跨线程),默认 thread */
   semanticRecallScope: "thread" | "resource";
+  /** options.semanticRecall.threshold — 相似度下限,0 = 使用向量库全部结果 */
+  semanticRecallThreshold: number;
+  /** options.semanticRecall.indexName — 向量索引名,空字符串使用官方默认 */
+  semanticRecallIndexName: string;
   /** options.workingMemory.enabled — 工作记忆开关 */
   workingMemory: boolean;
   /** options.workingMemory.scope — resource(跨线程用户画像) / thread(线程内) */
@@ -170,6 +174,8 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   semanticRecallMessageRangeBefore: 1,
   semanticRecallMessageRangeAfter: 1,
   semanticRecallScope: "thread",
+  semanticRecallThreshold: 0,
+  semanticRecallIndexName: "",
   // 工作记忆适合保存小型稳定状态,默认开启。
   workingMemory: true,
   workingMemoryScope: "resource",
@@ -311,6 +317,11 @@ function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConf
       50,
     ),
     semanticRecallScope: merged.semanticRecallScope === "resource" ? "resource" : "thread",
+    semanticRecallThreshold: clampNumber(merged.semanticRecallThreshold, 0, 0, 1),
+    semanticRecallIndexName:
+      typeof merged.semanticRecallIndexName === "string"
+        ? merged.semanticRecallIndexName.trim().slice(0, 128)
+        : "",
     workingMemoryScope: merged.workingMemoryScope === "thread" ? "thread" : "resource",
     workingMemoryFormat: merged.workingMemoryFormat === "schema" ? "schema" : "template",
     omScope: merged.omScope === "resource" ? "resource" : "thread",
@@ -486,6 +497,12 @@ function buildMemory(overrides: MemoryBuildOverrides = {}, resourceId?: string):
                 after: config.semanticRecallMessageRangeAfter,
               },
               scope: semanticRecallScope,
+              ...(config.semanticRecallThreshold > 0
+                ? { threshold: config.semanticRecallThreshold }
+                : {}),
+              ...(config.semanticRecallIndexName
+                ? { indexName: config.semanticRecallIndexName }
+                : {}),
             },
           }
         : {}),

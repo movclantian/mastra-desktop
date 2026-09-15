@@ -743,6 +743,7 @@ function ProviderDetail({
     : "";
   React.useEffect(() => {
     if (!provider) return;
+    if (provider.registryId && registry.length === 0) return;
     const cached = getCachedProviderModels(provider.id);
     if (cached) {
       setModels(cached);
@@ -755,7 +756,7 @@ function ProviderDetail({
         if (active) setModels(fetched);
       })
       .catch((error: unknown) => {
-        toastError(error);
+        if (active) toastError(error);
       })
       .finally(() => {
         if (active) setLoadingModels(false);

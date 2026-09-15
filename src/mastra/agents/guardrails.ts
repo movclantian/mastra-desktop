@@ -51,9 +51,11 @@ import {
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
+import { clampNumber, cleanStrings } from "../config/normalize";
 import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
 import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
-import { getThreadWorkspace, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import { getThreadWorkspace, isWorkspaceEnabled, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
 
@@ -81,6 +83,8 @@ export interface GuardrailsUserConfig {
    * 第三方网关/兼容端点常不支持 response_format,关闭会让检测结果解析失败。
    */
   jsonPromptInjection: boolean;
+  /** JSON provider options shared by the internal detector agents. */
+  detectorProviderOptions: string;
   /** 处理器重试上限(abort({retry:true}) 生效前提);0 = 不显式设置 */
   maxProcessorRetries: number;
 
@@ -142,6 +146,7 @@ export interface GuardrailsUserConfig {
   piiPreserveFormat: boolean;
   piiLastMessageOnly: boolean;
   piiIncludeDetections: boolean;
+  piiBufferSize: number;
   piiInstructions: string;
 
   // --- SystemPromptScrubber(输出) -----------------------------------------
@@ -204,11 +209,13 @@ export interface GuardrailsUserConfig {
   skillSearchTopK: number;
   skillSearchMinScore: number;
   skillSearchTtl: number;
+  skillSearchBlockingRefresh: boolean;
 
   // --- ToolSearchProcessor(输入,动态工具发现) -------------------------------
   toolSearch: boolean;
   toolSearchTopK: number;
   toolSearchMinScore: number;
+  toolSearchInjectCatalog: boolean;
   toolSearchAutoLoad: boolean;
   toolSearchStorage: ToolSearchStorage;
   toolSearchTtl: number;
@@ -274,6 +281,7 @@ const INJECTION_TYPES = [
  */
 const DEFAULT_CONFIG: GuardrailsUserConfig = {
   jsonPromptInjection: true,
+  detectorProviderOptions: "{}",
   maxProcessorRetries: 0,
 
   unicode: true,
@@ -328,6 +336,7 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   piiPreserveFormat: true,
   piiLastMessageOnly: true,
   piiIncludeDetections: false,
+  piiBufferSize: 200,
   piiInstructions: "",
 
   scrubber: false,
@@ -376,10 +385,12 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   skillSearchTopK: 5,
   skillSearchMinScore: 0,
   skillSearchTtl: 3_600_000,
+  skillSearchBlockingRefresh: false,
 
   toolSearch: false,
   toolSearchTopK: 5,
   toolSearchMinScore: 0,
+  toolSearchInjectCatalog: false,
   toolSearchAutoLoad: false,
   toolSearchStorage: "context",
   toolSearchTtl: 3_600_000,
@@ -387,7 +398,9 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   prefillErrorHandler: true,
   streamErrorRetry: true,
   streamErrorRetryMax: 2,
-  streamErrorRetryDelayMs: 1_000,
+  // createCodingAgent() uses 3000ms for unknown errors. Network-reset
+  // matchers below keep their documented 1000ms exponential backoff.
+  streamErrorRetryDelayMs: 3_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
   streamErrorRetryUnknown: true,
 };
@@ -426,8 +439,171 @@ export async function saveGuardrailsConfig(
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
 
 function normalizeGuardrailsConfig(input: Partial<GuardrailsUserConfig>): GuardrailsUserConfig {
-  const stored = Object.fromEntries(Object.entries(input).filter(([key]) => key in DEFAULT_CONFIG));
-  return { ...DEFAULT_CONFIG, ...stored } as GuardrailsUserConfig;
+  const raw = input as Record<string, unknown>;
+  const output = { ...DEFAULT_CONFIG } as Record<string, unknown>;
+  const booleans = [
+    "jsonPromptInjection",
+    "unicode",
+    "unicodeStripControlChars",
+    "unicodePreserveEmojis",
+    "unicodeCollapseWhitespace",
+    "unicodeTrim",
+    "regex",
+    "regexIncludeRedactedValues",
+    "injection",
+    "injectionLastMessageOnly",
+    "injectionIncludeScores",
+    "language",
+    "languagePreserveOriginal",
+    "languageLastMessageOnly",
+    "languageIncludeDetails",
+    "moderationInput",
+    "moderationOutput",
+    "moderationLastMessageOnly",
+    "moderationIncludeScores",
+    "piiInput",
+    "piiOutput",
+    "piiPreserveFormat",
+    "piiLastMessageOnly",
+    "piiIncludeDetections",
+    "scrubber",
+    "scrubberIncludeDetections",
+    "scrubberLastMessageOnly",
+    "batchParts",
+    "batchPartsEmitOnNonText",
+    "tokenLimitInput",
+    "tokenLimitOutput",
+    "tokenCost",
+    "tokenCostIncludeBreakdown",
+    "toolCallFilter",
+    "toolCallFilterPreserveModelOutput",
+    "responseCache",
+    "providerCompat",
+    "skillSearch",
+    "skillSearchBlockingRefresh",
+    "toolSearch",
+    "toolSearchInjectCatalog",
+    "toolSearchAutoLoad",
+    "prefillErrorHandler",
+    "streamErrorRetry",
+    "streamErrorRetryUnknown",
+  ] as const;
+  for (const key of booleans) {
+    if (typeof raw[key] === "boolean") output[key] = raw[key];
+  }
+
+  const numbers: Record<string, [number, number, number]> = {
+    maxProcessorRetries: [0, 0, 50],
+    injectionThreshold: [0.7, 0, 1],
+    languageThreshold: [0.7, 0, 1],
+    languageMinTextLength: [10, 0, 10_000],
+    moderationThreshold: [0.5, 0, 1],
+    moderationChunkWindow: [0, 0, 50],
+    piiThreshold: [0.6, 0, 1],
+    piiBufferSize: [200, 1, 10_000],
+    regexStreamCarryoverSize: [128, 0, 100_000],
+    batchPartsSize: [5, 1, 100],
+    batchPartsMaxWaitTime: [100, 0, 120_000],
+    tokenLimitInputValue: [120_000, 1, 2_000_000],
+    tokenLimitOutputValue: [4_000, 1, 500_000],
+    tokenCostMax: [5, 0, 1_000_000],
+    tokenCostWarnAtPercent: [80, 0, 100],
+    toolCallFilterAfterToolSteps: [-1, -1, 100],
+    responseCacheTtl: [300, 0, 86_400],
+    skillSearchTopK: [5, 1, 100],
+    skillSearchMinScore: [0, 0, 1],
+    skillSearchTtl: [3_600_000, 0, 86_400_000],
+    toolSearchTopK: [5, 1, 100],
+    toolSearchMinScore: [0, 0, 1],
+    toolSearchTtl: [3_600_000, 0, 86_400_000],
+    streamErrorRetryMax: [2, 0, 10],
+    streamErrorRetryDelayMs: [3_000, 0, 120_000],
+    streamErrorRetryMaxRetryAfterMs: [30_000, 0, 600_000],
+  };
+  for (const [key, [fallback, min, max]] of Object.entries(numbers)) {
+    output[key] = clampNumber(raw[key], fallback, min, max);
+  }
+
+  const integerKeys = new Set([
+    "maxProcessorRetries",
+    "languageMinTextLength",
+    "moderationChunkWindow",
+    "piiBufferSize",
+    "regexStreamCarryoverSize",
+    "batchPartsSize",
+    "batchPartsMaxWaitTime",
+    "tokenLimitInputValue",
+    "tokenLimitOutputValue",
+    "toolCallFilterAfterToolSteps",
+    "responseCacheTtl",
+    "skillSearchTopK",
+    "skillSearchTtl",
+    "toolSearchTopK",
+    "toolSearchTtl",
+    "streamErrorRetryMax",
+    "streamErrorRetryDelayMs",
+    "streamErrorRetryMaxRetryAfterMs",
+  ]);
+  for (const key of integerKeys) {
+    const value = output[key];
+    if (typeof value === "number") output[key] = Math.round(value);
+  }
+
+  const lists: Record<string, number> = {
+    regexPresets: 3,
+    injectionTypes: 50,
+    languageTargets: 50,
+    moderationCategories: 50,
+    piiTypes: 50,
+    scrubberCustomPatterns: 100,
+    toolCallFilterExclude: 100,
+  };
+  for (const [key, limit] of Object.entries(lists)) {
+    if (raw[key] !== undefined) output[key] = cleanStrings(raw[key], limit);
+  }
+  output.regexPresets = (output.regexPresets as string[]).filter((value): value is RegexPreset =>
+    ["pii", "secrets", "urls"].includes(value),
+  );
+
+  const textKeys = [
+    "detectorProviderOptions",
+    "regexRules",
+    "injectionInstructions",
+    "languageInstructions",
+    "moderationInstructions",
+    "piiInstructions",
+    "scrubberPlaceholderText",
+    "scrubberInstructions",
+    "responseCacheScopeValue",
+  ] as const;
+  for (const key of textKeys) {
+    if (typeof raw[key] === "string") output[key] = raw[key].slice(0, 100_000);
+  }
+
+  const enums: Record<string, readonly string[]> = {
+    regexStrategy: ["block", "redact", "warn"],
+    regexPhase: ["input", "output", "all"],
+    injectionStrategy: ["block", "warn", "filter", "rewrite"],
+    languageStrategy: ["detect", "translate", "block", "warn"],
+    moderationStrategy: ["block", "warn", "filter"],
+    piiStrategy: ["block", "warn", "filter", "redact"],
+    piiRedactionMethod: ["mask", "hash", "remove", "placeholder"],
+    scrubberStrategy: ["block", "warn", "filter", "redact"],
+    scrubberRedactionMethod: ["mask", "placeholder", "remove"],
+    tokenLimitTrimMode: ["best-fit", "contiguous"],
+    tokenLimitOutputStrategy: ["truncate", "abort"],
+    tokenLimitOutputCountMode: ["cumulative", "part"],
+    tokenCostScope: ["run", "resource", "thread", "user", "organization", "session"],
+    tokenCostWindow: ["1h", "6h", "24h", "7d", "30d", "365d"],
+    tokenCostStrategy: ["block", "warn"],
+    responseCacheScopeMode: ["auto", "none", "custom"],
+    toolSearchStorage: ["in-memory", "context"],
+  };
+  for (const [key, allowed] of Object.entries(enums)) {
+    if (typeof raw[key] === "string" && allowed.includes(raw[key])) output[key] = raw[key];
+  }
+
+  return output as unknown as GuardrailsUserConfig;
 }
 
 function scopeKey(resourceId?: string): string {
@@ -496,6 +672,21 @@ function structuredOutputOptions(cfg: GuardrailsUserConfig) {
   return cfg.jsonPromptInjection ? { jsonPromptInjection: true } : undefined;
 }
 
+type DetectorProviderOptions = NonNullable<
+  ConstructorParameters<typeof PromptInjectionDetector>[0]["providerOptions"]
+>;
+
+function parseDetectorProviderOptions(text: string): DetectorProviderOptions | undefined {
+  try {
+    const value = JSON.parse(text) as unknown;
+    return typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as DetectorProviderOptions)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 自定义正则规则:面板里是 JSON 文本,这里解析成 RegexRule[]。
  * 强制补 g 标志 —— redact 依赖全局替换,漏了只会改写第一处。
@@ -551,6 +742,7 @@ function buildRegexFilter(cfg: GuardrailsUserConfig): RegexFilterProcessor | und
 /** 审核器:输入与输出共用一个实例(无跨请求状态,内部 agent 只需建一次) */
 function buildModeration(model: MastraModelConfig, cfg: GuardrailsUserConfig): ModerationProcessor {
   const structuredOptions = structuredOutputOptions(cfg);
+  const providerOptions = parseDetectorProviderOptions(cfg.detectorProviderOptions);
   return new ModerationProcessor({
     model,
     categories: cfg.moderationCategories,
@@ -563,12 +755,14 @@ function buildModeration(model: MastraModelConfig, cfg: GuardrailsUserConfig): M
       ? { instructions: cfg.moderationInstructions.trim() }
       : {}),
     ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
   });
 }
 
 /** PII 检测:输入与输出共用一个实例 */
 function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetector {
   const structuredOptions = structuredOutputOptions(cfg);
+  const providerOptions = parseDetectorProviderOptions(cfg.detectorProviderOptions);
   return new PIIDetector({
     model,
     detectionTypes: cfg.piiTypes,
@@ -578,8 +772,10 @@ function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetec
     preserveFormat: cfg.piiPreserveFormat,
     lastMessageOnly: cfg.piiLastMessageOnly,
     includeDetections: cfg.piiIncludeDetections,
+    bufferSize: cfg.piiBufferSize,
     ...(cfg.piiInstructions.trim() ? { instructions: cfg.piiInstructions.trim() } : {}),
     ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
   });
 }
 
@@ -596,6 +792,7 @@ async function buildInput(
   const processors: InputProcessorOrWorkflow[] = [];
   const model = await resolveGuardrailModel(requestContext, resourceId);
   const structuredOptions = structuredOutputOptions(cfg);
+  const providerOptions = parseDetectorProviderOptions(cfg.detectorProviderOptions);
 
   if (cfg.unicode) {
     processors.push(
@@ -625,6 +822,7 @@ async function buildInput(
             ? { instructions: cfg.injectionInstructions.trim() }
             : {}),
           ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
+          ...(providerOptions ? { providerOptions } : {}),
         }),
       );
     }
@@ -642,6 +840,7 @@ async function buildInput(
           ...(cfg.languageInstructions.trim()
             ? { instructions: cfg.languageInstructions.trim() }
             : {}),
+          ...(providerOptions ? { providerOptions } : {}),
         }),
       );
     }
@@ -697,6 +896,14 @@ async function buildInput(
       new ToolSearchProcessor({
         tools: {},
         includeResolvedTools: true,
+        injectCatalog: cfg.toolSearchInjectCatalog,
+        filter: ({ toolName, requestContext }) => {
+          const policy = requestContext?.get(SESSION_TOOL_POLICY_CONTEXT_KEY) as
+            | ((toolName: string) => string)
+            | undefined;
+          if (typeof policy !== "function") return true;
+          return policy(toolName) !== "deny";
+        },
         search: {
           topK: cfg.toolSearchTopK,
           minScore: cfg.toolSearchMinScore,
@@ -793,7 +1000,6 @@ async function buildOutput(
 /** 错误处理器数组:供应商 API 拒绝时的恢复通路 */
 function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
   const processors: ErrorProcessorOrWorkflow[] = [];
-  if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
   if (cfg.streamErrorRetry) {
     processors.push(
       new StreamErrorRetryProcessor({
@@ -815,15 +1021,13 @@ function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
             },
             maxRetries: cfg.streamErrorRetryMax,
             delayMs: ({ retryCount }) =>
-              Math.min(
-                cfg.streamErrorRetryDelayMs * 2 ** retryCount,
-                cfg.streamErrorRetryMaxRetryAfterMs,
-              ),
+              Math.min(1_000 * 2 ** retryCount, cfg.streamErrorRetryMaxRetryAfterMs),
           },
         ],
       }),
     );
   }
+  if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
   if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
   return processors;
 }
@@ -840,7 +1044,7 @@ export async function buildGuardrailInputProcessors(
   const cfg = currentConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const input = await buildInput(cfg, resourceId, requestContext);
-  if (!cfg.skillSearch) return input;
+  if (!cfg.skillSearch || !isWorkspaceEnabled(resourceId)) return input;
   const contextPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspacePath =
     typeof contextPath === "string" && contextPath ? contextPath : process.cwd();
@@ -850,6 +1054,7 @@ export async function buildGuardrailInputProcessors(
       workspace: getThreadWorkspace(workspacePath, undefined, resourceId),
       search: { topK: cfg.skillSearchTopK, minScore: cfg.skillSearchMinScore },
       ttl: cfg.skillSearchTtl,
+      blockingRefresh: cfg.skillSearchBlockingRefresh,
     });
     runtime.skillSearchCache.set(workspacePath, skillSearch);
   }

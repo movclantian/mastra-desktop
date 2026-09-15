@@ -560,28 +560,32 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       {/* 重命名线程弹窗 */}
       <Dialog open={renaming !== null} onOpenChange={(open) => !open && setRenaming(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>重命名会话</DialogTitle>
-            <DialogDescription>为这个会话线程输入新名称。</DialogDescription>
-          </DialogHeader>
-          <Field>
-            <FieldLabel htmlFor="rename-thread-input" className="sr-only">
-              会话名称
-            </FieldLabel>
-            <Input
-              id="rename-thread-input"
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleRenameSubmit();
-              }}
-            />
-          </Field>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
-            <Button onClick={handleRenameSubmit}>保存</Button>
-          </DialogFooter>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleRenameSubmit();
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle>重命名会话</DialogTitle>
+              <DialogDescription>为这个会话线程输入新名称。</DialogDescription>
+            </DialogHeader>
+            <Field className="py-4">
+              <FieldLabel htmlFor="rename-thread-input" className="sr-only">
+                会话名称
+              </FieldLabel>
+              <Input
+                id="rename-thread-input"
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+              />
+            </Field>
+            <DialogFooter>
+              <DialogClose render={<Button variant="outline">取消</Button>} />
+              <Button type="submit">保存</Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

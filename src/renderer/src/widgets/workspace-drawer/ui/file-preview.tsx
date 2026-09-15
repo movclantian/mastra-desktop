@@ -10,8 +10,10 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import { FileViewer } from "@open-file-viewer/react";
+import { FileQuestionIcon } from "lucide-react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 import { getFileExtension } from "../lib/editor";
 
 const fileViewerPlugins = [
@@ -68,9 +70,15 @@ export function WorkspaceFilePreview({
   const source = blobUrl || url;
   if (!source) {
     return (
-      <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
-        无法获取文件预览源
-      </div>
+      <Empty className="size-full justify-center">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <FileQuestionIcon />
+          </EmptyMedia>
+          <EmptyTitle>无法预览此文件</EmptyTitle>
+          <EmptyDescription>未找到有效的文件内容或预览源（{fileName}）</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
 

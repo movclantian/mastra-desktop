@@ -38,6 +38,8 @@ export interface MemoryDraft {
   semanticRecallMessageRangeBefore: number;
   semanticRecallMessageRangeAfter: number;
   semanticRecallScope: "thread" | "resource";
+  semanticRecallThreshold: number;
+  semanticRecallIndexName: string;
   workingMemory: boolean;
   workingMemoryScope: "resource" | "thread";
   workingMemoryFormat: "template" | "schema";
@@ -84,6 +86,8 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
   semanticRecallMessageRangeBefore: 1,
   semanticRecallMessageRangeAfter: 1,
   semanticRecallScope: "thread",
+  semanticRecallThreshold: 0,
+  semanticRecallIndexName: "",
   workingMemory: true,
   workingMemoryScope: "resource",
   workingMemoryFormat: "template",
@@ -135,6 +139,7 @@ export function MemorySection() {
   const [extractorText, setExtractorText] = React.useState(() =>
     JSON.stringify(DEFAULT_MEMORY_DRAFT.omExtractors, null, 2),
   );
+  const [extractorTextValid, setExtractorTextValid] = React.useState(true);
   const [loaded, setLoaded] = React.useState(false);
 
   const showAdvancedMemorySettings = true;
@@ -157,6 +162,7 @@ export function MemorySection() {
         const merged = { ...DEFAULT_MEMORY_DRAFT, ...config } as MemoryDraft;
         setDraft(merged);
         setExtractorText(JSON.stringify(merged.omExtractors, null, 2));
+        setExtractorTextValid(true);
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
@@ -166,9 +172,9 @@ export function MemorySection() {
   const prevSavedRef = React.useRef<MemoryDraft | null>(null);
 
   // 自动保存:800ms 防抖写入;非文本字段变化成功后弹 toast 供撤回,
-  // 文本编辑(模板/Schema/指令)静默。messageTokens 按模型窗口自动重算,未知时回退 16K。
+  // 文本编辑(模板/Schema/指令)静默。JSON 草稿非法时暂停,避免写入旧值或触发后端回退。
   React.useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !workingMemorySchemaValid || !extractorTextValid) return;
     const timer = window.setTimeout(() => {
       void saveMemoryConfig({
         ...draft,
@@ -198,7 +204,7 @@ export function MemorySection() {
         .catch(() => toast.error("记忆配置自动保存失败,请确认 Mastra 服务已启动"));
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draft, loaded]);
+  }, [draft, extractorTextValid, loaded, workingMemorySchemaValid]);
 
   return (
     <>
@@ -291,6 +297,26 @@ export function MemorySection() {
                 value={draft.semanticRecallScope}
               />
             </SettingRow>
+            <SliderRow
+              description="仅保留达到该相似度的消息;0 表示不额外过滤"
+              max={1}
+              min={0}
+              onChange={(v) =>
+                setDraft({ ...draft, semanticRecallThreshold: Math.round(v * 100) / 100 })
+              }
+              step={0.05}
+              title="相似度下限(threshold)"
+              value={draft.semanticRecallThreshold}
+            />
+            <TextAreaRow
+              description="可选的向量索引名;留空使用 embedder 对应的默认索引"
+              onChange={(semanticRecallIndexName) =>
+                setDraft({ ...draft, semanticRecallIndexName })
+              }
+              rows={1}
+              title="向量索引(indexName)"
+              value={draft.semanticRecallIndexName}
+            />
           </>
         ) : null}
       </SettingCard>
@@ -562,16 +588,25 @@ export function MemorySection() {
                       setExtractorText(e.target.value);
                       try {
                         const value = JSON.parse(e.target.value) as unknown;
-                        if (Array.isArray(value))
+                        if (Array.isArray(value)) {
+                          setExtractorTextValid(true);
                           setDraft({ ...draft, omExtractors: value as OmExtractorDraft[] });
+                        } else {
+                          setExtractorTextValid(false);
+                        }
                       } catch {
-                        // Keep the last valid draft while the user is typing.
+                        setExtractorTextValid(false);
                       }
                     }}
                     rows={8}
                     spellCheck={false}
                     value={extractorText}
                   />
+                  {!extractorTextValid ? (
+                    <FieldError className="text-xs">
+                      JSON 无效:修正为数组后才会保存抽取器配置
+                    </FieldError>
+                  ) : null}
                 </Field>
                 <SettingRow
                   description="为 Agent 注册 recall 工具,可回查观察背后的原始消息"
