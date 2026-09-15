@@ -44,6 +44,7 @@ import {
 } from "../api/chat-api";
 import { persistAttachments as uploadAttachments } from "../lib/attachments";
 import { buildDisplayMessages } from "../lib/display";
+import { approvalResumeKey } from "../model/approval-state";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import {
   type AgentInteraction,
@@ -691,17 +692,20 @@ export function ChatPanel() {
 
   const handleResumeInteraction = React.useCallback(
     async (interaction: AgentInteraction, resumeData: unknown) => {
-      if (!activeThreadId || resumingKeysRef.current.has(interaction.key)) return;
+      const threadId = activeThreadId;
+      if (!threadId) return;
+      const resumeKey = approvalResumeKey(threadId, interaction.key);
+      if (resumingKeysRef.current.has(resumeKey)) return;
       // State updates are asynchronous and cannot be used as a same-tick mutex.
       // The ref closes the gap between two rapid approval clicks or duplicate UI events.
-      resumingKeysRef.current.add(interaction.key);
-      setResumingKeys((current) => new Set(current).add(interaction.key));
+      resumingKeysRef.current.add(resumeKey);
+      setResumingKeys((current) => new Set(current).add(resumeKey));
       // 审批卡来自持久化快照,但 AI SDK 恢复只读取当前 Chat 实例的内存消息。
       // 先并行重新拉取两份 canonical 状态,再让同一个 Chat 实例持有审批 part。
       try {
         const [messageReload, pendingReload] = await Promise.allSettled([
           reloadMessages(),
-          fetchSuspendedInteractions(activeThreadId),
+          fetchSuspendedInteractions(threadId),
         ]);
         if (messageReload.status !== "fulfilled" || !messageReload.value) {
           toast.error("无法加载这条审批消息,请刷新线程后重试");
@@ -715,7 +719,7 @@ export function ChatPanel() {
         const stillPending = pending.some(
           (item) => item.runId === interaction.runId && item.toolCallId === interaction.toolCallId,
         );
-        const chat = getThreadChat(activeThreadId);
+        const chat = getThreadChat(threadId);
         const hasCanonicalPart = hasPendingInteraction(chat.messages, interaction);
         if (!stillPending || !hasCanonicalPart) {
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
@@ -749,9 +753,10 @@ export function ChatPanel() {
             ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
           },
         });
-        await reloadMessages();
+        if (activeThreadIdRef.current === threadId) await reloadMessages();
         // 计划获批时服务端会按 transitionsTo 切模式,重新采纳线程设置让选择器跟上
-        if (interaction.toolName === "submit_plan") await refreshThreadSettings();
+        if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId)
+          await refreshThreadSettings();
       } catch {
         setResolvedInteractionKeys((current) => {
           const next = new Set(current);
@@ -760,10 +765,10 @@ export function ChatPanel() {
         });
         toast.error("无法继续 Agent 工具调用,请重试");
       } finally {
-        resumingKeysRef.current.delete(interaction.key);
+        resumingKeysRef.current.delete(resumeKey);
         setResumingKeys((current) => {
           const next = new Set(current);
-          next.delete(interaction.key);
+          next.delete(resumeKey);
           return next;
         });
       }
@@ -1104,11 +1109,12 @@ export function ChatPanel() {
 
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
-          busy={resumingKeys.size > 0}
+          busyKeys={resumingKeys}
           interactions={interactions}
           messages={messages}
           onAlwaysAllow={handleAlwaysAllowCategory}
           onResume={handleResumeInteraction}
+          threadId={activeThreadId}
         />
         {interactions.length === 0 ? (
           <>

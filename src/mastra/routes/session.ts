@@ -443,6 +443,10 @@ function isTerminalAgentChunk(chunk: { type: string }): boolean {
   return chunk.type === "finish" || chunk.type === "error" || chunk.type === "abort";
 }
 
+type StreamReplayMode =
+  | { kind: "approval"; toolCallId: string }
+  | { kind: "terminal" };
+
 /** Wait for the native run to stop before any destructive history operation. */
 export async function abortWorkbenchSession(session: ControllerSession) {
   session.suspensions.clear();
@@ -468,8 +472,7 @@ export async function streamWorkbenchSession(
   c: ContextWithMastra,
   session: ControllerSession,
   action?: () => Promise<unknown>,
-  discardCurrentSegment = false,
-  resumeTool?: { runId: string; toolCallId: string; toolName: string; args?: unknown },
+  replayMode?: StreamReplayMode,
 ) {
   const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(session);
   const threadId = session.thread.getId();
@@ -478,7 +481,7 @@ export async function streamWorkbenchSession(
     threadId,
     resourceId: session.identity.getResourceId(),
   });
-  let discardReplay = discardCurrentSegment && subscription.activeRunId() !== null;
+  let discardReplay = replayMode !== undefined && subscription.activeRunId() !== null;
   let closed = false;
   let unsubscribeEvents: (() => void) | undefined;
   const fullStream = new ReadableStream({
@@ -493,21 +496,6 @@ export async function streamWorkbenchSession(
       unsubscribeEvents = session.subscribe((event) => {
         if (event.type === "error") fail(event.error);
       });
-      // A resumed suspended tool emits its result from a fresh Agent stream.
-      // Seed the UI stream with the original call so AI SDK can apply that result
-      // even when the client restored the history from persisted tool output.
-      if (resumeTool) {
-        controller.enqueue({
-          type: "tool-call",
-          runId: resumeTool.runId,
-          from: "AGENT",
-          payload: {
-            toolCallId: resumeTool.toolCallId,
-            toolName: resumeTool.toolName,
-            args: resumeTool.args ?? {},
-          },
-        });
-      }
       void (async () => {
         let automaticApproval = false;
         for await (const chunk of subscription.stream) {
@@ -515,7 +503,12 @@ export async function streamWorkbenchSession(
           // A subscription replays the parked segment before the resumed one.
           // The client already holds that message; discard through its boundary.
           if (discardReplay) {
-            if (isTerminalAgentChunk(chunk)) discardReplay = false;
+            const reachesApprovalBoundary =
+              replayMode?.kind === "approval" &&
+              chunk.type === "tool-call-approval" &&
+              chunk.payload.toolCallId === replayMode.toolCallId;
+            const reachesTerminalBoundary = replayMode?.kind === "terminal" && isTerminalAgentChunk(chunk);
+            if (reachesApprovalBoundary || reachesTerminalBoundary) discardReplay = false;
             continue;
           }
           if (chunk.type === "start") automaticApproval = false;

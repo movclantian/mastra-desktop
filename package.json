@@ -9,6 +9,7 @@
   "scripts": {
     "format": "biome format --write .",
     "lint": "biome check --write .",
+    "test:approval-state": "node --experimental-strip-types --test scripts/approval-state.test.mts",
     "typecheck": "tsc --noEmit -p tsconfig.node.json --composite false && tsc --noEmit -p tsconfig.web.json --composite false && tsc --noEmit -p tsconfig.mastra.json",
     "start": "node scripts/install-browser.mjs && electron-vite build && electron-vite preview",
     "dev": "node scripts/install-browser.mjs && electron-vite dev",

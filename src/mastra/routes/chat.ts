@@ -1004,7 +1004,11 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
       c,
       controllerSession,
       action,
-      Boolean(explicitResumeTarget || body.messageId) || sessionAction === "steer",
+      explicitResumeTarget && body.approval !== undefined
+        ? { kind: "approval", toolCallId: explicitResumeTarget.toolCallId }
+        : explicitResumeTarget || body.messageId || sessionAction === "steer"
+          ? { kind: "terminal" }
+          : undefined,
     );
     return createUIMessageStreamResponse({ stream: prepareClientStream(stream) });
   },

@@ -64,6 +64,7 @@ import {
 } from "@/shared/ui/questionnaire";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
+import { isInteractionBusy } from "../model/approval-state";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -814,16 +815,18 @@ export function AgentApprovalPanel({
 
 export function AgentInteractionPanel({
   interactions,
-  busy,
+  busyKeys,
   onResume,
   onAlwaysAllow,
   messages,
+  threadId,
 }: {
   interactions: AgentInteraction[];
-  busy: boolean;
+  busyKeys: ReadonlySet<string>;
   onResume: (interaction: AgentInteraction, resumeData: unknown) => void;
   onAlwaysAllow?: (category: ToolCategory) => Promise<void> | void;
   messages: UIMessage[];
+  threadId: string | null;
 }) {
   if (interactions.length === 0) return null;
 
@@ -840,6 +843,7 @@ export function AgentInteractionPanel({
               }
             : interaction;
         const resume = (resumeData: unknown) => onResume(enriched, resumeData);
+        const busy = isInteractionBusy(busyKeys, threadId, interaction.key);
         if (interaction.toolName === "ask_user") {
           return (
             <AgentQuestionnairePanel
