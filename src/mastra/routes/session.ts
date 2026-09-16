@@ -539,7 +539,8 @@ export async function streamWorkbenchSession(
               typeof chunk.payload === "object" &&
               chunk.payload !== null &&
               (chunk.payload as { toolCallId?: unknown }).toolCallId === replayMode.toolCallId;
-            const reachesTerminalBoundary = replayMode?.kind === "terminal" && isTerminalAgentChunk(chunk);
+            const reachesTerminalBoundary =
+              replayMode?.kind === "terminal" && isTerminalAgentChunk(chunk);
             if (reachesApprovalBoundary || reachesTerminalBoundary) discardReplay = false;
             continue;
           }

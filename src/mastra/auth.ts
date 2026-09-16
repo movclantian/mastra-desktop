@@ -275,6 +275,11 @@ class DatabaseAuth
   extends MastraAuthProvider<AuthUser>
   implements ICredentialsProvider<AuthUser>, IUserProvider<AuthUser>
 {
+  // The desktop database provider is local credentials auth. Mark it as
+  // SimpleAuth-compatible so Studio exposes its login method without an EE
+  // license while the provider still enforces the database session checks.
+  readonly isSimpleAuth = true;
+
   async signIn(email: string, password: string, _request: Request) {
     const session = await loginAuthUser({ email, password });
     return {

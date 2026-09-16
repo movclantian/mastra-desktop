@@ -8,6 +8,7 @@
 
 import { AgentController } from "@mastra/core/agent-controller";
 import { InMemoryServerCache } from "@mastra/core/cache";
+import type { BrowserProvider } from "@mastra/core/editor";
 import { EventEmitterPubSub, withCaching } from "@mastra/core/events";
 import { Mastra } from "@mastra/core/mastra";
 import type { Processor } from "@mastra/core/processors";
@@ -82,6 +83,18 @@ const workAgentController = new AgentController({
   toolCategoryResolver: (toolName) => toolCategoryOf(toolName),
 });
 
+const editorBrowserProvider: BrowserProvider = {
+  id: "agent-browser",
+  name: "Mastra Agent Browser",
+  description: "Thread-scoped browser provided by the desktop workbench.",
+  createBrowser: () => workBrowser,
+};
+
+const workEditor = new MastraEditor({
+  source: "db",
+  browsers: { [editorBrowserProvider.id]: editorBrowserProvider },
+});
+
 export const mastra = new Mastra({
   agentControllers: { workbench: workAgentController },
   // Delegation and direct registry access share the same Agent instances.
@@ -112,7 +125,7 @@ export const mastra = new Mastra({
     submit_plan: submitPlanTool,
   },
   gateways: { [WORKBENCH_GATEWAY_ID]: new WorkbenchGateway() },
-  editor: new MastraEditor(),
+  editor: workEditor,
   workspace: getThreadWorkspace(getThreadsRoot()),
   server: {
     auth: workAuth,
