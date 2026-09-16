@@ -405,9 +405,21 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           resourceId,
         ));
-      return profile.id === DEFAULT_AGENT_PROFILE_ID
-        ? [getManagedSkillsDirectory(resourceId)]
-        : resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
+      const configuredPaths =
+        profile.id === DEFAULT_AGENT_PROFILE_ID
+          ? [getManagedSkillsDirectory(resourceId)]
+          : await resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
+      const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
+      const selectedPaths =
+        !member && Array.isArray(selectedSkills)
+          ? await resolveManagedSkillPaths(
+              selectedSkills.filter(
+                (value): value is string => typeof value === "string" && value.trim().length > 0,
+              ),
+              resourceId,
+            )
+          : [];
+      return [...new Set([...configuredPaths, ...selectedPaths])];
     },
     inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
     outputProcessors: async ({ requestContext }) => buildGuardrailOutputProcessors(requestContext),

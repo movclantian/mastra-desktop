@@ -2,6 +2,7 @@ import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { apiError, type WorkErrorPayload } from "@/shared/lib";
 import type {
   CuratedOwner,
+  McpFormServer,
   McpSummary,
   SkillDetail,
   SkillMarketplace,
@@ -161,6 +162,31 @@ export async function deleteSkill(name: string): Promise<void> {
     }),
     "删除技能失败",
   );
+}
+
+export async function updateSkill(
+  name: string,
+  patch: { description?: string; instructions?: string },
+): Promise<SkillDetail> {
+  const payload = await readPayload<{ skill?: SkillDetail }>(
+    await apiFetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+    "更新技能失败",
+  );
+  if (!payload.skill) throw new Error("更新技能失败");
+  return payload.skill;
+}
+
+export async function getMcpServer(id: string): Promise<McpFormServer> {
+  const payload = await readPayload<{ server?: McpFormServer }>(
+    await apiFetch(`${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(id)}`),
+    "获取 MCP 配置失败",
+  );
+  if (!payload.server) throw new Error("获取 MCP 配置失败");
+  return payload.server;
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {

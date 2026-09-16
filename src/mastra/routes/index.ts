@@ -42,6 +42,7 @@ import {
 import {
   authenticateMcpConfigRoute,
   deleteMcpConfigRoute,
+  getMcpServerRoute,
   mcpConfigRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,
@@ -61,6 +62,7 @@ import {
   saveProvidersConfigRoute,
   testProviderModelRoute,
 } from "./providers";
+import { scheduleRoutes } from "./schedules";
 import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
 import { signalRoutes } from "./signals";
@@ -82,6 +84,7 @@ import {
   skillsShCuratedRoute,
   skillsShListRoute,
   skillsShSkillRoute,
+  updateSkillRoute,
   uploadSkillRoute,
 } from "./skills";
 import { storageInfoRoute } from "./storage";
@@ -121,6 +124,7 @@ export const workRoutes = [
   ...threadRoutes,
   ...signalRoutes,
   ...sessionRoutes,
+  ...scheduleRoutes,
   shutdownRoute,
   libraryAssetsRoute,
   libraryUploadSessionsRoute,
@@ -153,6 +157,7 @@ export const workRoutes = [
   saveMemoryConfigRoute,
   memoryProfileRoute,
   mcpConfigRoute,
+  getMcpServerRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,
   deleteMcpConfigRoute,
@@ -190,6 +195,7 @@ export const workRoutes = [
   skillsShSkillRoute,
   uploadSkillRoute,
   importSkillRoute,
+  updateSkillRoute,
   deleteSkillRoute,
 ];
 

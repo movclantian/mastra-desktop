@@ -1399,8 +1399,7 @@ function FilesWorkspace({ active }: { active: boolean }) {
         minSize="20%"
         maxSize="46%"
         groupResizeBehavior="preserve-pixel-size"
-        onCollapse={() => setTreeOpen(false)}
-        onExpand={() => setTreeOpen(true)}
+        onResize={(panelSize) => setTreeOpen(panelSize.asPercentage > 0)}
       >
         <aside className={cn("flex size-full min-w-0 flex-col bg-muted/20", !treeOpen && "hidden")}>
           <PanelHeader className="h-10 bg-muted/60 px-3 text-xs font-medium">

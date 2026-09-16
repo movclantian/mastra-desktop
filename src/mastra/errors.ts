@@ -151,6 +151,18 @@ export const WORK_ERRORS = {
     status: 409,
     text: "Workflow run cannot perform this operation in its current state",
   },
+  SCHEDULE_NOT_FOUND: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "Scheduled task not found",
+  },
+  SCHEDULE_INVALID: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 400,
+    text: "定时任务参数无效",
+  },
 
   // ---- 模型与供应商(models/)--------------------------------------------
   MODEL_NOT_CONFIGURED: {

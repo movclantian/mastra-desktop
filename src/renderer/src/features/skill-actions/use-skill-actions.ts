@@ -7,6 +7,7 @@ import {
   deleteSkill,
   importSkill as importSkillRequest,
   installSkill as installSkillRequest,
+  updateSkill as updateSkillRequest,
   uploadSkillArchive,
 } from "@/entities/skill";
 import { toastError } from "@/shared/lib";
@@ -28,7 +29,11 @@ export interface SkillActionsState {
   uploadSkill: (file: File | undefined) => Promise<void>;
   importSkill: (source: string) => Promise<void>;
   installBuiltin: (skill: SkillMetadata) => Promise<void>;
-  removeSkill: () => Promise<void>;
+  removeSkill: (targetSkill?: SkillMetadata) => Promise<void>;
+  updateSkill: (
+    name: string,
+    patch: { description?: string; instructions?: string },
+  ) => Promise<void>;
   removeMcp: (server: McpSummary) => Promise<void>;
   authenticateMcp: (server: McpSummary) => Promise<void>;
 }
@@ -106,19 +111,40 @@ export function useSkillActions({
     [loadInstalled],
   );
 
-  const removeSkill = React.useCallback(async () => {
-    if (!activeSkill || !window.confirm(`确定删除技能「${activeSkill.name}」吗？`)) return;
-    try {
-      await deleteSkill(activeSkill.name);
-    } catch {
-      toast.error("删除技能失败");
-      return;
-    }
-    setActiveSkill(null);
-    setDetail(null);
-    await loadInstalled();
-    toast.success("技能已删除");
-  }, [activeSkill, loadInstalled, setActiveSkill, setDetail]);
+  const removeSkill = React.useCallback(
+    async (targetSkill?: SkillMetadata) => {
+      const skillToDelete = targetSkill || activeSkill;
+      if (!skillToDelete || !window.confirm(`确定删除技能「${skillToDelete.name}」吗？`)) return;
+      try {
+        await deleteSkill(skillToDelete.name);
+      } catch {
+        toast.error("删除技能失败");
+        return;
+      }
+      if (activeSkill?.name === skillToDelete.name) {
+        setActiveSkill(null);
+        setDetail(null);
+      }
+      await loadInstalled();
+      toast.success("技能已删除");
+    },
+    [activeSkill, loadInstalled, setActiveSkill, setDetail],
+  );
+
+  const updateSkill = React.useCallback(
+    async (name: string, patch: { description?: string; instructions?: string }) => {
+      try {
+        const updated = await updateSkillRequest(name, patch);
+        await loadInstalled();
+        setDetail((prev) => (prev && prev.name === name ? { ...prev, ...updated } : prev));
+        toast.success("技能配置已保存");
+      } catch (error) {
+        toastError(error, "更新技能失败");
+        throw error;
+      }
+    },
+    [loadInstalled, setDetail],
+  );
 
   const removeMcp = React.useCallback(
     async (server: McpSummary) => {
@@ -157,6 +183,7 @@ export function useSkillActions({
     importSkill,
     installBuiltin,
     removeSkill,
+    updateSkill,
     removeMcp,
     authenticateMcp,
   };

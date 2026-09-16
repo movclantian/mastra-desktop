@@ -15,9 +15,11 @@
 import { mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import {
   LocalFilesystem,
   LocalSandbox,
+  LocalSkillSource,
   type ToolConfigWithArgsContext,
   Workspace,
   type WorkspaceToolConfig,
@@ -424,9 +426,11 @@ export function getThreadWorkspace(
   const cached = runtime.cache.get(cacheKey);
   if (cached) return cached;
 
+  const managedSkillsDirectory = getManagedSkillsDirectory(resourceId);
   const allowedPaths = [
     ...config.allowedPaths,
     ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
+    managedSkillsDirectory,
   ];
   const filesystem = new LocalFilesystem({
     basePath: workspacePath,
@@ -479,7 +483,13 @@ export function getThreadWorkspace(
     ...(bm25 ? { bm25 } : {}),
     ...(lsp ? { lsp } : {}),
     tools: workspaceTools,
-    ...(config.skillsPaths.length ? { skills: config.skillsPaths } : {}),
+    skillSource: new LocalSkillSource({ basePath: workspacePath }),
+    skills: ({ requestContext }) => {
+      const contextResourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
+      const scopedResourceId =
+        resourceId ?? (typeof contextResourceId === "string" ? contextResourceId : undefined);
+      return [...config.skillsPaths, getManagedSkillsDirectory(scopedResourceId)];
+    },
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
   };
   const workspace = new Workspace(workspaceConfig) as Workspace;

@@ -118,6 +118,24 @@ export const mastra = new Mastra({
         error: task.error,
       }),
   },
+  schedules: {
+    onFinish: ({ agentId, schedule, trigger, outcome, runId }) =>
+      logger.info("Scheduled agent run finished", {
+        agentId,
+        scheduleId: schedule.id,
+        trigger: trigger.kind,
+        outcome,
+        runId,
+      }),
+    onError: ({ agentId, schedule, trigger, phase, error }) =>
+      logger.error("Scheduled agent run failed", {
+        agentId,
+        scheduleId: schedule.id,
+        trigger: trigger.kind,
+        phase,
+        error,
+      }),
+  },
   pubsub: withCaching(new EventEmitterPubSub(), new InMemoryServerCache()),
   processors: processorRegistry,
   tools: {
@@ -129,6 +147,7 @@ export const mastra = new Mastra({
   workspace: getThreadWorkspace(getThreadsRoot()),
   server: {
     auth: workAuth,
+    storedResources: { scope: { metadataKey: "mastra_resource_id" } },
     middleware: [
       { path: "/*", handler: workRequestContextMiddleware },
       { path: "/api/memory/*", handler: memoryThreadMiddleware },

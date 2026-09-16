@@ -626,3 +626,50 @@ export const deleteSkillRoute = registerApiRoute("/work/skills/:name", {
     return c.json({ ok: true });
   },
 });
+
+export const updateSkillRoute = registerApiRoute("/work/skills/:name", {
+  method: "PUT",
+  handler: async (c) => {
+    const name = basename(decodeURIComponent(c.req.param("name")));
+    const root = resolve(getManagedSkillsDirectory(resourceIdFromRequest(c)));
+    const target = resolve(root, name);
+    if (!isWithin(root, target) || target === root) throw workError("SKILL_MANAGED_ONLY");
+
+    const payload = (await c.req.json()) as { description?: string; instructions?: string };
+    const skillMdPath = resolve(target, "SKILL.md");
+    let existingContent = "";
+    try {
+      existingContent = await readFile(skillMdPath, "utf8");
+    } catch {
+      throw workError("SKILL_NOT_FOUND");
+    }
+
+    const frontmatterMatch = existingContent.match(/^---\s*([\s\S]*?)\s*---\s*/);
+    let frontmatter = "";
+    if (frontmatterMatch) {
+      let fmBody = frontmatterMatch[1];
+      if (payload.description !== undefined) {
+        if (/description\s*:/.test(fmBody)) {
+          fmBody = fmBody.replace(
+            /description\s*:.*(\r?\n|$)/,
+            `description: "${payload.description.replaceAll('"', '\\"')}"$1`,
+          );
+        } else {
+          fmBody += `\ndescription: "${payload.description.replaceAll('"', '\\"')}"\n`;
+        }
+      }
+      frontmatter = `---\n${fmBody.trim()}\n---\n\n`;
+    } else if (payload.description !== undefined) {
+      frontmatter = `---\nname: "${name}"\ndescription: "${payload.description.replaceAll('"', '\\"')}"\n---\n\n`;
+    }
+
+    const newInstructions =
+      payload.instructions !== undefined
+        ? payload.instructions.trim()
+        : existingContent.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim();
+
+    await writeFile(skillMdPath, `${frontmatter}${newInstructions}\n`, "utf8");
+    const skill = await readLocalSkill(target);
+    return c.json({ skill });
+  },
+});

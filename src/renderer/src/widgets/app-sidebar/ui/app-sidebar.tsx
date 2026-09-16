@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   BotIcon,
+  CalendarClockIcon,
   ChevronsUpDown,
   LaptopIcon,
   LibraryBigIcon,
@@ -363,6 +364,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       <span>专家</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      tooltip="已安排"
+                      isActive={activeView === "schedules"}
+                      onClick={() => {
+                        setFileManagerThreadId(null);
+                        setActiveView("schedules");
+                      }}
+                    >
+                      <CalendarClockIcon />
+                      <span>已安排</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
@@ -482,6 +496,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <BotIcon className="text-muted-foreground" />
               <span>专家</span>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
+                setActiveView("schedules");
+              }}
+            >
+              <CalendarClockIcon className="text-muted-foreground" />
+              <span>已安排</span>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />

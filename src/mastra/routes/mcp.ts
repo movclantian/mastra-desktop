@@ -24,6 +24,18 @@ export const mcpConfigRoute = registerApiRoute("/work/mcp", {
   },
 });
 
+export const getMcpServerRoute = registerApiRoute("/work/mcp/:id", {
+  method: "GET",
+  handler: async (c) => {
+    const id = c.req.param("id");
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const config = await getMcpConfig(resourceId);
+    const server = config.servers.find((item) => item.id === id);
+    if (!server) throw workError("MCP_SERVER_NOT_FOUND");
+    return c.json({ server });
+  },
+});
+
 export const saveMcpConfigRoute = registerApiRoute("/work/mcp", {
   method: "POST",
   handler: async (c) => {

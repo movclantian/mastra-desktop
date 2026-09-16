@@ -9,7 +9,7 @@ export interface WorkUser {
   email: string;
 }
 
-export const MAIN_VIEWS = ["chat", "agents", "skills", "library", "settings"] as const;
+export const MAIN_VIEWS = ["chat", "agents", "skills", "library", "schedules", "settings"] as const;
 export type MainView = (typeof MAIN_VIEWS)[number];
 export const DEFAULT_MAIN_VIEW: MainView = "chat";
 

@@ -11,6 +11,8 @@ import {
   FlameIcon,
   FolderOpenIcon,
   GlobeIcon,
+  LayoutGridIcon,
+  ListIcon,
   PencilIcon,
   PlugZapIcon,
   PlusIcon,
@@ -39,6 +41,7 @@ import type {
 } from "@/entities/skill";
 import {
   deleteSkillMarketplace,
+  fetchSkillDetail,
   formatInstalls,
   getPaginationRange,
   type SkillMetadata,
@@ -81,7 +84,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Field, FieldGroup, FieldLabel } from "@/shared/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { InteractiveHoverButton } from "@/shared/ui/interactive-hover-button";
 import { MagicCard } from "@/shared/ui/magic-card";
@@ -94,6 +97,8 @@ import {
 } from "@/shared/ui/pagination";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { Separator } from "@/shared/ui/separator";
+import { Textarea } from "@/shared/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
 import { McpDialog } from "@/widgets/mcp-dialog";
 
 export function SkillHubPage() {
@@ -142,6 +147,8 @@ export function SkillHubPage() {
   });
   const [addSkillOpen, setAddSkillOpen] = React.useState(false);
   const [mcpOpen, setMcpOpen] = React.useState(false);
+  const [editingMcp, setEditingMcp] = React.useState<McpSummary | null>(null);
+  const [editingSkill, setEditingSkill] = React.useState<SkillMetadata | null>(null);
   const [marketplacesOpen, setMarketplacesOpen] = React.useState(false);
   const {
     inputRef,
@@ -151,6 +158,7 @@ export function SkillHubPage() {
     importSkill,
     installBuiltin,
     removeSkill,
+    updateSkill,
     removeMcp,
     authenticateMcp,
   } = useSkillActions({
@@ -219,19 +227,32 @@ export function SkillHubPage() {
 
   if (activeSkill) {
     return (
-      <SkillDetailPage
-        detail={detail}
-        detailError={detailError}
-        detailLoading={detailLoading}
-        installed={skills.some((skill) => skill.name === activeSkill.name)}
-        onInstall={() => void installBuiltin(activeSkill)}
-        onRemove={() => void removeSkill()}
-        onUsePrompt={(prompt) => {
-          setPendingPrompt(`${activeSkill.name} ${prompt}`);
-          setActiveView("chat");
-        }}
-        installing={installing === activeSkill.name}
-      />
+      <>
+        <SkillDetailPage
+          detail={detail}
+          detailError={detailError}
+          detailLoading={detailLoading}
+          installed={skills.some((skill) => skill.name === activeSkill.name)}
+          onInstall={() => void installBuiltin(activeSkill)}
+          onRemove={() => void removeSkill()}
+          onEdit={() => setEditingSkill(activeSkill)}
+          onUsePrompt={(prompt) => {
+            setPendingPrompt(`${activeSkill.name} ${prompt}`);
+            setActiveView("chat");
+          }}
+          installing={installing === activeSkill.name}
+        />
+        <SkillEditDialog
+          open={Boolean(editingSkill)}
+          onOpenChange={(open) => {
+            if (!open) setEditingSkill(null);
+          }}
+          skill={editingSkill}
+          onSave={async (name, patch) => {
+            await updateSkill(name, patch);
+          }}
+        />
+      </>
     );
   }
 
@@ -402,12 +423,21 @@ export function SkillHubPage() {
               mcpServers={mcpServers}
               onDelete={(server) => void removeMcp(server)}
               onAuthenticate={(server) => void authenticateMcp(server)}
-              onAddMcp={() => setMcpOpen(true)}
+              onEdit={(server) => {
+                setEditingMcp(server);
+                setMcpOpen(true);
+              }}
+              onAddMcp={() => {
+                setEditingMcp(null);
+                setMcpOpen(true);
+              }}
             />
           ) : section === "personal" ? (
             <InstalledSection
               skills={visibleInstalled}
               onSelect={setActiveSkill}
+              onEdit={(skill) => setEditingSkill(skill)}
+              onDelete={(skill) => void removeSkill(skill)}
               onAddSkill={() => setAddSkillOpen(true)}
               onExploreMarket={() => setSection("public")}
             />
@@ -764,7 +794,25 @@ export function SkillHubPage() {
         open={addSkillOpen}
         uploading={uploading}
       />
-      <McpDialog onOpenChange={setMcpOpen} onSaved={() => void loadMcp()} open={mcpOpen} />
+      <McpDialog
+        open={mcpOpen}
+        onOpenChange={(open) => {
+          setMcpOpen(open);
+          if (!open) setEditingMcp(null);
+        }}
+        onSaved={() => void loadMcp()}
+        server={editingMcp}
+      />
+      <SkillEditDialog
+        open={Boolean(editingSkill)}
+        onOpenChange={(open) => {
+          if (!open) setEditingSkill(null);
+        }}
+        skill={editingSkill}
+        onSave={async (name, patch) => {
+          await updateSkill(name, patch);
+        }}
+      />
       <MarketplacesDialog
         marketplaces={marketplaces}
         onOpenChange={setMarketplacesOpen}
@@ -936,14 +984,28 @@ const SkillCard = React.memo(function SkillCard({
 function InstalledSection({
   skills,
   onSelect,
+  onEdit,
+  onDelete,
   onAddSkill,
   onExploreMarket,
 }: {
   skills: SkillMetadata[];
   onSelect: (skill: SkillMetadata) => void;
+  onEdit?: (skill: SkillMetadata) => void;
+  onDelete?: (skill: SkillMetadata) => void;
   onAddSkill?: () => void;
   onExploreMarket?: () => void;
 }) {
+  const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const [page, setPage] = React.useState(1);
+  const pageSize = 12;
+
+  const totalPages = Math.max(1, Math.ceil(skills.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginated = React.useMemo(() => {
+    return skills.slice((safePage - 1) * pageSize, safePage * pageSize);
+  }, [skills, safePage, pageSize]);
+
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -953,8 +1015,24 @@ function InstalledSection({
             当前已安装到本机的技能与插件，可在与 Agent 对话时直接调度。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <Badge variant="secondary">{skills.length} 个技能</Badge>
+          <ToggleGroup
+            className="h-8"
+            variant="outline"
+            value={[viewMode]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "grid" || value === "list") setViewMode(value);
+            }}
+          >
+            <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+              <LayoutGridIcon className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+              <ListIcon className="size-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
           {onAddSkill ? (
             <Button size="sm" onClick={onAddSkill} className="gap-1.5 h-8">
               <PlusIcon className="size-3.5" />
@@ -994,33 +1072,64 @@ function InstalledSection({
             ) : null}
           </div>
         </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2 mt-4">
-          {skills.map((skill, index) => (
+      ) : viewMode === "grid" ? (
+        <div className="grid gap-3.5 md:grid-cols-2 mt-4">
+          {paginated.map((skill, index) => (
             <BlurFade delay={0.02 * index} duration={0.2} blur="3px" key={skill.name}>
               <ContextMenu>
                 <ContextMenuTrigger className="w-full block">
-                  <button
-                    type="button"
-                    className="flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all duration-200 hover:border-primary/40 hover:bg-card/90 cursor-pointer shadow-xs"
+                  <div
+                    className="group relative flex w-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5 text-left transition-all duration-200 hover:border-primary/40 hover:bg-card/90 cursor-pointer shadow-xs"
                     onClick={() => onSelect(skill)}
                   >
                     <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xl shadow-2xs">
                       {skillIcon(skill, index)}
                     </span>
-                    <span className="min-w-0 flex-1">
-                      <span
-                        className="block break-words font-medium text-sm text-foreground"
-                        title={skill.name}
-                      >
-                        {skill.name}
-                      </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="block truncate font-medium text-sm text-foreground"
+                          title={skill.name}
+                        >
+                          {skill.name}
+                        </span>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                          {skillSourceLabel(skill)}
+                        </Badge>
+                      </div>
                       <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">
                         {skill.description || "未提供描述"}
                       </span>
-                    </span>
-                    <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-                  </button>
+                    </div>
+                    <div
+                      className="flex items-center gap-1 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {onEdit ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          onClick={() => onEdit(skill)}
+                          title="编辑技能配置"
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      {onDelete ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-destructive cursor-pointer"
+                          onClick={() => onDelete(skill)}
+                          title="删除技能"
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground ml-0.5" />
+                    </div>
+                  </div>
                 </ContextMenuTrigger>
                 <ContextMenuContent className="w-48">
                   <ContextMenuGroup>
@@ -1034,6 +1143,12 @@ function InstalledSection({
                       <SparklesIcon className="text-muted-foreground" />
                       <span>查看技能详情</span>
                     </ContextMenuItem>
+                    {onEdit ? (
+                      <ContextMenuItem onClick={() => onEdit(skill)}>
+                        <PencilIcon className="text-muted-foreground" />
+                        <span>编辑技能配置</span>
+                      </ContextMenuItem>
+                    ) : null}
                     <ContextMenuItem
                       onClick={() => {
                         void navigator.clipboard.writeText(skill.name);
@@ -1043,6 +1158,127 @@ function InstalledSection({
                       <CopyIcon className="text-muted-foreground" />
                       <span>复制技能名称</span>
                     </ContextMenuItem>
+                    {onDelete ? (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => onDelete(skill)}
+                        >
+                          <Trash2Icon className="text-destructive" />
+                          <span>删除技能</span>
+                        </ContextMenuItem>
+                      </>
+                    ) : null}
+                  </ContextMenuGroup>
+                </ContextMenuContent>
+              </ContextMenu>
+            </BlurFade>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 mt-4">
+          {paginated.map((skill, index) => (
+            <BlurFade delay={0.02 * index} duration={0.2} blur="3px" key={skill.name}>
+              <ContextMenu>
+                <ContextMenuTrigger className="w-full block">
+                  <div
+                    className="group flex items-center justify-between gap-4 rounded-xl border border-border bg-card/60 px-4 py-3 text-left transition-all duration-200 hover:border-primary/40 hover:bg-card shadow-2xs cursor-pointer"
+                    onClick={() => onSelect(skill)}
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-lg shadow-2xs">
+                        {skillIcon(skill, index)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="truncate font-medium text-sm text-foreground"
+                            title={skill.name}
+                          >
+                            {skill.name}
+                          </span>
+                          <Badge variant="outline" className="text-[10px] px-1 py-0 h-4">
+                            {skillSourceLabel(skill)}
+                          </Badge>
+                        </div>
+                        <p
+                          className="mt-0.5 truncate text-xs text-muted-foreground"
+                          title={skill.description}
+                        >
+                          {skill.description || "未提供描述"}
+                        </p>
+                      </div>
+                    </div>
+                    <div
+                      className="flex items-center gap-1 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {onEdit ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-foreground cursor-pointer"
+                          onClick={() => onEdit(skill)}
+                          title="编辑技能配置"
+                        >
+                          <PencilIcon className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      {onDelete ? (
+                        <Button
+                          size="icon-xs"
+                          variant="ghost"
+                          className="size-7 text-muted-foreground hover:text-destructive cursor-pointer"
+                          onClick={() => onDelete(skill)}
+                          title="删除技能"
+                        >
+                          <Trash2Icon className="size-3.5" />
+                        </Button>
+                      ) : null}
+                      <ChevronRightIcon className="size-4 text-muted-foreground ml-1 transition-transform group-hover:translate-x-0.5" />
+                    </div>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuGroup>
+                    <ContextMenuLabel
+                      className="max-w-44 whitespace-normal break-words"
+                      title={skill.name}
+                    >
+                      {skill.name}
+                    </ContextMenuLabel>
+                    <ContextMenuItem onClick={() => onSelect(skill)}>
+                      <SparklesIcon className="text-muted-foreground" />
+                      <span>查看技能详情</span>
+                    </ContextMenuItem>
+                    {onEdit ? (
+                      <ContextMenuItem onClick={() => onEdit(skill)}>
+                        <PencilIcon className="text-muted-foreground" />
+                        <span>编辑技能配置</span>
+                      </ContextMenuItem>
+                    ) : null}
+                    <ContextMenuItem
+                      onClick={() => {
+                        void navigator.clipboard.writeText(skill.name);
+                        toast.success("已复制技能名称");
+                      }}
+                    >
+                      <CopyIcon className="text-muted-foreground" />
+                      <span>复制技能名称</span>
+                    </ContextMenuItem>
+                    {onDelete ? (
+                      <>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => onDelete(skill)}
+                        >
+                          <Trash2Icon className="text-destructive" />
+                          <span>删除技能</span>
+                        </ContextMenuItem>
+                      </>
+                    ) : null}
                   </ContextMenuGroup>
                 </ContextMenuContent>
               </ContextMenu>
@@ -1050,6 +1286,58 @@ function InstalledSection({
           ))}
         </div>
       )}
+
+      {totalPages > 1 ? (
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t pt-4">
+          <span className="text-xs text-muted-foreground">
+            第 {safePage} / {totalPages} 页 · 共 {skills.length} 个技能 · 每页 {pageSize} 条
+          </span>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="gap-1 pl-2.5 h-8 text-xs cursor-pointer"
+                >
+                  <ChevronLeftIcon className="size-3.5" />
+                  <span>上一页</span>
+                </Button>
+              </PaginationItem>
+              {getPaginationRange(safePage, totalPages).map((item, idx) => (
+                <PaginationItem key={typeof item === "number" ? item : `ellipsis-${idx}`}>
+                  {item === "..." ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <Button
+                      variant={safePage === item ? "outline" : "ghost"}
+                      size="icon"
+                      className="size-8 text-xs font-mono cursor-pointer"
+                      onClick={() => setPage(Number(item))}
+                    >
+                      {item}
+                    </Button>
+                  )}
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="gap-1 pr-2.5 h-8 text-xs cursor-pointer"
+                >
+                  <span>下一页</span>
+                  <ChevronRightIcon className="size-3.5" />
+                </Button>
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1058,13 +1346,25 @@ function McpSection({
   mcpServers,
   onDelete,
   onAuthenticate,
+  onEdit,
   onAddMcp,
 }: {
   mcpServers: McpSummary[];
   onDelete: (server: McpSummary) => void;
   onAuthenticate: (server: McpSummary) => void;
+  onEdit?: (server: McpSummary) => void;
   onAddMcp?: () => void;
 }) {
+  const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const [page, setPage] = React.useState(1);
+  const pageSize = 10;
+
+  const totalPages = Math.max(1, Math.ceil(mcpServers.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paginated = React.useMemo(() => {
+    return mcpServers.slice((safePage - 1) * pageSize, safePage * pageSize);
+  }, [mcpServers, safePage, pageSize]);
+
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -1077,7 +1377,23 @@ function McpSection({
             连接外部 MCP 服务，为 Agent 提供数据库、文件系统、终端和三方 API 访问支持。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          <ToggleGroup
+            className="h-8"
+            variant="outline"
+            value={[viewMode]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "grid" || value === "list") setViewMode(value);
+            }}
+          >
+            <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+              <LayoutGridIcon className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+              <ListIcon className="size-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
           {onAddMcp ? (
             <Button size="sm" onClick={onAddMcp} className="gap-1.5 h-8 cursor-pointer">
               <PlusIcon className="size-3.5" />
@@ -1087,65 +1403,193 @@ function McpSection({
         </div>
       </div>
       <Separator className="mt-4" />
-      <div className="grid gap-3.5 md:grid-cols-2 mt-4">
-        {mcpServers.map((server) => (
-          <div
-            className="flex items-start justify-between gap-3 rounded-xl border bg-card/60 p-4 shadow-xs"
-            key={server.id}
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="font-semibold text-sm">{server.name}</span>
-                <Badge variant="outline" className="text-[10px] font-mono uppercase">
-                  {server.transport}
-                </Badge>
+      {mcpServers.length === 0 ? (
+        <div className="py-16 flex flex-col items-center justify-center text-center">
+          <span className="flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3 shadow-2xs">
+            <PlugZapIcon className="size-7" />
+          </span>
+          <h3 className="text-base font-semibold">还没有配置 MCP 外部能力</h3>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+            你可以连接远程 Streamable HTTP / SSE 服务或本地 stdio 进程，为 Agent 扩展工具库。
+          </p>
+          {onAddMcp ? (
+            <Button size="sm" onClick={onAddMcp} className="gap-1.5 mt-4 cursor-pointer">
+              <PlusIcon className="size-3.5" />
+              添加第一个 MCP 服务
+            </Button>
+          ) : null}
+        </div>
+      ) : viewMode === "grid" ? (
+        <div className="grid gap-3.5 md:grid-cols-2 mt-4">
+          {paginated.map((server) => (
+            <div
+              className="flex items-start justify-between gap-3 rounded-xl border bg-card/60 p-4 shadow-xs hover:border-primary/40 transition-colors"
+              key={server.id}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">{server.name}</span>
+                  <Badge variant="outline" className="text-[10px] font-mono uppercase">
+                    {server.transport}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground break-all font-mono">
+                  {server.transport === "stdio" ? server.command : server.url}
+                </p>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground break-all">
-                {server.transport === "stdio" ? server.command : server.url}
-              </p>
-            </div>
-            <div className="flex items-center gap-1">
-              {server.transport === "http" && server.oauth?.enabled ? (
+              <div className="flex items-center gap-1 shrink-0">
+                {server.transport === "http" && server.oauth?.enabled ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={() => onAuthenticate(server)}
+                    title="OAuth 授权"
+                  >
+                    <ShieldCheckIcon className="size-3.5" />
+                  </Button>
+                ) : null}
+                {onEdit ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={() => onEdit(server)}
+                    title="编辑 MCP 配置"
+                  >
+                    <PencilIcon className="size-3.5" />
+                  </Button>
+                ) : null}
                 <Button
                   size="icon-xs"
                   variant="ghost"
-                  className="text-muted-foreground"
-                  onClick={() => onAuthenticate(server)}
-                  title="OAuth 授权"
+                  className="text-muted-foreground hover:text-destructive cursor-pointer"
+                  onClick={() => onDelete(server)}
+                  title="移除 MCP"
                 >
-                  <ShieldCheckIcon className="size-3.5" />
+                  <Trash2Icon className="size-3.5" />
                 </Button>
-              ) : null}
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="text-muted-foreground hover:text-destructive"
-                onClick={() => onDelete(server)}
-                title="移除 MCP"
-              >
-                <Trash2Icon className="size-3.5" />
-              </Button>
+              </div>
             </div>
-          </div>
-        ))}
-        {mcpServers.length === 0 && (
-          <div className="col-span-full py-16 flex flex-col items-center justify-center text-center">
-            <span className="flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3 shadow-2xs">
-              <PlugZapIcon className="size-7" />
-            </span>
-            <h3 className="text-base font-semibold">还没有配置 MCP 外部能力</h3>
-            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-              你可以连接远程 Streamable HTTP / SSE 服务或本地 stdio 进程，为 Agent 扩展工具库。
-            </p>
-            {onAddMcp ? (
-              <Button size="sm" onClick={onAddMcp} className="gap-1.5 mt-4 cursor-pointer">
-                <PlusIcon className="size-3.5" />
-                添加第一个 MCP 服务
-              </Button>
-            ) : null}
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2 mt-4">
+          {paginated.map((server) => (
+            <div
+              className="flex items-center justify-between gap-4 rounded-xl border bg-card/60 px-4 py-3 shadow-2xs transition-all duration-200 hover:border-primary/40 hover:bg-card"
+              key={server.id}
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-primary shadow-2xs">
+                  <PlugZapIcon className="size-4" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm truncate" title={server.name}>
+                      {server.name}
+                    </span>
+                    <Badge variant="outline" className="text-[10px] font-mono uppercase">
+                      {server.transport}
+                    </Badge>
+                  </div>
+                  <p
+                    className="mt-0.5 truncate text-xs text-muted-foreground font-mono"
+                    title={server.transport === "stdio" ? server.command : server.url}
+                  >
+                    {server.transport === "stdio" ? server.command : server.url}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {server.transport === "http" && server.oauth?.enabled ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={() => onAuthenticate(server)}
+                    title="OAuth 授权"
+                  >
+                    <ShieldCheckIcon className="size-3.5" />
+                  </Button>
+                ) : null}
+                {onEdit ? (
+                  <Button
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    onClick={() => onEdit(server)}
+                    title="编辑 MCP 配置"
+                  >
+                    <PencilIcon className="size-3.5" />
+                  </Button>
+                ) : null}
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="text-muted-foreground hover:text-destructive cursor-pointer"
+                  onClick={() => onDelete(server)}
+                  title="移除 MCP"
+                >
+                  <Trash2Icon className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {totalPages > 1 ? (
+        <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t pt-4">
+          <span className="text-xs text-muted-foreground">
+            第 {safePage} / {totalPages} 页 · 共 {mcpServers.length} 个服务 · 每页 {pageSize} 条
+          </span>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="gap-1 pl-2.5 h-8 text-xs cursor-pointer"
+                >
+                  <ChevronLeftIcon className="size-3.5" />
+                  <span>上一页</span>
+                </Button>
+              </PaginationItem>
+              {getPaginationRange(safePage, totalPages).map((item, idx) => (
+                <PaginationItem key={typeof item === "number" ? item : `ellipsis-${idx}`}>
+                  {item === "..." ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <Button
+                      variant={safePage === item ? "outline" : "ghost"}
+                      size="icon"
+                      className="size-8 text-xs font-mono cursor-pointer"
+                      onClick={() => setPage(Number(item))}
+                    >
+                      {item}
+                    </Button>
+                  )}
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="gap-1 pr-2.5 h-8 text-xs cursor-pointer"
+                >
+                  <span>下一页</span>
+                  <ChevronRightIcon className="size-3.5" />
+                </Button>
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1156,12 +1600,14 @@ function SkillTopBarActions({
   installing,
   onInstall,
   onRemove,
+  onEdit,
 }: {
   visible: boolean;
   installed: boolean;
   installing: boolean;
   onInstall: () => void;
   onRemove: () => void;
+  onEdit?: () => void;
 }) {
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
 
@@ -1181,15 +1627,28 @@ function SkillTopBarActions({
       )}
     >
       {installed ? (
-        <Button
-          onClick={onRemove}
-          variant="outline"
-          size="sm"
-          className="h-7 cursor-pointer gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
-        >
-          <Trash2Icon className="size-3.5 text-destructive" />
-          移除技能
-        </Button>
+        <>
+          {onEdit ? (
+            <Button
+              onClick={onEdit}
+              variant="outline"
+              size="sm"
+              className="h-7 cursor-pointer gap-1 px-2.5 text-xs"
+            >
+              <PencilIcon className="size-3.5" />
+              编辑配置
+            </Button>
+          ) : null}
+          <Button
+            onClick={onRemove}
+            variant="outline"
+            size="sm"
+            className="h-7 cursor-pointer gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+          >
+            <Trash2Icon className="size-3.5 text-destructive" />
+            移除技能
+          </Button>
+        </>
       ) : (
         <Button
           onClick={onInstall}
@@ -1218,6 +1677,7 @@ function SkillDetailPage({
   installing,
   onInstall,
   onRemove,
+  onEdit,
   onUsePrompt,
 }: {
   detail: SkillDetail | null;
@@ -1227,6 +1687,7 @@ function SkillDetailPage({
   installing: boolean;
   onInstall: () => void;
   onRemove: () => void;
+  onEdit?: () => void;
   onUsePrompt: (prompt: string) => void;
 }) {
   const [showTopBarButton, setShowTopBarButton] = React.useState(false);
@@ -1269,6 +1730,7 @@ function SkillDetailPage({
         installing={installing}
         onInstall={onInstall}
         onRemove={onRemove}
+        onEdit={onEdit}
       />
       <ScrollArea
         className="min-h-0 flex-1"
@@ -1332,15 +1794,28 @@ function SkillDetailPage({
                 {/* 页面主操作按钮 */}
                 <div ref={heroActionRef} className="flex items-center gap-2 shrink-0 sm:self-start">
                   {installed ? (
-                    <Button
-                      onClick={onRemove}
-                      variant="outline"
-                      size="sm"
-                      className="cursor-pointer gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
-                    >
-                      <Trash2Icon className="size-4 text-destructive" />
-                      移除技能
-                    </Button>
+                    <>
+                      {onEdit ? (
+                        <Button
+                          onClick={onEdit}
+                          variant="outline"
+                          size="sm"
+                          className="cursor-pointer gap-1.5"
+                        >
+                          <PencilIcon className="size-4" />
+                          编辑配置
+                        </Button>
+                      ) : null}
+                      <Button
+                        onClick={onRemove}
+                        variant="outline"
+                        size="sm"
+                        className="cursor-pointer gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
+                      >
+                        <Trash2Icon className="size-4 text-destructive" />
+                        移除技能
+                      </Button>
+                    </>
                   ) : (
                     <Button
                       disabled={installing}
@@ -1570,6 +2045,149 @@ function SkillDetailPage({
         </main>
       </ScrollArea>
     </div>
+  );
+}
+
+function SkillEditDialog({
+  open,
+  onOpenChange,
+  skill,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  skill: SkillMetadata | null;
+  onSave: (name: string, patch: { description?: string; instructions?: string }) => Promise<void>;
+}) {
+  const [description, setDescription] = React.useState("");
+  const [instructions, setInstructions] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open || !skill) {
+      setDescription("");
+      setInstructions("");
+      return;
+    }
+    setDescription(skill.description || "");
+    setLoading(true);
+    fetchSkillDetail(skill)
+      .then((detail) => {
+        if (detail) {
+          setDescription(detail.description || "");
+          setInstructions(detail.instructions || "");
+        }
+      })
+      .catch((err) => {
+        toastError(err, "获取技能详情失败");
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [open, skill]);
+
+  const handleSave = async () => {
+    if (!skill) return;
+    setSaving(true);
+    try {
+      await onSave(skill.name, {
+        description: description.trim(),
+        instructions: instructions.trim(),
+      });
+      onOpenChange(false);
+    } catch {
+      // Handled in onSave / updateSkill
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[min(88vh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+        <DialogHeader className="shrink-0 border-b bg-background px-5 py-4 pr-12">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-xl shadow-2xs">
+              {skill ? skillIcon(skill) : "✨"}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <DialogTitle className="text-base font-semibold">编辑技能配置</DialogTitle>
+                {skill ? (
+                  <Badge variant="outline" className="font-mono text-xs">
+                    {skill.name}
+                  </Badge>
+                ) : null}
+              </div>
+              <DialogDescription className="mt-0.5 text-xs">
+                修改该技能在本地的简要描述及 SKILL.md 中的执行说明指令。
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="grid gap-4 px-6 py-4 pb-6">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
+                <Dotm3x3_1 size={16} dotSize={2.4} colorPreset="solid-theme" />
+                正在读取技能详情…
+              </div>
+            ) : (
+              <>
+                <Field>
+                  <FieldLabel className="text-xs font-medium">技能简要描述</FieldLabel>
+                  <Textarea
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="简述该技能的功能与触发场景..."
+                    className="resize-none text-xs"
+                    rows={2}
+                  />
+                  <FieldDescription className="text-[11px]">
+                    用于在技能列表或 Agent 工具栏中快速展示功能摘要。
+                  </FieldDescription>
+                </Field>
+
+                <Field>
+                  <FieldLabel className="text-xs font-medium">
+                    执行说明与系统提示词 (SKILL.md)
+                  </FieldLabel>
+                  <Textarea
+                    value={instructions}
+                    onChange={(e) => setInstructions(e.target.value)}
+                    placeholder="输入该技能的详细执行指引、约束与系统提示词..."
+                    className="font-mono text-xs leading-relaxed resize-y min-h-[220px]"
+                    rows={10}
+                  />
+                  <FieldDescription className="text-[11px]">
+                    当调用此技能时，这些指令将被注入给 Agent 作为执行指引。
+                  </FieldDescription>
+                </Field>
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none border-0 border-t bg-background px-5 py-3 sm:flex-row sm:items-center sm:justify-end gap-2">
+          <DialogClose render={<Button variant="ghost" size="sm" />}>取消</DialogClose>
+          <Button
+            size="sm"
+            disabled={loading || saving}
+            onClick={() => void handleSave()}
+            className="gap-1.5 cursor-pointer"
+          >
+            {saving ? (
+              <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
+            ) : (
+              <CheckIcon className="size-3.5" />
+            )}
+            {saving ? "正在保存…" : "保存修改"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

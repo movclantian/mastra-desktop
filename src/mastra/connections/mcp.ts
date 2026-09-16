@@ -5,7 +5,9 @@
  * 支持 HTTP (SSE) 与 Stdio (子进程) 双传输,配置存 app_config 表
  * (key = "mcp"),按配置哈希缓存 MCPClient,变更后重建并动态注入 Agent 工具集。
  */
+import { createHash, randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
+import type { StorageMCPServerConfig } from "@mastra/core/storage";
 import {
   getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
@@ -14,7 +16,7 @@ import {
   type OAuthStorage,
 } from "@mastra/mcp";
 import { stringRecord } from "../config/normalize";
-import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
+import { appStorage, deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
 
 type McpTransport = "http" | "stdio";
 
@@ -54,6 +56,15 @@ interface McpServerSummary extends Omit<McpServerConfig, "headers" | "env"> {
 
 const MCP_CONFIG_KEY = "mcp";
 const EMPTY_CONFIG: McpConfig = { servers: [] };
+const STORED_MCP_PREFIX = "mastrawork-";
+const STORED_MCP_MARKER = "mastrawork-configured";
+const mcpSyncedScopes = new Set<string>();
+
+function storedMcpId(serverId: string, resourceId?: string): string {
+  const scope = storedMcpOwner(resourceId);
+  const digest = createHash("sha256").update(scope).digest("hex").slice(0, 12);
+  return `${STORED_MCP_PREFIX}${digest}-${serverId}`;
+}
 
 interface McpRuntime {
   cachedHash: string;
@@ -133,19 +144,28 @@ function normalizeServer(value: unknown): McpServerConfig | null {
 
 export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
   const raw = await getAppConfig(MCP_CONFIG_KEY, resourceId);
-  if (!raw) return EMPTY_CONFIG;
-  try {
-    const parsed = JSON.parse(raw) as { servers?: unknown };
-    return {
-      servers: Array.isArray(parsed.servers)
-        ? parsed.servers
-            .map(normalizeServer)
-            .filter((item): item is McpServerConfig => Boolean(item))
-        : [],
-    };
-  } catch {
-    return EMPTY_CONFIG;
+  let config = EMPTY_CONFIG;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { servers?: unknown };
+      config = {
+        servers: Array.isArray(parsed.servers)
+          ? parsed.servers
+              .map(normalizeServer)
+              .filter((item): item is McpServerConfig => Boolean(item))
+          : [],
+      };
+    } catch {
+      config = EMPTY_CONFIG;
+    }
   }
+  const scope = storedMcpOwner(resourceId);
+  if (!mcpSyncedScopes.has(scope)) {
+    await syncStoredMcpClients(config.servers, resourceId)
+      .then(() => mcpSyncedScopes.add(scope))
+      .catch(() => undefined);
+  }
+  return config;
 }
 
 export async function saveMcpConfig(config: McpConfig, resourceId?: string): Promise<void> {
@@ -155,12 +175,95 @@ export async function saveMcpConfig(config: McpConfig, resourceId?: string): Pro
   if (servers.length !== config.servers.length) throw new Error("MCP 配置无效");
   if (new Set(servers.map((server) => server.id)).size !== servers.length)
     throw new Error("MCP ID 不能重复");
+  await syncStoredMcpClients(servers, resourceId);
   await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2), resourceId);
+  mcpSyncedScopes.add(storedMcpOwner(resourceId));
   const runtime = getRuntime(resourceId);
   await runtime.cachedClient?.disconnect().catch(() => undefined);
   runtime.cachedHash = "";
   runtime.cachedClient = null;
   runtime.cachedTools = {};
+}
+
+function storedMcpOwner(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
+}
+
+function storedMcpServer(server: McpServerConfig): StorageMCPServerConfig {
+  // Editor storage is returned to Studio; never copy app_config credentials or OAuth state there.
+  if (server.transport === "http") {
+    if (!server.url) throw new Error(`MCP 服务 ${server.id} 缺少 URL`);
+    return { type: "http", url: server.url };
+  }
+  if (!server.command) throw new Error(`MCP 服务 ${server.id} 缺少启动命令`);
+  return {
+    type: "stdio",
+    command: server.command,
+    args: server.args,
+    env: server.env,
+  };
+}
+
+/** Mirror configured servers into the official Editor domain consumed by Studio /mcps. */
+async function syncStoredMcpClients(
+  servers: McpServerConfig[],
+  resourceId?: string,
+): Promise<void> {
+  const store = await appStorage.getStore("mcpClients");
+  if (!store) throw new Error("MCP clients storage domain is not available");
+  const owner = storedMcpOwner(resourceId);
+  const desiredIds = new Set<string>();
+
+  for (const server of servers) {
+    const id = storedMcpId(server.id, resourceId);
+    desiredIds.add(id);
+    const snapshot = {
+      name: server.name,
+      description: "MastraWork configured MCP server",
+      servers: { [server.id]: storedMcpServer(server) },
+    };
+    const metadata = {
+      mastrawork: STORED_MCP_MARKER,
+      mastraworkEnabled: server.enabled ? "true" : "false",
+      mastra_resource_id: owner,
+    };
+    const existing = await store.getById(id);
+    if (existing && existing.metadata?.mastrawork !== STORED_MCP_MARKER) continue;
+    if (!existing) {
+      await store.create({ mcpClient: { id, authorId: owner, metadata, ...snapshot } });
+    } else {
+      const latest = await store.getLatestVersion(id);
+      const unchanged =
+        latest?.name === snapshot.name &&
+        latest.description === snapshot.description &&
+        JSON.stringify(latest.servers) === JSON.stringify(snapshot.servers);
+      if (!unchanged) {
+        await store.createVersion({
+          id: randomUUID(),
+          mcpClientId: id,
+          versionNumber: (latest?.versionNumber ?? 0) + 1,
+          ...snapshot,
+          changedFields: ["name", "description", "servers"],
+          changeMessage: "MastraWork MCP configuration updated",
+        });
+      }
+      await store.update({ id, authorId: owner, metadata });
+    }
+    const current = await store.getLatestVersion(id);
+    if (current) await store.update({ id, status: "published", activeVersionId: current.id });
+  }
+
+  const published = await store.list({
+    perPage: false,
+    authorId: owner,
+    metadata: { mastrawork: STORED_MCP_MARKER, mastra_resource_id: owner },
+    status: "published",
+  });
+  await Promise.all(
+    published.mcpClients
+      .filter((client) => !desiredIds.has(client.id))
+      .map((client) => store.delete(client.id)),
+  );
 }
 
 export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {

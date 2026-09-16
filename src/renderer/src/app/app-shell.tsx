@@ -4,6 +4,7 @@ import { useWorkbench, WorkbenchProvider } from "@/entities/workbench";
 import { LoginScreen, useAuth } from "@/features/auth";
 import { AgentHubPage } from "@/pages/agents";
 import { ChatPage } from "@/pages/chat";
+import { SchedulesPage } from "@/pages/schedules";
 import { SettingsPage } from "@/pages/settings";
 import { SkillHubPage } from "@/pages/skills";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
@@ -166,6 +167,10 @@ function AppShell() {
                       onSettingsOpenChange={setLibrarySettingsOpen}
                     />
                   </React.Suspense>
+                </BlurFade>
+              ) : activeView === "schedules" ? (
+                <BlurFade key="schedules" duration={0.2} blur="3px" className="size-full">
+                  <SchedulesPage />
                 </BlurFade>
               ) : (
                 <ChatPage userId={user.id} />

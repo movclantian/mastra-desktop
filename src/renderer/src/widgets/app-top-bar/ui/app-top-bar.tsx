@@ -41,7 +41,9 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
         ? "技能套件"
         : activeView === "library"
           ? "资料库"
-          : (threads.find((thread) => thread.id === activeThreadId)?.title ?? "MastraWork");
+          : activeView === "schedules"
+            ? "已安排"
+            : (threads.find((thread) => thread.id === activeThreadId)?.title ?? "MastraWork");
   const isCurrentThreadBusy = activeThreadId ? isThreadBusy(activeThreadId) : false;
 
   return (

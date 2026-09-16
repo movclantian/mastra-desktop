@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { getMcpServer, type McpSummary } from "@/entities/skill";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { toastError } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -55,6 +56,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  server?: McpSummary | McpFormServer | null;
 }
 
 const initial = (): McpFormServer => ({
@@ -109,7 +111,7 @@ function generatedServerId(form: McpFormServer) {
   return `mcp-${(hash >>> 0).toString(36)}`;
 }
 
-export function McpDialog({ open, onOpenChange, onSaved }: Props) {
+export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const [form, setForm] = React.useState<McpFormServer>(initial);
   const [headersText, setHeadersText] = React.useState("");
   const [envText, setEnvText] = React.useState("");
@@ -118,14 +120,104 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
 
+  const isEditing = Boolean(server);
+
   React.useEffect(() => {
     if (!open) return;
-    setForm(initial());
-    setHeadersText("");
-    setEnvText("");
-    setAllowedHostsText("");
-    setArgsText("");
-  }, [open]);
+    if (!server) {
+      setForm(initial());
+      setHeadersText("");
+      setEnvText("");
+      setAllowedHostsText("");
+      setArgsText("");
+      return;
+    }
+
+    const initialTransport =
+      server.transport || (server as { type?: string }).type === "stdio" ? "stdio" : "http";
+    const initialForm: McpFormServer = {
+      id: server.id || "",
+      name: server.name || "",
+      enabled: server.enabled ?? true,
+      transport: initialTransport,
+      url: server.url ?? "",
+      headers: (server as McpFormServer).headers ?? {},
+      allowedHosts: (server as { allowedHosts?: string[] }).allowedHosts ?? [],
+      command: server.command ?? "",
+      args: server.args ?? [],
+      env: (server as McpFormServer).env ?? {},
+      inheritDefaultEnv: (server as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
+      requireToolApproval:
+        (server as { requireToolApproval?: boolean }).requireToolApproval ?? true,
+      oauth: server.oauth ?? { enabled: false },
+    };
+    setForm(initialForm);
+    setArgsText(server.args?.join("\n") ?? "");
+    setAllowedHostsText((server as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
+
+    const headersObj = (server as McpFormServer).headers;
+    if (headersObj && typeof headersObj === "object") {
+      setHeadersText(
+        Object.entries(headersObj)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\n"),
+      );
+    } else {
+      setHeadersText("");
+    }
+    const envObj = (server as McpFormServer).env;
+    if (envObj && typeof envObj === "object") {
+      setEnvText(
+        Object.entries(envObj)
+          .map(([k, v]) => `${k}=${v}`)
+          .join("\n"),
+      );
+    } else {
+      setEnvText("");
+    }
+
+    if (server.id) {
+      getMcpServer(server.id)
+        .then((full) => {
+          setForm({
+            id: full.id,
+            name: full.name,
+            enabled: full.enabled ?? true,
+            transport:
+              full.transport || ((full as { type?: string }).type === "stdio" ? "stdio" : "http"),
+            url: full.url ?? "",
+            headers: full.headers ?? {},
+            allowedHosts: (full as { allowedHosts?: string[] }).allowedHosts ?? [],
+            command: full.command ?? "",
+            args: full.args ?? [],
+            env: full.env ?? {},
+            inheritDefaultEnv: (full as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
+            requireToolApproval:
+              (full as { requireToolApproval?: boolean }).requireToolApproval ?? true,
+            oauth: full.oauth ?? { enabled: false },
+          });
+          setArgsText(full.args?.join("\n") ?? "");
+          setAllowedHostsText((full as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
+          if (full.headers) {
+            setHeadersText(
+              Object.entries(full.headers)
+                .map(([k, v]) => `${k}=${v}`)
+                .join("\n"),
+            );
+          }
+          if (full.env) {
+            setEnvText(
+              Object.entries(full.env)
+                .map(([k, v]) => `${k}=${v}`)
+                .join("\n"),
+            );
+          }
+        })
+        .catch(() => {
+          // Keep existing values
+        });
+    }
+  }, [open, server]);
 
   const update = (patch: Partial<McpFormServer>) =>
     setForm((current) => ({ ...current, ...patch }));
@@ -186,12 +278,13 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
         body: JSON.stringify({ server: payload() }),
       });
       const result = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(result.error || "保存 MCP 失败");
-      toast.success("MCP 能力已添加");
+      if (!response.ok)
+        throw new Error(result.error || (isEditing ? "更新 MCP 失败" : "保存 MCP 失败"));
+      toast.success(isEditing ? "MCP 配置已更新" : "MCP 能力已添加");
       onOpenChange(false);
       onSaved();
     } catch (error) {
-      toastError(error, "保存 MCP 失败");
+      toastError(error, isEditing ? "更新 MCP 失败" : "保存 MCP 失败");
     } finally {
       setSaving(false);
     }
@@ -199,22 +292,26 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[88vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+      <DialogContent className="flex max-h-[min(88vh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 border-b bg-background px-5 py-4 pr-12">
           <div className="flex items-start gap-3">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <PlugZapIcon className="size-4" />
             </span>
             <div className="min-w-0">
-              <DialogTitle className="text-base font-semibold">添加 MCP 外部能力</DialogTitle>
+              <DialogTitle className="text-base font-semibold">
+                {isEditing ? "编辑 MCP 外部能力" : "添加 MCP 外部能力"}
+              </DialogTitle>
               <DialogDescription className="mt-0.5 text-xs leading-normal">
-                连接远程 MCP 服务或本地 stdio 服务。密钥仅保存在本地服务端。
+                {isEditing
+                  ? "修改 MCP 服务的连接协议、运行命令、参数与鉴权配置。"
+                  : "连接远程 MCP 服务或本地 stdio 服务。密钥仅保存在本地服务端。"}
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <div className="grid gap-4 px-5 py-4">
+          <div className="grid gap-4 px-6 py-4 pb-6">
             <section className="grid gap-3">
               <div>
                 <h3 className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
@@ -273,12 +370,12 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                   placeholder="https://example.com/mcp"
                   required
                 />
-                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20 px-3.5">
-                  <CollapsibleTrigger className="group flex w-full items-center justify-between py-2.5 text-left text-xs font-medium">
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-medium">
                     高级连接选项（请求头 / Host 限制 / OAuth）
                     <ChevronDownIcon className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="grid gap-3 pb-3">
+                  <CollapsibleContent className="grid gap-3 px-3.5 pt-1 pb-3.5">
                     <TextAreaField
                       label="请求 Headers"
                       value={headersText}
@@ -315,12 +412,12 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
                   placeholder="npx"
                   required
                 />
-                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20 px-3.5">
-                  <CollapsibleTrigger className="group flex w-full items-center justify-between py-2.5 text-left text-xs font-medium">
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20">
+                  <CollapsibleTrigger className="group flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-medium">
                     高级命令选项（参数 / 环境变量）
                     <ChevronDownIcon className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
-                  <CollapsibleContent className="grid gap-3 pb-3">
+                  <CollapsibleContent className="grid gap-3 px-3.5 pt-1 pb-3.5">
                     <TextAreaField
                       label="命令参数"
                       value={argsText}
@@ -383,7 +480,7 @@ export function McpDialog({ open, onOpenChange, onSaved }: Props) {
             />
             <Button size="sm" disabled={saving || testing} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
-              {saving ? "保存中…" : "保存 MCP"}
+              {saving ? (isEditing ? "更新中…" : "保存中…") : isEditing ? "更新 MCP" : "保存 MCP"}
             </Button>
           </div>
         </DialogFooter>
@@ -408,7 +505,7 @@ function TextField({
   required?: boolean;
 }) {
   return (
-    <Field>
+    <Field className="px-0.5">
       <FieldLabel htmlFor={id}>
         {label}
         {required ? <span className="ml-1 text-destructive">*</span> : null}
@@ -440,7 +537,7 @@ function TextAreaField({
 }) {
   const fieldId = React.useId();
   return (
-    <Field>
+    <Field className="px-0.5">
       <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
       <Textarea
         id={fieldId}
@@ -471,7 +568,7 @@ function CheckField({
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
-    <Field orientation="horizontal" className="gap-3">
+    <Field orientation="horizontal" className="gap-3 px-0.5">
       <Checkbox
         id={id}
         checked={checked}
