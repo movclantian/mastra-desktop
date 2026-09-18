@@ -57,9 +57,5 @@ npmRebuild: false
 # node-pty ships N-API prebuilds for the supported desktop architectures.
 # Never force a local node-gyp/Visual Studio toolchain during packaging.
 buildDependenciesFromSource: false
-publish:
-  provider: generic
-  # TODO: 替换为你的真实更新服务器地址（需自行托管静态文件）
-  url: https://updates.mastra-desktop.app/auto-updates
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

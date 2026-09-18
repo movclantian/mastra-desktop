@@ -78,7 +78,10 @@ export function commandForFile(path: string): string | undefined {
   if (["ts", "mts", "cts"].includes(extension ?? ""))
     return `node --experimental-strip-types ${target}`;
   if (extension === "py") return `python ${target}`;
-  if (extension === "ps1") return `powershell -NoLogo -NoProfile -File ${target}`;
+  if (extension === "ps1") {
+    const shell = navigator.userAgent.includes("Windows") ? "powershell" : "pwsh";
+    return `${shell} -NoLogo -NoProfile -File ${target}`;
+  }
   if (extension === "sh") return `sh ${target}`;
   return undefined;
 }

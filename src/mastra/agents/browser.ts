@@ -1,6 +1,4 @@
 /** Resource-scoped browser configuration and lifecycle. */
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { AgentBrowser } from "@mastra/agent-browser";
 import { FirecrawlBrowser } from "@mastra/browser-firecrawl";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
@@ -9,6 +7,7 @@ import {
   STAGEHAND_MODEL_PROVIDERS,
   StagehandBrowser,
 } from "@mastra/stagehand";
+import { chromium } from "playwright-core";
 import { type BrowserConfig, BrowserConfigSchema } from "../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
@@ -40,23 +39,8 @@ export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
 };
 
 function resolveBundledChromium(): string | undefined {
-  const browserRoot = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (!browserRoot) return undefined;
   try {
-    const browserDir = readdirSync(browserRoot, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && /^chromium-\d+$/.test(entry.name))
-      .map((entry) => entry.name)
-      .sort()
-      .at(-1);
-    if (!browserDir) return undefined;
-    const relativePath =
-      process.platform === "win32"
-        ? join(browserDir, "chrome-win64", "chrome.exe")
-        : process.platform === "darwin"
-          ? join(browserDir, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")
-          : join(browserDir, "chrome-linux", "chrome");
-    const executable = join(browserRoot, relativePath);
-    return existsSync(executable) ? executable : undefined;
+    return chromium.executablePath() || undefined;
   } catch {
     return undefined;
   }

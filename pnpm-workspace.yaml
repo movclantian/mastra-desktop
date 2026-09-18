@@ -1,13 +1,16 @@
-# pnpm 11 配置
+# pnpm 12 配置
 dangerouslyAllowAllBuilds: true
 # onnxruntime-node(@mastra/fastembed 的原生依赖)有构建脚本:部署时 deployer 复制本
 # workspace 配置只认白名单键(不含 dangerouslyAllowAllBuilds),必须显式 allowBuilds
 # 才能让 .mastra/output 里的 pnpm install 放行其构建(否则 ERR_PNPM_IGNORED_BUILDS)
 allowBuilds:
+  '@google/genai': true
   agent-browser: true
+  bufferutil: true
   edgedriver: true
   geckodriver: true
   onnxruntime-node: true
+  protobufjs: true
 # 关闭供应链最小发布年龄保护（默认 1440s=1天）：刚发布的包立即可用
 minimumReleaseAge: 0
 shamefullyHoist: true
