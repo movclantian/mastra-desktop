@@ -3,33 +3,69 @@ name: Build and release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*.*.*'
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'electron-builder.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Windows
             os: windows-latest
-            target: win
+            artifact_name: win
+            builder_args: --win
+            artifact_paths: dist/*-setup.exe
           - name: macOS
             os: macos-latest
-            target: mac
-          - name: Linux
+            artifact_name: mac
+            builder_args: --mac
+            artifact_paths: dist/*.dmg
+          - name: Linux AppImage
             os: ubuntu-latest
-            target: linux
+            artifact_name: linux-appimage
+            builder_args: --linux AppImage
+            artifact_paths: dist/*.AppImage
+          - name: Linux Debian
+            os: ubuntu-latest
+            artifact_name: linux-deb
+            builder_args: --linux deb
+            artifact_paths: dist/*.deb
+          - name: Linux Snap
+            os: ubuntu-latest
+            artifact_name: linux-snap
+            builder_args: --linux snap
+            artifact_paths: dist/*.snap
+    env:
+      CI: 'true'
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+      PNPM_CONFIG_DANGEROUSLY_ALLOW_ALL_BUILDS: 'true'
+      npm_config_dangerously_allow_all_builds: 'true'
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:
-      - name: Checkout
+      - name: Check out tagged source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -42,26 +78,36 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Verify tag matches package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: >-
+          node -e "const p=require('./package.json').version,t=process.env.GITHUB_REF_NAME.replace(/^v/,'');if(p!==t){throw new Error('Tag '+process.env.GITHUB_REF_NAME+' does not match package.json version '+p)}"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build installer
-        run: pnpm run build:${{ matrix.target }}
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Build application
+        run: pnpm run build
+
+      - name: Package installer
+        run: pnpm exec electron-builder ${{ matrix.builder_args }}
 
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mastra-desktop-${{ matrix.target }}
-          path: dist/*
+          name: mastra-desktop-${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_paths }}
           if-no-files-found: error
           retention-days: 1
 
   release:
     name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
       - name: Download installer artifacts
         uses: actions/download-artifact@v4
@@ -73,5 +119,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
+          name: mastra-desktop ${{ github.ref_name }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
+          make_latest: true
           files: release-assets/**/*
