@@ -1,9 +1,21 @@
 import type { IpcRenderer } from "electron";
+import {
+  FILESYSTEM_CHANNELS,
+  OpenDirectoryRequestSchema,
+  OpenDirectoryResultSchema,
+  PickDirectoryResultSchema,
+} from "../../shared/filesystem-contract";
 
 export function createFilesystemApi(ipcRenderer: IpcRenderer) {
   return {
-    openDirectory: (directory: string) =>
-      ipcRenderer.invoke("open-directory", directory) as Promise<string>,
-    pickDirectory: () => ipcRenderer.invoke("pick-directory") as Promise<string>,
+    openDirectory: async (directory: string) =>
+      OpenDirectoryResultSchema.parse(
+        await ipcRenderer.invoke(
+          FILESYSTEM_CHANNELS.openDirectory,
+          OpenDirectoryRequestSchema.parse(directory),
+        ),
+      ),
+    pickDirectory: async () =>
+      PickDirectoryResultSchema.parse(await ipcRenderer.invoke(FILESYSTEM_CHANNELS.pickDirectory)),
   };
 }

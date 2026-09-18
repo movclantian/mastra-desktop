@@ -1,13 +1,20 @@
+import { i18n } from "@/shared/i18n";
 import type { ThemeInspirationPalette, ThemePreset } from "./types";
 
 export const THEME_PRESETS: ThemePreset[] = [
   {
     id: "default",
-    name: "现代极简",
+    get name() {
+      return i18n.t("settings:themes.presets.default.name");
+    },
     englishName: "Mastra Clean",
     category: "modern",
-    categoryLabel: "现代极简",
-    description: "基于 Mastra 官方设计规范的高性能极简风格，优雅微阴影与多层圆角体系。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.default.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.default.desc");
+    },
     registrySource: "official",
     styleKey: "default",
     light: {
@@ -82,11 +89,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "boldkit",
-    name: "BoldKit 新粗野",
+    get name() {
+      return i18n.t("settings:themes.presets.boldkit.name");
+    },
     englishName: "BoldKit Brutalism",
     category: "brutalism",
-    categoryLabel: "粗野主义",
-    description: "极具视觉张力的新粗野主义体系，以纯黑厚重描边、立体实体硬阴影和高饱和亮橙为代表。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.boldkit.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.boldkit.desc");
+    },
     registrySource: "@boldkit",
     styleKey: "boldkit",
     light: {
@@ -160,12 +173,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "neobrutalism",
-    name: "NeoBrutalism 经典",
+    get name() {
+      return i18n.t("settings:themes.presets.neobrutalism.name");
+    },
     englishName: "Classic NeoBrutalism",
     category: "brutalism",
-    categoryLabel: "粗野主义",
-    description:
-      "经典新粗野主义，0 弧度锐角几何、2px 纯黑外边框、4px 硬阴影与赛博柠檬黄、霓虹青撞色。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.neobrutalism.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.neobrutalism.desc");
+    },
     registrySource: "@neobrutalism",
     styleKey: "neobrutalism",
     light: {
@@ -239,11 +257,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "retroui",
-    name: "RetroUI 复古粗野",
+    get name() {
+      return i18n.t("settings:themes.presets.retroui.name");
+    },
     englishName: "Retro Modern Brutalism",
     category: "brutalism",
-    categoryLabel: "粗野主义",
-    description: "融合 90 年代报纸排版与极客终端质感，复古琥珀橙、羊皮纸暖底色与粗粝外框。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.retroui.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.retroui.desc");
+    },
     registrySource: "@retroui",
     styleKey: "retroui",
     light: {
@@ -317,11 +341,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "saaskit",
-    name: "SaaSKit 柔和粗野",
+    get name() {
+      return i18n.t("settings:themes.presets.saaskit.name");
+    },
     englishName: "SaaSKit Soft Brutal",
     category: "soft_brutalism",
-    categoryLabel: "柔和粗野",
-    description: "专为现代化高质感 SaaS 打造的柔和粗野主义，圆润大边角、克制深色轮廓与电光靛蓝。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.saaskit.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.saaskit.desc");
+    },
     registrySource: "@saaskit",
     styleKey: "saaskit",
     light: {
@@ -395,11 +425,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "pouf",
-    name: "Pouf 黏土拟物",
+    get name() {
+      return i18n.t("settings:themes.presets.pouf.name");
+    },
     englishName: "1st-Pouf Claymorphism",
     category: "clay_glass",
-    categoryLabel: "拟物与质感",
-    description: "柔和可爱的粉彩 3D 黏土膨胀风格，宛如软垫般的立体触觉、双层内发光与充气软阴影。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.pouf.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.pouf.desc");
+    },
     registrySource: "@1st-pouf",
     styleKey: "pouf",
     light: {
@@ -473,12 +509,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "glasscn",
-    name: "GlassCN 玻璃拟态",
+    get name() {
+      return i18n.t("settings:themes.presets.glasscn.name");
+    },
     englishName: "Glassmorphism UI",
     category: "clay_glass",
-    categoryLabel: "拟物与质感",
-    description:
-      "受 Apple 现代界面启发的半透明玻璃拟态，高饱和亚克力模糊、晶亮边缘微光与空间折射感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.glasscn.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.glasscn.desc");
+    },
     registrySource: "@glasscn",
     styleKey: "glasscn",
     light: {
@@ -553,11 +594,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "einui",
-    name: "EinUI 磨砂晶钻",
+    get name() {
+      return i18n.t("settings:themes.presets.einui.name");
+    },
     englishName: "EinUI Frosted Acrylic",
     category: "clay_glass",
-    categoryLabel: "拟物与质感",
-    description: "暗黑模式优先的深邃磨砂亚克力玻璃，天鹅绒般细腻雾面、柔和漫反射与冰晶翡翠质感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.einui.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.einui.desc");
+    },
     registrySource: "@einui",
     styleKey: "einui",
     light: {
@@ -631,12 +678,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "sabraman",
-    name: "Sabraman 经典拟物",
+    get name() {
+      return i18n.t("settings:themes.presets.sabraman.name");
+    },
     englishName: "Sabraman Skeuomorphism",
     category: "clay_glass",
-    categoryLabel: "拟物与质感",
-    description:
-      "致敬经典 UI 的高保真拟物风格，顶部高光倒角、立体渐变浮雕、真实物理按压触感与暖调质感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.sabraman.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.sabraman.desc");
+    },
     registrySource: "@sabraman",
     styleKey: "sabraman",
     light: {
@@ -710,12 +762,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "thegridcn",
-    name: "TheGridCN 创战纪",
+    get name() {
+      return i18n.t("settings:themes.presets.thegridcn.name");
+    },
     englishName: "Tron: Ares Cyber Sci-Fi",
     category: "scifi_dark",
-    categoryLabel: "科幻与发光",
-    description:
-      "受《创：战纪》(Tron: Ares) 启发的赛博科幻 HUD 系统，激光赤红与霓虹青蓝、HUD 扫描线与硬核电光发光。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.thegridcn.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.thegridcn.desc");
+    },
     registrySource: "@thegridcn",
     styleKey: "thegridcn",
     light: {
@@ -789,12 +846,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "gymnopedies",
-    name: "Gymnopédies 萨蒂静谧",
+    get name() {
+      return i18n.t("settings:themes.presets.gymnopedies.name");
+    },
     englishName: "Satie Literary Dark Glow",
     category: "scifi_dark",
-    categoryLabel: "科幻与发光",
-    description:
-      "灵感源自埃里克·萨蒂《裸体歌舞》的暗调静谧文学主题，古老衬线排版、烛光微金暖光与沉浸式夜读氛围。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.gymnopedies.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.gymnopedies.desc");
+    },
     registrySource: "@gymnopedies",
     styleKey: "gymnopedies",
     light: {
@@ -868,11 +930,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "atroui",
-    name: "AtroUI 深空霓虹",
+    get name() {
+      return i18n.t("settings:themes.presets.atroui.name");
+    },
     englishName: "AtroUI Cyberpunk Neon",
     category: "scifi_dark",
-    categoryLabel: "科幻与发光",
-    description: "暗黑模式优先的极客沉浸式霓虹，深空黑曜石底色、电光激光紫与强自发光边框。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.atroui.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.atroui.desc");
+    },
     registrySource: "@atroui",
     styleKey: "atroui",
     light: {
@@ -946,11 +1014,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "usva",
-    name: "Usva 极夜大气",
+    get name() {
+      return i18n.t("settings:themes.presets.usva.name");
+    },
     englishName: "Usva Nordic Mist Atmosphere",
     category: "scifi_dark",
-    categoryLabel: "科幻与发光",
-    description: "芬兰自然哲学与极夜极光漫反射设计系统，薄雾微光扩散、极客紧凑机能与有机空间质感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.usva.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.usva.desc");
+    },
     registrySource: "@usva",
     styleKey: "usva",
     light: {
@@ -1024,11 +1098,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "8bitcn",
-    name: "8bitCN 像素复古",
+    get name() {
+      return i18n.t("settings:themes.presets.8bitcn.name");
+    },
     englishName: "8-Bit Retro Gaming",
     category: "pixel_retro",
-    categoryLabel: "像素与游戏",
-    description: "经典的 8-bit FC/NES 像素复古风格，台阶状硬阴影、粗像素边框与街机怀旧质感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.8bitcn.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.8bitcn.desc");
+    },
     registrySource: "@8bitcn",
     styleKey: "8bitcn",
     light: {
@@ -1102,12 +1182,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "pixelact",
-    name: "Pixelact 像素艺术",
+    get name() {
+      return i18n.t("settings:themes.presets.pixelact.name");
+    },
     englishName: "Pixelact Playful Art",
     category: "pixel_retro",
-    categoryLabel: "像素与游戏",
-    description:
-      "俏皮活泼的像素艺术与 RPG 游戏化设计语言，马赛克边框、游戏糖果色系与像素动态交互。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.pixelact.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.pixelact.desc");
+    },
     registrySource: "@pixelact-ui",
     styleKey: "pixelact",
     light: {
@@ -1181,11 +1266,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "washiveil",
-    name: "WashiVeil 和纸轻纱",
+    get name() {
+      return i18n.t("settings:themes.presets.washiveil.name");
+    },
     englishName: "Washi Veil Oriental Aesthetics",
     category: "oriental_desktop",
-    categoryLabel: "东方与桌面",
-    description: "“和纸打底，轻纱覆盖，三层底光”，极具东方水墨禅意的中日文排版体系与和纸微透质感。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.washiveil.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.washiveil.desc");
+    },
     registrySource: "@washiveil",
     styleKey: "washiveil",
     light: {
@@ -1260,12 +1351,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "whiskeyjack",
-    name: "Whiskeyjack 桌面枢纽",
+    get name() {
+      return i18n.t("settings:themes.presets.whiskeyjack.name");
+    },
     englishName: "Whiskeyjack Desktop Hub",
     category: "oriental_desktop",
-    categoryLabel: "东方与桌面",
-    description:
-      "为跨端桌面软件 (Tauri/Electron) 打造的现代流线视觉系统，Metro 风格枢纽导航、磨砂操作条与紧凑桌面机能。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.whiskeyjack.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.whiskeyjack.desc");
+    },
     registrySource: "@whiskeyjack",
     styleKey: "whiskeyjack",
     light: {
@@ -1339,12 +1435,17 @@ export const THEME_PRESETS: ThemePreset[] = [
   },
   {
     id: "motion",
-    name: "动效流光",
+    get name() {
+      return i18n.t("settings:themes.presets.motion.name");
+    },
     englishName: "Motion Flow",
     category: "modern",
-    categoryLabel: "动效主导",
-    description:
-      "以 Magic UI 动效语言为核心的现代主题：极光渐变环境光、弹性过渡曲线，与光效/粒子组件深度联动。",
+    get categoryLabel() {
+      return i18n.t("settings:themes.presets.motion.categoryLabel");
+    },
+    get description() {
+      return i18n.t("settings:themes.presets.motion.desc");
+    },
     registrySource: "@magicui",
     styleKey: "motion",
     light: {
@@ -1421,8 +1522,12 @@ export const THEME_PRESETS: ThemePreset[] = [
 export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   {
     id: "cyber-yellow",
-    name: "赛博柠檬",
-    description: "纯黑边框与明烈电光黄",
+    get name() {
+      return i18n.t("settings:themes.inspirations.cyber-yellow.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.cyber-yellow.desc");
+    },
     primary: "#facc15",
     secondary: "#fef08a",
     accent: "#38bdf8",
@@ -1430,8 +1535,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "blaze-orange",
-    name: "烈焰赤橙",
-    description: "高张力活力热烈橙",
+    get name() {
+      return i18n.t("settings:themes.inspirations.blaze-orange.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.blaze-orange.desc");
+    },
     primary: "#ff5400",
     secondary: "#ffe5d0",
     accent: "#ffc837",
@@ -1439,8 +1548,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "neon-pink",
-    name: "泡泡糖粉",
-    description: "潮酷活泼的霓虹桃粉",
+    get name() {
+      return i18n.t("settings:themes.inspirations.neon-pink.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.neon-pink.desc");
+    },
     primary: "#f43f5e",
     secondary: "#fce7f3",
     accent: "#a855f7",
@@ -1448,8 +1561,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "terminal-green",
-    name: "极客荧绿",
-    description: "黑客复古终端荧光绿",
+    get name() {
+      return i18n.t("settings:themes.inspirations.terminal-green.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.terminal-green.desc");
+    },
     primary: "#22c55e",
     secondary: "#dcfce7",
     accent: "#06b6d4",
@@ -1457,8 +1574,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "tron-ares",
-    name: "创·战纪",
-    description: "Tron: Ares 激光赤红与青蓝",
+    get name() {
+      return i18n.t("settings:themes.inspirations.tron-ares.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.tron-ares.desc");
+    },
     primary: "#00f0ff",
     secondary: "#0f2238",
     accent: "#ff003c",
@@ -1466,8 +1587,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "famicom-red",
-    name: "红白机像素",
-    description: "FC红白机红白撞色与金币黄",
+    get name() {
+      return i18n.t("settings:themes.inspirations.famicom-red.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.famicom-red.desc");
+    },
     primary: "#e60012",
     secondary: "#e5e5e5",
     accent: "#f59e0b",
@@ -1475,8 +1600,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "washi-tea",
-    name: "和风古木",
-    description: "和纸打底黄栌染与深绯",
+    get name() {
+      return i18n.t("settings:themes.inspirations.washi-tea.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.washi-tea.desc");
+    },
     primary: "#8b572a",
     secondary: "#eee7d8",
     accent: "#c23531",
@@ -1484,8 +1613,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "desktop-slate",
-    name: "桌面流线",
-    description: "现代 Fluent 冰蓝与板岩灰",
+    get name() {
+      return i18n.t("settings:themes.inspirations.desktop-slate.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.desktop-slate.desc");
+    },
     primary: "#0284c7",
     secondary: "#f1f5f9",
     accent: "#6366f1",
@@ -1493,8 +1626,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "candle-amber",
-    name: "萨蒂烛光",
-    description: "静谧夜读暗金与暖琥珀",
+    get name() {
+      return i18n.t("settings:themes.inspirations.candle-amber.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.candle-amber.desc");
+    },
     primary: "#e2a855",
     secondary: "#241e1b",
     accent: "#f3b768",
@@ -1502,8 +1639,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "cyber-purple",
-    name: "深空霓虹",
-    description: "深空黑曜石与电光紫粉",
+    get name() {
+      return i18n.t("settings:themes.inspirations.cyber-purple.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.cyber-purple.desc");
+    },
     primary: "#c084fc",
     secondary: "#23153c",
     accent: "#f43f5e",
@@ -1511,8 +1652,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "nordic-aurora",
-    name: "北欧极光",
-    description: "极夜极光薄雾与冰川青",
+    get name() {
+      return i18n.t("settings:themes.inspirations.nordic-aurora.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.nordic-aurora.desc");
+    },
     primary: "#2dd4bf",
     secondary: "#132638",
     accent: "#38bdf8",
@@ -1520,8 +1665,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "pastel-clay",
-    name: "粉彩黏土",
-    description: "柔和治愈系薰衣草紫与棉花糖粉",
+    get name() {
+      return i18n.t("settings:themes.inspirations.pastel-clay.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.pastel-clay.desc");
+    },
     primary: "#8b5cf6",
     secondary: "#ede9fe",
     accent: "#fbcfe8",
@@ -1529,8 +1678,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "crystal-ice",
-    name: "冰晶极光",
-    description: "高透亮晶莹 Apple 玻璃海蓝",
+    get name() {
+      return i18n.t("settings:themes.inspirations.crystal-ice.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.crystal-ice.desc");
+    },
     primary: "#0284c7",
     secondary: "#e0f2fe",
     accent: "#38bdf8",
@@ -1538,8 +1691,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "emerald-glass",
-    name: "翡翠晶钻",
-    description: "磨砂深邃翡翠绿与薄荷青",
+    get name() {
+      return i18n.t("settings:themes.inspirations.emerald-glass.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.emerald-glass.desc");
+    },
     primary: "#059669",
     secondary: "#d1fae5",
     accent: "#10b981",
@@ -1547,8 +1704,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "classic-leather",
-    name: "复古皮质",
-    description: "经典拟物高光倒角与暖木棕",
+    get name() {
+      return i18n.t("settings:themes.inspirations.classic-leather.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.classic-leather.desc");
+    },
     primary: "#3b5998",
     secondary: "#d8d2c4",
     accent: "#c29b38",
@@ -1556,8 +1717,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "electric-indigo",
-    name: "电光靛蓝",
-    description: "现代科技感 SaaS 蓝紫",
+    get name() {
+      return i18n.t("settings:themes.inspirations.electric-indigo.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.electric-indigo.desc");
+    },
     primary: "#4f46e5",
     secondary: "#e0e7ff",
     accent: "#06b6d4",
@@ -1565,8 +1730,12 @@ export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [
   },
   {
     id: "monochrome-ink",
-    name: "极简纯墨",
-    description: "黑白极简主义对比",
+    get name() {
+      return i18n.t("settings:themes.inspirations.monochrome-ink.name");
+    },
+    get description() {
+      return i18n.t("settings:themes.inspirations.monochrome-ink.desc");
+    },
     primary: "#000000",
     secondary: "#e4e4e7",
     accent: "#71717a",

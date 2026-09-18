@@ -27,7 +27,6 @@ import {
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
-import { workBrowser } from "./browser";
 import {
   buildGuardrailErrorProcessors,
   buildGuardrailInputProcessors,
@@ -101,7 +100,6 @@ const explorerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
-  browser: workBrowser,
 });
 
 /**
@@ -130,7 +128,6 @@ const reviewerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
-  browser: workBrowser,
 });
 
 export const workSubagents = {

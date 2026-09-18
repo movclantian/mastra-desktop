@@ -1,9 +1,21 @@
 import type { IpcRenderer } from "electron";
+import {
+  MigrateStorageRequestSchema,
+  MigrateStorageResultSchema,
+  ResetAppDataResultSchema,
+  STORAGE_CHANNELS,
+} from "../../shared/storage-contract";
 
 export function createStorageApi(ipcRenderer: IpcRenderer) {
   return {
-    migrate: (directory: string) =>
-      ipcRenderer.invoke("migrate-storage", directory) as Promise<boolean>,
-    reset: () => ipcRenderer.invoke("reset-app-data") as Promise<boolean>,
+    migrate: async (directory: string) =>
+      MigrateStorageResultSchema.parse(
+        await ipcRenderer.invoke(
+          STORAGE_CHANNELS.migrate,
+          MigrateStorageRequestSchema.parse(directory),
+        ),
+      ),
+    reset: async () =>
+      ResetAppDataResultSchema.parse(await ipcRenderer.invoke(STORAGE_CHANNELS.reset)),
   };
 }

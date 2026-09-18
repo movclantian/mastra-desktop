@@ -14,6 +14,7 @@ import {
 import { createGatewayModel, inferGatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
 import {
   getProvidersConfig,
+  resolveProviderCredential,
   routerPrefix,
   splitRouterId,
   type UserProviderConfig,
@@ -57,7 +58,7 @@ export class WorkbenchGateway extends MastraModelGateway {
   async resolveAuth(request: GatewayAuthRequest): Promise<GatewayAuthResult | undefined> {
     const provider = await this.findProvider(request.providerId);
     if (!provider) return undefined;
-    return { apiKey: provider.apiKey, source: "gateway" };
+    return { apiKey: await resolveProviderCredential(provider), source: "gateway" };
   }
 
   async getApiKey(modelId: string): Promise<string> {
@@ -67,7 +68,7 @@ export class WorkbenchGateway extends MastraModelGateway {
         `未在设置中找到供应商 ${splitRouterId(modelId).providerId} 的 API Key,请先在「模型供应商」配置`,
       );
     }
-    return provider.apiKey;
+    return resolveProviderCredential(provider);
   }
 
   async buildUrl(modelId: string): Promise<string | undefined> {
@@ -87,6 +88,7 @@ export class WorkbenchGateway extends MastraModelGateway {
       const protocol = inferGatewayProtocol(args.providerId) ?? "openai";
       return createGatewayModel({
         modelId: args.modelId,
+        modelRouterId: `${args.providerId}/${args.modelId}`,
         apiKey: args.apiKey,
         protocol,
         useResponses: provider?.useResponses,
@@ -95,6 +97,7 @@ export class WorkbenchGateway extends MastraModelGateway {
     }
     return createGatewayModel({
       modelId: args.modelId,
+      modelRouterId: `${args.providerId}/${args.modelId}`,
       apiKey: args.apiKey,
       baseUrl,
       protocol: provider?.protocol,

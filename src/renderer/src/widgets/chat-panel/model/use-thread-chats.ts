@@ -3,6 +3,7 @@ import { DefaultChatTransport } from "ai";
 import * as React from "react";
 import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import { isTransientStreamError, STREAM_RECONNECT_LIMIT, streamErrorMessage } from "../lib/display";
 import type { WorkUIMessage } from "../model/types";
 
@@ -34,6 +35,7 @@ export function useThreadChats(
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
   const reconnectAttemptsRef = React.useRef(new Map<string, number>());
   const reconnectTimersRef = React.useRef(new Map<string, number>());
+  const resumeRequestsRef = React.useRef(new Set<string>());
   const buildRequestBodyRef = React.useRef(buildRequestBody);
   buildRequestBodyRef.current = buildRequestBody;
   const onThreadBusyChangeRef = React.useRef(onThreadBusyChange);
@@ -82,11 +84,15 @@ export function useThreadChats(
               messageId,
               messages: messages.length > 0 ? [messages[messages.length - 1]] : [],
             };
+            if (typeof payload.runId === "string" && typeof payload.toolCallId === "string") {
+              resumeRequestsRef.current.add(threadId);
+            }
             return { body: payload };
           },
         }),
         onFinish: ({ isError }) => {
           if (!isError) {
+            resumeRequestsRef.current.delete(threadId);
             reconnectAttemptsRef.current.delete(threadId);
             const timer = reconnectTimersRef.current.get(threadId);
             if (timer !== undefined) {
@@ -97,10 +103,14 @@ export function useThreadChats(
           }
         },
         onError: (error) => {
+          if (resumeRequestsRef.current.delete(threadId)) {
+            onThreadBusyChangeRef.current?.(threadId, false);
+            return;
+          }
           const detail = streamErrorMessage(error);
           if (!isTransientStreamError(error)) {
             onThreadBusyChangeRef.current?.(threadId, false);
-            toast.error(`本轮生成失败：${detail}`);
+            toast.error(i18n.t("chat:messages.turnFailed", { detail }));
             return;
           }
 
@@ -108,7 +118,7 @@ export function useThreadChats(
           reconnectAttemptsRef.current.set(threadId, attempt);
           if (attempt > STREAM_RECONNECT_LIMIT) {
             onThreadBusyChangeRef.current?.(threadId, false);
-            toast.error(`流式响应中断：${detail}`);
+            toast.error(i18n.t("chat:messages.streamInterruptedDetail", { detail }));
             return;
           }
 
@@ -130,7 +140,7 @@ export function useThreadChats(
                 if (!payload.displayState?.activeRunId) {
                   reconnectAttemptsRef.current.delete(threadId);
                   onThreadBusyChangeRef.current?.(threadId, false);
-                  toast.error(`流式响应中断：${detail}`);
+                  toast.error(i18n.t("chat:messages.streamInterruptedDetail", { detail }));
                 }
               })
               .catch(() => {

@@ -6,7 +6,7 @@
 
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { getToolsConfig, saveToolsConfig, type ToolsUserConfig } from "../tools";
+import { getToolsConfig, saveToolsConfig } from "../tools";
 
 // GET /work/tools — 读取当前工具配置
 export const toolsConfigRoute = registerApiRoute("/work/tools", {
@@ -23,7 +23,7 @@ export const saveToolsConfigRoute = registerApiRoute("/work/tools", {
   method: "POST",
   handler: async (c) => {
     await saveToolsConfig(
-      await c.req.json<ToolsUserConfig>(),
+      await c.req.json(),
       c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
     );
     return c.json({ ok: true });

@@ -10,9 +10,24 @@ import {
 } from "@open-file-viewer/core";
 import "@open-file-viewer/core/style.css";
 import { FileViewer } from "@open-file-viewer/react";
-import { FileQuestionIcon } from "lucide-react";
+import { FileCode2Icon, FileQuestionIcon } from "lucide-react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
+import type { BundledLanguage } from "shiki";
+import { useTranslation } from "@/shared/i18n";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockCopyButton,
+  CodeBlockFilename,
+  CodeBlockHeader,
+  CodeBlockLanguageSelector,
+  CodeBlockLanguageSelectorContent,
+  CodeBlockLanguageSelectorItem,
+  CodeBlockLanguageSelectorTrigger,
+  CodeBlockLanguageSelectorValue,
+  CodeBlockTitle,
+} from "@/shared/ui/ai-elements/code-block";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 import { getFileExtension } from "../lib/editor";
 
@@ -36,6 +51,84 @@ const DEFAULT_PREVIEW_TOOLBAR = {
   search: true,
 } as const;
 
+const CODE_LANGUAGES: Record<string, string> = {
+  c: "c",
+  cpp: "cpp",
+  css: "css",
+  go: "go",
+  html: "html",
+  java: "java",
+  js: "javascript",
+  json: "json",
+  jsx: "jsx",
+  md: "markdown",
+  mdx: "mdx",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  sh: "bash",
+  sql: "sql",
+  ts: "typescript",
+  tsx: "tsx",
+  vue: "vue",
+  xml: "xml",
+  yaml: "yaml",
+  yml: "yaml",
+};
+
+const CODE_LANGUAGE_OPTIONS = [...new Set(Object.values(CODE_LANGUAGES))].sort();
+
+function WorkspaceCodePreview({
+  code,
+  fileName,
+  initialLanguage,
+}: {
+  code: string;
+  fileName: string;
+  initialLanguage: BundledLanguage;
+}) {
+  const { t } = useTranslation();
+  const [language, setLanguage] = React.useState(initialLanguage);
+
+  return (
+    <CodeBlock
+      className="size-full overflow-auto rounded-none border-0"
+      code={code}
+      language={language}
+      showLineNumbers
+    >
+      <CodeBlockHeader className="sticky top-0 z-10">
+        <CodeBlockTitle className="min-w-0">
+          <FileCode2Icon className="size-3.5 shrink-0" />
+          <CodeBlockFilename className="truncate" title={fileName}>
+            {fileName}
+          </CodeBlockFilename>
+        </CodeBlockTitle>
+        <CodeBlockActions>
+          <CodeBlockLanguageSelector
+            onValueChange={(value) => {
+              if (value) setLanguage(value as BundledLanguage);
+            }}
+            value={language}
+          >
+            <CodeBlockLanguageSelectorTrigger aria-label={t("common:language")}>
+              <CodeBlockLanguageSelectorValue />
+            </CodeBlockLanguageSelectorTrigger>
+            <CodeBlockLanguageSelectorContent>
+              {CODE_LANGUAGE_OPTIONS.map((option) => (
+                <CodeBlockLanguageSelectorItem key={option} value={option}>
+                  {option}
+                </CodeBlockLanguageSelectorItem>
+              ))}
+            </CodeBlockLanguageSelectorContent>
+          </CodeBlockLanguageSelector>
+          <CodeBlockCopyButton size="icon-xs" />
+        </CodeBlockActions>
+      </CodeBlockHeader>
+    </CodeBlock>
+  );
+}
+
 export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
   filePath,
   fileName,
@@ -51,6 +144,7 @@ export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
   isDraft?: boolean;
   mimeType?: string;
 }) {
+  const { t, i18n } = useTranslation();
   const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -80,6 +174,17 @@ export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
   }, [content, fileName, isDraft, mimeType]);
 
   const source = isDraft ? blobUrl : url;
+  const language = CODE_LANGUAGES[getFileExtension(fileName)];
+  if (content !== undefined && language) {
+    return (
+      <WorkspaceCodePreview
+        code={content}
+        fileName={fileName}
+        initialLanguage={language as BundledLanguage}
+        key={`${filePath}:${language}`}
+      />
+    );
+  }
   if (!source) {
     if (isDraft && content !== undefined) {
       return null;
@@ -90,8 +195,8 @@ export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
           <EmptyMedia variant="icon">
             <FileQuestionIcon />
           </EmptyMedia>
-          <EmptyTitle>无法预览此文件</EmptyTitle>
-          <EmptyDescription>未找到有效的文件内容或预览源（{fileName}）</EmptyDescription>
+          <EmptyTitle>{t("workspace:cannotPreviewFile")}</EmptyTitle>
+          <EmptyDescription>{t("workspace:noValidFileContent", { fileName })}</EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -109,7 +214,7 @@ export const WorkspaceFilePreview = React.memo(function WorkspaceFilePreview({
         height="100%"
         fit="contain"
         fallback="inline"
-        locale="zh-CN"
+        locale={i18n.language === "zh" ? "zh-CN" : "en-US"}
         plugins={fileViewerPlugins}
         toolbar={DEFAULT_PREVIEW_TOOLBAR}
       />

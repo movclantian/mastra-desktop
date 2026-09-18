@@ -6,24 +6,71 @@ import type { ChildProcess } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { app, BrowserWindow, dialog, ipcMain, screen, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
 import {
-  parseTerminalCreateRequest,
-  parseTerminalResizeRequest,
-  parseTerminalSessionId,
-  parseTerminalWriteRequest,
+  CREDENTIAL_CHANNELS,
+  CredentialDeleteRequestSchema,
+  CredentialDeleteResultSchema,
+  CredentialPutRequestSchema,
+  CredentialPutResultSchema,
+} from "../shared/credential-contract";
+import {
+  FILESYSTEM_CHANNELS,
+  OpenDirectoryRequestSchema,
+  OpenDirectoryResultSchema,
+  PickDirectoryRequestSchema,
+  PickDirectoryResultSchema,
+} from "../shared/filesystem-contract";
+import {
+  GetProxyRequestSchema,
+  GetProxyResultSchema,
+  PROXY_CHANNELS,
+  type ProxyConfig,
+  type ProxyTestResult,
+  SetProxyRequestSchema,
+  SetProxyResultSchema,
+  TestProxyRequestSchema,
+  TestProxyResultSchema,
+} from "../shared/proxy-contract";
+import {
+  MigrateStorageRequestSchema,
+  MigrateStorageResultSchema,
+  ResetAppDataRequestSchema,
+  ResetAppDataResultSchema,
+  STORAGE_CHANNELS,
+} from "../shared/storage-contract";
+import {
   TERMINAL_CLOSE_CHANNEL,
   TERMINAL_CREATE_CHANNEL,
   TERMINAL_EVENT_CHANNEL,
   TERMINAL_RESIZE_CHANNEL,
   TERMINAL_WRITE_CHANNEL,
+  TerminalCreateRequestSchema,
+  TerminalCreateResultSchema,
+  TerminalResizeRequestSchema,
+  TerminalSessionIdSchema,
+  TerminalWriteRequestSchema,
 } from "../shared/terminal-contract";
+import { SetMinimumWidthRequestSchema, WINDOW_CHANNELS } from "../shared/window-contract";
+import {
+  type DetectedIde,
+  DetectIdesRequestSchema,
+  DetectIdesResultSchema,
+  ExternalUrlSchema,
+  OpenExternalRequestSchema,
+  OpenExternalResultSchema,
+  OpenInAppRequestSchema,
+  OpenInAppResultSchema,
+  WORKSPACE_CHANNELS,
+} from "../shared/workspace-contract";
+import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
 const MASTRA_SERVER_URL = "http://localhost:4111";
@@ -63,7 +110,34 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * 返回 undefined = 直连:未配置代理、代理已关闭(DIRECT)、不受支持的 SOCKS4
  * 代理,或系统代理规则解析失败。
  */
+function getProxyConfigFile(): string {
+  const defaultDir = join(homedir(), ".mastrawork");
+  return join(defaultDir, "proxy-config.json");
+}
+
+async function readAppProxyConfig(): Promise<ProxyConfig> {
+  try {
+    const file = getProxyConfigFile();
+    const content = await readFile(file, "utf-8");
+    return GetProxyResultSchema.parse(JSON.parse(content));
+  } catch {
+    /* 默认跟随系统代理 */
+  }
+  return { mode: "system" };
+}
+
+async function writeAppProxyConfig(config: ProxyConfig): Promise<void> {
+  const file = getProxyConfigFile();
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, JSON.stringify(config, null, 2), "utf-8");
+}
+
 async function resolveOutboundProxyUrl(): Promise<string | undefined> {
+  const config = await readAppProxyConfig();
+  if (config.mode === "direct") {
+    return undefined;
+  }
+  if (config.mode === "manual") return config.url;
   const explicit = (
     process.env.HTTPS_PROXY ??
     process.env.https_proxy ??
@@ -73,6 +147,87 @@ async function resolveOutboundProxyUrl(): Promise<string | undefined> {
   ).trim();
   if (explicit) return withProxyScheme(explicit, "http");
   return resolveSystemProxyUrl();
+}
+
+async function applySessionProxy(config: ProxyConfig): Promise<string | undefined> {
+  await app.whenReady();
+  let outboundProxy: string | undefined;
+  if (config.mode === "direct") {
+    await session.defaultSession.setProxy({ mode: "direct" });
+    outboundProxy = undefined;
+  } else if (config.mode === "manual") {
+    await session.defaultSession.setProxy({ proxyRules: config.url });
+    outboundProxy = config.url;
+  } else {
+    await session.defaultSession.setProxy({ mode: "system" });
+    outboundProxy = await resolveSystemProxyUrl();
+  }
+
+  if (outboundProxy) {
+    process.env.HTTPS_PROXY = outboundProxy;
+    process.env.HTTP_PROXY = outboundProxy;
+    process.env.https_proxy = outboundProxy;
+    process.env.http_proxy = outboundProxy;
+  } else {
+    for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) {
+      delete process.env[key];
+    }
+  }
+
+  // 若 Mastra 服务在线，同步通知动态变更 Dispatcher
+  if (await isServerUp(300)) {
+    try {
+      await fetch(`${MASTRA_SERVER_URL}/work/proxy`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN,
+        },
+        body: JSON.stringify({ mode: config.mode, url: outboundProxy }),
+        signal: AbortSignal.timeout(1_500),
+      });
+    } catch {
+      /* 静默忽略通知失败 */
+    }
+  }
+  return outboundProxy;
+}
+
+async function testProxyConnectivity(proxyUrl?: string): Promise<ProxyTestResult> {
+  await app.whenReady();
+  const testUrl = "https://models.dev/api.json";
+  const start = Date.now();
+  try {
+    const testSession = session.fromPartition(`proxy-test-${Date.now()}`);
+    if (proxyUrl?.trim()) {
+      await testSession.setProxy({ proxyRules: proxyUrl });
+    } else {
+      await testSession.setProxy({ mode: "system" });
+    }
+    const resp = await testSession.fetch(testUrl, {
+      method: "GET",
+      signal: AbortSignal.timeout(8_000),
+    });
+    const latencyMs = Date.now() - start;
+    if (resp.ok || resp.status < 500) {
+      return { ok: true, latencyMs };
+    }
+    return { ok: false, error: `代理连接异常：HTTP 状态码 ${resp.status} ${resp.statusText}` };
+  } catch (error) {
+    let msg = error instanceof Error ? error.message : String(error);
+    if (msg.includes("ERR_PROXY_CONNECTION_FAILED")) {
+      msg = "无法连接至代理服务器，请检查代理端口或服务是否开启";
+    } else if (msg.includes("ERR_CONNECTION_REFUSED")) {
+      msg = "代理连接被拒绝 (ECONNREFUSED)";
+    } else if (
+      msg.includes("ERR_TIMED_OUT") ||
+      msg.includes("timeout") ||
+      msg.includes("Timeout")
+    ) {
+      msg = "连接超时，代理服务器未在预期时间内响应";
+    }
+    return { ok: false, error: msg };
+  }
 }
 
 async function resolveSystemProxyUrl(): Promise<string | undefined> {
@@ -106,6 +261,41 @@ let mastraProcess: ChildProcess | null = null;
 let mastraStartPromise: Promise<void> | null = null;
 let isMastraStopping = false;
 let mainWindow: BrowserWindow | null = null;
+let credentialVault: CredentialVault | null = null;
+let credentialBroker: CredentialBroker | null = null;
+let appShutdownPromise: Promise<void> | null = null;
+
+function isTrustedRendererUrl(value: string): boolean {
+  try {
+    const expected = new URL(
+      is.dev && process.env.ELECTRON_RENDERER_URL
+        ? process.env.ELECTRON_RENDERER_URL
+        : pathToFileURL(join(__dirname, "../renderer/index.html")),
+    );
+    const actual = new URL(value);
+    return (
+      actual.origin === expected.origin &&
+      (expected.protocol !== "file:" || actual.pathname === expected.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedIpcSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
+  const window = mainWindow;
+  return Boolean(
+    window &&
+      !window.isDestroyed() &&
+      event.sender === window.webContents &&
+      event.senderFrame === window.webContents.mainFrame &&
+      isTrustedRendererUrl(event.senderFrame.url),
+  );
+}
+
+function assertTrustedIpcSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): void {
+  if (!isTrustedIpcSender(event)) throw new Error("unauthorized IPC request");
+}
 
 async function isServerUp(timeoutMs = 800): Promise<boolean> {
   try {
@@ -369,6 +559,8 @@ function showCrashDialog(detail: string): void {
  */
 function ensureMastraRunning(): Promise<void> {
   if (mastraStartPromise) return mastraStartPromise;
+  const broker = credentialBroker;
+  if (!broker) return Promise.reject(new Error("凭据 Broker 尚未启动"));
 
   mastraStartPromise = new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -407,6 +599,8 @@ function ensureMastraRunning(): Promise<void> {
         // Mastra. This keeps auth capability checks out of the EE dev path.
         MASTRA_DESKTOP_RUNTIME: "true",
         MASTRA_SHUTDOWN_TOKEN,
+        MASTRA_CREDENTIAL_BROKER_PATH: broker.endpoint,
+        MASTRA_CREDENTIAL_BROKER_TOKEN: broker.token,
       };
 
       // 服务进程是纯 Node,原生 fetch 不读系统代理;把解析出的代理以环境变量注入,
@@ -541,6 +735,22 @@ function createWindow(): void {
     },
   });
 
+  const displayMediaSession = mainWindow.webContents.session;
+  displayMediaSession.setDisplayMediaRequestHandler((request, callback) => {
+    const window = mainWindow;
+    if (
+      !window ||
+      window.isDestroyed() ||
+      !request.userGesture ||
+      !request.videoRequested ||
+      request.frame !== window.webContents.mainFrame
+    ) {
+      callback({});
+      return;
+    }
+    callback({ video: request.frame });
+  });
+
   const terminal = new TerminalSessionRuntime({
     runtimeRoot: is.dev ? getProjectRoot() : app.getAppPath(),
     defaultCwd: is.dev ? getProjectRoot() : app.getPath("home"),
@@ -551,32 +761,32 @@ function createWindow(): void {
     },
   });
 
-  const ownsTerminalRequest = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) =>
-    event.sender === mainWindow?.webContents;
   const handleTerminalCreate = async (event: Electron.IpcMainInvokeEvent, request: unknown) => {
-    if (!ownsTerminalRequest(event)) throw new Error("unauthorized terminal request");
-    return terminal.create(parseTerminalCreateRequest(request));
+    assertTrustedIpcSender(event);
+    return TerminalCreateResultSchema.parse(
+      await terminal.create(TerminalCreateRequestSchema.parse(request)),
+    );
   };
   const handleTerminalWrite = (event: Electron.IpcMainEvent, request: unknown) => {
-    if (!ownsTerminalRequest(event)) return;
+    if (!isTrustedIpcSender(event)) return;
     try {
-      terminal.write(parseTerminalWriteRequest(request));
+      terminal.write(TerminalWriteRequestSchema.parse(request));
     } catch {
       // High-frequency input is ignored when it does not match the IPC contract.
     }
   };
   const handleTerminalResize = (event: Electron.IpcMainEvent, request: unknown) => {
-    if (!ownsTerminalRequest(event)) return;
+    if (!isTrustedIpcSender(event)) return;
     try {
-      terminal.resize(parseTerminalResizeRequest(request));
+      terminal.resize(TerminalResizeRequestSchema.parse(request));
     } catch {
       // Invalid dimensions are ignored at the trusted boundary.
     }
   };
   const handleTerminalClose = (event: Electron.IpcMainEvent, sessionId: unknown) => {
-    if (!ownsTerminalRequest(event)) return;
+    if (!isTrustedIpcSender(event)) return;
     try {
-      terminal.close(parseTerminalSessionId(sessionId));
+      terminal.close(TerminalSessionIdSchema.parse(sessionId));
     } catch {
       // Invalid session ids are ignored at the trusted boundary.
     }
@@ -587,6 +797,7 @@ function createWindow(): void {
   ipcMain.on(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
 
   mainWindow.on("closed", () => {
+    displayMediaSession.setDisplayMediaRequestHandler(null);
     ipcMain.removeHandler(TERMINAL_CREATE_CHANNEL);
     ipcMain.removeListener(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
     ipcMain.removeListener(TERMINAL_RESIZE_CHANNEL, handleTerminalResize);
@@ -600,7 +811,8 @@ function createWindow(): void {
   });
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    const url = ExternalUrlSchema.safeParse(details.url);
+    if (url.success) void shell.openExternal(url.data);
     return { action: "deny" };
   });
 
@@ -611,13 +823,6 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
-}
-
-interface DetectedIdeInfo {
-  id: string;
-  name: string;
-  command: string;
-  category: "ide" | "system";
 }
 
 /**
@@ -636,7 +841,14 @@ async function findVSCodeExecutable(): Promise<string | null> {
       try {
         const { stdout } = await execFileAsync(lookupTool, [cmd], { timeout: 1500 });
         const firstLine = stdout.trim().split(/\r?\n/)[0]?.trim();
-        if (firstLine && existsSync(firstLine)) return firstLine;
+        if (firstLine && existsSync(firstLine)) {
+          if (isWin && firstLine.toLowerCase().endsWith(".cmd")) {
+            const executable = resolve(dirname(firstLine), "..", "Code.exe");
+            if (existsSync(executable)) return executable;
+            continue;
+          }
+          return firstLine;
+        }
       } catch {
         // try next command
       }
@@ -686,15 +898,15 @@ async function findVSCodeExecutable(): Promise<string | null> {
   return null;
 }
 
-let cachedDetectedIdes: DetectedIdeInfo[] | null = null;
+let cachedDetectedIdes: DetectedIde[] | null = null;
 let lastDetectionTime = 0;
 
-async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIdeInfo[]> {
+async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIde[]> {
   if (!forceRefresh && cachedDetectedIdes && Date.now() - lastDetectionTime < 120_000) {
     return cachedDetectedIdes;
   }
 
-  const results: DetectedIdeInfo[] = [];
+  const results: DetectedIde[] = [];
 
   const vscodePath = await findVSCodeExecutable();
   if (vscodePath) {
@@ -725,10 +937,6 @@ async function detectInstalledIdes(forceRefresh = false): Promise<DetectedIdeInf
 }
 
 function bootstrap(): void {
-  // 提前拉起 Mastra,与 Electron 自身初始化并行;窗口仍要等健康检查通过才创建,
-  // 保证"后端就绪 → 前端加载"的顺序。失败在 whenReady 里统一弹窗。
-  void ensureMastraRunning().catch(() => {});
-
   // This method will be called when Electron has finished
   // initialization and is ready to create browser windows.
   // Some APIs can only be used after this event occurs.
@@ -736,15 +944,45 @@ function bootstrap(): void {
     // Set app user model id for windows
     electronApp.setAppUserModelId("com.mastra.desktop");
 
+    try {
+      const vaultDirectory = join(app.getPath("userData"), "credential-vault");
+      credentialVault = new CredentialVault(vaultDirectory, safeStorage);
+      await credentialVault.initialize();
+      credentialBroker = new CredentialBroker(credentialVault, vaultDirectory);
+      await credentialBroker.start();
+    } catch (error) {
+      await dialog.showMessageBox({
+        type: "error",
+        title: "凭据金库启动失败",
+        message: error instanceof Error ? error.message : String(error),
+      });
+      app.exit(1);
+      return;
+    }
+
+    ipcMain.handle(CREDENTIAL_CHANNELS.put, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const request = CredentialPutRequestSchema.parse(value);
+      if (!credentialVault) throw new Error("凭据金库不可用");
+      return CredentialPutResultSchema.parse(
+        await credentialVault.put(request.value, request.purpose),
+      );
+    });
+
+    ipcMain.handle(CREDENTIAL_CHANNELS.delete, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const request = CredentialDeleteRequestSchema.parse(value);
+      if (!credentialVault) throw new Error("凭据金库不可用");
+      await credentialVault.delete(request.secretRef, request.purpose);
+      return CredentialDeleteResultSchema.parse(undefined);
+    });
+
     // Default open or close DevTools by F12 in development
     // and ignore CommandOrControl + R in production.
     // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
     app.on("browser-window-created", (_, window) => {
       optimizer.watchWindowShortcuts(window);
     });
-
-    // IPC test
-    ipcMain.on("ping", () => console.log("pong"));
 
     // 窗口最小宽度由渲染进程实测的布局需求决定(见 App.tsx 的 chatMinWidth)——
     // 写死一个数必然要么挡住用户缩窗口、要么挡不住布局被压坏。高度下限保持不变。
@@ -754,9 +992,12 @@ function bootstrap(): void {
     //
     // 它是**内容区**宽度(渲染进程用 window.innerWidth 度量),而 setMinimumSize 与
     // getBounds 走的是外框,Win11 上两者差十几像素 —— 所以这里换算一次再用。
-    ipcMain.on("set-minimum-width", (_event, width: number) => {
+    ipcMain.on(WINDOW_CHANNELS.setMinimumWidth, (event, value: unknown) => {
+      if (!isTrustedIpcSender(event)) return;
+      const request = SetMinimumWidthRequestSchema.safeParse(value);
+      if (!request.success) return;
+      const width = request.data;
       if (!mainWindow || mainWindow.isDestroyed()) return;
-      if (!Number.isFinite(width) || width <= 0) return;
       const bounds = mainWindow.getBounds();
       const frame = Math.max(0, mainWindow.getSize()[0] - mainWindow.getContentSize()[0]);
       const target = Math.ceil(width) + frame;
@@ -778,46 +1019,70 @@ function bootstrap(): void {
     });
 
     // 打开存储目录(Electron 官方 shell.openPath)
-    ipcMain.handle("open-directory", (_event, directory: string) => shell.openPath(directory));
+    ipcMain.handle(FILESYSTEM_CHANNELS.openDirectory, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const directory = OpenDirectoryRequestSchema.parse(value);
+      return OpenDirectoryResultSchema.parse(await shell.openPath(directory));
+    });
 
     // 动态检测用户操作系统中实际安装的各类 IDE 与系统工具
-    ipcMain.handle("detect-ides", async () => detectInstalledIdes());
+    ipcMain.handle(WORKSPACE_CHANNELS.detectIdes, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      DetectIdesRequestSchema.parse(value);
+      return DetectIdesResultSchema.parse(await detectInstalledIdes());
+    });
 
     // 在本地外部 IDE 或系统工具中打开工作区目录
-    ipcMain.handle("open-in-app", async (_event, payload: { app: string; targetPath: string }) => {
-      const { app: appName, targetPath } = payload || {};
-      if (!targetPath) return { ok: false, error: "未指定工作区路径" };
+    ipcMain.handle(WORKSPACE_CHANNELS.openInApp, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const { app: appName, targetPath } = OpenInAppRequestSchema.parse(value);
 
       try {
         if (appName === "explorer") {
-          await shell.openPath(targetPath);
-          return { ok: true };
+          const error = await shell.openPath(targetPath);
+          return OpenInAppResultSchema.parse(error ? { ok: false, error } : { ok: true });
         }
 
         if (appName === "terminal") {
           if (process.platform === "win32") {
-            const child = spawn("cmd.exe", ["/c", "start", "wt.exe", "-d", targetPath], {
+            const child = spawn("wt.exe", ["-d", targetPath], {
               detached: true,
               stdio: "ignore",
-              shell: true,
             });
             child.on("error", () => {
-              spawn("cmd.exe", ["/c", "start", "cmd.exe", "/K", `cd /d "${targetPath}"`], {
+              const fallback = spawn("cmd.exe", ["/K"], {
+                cwd: targetPath,
                 detached: true,
                 stdio: "ignore",
-                shell: true,
               });
+              fallback.unref();
             });
+            child.unref();
           } else if (process.platform === "darwin") {
-            spawn("open", ["-a", "Terminal", targetPath], { detached: true, stdio: "ignore" });
+            const child = spawn("open", ["-a", "Terminal", targetPath], {
+              detached: true,
+              stdio: "ignore",
+            });
+            child.unref();
           } else {
-            spawn("x-terminal-emulator", [], { cwd: targetPath, detached: true, stdio: "ignore" });
+            const child = spawn("x-terminal-emulator", [], {
+              cwd: targetPath,
+              detached: true,
+              stdio: "ignore",
+            });
+            child.unref();
           }
-          return { ok: true };
+          return OpenInAppResultSchema.parse({ ok: true });
         }
 
         if (appName === "vscode") {
-          const vscodeTarget = (await findVSCodeExecutable()) || "code";
+          const vscodeTarget = await findVSCodeExecutable();
+          if (!vscodeTarget) {
+            return OpenInAppResultSchema.parse({
+              ok: false,
+              error: "未检测到 Visual Studio Code",
+            });
+          }
           if (process.platform === "darwin" && vscodeTarget.endsWith(".app")) {
             const child = spawn("open", ["-a", vscodeTarget, targetPath], {
               detached: true,
@@ -828,38 +1093,32 @@ function bootstrap(): void {
             const child = spawn(vscodeTarget, [targetPath], {
               detached: true,
               stdio: "ignore",
-              shell: true,
             });
             child.unref();
           }
-          return { ok: true };
+          return OpenInAppResultSchema.parse({ ok: true });
         }
 
-        return { ok: false, error: `不支持的应用: ${appName}` };
+        return OpenInAppResultSchema.parse({ ok: false, error: `不支持的应用: ${appName}` });
       } catch (error) {
-        return {
+        return OpenInAppResultSchema.parse({
           ok: false,
           error: error instanceof Error ? error.message : "启动应用失败",
-        };
+        });
       }
     });
 
-    ipcMain.handle("open-external", async (_event, value: string) => {
-      let url: URL;
-      try {
-        url = new URL(value);
-      } catch {
-        return;
-      }
-      if (url.protocol !== "http:" && url.protocol !== "https:") {
-        return;
-      }
-      await shell.openExternal(url.toString());
+    ipcMain.handle(WORKSPACE_CHANNELS.openExternal, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      await shell.openExternal(OpenExternalRequestSchema.parse(value));
+      return OpenExternalResultSchema.parse(undefined);
     });
 
     // 系统目录选择器(Electron 官方 dialog.showOpenDialog)。
     // 所有路径类设置(存储位置/工作区根目录/额外目录/Skills 目录)统一走此处,不手输路径。
-    ipcMain.handle("pick-directory", async () => {
+    ipcMain.handle(FILESYSTEM_CHANNELS.pickDirectory, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      PickDirectoryRequestSchema.parse(value);
       const focused = BrowserWindow.getFocusedWindow();
       const options = {
         properties: ["openDirectory", "createDirectory"] as Array<
@@ -869,8 +1128,9 @@ function bootstrap(): void {
       const result = focused
         ? await dialog.showOpenDialog(focused, options)
         : await dialog.showOpenDialog(options);
-      if (result.canceled || result.filePaths.length === 0) return "";
-      return result.filePaths[0];
+      return PickDirectoryResultSchema.parse(
+        result.canceled || result.filePaths.length === 0 ? "" : result.filePaths[0],
+      );
     });
 
     // 存储位置迁移:数据库文件句柄活跃时只有杀掉进程才能释放 ——
@@ -878,8 +1138,9 @@ function bootstrap(): void {
     // → 写 storage-location.json → 重新拉起并等健康检查。任一步失败则保留旧配置、
     // 按旧位置重启服务并向上抛错。storage-location.json 的落点与服务端
     // storage/index.ts 的 STORAGE_CONFIG_FILE 保持一致(dev 项目根 / 打包 resources)。
-    ipcMain.handle("migrate-storage", async (_event, directory: string) => {
-      if (!directory) throw new Error("directory is required");
+    ipcMain.handle(STORAGE_CHANNELS.migrate, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const directory = MigrateStorageRequestSchema.parse(value);
       const targetDir = resolve(directory);
       let oldDir = "";
       try {
@@ -926,13 +1187,15 @@ function bootstrap(): void {
         throw err;
       }
       await ensureMastraRunning();
-      return true;
+      return MigrateStorageResultSchema.parse(true);
     });
 
     // 一键重置软件数据:先问服务要实际数据目录 → 停服务(解除数据库文件句柄,
     // Windows 下删打开中的文件会直接失败)→ 清理 → 自动重启。
     // 数据目录必须从服务侧拿,主进程侧 cwd 推算在打包态会落错位置。
-    ipcMain.handle("reset-app-data", async () => {
+    ipcMain.handle(STORAGE_CHANNELS.reset, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      ResetAppDataRequestSchema.parse(value);
       let dataDir = "";
       try {
         const resp = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
@@ -946,6 +1209,9 @@ function bootstrap(): void {
         /* 服务未就绪时退回默认目录推算 */
       }
       await stopMastra();
+      await credentialBroker?.close();
+      credentialBroker = null;
+      credentialVault = null;
       const dirsToClean = [
         app.getPath("userData"),
         dataDir || defaultMastraDataDir(),
@@ -956,7 +1222,32 @@ function bootstrap(): void {
       }
       app.relaunch();
       app.exit(0);
-      return true;
+      return ResetAppDataResultSchema.parse(true);
+    });
+
+    // 初始化应用代理设置(应用到 Chromium Session 与出站环境变量)
+    const initialProxyConfig = await readAppProxyConfig();
+    await applySessionProxy(initialProxyConfig);
+
+    // 注册网络代理 IPC
+    ipcMain.handle(PROXY_CHANNELS.get, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      GetProxyRequestSchema.parse(value);
+      return GetProxyResultSchema.parse(await readAppProxyConfig());
+    });
+
+    ipcMain.handle(PROXY_CHANNELS.set, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const config = SetProxyRequestSchema.parse(value);
+      await writeAppProxyConfig(config);
+      const effectiveProxy = await applySessionProxy(config);
+      return SetProxyResultSchema.parse({ ok: true, effectiveProxy });
+    });
+
+    ipcMain.handle(PROXY_CHANNELS.test, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const { url } = TestProxyRequestSchema.parse(value);
+      return TestProxyResultSchema.parse(await testProxyConnectivity(url));
     });
 
     // 先等 Mastra 就绪再开窗,避免首屏接口 404/竞态
@@ -989,15 +1280,23 @@ function bootstrap(): void {
   // 等 stopMastra() 完成后再让 app 真正退出;第二次进来时清理已在进行,直接放行。
   // 拦截必须放在 before-quit(will-quit 阶段窗口已销毁,preventDefault 后重新
   // quit 会走不到这里),同时保留 will-quit 兜底应对未经 before-quit 的退出路径。
+  const shutdownApp = () => {
+    appShutdownPromise ??= stopMastra().finally(async () => {
+      await credentialBroker?.close();
+      credentialBroker = null;
+      credentialVault = null;
+    });
+    return appShutdownPromise;
+  };
   app.on("before-quit", (e) => {
-    if (isMastraStopping || !mastraProcess) return;
+    if (!mastraProcess && !credentialBroker) return;
     e.preventDefault();
-    void stopMastra().finally(() => app.quit());
+    void shutdownApp().finally(() => app.quit());
   });
   app.on("will-quit", (e) => {
-    if (mastraProcess && !isMastraStopping) {
+    if (mastraProcess || credentialBroker) {
       e.preventDefault();
-      void stopMastra().finally(() => app.quit());
+      void shutdownApp().finally(() => app.quit());
     }
   });
 
@@ -1012,10 +1311,10 @@ function bootstrap(): void {
 
   // 处理终端 Ctrl+C 信号:开发模式下强制回收 Mastra 进程树,防止孤儿进程锁库
   process.on("SIGINT", () => {
-    void stopMastra().finally(() => process.exit(0));
+    void shutdownApp().finally(() => process.exit(0));
   });
   process.on("SIGTERM", () => {
-    void stopMastra().finally(() => process.exit(0));
+    void shutdownApp().finally(() => process.exit(0));
   });
 }
 

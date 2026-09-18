@@ -1,5 +1,8 @@
 import { CheckIcon, ChevronDownIcon, FolderIcon, FolderOpenIcon, XIcon } from "lucide-react";
-import { dirName, type RecentWorkspace, useWorkbench } from "@/entities/workbench";
+import { dirName, type RecentWorkspace } from "@/entities/workbench";
+import { useRecentWorkspacesQuery } from "@/entities/workbench/model/queries/workspace";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import {
@@ -32,7 +35,11 @@ export function ChatWorkspaceSelector({
   /** 附加类名(如上方还有 Queue 卡片时去除顶边与其相接) */
   className?: string;
 }) {
-  const { recentWorkspaces, refreshRecentWorkspaces } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const recentWorkspacesQuery = useRecentWorkspacesQuery(user?.id ?? "anonymous");
+  const recentWorkspaces = recentWorkspacesQuery.data ?? [];
+  const refreshRecentWorkspaces = () => recentWorkspacesQuery.refetch();
 
   const pickDirectory = async () => {
     const dir = await window.api?.filesystem.pickDirectory?.();
@@ -53,13 +60,13 @@ export function ChatWorkspaceSelector({
               variant="ghost"
               size="xs"
               className="h-7 min-w-0 gap-2 px-2 text-xs font-normal text-muted-foreground hover:text-foreground"
-              title={value ?? "为新会话选择工作区目录(可选)"}
+              title={value ?? t("chat:workspaceSelector.titleTooltip")}
             />
           }
         >
           <FolderIcon className={cn("size-4 shrink-0", value && "text-primary")} />
           <span className="max-w-64 truncate">
-            {value ? dirName(value) : "选择工作区目录(可选)"}
+            {value ? dirName(value) : t("chat:workspaceSelector.selectPlaceholder")}
           </span>
           <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
         </DropdownMenuTrigger>
@@ -68,7 +75,7 @@ export function ChatWorkspaceSelector({
           className="w-max min-w-64 max-w-[min(calc(100vw-2rem),28rem)]"
         >
           <DropdownMenuGroup>
-            <DropdownMenuLabel>工作区目录(发送首条消息后锁定)</DropdownMenuLabel>
+            <DropdownMenuLabel>{t("chat:workspaceSelector.menuLabel")}</DropdownMenuLabel>
             {value ? (
               <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-muted-foreground">
                 <CheckIcon className="size-3.5 shrink-0 text-primary" />
@@ -78,13 +85,13 @@ export function ChatWorkspaceSelector({
               </div>
             ) : (
               <div className="px-2 py-1.5 text-xs leading-relaxed text-muted-foreground">
-                不选择则使用默认目录(仅 Agent 工作目录,不展示文件树)
+                {t("chat:workspaceSelector.defaultDirectoryHint")}
               </div>
             )}
             {recentWorkspaces.length > 0 ? (
               <>
                 <DropdownMenuSeparator />
-                <DropdownMenuLabel>近期使用</DropdownMenuLabel>
+                <DropdownMenuLabel>{t("chat:workspaceSelector.recentlyUsed")}</DropdownMenuLabel>
                 {recentWorkspaces.map((workspace: RecentWorkspace) => (
                   <DropdownMenuItem
                     key={workspace.path}
@@ -105,7 +112,7 @@ export function ChatWorkspaceSelector({
               }}
             >
               <FolderOpenIcon />
-              选择本地目录…
+              {t("chat:workspaceSelector.chooseLocalDir")}
             </DropdownMenuItem>
           </DropdownMenuGroup>
         </DropdownMenuContent>
@@ -116,10 +123,10 @@ export function ChatWorkspaceSelector({
           size="xs"
           className="mr-1 ml-auto h-6 shrink-0 gap-1 px-1.5 text-[10px] text-muted-foreground hover:text-foreground"
           onClick={() => onChange(null)}
-          title="清除选择(改为默认目录)"
+          title={t("chat:workspaceSelector.clearTooltip")}
         >
           <XIcon className="size-3" />
-          清除
+          {t("chat:workspaceSelector.clear")}
         </Button>
       ) : null}
     </div>

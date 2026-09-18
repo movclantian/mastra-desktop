@@ -13,7 +13,7 @@
  * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
  */
 import { mkdirSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import {
@@ -132,7 +132,6 @@ interface WorkspaceToolRule {
 }
 
 interface WorkspaceToolsUserConfig {
-  enabled?: boolean;
   requireApproval?: boolean;
   requireReadBeforeWrite?: boolean;
   maxOutputTokens?: number;
@@ -141,6 +140,8 @@ interface WorkspaceToolsUserConfig {
 }
 
 const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
+/** Scheduler worker -> agent context marker for unattended threaded runs. */
+export const SCHEDULE_RUN_CONTEXT_KEY = "mastra-work:scheduled-run";
 const PERMISSION_CATEGORIES = ["read", "edit", "execute", "mcp", "other"] as const;
 
 /**
@@ -167,7 +168,11 @@ function wrapWorkspaceApproval(
 ): WorkspaceToolConfig["requireApproval"] {
   if (value === undefined) return undefined;
   return async (context: ToolConfigWithArgsContext) => {
-    if (isSessionFullyAllowed(context.requestContext)) return false;
+    if (
+      context.requestContext[SCHEDULE_RUN_CONTEXT_KEY] === true ||
+      isSessionFullyAllowed(context.requestContext)
+    )
+      return false;
     return typeof value === "function" ? value(context) : value;
   };
 }
@@ -261,7 +266,7 @@ function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
     return DEFAULT_CONFIG.tools;
   const output: WorkspaceToolsUserConfig = {};
   for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (["enabled", "requireApproval", "requireReadBeforeWrite"].includes(key)) {
+    if (["requireApproval", "requireReadBeforeWrite"].includes(key)) {
       if (typeof raw === "boolean") output[key] = raw;
       continue;
     }
@@ -408,6 +413,28 @@ export function getManagedSkillsDirectory(resourceId?: string): string {
   return directory;
 }
 
+/** Return enabled managed skill directories for a request-scoped Workspace. */
+export async function getManagedSkillPaths(resourceId?: string): Promise<string[]> {
+  const root = getManagedSkillsDirectory(resourceId);
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  return (
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory())
+        .map(async (entry) => {
+          const directory = join(root, entry.name);
+          try {
+            const content = await readFile(join(directory, "SKILL.md"), "utf8");
+            if (/^enabled\s*:\s*["']?(?:false|0|no)["']?\s*$/im.test(content)) return undefined;
+            return directory;
+          } catch {
+            return undefined;
+          }
+        }),
+    )
+  ).filter((path): path is string => Boolean(path));
+}
+
 // Workspace 实例按路径缓存:BM25 索引 / LSP 客户端初始化昂贵,
 // 同一线程多次请求必须复用同一实例(workspace-class.mdx 单实例语义)。
 /**
@@ -484,11 +511,11 @@ export function getThreadWorkspace(
     ...(lsp ? { lsp } : {}),
     tools: workspaceTools,
     skillSource: new LocalSkillSource({ basePath: workspacePath }),
-    skills: ({ requestContext }) => {
+    skills: async ({ requestContext }) => {
       const contextResourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
       const scopedResourceId =
         resourceId ?? (typeof contextResourceId === "string" ? contextResourceId : undefined);
-      return [...config.skillsPaths, getManagedSkillsDirectory(scopedResourceId)];
+      return [...config.skillsPaths, ...(await getManagedSkillPaths(scopedResourceId))];
     },
     ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
   };

@@ -25,6 +25,7 @@ import {
 } from "../agents/custom";
 import { MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
 import {
+  PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
   TOOL_CATEGORIES,
@@ -135,8 +136,15 @@ export async function getWorkbenchSession(
   );
   if (session.mode.get() !== mode.id) await session.mode.switch({ modeId: mode.id });
   const rules = parsePermissionRules(thread.metadata?.permissionRules);
-  if (JSON.stringify(session.permissions.getRules()) !== JSON.stringify(rules)) {
-    await session.state.set({ permissionRules: rules });
+  const yolo =
+    TOOL_CATEGORIES.every((category) => rules.categories[category] === "allow") &&
+    Object.values(rules.tools).every((policy) => policy === "allow");
+  requestContext.set(PERMISSION_RULES_CONTEXT_KEY, rules);
+  if (
+    JSON.stringify(session.permissions.getRules()) !== JSON.stringify(rules) ||
+    session.state.get().yolo !== yolo
+  ) {
+    await session.state.set({ permissionRules: rules, yolo });
   }
   return session;
 }
@@ -410,6 +418,15 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   const workflowRunning = workflowRuns.some((run) =>
     ["pending", "running", "waiting"].includes(run.status ?? ""),
   );
+  const suspendedRuns = runs.flatMap((run) => {
+    const toolCalls = run.toolCalls.flatMap((toolCall) => {
+      const toolName = toolCall.toolName ?? "";
+      const policy = result.controllerSession.resolveToolApproval(toolName);
+      if (toolCall.requiresApproval && policy !== "ask") return [];
+      return [{ ...toolCall, category: toolCategoryOf(toolName), policy }];
+    });
+    return toolCalls.length > 0 ? [{ ...run, toolCalls }] : [];
+  });
   return {
     ...displayState,
     threadId: result.threadId,
@@ -418,21 +435,14 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     activeRunId: result.agent.getActiveThreadRunId(result),
     status: result.agent.getActiveThreadRunId(result)
       ? "running"
-      : runs.length > 0 || backgroundSuspended || workflowSuspended
+      : suspendedRuns.length > 0 || backgroundSuspended || workflowSuspended
         ? "suspended"
         : backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
             workflowRunning
           ? "running"
           : "idle",
     tasks: Array.isArray(tasks) ? tasks : [],
-    suspendedRuns: runs.map((run) => ({
-      ...run,
-      toolCalls: run.toolCalls.map((toolCall) => ({
-        ...toolCall,
-        category: toolCategoryOf(toolCall.toolName ?? ""),
-        policy: result.controllerSession.resolveToolApproval(toolCall.toolName ?? ""),
-      })),
-    })),
+    suspendedRuns,
     backgroundTasks,
     workflowRuns,
   };
@@ -797,7 +807,10 @@ export const updateSessionPermissionsRoute = registerApiRoute(
     handler: async (c) => {
       const result = await sessionFor(c);
       const rules = parsePermissionRules(await c.req.json());
-      await result.controllerSession.state.set({ permissionRules: rules });
+      const yolo =
+        TOOL_CATEGORIES.every((category) => rules.categories[category] === "allow") &&
+        Object.values(rules.tools).every((policy) => policy === "allow");
+      await result.controllerSession.state.set({ permissionRules: rules, yolo });
       const thread = await result.memory.updateThread({
         id: result.threadId,
         title: result.thread.title,

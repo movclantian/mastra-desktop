@@ -1,11 +1,28 @@
+import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
+  CopyIcon,
+  Loader2Icon,
+  NotebookPenIcon,
   PanelBottomCloseIcon,
   PanelBottomOpenIcon,
   PanelRightOpenIcon,
   Settings2Icon,
+  SquareCheckIcon,
 } from "lucide-react";
-import { useWorkbench } from "@/entities/workbench";
+import * as React from "react";
+import { toast } from "sonner";
+import {
+  buildRequestModel,
+  summarizeThreadRequest,
+  type ThreadSummaryResult,
+} from "@/entities/workbench";
+import { useProviderConfigQuery } from "@/entities/workbench/model/queries/config";
+import { useIsThreadBusy, useThreadsQuery } from "@/entities/workbench/model/queries/threads";
+import { viewFromPath } from "@/entities/workbench/model/types";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
 import { OpenInIde } from "@/features/workspace-session";
+import { useTranslation } from "@/shared/i18n";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -15,34 +32,186 @@ import {
   BreadcrumbSeparator,
 } from "@/shared/ui/breadcrumb";
 import { Button } from "@/shared/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { PanelHeader } from "@/shared/ui/panel";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Separator } from "@/shared/ui/separator";
 import { SidebarTrigger } from "@/shared/ui/sidebar";
 
-export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: () => void }) {
-  const {
-    threads,
-    activeThreadId,
-    activeView,
-    activeSkill,
-    setActiveSkill,
-    workspacePanelOpen,
-    setWorkspacePanelOpen,
-    terminalPanelOpen,
-    setTerminalPanelOpen,
-    isThreadBusy,
-  } = useWorkbench();
+/**
+ * 「生成本次对话纪要」(官方 Memory.summarizeThread + Extractor):一键蒸馏
+ * 整段对话并提取核心待办,不写入 memory、不消耗会话上下文。模型取当前
+ * 选定(与服务端 chat 同一解析链),未配置时由服务端回退默认模型。
+ */
+function ThreadSummaryButton() {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const providers = useProviderConfigQuery().data?.providers ?? [];
+  const modelSelection = useWorkbenchStore((state) => state.modelSelection);
+  const [open, setOpen] = React.useState(false);
+  const [loading, setLoading] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const [result, setResult] = React.useState<ThreadSummaryResult | null>(null);
+  const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
+  const model =
+    selectedProvider && modelSelection
+      ? buildRequestModel(selectedProvider, modelSelection.modelId)
+      : undefined;
+
+  const runSummary = async () => {
+    if (!activeThreadId) return;
+    setLoading(true);
+    setFailed(false);
+    try {
+      setResult(await summarizeThreadRequest(activeThreadId, userId, model));
+    } catch {
+      setFailed(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCopy = () => {
+    if (!result) return;
+    const text = [
+      `【${t("topbar:summarySection")}】`,
+      result.summary,
+      ...(result.todos.length > 0
+        ? [
+            "",
+            `【${t("topbar:todosSection")}】`,
+            ...result.todos.map((todo, index) => `${index + 1}. ${todo}`),
+          ]
+        : []),
+    ].join("\n");
+    void navigator.clipboard.writeText(text);
+    toast.success(t("topbar:copiedSummary"));
+  };
+
+  return (
+    <>
+      <Button
+        aria-label={t("topbar:btnAriaLabel")}
+        disabled={!activeThreadId}
+        onClick={() => {
+          setResult(null);
+          setFailed(false);
+          setOpen(true);
+          void runSummary();
+        }}
+        size="icon-sm"
+        title={t("topbar:btnTitle")}
+        variant="ghost"
+      >
+        <NotebookPenIcon />
+      </Button>
+      <Dialog onOpenChange={setOpen} open={open}>
+        <DialogContent className="flex max-h-[min(80vh,40rem)] max-w-lg flex-col">
+          <DialogHeader>
+            <DialogTitle>{t("topbar:summaryTitle")}</DialogTitle>
+            <DialogDescription>{t("topbar:summaryDesc")}</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-4 pr-3 text-sm">
+              {loading ? (
+                <p className="flex items-center gap-2 py-8 text-muted-foreground">
+                  <Loader2Icon className="size-4 animate-spin" />
+                  {t("topbar:summaryExtracting")}
+                </p>
+              ) : failed ? (
+                <div className="flex flex-col items-center gap-3 py-8 text-muted-foreground">
+                  <p>{t("topbar:summaryFailed")}</p>
+                  <Button onClick={() => void runSummary()} size="sm" variant="outline">
+                    {t("topbar:regenerate")}
+                  </Button>
+                </div>
+              ) : result ? (
+                <>
+                  <section className="flex flex-col gap-2">
+                    <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                      {t("topbar:summarySection")}
+                    </h3>
+                    <p className="leading-relaxed whitespace-pre-wrap break-words">
+                      {result.summary}
+                    </p>
+                  </section>
+                  {result.todos.length > 0 ? (
+                    <section className="flex flex-col gap-2">
+                      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                        {t("topbar:todosSection")}
+                      </h3>
+                      <ul className="flex flex-col gap-1.5">
+                        {result.todos.map((todo, index) => (
+                          <li className="flex items-start gap-2" key={`${index}-${todo}`}>
+                            <SquareCheckIcon className="mt-0.5 size-4 shrink-0 text-primary" />
+                            <span className="min-w-0 break-words">{todo}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </ScrollArea>
+          {result && !loading ? (
+            <DialogFooter>
+              <Button onClick={() => void runSummary()} size="sm" variant="outline">
+                {t("topbar:regenerate")}
+              </Button>
+              <Button onClick={handleCopy} size="sm">
+                <CopyIcon />
+                {t("topbar:copyAll")}
+              </Button>
+            </DialogFooter>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+export function AppTopBar() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const location = useLocation();
+  const activeView = viewFromPath(location.pathname);
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const threads = useThreadsQuery(userId).data ?? [];
+  const activeSkillPath = useRouterState({
+    select: (state) => (state.location.search as { skill?: string }).skill ?? null,
+  });
+  const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
+  const setWorkspacePanelOpen = useWorkbenchStore((state) => state.setWorkspacePanelOpen);
+  const terminalPanelOpen = useWorkbenchStore((state) => state.terminalPanelOpen);
+  const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const isThreadBusy = useIsThreadBusy(userId);
 
   const title =
     activeView === "agents"
-      ? "专家"
+      ? t("sidebar:agents")
       : activeView === "skills"
-        ? "技能套件"
+        ? t("sidebar:skills")
         : activeView === "library"
-          ? "资料库"
+          ? t("sidebar:library")
           : activeView === "schedules"
-            ? "已安排"
+            ? t("sidebar:schedules")
             : (threads.find((thread) => thread.id === activeThreadId)?.title ?? "MastraWork");
   const isCurrentThreadBusy = activeThreadId ? isThreadBusy(activeThreadId) : false;
 
@@ -53,20 +222,30 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
         <Separator orientation="vertical" className="mx-1 h-4" />
         <Breadcrumb className="min-w-0">
           <BreadcrumbList className="flex-nowrap text-xs sm:text-sm">
-            {activeView === "skills" && activeSkill ? (
+            {activeView === "skills" && activeSkillPath ? (
               <>
                 <BreadcrumbItem className="shrink-0">
                   <BreadcrumbLink
                     className="cursor-pointer"
-                    render={<button type="button" onClick={() => setActiveSkill(null)} />}
+                    render={
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void navigate({
+                            to: "/skills",
+                            search: (prev) => ({ ...prev, skill: undefined }),
+                          })
+                        }
+                      />
+                    }
                   >
-                    技能套件
+                    {t("sidebar:skills")}
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem className="min-w-0">
                   <BreadcrumbPage className="max-w-64 truncate font-medium">
-                    {activeSkill.name}
+                    {activeSkillPath.split("/").pop() || activeSkillPath}
                   </BreadcrumbPage>
                 </BreadcrumbItem>
               </>
@@ -77,7 +256,7 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
                   {isCurrentThreadBusy && activeView === "chat" ? (
                     <span
                       className="flex shrink-0 items-center text-primary"
-                      title="当前会话正在运行中…"
+                      title={t("topbar:runningTooltip")}
                     >
                       <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
                     </span>
@@ -92,14 +271,17 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
       <div id="app-top-bar-actions" className="flex items-center gap-2 shrink-0 empty:hidden" />
       {activeView === "chat" ? (
         <>
+          <ThreadSummaryButton />
           <OpenInIde />
           <Separator orientation="vertical" className="mx-0.5 h-4" />
           <Button
-            aria-label={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
+            aria-label={
+              terminalPanelOpen ? t("topbar:collapseTerminal") : t("topbar:expandTerminal")
+            }
             aria-pressed={terminalPanelOpen}
             onClick={() => setTerminalPanelOpen(!terminalPanelOpen)}
             size="icon-sm"
-            title={terminalPanelOpen ? "收起终端面板" : "展开终端面板"}
+            title={terminalPanelOpen ? t("topbar:collapseTerminal") : t("topbar:expandTerminal")}
             variant={terminalPanelOpen ? "secondary" : "ghost"}
           >
             {terminalPanelOpen ? <PanelBottomCloseIcon /> : <PanelBottomOpenIcon />}
@@ -109,11 +291,11 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
               始终贴近右缘,展开/收起前后位置完全一致 */}
           {!workspacePanelOpen ? (
             <Button
-              aria-label="展开工作区面板"
+              aria-label={t("topbar:expandWorkspace")}
               className="size-7 shrink-0"
               onClick={() => setWorkspacePanelOpen(true)}
               size="icon-sm"
-              title="展开工作区面板"
+              title={t("topbar:expandWorkspace")}
               variant="ghost"
             >
               <PanelRightOpenIcon />
@@ -125,9 +307,14 @@ export function AppTopBar({ onOpenLibrarySettings }: { onOpenLibrarySettings: ()
         <Button
           size="icon-sm"
           variant="ghost"
-          aria-label="资料库设置"
-          title="资料库设置"
-          onClick={onOpenLibrarySettings}
+          aria-label={t("topbar:librarySettings")}
+          title={t("topbar:librarySettings")}
+          onClick={() => {
+            void navigate({
+              to: "/library",
+              search: (prev) => ({ ...prev, settings: true }),
+            });
+          }}
         >
           <Settings2Icon />
         </Button>

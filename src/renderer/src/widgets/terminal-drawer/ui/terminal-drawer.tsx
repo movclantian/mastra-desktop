@@ -1,92 +1,233 @@
-import { PlusIcon, TerminalIcon, XIcon } from "lucide-react";
-import { nanoid } from "nanoid";
+import { useRouterState } from "@tanstack/react-router";
+import { PanelRightOpenIcon, PlusIcon, TerminalIcon, XIcon } from "lucide-react";
 import * as React from "react";
-import { TerminalSession, useWorkbench } from "@/entities/workbench";
+import { toast } from "sonner";
+import { useThreadsQuery } from "@/entities/workbench/model/queries/threads";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { TerminalSession } from "@/entities/workbench/ui/terminal-session";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
+import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuTrigger,
+} from "@/shared/ui/context-menu";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
-import { Tabs, TabsList, TabsTrigger } from "@/shared/ui/tabs";
+
+const TAB_DND_TYPE = "application/x-mastra-tab";
 
 export function TerminalPanel() {
-  const { activeThreadId, threads, terminalPanelOpen, setTerminalPanelOpen, terminalRequest } =
-    useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const threads = useThreadsQuery(user?.id ?? "anonymous").data ?? [];
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const terminalPanelOpen = useWorkbenchStore((state) => state.terminalPanelOpen);
+  const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const terminalRequest = useWorkbenchStore((state) => state.terminalRequest);
+
+  const sessionIds = useWorkbenchStore((state) => state.terminalDrawerSessionIds);
+  const activeSessionId = useWorkbenchStore((state) => state.activeTerminalDrawerSessionId);
+  const addSession = useWorkbenchStore((state) => state.addTerminalDrawerSession);
+  const closeSession = useWorkbenchStore((state) => state.closeTerminalDrawerSession);
+  const setActiveSessionId = useWorkbenchStore((state) => state.setActiveTerminalDrawerSessionId);
+  const reorderSession = useWorkbenchStore((state) => state.reorderTerminalDrawerSession);
+  const moveTerminalTab = useWorkbenchStore((state) => state.moveTerminalTab);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const activeWorkspacePath = activeThread?.metadata?.workspacePath;
 
-  const [sessionIds, setSessionIds] = React.useState<string[]>(() => [nanoid(6)]);
-  const [activeSessionId, setActiveSessionId] = React.useState<string>(sessionIds[0]);
   const [handledRequestId, setHandledRequestId] = React.useState<number | null>(null);
   const pendingRequest = terminalRequest?.id === handledRequestId ? null : terminalRequest;
 
-  const addSession = React.useCallback(() => {
-    const nextId = nanoid(6);
-    setSessionIds((prev) => [...prev, nextId]);
-    setActiveSessionId(nextId);
-  }, []);
-
-  const closeSession = React.useCallback(
-    (id: string, e: React.MouseEvent | React.SyntheticEvent) => {
-      e.stopPropagation();
-      setSessionIds((prev) => {
-        if (prev.length <= 1) return prev;
-        const next = prev.filter((s) => s !== id);
-        if (activeSessionId === id) {
-          setActiveSessionId(next[next.length - 1]);
-        }
-        return next;
-      });
-    },
-    [activeSessionId],
-  );
+  const draggedSessionRef = React.useRef<string | null>(null);
+  const [draggingSessionId, setDraggingSessionId] = React.useState<string | null>(null);
+  const [dragOverSessionId, setDragOverSessionId] = React.useState<string | null>(null);
 
   return (
     <PanelSurface>
       <PanelHeader className="h-9 justify-between border-b px-2 py-0">
-        <div className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <Tabs
-            value={activeSessionId}
-            onValueChange={(val) => {
-              if (val) setActiveSessionId(val);
-            }}
-            className="flex-row items-center gap-1 shrink-0"
-          >
-            <TabsList className="h-7 gap-1 border-0 bg-transparent p-0">
-              {sessionIds.map((id, index) => (
-                <TabsTrigger
-                  key={id}
-                  value={id}
-                  className="group relative h-7 gap-1.5 rounded-md border border-transparent px-2 text-xs font-normal text-muted-foreground data-active:border-border data-active:bg-background data-active:text-foreground data-active:shadow-xs hover:bg-muted/60 hover:text-foreground"
-                >
-                  <TerminalIcon className="size-3 text-muted-foreground group-data-active:text-primary" />
-                  <span>终端 {index + 1}</span>
-                  {sessionIds.length > 1 ? (
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`关闭终端 ${index + 1}`}
-                      onClick={(e) => closeSession(id, e)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
+        <div
+          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOverSessionId(null);
+            setDraggingSessionId(null);
+            const rawData = e.dataTransfer.getData(TAB_DND_TYPE);
+            if (rawData) {
+              try {
+                const data = JSON.parse(rawData);
+                if (data.kind !== "terminal") {
+                  toast.info(t("workspace:onlyTerminalSupported"));
+                  return;
+                }
+                if (data.source === "workspace") {
+                  moveTerminalTab("workspace", "terminal", data.id, data.title);
+                }
+              } catch {}
+            }
+          }}
+        >
+          {sessionIds.map((id, index) => {
+            const isSelected = id === activeSessionId;
+            const title = t("workspace:terminalIndex", {
+              index: index + 1,
+            });
+            return (
+              <ContextMenu key={id}>
+                <ContextMenuTrigger>
+                  <button
+                    draggable
+                    onDragStart={(e) => {
+                      draggedSessionRef.current = id;
+                      setDraggingSessionId(id);
+                      e.dataTransfer.setData(
+                        TAB_DND_TYPE,
+                        JSON.stringify({
+                          source: "terminal",
+                          id,
+                          kind: "terminal",
+                          title,
+                        }),
+                      );
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (dragOverSessionId !== id) setDragOverSessionId(id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverSessionId === id) setDragOverSessionId(null);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDragOverSessionId(null);
+                      setDraggingSessionId(null);
+                      const rawData = e.dataTransfer.getData(TAB_DND_TYPE);
+                      if (rawData) {
+                        try {
+                          const data = JSON.parse(rawData);
+                          if (data.kind !== "terminal") {
+                            toast.info(t("workspace:onlyTerminalSupported"));
+                            return;
+                          }
+                          if (data.source === "terminal") {
+                            reorderSession(data.id, id);
+                          } else if (data.source === "workspace") {
+                            moveTerminalTab("workspace", "terminal", data.id, data.title, id);
+                          }
+                        } catch {
+                          if (draggedSessionRef.current)
+                            reorderSession(draggedSessionRef.current, id);
+                        }
+                      } else if (draggedSessionRef.current) {
+                        reorderSession(draggedSessionRef.current, id);
+                      }
+                      draggedSessionRef.current = null;
+                    }}
+                    onDragEnd={() => {
+                      draggedSessionRef.current = null;
+                      setDraggingSessionId(null);
+                      setDragOverSessionId(null);
+                    }}
+                    onClick={() => setActiveSessionId(id)}
+                    className={cn(
+                      "group relative flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                      isSelected
+                        ? "border-border bg-background text-foreground shadow-xs font-medium"
+                        : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                      draggingSessionId === id && "opacity-50",
+                      dragOverSessionId === id && "ring-2 ring-primary/40",
+                    )}
+                    title={title}
+                    type="button"
+                  >
+                    <TerminalIcon
+                      className={cn(
+                        "size-3 shrink-0",
+                        isSelected ? "text-primary" : "text-muted-foreground",
+                      )}
+                    />
+                    <span className="truncate">{title}</span>
+                    {sessionIds.length > 1 ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${t("workspace:closeTab")} ${title}`}
+                        onClick={(e) => {
                           e.stopPropagation();
-                          closeSession(id, e);
+                          closeSession(id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            closeSession(id);
+                          }
+                        }}
+                        className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
+                      >
+                        <XIcon className="size-3" />
+                      </span>
+                    ) : null}
+                  </button>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuGroup>
+                    <ContextMenuLabel className="max-w-44 truncate">{title}</ContextMenuLabel>
+                    <ContextMenuItem onClick={() => closeSession(id)}>
+                      <XIcon className="text-muted-foreground" />
+                      <span>{t("workspace:closeTab")}</span>
+                      <ContextMenuShortcut>⌘W</ContextMenuShortcut>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      disabled={sessionIds.length <= 1}
+                      onClick={() => {
+                        for (const other of sessionIds) {
+                          if (other !== id) closeSession(other);
                         }
                       }}
-                      className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
                     >
-                      <XIcon className="size-3" />
-                    </span>
-                  ) : null}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+                      <span>{t("workspace:closeOtherTabs")}</span>
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => moveTerminalTab("terminal", "workspace", id, title)}
+                    >
+                      <PanelRightOpenIcon className="text-muted-foreground" />
+                      <span>{t("workspace:moveToWorkspace")}</span>
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                  <ContextMenuSeparator />
+                  <ContextMenuGroup>
+                    <ContextMenuItem onClick={() => addSession()}>
+                      <PlusIcon className="text-muted-foreground" />
+                      <span>{t("workspace:newTerminal")}</span>
+                    </ContextMenuItem>
+                  </ContextMenuGroup>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          })}
           <Button
             variant="ghost"
             size="icon-xs"
-            onClick={addSession}
+            onClick={() => addSession()}
             className="size-6 shrink-0"
-            title="新建终端会话"
-            aria-label="新建终端会话"
+            title={t("workspace:newTerminal")}
+            aria-label={t("workspace:newTerminal")}
           >
             <PlusIcon className="size-3.5" />
           </Button>
@@ -96,8 +237,8 @@ export function TerminalPanel() {
           size="icon-xs"
           onClick={() => setTerminalPanelOpen(false)}
           className="size-6 shrink-0"
-          title="收起终端"
-          aria-label="收起终端"
+          title={t("workspace:collapse")}
+          aria-label={t("workspace:collapse")}
         >
           <XIcon className="size-3.5" />
         </Button>

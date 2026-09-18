@@ -1,7 +1,7 @@
-import type { FileUIPart } from "ai";
-import type { CatalogProvider, ProviderConfig, ReasoningEffort } from "./providers";
-import type { PermissionRules, WorkModeId } from "./session";
-import type { TerminalSessionInfo } from "./terminal";
+import { i18n } from "@/shared/i18n";
+import type { CredentialState } from "../../../../../shared/credential-contract";
+import type { ReasoningEffort } from "./providers";
+import type { PermissionRules } from "./session";
 
 export interface WorkUser {
   id: string;
@@ -12,6 +12,11 @@ export interface WorkUser {
 export const MAIN_VIEWS = ["chat", "agents", "skills", "library", "schedules", "settings"] as const;
 export type MainView = (typeof MAIN_VIEWS)[number];
 export const DEFAULT_MAIN_VIEW: MainView = "chat";
+
+export function viewFromPath(pathname: string): MainView {
+  const view = pathname.replace(/^\//, "").split("/")[0];
+  return (MAIN_VIEWS as readonly string[]).includes(view) ? (view as MainView) : "chat";
+}
 
 export interface ThreadMetadata {
   agentProfileId?: string;
@@ -34,6 +39,20 @@ export interface ThreadMetadata {
   contextUsage?: Record<string, unknown>;
   isWorking?: boolean;
   activeRunId?: string | null;
+  /** 克隆/分支溯源(memory.copyThread 自动写入,官方 clone-utilities) */
+  clone?: {
+    sourceThreadId: string;
+    clonedAt?: string;
+    lastMessageId?: string;
+  };
+}
+
+/** 会话所有权迁移的目标账户候选(GET /work/users) */
+export interface WorkUserOption {
+  id: string;
+  name: string;
+  email: string;
+  role: "admin" | "user";
 }
 
 export interface WorkThread {
@@ -143,13 +162,13 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   type: "agent",
   name: "MastraWork",
   displayName: "MastraWork",
-  profession: "通用工作 Agent",
-  description: "默认工作 Agent",
+  profession: i18n.t("chat:agents.generalAgentProfession"),
+  description: i18n.t("chat:agents.defaultAgentDescription"),
   instructions: "",
   skills: [],
   members: [],
   workflow: undefined,
-  tags: ["默认"],
+  tags: [i18n.t("common:default")],
   quickPrompts: [],
   enabled: true,
   createdAt: "",
@@ -184,6 +203,8 @@ export type ActivePanelTab =
   | { kind: "files" | "terminal" | "changes"; id: string }
   | { kind: "browser"; index: number };
 
+export type WorkspacePanelMode = "docked" | "floating" | "fullscreen";
+
 export interface TerminalRequest {
   id: number;
   command?: string;
@@ -209,9 +230,9 @@ export interface SearchSelection {
 }
 
 export interface ToolsConfig {
-  tavily: { apiKey: string };
-  firecrawl: { apiKey: string; apiUrl: string };
-  anysearch: { apiKey: string };
+  tavily: CredentialState;
+  firecrawl: CredentialState & { apiUrl: string };
+  anysearch: CredentialState;
 }
 
 export interface WorkbenchStatePatch {
@@ -235,84 +256,4 @@ export interface WorkbenchStatePatch {
     terminalPanelOpen: boolean;
     libraryOpen: boolean;
   };
-}
-
-export interface WorkbenchValue {
-  user: WorkUser;
-  threads: WorkThread[];
-  threadsLoading: boolean;
-  refreshThreads: () => Promise<void>;
-  createThread: (title?: string) => Promise<WorkThread | null>;
-  renameThread: (threadId: string, title: string) => Promise<void>;
-  generateThreadTitle: (threadId: string) => Promise<string | null>;
-  deleteThread: (threadId: string) => Promise<void>;
-  pinThread: (threadId: string, pinned: boolean) => Promise<void>;
-  archiveThread: (threadId: string, archived: boolean) => Promise<void>;
-  searchMessages: (query: string) => Promise<MessageSearchHit[]>;
-  recentWorkspaces: RecentWorkspace[];
-  refreshRecentWorkspaces: () => Promise<void>;
-  fetchTreeEntries: (threadId: string, path?: string) => Promise<TreeEntry[]>;
-  fetchThreadChanges: (threadId: string) => Promise<WorkspaceFileChange[]>;
-  fetchThreadChangeContent: (
-    threadId: string,
-    changeId: string,
-    side: "before" | "after",
-  ) => Promise<{ content: string; binary: boolean; metadata: WorkspaceChangeSnapshot } | null>;
-  activeThreadId: string | null;
-  setActiveThreadId: (id: string | null) => void;
-  pendingJump: PendingJump | null;
-  setPendingJump: (jump: PendingJump | null) => void;
-  providers: ProviderConfig[];
-  setProviders: (providers: ProviderConfig[]) => void;
-  catalog: CatalogProvider[];
-  catalogStatus: "loading" | "ready" | "error";
-  modelSelection: ModelSelection | null;
-  setModelSelection: (selection: ModelSelection | null) => void;
-  agents: AgentProfile[];
-  agentSelection: AgentProfile;
-  setAgentSelection: (profile: AgentProfile) => Promise<void>;
-  refreshAgents: () => Promise<void>;
-  modeId: WorkModeId;
-  setModeId: (modeId: WorkModeId) => Promise<void>;
-  permissionRules: PermissionRules;
-  setPermissionRules: (rules: PermissionRules) => Promise<void>;
-  refreshThreadSettings: () => Promise<void>;
-  searchSelection: SearchSelection | null;
-  setSearchSelection: (selection: SearchSelection | null) => void;
-  toolsConfig: ToolsConfig | null;
-  refreshToolsConfig: () => Promise<void>;
-  settingsSection: string;
-  setSettingsSection: (section: string) => void;
-  openSettings: (section?: string) => void;
-  busyThreadIds: Record<string, boolean>;
-  setThreadBusy: (threadId: string, busy: boolean) => void;
-  isThreadBusy: (threadId: string) => boolean;
-  agentBusy: boolean;
-  setAgentBusy: (busy: boolean) => void;
-  activeView: MainView;
-  setActiveView: (view: MainView) => void;
-  activeSkill: unknown | null;
-  setActiveSkill: (skill: unknown | null) => void;
-  pendingPrompt: string | null;
-  setPendingPrompt: (prompt: string | null) => void;
-  pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
-  queueLibraryFiles: (files: Array<FileUIPart & { byteSize?: number }>) => void;
-  clearPendingLibraryFiles: () => void;
-  workspacePanelOpen: boolean;
-  setWorkspacePanelOpen: (open: boolean) => void;
-  panelTabs: LocalPanelTab[];
-  activePanelTab: ActivePanelTab;
-  activatePanelTab: (tab: ActivePanelTab) => void;
-  addPanelTab: (kind: "files" | "terminal" | "changes") => string;
-  closePanelTab: (id: string) => void;
-  openWorkspacePanel: (kind?: PanelTabKind) => void;
-  terminalPanelOpen: boolean;
-  setTerminalPanelOpen: (open: boolean) => void;
-  promptMinWidth: number;
-  reportPromptMinWidth: (width: number) => void;
-  reportTerminalSession: (id: string, info: TerminalSessionInfo | null) => void;
-  terminalRequest: TerminalRequest | null;
-  requestTerminalCommand: (request: Omit<TerminalRequest, "id">) => void;
-  browserRequest: BrowserRequest | null;
-  openBrowserUrl: (url: string) => void;
 }

@@ -1,3 +1,4 @@
+import { useRouterState } from "@tanstack/react-router";
 import {
   CalendarClockIcon,
   CheckIcon,
@@ -14,7 +15,17 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import type { AgentProfile, WorkThread } from "@/entities/workbench";
-import { useWorkbench } from "@/entities/workbench";
+import {
+  useAgentsQuery,
+  useCreateScheduleMutation,
+  useDeleteScheduleMutation,
+  useScheduleActionMutation,
+  useSchedulesQuery,
+  useThreadsQuery,
+  useUpdateScheduleMutation,
+} from "@/entities/workbench";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -25,18 +36,12 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Separator } from "@/shared/ui/separator";
 import { Textarea } from "@/shared/ui/textarea";
-import {
-  type AgentSchedule,
-  createSchedule,
-  deleteSchedule,
-  fetchSchedules,
-  pauseSchedule,
-  resumeSchedule,
-  runSchedule,
-  updateSchedule,
-} from "../api/schedules-api";
+import type { AgentSchedule } from "../api/schedules-api";
 
 type Frequency = "daily" | "weekdays" | "weekly" | "custom";
+type SignalType = NonNullable<AgentSchedule["signalType"]>;
+type ActiveBehavior = NonNullable<NonNullable<AgentSchedule["ifActive"]>["behavior"]>;
+type IdleBehavior = NonNullable<NonNullable<AgentSchedule["ifIdle"]>["behavior"]>;
 type ScheduleDraft = {
   name: string;
   prompt: string;
@@ -47,16 +52,22 @@ type ScheduleDraft = {
   cron: string;
   timezone: string;
   agentId: string;
+  signalType: SignalType;
+  tagName: string;
+  ifActive: ActiveBehavior;
+  ifIdle: IdleBehavior;
+  attributesJson: string;
+  providerOptionsJson: string;
 };
 
-const WEEKDAYS = [
-  ["1", "周一"],
-  ["2", "周二"],
-  ["3", "周三"],
-  ["4", "周四"],
-  ["5", "周五"],
-  ["6", "周六"],
-  ["0", "周日"],
+const WEEKDAY_KEYS = [
+  ["1", "schedules:days.1"],
+  ["2", "schedules:days.2"],
+  ["3", "schedules:days.3"],
+  ["4", "schedules:days.4"],
+  ["5", "schedules:days.5"],
+  ["6", "schedules:days.6"],
+  ["0", "schedules:days.0"],
 ] as const;
 
 function defaultDraft(threadId = "", agentId = "mastra-work-agent"): ScheduleDraft {
@@ -70,6 +81,12 @@ function defaultDraft(threadId = "", agentId = "mastra-work-agent"): ScheduleDra
     cron: "0 9 * * *",
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     agentId,
+    signalType: "notification",
+    tagName: "schedule",
+    ifActive: "deliver",
+    ifIdle: "wake",
+    attributesJson: "",
+    providerOptionsJson: "",
   };
 }
 
@@ -83,14 +100,14 @@ function cronFor(draft: ScheduleDraft): string {
   return `${safeMinute} ${safeHour} * * ${day}`;
 }
 
-function scheduleLabel(schedule: AgentSchedule): string {
+function scheduleLabel(schedule: AgentSchedule, fallback = "Schedule"): string {
   if (schedule.name?.trim()) return schedule.name;
-  return schedule.prompt.split(/\r?\n/)[0]?.slice(0, 48) || "已安排任务";
+  return schedule.prompt.split(/\r?\n/)[0]?.slice(0, 48) || fallback;
 }
 
-function formatFireAt(value: number | undefined): string {
-  if (!value) return "尚未运行";
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(
+function formatFireAt(value: number | undefined, neverRun = "-"): string {
+  if (!value) return neverRun;
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
     value,
   );
 }
@@ -125,11 +142,19 @@ function draftFromSchedule(schedule: AgentSchedule): ScheduleDraft {
       typeof schedule.metadata?.profileId === "string"
         ? schedule.metadata.profileId
         : schedule.agentId,
+    signalType: schedule.signalType ?? "notification",
+    tagName: schedule.tagName ?? "schedule",
+    ifActive: schedule.ifActive?.behavior ?? "deliver",
+    ifIdle: schedule.ifIdle?.behavior ?? "wake",
+    attributesJson: schedule.attributes ? JSON.stringify(schedule.attributes, null, 2) : "",
+    providerOptionsJson: schedule.providerOptions
+      ? JSON.stringify(schedule.providerOptions, null, 2)
+      : "",
   };
 }
 
-function threadTitle(thread: WorkThread): string {
-  return thread.title?.trim() || "新对话";
+function threadTitle(thread: WorkThread, fallback = "New Thread"): string {
+  return thread.title?.trim() || fallback;
 }
 
 function agentLabel(agent: AgentProfile): string {
@@ -137,45 +162,61 @@ function agentLabel(agent: AgentProfile): string {
 }
 
 export function SchedulesPage() {
-  const { threads, agents, activeThreadId, refreshThreads } = useWorkbench();
-  const [schedules, setSchedules] = React.useState<AgentSchedule[]>([]);
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const threads = useThreadsQuery(userId).data ?? [];
+  const agents = useAgentsQuery().data ?? [];
+  const schedulesQuery = useSchedulesQuery();
+  const createMutation = useCreateScheduleMutation(userId);
+  const updateMutation = useUpdateScheduleMutation(userId);
+  const actionMutation = useScheduleActionMutation(userId);
+  const deleteMutation = useDeleteScheduleMutation(userId);
+  const schedules = schedulesQuery.data ?? [];
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const [draft, setDraft] = React.useState<ScheduleDraft>(() =>
     defaultDraft(activeThreadId ?? "", agents[0]?.id ?? "mastra-work-agent"),
   );
   const [editing, setEditing] = React.useState(false);
-  const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
-  const [busyId, setBusyId] = React.useState<string | null>(null);
+  const loading = schedulesQuery.isPending || schedulesQuery.isFetching;
+  const saving = createMutation.isPending || updateMutation.isPending;
+  const busyId = actionMutation.isPending
+    ? (actionMutation.variables?.id ?? null)
+    : deleteMutation.isPending
+      ? (deleteMutation.variables ?? null)
+      : null;
 
   const load = React.useCallback(async () => {
-    setLoading(true);
     try {
-      const next = await fetchSchedules();
-      setSchedules(next);
-      setSelectedId((current) =>
-        current && next.some((item) => item.id === current) ? current : (next[0]?.id ?? null),
-      );
+      const result = await schedulesQuery.refetch();
+      if (result.error) throw result.error;
     } catch (error) {
-      toastError(error, "加载已安排任务失败");
-    } finally {
-      setLoading(false);
+      toastError(error, t("schedules:loadFailed"));
     }
-  }, []);
+  }, [schedulesQuery, t]);
 
   React.useEffect(() => {
-    void load();
-  }, [load]);
+    setSelectedId((current) =>
+      current && schedules.some((item) => item.id === current)
+        ? current
+        : (schedules[0]?.id ?? null),
+    );
+  }, [schedules]);
 
   const selected = schedules.find((item) => item.id === selectedId) ?? null;
   const filtered = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
+    const defaultName = t("schedules:defaultScheduleName");
     return schedules.filter(
       (item) =>
-        !needle || `${scheduleLabel(item)} ${item.prompt}`.toLocaleLowerCase().includes(needle),
+        !needle ||
+        `${scheduleLabel(item, defaultName)} ${item.prompt}`.toLocaleLowerCase().includes(needle),
     );
-  }, [query, schedules]);
+  }, [query, schedules, t]);
 
   const updateDraft = (patch: Partial<ScheduleDraft>) =>
     setDraft((current) => ({ ...current, ...patch }));
@@ -196,65 +237,78 @@ export function SchedulesPage() {
 
   const save = async () => {
     if (!draft.prompt.trim()) {
-      toast.error("请填写任务描述");
+      toast.error(t("schedules:promptRequired"));
       return;
     }
     const cron = cronFor(draft);
     if (!cron) {
-      toast.error("请输入有效的 Cron 表达式");
+      toast.error(t("schedules:invalidCron"));
       return;
     }
-    setSaving(true);
+    let attributes: AgentSchedule["attributes"];
+    let providerOptions: AgentSchedule["providerOptions"];
+    try {
+      if (draft.attributesJson.trim()) {
+        const value: unknown = JSON.parse(draft.attributesJson);
+        if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error();
+        attributes = value as AgentSchedule["attributes"];
+      }
+      if (draft.providerOptionsJson.trim()) {
+        const value: unknown = JSON.parse(draft.providerOptionsJson);
+        if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error();
+        providerOptions = value as AgentSchedule["providerOptions"];
+      }
+    } catch {
+      toast.error(t("schedules:invalidJsonAttrs"));
+      return;
+    }
     try {
       const payload = {
-        agentId: draft.agentId,
         name: draft.name.trim() || undefined,
         prompt: draft.prompt.trim(),
         cron,
         timezone: draft.timezone.trim() || undefined,
         ...(draft.threadId ? { threadId: draft.threadId } : {}),
+        signalType: draft.signalType,
+        tagName: draft.tagName.trim() || undefined,
+        ifActive: { behavior: draft.ifActive },
+        ifIdle: { behavior: draft.ifIdle },
+        ...(attributes ? { attributes } : {}),
+        ...(providerOptions ? { providerOptions } : {}),
       };
       if (selectedId) {
-        const next = await updateSchedule(selectedId, payload);
-        setSchedules((current) => current.map((item) => (item.id === next.id ? next : item)));
+        await updateMutation.mutateAsync({ id: selectedId, input: payload });
       } else {
-        const next = await createSchedule(payload);
-        setSchedules((current) => [next, ...current]);
+        const next = await createMutation.mutateAsync({ ...payload, agentId: draft.agentId });
         setSelectedId(next.id);
       }
       setEditing(false);
-      toast.success("已保存安排");
+      toast.success(t("schedules:saved"));
     } catch (error) {
-      toastError(error, "保存安排失败");
-    } finally {
-      setSaving(false);
+      toastError(error, t("schedules:saveFailed"));
     }
   };
 
   const act = async (id: string, action: "pause" | "resume" | "run" | "delete") => {
-    setBusyId(id);
     try {
       if (action === "delete") {
-        await deleteSchedule(id);
-        setSchedules((current) => current.filter((item) => item.id !== id));
+        await deleteMutation.mutateAsync(id);
         if (selectedId === id) {
           setSelectedId(null);
           setEditing(false);
         }
-        toast.success("已删除安排");
+        toast.success(t("schedules:deleted"));
       } else if (action === "run") {
-        await runSchedule(id);
-        toast.success("已开始运行");
+        await actionMutation.mutateAsync({ id, action });
+        toast.success(t("schedules:started"));
       } else {
-        const next = action === "pause" ? await pauseSchedule(id) : await resumeSchedule(id);
-        setSchedules((current) => current.map((item) => (item.id === id ? next : item)));
-        toast.success(action === "pause" ? "已暂停安排" : "已恢复安排");
+        await actionMutation.mutateAsync({ id, action });
+        toast.success(
+          action === "pause" ? t("schedules:statusPaused") : t("schedules:statusResumed"),
+        );
       }
-      await refreshThreads();
     } catch (error) {
-      toastError(error, "操作安排失败");
-    } finally {
-      setBusyId(null);
+      toastError(error, t("schedules:operateFailed"));
     }
   };
 
@@ -268,25 +322,23 @@ export function SchedulesPage() {
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
             <CalendarClockIcon className="size-5 text-primary" />
-            已安排的任务
+            {t("schedules:title")}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            让 Mastra Agent 按 Cron 节奏持续处理线程任务
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{t("schedules:subtitle")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Button
             size="icon"
             variant="ghost"
-            title="刷新安排"
-            aria-label="刷新安排"
+            title={t("schedules:refresh")}
+            aria-label={t("schedules:refresh")}
             onClick={() => void load()}
           >
             <RefreshCwIcon className={cn(loading && "animate-spin")} />
           </Button>
           <Button onClick={openNew} size="sm">
             <PlusIcon />
-            新建安排
+            {t("schedules:newSchedule")}
           </Button>
         </div>
       </header>
@@ -300,17 +352,19 @@ export function SchedulesPage() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 className="pl-9"
-                placeholder="搜索已安排任务"
+                placeholder={t("schedules:searchPlaceholder")}
               />
             </div>
           </div>
           <ScrollArea className="min-h-0 flex-1 px-3 pb-3">
             {loading ? (
               <div className="flex items-center gap-2 px-2 py-8 text-sm text-muted-foreground">
-                <RefreshCwIcon className="size-4 animate-spin" /> 正在加载
+                <RefreshCwIcon className="size-4 animate-spin" /> {t("schedules:loading")}
               </div>
             ) : filtered.length === 0 ? (
-              <div className="px-2 py-8 text-sm text-muted-foreground">还没有安排任务</div>
+              <div className="px-2 py-8 text-sm text-muted-foreground">
+                {t("schedules:emptyList")}
+              </div>
             ) : (
               <div className="space-y-2">
                 {filtered.map((schedule) => (
@@ -325,18 +379,20 @@ export function SchedulesPage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span className="line-clamp-1 min-w-0 font-medium">
-                        {scheduleLabel(schedule)}
+                        {scheduleLabel(schedule, t("schedules:defaultScheduleName"))}
                       </span>
                       <Badge variant={schedule.status === "active" ? "default" : "secondary"}>
-                        {schedule.status === "active" ? "已开启" : "已暂停"}
+                        {schedule.status === "active"
+                          ? t("schedules:statusActive")
+                          : t("schedules:statusPausedTag")}
                       </Badge>
                     </div>
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                       {schedule.prompt}
                     </p>
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Clock3Icon className="size-3.5" /> 下次运行{" "}
-                      {formatFireAt(schedule.nextFireAt)}
+                      <Clock3Icon className="size-3.5" /> {t("schedules:nextRun")}{" "}
+                      {formatFireAt(schedule.nextFireAt, t("schedules:neverRun"))}
                     </div>
                   </button>
                 ))}
@@ -352,17 +408,19 @@ export function SchedulesPage() {
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between gap-4 border-b">
                     <div className="min-w-0">
-                      <CardTitle>{selected ? "安排详情" : "新建安排"}</CardTitle>
+                      <CardTitle>
+                        {selected ? t("schedules:detailsTitle") : t("schedules:newSchedule")}
+                      </CardTitle>
                       <CardDescription className="mt-1">
-                        每次触发都会向安排专属线程发送一个 Mastra signal。
+                        {t("schedules:detailsDesc")}
                       </CardDescription>
                     </div>
                     {selected && !editing ? (
                       <Button
                         size="icon"
                         variant="ghost"
-                        title="编辑安排"
-                        aria-label="编辑安排"
+                        title={t("schedules:edit")}
+                        aria-label={t("schedules:edit")}
                         onClick={() => setEditing(true)}
                       >
                         <MoreHorizontalIcon />
@@ -371,8 +429,8 @@ export function SchedulesPage() {
                       <Button
                         size="icon"
                         variant="ghost"
-                        title="取消编辑"
-                        aria-label="取消编辑"
+                        title={t("schedules:cancelEdit")}
+                        aria-label={t("schedules:cancelEdit")}
                         onClick={() => {
                           setEditing(false);
                           if (!selected) setSelectedId(null);
@@ -390,9 +448,11 @@ export function SchedulesPage() {
                         </div>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <div>
-                            <p className="text-xs text-muted-foreground">运行于</p>
+                            <p className="text-xs text-muted-foreground">{t("schedules:runIn")}</p>
                             <p className="mt-1 text-sm">
-                              {selectedThread ? threadTitle(selectedThread) : "每次新建独立运行"}
+                              {selectedThread
+                                ? threadTitle(selectedThread, t("schedules:newThread"))
+                                : t("schedules:newThreadPerRun")}
                             </p>
                           </div>
                           <div>
@@ -400,12 +460,36 @@ export function SchedulesPage() {
                             <p className="mt-1 font-mono text-sm">{selected.cron}</p>
                           </div>
                           <div>
-                            <p className="text-xs text-muted-foreground">下次运行</p>
-                            <p className="mt-1 text-sm">{formatFireAt(selected.nextFireAt)}</p>
+                            <p className="text-xs text-muted-foreground">{t("schedules:signal")}</p>
+                            <p className="mt-1 text-sm">
+                              {selected.signalType ?? "notification"} · &lt;
+                              {selected.tagName ?? "schedule"}&gt;
+                            </p>
                           </div>
                           <div>
-                            <p className="text-xs text-muted-foreground">上次运行</p>
-                            <p className="mt-1 text-sm">{formatFireAt(selected.lastFireAt)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {t("schedules:busyIdleStatus")}
+                            </p>
+                            <p className="mt-1 text-sm">
+                              {selected.ifActive?.behavior ?? "deliver"} /{" "}
+                              {selected.ifIdle?.behavior ?? "wake"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              {t("schedules:nextRun")}
+                            </p>
+                            <p className="mt-1 text-sm">
+                              {formatFireAt(selected.nextFireAt, t("schedules:neverRun"))}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">
+                              {t("schedules:lastRun")}
+                            </p>
+                            <p className="mt-1 text-sm">
+                              {formatFireAt(selected.lastFireAt, t("schedules:neverRun"))}
+                            </p>
                           </div>
                         </div>
                         <Separator />
@@ -415,7 +499,7 @@ export function SchedulesPage() {
                             onClick={() => void act(selected.id, "run")}
                             disabled={busyId === selected.id}
                           >
-                            <PlayIcon /> 立即运行
+                            <PlayIcon /> {t("schedules:runNow")}
                           </Button>
                           <Button
                             size="sm"
@@ -429,7 +513,9 @@ export function SchedulesPage() {
                             disabled={busyId === selected.id}
                           >
                             {selected.status === "active" ? <PauseIcon /> : <CheckIcon />}
-                            {selected.status === "active" ? "暂停" : "恢复"}
+                            {selected.status === "active"
+                              ? t("schedules:pause")
+                              : t("schedules:resume")}
                           </Button>
                           <Button
                             size="sm"
@@ -438,7 +524,7 @@ export function SchedulesPage() {
                             onClick={() => void act(selected.id, "delete")}
                             disabled={busyId === selected.id}
                           >
-                            <Trash2Icon /> 删除
+                            <Trash2Icon /> {t("schedules:delete")}
                           </Button>
                         </div>
                       </div>
@@ -458,12 +544,12 @@ export function SchedulesPage() {
               ) : (
                 <div className="flex min-h-[26rem] flex-col items-center justify-center text-center">
                   <CalendarClockIcon className="size-10 text-muted-foreground/60" />
-                  <h2 className="mt-4 text-lg font-medium">安排重复任务</h2>
+                  <h2 className="mt-4 text-lg font-medium">{t("schedules:emptyHeroTitle")}</h2>
                   <p className="mt-2 max-w-md text-sm text-muted-foreground">
-                    按日、工作日、每周或自定义 Cron 运行 Agent，把提醒、检查和摘要送回你的线程。
+                    {t("schedules:emptyHeroDesc")}
                   </p>
                   <Button className="mt-5" onClick={openNew}>
-                    <PlusIcon /> 新建安排
+                    <PlusIcon /> {t("schedules:newSchedule")}
                   </Button>
                 </div>
               )}
@@ -492,6 +578,7 @@ function ScheduleForm({
   onChange: (patch: Partial<ScheduleDraft>) => void;
   onSave: () => void;
 }) {
+  const { t } = useTranslation();
   const frequency = draft.frequency;
   return (
     <form
@@ -502,28 +589,28 @@ function ScheduleForm({
       }}
     >
       <Field>
-        <FieldLabel htmlFor="schedule-name">安排标题</FieldLabel>
+        <FieldLabel htmlFor="schedule-name">{t("schedules:form.title")}</FieldLabel>
         <Input
           id="schedule-name"
           value={draft.name}
           onChange={(event) => onChange({ name: event.target.value })}
-          placeholder="例如：每日简报"
+          placeholder={t("schedules:form.titlePlaceholder")}
         />
       </Field>
       <Field>
-        <FieldLabel htmlFor="schedule-prompt">任务描述</FieldLabel>
+        <FieldLabel htmlFor="schedule-prompt">{t("schedules:form.prompt")}</FieldLabel>
         <Textarea
           id="schedule-prompt"
           value={draft.prompt}
           onChange={(event) => onChange({ prompt: event.target.value })}
-          placeholder="描述 Agent 每次运行应该做什么"
+          placeholder={t("schedules:form.promptPlaceholder")}
           rows={5}
         />
-        <FieldDescription>描述会作为每次 signal 的正文发送到线程。</FieldDescription>
+        <FieldDescription>{t("schedules:form.promptHint")}</FieldDescription>
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field>
-          <FieldLabel>运行于</FieldLabel>
+          <FieldLabel>{t("schedules:form.runIn")}</FieldLabel>
           <Select
             value={draft.threadId || "__new__"}
             onValueChange={(threadId) =>
@@ -532,28 +619,29 @@ function ScheduleForm({
             disabled={!targetEditable}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="选择线程" />
+              <SelectValue placeholder={t("schedules:form.selectThread")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="__new__">为安排新建专属线程</SelectItem>
+              <SelectItem value="__new__">{t("schedules:form.newThreadOption")}</SelectItem>
               {threads
                 .filter((thread) => !thread.metadata?.archivedAt)
                 .map((thread) => (
                   <SelectItem key={thread.id} value={thread.id}>
-                    {threadTitle(thread)}
+                    {threadTitle(thread, t("schedules:newThread"))}
                   </SelectItem>
                 ))}
             </SelectContent>
           </Select>
         </Field>
         <Field>
-          <FieldLabel>使用 Agent</FieldLabel>
+          <FieldLabel>{t("schedules:form.useAgent")}</FieldLabel>
           <Select
             value={draft.agentId}
             onValueChange={(agentId) => onChange({ agentId: agentId ?? "mastra-work-agent" })}
+            disabled={!targetEditable}
           >
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="选择 Agent" />
+              <SelectValue placeholder={t("schedules:form.selectAgent")} />
             </SelectTrigger>
             <SelectContent>
               {agents.map((agent) => (
@@ -567,7 +655,112 @@ function ScheduleForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field>
-          <FieldLabel>重复</FieldLabel>
+          <FieldLabel htmlFor="schedule-attributes">{t("schedules:form.attributes")}</FieldLabel>
+          <Textarea
+            id="schedule-attributes"
+            value={draft.attributesJson}
+            onChange={(event) => onChange({ attributesJson: event.target.value })}
+            placeholder={'{"source":"cron"}'}
+            rows={3}
+            className="font-mono text-xs"
+          />
+          <FieldDescription>{t("schedules:form.attributesHint")}</FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="schedule-provider-options">
+            {t("schedules:form.providerOptions")}
+          </FieldLabel>
+          <Textarea
+            id="schedule-provider-options"
+            value={draft.providerOptionsJson}
+            onChange={(event) => onChange({ providerOptionsJson: event.target.value })}
+            placeholder={'{"openai":{"reasoningEffort":"low"}}'}
+            rows={3}
+            className="font-mono text-xs"
+          />
+          <FieldDescription>{t("schedules:form.providerOptionsHint")}</FieldDescription>
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field>
+          <FieldLabel>{t("schedules:form.signalType")}</FieldLabel>
+          <Select
+            value={draft.signalType}
+            onValueChange={(value) => onChange({ signalType: value as SignalType })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="notification">
+                {t("schedules:form.signalTypes.notification")}
+              </SelectItem>
+              <SelectItem value="user">{t("schedules:form.signalTypes.user")}</SelectItem>
+              <SelectItem value="user-message">
+                {t("schedules:form.signalTypes.userMessage")}
+              </SelectItem>
+              <SelectItem value="reactive">{t("schedules:form.signalTypes.reactive")}</SelectItem>
+              <SelectItem value="state">{t("schedules:form.signalTypes.state")}</SelectItem>
+              <SelectItem value="system-reminder">
+                {t("schedules:form.signalTypes.systemReminder")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="schedule-tag">{t("schedules:form.signalTag")}</FieldLabel>
+          <Input
+            id="schedule-tag"
+            value={draft.tagName}
+            onChange={(event) => onChange({ tagName: event.target.value })}
+            placeholder="schedule"
+          />
+          <FieldDescription>{t("schedules:form.signalTagHint")}</FieldDescription>
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field>
+          <FieldLabel>{t("schedules:form.runningBehavior")}</FieldLabel>
+          <Select
+            value={draft.ifActive}
+            onValueChange={(value) => onChange({ ifActive: value as ActiveBehavior })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="deliver">
+                {t("schedules:form.runningBehaviors.deliver")}
+              </SelectItem>
+              <SelectItem value="discard">
+                {t("schedules:form.runningBehaviors.discard")}
+              </SelectItem>
+              <SelectItem value="persist">
+                {t("schedules:form.runningBehaviors.persist")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field>
+          <FieldLabel>{t("schedules:form.idleBehavior")}</FieldLabel>
+          <Select
+            value={draft.ifIdle}
+            onValueChange={(value) => onChange({ ifIdle: value as IdleBehavior })}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="wake">{t("schedules:form.idleBehaviors.wake")}</SelectItem>
+              <SelectItem value="discard">{t("schedules:form.idleBehaviors.discard")}</SelectItem>
+              <SelectItem value="persist">{t("schedules:form.idleBehaviors.persist")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field>
+          <FieldLabel>{t("schedules:form.frequency")}</FieldLabel>
           <Select
             value={frequency}
             onValueChange={(value) => onChange({ frequency: value as Frequency })}
@@ -576,16 +769,16 @@ function ScheduleForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="daily">每天</SelectItem>
-              <SelectItem value="weekdays">每个工作日</SelectItem>
-              <SelectItem value="weekly">每周</SelectItem>
-              <SelectItem value="custom">自定义 Cron</SelectItem>
+              <SelectItem value="daily">{t("schedules:form.frequencies.daily")}</SelectItem>
+              <SelectItem value="weekdays">{t("schedules:form.frequencies.weekdays")}</SelectItem>
+              <SelectItem value="weekly">{t("schedules:form.frequencies.weekly")}</SelectItem>
+              <SelectItem value="custom">{t("schedules:form.frequencies.custom")}</SelectItem>
             </SelectContent>
           </Select>
         </Field>
         {frequency === "custom" ? (
           <Field>
-            <FieldLabel htmlFor="schedule-cron">Cron 表达式</FieldLabel>
+            <FieldLabel htmlFor="schedule-cron">{t("schedules:form.cronExpression")}</FieldLabel>
             <Input
               id="schedule-cron"
               value={draft.cron}
@@ -596,7 +789,7 @@ function ScheduleForm({
           </Field>
         ) : (
           <Field>
-            <FieldLabel htmlFor="schedule-time">时间</FieldLabel>
+            <FieldLabel htmlFor="schedule-time">{t("schedules:form.time")}</FieldLabel>
             <Input
               id="schedule-time"
               type="time"
@@ -608,7 +801,7 @@ function ScheduleForm({
       </div>
       {frequency === "weekly" ? (
         <Field>
-          <FieldLabel>星期</FieldLabel>
+          <FieldLabel>{t("schedules:form.weekday")}</FieldLabel>
           <Select
             value={draft.weekday}
             onValueChange={(weekday) => onChange({ weekday: weekday ?? "1" })}
@@ -617,9 +810,9 @@ function ScheduleForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {WEEKDAYS.map(([value, label]) => (
+              {WEEKDAY_KEYS.map(([value, key]) => (
                 <SelectItem key={value} value={value}>
-                  {label}
+                  {t(key)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -627,19 +820,19 @@ function ScheduleForm({
         </Field>
       ) : null}
       <Field>
-        <FieldLabel htmlFor="schedule-timezone">时区</FieldLabel>
+        <FieldLabel htmlFor="schedule-timezone">{t("schedules:form.timezone")}</FieldLabel>
         <Input
           id="schedule-timezone"
           value={draft.timezone}
           onChange={(event) => onChange({ timezone: event.target.value })}
           placeholder="Asia/Shanghai"
         />
-        <FieldDescription>使用 IANA 时区；留空时由 Mastra 使用服务端本地时区。</FieldDescription>
+        <FieldDescription>{t("schedules:form.timezoneHint")}</FieldDescription>
       </Field>
       <div className="flex justify-end gap-2 pt-2">
         <Button type="submit" disabled={saving || !draft.prompt.trim()}>
           {saving ? <RefreshCwIcon className="animate-spin" /> : <CheckIcon />}
-          保存安排
+          {t("schedules:form.save")}
         </Button>
       </div>
     </form>

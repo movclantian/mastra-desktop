@@ -1,3 +1,4 @@
+import i18n from "@/shared/i18n";
 import type { SkillMetadata } from "../model/types";
 
 const ICONS = ["📦", "📝", "🪟", "📄", "🤖", "📘", "⚡", "🛠️"];
@@ -8,10 +9,10 @@ export function skillIcon(skill: SkillMetadata, index = 0) {
 }
 
 export function skillSourceLabel(skill?: SkillMetadata) {
-  if (skill?.origin === "builtin") return "Mastra 内置";
-  if (skill?.isOfficial) return "官方认证";
+  if (skill?.origin === "builtin") return i18n.t("skills:builtin");
+  if (skill?.isOfficial) return i18n.t("skills:officialVerified");
   if (skill?.origin === "skills-sh") return "skills.sh";
-  return skill?.marketplaceName || "个人技能";
+  return skill?.marketplaceName || i18n.t("skills:personalSkill");
 }
 
 export function formatInstalls(count?: number): string {

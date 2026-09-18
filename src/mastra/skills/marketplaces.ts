@@ -449,6 +449,7 @@ export function parseSkillMarkdown(content: string, fallbackName: string) {
   return {
     name: fields.name || fallbackName,
     description: fields.description || "未提供描述",
+    enabled: !["false", "0", "no"].includes((fields.enabled || "true").toLowerCase()),
     license: fields.license,
     metadata:
       fields.category || fields.icon

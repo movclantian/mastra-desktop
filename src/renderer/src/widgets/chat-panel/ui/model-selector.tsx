@@ -1,3 +1,4 @@
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { BoxesIcon, BrainIcon, CheckIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
 import {
   CapabilityBadges,
@@ -8,8 +9,11 @@ import {
   getReasoningEfforts,
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
-  useWorkbench,
 } from "@/entities/workbench";
+import { useCatalogQuery } from "@/entities/workbench/model/queries/config";
+import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { ModelSelectorLogo, ModelSelectorName } from "@/shared/ui/ai-elements/model-selector";
 import { PromptInputButton } from "@/shared/ui/ai-elements/prompt-input";
 import { Badge } from "@/shared/ui/badge";
@@ -36,8 +40,29 @@ import { HyperText } from "@/shared/ui/hyper-text";
 // ---------------------------------------------------------------------------
 
 export function ChatModelSelector() {
-  const { providers, catalog, catalogStatus, modelSelection, setModelSelection, openSettings } =
-    useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const catalogQuery = useCatalogQuery();
+  const catalog = catalogQuery.data ?? [];
+  const catalogStatus = catalogQuery.isPending
+    ? "loading"
+    : catalogQuery.isError
+      ? "error"
+      : "ready";
+  const openSettings = (section?: string) => {
+    void navigate({
+      to: "/settings",
+      search: (prev) => ({ ...prev, ...(section ? { section } : {}) }),
+    });
+  };
+  const { providers, modelSelection, setModelSelection } = useSessionSettings(
+    user?.id ?? "anonymous",
+    activeThreadId,
+  );
 
   const activeProviders = providers.filter((p) => !p.disabled && p.enabledModels.length > 0);
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
@@ -87,7 +112,9 @@ export function ChatModelSelector() {
   return (
     <DropdownMenu>
       {/* min-w-0:见 approval-selector 同处注释,解开 min-content 定宽标签才能截短 */}
-      <DropdownMenuTrigger render={<PromptInputButton aria-label="选择模型" className="min-w-0" />}>
+      <DropdownMenuTrigger
+        render={<PromptInputButton aria-label={t("chat:models.selectModel")} className="min-w-0" />}
+      >
         {selectedProvider && modelSelection ? (
           <>
             <ModelSelectorLogo provider={selectedProvider.registryId ?? "custom"} />
@@ -111,7 +138,7 @@ export function ChatModelSelector() {
         ) : (
           <>
             <BoxesIcon />
-            <span>选择模型</span>
+            <span>{t("chat:models.selectModel")}</span>
           </>
         )}
         <ChevronDownIcon className="size-3.5 opacity-60" />
@@ -124,7 +151,7 @@ export function ChatModelSelector() {
             }}
           >
             <SettingsIcon />
-            暂无可用模型,去设置添加供应商
+            {t("chat:models.noModels")}
           </DropdownMenuItem>
         ) : (
           activeProviders.map((provider, groupIndex) => (
@@ -179,10 +206,10 @@ export function ChatModelSelector() {
                               variant={catalogStatus === "loading" ? "secondary" : "outline"}
                             >
                               {catalogStatus === "loading"
-                                ? "读取中"
+                                ? t("chat:models.catalogLoading")
                                 : catalogStatus === "error"
-                                  ? "目录错误"
-                                  : "未收录"}
+                                  ? t("chat:models.catalogError")
+                                  : t("chat:models.catalogUnlisted")}
                             </Badge>
                           )}
                           {isSelected ? <CheckIcon className="size-4" /> : null}
@@ -194,37 +221,43 @@ export function ChatModelSelector() {
                             className="pr-2"
                             onClick={() => handleSelect(provider.id, model.id, model.name)}
                           >
-                            使用此模型
+                            {t("chat:models.useModel")}
                             <CheckIcon className="ml-auto size-4" />
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuLabel>模型能力</DropdownMenuLabel>
+                          <DropdownMenuLabel>{t("chat:models.capabilities")}</DropdownMenuLabel>
                           <div className="flex flex-wrap gap-1 px-1.5 pb-1.5">
-                            {caps.reasoning || caps.vision || caps.audio || caps.tools ? (
+                            {caps.reasoning ||
+                            caps.vision ||
+                            caps.audio ||
+                            caps.tools ||
+                            caps.structuredOutput ? (
                               <CapabilityBadges caps={caps} />
                             ) : (
-                              <span className="text-xs text-muted-foreground">基础对话</span>
+                              <span className="text-xs text-muted-foreground">
+                                {t("chat:models.basicChat")}
+                              </span>
                             )}
                           </div>
                           {contextWindow ? (
                             <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                              <span>上下文窗口</span>
+                              <span>{t("chat:models.contextWindow")}</span>
                               <span className="font-mono text-xs text-muted-foreground">
                                 {formatModelContextWindow(contextWindow)}
                               </span>
                             </DropdownMenuLabel>
                           ) : (
                             <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                              <span>上下文窗口</span>
+                              <span>{t("chat:models.contextWindow")}</span>
                               <Badge
                                 className="h-4 px-1.5 text-[10px]"
                                 variant={catalogStatus === "loading" ? "secondary" : "outline"}
                               >
                                 {catalogStatus === "loading"
-                                  ? "目录读取中"
+                                  ? t("chat:models.catalogFetching")
                                   : catalogStatus === "error"
-                                    ? "目录读取失败"
-                                    : "未匹配"}
+                                    ? t("chat:models.catalogFetchError")
+                                    : t("chat:models.catalogUnmatched")}
                               </Badge>
                             </DropdownMenuLabel>
                           )}
@@ -232,13 +265,16 @@ export function ChatModelSelector() {
                             <DropdownMenuSub>
                               <DropdownMenuSubTrigger>
                                 <BrainIcon />
-                                思考等级
+                                {t("chat:models.reasoningEffort")}
                                 {currentEffort ? (
                                   <Badge
                                     className="ml-auto h-4 px-1.5 text-[10px]"
                                     variant="secondary"
                                   >
-                                    {REASONING_EFFORT_LABELS[currentEffort]}
+                                    {t(
+                                      `chat:models.efforts.${currentEffort}`,
+                                      REASONING_EFFORT_LABELS[currentEffort],
+                                    )}
                                   </Badge>
                                 ) : null}
                               </DropdownMenuSubTrigger>
@@ -251,7 +287,10 @@ export function ChatModelSelector() {
                                 >
                                   {getReasoningEfforts(provider).map((effort) => (
                                     <DropdownMenuRadioItem key={effort} value={effort}>
-                                      {REASONING_EFFORT_LABELS[effort]}
+                                      {t(
+                                        `chat:models.efforts.${effort}`,
+                                        REASONING_EFFORT_LABELS[effort],
+                                      )}
                                     </DropdownMenuRadioItem>
                                   ))}
                                 </DropdownMenuRadioGroup>

@@ -11,7 +11,13 @@ import {
   deleteAgentProfileRoute,
   saveAgentProfileRoute,
 } from "./agents";
-import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
+import {
+  authLoginRoute,
+  authLogoutRoute,
+  authMeRoute,
+  authRegisterRoute,
+  workUsersRoute,
+} from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import {
@@ -62,6 +68,7 @@ import {
   saveProvidersConfigRoute,
   testProviderModelRoute,
 } from "./providers";
+import { proxyRoutes } from "./proxy";
 import { scheduleRoutes } from "./schedules";
 import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
@@ -93,8 +100,6 @@ import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import { usageSummaryRoute } from "./usage";
 import {
   createThreadTreeEntryRoute,
-  detectedIdesRoute,
-  openInAppRoute,
   recentWorkspacesRoute,
   saveThreadFileRoute,
   saveWorkspaceConfigRoute,
@@ -113,14 +118,14 @@ export const workRoutes = [
   authRegisterRoute,
   authLogoutRoute,
   authMeRoute,
+  workUsersRoute,
   ...backgroundTaskRoutes,
-  detectedIdesRoute,
-  openInAppRoute,
   agentProfilesRoute,
   saveAgentProfileRoute,
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
+  ...proxyRoutes,
   ...threadRoutes,
   ...signalRoutes,
   ...sessionRoutes,

@@ -18,6 +18,7 @@ import {
   useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 
@@ -146,12 +147,12 @@ export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & 
 
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
   if (isStreaming || duration === 0) {
-    return <Shimmer>思考中...</Shimmer>;
+    return <Shimmer>{i18n.t("common:thinking")}</Shimmer>;
   }
   if (duration === undefined) {
-    return <p>思考了片刻</p>;
+    return <p>{i18n.t("common:thoughtBriefly")}</p>;
   }
-  return <p>思考了 {duration} 秒</p>;
+  return <p>{i18n.t("common:thoughtDuration", { duration })}</p>;
 };
 
 export const ReasoningTrigger = memo(

@@ -1,4 +1,5 @@
 import { getUsage, models as tokenlensModels } from "tokenlens";
+import { i18n } from "@/shared/i18n";
 
 export interface CatalogModelCostLike {
   id: string;
@@ -122,7 +123,7 @@ export function calculateCostUSD(
  */
 export function formatCostUSD(cost: number | null): string {
   if (cost === null || cost === undefined || Number.isNaN(cost)) {
-    return "未定价";
+    return i18n.t("common:unpriced");
   }
   if (cost === 0) return "$0.00";
   if (cost < 0.0001) return `< $0.0001`;

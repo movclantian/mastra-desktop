@@ -6,6 +6,7 @@
  */
 
 export {
+  createEphemeralAgent,
   type GatewayProtocol,
   normalizeGatewayBaseUrl,
   WORKBENCH_GATEWAY_ID,
@@ -20,6 +21,7 @@ export {
   resolveConfiguredModel,
   resolveDefaultLanguageModel,
   resolveDefaultModelId,
+  resolveProviderCredential,
   resolveRequestModel,
   saveProvidersConfig,
   splitRouterId,

@@ -4,6 +4,7 @@
  */
 import { electronAPI } from "@electron-toolkit/preload";
 import { contextBridge, ipcRenderer } from "electron";
+import "../shared/zod-config";
 import { createPreloadApi } from "./api";
 
 // Custom APIs for renderer

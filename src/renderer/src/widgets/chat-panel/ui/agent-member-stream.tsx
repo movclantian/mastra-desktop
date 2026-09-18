@@ -1,11 +1,14 @@
-import { AlertCircleIcon, CheckCircle2Icon, CheckIcon, CircleIcon } from "lucide-react";
+import { AlertCircleIcon, CheckCircle2Icon, CircleIcon, XIcon } from "lucide-react";
 import type { AgentProfile } from "@/entities/workbench";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
-import { Avatar, AvatarBadge, AvatarFallback } from "@/shared/ui/avatar";
+import { Avatar, AvatarBadge, AvatarFallback, AvatarGroup } from "@/shared/ui/avatar";
 import { Bubble, BubbleContent } from "@/shared/ui/bubble";
+import { Button } from "@/shared/ui/button";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
+import { MessageScrollerItem } from "@/shared/ui/message-scroller";
 import type {
   AgentSubagentState,
   BackgroundTaskState,
@@ -171,14 +174,17 @@ function statusIcon(status: AgentMemberRuntimeStatus, className = "size-3.5") {
   return <CircleIcon className={className} />;
 }
 
-function statusLabel(status: AgentMemberRuntimeStatus): string {
+function statusLabel(
+  status: AgentMemberRuntimeStatus,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
   return status === "running"
-    ? "流式输出"
+    ? t("chat:memberStream.streaming")
     : status === "completed"
-      ? "已完成"
+      ? t("chat:memberStream.completed")
       : status === "error"
-        ? "失败"
-        : "等待调度";
+        ? t("chat:memberStream.failed")
+        : t("chat:memberStream.waitingSchedule");
 }
 
 function memberInitials(name: string): string {
@@ -201,56 +207,70 @@ export function AgentMemberSwitcher({
   activeMemberId,
   runtimes,
   onSelect,
+  onClose,
 }: {
   members: AgentProfile["members"];
   activeMemberId: string | null;
   runtimes: Record<string, AgentMemberRuntime>;
   onSelect: (memberId: string) => void;
+  onClose?: () => void;
 }) {
+  const { t } = useTranslation();
   if (members.length < 2) return null;
   return (
     <div
-      aria-label="当前线程 Agent 成员"
-      className="flex min-w-0 items-center gap-1 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      aria-label={t("chat:memberStream.threadMembersTab")}
+      className="flex min-w-0 items-center gap-2 overflow-x-auto px-1 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       role="tablist"
     >
-      {members.map((member) => {
-        const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
-        const active = member.id === activeMemberId;
-        return (
-          <button
-            aria-selected={active}
-            className={cn(
-              "group flex h-12 min-w-0 shrink-0 items-center gap-2 rounded-full border px-2.5 pr-3 text-left transition-colors",
-              "max-sm:px-1.5 max-sm:pr-1.5",
-              active
-                ? "border-primary/70 bg-background shadow-sm"
-                : "border-transparent bg-muted/65 hover:border-border hover:bg-muted",
-            )}
-            key={member.id}
-            onClick={() => onSelect(member.id)}
-            role="tab"
-            title={`${member.name} · ${member.profession || "团队成员"}`}
-            type="button"
-          >
-            <Avatar className="size-9 max-sm:size-8" size="sm">
-              <AvatarFallback className={active ? "bg-primary/15 text-primary" : undefined}>
-                {memberInitials(member.name)}
-              </AvatarFallback>
-              <AvatarBadge className={memberStatusClass(runtime.status)}>
-                {statusIcon(runtime.status, "size-2.5")}
-              </AvatarBadge>
-            </Avatar>
-            <span className="hidden min-w-0 max-w-36 flex-col sm:flex">
-              <span className="truncate text-sm font-semibold">{member.name}</span>
-              <span className="truncate text-[11px] text-muted-foreground">
-                {member.profession || "团队成员"}
-              </span>
-            </span>
-            {active ? <CheckIcon className="size-4 shrink-0 text-primary max-sm:hidden" /> : null}
-          </button>
-        );
-      })}
+      <AvatarGroup className="shrink-0 pl-1">
+        {members.map((member) => {
+          const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
+          const active = member.id === activeMemberId;
+          return (
+            <button
+              aria-label={member.name}
+              aria-selected={active}
+              className="group relative size-8 shrink-0 rounded-full p-0 transition-transform hover:z-10 hover:scale-105"
+              key={member.id}
+              onClick={() => onSelect(member.id)}
+              role="tab"
+              title={`${member.name} · ${member.profession || t("chat:memberStream.teamMember")}`}
+              type="button"
+            >
+              <Avatar
+                className={cn("size-8", active && "z-10 ring-2 ring-inset ring-primary")}
+                size="sm"
+              >
+                <AvatarFallback className={active ? "bg-primary/15 text-primary" : undefined}>
+                  {memberInitials(member.name)}
+                </AvatarFallback>
+                <AvatarBadge className={memberStatusClass(runtime.status)}>
+                  {statusIcon(runtime.status, "size-2")}
+                </AvatarBadge>
+              </Avatar>
+            </button>
+          );
+        })}
+      </AvatarGroup>
+      {activeMemberId ? (
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          {members.find((member) => member.id === activeMemberId)?.name}
+        </span>
+      ) : null}
+      {onClose ? (
+        <Button
+          aria-label={t("common:close")}
+          className="ml-auto size-7 shrink-0 text-muted-foreground"
+          onClick={onClose}
+          size="icon"
+          title={t("common:close")}
+          type="button"
+          variant="ghost"
+        >
+          <XIcon className="size-4" />
+        </Button>
+      ) : null}
     </div>
   );
 }
@@ -266,6 +286,7 @@ export function AgentMemberMessageView({
   messages: WorkUIMessage[];
   isBusy: boolean;
 }) {
+  const { t } = useTranslation();
   const latestRequest = messages
     .filter((message) => message.role === "user")
     .flatMap((message) =>
@@ -276,58 +297,60 @@ export function AgentMemberMessageView({
     .at(-1);
   const latestEntry = runtime.entries.at(-1);
   return (
-    <div className="flex w-full flex-col gap-4 py-6" data-agent-member-view>
-      {latestRequest ? (
-        <Message align="end" key={latestRequest.id}>
-          <MessageAvatar className="self-start">
-            <AssistantAvatar />
-          </MessageAvatar>
-          <MessageContent className="max-w-[85%]">
-            <MessageHeader className="justify-end px-0">MastraWork</MessageHeader>
-            <Bubble align="end">
-              <BubbleContent className="text-sm">{latestRequest.text}</BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
-      ) : null}
+    <MessageScrollerItem messageId={latestRequest?.id} scrollAnchor={Boolean(latestRequest)}>
+      <div className="flex w-full flex-col gap-4 py-6" data-agent-member-view>
+        {latestRequest ? (
+          <Message align="end" key={latestRequest.id}>
+            <MessageAvatar className="self-start">
+              <AssistantAvatar />
+            </MessageAvatar>
+            <MessageContent className="max-w-[85%]">
+              <MessageHeader className="justify-end px-0">MastraWork</MessageHeader>
+              <Bubble align="end">
+                <BubbleContent className="text-sm">{latestRequest.text}</BubbleContent>
+              </Bubble>
+            </MessageContent>
+          </Message>
+        ) : null}
 
-      {latestEntry ? (
-        <Message key={latestEntry.id}>
-          <MessageAvatar className="self-start">
-            <Avatar size="sm">
-              <AvatarFallback className="bg-primary/15 text-primary">
-                {memberInitials(member.name)}
-              </AvatarFallback>
-            </Avatar>
-          </MessageAvatar>
-          <MessageContent>
-            <MessageHeader className="px-0">
-              {member.name} · {latestEntry.label}
-            </MessageHeader>
-            <Bubble variant="outline">
-              <BubbleContent className="text-sm">
-                {latestEntry.text ? (
-                  <MessageResponse>{latestEntry.text}</MessageResponse>
-                ) : (
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    {statusIcon(latestEntry.status)}
-                    {latestEntry.status === "running"
-                      ? "正在流式输出…"
-                      : statusLabel(latestEntry.status)}
-                  </span>
-                )}
-              </BubbleContent>
-            </Bubble>
-          </MessageContent>
-        </Message>
-      ) : null}
+        {latestEntry ? (
+          <Message key={latestEntry.id}>
+            <MessageAvatar className="self-start">
+              <Avatar size="sm">
+                <AvatarFallback className="bg-primary/15 text-primary">
+                  {memberInitials(member.name)}
+                </AvatarFallback>
+              </Avatar>
+            </MessageAvatar>
+            <MessageContent>
+              <MessageHeader className="px-0">
+                {member.name} · {latestEntry.label}
+              </MessageHeader>
+              <Bubble variant="ghost">
+                <BubbleContent>
+                  {latestEntry.text ? (
+                    <MessageResponse>{latestEntry.text}</MessageResponse>
+                  ) : (
+                    <span className="flex items-center gap-2 text-muted-foreground">
+                      {statusIcon(latestEntry.status)}
+                      {latestEntry.status === "running"
+                        ? t("chat:memberStream.streamingWithEllipsis")
+                        : statusLabel(latestEntry.status, t)}
+                    </span>
+                  )}
+                </BubbleContent>
+              </Bubble>
+            </MessageContent>
+          </Message>
+        ) : null}
 
-      {isBusy && runtime.status === "running" ? (
-        <div className="flex items-center gap-2 pl-11 text-xs text-muted-foreground">
-          <DotmCircular5 size={14} dotSize={1.6} colorPreset="solid-theme" />
-          {member.name} 正在流式输出
-        </div>
-      ) : null}
-    </div>
+        {isBusy && runtime.status === "running" ? (
+          <div className="flex items-center gap-2 pl-11 text-xs text-muted-foreground">
+            <DotmCircular5 size={14} dotSize={1.6} colorPreset="solid-theme" />
+            {t("chat:memberStream.memberStreaming", { name: member.name })}
+          </div>
+        ) : null}
+      </div>
+    </MessageScrollerItem>
   );
 }

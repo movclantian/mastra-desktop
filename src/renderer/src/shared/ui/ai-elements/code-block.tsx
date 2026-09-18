@@ -12,6 +12,7 @@ import {
 } from "react";
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki";
 import { createHighlighter } from "shiki";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import {
@@ -414,6 +415,7 @@ export const CodeBlock = ({
   children,
   ...props
 }: CodeBlockProps) => {
+  const { t } = useTranslation();
   const [showLineNumbers, setShowLineNumbers] = useState(initialShowLineNumbers);
   const contextValue = useMemo(() => ({ code }), [code]);
 
@@ -438,16 +440,16 @@ export const CodeBlock = ({
         <ContextMenuContent className="w-52">
           <ContextMenuGroup>
             <ContextMenuLabel className="uppercase text-[10px] tracking-wider text-muted-foreground">
-              {language || "代码块"}
+              {language || t("common:codeBlock")}
             </ContextMenuLabel>
             <ContextMenuItem onClick={handleCopyCode}>
               <CopyIcon className="text-muted-foreground" />
-              <span>复制代码内容</span>
+              <span>{t("common:copyCode")}</span>
               <ContextMenuShortcut>⌘C</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={handleCopyMarkdown}>
               <Code2Icon className="text-muted-foreground" />
-              <span>复制为 Markdown</span>
+              <span>{t("common:copyMarkdown")}</span>
               <ContextMenuShortcut>⇧⌘C</ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
@@ -457,7 +459,7 @@ export const CodeBlock = ({
               checked={showLineNumbers}
               onCheckedChange={(checked) => setShowLineNumbers(Boolean(checked))}
             >
-              显示行号
+              {t("common:showLineNumbers")}
             </ContextMenuCheckboxItem>
           </ContextMenuGroup>
         </ContextMenuContent>

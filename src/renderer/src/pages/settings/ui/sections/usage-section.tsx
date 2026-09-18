@@ -6,6 +6,7 @@ import type { DateRange } from "react-day-picker";
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from "recharts";
 import { calculateCostUSD, formatCostUSD, useModelCatalog } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
+import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
 import { AnimatedTabs, AnimatedTabsPanel } from "@/shared/ui/animated-tabs";
@@ -110,20 +111,28 @@ interface MemoryProfile {
 }
 
 const chartConfig = {
-  inputTokens: { label: "输入", color: "#f97316" },
-  outputTokens: { label: "输出", color: "#22c55e" },
-  totalTokens: { label: "总 Token", color: "#a855f7" },
+  get inputTokens() {
+    return { label: i18n.t("settings:usage.table.input"), color: "#f97316" };
+  },
+  get outputTokens() {
+    return { label: i18n.t("settings:usage.table.output"), color: "#22c55e" };
+  },
+  get totalTokens() {
+    return { label: i18n.t("settings:usage.table.totalTokens"), color: "#a855f7" };
+  },
 } satisfies ChartConfig;
 
 function formatNumber(value: number): string {
-  return new Intl.NumberFormat("zh-CN").format(value);
+  return new Intl.NumberFormat().format(value);
 }
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const minutes = Math.floor(ms / 60_000);
   const seconds = Math.floor((ms % 60_000) / 1000);
-  return minutes ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`;
+  return minutes
+    ? `${minutes} ${i18n.t("common:minutesUnit")} ${seconds} ${i18n.t("common:secondsUnit")}`
+    : `${seconds} ${i18n.t("common:secondsUnit")}`;
 }
 
 /**
@@ -131,11 +140,14 @@ function formatDuration(ms: number): string {
  * 直接把 formatDuration 的成品字符串塞进数字组件会丢掉「分/秒/毫秒」的单位。
  */
 function DurationTicker({ ms }: { ms: number }) {
+  const { t } = useTranslation();
   if (ms < 1000) {
     return (
       <span className="inline-flex items-baseline gap-0.5">
         <NumberTicker className="text-foreground" value={ms} />
-        <span className="text-xs font-normal text-muted-foreground">ms</span>
+        <span className="text-xs font-normal text-muted-foreground">
+          {t("common:millisecondsUnit")}
+        </span>
       </span>
     );
   }
@@ -144,16 +156,16 @@ function DurationTicker({ ms }: { ms: number }) {
     return (
       <span className="inline-flex items-baseline gap-0.5">
         <NumberTicker className="text-foreground" value={minutes} />
-        <span className="text-xs font-normal text-muted-foreground">分</span>
+        <span className="text-xs font-normal text-muted-foreground">{t("common:minutesUnit")}</span>
         <NumberTicker className="text-foreground" value={Math.floor((ms % 60_000) / 1000)} />
-        <span className="text-xs font-normal text-muted-foreground">秒</span>
+        <span className="text-xs font-normal text-muted-foreground">{t("common:secondsUnit")}</span>
       </span>
     );
   }
   return (
     <span className="inline-flex items-baseline gap-0.5">
       <NumberTicker className="text-foreground" decimalPlaces={1} value={ms / 1000} />
-      <span className="text-xs font-normal text-muted-foreground">秒</span>
+      <span className="text-xs font-normal text-muted-foreground">{t("common:secondsUnit")}</span>
     </span>
   );
 }
@@ -184,6 +196,7 @@ function activityForRange(
 const PAGE_SIZE = 10;
 
 export function UsageSection() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const { isDark } = useTheme();
   const [range, setRange] = React.useState<DateRange>({
@@ -232,7 +245,7 @@ export function UsageSection() {
     void load();
   }, [load]);
 
-  const augmentedSummary = React.useMemo(() => {
+  const augmentedSummary = React.useMemo<UsageSummary | null>(() => {
     if (!summary) return null;
 
     const requests = summary.requests.map((req) => {
@@ -312,25 +325,37 @@ export function UsageSection() {
    */
   const stats: Array<{ label: string; value: React.ReactNode }> = [
     {
-      label: "累计 Token 数",
+      label: t("settings:usage.stats.totalTokens"),
       value: <SlidingNumber className="tabular-nums" number={totals.totalTokens} />,
     },
     {
-      label: "模型请求数",
+      label: t("settings:usage.stats.requests"),
       value: <NumberTicker className="text-foreground" value={totals.requests} />,
     },
-    { label: "预估总费用", value: formatCostUSD(totals.totalCost) },
-    { label: "平均响应时长", value: <DurationTicker ms={averageLatencyMs} /> },
-    { label: "最长聊天时长", value: <DurationTicker ms={totals.longestChatMs} /> },
-    { label: "活跃天数", value: <NumberTicker className="text-foreground" value={activeDays} /> },
+    {
+      label: t("settings:usage.stats.totalCost"),
+      value: formatCostUSD(totals.totalCost),
+    },
+    {
+      label: t("settings:usage.stats.avgLatency"),
+      value: <DurationTicker ms={averageLatencyMs} />,
+    },
+    {
+      label: t("settings:usage.stats.maxChatDuration"),
+      value: <DurationTicker ms={totals.longestChatMs} />,
+    },
+    {
+      label: t("settings:usage.stats.activeDays"),
+      value: <NumberTicker className="text-foreground" value={activeDays} />,
+    },
   ];
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-base font-semibold">个人与用量</h2>
-          <p className="text-xs text-muted-foreground">当前账号、Agent 提取偏好和模型使用情况。</p>
+          <h2 className="text-base font-semibold">{t("settings:usage.title")}</h2>
+          <p className="text-xs text-muted-foreground">{t("settings:usage.desc")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Popover>
@@ -340,7 +365,7 @@ export function UsageSection() {
                   <CalendarIcon />
                   {range.from
                     ? `${format(range.from, "yyyy-MM-dd")} - ${format(range.to ?? range.from, "yyyy-MM-dd")}`
-                    : "选择日期"}
+                    : t("settings:usage.selectDate")}
                 </Button>
               }
             />
@@ -356,8 +381,8 @@ export function UsageSection() {
           <Button
             size="icon-sm"
             variant="ghost"
-            title="刷新用量统计"
-            aria-label="刷新用量统计"
+            title={t("settings:usage.refresh")}
+            aria-label={t("settings:usage.refresh")}
             onClick={() => void load()}
           >
             <RefreshCwIcon className={cn(loading && "animate-spin")} />
@@ -368,23 +393,25 @@ export function UsageSection() {
       <Card>
         <CardContent className="grid min-w-0 gap-4 p-4 md:grid-cols-[minmax(180px,0.8fr)_minmax(0,1.2fr)]">
           <div className="min-w-0 space-y-2">
-            <p className="text-sm font-semibold">账号信息</p>
+            <p className="text-sm font-semibold">{t("settings:usage.accountInfo")}</p>
             <div className="space-y-1 text-xs">
               <p className="truncate" title={user?.name ?? user?.email}>
-                <span className="text-muted-foreground">名称：</span>
-                {user?.name || "未设置"}
+                <span className="text-muted-foreground">{t("settings:usage.name")}</span>
+                {user?.name || t("settings:usage.notSet")}
               </p>
               <p className="truncate" title={user?.email}>
-                <span className="text-muted-foreground">邮箱：</span>
-                {user?.email || "未设置"}
+                <span className="text-muted-foreground">{t("settings:usage.email")}</span>
+                {user?.email || t("settings:usage.notSet")}
               </p>
               <p className="text-muted-foreground">
-                已建立 {formatNumber(profile?.threadCount ?? 0)} 个会话
+                {t("settings:usage.threadCount", {
+                  count: formatNumber(profile?.threadCount ?? 0),
+                })}
               </p>
             </div>
             {profile?.workingMemory ? (
               <div className="border-t border-border pt-2">
-                <p className="mb-1 text-xs font-medium">工作记忆</p>
+                <p className="mb-1 text-xs font-medium">{t("settings:usage.workingMemory")}</p>
                 <ScrollArea className="max-h-28 rounded border border-border/60 p-2">
                   <pre className="whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
                     {profile.workingMemory}
@@ -395,9 +422,11 @@ export function UsageSection() {
           </div>
           <div className="min-w-0 space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">Agent 提取的用户偏好</p>
+              <p className="text-sm font-semibold">{t("settings:usage.userPreferences")}</p>
               <span className="shrink-0 text-xs text-muted-foreground">
-                {formatNumber(profile?.extractors.length ?? 0)} 项
+                {t("settings:usage.itemCount", {
+                  count: formatNumber(profile?.extractors.length ?? 0),
+                })}
               </span>
             </div>
             {profile?.extractors.length ? (
@@ -423,16 +452,15 @@ export function UsageSection() {
                         className="truncate text-[10px] text-muted-foreground/70"
                         title={item.threadTitle}
                       >
-                        来源：{item.threadTitle}
+                        {t("settings:usage.source")}
+                        {item.threadTitle}
                       </p>
                     </div>
                   ))}
                 </div>
               </ScrollArea>
             ) : (
-              <p className="text-xs text-muted-foreground">
-                暂无提取结果。完成几轮对话并达到 OM 观察阈值后，这里会显示稳定偏好。
-              </p>
+              <p className="text-xs text-muted-foreground">{t("settings:usage.noExtractors")}</p>
             )}
           </div>
         </CardContent>
@@ -453,7 +481,7 @@ export function UsageSection() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Token 活动</CardTitle>
+          <CardTitle className="text-sm">{t("settings:usage.activityTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="min-w-0 overflow-x-auto pb-4">
           <TooltipProvider>
@@ -461,7 +489,11 @@ export function UsageSection() {
               data={activity}
               colorScheme={isDark ? "dark" : "light"}
               theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
-              labels={{ totalCount: "{{count}} 次请求" }}
+              labels={{
+                totalCount: t("settings:usage.requestCount", {
+                  count: "{{count}}",
+                }),
+              }}
               blockSize={12}
               blockMargin={3}
               blockRadius={3}
@@ -475,7 +507,9 @@ export function UsageSection() {
                     <TooltipContent className="text-xs">
                       <div className="flex flex-col gap-0.5">
                         <span className="font-semibold">{item.date}</span>
-                        <span>请求：{formatNumber(item.count)} 次</span>
+                        <span>
+                          {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
+                        </span>
                         {typeof activityItem.tokens === "number" && activityItem.tokens > 0 ? (
                           <span>Token：{formatNumber(activityItem.tokens)}</span>
                         ) : null}
@@ -491,8 +525,8 @@ export function UsageSection() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm">使用趋势</CardTitle>
-          <span className="text-xs text-muted-foreground">按天</span>
+          <CardTitle className="text-sm">{t("settings:usage.trendTitle")}</CardTitle>
+          <span className="text-xs text-muted-foreground">{t("settings:usage.byDay")}</span>
         </CardHeader>
         <CardContent className="min-w-0">
           <ChartContainer config={chartConfig} className="h-[240px] w-full">
@@ -542,12 +576,12 @@ export function UsageSection() {
           activeTab={detailTab}
           onChange={(value) => setDetailTab(value as UsageDetailTab)}
           layoutId="usage-detail"
-          aria-label="用量明细"
+          aria-label={t("settings:usage.tabs.ariaLabel")}
           className="w-fit"
           tabs={[
-            { id: "requests", label: "请求日志" },
-            { id: "providers", label: "Provider 统计" },
-            { id: "models", label: "模型统计" },
+            { id: "requests", label: t("settings:usage.tabs.requests") },
+            { id: "providers", label: t("settings:usage.tabs.providers") },
+            { id: "models", label: t("settings:usage.tabs.models") },
           ]}
         />
         <AnimatedTabsPanel activeTab={detailTab} value="requests" layoutId="usage-detail">
@@ -555,19 +589,31 @@ export function UsageSection() {
             <CardContent className="p-0">
               <ScrollArea className="max-h-[360px] w-full">
                 <Table>
-                  <TableCaption className="sr-only">模型请求日志与费用明细</TableCaption>
+                  <TableCaption className="sr-only">
+                    {t("settings:usage.tableCaption")}
+                  </TableCaption>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>时间</TableHead>
-                      <TableHead>供应商</TableHead>
-                      <TableHead>计费模型</TableHead>
-                      <TableHead className="text-right">输入</TableHead>
-                      <TableHead className="text-right">输出</TableHead>
-                      <TableHead className="text-right">总 Token</TableHead>
-                      <TableHead className="text-right">预估费用</TableHead>
-                      <TableHead className="text-right">用时</TableHead>
-                      <TableHead className="text-right">状态</TableHead>
-                      <TableHead>来源</TableHead>
+                      <TableHead>{t("settings:usage.table.time")}</TableHead>
+                      <TableHead>{t("settings:usage.table.provider")}</TableHead>
+                      <TableHead>{t("settings:usage.table.model")}</TableHead>
+                      <TableHead className="text-right">
+                        {t("settings:usage.table.input")}
+                      </TableHead>
+                      <TableHead className="text-right">
+                        {t("settings:usage.table.output")}
+                      </TableHead>
+                      <TableHead className="text-right">
+                        {t("settings:usage.table.totalTokens")}
+                      </TableHead>
+                      <TableHead className="text-right">{t("settings:usage.table.cost")}</TableHead>
+                      <TableHead className="text-right">
+                        {t("settings:usage.table.duration")}
+                      </TableHead>
+                      <TableHead className="text-right">
+                        {t("settings:usage.table.status")}
+                      </TableHead>
+                      <TableHead>{t("settings:usage.table.source")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -577,7 +623,7 @@ export function UsageSection() {
                           colSpan={10}
                           className="h-28 text-center text-xs text-muted-foreground"
                         >
-                          选定时间范围内暂无请求记录
+                          {t("settings:usage.table.noRequests")}
                         </TableCell>
                       </TableRow>
                     ) : (
@@ -636,8 +682,13 @@ export function UsageSection() {
         </AnimatedTabsPanel>
         <AnimatedTabsPanel activeTab={detailTab} value="providers" layoutId="usage-detail">
           <StatsTable
-            caption="供应商用量统计"
-            headers={["供应商", "请求数", "Tokens", "预估成本"]}
+            caption={t("settings:usage.tabs.providers")}
+            headers={[
+              t("settings:usage.table.provider"),
+              t("settings:usage.table.requestsCount"),
+              t("settings:usage.table.tokens"),
+              t("settings:usage.table.cost"),
+            ]}
             rows={(augmentedSummary?.providers ?? []).map((row) => {
               return [
                 row.provider,
@@ -653,8 +704,15 @@ export function UsageSection() {
         </AnimatedTabsPanel>
         <AnimatedTabsPanel activeTab={detailTab} value="models" layoutId="usage-detail">
           <StatsTable
-            caption="模型用量统计"
-            headers={["模型", "供应商", "请求数", "Tokens", "总成本", "单次平均成本"]}
+            caption={t("settings:usage.tabs.models")}
+            headers={[
+              t("settings:usage.table.model"),
+              t("settings:usage.table.provider"),
+              t("settings:usage.table.requestsCount"),
+              t("settings:usage.table.tokens"),
+              t("settings:usage.table.totalCost"),
+              t("settings:usage.table.avgCost"),
+            ]}
             rows={(augmentedSummary?.models ?? []).map((row) => {
               return [
                 row.model,
@@ -707,21 +765,28 @@ function TablePagination({
   totalItems: number;
   onPageChange: (page: number) => void;
 }) {
+  const { t } = useTranslation();
   if (totalItems === 0) return null;
 
   return (
     <div className="flex items-center justify-between border-t border-border px-4 py-2 bg-background/50">
       <span className="text-xs text-muted-foreground">
         {totalPages > 1
-          ? `第 ${currentPage} / ${totalPages} 页 · 共 ${totalItems} 条`
-          : `共 ${totalItems} 条数据`}
+          ? t("settings:usage.pagination", {
+              page: currentPage,
+              total: totalPages,
+              count: totalItems,
+            })
+          : t("settings:usage.paginationSingle", {
+              count: totalItems,
+            })}
       </span>
       {totalPages > 1 ? (
         <Pagination className="mx-0 w-auto">
           <PaginationContent>
             <PaginationItem>
               <PaginationPrevious
-                text="上一页"
+                text={t("settings:usage.prevPage")}
                 className={cn(
                   "h-7 cursor-pointer text-xs",
                   currentPage <= 1 && "pointer-events-none opacity-40",
@@ -754,7 +819,7 @@ function TablePagination({
             )}
             <PaginationItem>
               <PaginationNext
-                text="下一页"
+                text={t("settings:usage.nextPage")}
                 className={cn(
                   "h-7 cursor-pointer text-xs",
                   currentPage >= totalPages && "pointer-events-none opacity-40",
@@ -787,6 +852,7 @@ function StatsTable({
   onPageChange?: (page: number) => void;
   pageSize?: number;
 }) {
+  const { t } = useTranslation();
   const totalPages = Math.ceil(rows.length / pageSize) || 1;
   const safePage = Math.min(Math.max(1, page), totalPages);
   const paginatedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
@@ -811,7 +877,7 @@ function StatsTable({
                     colSpan={headers.length}
                     className="h-24 text-center text-xs text-muted-foreground"
                   >
-                    暂无统计数据
+                    {t("settings:usage.table.noStats")}
                   </TableCell>
                 </TableRow>
               ) : (

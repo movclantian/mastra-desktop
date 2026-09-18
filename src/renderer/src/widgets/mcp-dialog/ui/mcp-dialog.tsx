@@ -7,8 +7,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { getMcpServer, type McpSummary } from "@/entities/skill";
+import { getMcpServer, type McpFormServer, type McpSummary } from "@/entities/skill";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
@@ -28,29 +29,7 @@ import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
-
-export interface McpFormServer {
-  id: string;
-  name: string;
-  enabled: boolean;
-  transport: "http" | "stdio";
-  url?: string;
-  headers?: Record<string, string>;
-  allowedHosts?: string[];
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  inheritDefaultEnv?: boolean;
-  requireToolApproval?: boolean;
-  oauth?: {
-    enabled: boolean;
-    redirectUrl?: string;
-    clientName?: string;
-    clientId?: string;
-    clientSecret?: string;
-    scopes?: string[];
-  };
-}
+import { mcpCredentialPurpose } from "../../../../../shared/credential-contract";
 
 interface Props {
   open: boolean;
@@ -65,11 +44,11 @@ const initial = (): McpFormServer => ({
   enabled: true,
   transport: "http",
   url: "",
-  headers: {},
+  headerKeys: [],
   allowedHosts: [],
   command: "",
   args: [],
-  env: {},
+  envKeys: [],
   inheritDefaultEnv: true,
   requireToolApproval: true,
   oauth: { enabled: false },
@@ -112,9 +91,11 @@ function generatedServerId(form: McpFormServer) {
 }
 
 export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
+  const { t } = useTranslation();
   const [form, setForm] = React.useState<McpFormServer>(initial);
   const [headersText, setHeadersText] = React.useState("");
   const [envText, setEnvText] = React.useState("");
+  const [oauthClientSecret, setOauthClientSecret] = React.useState("");
   const [allowedHostsText, setAllowedHostsText] = React.useState("");
   const [argsText, setArgsText] = React.useState("");
   const [saving, setSaving] = React.useState(false);
@@ -128,24 +109,26 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       setForm(initial());
       setHeadersText("");
       setEnvText("");
+      setOauthClientSecret("");
       setAllowedHostsText("");
       setArgsText("");
       return;
     }
 
-    const initialTransport =
-      server.transport || (server as { type?: string }).type === "stdio" ? "stdio" : "http";
+    const initialTransport = server.transport;
     const initialForm: McpFormServer = {
       id: server.id || "",
       name: server.name || "",
       enabled: server.enabled ?? true,
       transport: initialTransport,
       url: server.url ?? "",
-      headers: (server as McpFormServer).headers ?? {},
+      headerCredential: server.headerCredential,
+      headerKeys: server.headerKeys ?? [],
       allowedHosts: (server as { allowedHosts?: string[] }).allowedHosts ?? [],
       command: server.command ?? "",
       args: server.args ?? [],
-      env: (server as McpFormServer).env ?? {},
+      envCredential: server.envCredential,
+      envKeys: server.envKeys ?? [],
       inheritDefaultEnv: (server as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
       requireToolApproval:
         (server as { requireToolApproval?: boolean }).requireToolApproval ?? true,
@@ -155,26 +138,9 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     setArgsText(server.args?.join("\n") ?? "");
     setAllowedHostsText((server as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
 
-    const headersObj = (server as McpFormServer).headers;
-    if (headersObj && typeof headersObj === "object") {
-      setHeadersText(
-        Object.entries(headersObj)
-          .map(([k, v]) => `${k}=${v}`)
-          .join("\n"),
-      );
-    } else {
-      setHeadersText("");
-    }
-    const envObj = (server as McpFormServer).env;
-    if (envObj && typeof envObj === "object") {
-      setEnvText(
-        Object.entries(envObj)
-          .map(([k, v]) => `${k}=${v}`)
-          .join("\n"),
-      );
-    } else {
-      setEnvText("");
-    }
+    setHeadersText("");
+    setEnvText("");
+    setOauthClientSecret("");
 
     if (server.id) {
       getMcpServer(server.id)
@@ -183,14 +149,15 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             id: full.id,
             name: full.name,
             enabled: full.enabled ?? true,
-            transport:
-              full.transport || ((full as { type?: string }).type === "stdio" ? "stdio" : "http"),
+            transport: full.transport,
             url: full.url ?? "",
-            headers: full.headers ?? {},
+            headerCredential: full.headerCredential,
+            headerKeys: full.headerKeys ?? [],
             allowedHosts: (full as { allowedHosts?: string[] }).allowedHosts ?? [],
             command: full.command ?? "",
             args: full.args ?? [],
-            env: full.env ?? {},
+            envCredential: full.envCredential,
+            envKeys: full.envKeys ?? [],
             inheritDefaultEnv: (full as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
             requireToolApproval:
               (full as { requireToolApproval?: boolean }).requireToolApproval ?? true,
@@ -198,20 +165,9 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
           });
           setArgsText(full.args?.join("\n") ?? "");
           setAllowedHostsText((full as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
-          if (full.headers) {
-            setHeadersText(
-              Object.entries(full.headers)
-                .map(([k, v]) => `${k}=${v}`)
-                .join("\n"),
-            );
-          }
-          if (full.env) {
-            setEnvText(
-              Object.entries(full.env)
-                .map(([k, v]) => `${k}=${v}`)
-                .join("\n"),
-            );
-          }
+          setHeadersText("");
+          setEnvText("");
+          setOauthClientSecret("");
         })
         .catch(() => {
           // Keep existing values
@@ -222,24 +178,65 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const update = (patch: Partial<McpFormServer>) =>
     setForm((current) => ({ ...current, ...patch }));
 
-  const payload = () => ({
-    ...form,
-    id: form.id.trim() || generatedServerId(form),
-    name: form.name.trim() || generatedServerId(form),
-    headers: parseKeyValue(headersText),
-    env: parseKeyValue(envText),
-    args: parseLines(argsText),
-    allowedHosts:
-      parseLines(allowedHostsText).length > 0 ? parseLines(allowedHostsText) : undefined,
-  });
+  const payload = async () => {
+    const id = form.id.trim() || generatedServerId(form);
+    const created: Array<{ purpose: string; secretRef: string }> = [];
+    const headers = parseKeyValue(headersText);
+    const env = parseKeyValue(envText);
+    let headerCredential = form.headerCredential;
+    let headerKeys = form.headerKeys ?? [];
+    let envCredential = form.envCredential;
+    let envKeys = form.envKeys ?? [];
+    let oauth = form.oauth;
+    if (Object.keys(headers).length > 0) {
+      const purpose = mcpCredentialPurpose(id, "headers");
+      headerCredential = await window.api.credentials.put({
+        purpose,
+        value: JSON.stringify(headers),
+      });
+      headerKeys = Object.keys(headers);
+      created.push({ purpose, secretRef: headerCredential.credentialRef });
+    }
+    if (Object.keys(env).length > 0) {
+      const purpose = mcpCredentialPurpose(id, "env");
+      envCredential = await window.api.credentials.put({ purpose, value: JSON.stringify(env) });
+      envKeys = Object.keys(env);
+      created.push({ purpose, secretRef: envCredential.credentialRef });
+    }
+    if (oauthClientSecret.trim()) {
+      const purpose = mcpCredentialPurpose(id, "client-secret");
+      const clientSecretCredential = await window.api.credentials.put({
+        purpose,
+        value: oauthClientSecret.trim(),
+      });
+      oauth = { ...(oauth ?? { enabled: true }), clientSecretCredential };
+      created.push({ purpose, secretRef: clientSecretCredential.credentialRef });
+    }
+    return {
+      server: {
+        ...form,
+        id,
+        name: form.name.trim() || id,
+        headerCredential,
+        headerKeys,
+        envCredential,
+        envKeys,
+        oauth,
+        args: parseLines(argsText),
+        allowedHosts:
+          parseLines(allowedHostsText).length > 0 ? parseLines(allowedHostsText) : undefined,
+      },
+      created,
+    };
+  };
 
   const validate = () => {
     if (form.transport === "http" && !form.url?.trim()) {
-      toast.error("请输入 MCP URL");
+      toast.error(t("mcp:pleaseEnterUrl"));
       return false;
     }
     if (form.transport === "stdio" && !form.command?.trim()) {
-      toast.error("请输入启动命令");
+      toast.error(t("mcp:pleaseEnterCommand"));
       return false;
     }
     return true;
@@ -248,22 +245,30 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const test = async () => {
     if (!validate()) return;
     setTesting(true);
+    let temporaryCredentials: Array<{ purpose: string; secretRef: string }> = [];
     try {
+      const next = await payload();
+      temporaryCredentials = next.created;
       const response = await apiFetch(`${MASTRA_SERVER_URL}/work/mcp/test`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server: payload() }),
+        body: JSON.stringify({ server: next.server }),
       });
       const result = (await response.json()) as {
         ok?: boolean;
         toolCount?: number;
         error?: string;
       };
-      if (!response.ok || !result.ok) throw new Error(result.error || "MCP 连接失败");
-      toast.success(`连接成功，发现 ${result.toolCount ?? 0} 个工具`);
+      if (!response.ok || !result.ok) throw new Error(result.error || t("mcp:testFailed"));
+      toast.success(t("mcp:testSuccess", { count: result.toolCount ?? 0 }));
     } catch (error) {
-      toastError(error, "MCP 连接失败");
+      toastError(error, t("mcp:testFailed"));
     } finally {
+      await Promise.all(
+        temporaryCredentials.map((credential) =>
+          window.api.credentials.delete(credential).catch(() => undefined),
+        ),
+      );
       setTesting(false);
     }
   };
@@ -272,19 +277,20 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     if (!validate()) return;
     setSaving(true);
     try {
+      const next = await payload();
       const response = await apiFetch(`${MASTRA_SERVER_URL}/work/mcp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server: payload() }),
+        body: JSON.stringify({ server: next.server }),
       });
       const result = (await response.json()) as { error?: string };
       if (!response.ok)
-        throw new Error(result.error || (isEditing ? "更新 MCP 失败" : "保存 MCP 失败"));
-      toast.success(isEditing ? "MCP 配置已更新" : "MCP 能力已添加");
+        throw new Error(result.error || (isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed")));
+      toast.success(isEditing ? t("mcp:updateSuccess") : t("mcp:createSuccess"));
       onOpenChange(false);
       onSaved();
     } catch (error) {
-      toastError(error, isEditing ? "更新 MCP 失败" : "保存 MCP 失败");
+      toastError(error, isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -300,47 +306,41 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             </span>
             <div className="min-w-0">
               <DialogTitle className="text-base font-semibold">
-                {isEditing ? "编辑 MCP 外部能力" : "添加 MCP 外部能力"}
+                {isEditing ? t("mcp:editTitle") : t("mcp:addTitle")}
               </DialogTitle>
               <DialogDescription className="mt-0.5 text-xs leading-normal">
-                {isEditing
-                  ? "修改 MCP 服务的连接协议、运行命令、参数与鉴权配置。"
-                  : "连接远程 MCP 服务或本地 stdio 服务。密钥仅保存在本地服务端。"}
+                {isEditing ? t("mcp:editDesc") : t("mcp:addDesc")}
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <div className="grid gap-4 px-6 py-4 pb-6">
+          <div className="grid gap-4 px-6 py-4 pb-2">
             <section className="grid gap-3">
               <div>
                 <h3 className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
-                  基本信息
+                  {t("mcp:basicInfo")}
                 </h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  名称可以留空，保存时会根据地址或命令自动生成。
-                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t("mcp:basicInfoHint")}</p>
               </div>
               <TextField
                 id="mcp-name"
-                label="连接名称"
+                label={t("mcp:nameLabel")}
                 value={form.name}
                 onChange={(value) => update({ name: value })}
-                placeholder="可选，例如 GitHub / SQLite"
+                placeholder={t("mcp:namePlaceholder")}
               />
             </section>
 
             <section className="grid gap-2.5">
               <div>
                 <h3 className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
-                  传输方式
+                  {t("mcp:transportLabel")}
                 </h3>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  选择服务的连接协议与通信介质。
-                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{t("mcp:transportDesc")}</p>
               </div>
               <ToggleGroup
-                aria-label="传输方式"
+                aria-label={t("mcp:transportLabel")}
                 className="grid w-full grid-cols-2 gap-2"
                 variant="outline"
                 value={[form.transport]}
@@ -351,11 +351,11 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               >
                 <ToggleGroupItem className="h-9 justify-start text-xs font-medium" value="http">
                   <Globe2Icon className="size-3.5" />
-                  Streamable HTTP / SSE
+                  {t("mcp:streamableHttp")}
                 </ToggleGroupItem>
                 <ToggleGroupItem className="h-9 justify-start text-xs font-medium" value="stdio">
                   <SquareTerminalIcon className="size-3.5" />
-                  本地命令 / stdio
+                  {t("mcp:stdioCommand")}
                 </ToggleGroupItem>
               </ToggleGroup>
             </section>
@@ -364,41 +364,73 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               <section className="grid gap-3">
                 <TextField
                   id="mcp-url"
-                  label="MCP 服务端点 URL"
+                  label={t("mcp:urlLabel")}
                   value={form.url ?? ""}
                   onChange={(value) => update({ url: value })}
-                  placeholder="https://example.com/mcp"
+                  placeholder={t("mcp:urlPlaceholder")}
                   required
                 />
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20">
                   <CollapsibleTrigger className="group flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-medium">
-                    高级连接选项（请求头 / Host 限制 / OAuth）
+                    {t("mcp:advancedHttpTitle")}
                     <ChevronDownIcon className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="grid gap-3 px-3.5 pt-1 pb-3.5">
                     <TextAreaField
-                      label="请求 Headers"
+                      label={t("mcp:headersLabel")}
                       value={headersText}
                       onChange={setHeadersText}
-                      placeholder="Authorization=Bearer …"
-                      hint="每行一个 KEY=VALUE，可留空。"
+                      placeholder={
+                        form.headerKeys?.length
+                          ? t("mcp:secretConfigured", { keys: form.headerKeys.join(", ") })
+                          : t("mcp:headersPlaceholder")
+                      }
+                      hint={t("mcp:headersHint")}
                     />
                     <TextAreaField
-                      label="允许访问的 Host"
+                      label={t("mcp:allowedHostsLabel")}
                       value={allowedHostsText}
                       onChange={setAllowedHostsText}
-                      placeholder="api.example.com"
-                      hint="每行一个 Host，可留空。"
+                      placeholder={t("mcp:allowedHostsPlaceholder")}
+                      hint={t("mcp:allowedHostsHint")}
                     />
                     <CheckField
                       id="mcp-oauth"
-                      title="使用 OAuth 授权"
-                      description="需要登录时，保存后可从 MCP 服务卡片启动授权流程。"
+                      title={t("mcp:oauthTitle")}
+                      description={t("mcp:oauthDesc")}
                       checked={form.oauth?.enabled === true}
                       onCheckedChange={(checked) =>
                         update({ oauth: { ...(form.oauth ?? {}), enabled: checked } })
                       }
                     />
+                    {form.oauth?.enabled ? (
+                      <>
+                        <TextField
+                          id="mcp-oauth-client-id"
+                          label={t("mcp:oauthClientId")}
+                          value={form.oauth.clientId ?? ""}
+                          onChange={(clientId) =>
+                            update({
+                              oauth: { ...(form.oauth ?? { enabled: true }), clientId },
+                            })
+                          }
+                        />
+                        <TextField
+                          id="mcp-oauth-client-secret"
+                          label={t("mcp:oauthClientSecret")}
+                          value={oauthClientSecret}
+                          onChange={setOauthClientSecret}
+                          placeholder={
+                            form.oauth.clientSecretCredential
+                              ? t("mcp:credentialConfigured", {
+                                  hint: form.oauth.clientSecretCredential.credentialHint,
+                                })
+                              : undefined
+                          }
+                          type="password"
+                        />
+                      </>
+                    ) : null}
                   </CollapsibleContent>
                 </Collapsible>
               </section>
@@ -406,35 +438,39 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               <section className="grid gap-3">
                 <TextField
                   id="mcp-command"
-                  label="启动命令"
+                  label={t("mcp:commandLabel")}
                   value={form.command ?? ""}
                   onChange={(value) => update({ command: value })}
-                  placeholder="npx"
+                  placeholder={t("mcp:commandPlaceholder")}
                   required
                 />
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20">
                   <CollapsibleTrigger className="group flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-medium">
-                    高级命令选项（参数 / 环境变量）
+                    {t("mcp:advancedStdioTitle")}
                     <ChevronDownIcon className="size-3.5 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="grid gap-3 px-3.5 pt-1 pb-3.5">
                     <TextAreaField
-                      label="命令参数"
+                      label={t("mcp:argsLabel")}
                       value={argsText}
                       onChange={setArgsText}
                       placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\Projects"}
-                      hint="每行一个参数，可留空。"
+                      hint={t("mcp:argsHint")}
                     />
                     <TextAreaField
-                      label="环境变量"
+                      label={t("mcp:envLabel")}
                       value={envText}
                       onChange={setEnvText}
-                      placeholder="API_KEY=…"
-                      hint="每行一个 KEY=VALUE，可留空。"
+                      placeholder={
+                        form.envKeys?.length
+                          ? t("mcp:secretConfigured", { keys: form.envKeys.join(", ") })
+                          : t("mcp:envPlaceholder")
+                      }
+                      hint={t("mcp:envHint")}
                     />
                     <CheckField
                       id="mcp-inherit-env"
-                      title="继承 MCP SDK 默认环境变量"
+                      title={t("mcp:inheritEnvTitle")}
                       checked={form.inheritDefaultEnv ?? true}
                       onCheckedChange={(checked) => update({ inheritDefaultEnv: checked })}
                     />
@@ -446,14 +482,14 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             <section className="grid gap-2.5 rounded-lg border bg-muted/20 p-3">
               <CheckField
                 id="mcp-enabled"
-                title="保存后立即启用"
+                title={t("mcp:enableImmediately")}
                 checked={form.enabled}
                 onCheckedChange={(checked) => update({ enabled: checked })}
               />
               <CheckField
                 id="mcp-approval"
-                title="调用工具前要求批准"
-                description="推荐开启，避免高危或自动化工具被静默调用。"
+                title={t("mcp:requireApproval")}
+                description={t("mcp:requireApprovalDesc")}
                 checked={form.requireToolApproval ?? true}
                 onCheckedChange={(checked) => update({ requireToolApproval: checked })}
               />
@@ -468,19 +504,25 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             variant="outline"
           >
             <TestTube2Icon className="size-3.5" />
-            {testing ? "测试中…" : "测试连接"}
+            {testing ? t("mcp:testing") : t("mcp:testConnection")}
           </Button>
           <div className="flex items-center gap-2">
             <DialogClose
               render={
                 <Button size="sm" disabled={testing || saving} variant="ghost">
-                  取消
+                  {t("common:cancel")}
                 </Button>
               }
             />
             <Button size="sm" disabled={saving || testing} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
-              {saving ? (isEditing ? "更新中…" : "保存中…") : isEditing ? "更新 MCP" : "保存 MCP"}
+              {saving
+                ? isEditing
+                  ? t("mcp:updating")
+                  : t("mcp:saving")
+                : isEditing
+                  ? t("mcp:updateAction")
+                  : t("mcp:saveAction")}
             </Button>
           </div>
         </DialogFooter>
@@ -496,6 +538,7 @@ function TextField({
   onChange,
   placeholder,
   required = false,
+  type = "text",
 }: {
   id: string;
   label: string;
@@ -503,6 +546,7 @@ function TextField({
   onChange: (value: string) => void;
   placeholder?: string;
   required?: boolean;
+  type?: "text" | "password";
 }) {
   return (
     <Field className="px-0.5">
@@ -517,6 +561,7 @@ function TextField({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
+        type={type}
       />
     </Field>
   );

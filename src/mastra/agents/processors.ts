@@ -32,6 +32,71 @@ const MIN_MEDIA_ATTACHMENT_TOKENS = 1_024;
 
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
+  async processInputStep({ messages, requestContext }) {
+    const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
+    if (!resourceId) return;
+    const capabilities = requestContext?.get(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY) as
+      | { vision?: boolean; audio?: boolean }
+      | undefined;
+    let changed = false;
+    const resolvedMessages = await Promise.all(
+      messages.map(async (message) => {
+        if (message.role !== "user" && message.role !== "assistant") return message;
+        const parts = (message.content as { parts?: unknown[] } | undefined)?.parts;
+        if (!Array.isArray(parts)) return message;
+        const resolvedParts = await Promise.all(
+          parts.map(async (part) => {
+            if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "file") {
+              return part;
+            }
+            const record = part as { data?: unknown; filename?: string; mediaType?: string };
+            const assetId = getLibraryAssetId(record.data);
+            if (!assetId) return part;
+            changed = true;
+            const context = await getAssetContext(resourceId, assetId);
+            if (!context) {
+              return {
+                type: "text",
+                text: `[附件不可用: ${record.filename ?? "未命名附件"}]`,
+              };
+            }
+            if (context.text) {
+              return {
+                type: "text",
+                text: `附件「${context.asset.filename}」内容:\n\n${context.text}`,
+              };
+            }
+            if (context.dataUrl) {
+              const supported = context.asset.mediaType.startsWith("image/")
+                ? capabilities?.vision === true
+                : context.asset.mediaType.startsWith("audio/") && capabilities?.audio === true;
+              return supported
+                ? {
+                    type: "file",
+                    data: context.dataUrl,
+                    filename: context.asset.filename,
+                    mediaType: context.asset.mediaType,
+                  }
+                : {
+                    type: "text",
+                    text: `[附件「${context.asset.filename}」未注入: 当前模型不支持该原生媒体类型]`,
+                  };
+            }
+            return {
+              type: "text",
+              text: `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
+            };
+          }),
+        );
+        if (!resolvedParts.some((part, index) => part !== parts[index])) return message;
+        return {
+          ...message,
+          content: { ...message.content, parts: resolvedParts },
+        } as typeof message;
+      }),
+    );
+    return changed ? { messages: resolvedMessages } : undefined;
+  },
   async processLLMRequest({ prompt, requestContext }) {
     const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
     if (!resourceId) return;

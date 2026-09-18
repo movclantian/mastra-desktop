@@ -1,10 +1,13 @@
 "use client";
 
+import { useRouterState } from "@tanstack/react-router";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { useWorkbench } from "@/entities/workbench";
+import { useThreadsQuery } from "@/entities/workbench/model/queries/threads";
+import { useAuth } from "@/features/auth";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { i18n, useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import { ButtonGroup } from "@/shared/ui/button-group";
@@ -15,18 +18,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import type { DetectedIde, WorkspaceApp } from "../../../../../shared/workspace-contract";
 
 // ==========================================
 // 本地桌面 IDE / 工具支持 (打开当前会话工作区目录)
 // ==========================================
 
-export interface LocalIdeItem {
-  id: string;
-  name: string;
-  command: string;
-  category: "ide" | "system";
+export type LocalIdeItem = DetectedIde & {
   icon?: React.ReactNode;
-}
+};
 
 export const IDE_ICON_MAP: Record<string, React.ReactNode> = {
   vscode: (
@@ -55,33 +55,30 @@ export const IDE_ICON_MAP: Record<string, React.ReactNode> = {
       className="size-4 shrink-0"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <title>文件资源管理器</title>
+      <title>{i18n.t("workspace:fileExplorer")}</title>
       <path d="M19.5 21a3 3 0 0 0 3-3v-4.5a3 3 0 0 0-3-3h-1.5V9a3 3 0 0 0-3-3h-3.379a3 3 0 0 1-2.121-.879L8.379 4.12A3 3 0 0 0 6.257 3.243H4.5A3 3 0 0 0 1.5 6.243V18a3 3 0 0 0 3 3h15z" />
     </svg>
   ),
 };
 
-export async function openPathInApp(appId: string, targetPath: string, appName: string) {
+export async function openPathInApp(appId: WorkspaceApp, targetPath: string, appName: string) {
   try {
-    if (window.api?.workspace.openInApp) {
-      const result = await window.api.workspace.openInApp(appId, targetPath);
-      if (result && !result.ok && result.error) {
-        throw new Error(result.error);
-      }
-    } else {
-      const response = await apiFetch(`${MASTRA_SERVER_URL}/work/workspace/open-in`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app: appId, path: targetPath }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json()) as { error?: string; message?: string };
-        throw new Error(payload.error || payload.message || "启动应用失败");
-      }
+    const result = await window.api.workspace.openInApp(appId, targetPath);
+    if (!result.ok && result.error) {
+      throw new Error(result.error);
     }
-    toast.success(`已在 ${appName} 中打开工作区`);
+    toast.success(
+      i18n.t("workspace:openedToast", {
+        name: appName,
+      }),
+    );
   } catch (error) {
-    toastError(error, `在 ${appName} 中打开失败`);
+    toastError(
+      error,
+      i18n.t("workspace:openFailedToast", {
+        name: appName,
+      }),
+    );
   }
 }
 
@@ -92,7 +89,12 @@ const PREFERRED_IDE_KEY = "mastra-work:preferred-ide";
  * OpenInIde: 动态检测并列出用户操作系统中真正已安装的各类本地 IDE 与系统工具
  */
 export function OpenInIde({ className }: { className?: string }) {
-  const { threads, activeThreadId, user } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const threads = useThreadsQuery(user?.id ?? "anonymous").data ?? [];
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
   const preferredIdeKey = user
     ? `${PREFERRED_IDE_KEY}:${encodeURIComponent(user.id)}`
     : `${PREFERRED_IDE_KEY}:anonymous`;
@@ -107,14 +109,14 @@ export function OpenInIde({ className }: { className?: string }) {
     },
     {
       id: "terminal",
-      name: "终端",
+      name: t("workspace:terminal"),
       command: "terminal",
       category: "system",
       icon: IDE_ICON_MAP.terminal,
     },
     {
       id: "explorer",
-      name: "文件资源管理器",
+      name: t("workspace:fileExplorer"),
       command: "explorer",
       category: "system",
       icon: IDE_ICON_MAP.explorer,
@@ -133,25 +135,7 @@ export function OpenInIde({ className }: { className?: string }) {
     let cancelled = false;
     async function loadInstalledIdes() {
       try {
-        let rawList: Array<{
-          id: string;
-          name: string;
-          command: string;
-          category: "ide" | "system";
-        }> = [];
-        if (window.api?.workspace.detectIdes) {
-          rawList = await window.api.workspace.detectIdes();
-        } else {
-          const res = await apiFetch(`${MASTRA_SERVER_URL}/work/workspace/detected-ides`);
-          if (res.ok) {
-            rawList = (await res.json()) as Array<{
-              id: string;
-              name: string;
-              command: string;
-              category: "ide" | "system";
-            }>;
-          }
-        }
+        const rawList = await window.api.workspace.detectIdes();
         if (cancelled || !rawList || rawList.length === 0) return;
 
         const mapped: LocalIdeItem[] = rawList.map((item) => ({
@@ -164,7 +148,7 @@ export function OpenInIde({ className }: { className?: string }) {
               stroke="currentColor"
               strokeWidth="2"
             >
-              <title>本地应用</title>
+              <title>{t("workspace:localApp")}</title>
               <rect x="3" y="3" width="18" height="18" rx="3" />
               <path d="M9 8l4 4-4 4" />
             </svg>
@@ -186,7 +170,7 @@ export function OpenInIde({ className }: { className?: string }) {
           return fallback;
         });
       } catch (err) {
-        console.warn("[OpenInIde] 检测本地 IDE 失败:", err);
+        console.warn("[OpenInIde] Failed to detect local IDE:", err);
       }
     }
     void loadInstalledIdes();
@@ -213,7 +197,7 @@ export function OpenInIde({ className }: { className?: string }) {
       }
     }
     if (!targetDir) {
-      toast.error("当前会话尚未关联本地工作区目录");
+      toast.error(t("workspace:noWorkspaceDir"));
       return;
     }
     setPreferredId(ide.id);
@@ -222,24 +206,40 @@ export function OpenInIde({ className }: { className?: string }) {
     } catch {
       // 忽略
     }
-    void openPathInApp(ide.id, targetDir, ide.name);
+    void openPathInApp(ide.id, targetDir, getIdeDisplayName(ide));
+  };
+
+  const getIdeDisplayName = (ide?: LocalIdeItem | null) => {
+    if (!ide) return "";
+    if (ide.id === "terminal") return t("workspace:terminal");
+    if (ide.id === "explorer") return t("workspace:fileExplorer");
+    return ide.name;
   };
 
   const ideOptions = detectedIdes.filter((i) => i.category === "ide");
   const systemOptions = detectedIdes.filter((i) => i.category === "system");
 
+  const prefix = t("workspace:openInPrefix");
+  const suffix = t("workspace:openInSuffix");
+
   return (
-    <ButtonGroup className={cn("h-7.5", className)} aria-label="打开工作区">
+    <ButtonGroup className={cn("h-7.5", className)} aria-label={t("workspace:openWorkspace")}>
       <Button
         variant="outline"
         size="sm"
         className="h-full gap-1.5 px-2.5 text-xs font-normal"
         onClick={() => currentIde && handleOpen(currentIde)}
-        title={currentIde ? `在 ${currentIde.name} 中打开工作区` : "打开工作区"}
+        title={
+          currentIde
+            ? t("workspace:openInApp", {
+                name: getIdeDisplayName(currentIde),
+              })
+            : t("workspace:openWorkspace")
+        }
       >
-        <span className="text-muted-foreground">在</span>
+        {prefix ? <span className="text-muted-foreground">{prefix}</span> : null}
         {currentIde?.icon}
-        <span className="text-muted-foreground">中打开</span>
+        {suffix ? <span className="text-muted-foreground">{suffix}</span> : null}
       </Button>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger
@@ -248,7 +248,7 @@ export function OpenInIde({ className }: { className?: string }) {
               variant="outline"
               size="icon-sm"
               className="size-7.5 px-1 text-muted-foreground hover:text-foreground"
-              aria-label="选择本地打开工具"
+              aria-label={t("workspace:selectTool")}
             >
               {open ? (
                 <ChevronUpIcon className="size-3.5" />
@@ -271,7 +271,9 @@ export function OpenInIde({ className }: { className?: string }) {
                 className="flex items-center gap-2.5 px-2.5 py-2 text-sm cursor-pointer"
               >
                 {ide.icon}
-                <span className="flex-1 font-medium text-xs sm:text-sm">{ide.name}</span>
+                <span className="flex-1 font-medium text-xs sm:text-sm">
+                  {getIdeDisplayName(ide)}
+                </span>
                 {isSelected ? <CheckIcon className="size-4 text-emerald-500 shrink-0" /> : null}
               </DropdownMenuItem>
             );
@@ -288,7 +290,9 @@ export function OpenInIde({ className }: { className?: string }) {
                 className="flex items-center gap-2.5 px-2.5 py-2 text-sm cursor-pointer"
               >
                 {ide.icon}
-                <span className="flex-1 font-medium text-xs sm:text-sm">{ide.name}</span>
+                <span className="flex-1 font-medium text-xs sm:text-sm">
+                  {getIdeDisplayName(ide)}
+                </span>
                 {isSelected ? <CheckIcon className="size-4 text-emerald-500 shrink-0" /> : null}
               </DropdownMenuItem>
             );

@@ -1,5 +1,6 @@
 import { ChevronDownIcon, EyeIcon, EyeOffIcon, LogInIcon, UserPlusIcon } from "lucide-react";
 import * as React from "react";
+import { useTranslation } from "@/shared/i18n";
 import { useTheme } from "@/shared/theme";
 import { AnimatedThemeToggler } from "@/shared/ui/animated-theme-toggler";
 import { Card, CardContent } from "@/shared/ui/card";
@@ -34,6 +35,7 @@ interface LoginScreenProps {
 }
 
 export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
+  const { t } = useTranslation();
   const [mode, setMode] = React.useState<"login" | "register">("login");
   const rememberedAccounts = React.useMemo(() => getRememberedAccounts(), []);
   const [email, setEmail] = React.useState(() => rememberedAccounts[0]?.email ?? "");
@@ -55,6 +57,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
     setEmail(account.email);
     setName(account.name);
     setPassword("");
+    setConfirmPassword("");
     setError(null);
   };
 
@@ -69,7 +72,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
     event.preventDefault();
     setError(null);
     if (mode === "register" && password !== confirmPassword) {
-      setError("两次输入的密码不一致");
+      setError(t("auth:passwordMismatch"));
       return;
     }
     setBusy(true);
@@ -82,7 +85,11 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
       onAuthenticated(session, remember || autoLogin, autoLogin);
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : mode === "login" ? "登录失败" : "注册失败",
+        reason instanceof Error
+          ? reason.message
+          : mode === "login"
+            ? t("auth:loginFailed")
+            : t("auth:registerFailed"),
       );
     } finally {
       setBusy(false);
@@ -110,23 +117,21 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                     {mode === "login" ? <LogInIcon /> : <UserPlusIcon />}
                   </div>
                   <h1 className="text-2xl font-bold">
-                    {mode === "login" ? "欢迎回来" : "创建账户"}
+                    {mode === "login" ? t("auth:welcomeBack") : t("auth:createAccount")}
                   </h1>
                   <p className="text-sm text-balance text-muted-foreground">
-                    {mode === "login"
-                      ? "登录 MastraWork 继续你的工作"
-                      : "注册后即可开始使用 MastraWork"}
+                    {mode === "login" ? t("auth:loginSubtitle") : t("auth:registerSubtitle")}
                   </p>
                 </div>
 
                 {mode === "register" ? (
                   <Field>
-                    <FieldLabel htmlFor="auth-name">名称</FieldLabel>
+                    <FieldLabel htmlFor="auth-name">{t("auth:name")}</FieldLabel>
                     <Input
                       id="auth-name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      placeholder="你的名称"
+                      placeholder={t("auth:namePlaceholder")}
                       autoComplete="name"
                       required
                     />
@@ -134,7 +139,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                 ) : null}
 
                 <Field>
-                  <FieldLabel htmlFor="auth-email">邮箱</FieldLabel>
+                  <FieldLabel htmlFor="auth-email">{t("auth:email")}</FieldLabel>
                   <InputGroup>
                     <InputGroupInput
                       id="auth-email"
@@ -153,7 +158,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                               <InputGroupButton
                                 variant="ghost"
                                 size="icon-xs"
-                                aria-label="选择记住的账户"
+                                aria-label={t("auth:selectRememberedAccount")}
                               />
                             }
                           >
@@ -161,7 +166,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-64">
                             <DropdownMenuGroup>
-                              <DropdownMenuLabel>记住的账户</DropdownMenuLabel>
+                              <DropdownMenuLabel>{t("auth:rememberedAccounts")}</DropdownMenuLabel>
                               {rememberedAccounts.map((account) => (
                                 <DropdownMenuItem
                                   key={account.email}
@@ -184,7 +189,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                 </Field>
 
                 <Field>
-                  <FieldLabel htmlFor="auth-password">密码</FieldLabel>
+                  <FieldLabel htmlFor="auth-password">{t("auth:password")}</FieldLabel>
                   <InputGroup>
                     <InputGroupInput
                       id="auth-password"
@@ -196,7 +201,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                     />
                     <InputGroupAddon align="inline-end">
                       <InputGroupButton
-                        aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                        aria-label={showPassword ? t("auth:hidePassword") : t("auth:showPassword")}
                         size="icon-xs"
                         variant="ghost"
                         onClick={() => setShowPassword((show) => !show)}
@@ -206,13 +211,15 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                     </InputGroupAddon>
                   </InputGroup>
                   {mode === "register" ? (
-                    <FieldDescription>密码长度至少为 8 个字符。</FieldDescription>
+                    <FieldDescription>{t("auth:passwordHint")}</FieldDescription>
                   ) : null}
                 </Field>
 
                 {mode === "register" ? (
                   <Field>
-                    <FieldLabel htmlFor="auth-confirm-password">确认密码</FieldLabel>
+                    <FieldLabel htmlFor="auth-confirm-password">
+                      {t("auth:confirmPassword")}
+                    </FieldLabel>
                     <InputGroup>
                       <InputGroupInput
                         id="auth-confirm-password"
@@ -224,7 +231,9 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                       />
                       <InputGroupAddon align="inline-end">
                         <InputGroupButton
-                          aria-label={showConfirmPassword ? "隐藏密码" : "显示密码"}
+                          aria-label={
+                            showConfirmPassword ? t("auth:hidePassword") : t("auth:showPassword")
+                          }
                           size="icon-xs"
                           variant="ghost"
                           onClick={() => setShowConfirmPassword((show) => !show)}
@@ -248,7 +257,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                         }}
                       />
                       <FieldLabel htmlFor="remember-login" className="font-normal">
-                        记住我
+                        {t("auth:rememberMe")}
                       </FieldLabel>
                     </Field>
                     <Field orientation="horizontal">
@@ -262,7 +271,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                         }}
                       />
                       <FieldLabel htmlFor="auto-login" className="font-normal">
-                        自动登录
+                        {t("auth:autoLogin")}
                       </FieldLabel>
                     </Field>
                   </div>
@@ -280,16 +289,20 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                   className="w-full gap-2 border-primary/20 py-2.5 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {busy ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
-                  {busy ? "请稍候..." : mode === "login" ? "登录" : "注册"}
+                  {busy
+                    ? t("auth:pleaseWait")
+                    : mode === "login"
+                      ? t("auth:login")
+                      : t("auth:register")}
                 </ShimmerButton>
                 <FieldDescription className="text-center">
-                  {mode === "login" ? "还没有账户？" : "已经有账户？"}{" "}
+                  {mode === "login" ? t("auth:noAccountYet") : t("auth:alreadyHaveAccount")}{" "}
                   <button
                     type="button"
                     className="font-medium text-foreground underline underline-offset-4 cursor-pointer"
                     onClick={() => switchMode(mode === "login" ? "register" : "login")}
                   >
-                    {mode === "login" ? "立即注册" : "返回登录"}
+                    {mode === "login" ? t("auth:registerNow") : t("auth:backToLogin")}
                   </button>
                 </FieldDescription>
               </FieldGroup>
@@ -331,19 +344,15 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                   ) : null}
                 </div>
                 <div className="max-w-xs space-y-3">
-                  <p className="text-3xl font-semibold leading-tight">
-                    把每一次工作，都留在你的空间里。
-                  </p>
-                  <p className="text-sm text-primary-foreground/75">
-                    独立的会话、模型配置、资料库和使用统计，随账户一起安全保存。
-                  </p>
+                  <p className="text-3xl font-semibold leading-tight">{t("auth:heroTitle")}</p>
+                  <p className="text-sm text-primary-foreground/75">{t("auth:heroSubtitle")}</p>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
         <p className="mt-4 px-6 text-center text-xs text-muted-foreground">
-          登录即表示你同意 MastraWork 的服务条款和隐私政策。
+          {t("auth:termsNotice")}
         </p>
       </div>
     </main>

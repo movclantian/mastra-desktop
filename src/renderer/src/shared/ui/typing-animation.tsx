@@ -87,9 +87,15 @@ export function TypingAnimation({
 
   const rawContent = children ?? text;
 
+  const normalizedWords = useMemo(() => {
+    if (Array.isArray(words)) return words;
+    if (typeof words === "string") return [words];
+    return undefined;
+  }, [words]);
+
   const wordsToAnimate = useMemo(
-    () => words ?? (rawContent ? [rawContent] : []),
-    [words, rawContent],
+    () => normalizedWords ?? (rawContent ? [rawContent] : []),
+    [normalizedWords, rawContent],
   );
   const hasMultipleWords = wordsToAnimate.length > 1;
 
@@ -98,8 +104,8 @@ export function TypingAnimation({
 
   const shouldStart = startOnView ? isInView : true;
   const animationSourceKey = useMemo(
-    () => (words ? words.join("\u0000") : (rawContent ?? "")),
-    [words, rawContent],
+    () => (normalizedWords ? normalizedWords.join("\u0000") : (rawContent ?? "")),
+    [normalizedWords, rawContent],
   );
 
   useEffect(() => {

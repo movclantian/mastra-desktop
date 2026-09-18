@@ -14,7 +14,7 @@ interface WordRotateProps {
 
 export function WordRotate({
   words,
-  duration = 2500,
+  duration = 6000,
   motionProps = {
     initial: { opacity: 0, y: -16 },
     animate: { opacity: 1, y: 0 },
@@ -27,6 +27,10 @@ export function WordRotate({
   const wordsKey = words.join("\0");
 
   useEffect(() => {
+    setIndex(0);
+  }, [wordsKey]);
+
+  useEffect(() => {
     if (words.length <= 1) return;
     const interval = setInterval(() => {
       setIndex((prevIndex) => (prevIndex + 1) % words.length);
@@ -35,15 +39,20 @@ export function WordRotate({
     return () => clearInterval(interval);
   }, [wordsKey, words.length, duration]);
 
+  const safeIndex = words.length > 0 ? index % words.length : 0;
+  const currentWord = words[safeIndex];
+
+  if (!currentWord) return null;
+
   return (
     <div className="overflow-hidden py-0.5">
       <AnimatePresence mode="wait">
         <motion.span
-          key={`${words[index]}-${index}`}
+          key={`${currentWord}-${safeIndex}`}
           className={cn("inline-block", className)}
           {...motionProps}
         >
-          {words[index]}
+          {currentWord}
         </motion.span>
       </AnimatePresence>
     </div>

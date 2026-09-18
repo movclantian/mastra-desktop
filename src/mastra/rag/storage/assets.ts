@@ -288,10 +288,11 @@ export interface LibraryAttachmentContext {
 }
 
 export function getLibraryAssetId(urlOrPath: unknown): string | null {
-  if (typeof urlOrPath !== "string") return null;
-  const match = urlOrPath.match(/\/work\/library\/assets\/([^/?#]+)\/content/);
+  const value = urlOrPath instanceof URL ? urlOrPath.toString() : urlOrPath;
+  if (typeof value !== "string") return null;
+  const match = value.match(/\/work\/library\/assets\/([^/?#]+)\/content/);
   if (match) return decodeURIComponent(match[1]);
-  if (/^[a-zA-Z0-9_-]{10,32}$/.test(urlOrPath)) return urlOrPath;
+  if (/^[a-zA-Z0-9_-]{10,32}$/.test(value)) return value;
   return null;
 }
 

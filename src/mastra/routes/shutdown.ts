@@ -11,7 +11,7 @@
  * 2. IPC message + SIGTERM/SIGINT 兜底:注册在 src/mastra/index.ts。
  */
 import { registerApiRoute } from "@mastra/core/server";
-import { workBrowser } from "../agents";
+import { closeAllBrowsers } from "../agents/browser";
 import { settleAllMemory } from "../memory";
 
 /** 落盘上限:超时即退出,不能让退出流程挂住(主进程那边还有强杀兜底) */
@@ -30,7 +30,7 @@ export async function requestShutdown(httpExitDelayMs = 0): Promise<void> {
   shuttingDown = true;
   try {
     await Promise.race([
-      Promise.allSettled([settleAllMemory(), workBrowser.close()]),
+      Promise.allSettled([settleAllMemory(), closeAllBrowsers()]),
       new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
     ]);
   } catch {

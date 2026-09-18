@@ -67,11 +67,16 @@ import {
 } from "./threads/shared";
 import type { ThreadMetadata } from "./threads/types";
 
-/** 消息 metadata:用量 + 用户显式引用,前端据此显示上下文与强调徽章 */
+/** 消息 metadata:用量 + 用户显式引用,前端据此恢复附件展示 */
 interface WorkMessageMetadata {
   usage?: LanguageModelUsage;
   skillNames?: string[];
-  fileReferences?: Array<{ id: string; filename: string; url: string }>;
+  fileReferences?: Array<{
+    id: string;
+    filename: string;
+    url: string;
+    mediaType?: string;
+  }>;
 }
 
 interface LibraryCitationSource {

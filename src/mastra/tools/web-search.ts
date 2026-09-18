@@ -12,6 +12,12 @@ import { createTool, webFetchTool, webSearchTool } from "@mastra/core/tools";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
 import { z } from "zod";
+import {
+  CredentialPointerSchema,
+  CredentialStateSchema,
+  searchCredentialPurpose,
+} from "../../shared/credential-contract";
+import { deleteCredential, resolveCredential } from "../credential-broker";
 import { getAppConfig, setAppConfig } from "../storage";
 import {
   archiveTextContent,
@@ -45,36 +51,65 @@ interface WebSearchSelection {
 export const WEB_SEARCH_CONTEXT_KEY = "webSearch";
 
 export interface ToolsUserConfig {
-  tavily: { apiKey: string };
-  firecrawl: { apiKey: string; apiUrl: string };
-  anysearch: { apiKey: string };
+  tavily: z.infer<typeof CredentialStateSchema>;
+  firecrawl: z.infer<typeof CredentialStateSchema> & { apiUrl: string };
+  anysearch: z.infer<typeof CredentialStateSchema>;
 }
 
 const TOOLS_CONFIG_KEY = "tools";
 
 const DEFAULT_TOOLS_CONFIG: ToolsUserConfig = {
-  tavily: { apiKey: "" },
-  firecrawl: { apiKey: "", apiUrl: "" },
-  anysearch: { apiKey: "" },
+  tavily: { hasCredential: false },
+  firecrawl: { hasCredential: false, apiUrl: "" },
+  anysearch: { hasCredential: false },
 };
+
+const toolsConfigSchema = z
+  .object({
+    tavily: CredentialStateSchema,
+    firecrawl: z.union([
+      CredentialPointerSchema.extend({ apiUrl: z.string().max(2_048) }),
+      z.object({ hasCredential: z.literal(false), apiUrl: z.string().max(2_048) }).strict(),
+    ]),
+    anysearch: CredentialStateSchema,
+  })
+  .strict();
 
 export async function getToolsConfig(resourceId?: string): Promise<ToolsUserConfig> {
   const raw = await getAppConfig(TOOLS_CONFIG_KEY, resourceId);
   if (!raw) return DEFAULT_TOOLS_CONFIG;
   try {
-    const parsed = JSON.parse(raw) as Partial<ToolsUserConfig>;
-    return {
-      tavily: { ...DEFAULT_TOOLS_CONFIG.tavily, ...parsed.tavily },
-      firecrawl: { ...DEFAULT_TOOLS_CONFIG.firecrawl, ...parsed.firecrawl },
-      anysearch: { ...DEFAULT_TOOLS_CONFIG.anysearch, ...parsed.anysearch },
-    };
+    return toolsConfigSchema.parse(JSON.parse(raw));
   } catch {
     return DEFAULT_TOOLS_CONFIG;
   }
 }
 
-export async function saveToolsConfig(config: ToolsUserConfig, resourceId?: string): Promise<void> {
-  await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(config, null, 2), resourceId);
+export async function saveToolsConfig(config: unknown, resourceId?: string): Promise<void> {
+  const next = toolsConfigSchema.parse(config);
+  const current = await getToolsConfig(resourceId);
+  await Promise.all(
+    (["tavily", "firecrawl", "anysearch"] as const).map((engine) =>
+      next[engine].hasCredential
+        ? resolveCredential(next[engine].credentialRef, searchCredentialPurpose(engine))
+        : undefined,
+    ),
+  );
+  await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
+  await Promise.all(
+    (["tavily", "firecrawl", "anysearch"] as const).map(async (engine) => {
+      const oldConfig = current[engine];
+      const newConfig = next[engine];
+      if (
+        oldConfig.hasCredential &&
+        (!newConfig.hasCredential || oldConfig.credentialRef !== newConfig.credentialRef)
+      ) {
+        await deleteCredential(oldConfig.credentialRef, searchCredentialPurpose(engine)).catch(
+          () => undefined,
+        );
+      }
+    }),
+  );
 }
 
 interface DepthPreset {
@@ -639,7 +674,7 @@ function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
 }
 
 function createFirecrawlTools(
-  config: ToolsUserConfig["firecrawl"],
+  config: { apiKey: string; apiUrl: string },
   preset: DepthPreset,
 ): ToolsInput {
   const firecrawl = new Firecrawl({
@@ -789,27 +824,37 @@ export async function resolveWebSearchTools(
   const config = await getToolsConfig(resourceId);
 
   if (selection.engine === "tavily") {
-    if (!config.tavily.apiKey) return {};
+    if (!config.tavily.hasCredential) return {};
+    const apiKey = await resolveCredential(
+      config.tavily.credentialRef,
+      searchCredentialPurpose("tavily"),
+    );
     return {
       web_fetch: createArchivedWebFetchTool(),
-      tavily_search: createArchivedTavilySearchTool(config.tavily.apiKey),
-      ...(preset.allowDeepFetch
-        ? { tavily_extract: createArchivedTavilyExtractTool(config.tavily.apiKey) }
-        : {}),
+      tavily_search: createArchivedTavilySearchTool(apiKey),
+      ...(preset.allowDeepFetch ? { tavily_extract: createArchivedTavilyExtractTool(apiKey) } : {}),
     };
   }
 
   if (selection.engine === "firecrawl") {
-    if (!config.firecrawl.apiKey) return {};
+    if (!config.firecrawl.hasCredential) return {};
+    const apiKey = await resolveCredential(
+      config.firecrawl.credentialRef,
+      searchCredentialPurpose("firecrawl"),
+    );
     return {
       web_fetch: createArchivedWebFetchTool(),
-      ...createFirecrawlTools(config.firecrawl, preset),
+      ...createFirecrawlTools({ apiKey, apiUrl: config.firecrawl.apiUrl }, preset),
     };
   }
 
+  const apiKey = config.anysearch.hasCredential
+    ? await resolveCredential(config.anysearch.credentialRef, searchCredentialPurpose("anysearch"))
+    : "";
+
   return {
     web_fetch: createArchivedWebFetchTool(),
-    ...createAnySearchTools(config.anysearch.apiKey, preset),
+    ...createAnySearchTools(apiKey, preset),
   };
 }
 

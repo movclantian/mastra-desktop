@@ -1,11 +1,29 @@
+import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/shared/i18n";
+import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/shared/ui/drawer";
 import { Field, FieldContent, FieldDescription, FieldError, FieldTitle } from "@/shared/ui/field";
+import { Input } from "@/shared/ui/input";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
 import { Textarea } from "@/shared/ui/textarea";
 import { fetchMemoryConfig, saveMemoryConfig } from "../../api/settings-api";
 import {
+  AdvancedSection,
+  ConfirmDialog,
   NumberRow,
   ScopeSelect,
   SelectRow,
@@ -16,6 +34,10 @@ import {
 } from "../controls";
 
 const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
+const PROFILE_TEMPLATE =
+  "# User Profile\n- **Name**:\n- **Location**:\n- **Interests**:\n- **Preferences**:\n- **Long-term Goals**:\n";
+const PROJECT_TEMPLATE =
+  "# Project Context\n- **Goal**:\n- **Constraints**:\n- **Decisions**:\n- **Current Focus**:\n- **Next Steps**:\n";
 
 // ---------------------------------------------------------------------------
 // 记忆(暴露 Memory 可配置项,写入数据库 app_config 表,保存后实时生效)
@@ -91,8 +113,7 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
   workingMemory: true,
   workingMemoryScope: "resource",
   workingMemoryFormat: "template",
-  workingMemoryTemplate:
-    "# User Profile\n- **Name**:\n- **Location**:\n- **Interests**:\n- **Preferences**:\n- **Long-term Goals**:\n",
+  workingMemoryTemplate: PROFILE_TEMPLATE,
   workingMemorySchema:
     '{\n  "type": "object",\n  "properties": {\n    "name": { "type": "string" },\n    "location": { "type": "string" },\n    "timezone": { "type": "string" },\n    "preferences": {\n      "type": "object",\n      "properties": {\n        "communicationStyle": { "type": "string" },\n        "projectGoal": { "type": "string" },\n        "deadlines": { "type": "array", "items": { "type": "string" } }\n      }\n    }\n  }\n}\n',
   generateTitle: true,
@@ -134,26 +155,439 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
   ],
 };
 
-export function MemorySection() {
-  const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
-  const [extractorText, setExtractorText] = React.useState(() =>
-    JSON.stringify(DEFAULT_MEMORY_DRAFT.omExtractors, null, 2),
+function TemplateEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation();
+  const profileTemplate = `# ${t("settings:memory.templateHeadingProfile")}\n- **${t("settings:memory.templateFields.name")}**:\n- **${t("settings:memory.templateFields.location")}**:\n- **${t("settings:memory.templateFields.interests")}**:\n- **${t("settings:memory.templateFields.preferences")}**:\n- **${t("settings:memory.templateFields.goals")}**:\n`;
+  const projectTemplate = `# ${t("settings:memory.templateHeadingProject")}\n- **${t("settings:memory.templateFields.projectGoal")}**:\n- **${t("settings:memory.templateFields.constraints")}**:\n- **${t("settings:memory.templateFields.decisions")}**:\n- **${t("settings:memory.templateFields.currentFocus")}**:\n- **${t("settings:memory.templateFields.nextSteps")}**:\n`;
+  const displayedValue =
+    value === PROFILE_TEMPLATE
+      ? profileTemplate
+      : value === PROJECT_TEMPLATE
+        ? projectTemplate
+        : value;
+  const preset =
+    value === PROFILE_TEMPLATE || value === profileTemplate
+      ? "profile"
+      : value === PROJECT_TEMPLATE || value === projectTemplate
+        ? "project"
+        : "custom";
+  const fields = ["name", "preferences", "goals", "constraints"] as const;
+
+  return (
+    <Field className="min-w-0 py-3">
+      <FieldContent>
+        <FieldTitle>{t("settings:memory.templateTitle")}</FieldTitle>
+        <FieldDescription className="text-xs">{t("settings:memory.templateDesc")}</FieldDescription>
+      </FieldContent>
+      <Select
+        value={preset}
+        onValueChange={(next) => {
+          if (next === "profile") onChange(profileTemplate);
+          if (next === "project") onChange(projectTemplate);
+        }}
+      >
+        <SelectTrigger className="w-full sm:w-64">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="profile">{t("settings:memory.templatePresetProfile")}</SelectItem>
+          <SelectItem value="project">{t("settings:memory.templatePresetProject")}</SelectItem>
+          <SelectItem value="custom">{t("settings:memory.templatePresetCustom")}</SelectItem>
+        </SelectContent>
+      </Select>
+      <div className="flex min-w-0 flex-wrap gap-1.5">
+        {fields.map((field) => (
+          <Button
+            key={field}
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() =>
+              onChange(
+                `${displayedValue.trimEnd()}\n- **${t(`settings:memory.templateFields.${field}`)}**:\n`,
+              )
+            }
+          >
+            <PlusIcon />
+            {t(`settings:memory.templateFields.${field}`)}
+          </Button>
+        ))}
+      </div>
+      <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+        <Textarea
+          className="min-h-48 min-w-0 resize-y font-mono text-xs"
+          onChange={(event) => onChange(event.target.value)}
+          value={displayedValue}
+        />
+        <div className="min-h-48 min-w-0 overflow-auto rounded-lg border bg-muted/30 p-3">
+          <p className="mb-2 text-xs font-medium text-muted-foreground">
+            {t("settings:memory.templatePreview")}
+          </p>
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm">{displayedValue}</pre>
+        </div>
+      </div>
+    </Field>
   );
-  const [extractorTextValid, setExtractorTextValid] = React.useState(true);
-  const [loaded, setLoaded] = React.useState(false);
+}
 
-  const showAdvancedMemorySettings = true;
+interface SchemaField {
+  name: string;
+  definition: Record<string, unknown>;
+}
 
-  // schema 形态实时校验:非法 JSON / 非对象时后端会回落 template,这里给即时提示
-  const workingMemorySchemaValid = React.useMemo(() => {
-    if (draft.workingMemoryFormat !== "schema") return true;
-    try {
-      const parsed = JSON.parse(draft.workingMemorySchema) as unknown;
-      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
-    } catch {
-      return false;
+function parseSchema(value: string): { root: Record<string, unknown>; fields: SchemaField[] } {
+  try {
+    const root = JSON.parse(value) as Record<string, unknown>;
+    const properties =
+      root && typeof root === "object" && !Array.isArray(root) && root.properties
+        ? (root.properties as Record<string, unknown>)
+        : {};
+    return {
+      root,
+      fields: Object.entries(properties).map(([name, definition]) => ({
+        name,
+        definition:
+          definition && typeof definition === "object" && !Array.isArray(definition)
+            ? (definition as Record<string, unknown>)
+            : { type: "string" },
+      })),
+    };
+  } catch {
+    return { root: {}, fields: [] };
+  }
+}
+
+function SchemaEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { t } = useTranslation();
+  const { root, fields } = React.useMemo(() => parseSchema(value), [value]);
+  const rowIds = React.useMemo(() => fields.map(() => nanoid()), [fields.length]);
+  const commit = (nextFields: SchemaField[]) => {
+    const properties = Object.fromEntries(
+      nextFields
+        .filter((field) => field.name.trim())
+        .map((field) => [field.name.trim(), field.definition]),
+    );
+    onChange(JSON.stringify({ ...root, type: "object", properties }, null, 2));
+  };
+
+  return (
+    <Field className="min-w-0 py-3">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <FieldContent className="min-w-0">
+          <FieldTitle>{t("settings:memory.schemaTitle")}</FieldTitle>
+          <FieldDescription className="text-xs">{t("settings:memory.schemaDesc")}</FieldDescription>
+        </FieldContent>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          onClick={() => commit([...fields, { name: "", definition: { type: "string" } }])}
+        >
+          <PlusIcon />
+          {t("settings:memory.addSchemaField")}
+        </Button>
+      </div>
+      <div className="space-y-2">
+        {fields.length ? (
+          fields.map((field, index) => (
+            <div
+              key={rowIds[index]}
+              className="grid min-w-0 gap-2 rounded-lg border bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto]"
+            >
+              <Input
+                aria-label={t("settings:memory.schemaFieldName")}
+                placeholder={t("settings:memory.schemaFieldName")}
+                value={field.name}
+                onChange={(event) =>
+                  commit(
+                    fields.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, name: event.target.value } : item,
+                    ),
+                  )
+                }
+              />
+              <Select
+                value={String(field.definition.type ?? "string")}
+                onValueChange={(type) =>
+                  type &&
+                  commit(
+                    fields.map((item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, definition: { ...item.definition, type } }
+                        : item,
+                    ),
+                  )
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(["string", "number", "boolean", "array", "object"] as const).map((type) => (
+                    <SelectItem key={type} value={type}>
+                      {t(`settings:memory.schemaTypes.${type}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                aria-label={t("settings:memory.deleteSchemaField")}
+                onClick={() => commit(fields.filter((_, itemIndex) => itemIndex !== index))}
+              >
+                <Trash2Icon />
+              </Button>
+            </div>
+          ))
+        ) : (
+          <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+            {t("settings:memory.noSchemaFields")}
+          </p>
+        )}
+      </div>
+    </Field>
+  );
+}
+
+function ExtractorCardList({
+  value,
+  onChange,
+}: {
+  value: OmExtractorDraft[];
+  onChange: (value: OmExtractorDraft[]) => void;
+}) {
+  const { t } = useTranslation();
+  const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
+  const [editor, setEditor] = React.useState<OmExtractorDraft | null>(null);
+  const duplicate = editor
+    ? value.some(
+        (item, index) =>
+          index !== editingIndex &&
+          item.stage === editor.stage &&
+          item.name.trim().toLowerCase() === editor.name.trim().toLowerCase(),
+      )
+    : false;
+  const valid = Boolean(editor?.name.trim() && editor.instructions.trim() && !duplicate);
+  const localizeDefault = (item: OmExtractorDraft): OmExtractorDraft => {
+    if (item.id === "om-extractor-default-profile") {
+      return {
+        ...item,
+        name: t("settings:memory.defaultUserProfileName"),
+        instructions: t("settings:memory.defaultUserProfileInstructions"),
+      };
     }
-  }, [draft.workingMemoryFormat, draft.workingMemorySchema]);
+    if (item.id === "om-extractor-default-project") {
+      return {
+        ...item,
+        name: t("settings:memory.defaultProjectFactsName"),
+        instructions: t("settings:memory.defaultProjectFactsInstructions"),
+      };
+    }
+    return item;
+  };
+  const openEditor = (index: number | null) => {
+    setEditingIndex(index);
+    setEditor(
+      index === null
+        ? {
+            id: `extractor-${nanoid(8)}`,
+            name: "",
+            instructions: "",
+            stage: "observation",
+            enabled: true,
+          }
+        : localizeDefault(value[index]),
+    );
+  };
+  const closeEditor = () => {
+    setEditingIndex(null);
+    setEditor(null);
+  };
+  const saveEditor = () => {
+    if (!editor || !valid) return;
+    onChange(
+      editingIndex === null
+        ? [...value, editor]
+        : value.map((item, index) => (index === editingIndex ? editor : item)),
+    );
+    closeEditor();
+  };
+
+  return (
+    <Field className="min-w-0 py-3">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+        <FieldContent className="min-w-0">
+          <FieldTitle>{t("settings:memory.extractorsTitle")}</FieldTitle>
+          <FieldDescription className="text-xs">
+            {t("settings:memory.extractorsDesc")}
+          </FieldDescription>
+        </FieldContent>
+        <Button type="button" size="xs" variant="outline" onClick={() => openEditor(null)}>
+          <PlusIcon />
+          {t("settings:memory.addExtractor")}
+        </Button>
+      </div>
+      <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+        {value.map((item, index) => {
+          const displayItem = localizeDefault(item);
+          return (
+            <article key={item.id} className="min-w-0 rounded-lg border bg-muted/20 p-3">
+              <div className="flex min-w-0 items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                    <p className="break-words text-sm font-medium">{displayItem.name}</p>
+                    <Badge variant={item.enabled ? "secondary" : "outline"}>
+                      {item.enabled ? t("common:enabled") : t("common:disabled")}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 line-clamp-3 break-words text-xs text-muted-foreground">
+                    {displayItem.instructions}
+                  </p>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    {item.stage === "observation"
+                      ? t("settings:memory.extractorStageConversation")
+                      : t("settings:memory.extractorStageSummary")}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={t("common:edit")}
+                    onClick={() => openEditor(index)}
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={t("common:delete")}
+                    onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      <Drawer
+        open={editor !== null}
+        onOpenChange={(open) => {
+          if (!open) closeEditor();
+        }}
+        swipeDirection="right"
+      >
+        <DrawerContent>
+          <DrawerHeader>
+            <DrawerTitle>
+              {editingIndex === null
+                ? t("settings:memory.addExtractor")
+                : t("settings:memory.editExtractor")}
+            </DrawerTitle>
+            <DrawerDescription>{t("settings:memory.extractorEditorDesc")}</DrawerDescription>
+          </DrawerHeader>
+          {editor ? (
+            <ScrollArea className="min-h-0 flex-1 px-4">
+              <div className="space-y-4 py-4">
+                <Field data-invalid={!editor.name.trim() || duplicate}>
+                  <FieldTitle>{t("settings:memory.extractorName")}</FieldTitle>
+                  <Input
+                    value={editor.name}
+                    onChange={(event) => setEditor({ ...editor, name: event.target.value })}
+                  />
+                  {duplicate ? (
+                    <FieldError>{t("settings:memory.extractorNameDuplicate")}</FieldError>
+                  ) : null}
+                </Field>
+                <Field data-invalid={!editor.instructions.trim()}>
+                  <FieldTitle>{t("settings:memory.extractorInstructions")}</FieldTitle>
+                  <FieldDescription className="text-xs">
+                    {t("settings:memory.extractorInstructionsDesc")}
+                  </FieldDescription>
+                  <Textarea
+                    className="min-h-36 resize-y"
+                    value={editor.instructions}
+                    onChange={(event) => setEditor({ ...editor, instructions: event.target.value })}
+                  />
+                </Field>
+                <Field>
+                  <FieldTitle>{t("settings:memory.extractorStage")}</FieldTitle>
+                  <Select
+                    value={editor.stage}
+                    onValueChange={(stage) =>
+                      stage && setEditor({ ...editor, stage: stage as OmExtractorDraft["stage"] })
+                    }
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="observation">
+                        {t("settings:memory.extractorStageConversation")}
+                      </SelectItem>
+                      <SelectItem value="reflection">
+                        {t("settings:memory.extractorStageSummary")}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <SettingRow title={t("settings:memory.extractorEnabled")}>
+                  <Switch
+                    checked={editor.enabled}
+                    onCheckedChange={(enabled) => setEditor({ ...editor, enabled })}
+                  />
+                </SettingRow>
+                <SettingRow
+                  title={t("settings:memory.extractorUsePrevious")}
+                  description={t("settings:memory.extractorUsePreviousDesc")}
+                >
+                  <Switch
+                    checked={editor.includePreviousExtraction === true}
+                    onCheckedChange={(includePreviousExtraction) =>
+                      setEditor({ ...editor, includePreviousExtraction })
+                    }
+                  />
+                </SettingRow>
+                <Field>
+                  <FieldTitle>{t("settings:memory.extractorMetadataPath")}</FieldTitle>
+                  <FieldDescription className="text-xs">
+                    {t("settings:memory.extractorMetadataPathDesc")}
+                  </FieldDescription>
+                  <Input
+                    value={editor.metadataKeyPath ?? ""}
+                    onChange={(event) =>
+                      setEditor({ ...editor, metadataKeyPath: event.target.value })
+                    }
+                    placeholder={t("settings:memory.recommendedPlaceholder")}
+                  />
+                </Field>
+              </div>
+            </ScrollArea>
+          ) : null}
+          <DrawerFooter className="flex-row justify-end border-t pt-3">
+            <DrawerClose render={<Button type="button" variant="outline" />}>
+              {t("common:cancel")}
+            </DrawerClose>
+            <Button type="button" disabled={!valid} onClick={saveEditor}>
+              {t("common:save")}
+            </Button>
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
+    </Field>
+  );
+}
+
+export function MemorySection() {
+  const { t } = useTranslation();
+  const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
+  const [loaded, setLoaded] = React.useState(false);
 
   React.useEffect(() => {
     if (loaded) return;
@@ -161,8 +595,6 @@ export function MemorySection() {
       .then((config) => {
         const merged = { ...DEFAULT_MEMORY_DRAFT, ...config } as MemoryDraft;
         setDraft(merged);
-        setExtractorText(JSON.stringify(merged.omExtractors, null, 2));
-        setExtractorTextValid(true);
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
@@ -174,7 +606,7 @@ export function MemorySection() {
   // 自动保存:800ms 防抖写入;非文本字段变化成功后弹 toast 供撤回,
   // 文本编辑(模板/Schema/指令)静默。JSON 草稿非法时暂停,避免写入旧值或触发后端回退。
   React.useEffect(() => {
-    if (!loaded || !workingMemorySchemaValid || !extractorTextValid) return;
+    if (!loaded) return;
     const timer = window.setTimeout(() => {
       void saveMemoryConfig({
         ...draft,
@@ -189,9 +621,9 @@ export function MemorySection() {
               (key) => !MEMORY_TEXT_KEYS.has(key) && !Object.is(before[key], draft[key]),
             );
           if (before !== null && changed) {
-            toast.success("记忆配置已更新", {
+            toast.success(t("settings:memory.configUpdated"), {
               action: {
-                label: "撤回",
+                label: t("settings:memory.undo"),
                 onClick: () => {
                   // 预置快照:随后的自动保存视为无变化,不再弹 toast
                   prevSavedRef.current = before;
@@ -201,154 +633,197 @@ export function MemorySection() {
             });
           }
         })
-        .catch(() => toast.error("记忆配置自动保存失败,请确认 Mastra 服务已启动"));
+        .catch(() => toast.error(t("settings:memory.autoSaveFailed")));
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draft, extractorTextValid, loaded, workingMemorySchemaValid]);
+  }, [draft, loaded, t]);
+
+  const restore = (...keys: Array<keyof MemoryDraft>) =>
+    setDraft((current) => ({
+      ...current,
+      ...Object.fromEntries(keys.map((key) => [key, DEFAULT_MEMORY_DRAFT[key]])),
+    }));
+  const resetLabel = t("common:restoreDefaults");
 
   return (
     <>
       <SettingCard
-        title="消息历史"
+        title={t("settings:memory.messageHistoryTitle")}
+        onReset={() => restore("lastMessages", "readOnly")}
+        resetLabel={resetLabel}
         description={
           draft.observationalMemory
-            ? "启用 OM 后由 Observational Memory 管理未观察消息窗口;此项只在关闭 OM 时生效。"
-            : "每次请求注入上下文的最近消息条数与只读模式(message-history.mdx)。"
+            ? t("settings:memory.messageHistoryDescOm")
+            : t("settings:memory.messageHistoryDescNonOm")
         }
       >
-        {draft.observationalMemory ? (
-          <SettingRow title="最近消息数" description="OM 会根据当前模型窗口自动管理上下文边界">
-            <span className="shrink-0 text-sm font-medium text-muted-foreground">由 OM 管理</span>
-          </SettingRow>
-        ) : (
+        {!draft.observationalMemory ? (
           <SliderRow
-            description="每次请求注入的最近消息条数"
+            description={t("settings:memory.recentMessagesDesc")}
             max={200}
             min={1}
             step={1}
-            title="最近消息数"
+            title={t("settings:memory.recentMessagesTitle")}
             value={draft.lastMessages}
             onChange={(v) => setDraft({ ...draft, lastMessages: v })}
           />
-        )}
+        ) : null}
         <SettingRow
-          description="只读记忆:不保存新消息,不注册 updateWorkingMemory 工具"
-          title="只读模式(readOnly)"
+          description={t("settings:memory.readOnlyDesc")}
+          title={t("settings:memory.readOnlyTitle")}
         >
-          <Switch
-            checked={draft.readOnly}
-            onCheckedChange={(v) => setDraft({ ...draft, readOnly: v })}
-          />
+          {draft.readOnly ? (
+            <Switch checked onCheckedChange={(readOnly) => setDraft({ ...draft, readOnly })} />
+          ) : (
+            <ConfirmDialog
+              cancelLabel={t("common:cancel")}
+              confirmLabel={t("settings:memory.confirmReadOnlyAction")}
+              description={t("settings:memory.confirmReadOnlyDesc")}
+              onConfirm={() => setDraft({ ...draft, readOnly: true })}
+              title={t("settings:memory.confirmReadOnlyTitle")}
+              trigger={<Switch checked={false} aria-label={t("settings:memory.readOnlyTitle")} />}
+            />
+          )}
         </SettingRow>
       </SettingCard>
 
-      <SettingCard title="语义召回" description="按语义相似度找回相关历史消息。">
+      <SettingCard
+        title={t("settings:memory.semanticRecallTitle")}
+        description={t("settings:memory.semanticRecallDesc")}
+        onReset={() =>
+          restore(
+            "semanticRecall",
+            "semanticRecallTopK",
+            "semanticRecallMessageRangeBefore",
+            "semanticRecallMessageRangeAfter",
+            "semanticRecallScope",
+            "semanticRecallThreshold",
+            "semanticRecallIndexName",
+          )
+        }
+        resetLabel={resetLabel}
+      >
         <p className="py-3 text-xs text-muted-foreground">
-          使用本机 FastEmbed Small(384 维),无需 API Key。向量索引不随模型配置变化,也不需要手动重建。
+          {t("settings:memory.semanticRecallFastEmbedHint")}
         </p>
-        <SettingRow title="启用语义召回" description="对话内容将写入向量库用于相似检索">
+        <SettingRow
+          title={t("settings:memory.enableSemanticRecall")}
+          description={t("settings:memory.enableSemanticRecallDesc")}
+        >
           <Switch
             checked={draft.semanticRecall}
             onCheckedChange={(v) => setDraft({ ...draft, semanticRecall: v })}
           />
         </SettingRow>
-        {draft.semanticRecall && !showAdvancedMemorySettings ? (
-          <p className="py-3 text-xs text-muted-foreground">
-            已启用内置的保守召回策略；详细阈值由系统管理，以避免与观察记忆重复扩大上下文。
-          </p>
-        ) : null}
-        {draft.semanticRecall && showAdvancedMemorySettings ? (
-          <>
+        {draft.semanticRecall ? (
+          <AdvancedSection
+            title={t("settings:memory.advancedTitle")}
+            description={t("settings:memory.semanticAdvancedDesc")}
+          >
             <SliderRow
-              description="topK:每次召回的相似消息条数"
+              description={t("settings:memory.topKDesc")}
               max={20}
               min={1}
               step={1}
-              title="召回条数(topK)"
+              title={t("settings:memory.topKTitle")}
               value={draft.semanticRecallTopK}
               onChange={(v) => setDraft({ ...draft, semanticRecallTopK: v })}
             />
             <SliderRow
-              description="messageRange.before:每条命中消息向前附带的上下文条数"
+              description={t("settings:memory.beforeRangeDesc")}
               max={10}
               min={0}
               step={1}
-              title="向前附带(before)"
+              title={t("settings:memory.beforeRangeTitle")}
               value={draft.semanticRecallMessageRangeBefore}
               onChange={(v) => setDraft({ ...draft, semanticRecallMessageRangeBefore: v })}
             />
             <SliderRow
-              description="messageRange.after:每条命中消息向后附带的上下文条数"
+              description={t("settings:memory.afterRangeDesc")}
               max={10}
               min={0}
               step={1}
-              title="向后附带(after)"
+              title={t("settings:memory.afterRangeTitle")}
               value={draft.semanticRecallMessageRangeAfter}
               onChange={(v) => setDraft({ ...draft, semanticRecallMessageRangeAfter: v })}
             />
             <SettingRow
-              title="检索范围(scope)"
-              description="thread 仅当前线程;resource 跨全部线程检索"
+              title={t("settings:memory.scopeTitle")}
+              description={t("settings:memory.scopeDesc")}
             >
               <ScopeSelect
                 onChange={(v) => setDraft({ ...draft, semanticRecallScope: v })}
-                resourceLabel="resource(跨线程)"
-                threadLabel="thread(线程内)"
+                resourceLabel={t("settings:memory.scopeResource")}
+                threadLabel={t("settings:memory.scopeThread")}
                 value={draft.semanticRecallScope}
               />
             </SettingRow>
             <SliderRow
-              description="仅保留达到该相似度的消息;0 表示不额外过滤"
+              description={t("settings:memory.thresholdDesc")}
               max={1}
               min={0}
               onChange={(v) =>
                 setDraft({ ...draft, semanticRecallThreshold: Math.round(v * 100) / 100 })
               }
               step={0.05}
-              title="相似度下限(threshold)"
+              title={t("settings:memory.thresholdTitle")}
               value={draft.semanticRecallThreshold}
             />
             <TextAreaRow
-              description="可选的向量索引名;留空使用 embedder 对应的默认索引"
+              description={t("settings:memory.indexNameDesc")}
               onChange={(semanticRecallIndexName) =>
                 setDraft({ ...draft, semanticRecallIndexName })
               }
               rows={1}
-              title="向量索引(indexName)"
+              title={t("settings:memory.indexNameTitle")}
               value={draft.semanticRecallIndexName}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
-      <SettingCard title="工作记忆" description="跨轮维护一份小型、稳定的用户与项目状态。">
-        <SettingRow title="启用工作记忆" description="在系统上下文中维护一份可更新的画像">
+      <SettingCard
+        title={t("settings:memory.workingMemoryTitle")}
+        description={t("settings:memory.workingMemoryDesc")}
+        onReset={() =>
+          restore(
+            "workingMemory",
+            "workingMemoryScope",
+            "workingMemoryFormat",
+            "workingMemoryTemplate",
+            "workingMemorySchema",
+          )
+        }
+        resetLabel={resetLabel}
+      >
+        <SettingRow
+          title={t("settings:memory.enableWorkingMemory")}
+          description={t("settings:memory.enableWorkingMemoryDesc")}
+        >
           <Switch
             checked={draft.workingMemory}
             onCheckedChange={(v) => setDraft({ ...draft, workingMemory: v })}
           />
         </SettingRow>
-        {draft.workingMemory && !showAdvancedMemorySettings ? (
-          <p className="py-3 text-xs text-muted-foreground">
-            使用内置的小型用户画像模板；结构和写入策略由系统管理。
-          </p>
-        ) : null}
-        {draft.workingMemory && showAdvancedMemorySettings ? (
-          <>
+        {draft.workingMemory ? (
+          <AdvancedSection
+            title={t("settings:memory.advancedTitle")}
+            description={t("settings:memory.workingMemoryAdvancedDesc")}
+          >
             <SettingRow
-              title="记忆范围(scope)"
-              description="resource 跨线程共享用户画像;thread 每线程独立"
+              title={t("settings:memory.wmScopeTitle")}
+              description={t("settings:memory.wmScopeDesc")}
             >
               <ScopeSelect
                 onChange={(v) => setDraft({ ...draft, workingMemoryScope: v })}
-                resourceLabel="resource(跨线程)"
-                threadLabel="thread(线程内)"
+                resourceLabel={t("settings:memory.scopeResource")}
+                threadLabel={t("settings:memory.scopeThread")}
                 value={draft.workingMemoryScope}
               />
             </SettingRow>
             <SettingRow
-              title="记忆形态(format)"
-              description="template 每次整体重写(replace);schema 按 JSON 字段合并更新(merge)"
+              title={t("settings:memory.wmFormatTitle")}
+              description={t("settings:memory.wmFormatDesc")}
             >
               <Select
                 onValueChange={(v) =>
@@ -361,61 +836,36 @@ export function MemorySection() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="template">template(Markdown)</SelectItem>
-                  <SelectItem value="schema">schema(JSON Schema)</SelectItem>
+                  <SelectItem value="template">{t("settings:memory.wmFormatTemplate")}</SelectItem>
+                  <SelectItem value="schema">{t("settings:memory.wmFormatSchema")}</SelectItem>
                 </SelectContent>
               </Select>
             </SettingRow>
             {draft.workingMemoryFormat === "template" ? (
-              <Field className="space-y-2 py-2">
-                <FieldContent className="space-y-1">
-                  <FieldTitle className="text-sm leading-none font-medium">
-                    记忆模板(template)
-                  </FieldTitle>
-                  <FieldDescription className="text-xs text-muted-foreground">
-                    Markdown 模板,定义工作记忆的结构(Agent 按此结构填写)
-                  </FieldDescription>
-                </FieldContent>
-                <Textarea
-                  className="min-h-32 font-mono text-xs"
-                  onChange={(e) => setDraft({ ...draft, workingMemoryTemplate: e.target.value })}
-                  rows={8}
-                  value={draft.workingMemoryTemplate}
-                />
-              </Field>
+              <TemplateEditor
+                value={draft.workingMemoryTemplate}
+                onChange={(workingMemoryTemplate) => setDraft({ ...draft, workingMemoryTemplate })}
+              />
             ) : (
-              <Field className="space-y-2 py-2">
-                <FieldContent className="space-y-1">
-                  <FieldTitle className="text-sm leading-none font-medium">
-                    记忆结构(schema)
-                  </FieldTitle>
-                  <FieldDescription className="text-xs text-muted-foreground">
-                    Standard JSON Schema,定义工作记忆的字段(Agent 按字段合并更新)
-                  </FieldDescription>
-                </FieldContent>
-                <Textarea
-                  className={`min-h-32 font-mono text-xs ${
-                    workingMemorySchemaValid
-                      ? ""
-                      : "border-destructive focus-visible:ring-destructive"
-                  }`}
-                  onChange={(e) => setDraft({ ...draft, workingMemorySchema: e.target.value })}
-                  rows={12}
-                  value={draft.workingMemorySchema}
-                />
-                {!workingMemorySchemaValid ? (
-                  <FieldError className="text-xs">
-                    JSON 无效:保存后将回落 template 形态,请修正为合法的 JSON Schema 对象
-                  </FieldError>
-                ) : null}
-              </Field>
+              <SchemaEditor
+                value={draft.workingMemorySchema}
+                onChange={(workingMemorySchema) => setDraft({ ...draft, workingMemorySchema })}
+              />
             )}
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
-      <SettingCard title="线程标题" description="由模型根据首轮对话自动为新线程命名。">
-        <SettingRow title="自动生成线程标题" description="新建线程首轮对话后自动命名">
+      <SettingCard
+        title={t("settings:memory.threadTitleCard")}
+        description={t("settings:memory.threadTitleCardDesc")}
+        onReset={() => restore("generateTitle")}
+        resetLabel={resetLabel}
+      >
+        <SettingRow
+          title={t("settings:memory.autoTitle")}
+          description={t("settings:memory.autoTitleDesc")}
+        >
           <Switch
             checked={draft.generateTitle}
             onCheckedChange={(v) => setDraft({ ...draft, generateTitle: v })}
@@ -424,12 +874,36 @@ export function MemorySection() {
       </SettingCard>
 
       <SettingCard
-        title="观察记忆"
-        description="长对话中自动提取稳定事实，并在需要时压缩旧上下文。"
+        title={t("settings:memory.omTitle")}
+        description={t("settings:memory.omDesc")}
+        onReset={() =>
+          restore(
+            "observationalMemory",
+            "omScope",
+            "omTemporalMarkers",
+            "omObserverInstruction",
+            "omReflectionInstruction",
+            "omThreadTitle",
+            "omManageWorkingMemory",
+            "omObserveAttachments",
+            "omMessageTokens",
+            "omMaxTokensPerBatch",
+            "omTemperature",
+            "omMaxOutputTokens",
+            "omBufferTokens",
+            "omBufferEnabled",
+            "omObservationTokens",
+            "omRetrieval",
+            "omRetrievalVector",
+            "omRetrievalScope",
+            "omExtractors",
+          )
+        }
+        resetLabel={resetLabel}
       >
         <SettingRow
-          description="由 Observer/Reflector 代理后台提取用户偏好与事实"
-          title="启用观察记忆"
+          description={t("settings:memory.enableOmDesc")}
+          title={t("settings:memory.enableOm")}
         >
           <Switch
             checked={draft.observationalMemory}
@@ -439,210 +913,195 @@ export function MemorySection() {
         {draft.observationalMemory ? (
           <>
             <SettingRow
-              description="Observer 与 Reflector 自动使用当前 promptInput 选择或请求的模型"
-              title="记忆模型"
+              description={t("settings:memory.modelDesc")}
+              title={t("settings:memory.modelTitle")}
             >
               <span className="shrink-0 text-sm font-medium text-muted-foreground">
-                跟随当前模型
+                {t("settings:memory.followCurrentModel")}
               </span>
             </SettingRow>
             <NumberRow
-              description="Observer 触发观察前保留的消息 token 数"
+              description={t("settings:memory.messageTokensDesc")}
               max={250_000}
-              min={0}
+              min={1_000}
               onChange={(v) => setDraft({ ...draft, omMessageTokens: v })}
-              suffix="token"
-              title="消息阈值(messageTokens)"
+              suffix={t("settings:memory.tokenUnit")}
+              hint={t("settings:memory.messageTokensHint")}
+              title={t("settings:memory.messageTokensTitle")}
               value={draft.omMessageTokens}
             />
             <SettingRow
-              description="对话间隔 ≥10 分钟时插入时间标记,帮助模型感知时间跨度"
-              title="时间标记(temporalMarkers)"
+              description={t("settings:memory.temporalMarkersDesc")}
+              title={t("settings:memory.temporalMarkersTitle")}
             >
               <Switch
                 checked={draft.omTemporalMarkers}
                 onCheckedChange={(v) => setDraft({ ...draft, omTemporalMarkers: v })}
               />
             </SettingRow>
-            {showAdvancedMemorySettings ? (
-              <>
-                <SettingRow
-                  description="Observer 与 Reflector 共享 thread 或跨线程资源记忆"
-                  title="观察范围(scope)"
-                >
-                  <ScopeSelect
-                    onChange={(v) => setDraft({ ...draft, omScope: v })}
-                    resourceLabel="resource(跨线程)"
-                    threadLabel="thread(当前线程)"
-                    value={draft.omScope}
-                  />
-                </SettingRow>
-                <SettingRow
-                  description="Observer 顺手维护线程标题"
-                  title="Observer 维护线程标题(threadTitle)"
-                >
-                  <Switch
-                    checked={draft.omThreadTitle}
-                    onCheckedChange={(v) => setDraft({ ...draft, omThreadTitle: v })}
-                  />
-                </SettingRow>
-                <SettingRow
-                  description="允许 Observer 直接管理工作记忆"
-                  title="Observer 管理工作记忆(manageWorkingMemory)"
-                >
-                  <Switch
-                    checked={draft.omManageWorkingMemory}
-                    onCheckedChange={(v) => setDraft({ ...draft, omManageWorkingMemory: v })}
-                  />
-                </SettingRow>
-                <SelectRow
-                  description="按模型多模态能力自动决定是否观察附件"
-                  onChange={(omObserveAttachments) => setDraft({ ...draft, omObserveAttachments })}
-                  options={[
-                    { value: "auto" as const, label: "auto(跟随模型)" },
-                    { value: "on" as const, label: "on(启用)" },
-                    { value: "off" as const, label: "off(关闭)" },
-                  ]}
-                  title="观察附件(observeAttachments)"
-                  value={draft.omObserveAttachments}
+            <AdvancedSection
+              title={t("settings:memory.advancedTitle")}
+              description={t("settings:memory.observationAdvancedDesc")}
+            >
+              <SettingRow
+                description={t("settings:memory.omScopeDesc")}
+                title={t("settings:memory.omScopeTitle")}
+              >
+                <ScopeSelect
+                  onChange={(v) => setDraft({ ...draft, omScope: v })}
+                  resourceLabel={t("settings:memory.scopeResource")}
+                  threadLabel={t("settings:memory.omScopeCurrentThread")}
+                  value={draft.omScope}
                 />
-                <NumberRow
-                  description="resource 范围批量观察的最大 token 数;0 使用默认"
-                  max={2_000_000}
-                  min={0}
-                  onChange={(v) => setDraft({ ...draft, omMaxTokensPerBatch: v })}
-                  suffix="token"
-                  title="批量上限(maxTokensPerBatch)"
-                  value={draft.omMaxTokensPerBatch}
+              </SettingRow>
+              <SettingRow
+                description={t("settings:memory.omThreadTitleDesc")}
+                title={t("settings:memory.omThreadTitleTitle")}
+              >
+                <Switch
+                  checked={draft.omThreadTitle}
+                  onCheckedChange={(v) => setDraft({ ...draft, omThreadTitle: v })}
                 />
-                <NumberRow
-                  description="Observer 模型温度"
-                  max={2}
-                  min={0}
-                  onChange={(v) => setDraft({ ...draft, omTemperature: v })}
-                  title="Observer 温度(temperature)"
-                  value={draft.omTemperature}
+              </SettingRow>
+              <SettingRow
+                description={t("settings:memory.manageWmDesc")}
+                title={t("settings:memory.manageWmTitle")}
+              >
+                <Switch
+                  checked={draft.omManageWorkingMemory}
+                  onCheckedChange={(v) => setDraft({ ...draft, omManageWorkingMemory: v })}
                 />
-                <NumberRow
-                  description="Observer 单次输出上限;0 使用默认"
-                  max={500_000}
-                  min={0}
-                  onChange={(v) => setDraft({ ...draft, omMaxOutputTokens: v })}
-                  suffix="token"
-                  title="Observer 输出(maxOutputTokens)"
-                  value={draft.omMaxOutputTokens}
+              </SettingRow>
+              <SelectRow
+                description={t("settings:memory.observeAttachmentsDesc")}
+                onChange={(omObserveAttachments) => setDraft({ ...draft, omObserveAttachments })}
+                options={[
+                  { value: "auto" as const, label: t("settings:memory.observeAttachmentsAuto") },
+                  { value: "on" as const, label: t("settings:memory.observeAttachmentsOn") },
+                  { value: "off" as const, label: t("settings:memory.observeAttachmentsOff") },
+                ]}
+                title={t("settings:memory.observeAttachmentsTitle")}
+                value={draft.omObserveAttachments}
+              />
+              <NumberRow
+                description={t("settings:memory.maxTokensPerBatchDesc")}
+                max={2_000_000}
+                min={0}
+                onChange={(v) => setDraft({ ...draft, omMaxTokensPerBatch: v })}
+                emptyValue={0}
+                placeholder={t("settings:memory.recommendedPlaceholder")}
+                suffix={t("settings:memory.tokenUnit")}
+                hint={t("settings:memory.maxTokensPerBatchHint")}
+                title={t("settings:memory.maxTokensPerBatchTitle")}
+                value={draft.omMaxTokensPerBatch}
+              />
+              <NumberRow
+                description={t("settings:memory.temperatureDesc")}
+                max={2}
+                min={0}
+                onChange={(v) => setDraft({ ...draft, omTemperature: v })}
+                hint={t("settings:memory.temperatureHint")}
+                step={0.1}
+                title={t("settings:memory.temperatureTitle")}
+                value={draft.omTemperature}
+              />
+              <NumberRow
+                description={t("settings:memory.maxOutputTokensDesc")}
+                max={500_000}
+                min={0}
+                onChange={(v) => setDraft({ ...draft, omMaxOutputTokens: v })}
+                emptyValue={0}
+                placeholder={t("settings:memory.recommendedPlaceholder")}
+                suffix={t("settings:memory.tokenUnit")}
+                hint={t("settings:memory.maxOutputTokensHint")}
+                title={t("settings:memory.maxOutputTokensTitle")}
+                value={draft.omMaxOutputTokens}
+              />
+              <NumberRow
+                description={t("settings:memory.bufferTokensDesc")}
+                max={500_000}
+                min={0}
+                onChange={(v) => setDraft({ ...draft, omBufferTokens: v })}
+                hint={t("settings:memory.bufferTokensHint")}
+                step={0.1}
+                title={t("settings:memory.bufferTokensTitle")}
+                value={draft.omBufferTokens}
+              />
+              <SettingRow
+                description={t("settings:memory.bufferEnabledDesc")}
+                title={t("settings:memory.bufferEnabledTitle")}
+              >
+                <Switch
+                  checked={draft.omBufferEnabled}
+                  onCheckedChange={(v) => setDraft({ ...draft, omBufferEnabled: v })}
                 />
-                <NumberRow
-                  description="异步观察缓冲频率;小于 1 表示 messageTokens 比例"
-                  max={500_000}
-                  min={0}
-                  onChange={(v) => setDraft({ ...draft, omBufferTokens: v })}
-                  title="缓冲频率(bufferTokens)"
-                  value={draft.omBufferTokens}
+              </SettingRow>
+              <NumberRow
+                description={t("settings:memory.observationTokensDesc")}
+                max={2_000_000}
+                min={0}
+                onChange={(v) => setDraft({ ...draft, omObservationTokens: v })}
+                emptyValue={0}
+                placeholder={t("settings:memory.recommendedPlaceholder")}
+                suffix={t("settings:memory.tokenUnit")}
+                hint={t("settings:memory.observationTokensHint")}
+                title={t("settings:memory.observationTokensTitle")}
+                value={draft.omObservationTokens}
+              />
+              <TextAreaRow
+                description={t("settings:memory.observerInstructionDesc")}
+                onChange={(omObserverInstruction) => setDraft({ ...draft, omObserverInstruction })}
+                rows={3}
+                title={t("settings:memory.observerInstructionTitle")}
+                value={draft.omObserverInstruction}
+              />
+              <TextAreaRow
+                description={t("settings:memory.reflectorInstructionDesc")}
+                onChange={(omReflectionInstruction) =>
+                  setDraft({ ...draft, omReflectionInstruction })
+                }
+                rows={3}
+                title={t("settings:memory.reflectorInstructionTitle")}
+                value={draft.omReflectionInstruction}
+              />
+              <ExtractorCardList
+                value={draft.omExtractors}
+                onChange={(omExtractors) => setDraft({ ...draft, omExtractors })}
+              />
+              <SettingRow
+                description={t("settings:memory.recallDesc")}
+                title={t("settings:memory.recallTitle")}
+              >
+                <Switch
+                  checked={draft.omRetrieval}
+                  onCheckedChange={(v) => setDraft({ ...draft, omRetrieval: v })}
                 />
-                <SettingRow description="关闭后不使用异步缓冲" title="启用异步缓冲(bufferEnabled)">
-                  <Switch
-                    checked={draft.omBufferEnabled}
-                    onCheckedChange={(v) => setDraft({ ...draft, omBufferEnabled: v })}
-                  />
-                </SettingRow>
-                <NumberRow
-                  description="Reflector 触发反思的观察 token 数;0 使用默认"
-                  max={2_000_000}
-                  min={0}
-                  onChange={(v) => setDraft({ ...draft, omObservationTokens: v })}
-                  suffix="token"
-                  title="反思阈值(observationTokens)"
-                  value={draft.omObservationTokens}
-                />
-                <TextAreaRow
-                  description="追加到 Observer 系统提示的指令"
-                  onChange={(omObserverInstruction) =>
-                    setDraft({ ...draft, omObserverInstruction })
-                  }
-                  rows={3}
-                  title="Observer 指令(instruction)"
-                  value={draft.omObserverInstruction}
-                />
-                <TextAreaRow
-                  description="追加到 Reflector 系统提示的指令"
-                  onChange={(omReflectionInstruction) =>
-                    setDraft({ ...draft, omReflectionInstruction })
-                  }
-                  rows={3}
-                  title="Reflector 指令(instruction)"
-                  value={draft.omReflectionInstruction}
-                />
-                <Field className="space-y-2 py-3">
-                  <FieldContent className="space-y-1">
-                    <FieldTitle className="text-sm leading-none font-medium">
-                      自定义抽取器(extract)
-                    </FieldTitle>
-                    <FieldDescription className="text-xs text-muted-foreground">
-                      每个抽取器使用 name、instructions、stage、enabled 字段;保存为 JSON 数组
-                    </FieldDescription>
-                  </FieldContent>
-                  <Textarea
-                    className="min-h-32 font-mono text-xs"
-                    onChange={(e) => {
-                      setExtractorText(e.target.value);
-                      try {
-                        const value = JSON.parse(e.target.value) as unknown;
-                        if (Array.isArray(value)) {
-                          setExtractorTextValid(true);
-                          setDraft({ ...draft, omExtractors: value as OmExtractorDraft[] });
-                        } else {
-                          setExtractorTextValid(false);
-                        }
-                      } catch {
-                        setExtractorTextValid(false);
-                      }
-                    }}
-                    rows={8}
-                    spellCheck={false}
-                    value={extractorText}
-                  />
-                  {!extractorTextValid ? (
-                    <FieldError className="text-xs">
-                      JSON 无效:修正为数组后才会保存抽取器配置
-                    </FieldError>
-                  ) : null}
-                </Field>
-                <SettingRow
-                  description="为 Agent 注册 recall 工具,可回查观察背后的原始消息"
-                  title="原始消息回查"
-                >
-                  <Switch
-                    checked={draft.omRetrieval}
-                    onCheckedChange={(v) => setDraft({ ...draft, omRetrieval: v })}
-                  />
-                </SettingRow>
-                {draft.omRetrieval ? (
-                  <>
-                    <SettingRow
-                      description="recall 工具同时启用语义检索(复用记忆的向量库与 embedder)"
-                      title="语义回查"
-                    >
-                      <Switch
-                        checked={draft.omRetrievalVector}
-                        onCheckedChange={(v) => setDraft({ ...draft, omRetrievalVector: v })}
-                      />
-                    </SettingRow>
-                    <SettingRow
-                      title="回查范围"
-                      description="recall 工具检索原始消息的范围,默认跨线程"
-                    >
-                      <ScopeSelect
-                        onChange={(v) => setDraft({ ...draft, omRetrievalScope: v })}
-                        resourceLabel="跨线程"
-                        threadLabel="当前线程"
-                        value={draft.omRetrievalScope}
-                      />
-                    </SettingRow>
-                  </>
-                ) : null}
-              </>
-            ) : null}
+              </SettingRow>
+              {draft.omRetrieval ? (
+                <>
+                  <SettingRow
+                    description={t("settings:memory.recallSemanticDesc")}
+                    title={t("settings:memory.recallSemanticTitle")}
+                  >
+                    <Switch
+                      checked={draft.omRetrievalVector}
+                      onCheckedChange={(v) => setDraft({ ...draft, omRetrievalVector: v })}
+                    />
+                  </SettingRow>
+                  <SettingRow
+                    title={t("settings:memory.recallScopeTitle")}
+                    description={t("settings:memory.recallScopeDesc")}
+                  >
+                    <ScopeSelect
+                      onChange={(v) => setDraft({ ...draft, omRetrievalScope: v })}
+                      resourceLabel={t("settings:memory.recallScopeResource")}
+                      threadLabel={t("settings:memory.recallScopeThread")}
+                      value={draft.omRetrievalScope}
+                    />
+                  </SettingRow>
+                </>
+              ) : null}
+            </AdvancedSection>
           </>
         ) : null}
       </SettingCard>

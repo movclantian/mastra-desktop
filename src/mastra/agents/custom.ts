@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import { getAppConfig, setAppConfig } from "../storage";
-import { getManagedSkillsDirectory } from "../workspace";
+import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
@@ -534,22 +534,22 @@ export function unregisterProfileAgents(
 }
 
 export async function resolveManagedSkillPaths(
-  names: string[],
+  names: string[] | undefined,
   resourceId?: string,
 ): Promise<string[]> {
-  const requested = new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean));
-  if (requested.size === 0) return [];
-  const root = getManagedSkillsDirectory(resourceId);
-  const entries = await readdir(root, { withFileTypes: true });
+  const requested = names
+    ? new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean))
+    : undefined;
+  if (requested?.size === 0) return [];
   const paths: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const directory = join(root, entry.name);
+  for (const directory of await getManagedSkillPaths(resourceId)) {
+    const entryName = basename(directory);
     try {
       const content = await readFile(join(directory, "SKILL.md"), "utf8");
       const metadataName = /^---\s*[\s\S]*?\bname:\s*["']?([^\r\n"']+)/m.exec(content)?.[1]?.trim();
       if (
-        requested.has(entry.name.toLowerCase()) ||
+        !requested ||
+        requested.has(entryName.toLowerCase()) ||
         (metadataName && requested.has(metadataName.toLowerCase()))
       ) {
         paths.push(directory);

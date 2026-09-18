@@ -1,12 +1,15 @@
+import { useRouterState } from "@tanstack/react-router";
 import { CheckIcon, EyeIcon, HammerIcon, MapIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import {
   matchApprovalPreset,
-  useWorkbench,
   WORK_MODE_IDS,
   WORK_MODE_META,
   type WorkModeId,
 } from "@/entities/workbench";
+import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { PromptInputButton } from "@/shared/ui/ai-elements/prompt-input";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -37,56 +40,68 @@ const MODE_ICONS: Record<WorkModeId, ComponentType<{ className?: string }>> = {
 };
 
 export function ChatModeSelector() {
-  const { modeId, setModeId, permissionRules, setPermissionRules } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const { modeId, setModeId, permissionRules, setPermissionRules } = useSessionSettings(
+    user?.id ?? "anonymous",
+    activeThreadId,
+  );
   const ActiveIcon = MODE_ICONS[modeId];
+  const activeModeLabel = t(`chat:modes.${modeId}.label`, WORK_MODE_META[modeId].label);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         render={
           <PromptInputButton
-            aria-label="会话模式"
+            aria-label={t("chat:modes.title")}
             // 见 approval-selector 同处注释:解开 min-content 定宽,标签才能截短
             className="min-w-0"
             size="sm"
-            title={`会话模式:${WORK_MODE_META[modeId].label}`}
+            title={`${t("chat:modes.title")}:${activeModeLabel}`}
             type="button"
             variant="outline"
           />
         }
       >
         <ActiveIcon className="text-primary" />
-        <span className="max-w-20 truncate text-xs">{WORK_MODE_META[modeId].label}</span>
+        <span className="max-w-20 truncate text-xs">{activeModeLabel}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72 max-w-[min(90vw,26rem)]">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>会话模式</DropdownMenuLabel>
+          <DropdownMenuLabel>{t("chat:modes.title")}</DropdownMenuLabel>
           <DropdownMenuSeparator />
           {WORK_MODE_IDS.map((id) => {
             const meta = WORK_MODE_META[id];
             const Icon = MODE_ICONS[id];
+            const label = t(`chat:modes.${id}.label`, meta.label);
+            const desc = t(`chat:modes.${id}.desc`, meta.description);
+            const hint = t(`chat:modes.${id}.hint`, meta.hint);
             return (
               <DropdownMenuSub key={id}>
                 <DropdownMenuSubTrigger className="items-start gap-2 py-2">
                   <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="flex items-center gap-1.5">
-                      {meta.label}
+                      {label}
                       {id === modeId ? <CheckIcon className="ml-auto size-3.5" /> : null}
                     </span>
                     <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">
-                      {meta.description}
+                      {desc}
                     </span>
                     <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
-                      {meta.hint}
+                      {hint}
                     </Badge>
                   </span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-72">
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>模式与工具审批</DropdownMenuLabel>
+                    <DropdownMenuLabel>{t("chat:modes.modeTitle")}</DropdownMenuLabel>
                     <DropdownMenuItem onClick={() => void setModeId(id)}>
-                      切换到{meta.label}
+                      {t("chat:modes.switchTo", { name: label })}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <ApprovalMenuItems

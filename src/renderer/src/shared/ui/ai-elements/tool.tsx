@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { isValidElement } from "react";
+import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -28,26 +29,11 @@ export const Tool = ({ className, ...props }: ToolProps) => (
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
-export type ToolHeaderProps = {
+export type ToolHeaderProps = Omit<ComponentProps<typeof CollapsibleTrigger>, "type"> & {
   title?: string;
-  className?: string;
-} & (
-  | { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
-  | {
-      type: DynamicToolUIPart["type"];
-      state: DynamicToolUIPart["state"];
-      toolName: string;
-    }
-);
-
-const statusLabels: Record<ToolPart["state"], string> = {
-  "approval-requested": "等待批准",
-  "approval-responded": "已响应",
-  "input-available": "执行中",
-  "input-streaming": "准备中",
-  "output-available": "已完成",
-  "output-denied": "已拒绝",
-  "output-error": "失败",
+  type: ToolPart["type"];
+  state: ToolPart["state"];
+  toolName?: string;
 };
 
 const statusIcons: Record<ToolPart["state"], ReactNode> = {
@@ -63,7 +49,7 @@ const statusIcons: Record<ToolPart["state"], ReactNode> = {
 export const getStatusBadge = (status: ToolPart["state"]) => (
   <Badge className="gap-1.5 rounded-full text-xs" variant="secondary">
     {statusIcons[status]}
-    {statusLabels[status]}
+    {i18n.t(`common:toolStates.${status}`)}
   </Badge>
 );
 
@@ -110,7 +96,9 @@ export type ToolInputProps = ComponentProps<"div"> & {
 
 export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
   <div className={cn("space-y-2 overflow-hidden", className)} {...props}>
-    <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">参数</h4>
+    <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
+      {i18n.t("common:parameters")}
+    </h4>
     <div className="rounded-md bg-muted/50">
       <CodeBlock code={JSON.stringify(input, null, 2)} language="json" />
     </div>
@@ -138,7 +126,7 @@ export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutpu
   return (
     <div className={cn("space-y-2", className)} {...props}>
       <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        {errorText ? "错误" : "结果"}
+        {errorText ? i18n.t("common:error") : i18n.t("common:result")}
       </h4>
       <div
         className={cn(

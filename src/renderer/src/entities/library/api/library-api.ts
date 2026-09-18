@@ -1,4 +1,5 @@
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import { apiError, type WorkErrorPayload } from "@/shared/lib";
 import type {
   LibraryAsset,
@@ -27,15 +28,21 @@ export async function fetchLibraryContents(resourceId: string): Promise<{
     apiFetch(`${MASTRA_SERVER_URL}/work/library/assets?${suffix}`),
     apiFetch(`${MASTRA_SERVER_URL}/work/library/folders?${suffix}`),
   ]);
-  const assets = await readJson<{ assets?: LibraryAsset[] }>(assetResponse, "读取资料库失败");
-  const folders = await readJson<{ folders?: LibraryFolder[] }>(folderResponse, "读取资料库失败");
+  const assets = await readJson<{ assets?: LibraryAsset[] }>(
+    assetResponse,
+    i18n.t("library:readLibraryFailed"),
+  );
+  const folders = await readJson<{ folders?: LibraryFolder[] }>(
+    folderResponse,
+    i18n.t("library:readLibraryFailed"),
+  );
   return { assets: assets.assets ?? [], folders: folders.folders ?? [] };
 }
 
 export async function fetchLibrarySettings(): Promise<LibrarySettings> {
   const payload = await readJson<{ settings: LibrarySettings }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/library/settings`),
-    "读取资料库设置失败",
+    i18n.t("library:readSettingsFailed"),
   );
   return payload.settings;
 }
@@ -46,7 +53,7 @@ export function libraryAssetContentUrl(assetId: string, resourceId: string): str
 
 export async function fetchLibraryAssetBlob(url: string): Promise<Blob> {
   const response = await apiFetch(url);
-  if (!response.ok) throw new Error("文件加载失败");
+  if (!response.ok) throw new Error(i18n.t("library:loadFileFailed"));
   return response.blob();
 }
 
@@ -56,7 +63,7 @@ export async function saveLibrarySettings(settings: LibrarySettings): Promise<Li
       method: "PUT",
       body: { ...settings },
     }),
-    "保存资料库设置失败",
+    i18n.t("library:saveSettingsFailed"),
   );
   return payload.settings;
 }
@@ -77,9 +84,9 @@ export async function createLibraryUploadSession(
       method: "POST",
       body: { resourceId, ...body },
     }),
-    "创建上传会话失败",
+    i18n.t("library:createUploadSessionFailed"),
   );
-  if (!payload.session) throw new Error("创建上传会话失败");
+  if (!payload.session) throw new Error(i18n.t("library:createUploadSessionFailed"));
   return payload.session;
 }
 
@@ -100,9 +107,9 @@ export async function completeLibraryUpload(
       `${MASTRA_SERVER_URL}/work/library/uploads/${encodeURIComponent(sessionId)}/complete`,
       { method: "POST", body: { resourceId } },
     ),
-    "完成上传失败",
+    i18n.t("library:completeUploadFailed"),
   );
-  if (!payload.asset) throw new Error("完成上传失败");
+  if (!payload.asset) throw new Error(i18n.t("library:completeUploadFailed"));
   return payload.asset;
 }
 
@@ -111,7 +118,7 @@ export function cancelLibraryUpload(sessionId: string, resourceId: string): Prom
     `${MASTRA_SERVER_URL}/work/library/uploads/${encodeURIComponent(sessionId)}?${resourceQuery(resourceId)}`,
     { method: "DELETE" },
   ).then(async (response) => {
-    await readJson(response, "取消上传失败");
+    await readJson(response, i18n.t("library:cancelUploadFailed"));
   });
 }
 
@@ -125,7 +132,7 @@ export async function createLibraryFolder(
       method: "POST",
       body: { resourceId, name, ...(parentId ? { parentId } : {}) },
     }),
-    "创建文件夹失败",
+    i18n.t("library:createFolderFailed"),
   );
 }
 
@@ -135,7 +142,7 @@ export async function deleteLibraryAsset(assetId: string, resourceId: string): P
       `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(assetId)}?${resourceQuery(resourceId)}`,
       { method: "DELETE" },
     ),
-    "删除文件失败",
+    i18n.t("library:deleteFileFailed"),
   );
 }
 
@@ -156,7 +163,7 @@ export async function renameLibraryTarget(
         ...(target.kind === "asset" ? { filename: value } : { name: value }),
       },
     }),
-    "重命名失败",
+    i18n.t("library:renameFailed"),
   );
 }
 
@@ -166,7 +173,7 @@ export async function deleteLibraryFolder(folderId: string, resourceId: string):
       `${MASTRA_SERVER_URL}/work/library/folders/${encodeURIComponent(folderId)}?${resourceQuery(resourceId)}`,
       { method: "DELETE" },
     ),
-    "删除文件夹失败",
+    i18n.t("library:deleteFolderFailed"),
   );
 }
 
@@ -179,7 +186,7 @@ export async function reindexLibraryAsset(assetId: string, resourceId: string): 
         body: { resourceId },
       },
     ),
-    "重新索引失败",
+    i18n.t("library:reindexFailed"),
   );
 }
 
@@ -189,7 +196,7 @@ export async function reindexFailedLibraryAssets(resourceId: string): Promise<st
       method: "POST",
       body: { resourceId },
     }),
-    "批量重新索引失败",
+    i18n.t("library:batchReindexFailed"),
   );
   return payload.assetIds ?? [];
 }

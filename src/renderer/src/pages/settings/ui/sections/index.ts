@@ -1,3 +1,5 @@
+export { BrowserSection } from "./browser-section";
+export { GeneralSection } from "./general-section";
 export { GuardrailsSection } from "./guardrails-section";
 export { MemorySection } from "./memory-section";
 export { ProvidersSection } from "./providers-section";

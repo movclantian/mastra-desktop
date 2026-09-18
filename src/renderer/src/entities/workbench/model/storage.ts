@@ -16,11 +16,3 @@ export function readJson<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
-
-export function writeJson<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // Ignore storage quota exceeded or disabled errors.
-  }
-}

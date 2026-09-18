@@ -2,6 +2,7 @@ import { langs } from "@uiw/codemirror-extensions-langs";
 import type { HTMLAttributes } from "react";
 import { useMemo } from "react";
 import CodeMirrorMerge from "react-codemirror-merge";
+import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 
 export interface CodeComparisonProps extends HTMLAttributes<HTMLDivElement> {
@@ -46,7 +47,7 @@ export function CodeComparison({
     >
       <div className="flex min-w-0 items-center gap-2 border-b bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
         <span className="min-w-0 flex-1 truncate font-mono text-foreground">
-          {filename ?? "代码更改"}
+          {filename ?? i18n.t("common:codeChanges")}
         </span>
         <span className="shrink-0">{language}</span>
       </div>

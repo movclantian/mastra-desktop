@@ -1,9 +1,11 @@
 import type { FileUIPart } from "ai";
 import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import type {
   BackgroundTaskState,
   LibraryFilePart,
   MessageFileReference,
+  MessageReaction,
   WorkDisplayState,
   WorkUIMessage,
 } from "../model/types";
@@ -21,8 +23,14 @@ export interface ChatLibraryAssetOption {
 }
 
 export function fetchChatSkills<T>(): Promise<T[]> {
-  return requestJson<{ skills?: T[] }>("/work/skills", {}, "加载技能失败").then(
-    (payload) => payload.skills ?? [],
+  return requestJson<{ skills?: T[] }>(
+    "/work/skills",
+    {},
+    i18n.t("chat:api.loadSkillsFailed"),
+  ).then((payload) =>
+    (payload.skills ?? []).filter(
+      (skill) => (skill as T & { enabled?: boolean }).enabled !== false,
+    ),
   );
 }
 
@@ -30,17 +38,18 @@ export function fetchChatLibraryAssets(resourceId: string): Promise<ChatLibraryA
   const query = resourceQuery(resourceId);
   return requestJson<{
     assets?: Array<Omit<ChatLibraryAssetOption, "url">>;
-  }>(`/work/library/assets?${query}`, {}, "加载资料库文件失败").then((payload) =>
-    (payload.assets ?? []).map((asset) => ({
-      ...asset,
-      url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?${query}`,
-    })),
+  }>(`/work/library/assets?${query}`, {}, i18n.t("chat:api.loadLibraryAssetsFailed")).then(
+    (payload) =>
+      (payload.assets ?? []).map((asset) => ({
+        ...asset,
+        url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?${query}`,
+      })),
   );
 }
 
 export async function fetchChatAssetBlob(url: string): Promise<Blob> {
   const response = await apiFetch(url);
-  if (!response.ok) throw new Error("附件加载失败");
+  if (!response.ok) throw new Error(i18n.t("chat:api.loadAttachmentFailed"));
   return response.blob();
 }
 
@@ -59,17 +68,21 @@ export async function uploadChatAttachments(
   for (const file of pending) {
     const source =
       "file" in file && file.file instanceof File ? file.file : await fetchChatAssetBlob(file.url);
-    form.append("files", source, file.filename ?? "未命名附件");
+    form.append("files", source, file.filename ?? i18n.t("chat:messages.untitledAttachment"));
   }
   const payload = await requestJson<{
     assets?: Array<{ id: string; filename: string; mediaType: string; byteSize: number }>;
-  }>("/work/library/assets", { method: "POST", body: form }, "附件保存失败");
-  if (!payload.assets) throw new Error("附件上传结果不完整");
+  }>(
+    "/work/library/assets",
+    { method: "POST", body: form },
+    i18n.t("chat:api.saveAttachmentFailed"),
+  );
+  if (!payload.assets) throw new Error(i18n.t("chat:api.attachmentIncomplete"));
   let uploadedIndex = 0;
   return files.map((file) => {
     if (isPersisted(file)) return file as LibraryFilePart;
     const asset = payload.assets?.[uploadedIndex++];
-    if (!asset) throw new Error("附件上传结果不完整");
+    if (!asset) throw new Error(i18n.t("chat:api.attachmentIncomplete"));
     return {
       type: "file",
       byteSize: asset.byteSize,
@@ -80,21 +93,48 @@ export async function uploadChatAttachments(
   });
 }
 
-export async function fetchThreadMessages(
+export interface ThreadMessagesPage {
+  /** 本页消息,服务端 workbenchMessages 已按时间正序返回 */
+  messages: WorkUIMessage[];
+  /** 是否还有更早的历史(DESC 分页:hasMore 指向更旧的页) */
+  hasMore: boolean;
+}
+
+/**
+ * 单页拉取线程消息(官方 message-scroller-load-history 分页模式)。
+ * 服务端按 createdAt DESC 分页取页,再由 workbenchMessages 转成时间正序的 UI 数组
+ * (page 0 = 最新一页,hasMore 指向更旧的页)。因此这里不能再 reverse；向上滚动
+ * 加载时直接前置插入(prepend),preserveScrollOnPrepend 保持阅读位置。
+ */
+export function fetchThreadMessagesPage(
   threadId: string,
   resourceId: string,
-): Promise<{ messages: WorkUIMessage[] }> {
-  const messages: WorkUIMessage[] = [];
-  const orderBy = encodeURIComponent(JSON.stringify({ field: "createdAt", direction: "ASC" }));
-  for (let page = 0; ; page += 1) {
-    const result = await requestJson<{ uiMessages: WorkUIMessage[]; hasMore: boolean }>(
-      `/api/memory/threads/${encodeURIComponent(threadId)}/messages?${resourceQuery(resourceId)}&agentId=mastra-work-agent&page=${page}&perPage=100&orderBy=${orderBy}`,
-      {},
-      "加载消息失败",
-    );
-    messages.push(...result.uiMessages);
-    if (!result.hasMore) return { messages };
-  }
+  page: number,
+  perPage = 50,
+): Promise<ThreadMessagesPage> {
+  return requestJson<{ uiMessages: WorkUIMessage[]; hasMore: boolean }>(
+    `/work/threads/${encodeURIComponent(threadId)}/messages/page?${resourceQuery(resourceId)}&page=${page}&perPage=${perPage}`,
+    {},
+    i18n.t("chat:api.loadMessagesFailed"),
+  ).then((result) => ({
+    messages: result.uiMessages,
+    hasMore: result.hasMore,
+  }));
+}
+
+/** 切换消息表情反应(服务端持久化到消息 metadata.reactions) */
+export async function toggleThreadMessageReaction(
+  threadId: string,
+  resourceId: string,
+  messageId: string,
+  emoji: string,
+): Promise<{ reactions: MessageReaction[] }> {
+  const payload = await requestJson<{ reactions?: MessageReaction[] }>(
+    `/work/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/reactions`,
+    { method: "POST", body: { resourceId, emoji } },
+    i18n.t("chat:api.saveReactionFailed"),
+  );
+  return { reactions: payload.reactions ?? [] };
 }
 
 export type DisplayStatePayload = Omit<WorkDisplayState, "suspendedRuns"> & {
@@ -110,7 +150,7 @@ export async function fetchDisplayState(
   return requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?${resourceQuery(resourceId)}`,
     {},
-    "加载会话状态失败",
+    i18n.t("chat:api.loadSessionStateFailed"),
   );
 }
 
@@ -118,7 +158,7 @@ export async function abortThread(threadId: string, resourceId: string): Promise
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/abort?${resourceQuery(resourceId)}`,
     { method: "POST" },
-    "停止任务失败",
+    i18n.t("chat:api.stopTaskFailed"),
   );
 }
 
@@ -165,7 +205,7 @@ export async function grantToolCategory(
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/grants?${resourceQuery(resourceId)}`,
     { method: "POST", body: { category } },
-    "无法授予当前会话权限",
+    i18n.t("chat:api.grantPermissionFailed"),
   );
 }
 
@@ -184,8 +224,8 @@ export async function enqueueFollowUp(
   const payload = await requestJson<{ queued?: boolean }>(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/follow-up?${resourceQuery(resourceId)}`,
     { method: "POST", body },
-    "排队消息未被 Agent 接受",
+    i18n.t("chat:api.queueNotAccepted"),
   );
-  if (!payload.queued) throw new Error("排队消息未被 Agent 接受");
+  if (!payload.queued) throw new Error(i18n.t("chat:api.queueNotAccepted"));
   return { queued: true };
 }

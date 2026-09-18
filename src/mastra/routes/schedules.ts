@@ -17,10 +17,12 @@ import {
   ensureProfileAgentsRegistered,
   listAgentProfiles,
 } from "../agents/custom";
+import { MODE_ID_CONTEXT_KEY } from "../agents/modes";
 import { errorText, workError } from "../errors";
 import {
   ensureDirectory,
   implicitThreadWorkspacePath,
+  SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -86,8 +88,7 @@ function resourceIdFor(c: ContextWithMastra): string {
 function isOwnedSchedule(schedule: unknown, resourceId: string): schedule is ScheduleView {
   if (!schedule || typeof schedule !== "object" || !("agentId" in schedule)) return false;
   const candidate = schedule as ScheduleView;
-  const owner = candidate.metadata?.ownerResourceId;
-  return candidate.resourceId === resourceId || owner === resourceId;
+  return candidate.resourceId === resourceId;
 }
 
 async function resolveAgentId(c: ContextWithMastra, requestedId: string, resourceId: string) {
@@ -123,6 +124,7 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     const parsed = scheduleInputSchema.safeParse(await c.req.json());
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
     const input = parsed.data;
+    const agentId = await resolveAgentId(c, input.agentId, resourceId);
     const memory = await getWorkMemoryForThread(
       c.get("requestContext"),
       input.threadId ?? "",
@@ -144,7 +146,17 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
         ? thread.metadata.workspacePath.trim()
         : implicitThreadWorkspacePath(threadId, resourceId);
     ensureDirectory(workspacePath);
-    const agentId = await resolveAgentId(c, input.agentId, resourceId);
+    if (!thread.metadata?.workspacePath) {
+      await memory.updateThread({
+        id: threadId,
+        title: thread.title,
+        metadata: {
+          ...(thread.metadata ?? {}),
+          workspacePath,
+          workspaceExplicit: false,
+        },
+      });
+    }
     const metadata = { profileId: input.agentId };
     const ifIdle = {
       ...(input.ifIdle ?? {}),
@@ -156,6 +168,8 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
           [WORKSPACE_THREAD_ID_CONTEXT_KEY]: threadId,
           [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: resourceId,
           [MASTRA_RESOURCE_ID_KEY]: resourceId,
+          [MODE_ID_CONTEXT_KEY]: "build",
+          [SCHEDULE_RUN_CONTEXT_KEY]: true,
         },
       },
     };
@@ -201,8 +215,22 @@ export const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleI
           : implicitThreadWorkspacePath(current.threadId, current.resourceId);
       ensureDirectory(workspacePath);
       const requestedIfIdle = patch.ifIdle ?? current.ifIdle ?? {};
+      // 存储侧 AgentSignalAttributes 的索引签名允许 undefined 值,更新契约
+      // (Record<string, string | number | boolean | null>)不接受 —— 剔除原键、
+      // 过滤掉 undefined 条目后重新合并,序列化语义完全一致
+      const { attributes: storedAttributes, ...restIfIdle } = requestedIfIdle;
       patch.ifIdle = {
-        ...requestedIfIdle,
+        ...restIfIdle,
+        ...(storedAttributes !== undefined
+          ? {
+              attributes: Object.fromEntries(
+                Object.entries(storedAttributes).filter(
+                  (entry): entry is [string, string | number | boolean | null] =>
+                    entry[1] !== undefined,
+                ),
+              ),
+            }
+          : {}),
         streamOptions: {
           ...(requestedIfIdle.streamOptions ?? {}),
           requestContext: {
@@ -210,6 +238,9 @@ export const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleI
             [WORKSPACE_PATH_CONTEXT_KEY]: workspacePath,
             [WORKSPACE_THREAD_ID_CONTEXT_KEY]: current.threadId,
             [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: current.resourceId,
+            [MASTRA_RESOURCE_ID_KEY]: current.resourceId,
+            [MODE_ID_CONTEXT_KEY]: "build",
+            [SCHEDULE_RUN_CONTEXT_KEY]: true,
           },
         },
       };

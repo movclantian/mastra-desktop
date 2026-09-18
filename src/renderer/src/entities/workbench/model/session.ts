@@ -15,6 +15,8 @@
 // 会话模式
 // ---------------------------------------------------------------------------
 
+import { i18n } from "@/shared/i18n";
+
 export const WORK_MODE_IDS = ["plan", "build", "review"] as const;
 export type WorkModeId = (typeof WORK_MODE_IDS)[number];
 
@@ -29,19 +31,37 @@ export const WORK_MODE_META: Record<
   }
 > = {
   plan: {
-    label: "计划",
-    description: "先调研、写计划文件并提交审批",
-    hint: "批准计划后自动切到「执行」",
+    get label() {
+      return i18n.t("chat:modes.plan.label");
+    },
+    get description() {
+      return i18n.t("chat:modes.plan.desc");
+    },
+    get hint() {
+      return i18n.t("chat:modes.plan.hint");
+    },
   },
   build: {
-    label: "执行",
-    description: "执行已批准的计划,工具全量开放",
-    hint: "写入与命令执行仍按下方审批策略逐次确认",
+    get label() {
+      return i18n.t("chat:modes.build.label");
+    },
+    get description() {
+      return i18n.t("chat:modes.build.desc");
+    },
+    get hint() {
+      return i18n.t("chat:modes.build.hint");
+    },
   },
   review: {
-    label: "复查",
-    description: "只读复查已有变更并报告问题",
-    hint: "写入与执行类工具在本模式下被收回,模型改不了任何文件",
+    get label() {
+      return i18n.t("chat:modes.review.label");
+    },
+    get description() {
+      return i18n.t("chat:modes.review.desc");
+    },
+    get hint() {
+      return i18n.t("chat:modes.review.hint");
+    },
   },
 };
 
@@ -61,21 +81,77 @@ export interface PermissionRules {
 }
 
 export const CATEGORY_META: Record<ToolCategory, { label: string; description: string }> = {
-  read: { label: "读取", description: "读文件、列目录、检索、联网查资料" },
-  edit: { label: "写入", description: "创建/改写/删除文件、建目录" },
-  execute: { label: "执行", description: "运行命令与任务脚本" },
-  mcp: { label: "MCP", description: "外部 MCP 服务器提供的工具" },
-  other: { label: "其他", description: "未归类的工具" },
+  read: {
+    get label() {
+      return i18n.t("chat:approvals.categories.read");
+    },
+    get description() {
+      return i18n.t("chat:approvals.categoryDescriptions.read");
+    },
+  },
+  edit: {
+    get label() {
+      return i18n.t("chat:approvals.categories.edit");
+    },
+    get description() {
+      return i18n.t("chat:approvals.categoryDescriptions.edit");
+    },
+  },
+  execute: {
+    get label() {
+      return i18n.t("chat:approvals.categories.execute");
+    },
+    get description() {
+      return i18n.t("chat:approvals.categoryDescriptions.execute");
+    },
+  },
+  mcp: {
+    get label() {
+      return i18n.t("chat:approvals.categories.mcp");
+    },
+    get description() {
+      return i18n.t("chat:approvals.categoryDescriptions.mcp");
+    },
+  },
+  other: {
+    get label() {
+      return i18n.t("chat:approvals.categories.other");
+    },
+    get description() {
+      return i18n.t("chat:approvals.categoryDescriptions.other");
+    },
+  },
 };
 
 export const POLICY_META: Record<PermissionPolicy, { label: string; description: string }> = {
-  allow: { label: "允许", description: "直接执行,不打断" },
-  ask: { label: "询问", description: "每次调用前等你批准" },
-  deny: { label: "拒绝", description: "不给模型这类工具,它无从调用" },
+  allow: {
+    get label() {
+      return i18n.t("chat:approvals.policies.allow.label");
+    },
+    get description() {
+      return i18n.t("chat:approvals.policies.allow.desc");
+    },
+  },
+  ask: {
+    get label() {
+      return i18n.t("chat:approvals.policies.ask.label");
+    },
+    get description() {
+      return i18n.t("chat:approvals.policies.ask.desc");
+    },
+  },
+  deny: {
+    get label() {
+      return i18n.t("chat:approvals.policies.deny.label");
+    },
+    get description() {
+      return i18n.t("chat:approvals.policies.deny.desc");
+    },
+  },
 };
 
 export const DEFAULT_PERMISSION_RULES: PermissionRules = {
-  categories: { read: "allow", edit: "ask", execute: "ask", mcp: "ask", other: "ask" },
+  categories: { read: "allow", edit: "allow", execute: "allow", mcp: "allow", other: "allow" },
   tools: {},
 };
 
@@ -85,22 +161,40 @@ const ALLOW_ALL_RULES: PermissionRules = {
   tools: {},
 };
 
-export const APPROVAL_PRESETS = [
+export interface ApprovalPreset {
+  id: "standard" | "allow-all";
+  readonly label: string;
+  readonly description: string;
+  rules: PermissionRules;
+}
+
+export const APPROVAL_PRESETS: ApprovalPreset[] = [
   {
-    id: "standard" as const,
-    label: "逐次审批",
-    description: "读取直接放行,写入与执行每次都要你确认",
-    rules: DEFAULT_PERMISSION_RULES,
+    id: "standard",
+    get label() {
+      return i18n.t("chat:approvals.standard.label");
+    },
+    get description() {
+      return i18n.t("chat:approvals.standard.desc");
+    },
+    rules: {
+      categories: { read: "allow", edit: "ask", execute: "ask", mcp: "ask", other: "ask" },
+      tools: {},
+    },
   },
   {
-    id: "allow-all" as const,
-    label: "全部允许",
-    description: "所有工具免审并恢复并发调用 —— 模型可以直接改文件、跑命令",
+    id: "allow-all",
+    get label() {
+      return i18n.t("chat:approvals.allowAll.label");
+    },
+    get description() {
+      return i18n.t("chat:approvals.allowAll.desc");
+    },
     rules: ALLOW_ALL_RULES,
   },
 ];
 
-type ApprovalPresetId = (typeof APPROVAL_PRESETS)[number]["id"] | "custom";
+export type ApprovalPresetId = ApprovalPreset["id"] | "custom";
 
 function sameCategories(left: PermissionRules, right: PermissionRules): boolean {
   return TOOL_CATEGORIES.every(
@@ -118,13 +212,17 @@ export function matchApprovalPreset(rules: PermissionRules): ApprovalPresetId {
 export function approvalSummary(rules: PermissionRules): string {
   const preset = matchApprovalPreset(rules);
   if (preset !== "custom") {
-    return APPROVAL_PRESETS.find((item) => item.id === preset)?.label ?? "自定义";
+    return (
+      APPROVAL_PRESETS.find((item) => item.id === preset)?.label ?? i18n.t("chat:approvals.custom")
+    );
   }
   const denied = TOOL_CATEGORIES.filter((category) => rules.categories[category] === "deny");
   if (denied.length > 0) {
-    return `自定义 · 拒绝${denied.map((category) => CATEGORY_META[category].label).join("/")}`;
+    return i18n.t("chat:approvals.customDeny", {
+      denied: denied.map((category) => CATEGORY_META[category].label).join("/"),
+    });
   }
-  return "自定义";
+  return i18n.t("chat:approvals.custom");
 }
 
 export function withCategoryPolicy(

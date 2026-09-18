@@ -14,6 +14,7 @@ import { AlertCircleIcon } from "lucide-react";
 import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
 import * as React from "react";
 import { fetchLibraryAssetBlob } from "@/entities/library";
+import { useTranslation } from "@/shared/i18n";
 import { useTheme } from "@/shared/theme";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
@@ -46,6 +47,7 @@ const LIBRARY_PREVIEW_TOOLBAR = {
 } as const;
 
 export default React.memo(function LibraryFilePreview({ asset }: { asset: PreviewLibraryAsset }) {
+  const { t, i18n } = useTranslation();
   const { theme } = useTheme();
   const [loadedState, setLoadedState] = React.useState<{
     url: string;
@@ -82,7 +84,7 @@ export default React.memo(function LibraryFilePreview({ asset }: { asset: Previe
     return (
       <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
         <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
-        <span>正在加载预览…</span>
+        <span>{t("library:loadingPreview")}</span>
       </div>
     );
   }
@@ -95,8 +97,10 @@ export default React.memo(function LibraryFilePreview({ asset }: { asset: Previe
           <EmptyMedia variant="icon">
             <AlertCircleIcon className="text-destructive" />
           </EmptyMedia>
-          <EmptyTitle className="text-destructive">文件加载失败</EmptyTitle>
-          <EmptyDescription>无法获取该资料库文件的预览内容（{asset.filename}）</EmptyDescription>
+          <EmptyTitle className="text-destructive">{t("library:loadPreviewFailed")}</EmptyTitle>
+          <EmptyDescription>
+            {t("library:loadPreviewFailedDesc", { filename: asset.filename })}
+          </EmptyDescription>
         </EmptyHeader>
       </Empty>
     );
@@ -113,7 +117,7 @@ export default React.memo(function LibraryFilePreview({ asset }: { asset: Previe
       height="100%"
       fit="contain"
       fallback="inline"
-      locale="zh-CN"
+      locale={i18n.language.startsWith("zh") ? "zh-CN" : "en-US"}
       plugins={plugins}
       theme={theme === "system" ? "auto" : theme}
       toolbar={LIBRARY_PREVIEW_TOOLBAR}

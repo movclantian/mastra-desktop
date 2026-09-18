@@ -1,5 +1,6 @@
 import * as React from "react";
 import { toast } from "sonner";
+import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
 import {
   fetchGuardrailsConfig,
@@ -7,6 +8,8 @@ import {
   saveGuardrailsConfig,
 } from "../../api/settings-api";
 import {
+  AdvancedSection,
+  KeyValueEditor,
   NumberRow,
   SelectRow,
   SettingCard,
@@ -16,17 +19,6 @@ import {
   TagMultiSelect,
   TextAreaRow,
 } from "../controls";
-
-// ---------------------------------------------------------------------------
-// 护栏与处理器(暴露 @mastra/core/processors 全部内置处理器的可配置项,
-// 写入数据库 app_config 表 key = "guardrails",保存后实时生效)。
-// 字段与 src/mastra/agents/guardrails.ts 的 GuardrailsUserConfig 一一对应;
-// 参数语义对照 docs/en/docs/agents/{guardrails,processors}.mdx
-// 与 docs/en/reference/processors/*.mdx。
-//
-// 刻意不含 MessageHistory / SemanticRecall / WorkingMemory 三个处理器 ——
-// 它们由 Memory 类自动加入管线,参数在「记忆」页配置。
-// ---------------------------------------------------------------------------
 
 /** 纯文本/逐行列表字段:保存时静默,不弹撤回 toast(其余开关/滑块/下拉才弹) */
 const GUARDRAILS_TEXT_KEYS = new Set<string>([
@@ -326,49 +318,52 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
 
 // --- 枚举选项(值为库接受的字面量,标签为中文说明) -------------------------
 
-const REGEX_PRESET_OPTIONS = [
-  { value: "secrets", label: "secrets(密钥/令牌)" },
-  { value: "pii", label: "pii(邮箱/电话/卡号)" },
-  { value: "urls", label: "urls(HTTP 链接)" },
+const getRegexPresetOptions = (t: (k: string) => string) => [
+  { value: "secrets", label: t("settings:guardrails.options.secrets") },
+  { value: "pii", label: t("settings:guardrails.options.pii") },
+  { value: "urls", label: t("settings:guardrails.options.urls") },
 ];
 
-const INJECTION_TYPE_OPTIONS = [
-  { value: "injection", label: "指令注入" },
-  { value: "jailbreak", label: "越狱" },
-  { value: "tool-exfiltration", label: "工具外泄" },
-  { value: "data-exfiltration", label: "数据外泄" },
-  { value: "system-override", label: "系统覆写" },
-  { value: "role-manipulation", label: "角色操纵" },
+const getInjectionTypeOptions = (t: (k: string) => string) => [
+  { value: "injection", label: t("settings:guardrails.options.injection") },
+  { value: "jailbreak", label: t("settings:guardrails.options.jailbreak") },
+  { value: "tool-exfiltration", label: t("settings:guardrails.options.toolExfiltration") },
+  { value: "data-exfiltration", label: t("settings:guardrails.options.dataExfiltration") },
+  { value: "system-override", label: t("settings:guardrails.options.systemOverride") },
+  { value: "role-manipulation", label: t("settings:guardrails.options.roleManipulation") },
 ];
 
-const MODERATION_CATEGORY_OPTIONS = [
-  { value: "hate", label: "仇恨" },
-  { value: "hate/threatening", label: "仇恨威胁" },
-  { value: "harassment", label: "骚扰" },
-  { value: "harassment/threatening", label: "骚扰威胁" },
-  { value: "self-harm", label: "自我伤害" },
-  { value: "self-harm/intent", label: "自伤意图" },
-  { value: "self-harm/instructions", label: "自伤教程" },
-  { value: "sexual", label: "色情" },
-  { value: "sexual/minors", label: "未成年色情" },
-  { value: "violence", label: "暴力" },
-  { value: "violence/graphic", label: "血腥暴力" },
+const getModerationCategoryOptions = (t: (k: string) => string) => [
+  { value: "hate", label: t("settings:guardrails.options.hate") },
+  { value: "hate/threatening", label: t("settings:guardrails.options.hateThreatening") },
+  { value: "harassment", label: t("settings:guardrails.options.harassment") },
+  {
+    value: "harassment/threatening",
+    label: t("settings:guardrails.options.harassmentThreatening"),
+  },
+  { value: "self-harm", label: t("settings:guardrails.options.selfHarm") },
+  { value: "self-harm/intent", label: t("settings:guardrails.options.selfHarmIntent") },
+  { value: "self-harm/instructions", label: t("settings:guardrails.options.selfHarmInstructions") },
+  { value: "sexual", label: t("settings:guardrails.options.sexual") },
+  { value: "sexual/minors", label: t("settings:guardrails.options.sexualMinors") },
+  { value: "violence", label: t("settings:guardrails.options.violence") },
+  { value: "violence/graphic", label: t("settings:guardrails.options.violenceGraphic") },
 ];
 
-const PII_TYPE_OPTIONS = [
-  { value: "email", label: "邮箱" },
-  { value: "phone", label: "电话" },
-  { value: "credit-card", label: "银行卡号" },
-  { value: "ssn", label: "社保号" },
-  { value: "api-key", label: "API 密钥" },
-  { value: "ip-address", label: "IP 地址" },
-  { value: "name", label: "姓名" },
-  { value: "address", label: "地址" },
-  { value: "date-of-birth", label: "出生日期" },
-  { value: "url", label: "URL" },
-  { value: "uuid", label: "UUID" },
-  { value: "crypto-wallet", label: "加密钱包" },
-  { value: "iban", label: "IBAN" },
+const getPiiTypeOptions = (t: (k: string) => string) => [
+  { value: "email", label: t("settings:guardrails.options.email") },
+  { value: "phone", label: t("settings:guardrails.options.phone") },
+  { value: "credit-card", label: t("settings:guardrails.options.creditCard") },
+  { value: "ssn", label: t("settings:guardrails.options.ssn") },
+  { value: "api-key", label: t("settings:guardrails.options.apiKey") },
+  { value: "ip-address", label: t("settings:guardrails.options.ipAddress") },
+  { value: "name", label: t("settings:guardrails.options.name") },
+  { value: "address", label: t("settings:guardrails.options.address") },
+  { value: "date-of-birth", label: t("settings:guardrails.options.dateOfBirth") },
+  { value: "url", label: t("settings:guardrails.options.webAddress") },
+  { value: "uuid", label: t("settings:guardrails.options.uniqueIdentifier") },
+  { value: "crypto-wallet", label: t("settings:guardrails.options.cryptoWallet") },
+  { value: "iban", label: t("settings:guardrails.options.bankAccount") },
 ];
 
 /** 逐行文本 → 去空白去空行的字符串数组 */
@@ -390,6 +385,39 @@ function listTextFromDraft(draft: GuardrailsDraft): ListText {
     scrubberCustomPatterns: draft.scrubberCustomPatterns.join("\n"),
     toolCallFilterExclude: draft.toolCallFilterExclude.join("\n"),
   };
+}
+
+function providerOptionsFromText(text: string): Record<string, string> {
+  try {
+    const value = JSON.parse(text) as unknown;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        typeof entry === "string" ? entry : JSON.stringify(entry),
+      ]),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function updateProviderOptions(currentText: string, next: Record<string, string>): string {
+  let current: Record<string, unknown> = {};
+  try {
+    current = JSON.parse(currentText) as Record<string, unknown>;
+  } catch {}
+  return JSON.stringify(
+    Object.fromEntries(
+      Object.entries(next).map(([key, value]) => [
+        key,
+        key in current &&
+        (typeof current[key] === "string" ? current[key] : JSON.stringify(current[key])) === value
+          ? current[key]
+          : value,
+      ]),
+    ),
+  );
 }
 
 /** 前置条件状态徽章:说明"这个护栏此刻为什么不会生效" */
@@ -420,6 +448,11 @@ interface GuardrailsStatus {
 }
 
 export function GuardrailsSection() {
+  const { t } = useTranslation();
+  const regexPresetOptions = React.useMemo(() => getRegexPresetOptions(t), [t]);
+  const injectionTypeOptions = React.useMemo(() => getInjectionTypeOptions(t), [t]);
+  const moderationCategoryOptions = React.useMemo(() => getModerationCategoryOptions(t), [t]);
+  const piiTypeOptions = React.useMemo(() => getPiiTypeOptions(t), [t]);
   const [draft, setDraft] = React.useState<GuardrailsDraft>(DEFAULT_GUARDRAILS_DRAFT);
   const [listText, setListText] = React.useState<ListText>(() =>
     listTextFromDraft(DEFAULT_GUARDRAILS_DRAFT),
@@ -471,9 +504,9 @@ export function GuardrailsSection() {
               (key) => !GUARDRAILS_TEXT_KEYS.has(key) && !Object.is(before[key], draft[key]),
             );
           if (before !== null && changed) {
-            toast.success("护栏配置已更新", {
+            toast.success(t("settings:guardrails.configUpdated"), {
               action: {
-                label: "撤回",
+                label: t("settings:guardrails.undo"),
                 onClick: () => {
                   // 预置快照:随后的自动保存视为无变化,不再弹 toast
                   prevSavedRef.current = before;
@@ -484,12 +517,28 @@ export function GuardrailsSection() {
             });
           }
         })
-        .catch(() => toast.error("护栏配置自动保存失败,请确认 Mastra 服务已启动"));
+        .catch(() => toast.error(t("settings:guardrails.autoSaveFailed")));
     }, 800);
     return () => window.clearTimeout(timer);
   }, [draft, loaded, refreshStatus]);
 
   const patch = (next: Partial<GuardrailsDraft>) => setDraft({ ...draft, ...next });
+  const restore = (...keys: Array<keyof GuardrailsDraft>) => {
+    const restored = {
+      ...draft,
+      ...Object.fromEntries(keys.map((key) => [key, DEFAULT_GUARDRAILS_DRAFT[key]])),
+    } as GuardrailsDraft;
+    setDraft(restored);
+    setListText(listTextFromDraft(restored));
+  };
+  const resetLabel = t("common:restoreDefaults");
+  const blockConfirmation = {
+    when: (value: string) => value === "block",
+    title: t("settings:guardrails.confirmBlockingTitle"),
+    description: t("settings:guardrails.confirmBlockingDesc"),
+    cancelLabel: t("common:cancel"),
+    confirmLabel: t("settings:guardrails.confirmBlockingAction"),
+  };
 
   /** 逐行列表:文本原样留在输入框,数组同步进草稿 */
   const patchList = (key: ListFieldKey, text: string) => {
@@ -497,1012 +546,1218 @@ export function GuardrailsSection() {
     patch({ [key]: linesToList(text) } as Partial<GuardrailsDraft>);
   };
 
-  // 自定义正则规则实时校验:非 JSON 数组时服务端会整体忽略,这里给即时提示
-  const regexRulesValid = React.useMemo(() => {
-    const text = draft.regexRules.trim();
-    if (!text) return true;
-    try {
-      return Array.isArray(JSON.parse(text));
-    } catch {
-      return false;
-    }
-  }, [draft.regexRules]);
-
-  const detectorProviderOptionsValid = React.useMemo(() => {
-    try {
-      const parsed = JSON.parse(draft.detectorProviderOptions) as unknown;
-      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
-    } catch {
-      return false;
-    }
-  }, [draft.detectorProviderOptions]);
-
   const llmBadge = (
-    <ReadyBadge blockedText="需先选定模型" ready={status.modelReady} readyText="需调用模型" />
+    <ReadyBadge
+      blockedText={t("settings:guardrails.blockedModel")}
+      ready={status.modelReady}
+      readyText={t("settings:guardrails.readyModel")}
+    />
   );
 
   return (
     <>
       <SettingCard
         action={llmBadge}
-        description="模型调用前后加一层内置处理器管线:输入侧规范化与检测,输出侧过滤与清洗,报错时恢复(guardrails.mdx / processors.mdx)。历史消息、语义召回、工作记忆三个处理器由记忆模块自动接入,在「记忆」页配置。"
-        title="通用"
+        description={t("settings:guardrails.generalDesc")}
+        onReset={() =>
+          restore("jsonPromptInjection", "detectorProviderOptions", "maxProcessorRetries")
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.generalTitle")}
       >
         <SwitchRow
           checked={draft.jsonPromptInjection}
-          description="检测器使用 JSON 提示词代替 provider response_format"
+          description={t("settings:guardrails.compatJsonDesc")}
           onChange={(v) => patch({ jsonPromptInjection: v })}
-          title="兼容 JSON 检测输出"
+          title={t("settings:guardrails.compatJsonTitle")}
         />
         <NumberRow
-          description="输入/输出处理器触发 retry 时的最大重试数;0 表示不显式设置"
+          description={t("settings:guardrails.maxRetriesDesc")}
           max={50}
           min={0}
           onChange={(v) => patch({ maxProcessorRetries: v })}
-          title="处理器重试上限"
+          title={t("settings:guardrails.maxRetriesTitle")}
           value={draft.maxProcessorRetries}
         />
         <SettingRow
-          description="注入、语言、审核、PII 与清洗检测器自动使用当前 promptInput 选择或请求的模型"
-          title="护栏检测模型"
+          description={t("settings:guardrails.detectorModelDesc")}
+          title={t("settings:guardrails.detectorModelTitle")}
         >
-          <span className="shrink-0 text-sm font-medium text-muted-foreground">跟随当前模型</span>
+          <span className="shrink-0 text-sm font-medium text-muted-foreground">
+            {t("settings:guardrails.followCurrentModel")}
+          </span>
         </SettingRow>
-        <TextAreaRow
-          description="传给注入/语言/审核/PII 内部检测模型的 providerOptions JSON"
-          invalid={!detectorProviderOptionsValid}
-          invalidHint="必须是合法的 JSON 对象,否则不会传给检测模型"
-          onChange={(detectorProviderOptions) => patch({ detectorProviderOptions })}
-          rows={3}
-          title="检测模型参数(providerOptions)"
-          value={draft.detectorProviderOptions}
-        />
+        <AdvancedSection
+          title={t("settings:guardrails.advancedTitle")}
+          description={t("settings:guardrails.providerOptionsDesc")}
+        >
+          <KeyValueEditor
+            title={t("settings:guardrails.providerOptionsTitle")}
+            description={t("settings:guardrails.providerOptionsEditorDesc")}
+            value={providerOptionsFromText(draft.detectorProviderOptions)}
+            keyLabel={t("settings:guardrails.optionName")}
+            valueLabel={t("settings:guardrails.optionValue")}
+            addLabel={t("settings:guardrails.addOption")}
+            removeLabel={t("settings:guardrails.removeOption")}
+            duplicateLabel={t("settings:guardrails.duplicateOption")}
+            onChange={(value) =>
+              patch({
+                detectorProviderOptions: updateProviderOptions(
+                  draft.detectorProviderOptions,
+                  value,
+                ),
+              })
+            }
+          />
+        </AdvancedSection>
       </SettingCard>
 
       <SettingCard
-        description="输入侧第一道:统一 Unicode 形态、剔除不可见控制字符,消除同形字与零宽字符绕过后续检测的手法(unicode-normalizer.mdx)。零 LLM 成本。"
-        title="文本规范化(UnicodeNormalizer)"
+        description={t("settings:guardrails.unicodeDesc")}
+        onReset={() =>
+          restore(
+            "unicode",
+            "unicodeStripControlChars",
+            "unicodePreserveEmojis",
+            "unicodeCollapseWhitespace",
+            "unicodeTrim",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.unicodeTitle")}
       >
         <SwitchRow
           checked={draft.unicode}
-          description="所有输入消息统一 NFC 规范化"
+          description={t("settings:guardrails.enableUnicodeDesc")}
           onChange={(v) => patch({ unicode: v })}
-          title="启用文本规范化"
+          title={t("settings:guardrails.enableUnicodeTitle")}
         />
         <p className="px-1 pb-2 text-xs text-muted-foreground">
-          控制字符清理、表情保留和首尾空白处理按官方 UnicodeNormalizer 参数执行。
+          {t("settings:guardrails.unicodeDesc")}
         </p>
         <SwitchRow
           checked={draft.unicodeStripControlChars}
           onChange={(v) => patch({ unicodeStripControlChars: v })}
-          title="移除控制字符(stripControlChars)"
+          title={t("settings:guardrails.stripControlCharsTitle")}
         />
         <SwitchRow
           checked={draft.unicodePreserveEmojis}
           onChange={(v) => patch({ unicodePreserveEmojis: v })}
-          title="保留表情(preserveEmojis)"
+          title={t("settings:guardrails.preserveEmojisTitle")}
         />
         <SwitchRow
           checked={draft.unicodeCollapseWhitespace}
           onChange={(v) => patch({ unicodeCollapseWhitespace: v })}
-          title="折叠连续空白(collapseWhitespace)"
+          title={t("settings:guardrails.collapseWhitespaceTitle")}
         />
         <SwitchRow
           checked={draft.unicodeTrim}
           onChange={(v) => patch({ unicodeTrim: v })}
-          title="裁剪首尾空白(trim)"
+          title={t("settings:guardrails.trimTitle")}
         />
       </SettingCard>
 
       <SettingCard
-        description="纯正则匹配,不调用模型:内置密钥/PII/URL 预设,可加自定义规则;流式输出按 carryover 窗口保证跨块的匹配被整段处理(regex-filter-processor.mdx)。"
-        title="正则过滤(RegexFilterProcessor)"
+        description={t("settings:guardrails.regexDesc")}
+        onReset={() =>
+          restore(
+            "regex",
+            "regexPresets",
+            "regexStrategy",
+            "regexPhase",
+            "regexIncludeRedactedValues",
+            "regexStreamCarryoverSize",
+            "regexRules",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.regexTitle")}
       >
         <SwitchRow
           checked={draft.regex}
-          description="零成本的第一道过滤,推荐常开"
+          description={t("settings:guardrails.enableRegexDesc")}
           onChange={(v) => patch({ regex: v })}
-          title="启用正则过滤"
+          title={t("settings:guardrails.enableRegexTitle")}
         />
         {draft.regex ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <TagMultiSelect
-              description="内置规则集;与下方自定义规则叠加,全部留空则该处理器不加入管线"
+              description={t("settings:guardrails.regexPresetsDesc")}
               onChange={(regexPresets) => patch({ regexPresets })}
-              options={REGEX_PRESET_OPTIONS}
-              title="内置预设(presets)"
+              options={regexPresetOptions}
+              title={t("settings:guardrails.regexPresetsTitle")}
               value={draft.regexPresets}
             />
             <SelectRow
-              description="block 直接中断本轮;redact 替换为占位符;warn 仅记录不改写"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.regexStrategyDesc")}
               onChange={(regexStrategy) => patch({ regexStrategy })}
               options={[
-                { value: "redact" as const, label: "redact(替换)" },
-                { value: "block" as const, label: "block(中断)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "redact" as const, label: t("settings:guardrails.options.redactReplace") },
+                { value: "block" as const, label: t("settings:guardrails.options.blockInterrupt") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="命中策略(strategy)"
+              title={t("settings:guardrails.injectionStrategyTitle")}
               value={draft.regexStrategy}
             />
             <SelectRow
-              description="仅输入、仅输出或输入输出两侧都运行"
+              description={t("settings:guardrails.regexPhaseDesc")}
               onChange={(regexPhase) => patch({ regexPhase })}
               options={[
-                { value: "all" as const, label: "all(输入+输出)" },
-                { value: "input" as const, label: "input(输入)" },
-                { value: "output" as const, label: "output(输出)" },
+                { value: "all" as const, label: t("settings:guardrails.options.allInputOutput") },
+                { value: "input" as const, label: t("settings:guardrails.options.inputOnly") },
+                { value: "output" as const, label: t("settings:guardrails.options.outputOnly") },
               ]}
-              title="执行阶段(phase)"
+              title={t("settings:guardrails.regexPhaseTitle")}
               value={draft.regexPhase}
             />
             <SwitchRow
               checked={draft.regexIncludeRedactedValues}
               onChange={(v) => patch({ regexIncludeRedactedValues: v })}
-              title="保留脱敏原值(includeRedactedValues)"
+              title={t("settings:guardrails.includeRedactedTitle")}
             />
             <NumberRow
-              description="流式块之间保留的匹配窗口字符数"
+              description={t("settings:guardrails.streamCarryoverDesc")}
               max={10_000}
               min={0}
               onChange={(v) => patch({ regexStreamCarryoverSize: v })}
-              title="流式匹配窗口(streamCarryoverSize)"
+              title={t("settings:guardrails.streamCarryoverTitle")}
               value={draft.regexStreamCarryoverSize}
             />
-            <TextAreaRow
-              description={
-                '格式:[{ "name": "internal-id", "pattern": "INTERNAL-\\\\d{6}", "flags": "i", "replacement": "[INTERNAL_ID]" }];缺少 g 标志会自动补上,单条语法非法只跳过该条'
-              }
-              invalid={!regexRulesValid}
-              invalidHint="不是合法的 JSON 数组,服务端将忽略全部自定义规则"
-              onChange={(regexRules) => patch({ regexRules })}
-              placeholder="[]"
-              rows={5}
-              title="自定义规则(rules)"
-              value={draft.regexRules}
-            />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={llmBadge}
-        description="用检测模型识别指令注入、越狱与外泄企图,拦在真正的模型调用之前(prompt-injection-detector.mdx)。"
-        title="提示词注入检测(PromptInjectionDetector)"
+        description={t("settings:guardrails.injectionDesc")}
+        onReset={() =>
+          restore(
+            "injection",
+            "injectionTypes",
+            "injectionThreshold",
+            "injectionStrategy",
+            "injectionLastMessageOnly",
+            "injectionIncludeScores",
+            "injectionInstructions",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.injectionTitle")}
       >
         <SwitchRow
           checked={draft.injection}
-          description="每轮额外一次模型调用,按需开启"
+          description={t("settings:guardrails.enableInjectionDesc")}
           onChange={(v) => patch({ injection: v })}
-          title="启用注入检测"
+          title={t("settings:guardrails.enableInjectionTitle")}
         />
         {draft.injection ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <TagMultiSelect
-              description="要检测的攻击类型"
+              description={t("settings:guardrails.detectionTypesDesc")}
               onChange={(injectionTypes) => patch({ injectionTypes })}
-              options={INJECTION_TYPE_OPTIONS}
-              title="检测类型(detectionTypes)"
+              options={injectionTypeOptions}
+              title={t("settings:guardrails.piiDetectionTypesTitle")}
               value={draft.injectionTypes}
             />
             <SliderRow
-              description="置信度阈值,越高越不敏感、误报越少(库默认 0.7)"
+              description={t("settings:guardrails.injectionThresholdDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ injectionThreshold: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="判定阈值(threshold)"
+              title={t("settings:guardrails.thresholdTitle")}
               value={draft.injectionThreshold}
             />
             <SelectRow
-              description="block 中断;filter 丢掉命中的消息;rewrite 让模型改写为无害表述;warn 仅记录"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.injectionStrategyDesc")}
               onChange={(injectionStrategy) => patch({ injectionStrategy })}
               options={[
-                { value: "block" as const, label: "block(中断)" },
-                { value: "filter" as const, label: "filter(丢弃消息)" },
-                { value: "rewrite" as const, label: "rewrite(改写)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "block" as const, label: t("settings:guardrails.options.blockInterrupt") },
+                { value: "filter" as const, label: t("settings:guardrails.options.filterDrop") },
+                { value: "rewrite" as const, label: t("settings:guardrails.options.rewriteHarm") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="命中策略(strategy)"
+              title={t("settings:guardrails.injectionStrategyTitle")}
               value={draft.injectionStrategy}
             />
             <SwitchRow
               checked={draft.injectionLastMessageOnly}
               onChange={(v) => patch({ injectionLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
+              title={t("settings:guardrails.lastMessageOnlyTitle")}
             />
             <SwitchRow
               checked={draft.injectionIncludeScores}
               onChange={(v) => patch({ injectionIncludeScores: v })}
-              title="返回检测分数(includeScores)"
+              title={t("settings:guardrails.includeScoresTitle")}
             />
             <TextAreaRow
-              description="覆盖检测器默认判断说明"
+              description={t("settings:guardrails.injectionInstructionsDesc")}
               onChange={(injectionInstructions) => patch({ injectionInstructions })}
               rows={3}
-              title="检测指令(instructions)"
+              title={t("settings:guardrails.instructionsTitle")}
               value={draft.injectionInstructions}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={llmBadge}
-        description="识别输入语言,可仅标记、翻译成目标语言,或直接拦截非目标语言(language-detector.mdx)。"
-        title="语言检测(LanguageDetector)"
+        description={t("settings:guardrails.languageDesc")}
+        onReset={() =>
+          restore(
+            "language",
+            "languageTargets",
+            "languageThreshold",
+            "languageStrategy",
+            "languagePreserveOriginal",
+            "languageMinTextLength",
+            "languageLastMessageOnly",
+            "languageIncludeDetails",
+            "languageInstructions",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.languageTitle")}
       >
         <SwitchRow
           checked={draft.language}
-          description="每轮额外一次模型调用"
+          description={t("settings:guardrails.enableLanguageDesc")}
           onChange={(v) => patch({ language: v })}
-          title="启用语言检测"
+          title={t("settings:guardrails.enableLanguageTitle")}
         />
         {draft.language ? (
-          <>
-            <TextAreaRow
-              description="一行一个,可用英文名或 ISO 代码(如 Chinese / zh);留空则该处理器不加入管线"
-              onChange={(text) => patchList("languageTargets", text)}
-              placeholder={"Chinese\nzh"}
-              rows={3}
-              title="目标语言(targetLanguages)"
-              value={listText.languageTargets}
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
+            <TagMultiSelect
+              description={t("settings:guardrails.targetLanguagesDesc")}
+              onChange={(languageTargets) => patch({ languageTargets })}
+              options={[
+                { value: "Chinese", label: t("settings:guardrails.options.chinese") },
+                { value: "English", label: t("settings:guardrails.options.english") },
+                { value: "Japanese", label: t("settings:guardrails.options.japanese") },
+                { value: "Korean", label: t("settings:guardrails.options.korean") },
+                { value: "Spanish", label: t("settings:guardrails.options.spanish") },
+                { value: "French", label: t("settings:guardrails.options.french") },
+              ]}
+              title={t("settings:guardrails.targetLanguagesTitle")}
+              value={draft.languageTargets}
             />
             <SliderRow
-              description="语言判定置信度阈值(库默认 0.7)"
+              description={t("settings:guardrails.languageThresholdDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ languageThreshold: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="判定阈值(threshold)"
+              title={t("settings:guardrails.thresholdTitle")}
               value={draft.languageThreshold}
             />
             <SelectRow
-              description="detect 仅标记;translate 自动译为目标语言;block 拦截;warn 仅记录"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.languageStrategyDesc")}
               onChange={(languageStrategy) => patch({ languageStrategy })}
               options={[
-                { value: "detect" as const, label: "detect(仅标记)" },
-                { value: "translate" as const, label: "translate(翻译)" },
-                { value: "block" as const, label: "block(拦截)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "detect" as const, label: t("settings:guardrails.options.detectOnly") },
+                {
+                  value: "translate" as const,
+                  label: t("settings:guardrails.options.translateLang"),
+                },
+                { value: "block" as const, label: t("settings:guardrails.options.blockIntercept") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="处理策略(strategy)"
+              title={t("settings:guardrails.languageStrategyTitle")}
               value={draft.languageStrategy}
             />
             {draft.languageStrategy === "translate" ? (
               <SwitchRow
                 checked={draft.languagePreserveOriginal}
-                description="翻译后在元数据中保留用户原文"
+                description={t("settings:guardrails.preserveOriginalDesc")}
                 onChange={(v) => patch({ languagePreserveOriginal: v })}
-                title="保留原文(preserveOriginal)"
+                title={t("settings:guardrails.preserveOriginalTitle")}
               />
             ) : null}
             <NumberRow
-              description="短于该字符数的文本跳过检测"
+              description={t("settings:guardrails.minTextLengthDesc")}
               max={10_000}
               min={0}
               onChange={(v) => patch({ languageMinTextLength: v })}
-              title="最小文本长度(minTextLength)"
+              title={t("settings:guardrails.minTextLengthTitle")}
               value={draft.languageMinTextLength}
             />
             <SwitchRow
               checked={draft.languageLastMessageOnly}
               onChange={(v) => patch({ languageLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
+              title={t("settings:guardrails.lastMessageOnlyTitle")}
             />
             <SwitchRow
               checked={draft.languageIncludeDetails}
               onChange={(v) => patch({ languageIncludeDetails: v })}
-              title="返回检测详情(includeDetectionDetails)"
+              title={t("settings:guardrails.includeDetectionDetailsTitle")}
             />
             <TextAreaRow
-              description="覆盖语言检测器默认判断说明"
+              description={t("settings:guardrails.languageInstructionsDesc")}
               onChange={(languageInstructions) => patch({ languageInstructions })}
               rows={3}
-              title="检测指令(instructions)"
+              title={t("settings:guardrails.instructionsTitle")}
               value={draft.languageInstructions}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={llmBadge}
-        description="按类别为内容打分并按策略处置,输入与输出共用同一套参数(moderation-processor.mdx)。"
-        title="内容审核(ModerationProcessor)"
+        description={t("settings:guardrails.moderationDesc")}
+        onReset={() =>
+          restore(
+            "moderationInput",
+            "moderationOutput",
+            "moderationCategories",
+            "moderationThreshold",
+            "moderationStrategy",
+            "moderationLastMessageOnly",
+            "moderationIncludeScores",
+            "moderationChunkWindow",
+            "moderationInstructions",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.moderationTitle")}
       >
         <SwitchRow
           checked={draft.moderationInput}
-          description="模型调用前审核用户消息"
+          description={t("settings:guardrails.auditInputDesc")}
           onChange={(v) => patch({ moderationInput: v })}
-          title="审核输入"
+          title={t("settings:guardrails.auditInputTitle")}
         />
         <SwitchRow
           checked={draft.moderationOutput}
-          description="模型响应后审核助手消息"
+          description={t("settings:guardrails.auditOutputDesc")}
           onChange={(v) => patch({ moderationOutput: v })}
-          title="审核输出"
+          title={t("settings:guardrails.auditOutputTitle")}
         />
         {draft.moderationInput || draft.moderationOutput ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <TagMultiSelect
-              description="与 OpenAI moderation 同名类别"
+              description={t("settings:guardrails.moderationCategoriesDesc")}
               onChange={(moderationCategories) => patch({ moderationCategories })}
-              options={MODERATION_CATEGORY_OPTIONS}
-              title="审核类别(categories)"
+              options={moderationCategoryOptions}
+              title={t("settings:guardrails.moderationCategoriesTitle")}
               value={draft.moderationCategories}
             />
             <SliderRow
-              description="任一类别得分超过该值即判定命中(库默认 0.5)"
+              description={t("settings:guardrails.moderationThresholdDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ moderationThreshold: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="判定阈值(threshold)"
+              title={t("settings:guardrails.thresholdTitle")}
               value={draft.moderationThreshold}
             />
             <SelectRow
-              description="block 中断;filter 丢掉命中的消息;warn 仅记录"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.moderationStrategyDesc")}
               onChange={(moderationStrategy) => patch({ moderationStrategy })}
               options={[
-                { value: "block" as const, label: "block(中断)" },
-                { value: "filter" as const, label: "filter(丢弃消息)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "block" as const, label: t("settings:guardrails.options.blockInterrupt") },
+                { value: "filter" as const, label: t("settings:guardrails.options.filterDrop") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="命中策略(strategy)"
+              title={t("settings:guardrails.injectionStrategyTitle")}
               value={draft.moderationStrategy}
             />
             <SwitchRow
               checked={draft.moderationLastMessageOnly}
               onChange={(v) => patch({ moderationLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
+              title={t("settings:guardrails.lastMessageOnlyTitle")}
             />
             <SwitchRow
               checked={draft.moderationIncludeScores}
               onChange={(v) => patch({ moderationIncludeScores: v })}
-              title="返回检测分数(includeScores)"
+              title={t("settings:guardrails.includeScoresTitle")}
             />
             <NumberRow
-              description="输出流审核使用的块窗口;0 使用库默认"
+              description={t("settings:guardrails.chunkWindowDesc")}
               max={100}
               min={0}
               onChange={(v) => patch({ moderationChunkWindow: v })}
-              title="输出块窗口(chunkWindow)"
+              title={t("settings:guardrails.chunkWindowTitle")}
               value={draft.moderationChunkWindow}
             />
             <TextAreaRow
-              description="覆盖审核器默认判断说明"
+              description={t("settings:guardrails.moderationInstructionsDesc")}
               onChange={(moderationInstructions) => patch({ moderationInstructions })}
               rows={3}
-              title="审核指令(instructions)"
+              title={t("settings:guardrails.moderationInstructionsTitle")}
               value={draft.moderationInstructions}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={llmBadge}
-        description="识别并按需脱敏个人身份信息,输入与输出共用同一套参数(pii-detector.mdx)。"
-        title="PII 检测(PIIDetector)"
+        description={t("settings:guardrails.piiDesc")}
+        onReset={() =>
+          restore(
+            "piiInput",
+            "piiOutput",
+            "piiTypes",
+            "piiThreshold",
+            "piiStrategy",
+            "piiRedactionMethod",
+            "piiPreserveFormat",
+            "piiLastMessageOnly",
+            "piiIncludeDetections",
+            "piiBufferSize",
+            "piiInstructions",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.piiTitle")}
       >
         <SwitchRow
           checked={draft.piiInput}
-          description="模型调用前处理用户消息中的 PII"
+          description={t("settings:guardrails.detectInputDesc")}
           onChange={(v) => patch({ piiInput: v })}
-          title="检测输入"
+          title={t("settings:guardrails.detectInputTitle")}
         />
         <SwitchRow
           checked={draft.piiOutput}
-          description="模型响应后处理助手消息中的 PII"
+          description={t("settings:guardrails.detectOutputDesc")}
           onChange={(v) => patch({ piiOutput: v })}
-          title="检测输出"
+          title={t("settings:guardrails.detectOutputTitle")}
         />
         {draft.piiInput || draft.piiOutput ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <TagMultiSelect
-              description="要识别的信息类型"
+              description={t("settings:guardrails.piiDetectionTypesDesc")}
               onChange={(piiTypes) => patch({ piiTypes })}
-              options={PII_TYPE_OPTIONS}
-              title="检测类型(detectionTypes)"
+              options={piiTypeOptions}
+              title={t("settings:guardrails.piiDetectionTypesTitle")}
               value={draft.piiTypes}
             />
             <SliderRow
-              description="置信度阈值(库默认 0.6)"
+              description={t("settings:guardrails.piiThresholdDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ piiThreshold: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="判定阈值(threshold)"
+              title={t("settings:guardrails.thresholdTitle")}
               value={draft.piiThreshold}
             />
             <SelectRow
-              description="redact 就地脱敏后放行,是最常用的一档"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.piiStrategyDesc")}
               onChange={(piiStrategy) => patch({ piiStrategy })}
               options={[
-                { value: "redact" as const, label: "redact(脱敏)" },
-                { value: "block" as const, label: "block(中断)" },
-                { value: "filter" as const, label: "filter(丢弃消息)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "redact" as const, label: t("settings:guardrails.options.redactMask") },
+                { value: "block" as const, label: t("settings:guardrails.options.blockInterrupt") },
+                { value: "filter" as const, label: t("settings:guardrails.options.filterDrop") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="命中策略(strategy)"
+              title={t("settings:guardrails.injectionStrategyTitle")}
               value={draft.piiStrategy}
             />
             {draft.piiStrategy === "redact" ? (
               <SelectRow
-                description="mask 掩码;hash 哈希;placeholder 占位标签;remove 整段删除"
+                description={t("settings:guardrails.redactionMethodDesc")}
                 onChange={(piiRedactionMethod) => patch({ piiRedactionMethod })}
                 options={[
-                  { value: "mask" as const, label: "mask(掩码)" },
-                  { value: "hash" as const, label: "hash(哈希)" },
-                  { value: "placeholder" as const, label: "placeholder(占位)" },
-                  { value: "remove" as const, label: "remove(删除)" },
+                  { value: "mask" as const, label: t("settings:guardrails.options.methodMask") },
+                  { value: "hash" as const, label: t("settings:guardrails.options.methodHash") },
+                  {
+                    value: "placeholder" as const,
+                    label: t("settings:guardrails.options.methodPlaceholder"),
+                  },
+                  {
+                    value: "remove" as const,
+                    label: t("settings:guardrails.options.methodRemove"),
+                  },
                 ]}
-                title="脱敏方式(redactionMethod)"
+                title={t("settings:guardrails.redactionMethodTitle")}
                 value={draft.piiRedactionMethod}
               />
             ) : null}
             <SwitchRow
               checked={draft.piiPreserveFormat}
               onChange={(v) => patch({ piiPreserveFormat: v })}
-              title="保留原格式(preserveFormat)"
+              title={t("settings:guardrails.preserveFormatTitle")}
             />
             <SwitchRow
               checked={draft.piiLastMessageOnly}
               onChange={(v) => patch({ piiLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
+              title={t("settings:guardrails.lastMessageOnlyTitle")}
             />
             <SwitchRow
               checked={draft.piiIncludeDetections}
               onChange={(v) => patch({ piiIncludeDetections: v })}
-              title="返回检测详情(includeDetections)"
+              title={t("settings:guardrails.includeDetectionsTitle")}
             />
             <NumberRow
-              description="仅 LLM 类型 PII 的流式缓冲字符数,越大上下文更完整但延迟更高"
+              description={t("settings:guardrails.bufferSizeDesc")}
               max={10_000}
               min={1}
               onChange={(v) => patch({ piiBufferSize: v })}
-              title="流式缓冲(bufferSize)"
+              title={t("settings:guardrails.bufferSizeTitle")}
               value={draft.piiBufferSize}
             />
             <TextAreaRow
-              description="覆盖 PII 检测器默认判断说明"
+              description={t("settings:guardrails.piiInstructionsDesc")}
               onChange={(piiInstructions) => patch({ piiInstructions })}
               rows={3}
-              title="检测指令(instructions)"
+              title={t("settings:guardrails.instructionsTitle")}
               value={draft.piiInstructions}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={llmBadge}
-        description="输出侧:识别助手回复里泄漏的系统提示词片段并按策略处置(system-prompt-scrubber.mdx)。"
-        title="系统提示词清洗(SystemPromptScrubber)"
+        description={t("settings:guardrails.scrubberDesc")}
+        onReset={() =>
+          restore(
+            "scrubber",
+            "scrubberStrategy",
+            "scrubberRedactionMethod",
+            "scrubberPlaceholderText",
+            "scrubberCustomPatterns",
+            "scrubberIncludeDetections",
+            "scrubberLastMessageOnly",
+            "scrubberInstructions",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.scrubberTitle")}
       >
         <SwitchRow
           checked={draft.scrubber}
-          description="防止模型把自身指令原样吐给用户"
+          description={t("settings:guardrails.enableScrubberDesc")}
           onChange={(v) => patch({ scrubber: v })}
-          title="启用提示词清洗"
+          title={t("settings:guardrails.enableScrubberTitle")}
         />
         {draft.scrubber ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <SelectRow
-              description="redact 替换泄漏片段;filter 丢掉整条消息;block 中断;warn 仅记录"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.scrubberStrategyDesc")}
               onChange={(scrubberStrategy) => patch({ scrubberStrategy })}
               options={[
-                { value: "redact" as const, label: "redact(替换)" },
-                { value: "filter" as const, label: "filter(丢弃消息)" },
-                { value: "block" as const, label: "block(中断)" },
-                { value: "warn" as const, label: "warn(仅告警)" },
+                { value: "redact" as const, label: t("settings:guardrails.options.redactReplace") },
+                { value: "filter" as const, label: t("settings:guardrails.options.filterDrop") },
+                { value: "block" as const, label: t("settings:guardrails.options.blockInterrupt") },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
               ]}
-              title="命中策略(strategy)"
+              title={t("settings:guardrails.injectionStrategyTitle")}
               value={draft.scrubberStrategy}
             />
             {draft.scrubberStrategy === "redact" ? (
               <SelectRow
-                description="mask 掩码;placeholder 用下方占位文本替换;remove 整段删除"
+                description={t("settings:guardrails.scrubberRedactionModeDesc")}
                 onChange={(scrubberRedactionMethod) => patch({ scrubberRedactionMethod })}
                 options={[
-                  { value: "mask" as const, label: "mask(掩码)" },
-                  { value: "placeholder" as const, label: "placeholder(占位)" },
-                  { value: "remove" as const, label: "remove(删除)" },
+                  { value: "mask" as const, label: t("settings:guardrails.options.methodMask") },
+                  {
+                    value: "placeholder" as const,
+                    label: t("settings:guardrails.options.methodPlaceholder"),
+                  },
+                  {
+                    value: "remove" as const,
+                    label: t("settings:guardrails.options.methodRemove"),
+                  },
                 ]}
-                title="替换方式(redactionMethod)"
+                title={t("settings:guardrails.scrubberRedactionModeTitle")}
                 value={draft.scrubberRedactionMethod}
               />
             ) : null}
             <TextAreaRow
-              description="一行一条正则字符串,补充库内置的识别模式"
-              onChange={(text) => patchList("scrubberCustomPatterns", text)}
-              placeholder={"You are MastraWork[\\s\\S]{0,80}"}
-              rows={3}
-              title="自定义识别模式(customPatterns)"
-              value={listText.scrubberCustomPatterns}
-            />
-            <TextAreaRow
-              description="命中时使用的占位文本"
+              description={t("settings:guardrails.placeholderTextDesc")}
               onChange={(scrubberPlaceholderText) => patch({ scrubberPlaceholderText })}
               rows={2}
-              title="占位文本(placeholderText)"
+              title={t("settings:guardrails.placeholderTextTitle")}
               value={draft.scrubberPlaceholderText}
             />
             <SwitchRow
               checked={draft.scrubberIncludeDetections}
               onChange={(v) => patch({ scrubberIncludeDetections: v })}
-              title="返回检测详情(includeDetections)"
+              title={t("settings:guardrails.includeDetectionsTitle")}
             />
             <SwitchRow
               checked={draft.scrubberLastMessageOnly}
               onChange={(v) => patch({ scrubberLastMessageOnly: v })}
-              title="仅检测最新消息(lastMessageOnly)"
+              title={t("settings:guardrails.lastMessageOnlyTitle")}
             />
             <TextAreaRow
-              description="覆盖提示词清洗器默认判断说明"
+              description={t("settings:guardrails.scrubberInstructionsDesc")}
               onChange={(scrubberInstructions) => patch({ scrubberInstructions })}
               rows={3}
-              title="清洗指令(instructions)"
+              title={t("settings:guardrails.scrubberInstructionsTitle")}
               value={draft.scrubberInstructions}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="把连续的小型流式片段合并后再发送,减少网络事件和输出侧检测次数(batch-parts-processor.mdx)。"
-        title="流式片段合并(BatchPartsProcessor)"
+        description={t("settings:guardrails.batchPartsDesc")}
+        onReset={() =>
+          restore(
+            "batchParts",
+            "batchPartsSize",
+            "batchPartsMaxWaitTime",
+            "batchPartsEmitOnNonText",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.batchPartsTitle")}
       >
         <SwitchRow
           checked={draft.batchParts}
           onChange={(v) => patch({ batchParts: v })}
-          title="启用片段合并"
+          title={t("settings:guardrails.enableBatchPartsTitle")}
         />
         {draft.batchParts ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <NumberRow
-              description="累计多少个片段后发出"
+              description={t("settings:guardrails.batchSizeDesc")}
               max={100}
               min={1}
               onChange={(v) => patch({ batchPartsSize: v })}
-              title="批大小(batchSize)"
+              title={t("settings:guardrails.batchSizeTitle")}
               value={draft.batchPartsSize}
             />
             <NumberRow
-              description="等待更多片段的最大时间;0 表示仅按批大小触发"
+              description={t("settings:guardrails.maxWaitTimeDesc")}
               max={10_000}
               min={0}
               onChange={(v) => patch({ batchPartsMaxWaitTime: v })}
-              suffix="ms"
-              title="最大等待(maxWaitTime)"
+              suffix={t("common:millisecondsUnit")}
+              title={t("settings:guardrails.maxWaitTimeTitle")}
               value={draft.batchPartsMaxWaitTime}
             />
             <SwitchRow
               checked={draft.batchPartsEmitOnNonText}
               onChange={(v) => patch({ batchPartsEmitOnNonText: v })}
-              title="非文本块立即发出(emitOnNonText)"
+              title={t("settings:guardrails.emitOnNonTextTitle")}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="按 token 数裁剪上下文与响应。输入侧排在管线末尾,前面的处理器增删完消息后再保证上下文装得下(token-limiter-processor.mdx)。"
-        title="Token 上限(TokenLimiterProcessor)"
+        description={t("settings:guardrails.tokenLimiterDesc")}
+        onReset={() =>
+          restore(
+            "tokenLimitInput",
+            "tokenLimitInputValue",
+            "tokenLimitTrimMode",
+            "tokenLimitOutput",
+            "tokenLimitOutputValue",
+            "tokenLimitOutputStrategy",
+            "tokenLimitOutputCountMode",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.tokenLimiterTitle")}
       >
         <SwitchRow
           checked={draft.tokenLimitInput}
-          description="超出上限时按裁剪模式丢弃较早的消息"
+          description={t("settings:guardrails.limitInputDesc")}
           onChange={(v) => patch({ tokenLimitInput: v })}
-          title="限制输入上下文"
+          title={t("settings:guardrails.limitInputTitle")}
         />
         {draft.tokenLimitInput ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <NumberRow
-              description="送入模型的消息总 token 上限"
+              description={t("settings:guardrails.contextLimitDesc")}
               max={2_000_000}
               min={1_000}
               onChange={(v) => patch({ tokenLimitInputValue: v })}
               step={1_000}
-              suffix="token"
-              title="上下文上限(limit)"
+              suffix={t("settings:guardrails.tokenUnit")}
+              title={t("settings:guardrails.contextLimitTitle")}
               value={draft.tokenLimitInputValue}
             />
             <SelectRow
-              description="best-fit 尽量填满窗口;contiguous 保留连续消息"
+              description={t("settings:guardrails.trimModeDesc")}
               onChange={(tokenLimitTrimMode) => patch({ tokenLimitTrimMode })}
               options={[
-                { value: "contiguous" as const, label: "contiguous(连续)" },
-                { value: "best-fit" as const, label: "best-fit(尽量填满)" },
+                {
+                  value: "contiguous" as const,
+                  label: t("settings:guardrails.options.trimContiguous"),
+                },
+                { value: "best-fit" as const, label: t("settings:guardrails.options.trimBestFit") },
               ]}
-              title="输入裁剪模式(trimMode)"
+              title={t("settings:guardrails.trimModeTitle")}
               value={draft.tokenLimitTrimMode}
             />
-          </>
+          </AdvancedSection>
         ) : null}
         <SwitchRow
           checked={draft.tokenLimitOutput}
-          description="响应超过上限时截断或中断"
+          description={t("settings:guardrails.limitOutputDesc")}
           onChange={(v) => patch({ tokenLimitOutput: v })}
-          title="限制输出长度"
+          title={t("settings:guardrails.limitOutputTitle")}
         />
         {draft.tokenLimitOutput ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <NumberRow
-              description="单次响应允许的 token 数"
+              description={t("settings:guardrails.outputLimitDesc")}
               max={200_000}
               min={100}
               onChange={(v) => patch({ tokenLimitOutputValue: v })}
               step={100}
-              suffix="token"
-              title="输出上限(limit)"
+              suffix={t("settings:guardrails.tokenUnit")}
+              title={t("settings:guardrails.outputLimitTitle")}
               value={draft.tokenLimitOutputValue}
             />
             <SelectRow
-              description="truncate 截断后正常收尾;abort 直接中断本轮"
+              description={t("settings:guardrails.limitStrategyDesc")}
               onChange={(tokenLimitOutputStrategy) => patch({ tokenLimitOutputStrategy })}
               options={[
-                { value: "truncate" as const, label: "truncate(截断)" },
-                { value: "abort" as const, label: "abort(中断)" },
+                {
+                  value: "truncate" as const,
+                  label: t("settings:guardrails.options.limitTruncate"),
+                },
+                { value: "abort" as const, label: t("settings:guardrails.options.limitAbort") },
               ]}
-              title="超限策略(strategy)"
+              title={t("settings:guardrails.limitStrategyTitle")}
               value={draft.tokenLimitOutputStrategy}
             />
             <SelectRow
-              description="cumulative 按整轮累计;part 按单个输出块"
+              description={t("settings:guardrails.countModeDesc")}
               onChange={(tokenLimitOutputCountMode) => patch({ tokenLimitOutputCountMode })}
               options={[
-                { value: "cumulative" as const, label: "cumulative(累计)" },
-                { value: "part" as const, label: "part(分块)" },
+                {
+                  value: "cumulative" as const,
+                  label: t("settings:guardrails.options.countCumulative"),
+                },
+                { value: "part" as const, label: t("settings:guardrails.options.countPart") },
               ]}
-              title="输出计数模式(countMode)"
+              title={t("settings:guardrails.countModeTitle")}
               value={draft.tokenLimitOutputCountMode}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={
           <ReadyBadge
-            blockedText="观测存储不支持"
+            blockedText={t("settings:guardrails.blockedCost")}
             ready={status.costMetricsReady}
-            readyText="可用"
+            readyText={t("settings:guardrails.readyCost")}
           />
         }
-        description="按时间窗统计已花费的模型费用,超出预算时告警或拦截。金额为近似值:观测指标异步落盘,跑得快的一轮可能短暂越界(token-cost-control.mdx)。"
-        title="成本上限(TokenCostControl)"
+        description={t("settings:guardrails.tokenCostDesc")}
+        onReset={() =>
+          restore(
+            "tokenCost",
+            "tokenCostMax",
+            "tokenCostScope",
+            "tokenCostWindow",
+            "tokenCostStrategy",
+            "tokenCostWarnAtPercent",
+            "tokenCostIncludeBreakdown",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.tokenCostTitle")}
       >
         <SwitchRow
           checked={draft.tokenCost}
-          description="依赖观测存储的费用聚合能力"
+          description={t("settings:guardrails.enableTokenCostDesc")}
           disabled={!status.costMetricsReady}
           onChange={(v) => patch({ tokenCost: v })}
-          title="启用成本上限"
+          title={t("settings:guardrails.enableTokenCostTitle")}
         />
         {draft.tokenCost ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <NumberRow
-              description="统计窗口内允许的最大花费"
+              description={t("settings:guardrails.maxCostDesc")}
               max={10_000}
               min={0.1}
               onChange={(v) => patch({ tokenCostMax: v })}
               step={0.5}
-              suffix="美元"
-              title="费用上限(maxCost)"
+              suffix={t("settings:guardrails.options.suffixUsd")}
+              title={t("settings:guardrails.maxCostTitle")}
               value={draft.tokenCostMax}
             />
             <SelectRow
-              description="按哪一维聚合费用:resource = 每个用户,thread = 每条会话"
+              description={t("settings:guardrails.scopeDesc")}
               onChange={(tokenCostScope) => patch({ tokenCostScope })}
               options={[
-                { value: "resource" as const, label: "resource(每用户)" },
-                { value: "thread" as const, label: "thread(每会话)" },
-                { value: "run" as const, label: "run(每轮)" },
-                { value: "user" as const, label: "user(登录用户)" },
-                { value: "session" as const, label: "session(会话期)" },
-                { value: "organization" as const, label: "organization(组织)" },
+                {
+                  value: "resource" as const,
+                  label: t("settings:guardrails.options.scopeResource"),
+                },
+                { value: "thread" as const, label: t("settings:guardrails.options.scopeThread") },
+                { value: "run" as const, label: t("settings:guardrails.options.scopeRun") },
+                { value: "user" as const, label: t("settings:guardrails.options.scopeUser") },
+                { value: "session" as const, label: t("settings:guardrails.options.scopeSession") },
+                {
+                  value: "organization" as const,
+                  label: t("settings:guardrails.options.scopeOrganization"),
+                },
               ]}
-              title="统计维度(scope)"
+              title={t("settings:guardrails.scopeTitle")}
               value={draft.tokenCostScope}
             />
             <SelectRow
-              description="回溯多长时间累计费用"
+              description={t("settings:guardrails.windowDesc")}
               onChange={(tokenCostWindow) => patch({ tokenCostWindow })}
               options={[
-                { value: "1h" as const, label: "最近 1 小时" },
-                { value: "6h" as const, label: "最近 6 小时" },
-                { value: "24h" as const, label: "最近 24 小时" },
-                { value: "7d" as const, label: "最近 7 天" },
-                { value: "30d" as const, label: "最近 30 天" },
-                { value: "365d" as const, label: "最近 365 天" },
+                { value: "1h" as const, label: t("settings:guardrails.options.window1h") },
+                { value: "6h" as const, label: t("settings:guardrails.options.window6h") },
+                { value: "24h" as const, label: t("settings:guardrails.options.window24h") },
+                { value: "7d" as const, label: t("settings:guardrails.options.window7d") },
+                { value: "30d" as const, label: t("settings:guardrails.options.window30d") },
+                { value: "365d" as const, label: t("settings:guardrails.options.window365d") },
               ]}
-              title="统计窗口(window)"
+              title={t("settings:guardrails.windowTitle")}
               value={draft.tokenCostWindow}
             />
             <SelectRow
-              description="block 超额直接拒绝新请求;warn 仅提示"
+              confirm={blockConfirmation}
+              description={t("settings:guardrails.costStrategyDesc")}
               onChange={(tokenCostStrategy) => patch({ tokenCostStrategy })}
               options={[
-                { value: "warn" as const, label: "warn(仅告警)" },
-                { value: "block" as const, label: "block(拦截)" },
+                { value: "warn" as const, label: t("settings:guardrails.options.warnOnly") },
+                { value: "block" as const, label: t("settings:guardrails.options.blockIntercept") },
               ]}
-              title="超额策略(strategy)"
+              title={t("settings:guardrails.costStrategyTitle")}
               value={draft.tokenCostStrategy}
             />
             <SliderRow
-              description="达到上限的该百分比时提前告警;0 = 不启用软阈值"
+              description={t("settings:guardrails.warnAtPercentDesc")}
               max={95}
               min={0}
               onChange={(v) => patch({ tokenCostWarnAtPercent: v })}
               step={5}
-              title="软阈值(warnAtPercent %)"
+              title={t("settings:guardrails.warnAtPercentTitle")}
               value={draft.tokenCostWarnAtPercent}
             />
             <SwitchRow
               checked={draft.tokenCostIncludeBreakdown}
               onChange={(v) => patch({ tokenCostIncludeBreakdown: v })}
-              title="返回费用明细(includeBreakdown)"
+              title={t("settings:guardrails.includeBreakdownTitle")}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="在切换模型或供应商时整理历史消息中的私有字段,保证上下文仍能被当前供应商接受。默认开启,必要时可关闭。"
-        title="供应商历史兼容"
+        description={t("settings:guardrails.historyCompatDesc")}
+        onReset={() => restore("providerCompat")}
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.historyCompatTitle")}
       >
         <SwitchRow
           checked={draft.providerCompat}
-          description="仅影响跨供应商发送历史消息时的兼容处理"
+          description={t("settings:guardrails.enableHistoryCompatDesc")}
           onChange={(v) => patch({ providerCompat: v })}
-          title="启用历史兼容"
+          title={t("settings:guardrails.enableHistoryCompatTitle")}
         />
       </SettingCard>
 
       <SettingCard
-        description="裁剪历史中的工具调用与结果,把上下文预算留给当前任务(tool-call-filter.mdx)。"
-        title="工具调用裁剪(ToolCallFilter)"
+        description={t("settings:guardrails.toolCallFilterDesc")}
+        onReset={() =>
+          restore(
+            "toolCallFilter",
+            "toolCallFilterExclude",
+            "toolCallFilterAfterToolSteps",
+            "toolCallFilterPreserveModelOutput",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.toolCallFilterTitle")}
       >
         <SwitchRow
           checked={draft.toolCallFilter}
           onChange={(v) => patch({ toolCallFilter: v })}
-          title="启用工具调用裁剪"
+          title={t("settings:guardrails.enableToolCallFilterTitle")}
         />
         {draft.toolCallFilter ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <TextAreaRow
-              description="一行一个工具名;留空表示全部工具调用都可裁剪"
+              description={t("settings:guardrails.excludeToolsDesc")}
               onChange={(text) => patchList("toolCallFilterExclude", text)}
               rows={3}
-              title="排除工具(exclude)"
+              title={t("settings:guardrails.excludeToolsTitle")}
               value={listText.toolCallFilterExclude}
             />
             <NumberRow
-              description="保留最近 N 个产生工具调用的步骤; -1 表示不裁剪当前循环"
+              description={t("settings:guardrails.filterStartDesc")}
               max={100}
               min={-1}
               onChange={(v) => patch({ toolCallFilterAfterToolSteps: v })}
-              title="当前循环裁剪起点(filterAfterToolSteps)"
+              title={t("settings:guardrails.filterStartTitle")}
               value={draft.toolCallFilterAfterToolSteps}
             />
             <SwitchRow
               checked={draft.toolCallFilterPreserveModelOutput}
               onChange={(v) => patch({ toolCallFilterPreserveModelOutput: v })}
-              title="保留模型输出(preserveModelOutput)"
+              title={t("settings:guardrails.preserveModelOutputTitle")}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="缓存已经完成的模型步骤,相同的模型、提示词和工具循环可直接复用(response-cache.mdx)。"
-        title="响应缓存(ResponseCache)"
+        description={t("settings:guardrails.responseCacheDesc")}
+        onReset={() =>
+          restore(
+            "responseCache",
+            "responseCacheTtl",
+            "responseCacheScopeMode",
+            "responseCacheScopeValue",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.responseCacheTitle")}
       >
         <SwitchRow
           checked={draft.responseCache}
           onChange={(v) => patch({ responseCache: v })}
-          title="启用响应缓存"
+          title={t("settings:guardrails.enableResponseCacheTitle")}
         />
         {draft.responseCache ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <NumberRow
-              description="缓存条目存活时间"
+              description={t("settings:guardrails.cacheTtlDesc")}
               max={86_400}
               min={0}
               onChange={(v) => patch({ responseCacheTtl: v })}
-              suffix="s"
-              title="缓存 TTL(ttl)"
+              suffix={t("common:secondsUnit")}
+              title={t("settings:guardrails.cacheTtlTitle")}
               value={draft.responseCacheTtl}
             />
             <SelectRow
-              description="auto 按资源隔离;none 全局共享;custom 使用固定作用域"
+              description={t("settings:guardrails.cacheScopeDesc")}
               onChange={(responseCacheScopeMode) => patch({ responseCacheScopeMode })}
               options={[
-                { value: "auto" as const, label: "auto(按资源)" },
-                { value: "none" as const, label: "none(全局)" },
-                { value: "custom" as const, label: "custom(自定义)" },
+                { value: "auto" as const, label: t("settings:guardrails.options.cacheAuto") },
+                { value: "none" as const, label: t("settings:guardrails.options.cacheNone") },
               ]}
-              title="缓存作用域(scope)"
-              value={draft.responseCacheScopeMode}
+              title={t("settings:guardrails.cacheScopeTitle")}
+              value={
+                draft.responseCacheScopeMode === "custom" ? "auto" : draft.responseCacheScopeMode
+              }
             />
-            {draft.responseCacheScopeMode === "custom" ? (
-              <TextAreaRow
-                description="同一作用域共享缓存"
-                onChange={(responseCacheScopeValue) => patch({ responseCacheScopeValue })}
-                rows={2}
-                title="自定义作用域(scopeValue)"
-                value={draft.responseCacheScopeValue}
-              />
-            ) : null}
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
         action={
-          <ReadyBadge blockedText="需要工作区" ready={status.workspaceReady} readyText="可用" />
+          <ReadyBadge
+            blockedText={t("settings:guardrails.blockedWorkspace")}
+            ready={status.workspaceReady}
+            readyText={t("settings:guardrails.readyWorkspace")}
+          />
         }
-        description="在模型需要技能时从工作区索引中召回相关 SKILL.md(skill-search-processor.mdx)。"
-        title="技能搜索(SkillSearchProcessor)"
+        description={t("settings:guardrails.skillSearchDesc")}
+        onReset={() =>
+          restore(
+            "skillSearch",
+            "skillSearchTopK",
+            "skillSearchMinScore",
+            "skillSearchTtl",
+            "skillSearchBlockingRefresh",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.skillSearchTitle")}
       >
         <SwitchRow
           checked={draft.skillSearch}
           disabled={!status.workspaceReady}
           onChange={(v) => patch({ skillSearch: v })}
-          title="启用技能搜索"
+          title={t("settings:guardrails.enableSkillSearchTitle")}
         />
         {draft.skillSearch ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <SliderRow
-              description="每次最多召回的技能数"
+              description={t("settings:guardrails.topKDesc")}
               max={20}
               min={1}
               onChange={(v) => patch({ skillSearchTopK: v })}
               step={1}
-              title="召回数量(topK)"
+              title={t("settings:guardrails.topKTitle")}
               value={draft.skillSearchTopK}
             />
             <SliderRow
-              description="最低相关性分数"
+              description={t("settings:guardrails.minScoreDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ skillSearchMinScore: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="最低分数(minScore)"
+              title={t("settings:guardrails.minScoreTitle")}
               value={draft.skillSearchMinScore}
             />
             <NumberRow
-              description="技能搜索结果缓存时间"
+              description={t("settings:guardrails.skillCacheTtlDesc")}
               max={86_400_000}
               min={0}
               onChange={(v) => patch({ skillSearchTtl: v })}
-              suffix="ms"
-              title="缓存 TTL(ttl)"
+              suffix={t("common:millisecondsUnit")}
+              title={t("settings:guardrails.cacheTtlTitle")}
               value={draft.skillSearchTtl}
             />
             <SwitchRow
               checked={draft.skillSearchBlockingRefresh}
-              description="等待磁盘技能索引刷新后再开始首步,同轮看到最新文件"
+              description={t("settings:guardrails.blockingRefreshDesc")}
               onChange={(v) => patch({ skillSearchBlockingRefresh: v })}
-              title="阻塞刷新(blockingRefresh)"
+              title={t("settings:guardrails.blockingRefreshTitle")}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="从动态工具集合中按需搜索并加载工具,减少每轮发送的工具定义上下文(tool-search-processor.mdx)。"
-        title="按需工具发现(ToolSearchProcessor)"
+        description={t("settings:guardrails.toolSearchDesc")}
+        onReset={() =>
+          restore(
+            "toolSearch",
+            "toolSearchTopK",
+            "toolSearchMinScore",
+            "toolSearchInjectCatalog",
+            "toolSearchAutoLoad",
+            "toolSearchStorage",
+            "toolSearchTtl",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.toolSearchTitle")}
       >
         <SwitchRow
           checked={draft.toolSearch}
-          description="启用 search_tools / load_tool 元工具"
+          description={t("settings:guardrails.enableToolSearchDesc")}
           onChange={(v) => patch({ toolSearch: v })}
-          title="启用工具搜索"
+          title={t("settings:guardrails.enableToolSearchTitle")}
         />
         {draft.toolSearch ? (
-          <>
+          <AdvancedSection title={t("settings:guardrails.advancedTitle")}>
             <SliderRow
-              description="每次搜索最多返回的工具数"
+              description={t("settings:guardrails.toolSearchTopKDesc")}
               max={20}
               min={1}
               onChange={(v) => patch({ toolSearchTopK: v })}
               step={1}
-              title="返回数量(topK)"
+              title={t("settings:guardrails.toolSearchTopKTitle")}
               value={draft.toolSearchTopK}
             />
             <SliderRow
-              description="最低相关性分数"
+              description={t("settings:guardrails.minScoreDesc")}
               max={1}
               min={0}
               onChange={(v) => patch({ toolSearchMinScore: Math.round(v * 100) / 100 })}
               step={0.05}
-              title="最低分数(minScore)"
+              title={t("settings:guardrails.minScoreTitle")}
               value={draft.toolSearchMinScore}
             />
             <SwitchRow
               checked={draft.toolSearchAutoLoad}
-              description="搜索结果直接激活,省掉 load_tool 一步"
+              description={t("settings:guardrails.autoLoadDesc")}
               onChange={(v) => patch({ toolSearchAutoLoad: v })}
-              title="自动加载(autoLoad)"
+              title={t("settings:guardrails.autoLoadTitle")}
             />
             <SwitchRow
               checked={draft.toolSearchInjectCatalog}
-              description="把可发现工具目录摘要注入系统提示,减少一次搜索往返"
+              description={t("settings:guardrails.injectCatalogDesc")}
               onChange={(v) => patch({ toolSearchInjectCatalog: v })}
-              title="注入工具目录(injectCatalog)"
+              title={t("settings:guardrails.injectCatalogTitle")}
             />
             <SelectRow
-              description="context 随消息持久化,适合线程和重启恢复"
+              description={t("settings:guardrails.storageDesc")}
               onChange={(toolSearchStorage) => patch({ toolSearchStorage })}
               options={[
-                { value: "context" as const, label: "context(随消息)" },
-                { value: "in-memory" as const, label: "in-memory(进程内)" },
+                {
+                  value: "context" as const,
+                  label: t("settings:guardrails.options.storageContext"),
+                },
+                {
+                  value: "in-memory" as const,
+                  label: t("settings:guardrails.options.storageInMemory"),
+                },
               ]}
-              title="状态存储(storage)"
+              title={t("settings:guardrails.storageTitle")}
               value={draft.toolSearchStorage}
             />
             <NumberRow
-              description="仅 in-memory 模式生效;0 表示不清理"
+              description={t("settings:guardrails.stateTtlDesc")}
               max={86_400_000}
               min={0}
               onChange={(v) => patch({ toolSearchTtl: v })}
-              suffix="ms"
-              title="状态 TTL(ttl)"
+              suffix={t("common:millisecondsUnit")}
+              title={t("settings:guardrails.stateTtlTitle")}
               value={draft.toolSearchTtl}
             />
-          </>
+          </AdvancedSection>
         ) : null}
       </SettingCard>
 
       <SettingCard
-        description="供应商 API 报错时自动修正预填充请求,并对限流和瞬时网络错误进行恢复。默认开启,必要时可关闭。"
-        title="错误恢复"
+        description={t("settings:guardrails.errorRecoveryDesc")}
+        onReset={() =>
+          restore(
+            "prefillErrorHandler",
+            "streamErrorRetry",
+            "streamErrorRetryMax",
+            "streamErrorRetryDelayMs",
+            "streamErrorRetryMaxRetryAfterMs",
+            "streamErrorRetryUnknown",
+          )
+        }
+        resetLabel={resetLabel}
+        title={t("settings:guardrails.errorRecoveryTitle")}
       >
         <SwitchRow
           checked={draft.prefillErrorHandler}
-          description="修正部分供应商拒绝以助手消息结尾的请求"
+          description={t("settings:guardrails.prefillFixDesc")}
           onChange={(v) => patch({ prefillErrorHandler: v })}
-          title="预填充错误修正"
+          title={t("settings:guardrails.prefillFixTitle")}
         />
         <SwitchRow
           checked={draft.streamErrorRetry}
-          description="对限流与瞬时网络错误自动重试并遵守 Retry-After"
+          description={t("settings:guardrails.streamRetryDesc")}
           onChange={(v) => patch({ streamErrorRetry: v })}
-          title="流式错误重试"
+          title={t("settings:guardrails.streamRetryTitle")}
         />
         <NumberRow
-          description="每类瞬时错误允许的最大重试次数"
+          description={t("settings:guardrails.maxRetriesCountDesc")}
           max={10}
           min={0}
           onChange={(v) => patch({ streamErrorRetryMax: v })}
-          title="最大重试次数(maxRetries)"
+          title={t("settings:guardrails.maxRetriesCountTitle")}
           value={draft.streamErrorRetryMax}
         />
         <NumberRow
-          description="普通错误首次重试等待时间"
+          description={t("settings:guardrails.initialDelayDesc")}
           max={120_000}
           min={0}
           onChange={(v) => patch({ streamErrorRetryDelayMs: v })}
-          suffix="ms"
-          title="初始退避(delayMs)"
+          suffix={t("common:millisecondsUnit")}
+          title={t("settings:guardrails.initialDelayTitle")}
           value={draft.streamErrorRetryDelayMs}
         />
         <NumberRow
-          description="遵守 Retry-After 时允许的最大等待时间"
+          description={t("settings:guardrails.maxRetryAfterDesc")}
           max={600_000}
           min={0}
           onChange={(v) => patch({ streamErrorRetryMaxRetryAfterMs: v })}
-          suffix="ms"
-          title="Retry-After 上限(maxRetryAfterMs)"
+          suffix={t("common:millisecondsUnit")}
+          title={t("settings:guardrails.maxRetryAfterTitle")}
           value={draft.streamErrorRetryMaxRetryAfterMs}
         />
         <SwitchRow
           checked={draft.streamErrorRetryUnknown}
-          description="对未匹配到专用策略的流错误也进行重试"
+          description={t("settings:guardrails.retryUnknownErrorsDesc")}
           onChange={(v) => patch({ streamErrorRetryUnknown: v })}
-          title="重试未知错误(retryUnknownErrors)"
+          title={t("settings:guardrails.retryUnknownErrorsTitle")}
         />
       </SettingCard>
     </>

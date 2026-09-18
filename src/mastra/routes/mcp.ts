@@ -9,7 +9,7 @@ import { errorText, workError } from "../errors";
 import {
   authenticateMcpServer,
   getMcpConfig,
-  type McpServerConfig,
+  parseMcpServerConfig,
   saveMcpConfig,
   summarizeMcpServer,
   testMcpServer,
@@ -41,8 +41,8 @@ export const saveMcpConfigRoute = registerApiRoute("/work/mcp", {
   handler: async (c) => {
     try {
       const payload = (await c.req.json()) as { server?: unknown };
-      const server = payload.server as McpServerConfig | undefined;
-      if (!server) throw workError("MCP_CONFIG_MISSING");
+      if (!payload.server) throw workError("MCP_CONFIG_MISSING");
+      const server = parseMcpServerConfig(payload.server);
       const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
       const config = await getMcpConfig(resourceId);
       const next = config.servers.filter((item) => item.id !== server.id);
@@ -77,11 +77,11 @@ export const testMcpConfigRoute = registerApiRoute("/work/mcp/test", {
   method: "POST",
   handler: async (c) => {
     try {
-      const payload = (await c.req.json()) as { server?: McpServerConfig };
+      const payload = (await c.req.json()) as { server?: unknown };
       if (!payload.server) throw workError("MCP_CONFIG_MISSING");
       return c.json(
         await testMcpServer(
-          payload.server,
+          parseMcpServerConfig(payload.server),
           c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
         ),
       );

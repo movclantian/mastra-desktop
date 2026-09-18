@@ -7,9 +7,12 @@
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { generateText } from "ai";
+import { z } from "zod";
+import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
+import { resolveCredential } from "../credential-broker";
 import { errorText, workError } from "../errors";
 import {
+  createEphemeralAgent,
   getProvidersConfig,
   parseModelSelection,
   resolveConfiguredModel,
@@ -137,7 +140,7 @@ export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
 
 // ---------------------------------------------------------------------------
 // 自定义网关模型列表拉取(规避渲染进程 CORS/外网限制)
-// body: { protocol: 'openai' | 'anthropic' | 'gemini', url, apiKey, useResponses? }
+// body only carries gateway metadata and credentialRef; plaintext is resolved through the broker.
 // ---------------------------------------------------------------------------
 
 /** 网关 /models 本身很快,但经代理时握手会慢,给到 30s */
@@ -146,13 +149,17 @@ const GATEWAY_TIMEOUT_MS = 30_000;
 export const listProviderModelsRoute = registerApiRoute("/work/providers/models", {
   method: "POST",
   handler: async (c) => {
-    let payload: { protocol?: string; url?: string; apiKey?: string };
+    let payload: z.infer<typeof providerModelsRequestSchema>;
     try {
-      payload = (await c.req.json()) as typeof payload;
+      payload = providerModelsRequestSchema.parse(await c.req.json());
     } catch {
       throw workError("VALIDATION_INVALID_JSON");
     }
-    const { protocol, apiKey = "" } = payload;
+    const { protocol } = payload;
+    const apiKey = await resolveCredential(
+      payload.credentialRef,
+      providerCredentialPurpose(payload.providerId),
+    );
 
     // 与前端 normalizeGatewayUrl 同款的服务端兜底:openai/anthropic 的模型列表端点在
     // 版本段之下(…/v1/models)。裸域名不补 /v1 会打到网关的网页(返回 HTML),JSON
@@ -244,7 +251,17 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
   },
 });
 
-// POST /work/providers/test — 直接测试单个模型,不创建线程或写入 Memory。
+const providerModelsRequestSchema = z
+  .object({
+    providerId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    protocol: z.enum(["openai", "anthropic", "gemini"]),
+    url: z.string().min(1).max(2_048),
+    credentialRef: SecretRefSchema,
+  })
+  .strict();
+
+// POST /work/providers/test — 用一次性 Mastra Agent 测试文本与结构化输出,
+// 不创建线程或写入 Memory。
 export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
   method: "POST",
   handler: async (c) => {
@@ -259,13 +276,19 @@ export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
         resourceId,
       );
       if (!model) throw workError("MODEL_NOT_CONFIGURED");
-      const result = await generateText({
-        model,
-        prompt: "Reply a short greeting `hi`.",
-        maxOutputTokens: 32,
+      const testAgent = createEphemeralAgent(model, {
+        id: "mastra-work-model-test",
+        name: "MastraWork Model Test",
+        instructions: "返回一个简短问候语,并严格按结构化字段输出。",
+      });
+      const result = await testAgent.generate("请回复一个简短的 hi。", {
+        structuredOutput: {
+          schema: z.object({ reply: z.string().min(1) }),
+          jsonPromptInjection: "auto",
+        },
         abortSignal: c.req.raw.signal,
       });
-      return c.json({ ok: true, reply: result.text.trim().slice(0, 120) });
+      return c.json({ ok: true, reply: result.object.reply.trim().slice(0, 120) });
     } catch (error) {
       return c.json(
         {
@@ -301,9 +324,8 @@ export const providersConfigRoute = registerApiRoute("/work/providers/config", {
 export const saveProvidersConfigRoute = registerApiRoute("/work/providers/config", {
   method: "POST",
   handler: async (c) => {
-    const config = (await c.req.json()) as Parameters<typeof saveProvidersConfig>[0];
     await saveProvidersConfig(
-      config,
+      await c.req.json(),
       c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
     );
     return c.json({ ok: true });

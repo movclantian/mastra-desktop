@@ -1,3 +1,5 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BotIcon,
   CheckIcon,
@@ -18,9 +20,13 @@ import {
   DEFAULT_AGENT_PROFILE,
   deleteAgent,
   generateAgentAssist,
+  qk,
   saveAgent,
-  useWorkbench,
+  useAgentsQuery,
+  useSessionSettings,
 } from "@/entities/workbench";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { AnimatedBeam } from "@/shared/ui/animated-beam";
 import { AnimatedTabs } from "@/shared/ui/animated-tabs";
@@ -100,11 +106,11 @@ type Draft = {
   workflowStepsJson: string;
 };
 
-const STRATEGY_OPTIONS = [
-  { value: "supervisor", label: "Supervisors · 智能委派" },
-  { value: "handoff", label: "Handoffs · 顺序交接" },
-  { value: "workflow", label: "Workflows · 显式编排" },
-  { value: "council", label: "Council · 并行评议" },
+const STRATEGY_KEYS = [
+  { value: "supervisor", labelKey: "agentHub:strategies.supervisor" },
+  { value: "handoff", labelKey: "agentHub:strategies.handoff" },
+  { value: "workflow", labelKey: "agentHub:strategies.workflow" },
+  { value: "council", labelKey: "agentHub:strategies.council" },
 ] as const;
 
 const createEmptyDraft = (type: AgentProfile["type"] = "agent"): Draft => ({
@@ -122,14 +128,14 @@ function textValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function memberTextFromDraft(value: unknown): string {
+function memberTextFromDraft(value: unknown, defaultMemberName = ""): string {
   if (!Array.isArray(value)) return "";
   return value
     .filter(
       (member): member is Record<string, unknown> => typeof member === "object" && member !== null,
     )
     .map((member) => {
-      const name = textValue(member.name) || "团队成员";
+      const name = textValue(member.name) || defaultMemberName;
       const profession = textValue(member.profession);
       const instructions = textValue(member.instructions);
       const skills = Array.isArray(member.skills)
@@ -140,19 +146,23 @@ function memberTextFromDraft(value: unknown): string {
     .join("\n");
 }
 
-function membersFromText(value: string): AgentProfile["members"] {
+function membersFromText(
+  value: string,
+  defaultName = "",
+  defaultDuty = (profession: string) => profession,
+): AgentProfile["members"] {
   return value
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, index) => {
-      const [name = "团队成员", profession = "", instructions = "", skills = ""] = line.split("|");
+      const [name = defaultName, profession = "", instructions = "", skills = ""] = line.split("|");
       return {
         id: `member-${index + 1}`,
-        name: name.trim() || "团队成员",
+        name: name.trim() || defaultName,
         profession: profession.trim(),
         description: profession.trim(),
-        instructions: instructions.trim() || `负责${profession.trim() || "完成分配的专业任务"}。`,
+        instructions: instructions.trim() || defaultDuty(profession.trim()),
         skills: skills
           .split(",")
           .map((item) => item.trim())
@@ -163,8 +173,20 @@ function membersFromText(value: string): AgentProfile["members"] {
 }
 
 export function AgentHubPage() {
-  const { agents, agentSelection, refreshAgents, setAgentSelection, setActiveView } =
-    useWorkbench();
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const agentsQuery = useAgentsQuery();
+  const agents = agentsQuery.data ?? [];
+  const { user } = useAuth();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const { agentSelection, setAgentSelection } = useSessionSettings(
+    user?.id ?? "anonymous",
+    activeThreadId,
+  );
+  const setActiveView = (view: string) => void navigate({ to: `/${view}` });
   const [tab, setTab] = React.useState<HubTab>("all");
   const [query, setQuery] = React.useState("");
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
@@ -177,6 +199,15 @@ export function AgentHubPage() {
   const [assistType, setAssistType] = React.useState<AgentProfile["type"]>("agent");
   const [assistDescription, setAssistDescription] = React.useState("");
   const [assisting, setAssisting] = React.useState(false);
+
+  const defaultMemberName = t("agentHub:defaultMemberName");
+  const defaultMemberDuty = React.useCallback(
+    (profession: string) =>
+      t("agentHub:defaultMemberDuty", {
+        profession: profession || t("agentHub:defaultMemberDutyFallback"),
+      }),
+    [t],
+  );
 
   React.useEffect(() => {
     setPage(1);
@@ -237,7 +268,7 @@ export function AgentHubPage() {
 
   const generateAssistDraft = async () => {
     if (!assistDescription.trim()) {
-      toast.error("请先描述你想要的 Agent 或团队");
+      toast.error(t("agentHub:describePromptRequired"));
       return;
     }
     setAssisting(true);
@@ -256,7 +287,7 @@ export function AgentHubPage() {
           generated.workflow?.strategy === "council"
             ? generated.workflow.strategy
             : "supervisor",
-        memberText: memberTextFromDraft(generated.members),
+        memberText: memberTextFromDraft(generated.members, defaultMemberName),
         workflowStepsJson: JSON.stringify(
           Array.isArray(generated.workflow?.steps) ? generated.workflow.steps : [],
           null,
@@ -265,22 +296,22 @@ export function AgentHubPage() {
       });
       setAssistOpen(false);
       setDialogOpen(true);
-      toast.success("AI 已生成草稿,请确认后保存");
+      toast.success(t("agentHub:aiDraftSuccess"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "AI 创建失败");
+      toast.error(error instanceof Error ? error.message : t("agentHub:aiCreateFailed"));
     } finally {
       setAssisting(false);
     }
   };
 
   const save = async () => {
-    const members = membersFromText(draft.memberText);
+    const members = membersFromText(draft.memberText, defaultMemberName, defaultMemberDuty);
     if (!draft.displayName.trim() || !draft.instructions.trim()) {
-      toast.error("请至少填写名称和工作指令");
+      toast.error(t("agentHub:nameAndInstructionRequired"));
       return;
     }
     if (draft.type === "team" && members.length === 0) {
-      toast.error("团队至少需要一位成员");
+      toast.error(t("agentHub:teamNeedsMember"));
       return;
     }
     setSaving(true);
@@ -292,10 +323,10 @@ export function AgentHubPage() {
       if (draft.type === "team" && draft.workflowStrategy === "workflow") {
         try {
           const parsed = JSON.parse(draft.workflowStepsJson);
-          if (!Array.isArray(parsed)) throw new Error("编排节点必须是数组");
+          if (!Array.isArray(parsed)) throw new Error(t("agentHub:nodesMustBeArray"));
           workflowSteps = parsed as typeof workflowSteps;
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "编排节点 JSON 无效");
+          toast.error(error instanceof Error ? error.message : t("agentHub:nodesJsonInvalid"));
           setSaving(false);
           return;
         }
@@ -325,13 +356,13 @@ export function AgentHubPage() {
               }
             : undefined,
       });
-      await refreshAgents();
+      await queryClient.invalidateQueries({ queryKey: qk.agents() });
       if (savedAgent) await setAgentSelection(savedAgent);
       setEditing(null);
       setDialogOpen(false);
-      toast.success("Agent 配置已保存");
+      toast.success(t("agentHub:configSaved"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
+      toast.error(error instanceof Error ? error.message : t("agentHub:saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -341,10 +372,10 @@ export function AgentHubPage() {
     if (profile.id === DEFAULT_AGENT_PROFILE.id) return;
     try {
       await deleteAgent(profile.id);
-      await refreshAgents();
-      toast.success("Agent 已删除");
+      await queryClient.invalidateQueries({ queryKey: qk.agents() });
+      toast.success(t("agentHub:deleted"));
     } catch {
-      toast.error("删除失败");
+      toast.error(t("agentHub:deleteFailed"));
     }
   };
 
@@ -364,21 +395,21 @@ export function AgentHubPage() {
           <InputGroupInput
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索 Agent、团队或职责"
+            placeholder={t("agentHub:searchPlaceholder")}
           />
         </InputGroup>
         <RainbowButton variant="outline" onClick={() => openAssist("agent")}>
           <SparklesIcon />
-          AI 创建 Agent
+          {t("agentHub:aiCreateAgent")}
         </RainbowButton>
         <RainbowButton onClick={() => openAssist("team")}>
           <SparklesIcon />
-          AI 创建团队
+          {t("agentHub:aiCreateTeam")}
         </RainbowButton>
         <Button
           variant="ghost"
-          title="手动创建"
-          aria-label="手动创建"
+          title={t("agentHub:manualCreate")}
+          aria-label={t("agentHub:manualCreate")}
           size="icon"
           onClick={() => openCreate("agent")}
         >
@@ -396,18 +427,18 @@ export function AgentHubPage() {
             }}
             layoutId="agent-hub-filter"
             variant="segmented"
-            aria-label="Agent 分类"
+            aria-label={t("agentHub:categoryAria")}
             className="w-fit"
             tabs={[
-              { id: "all", label: "全部" },
-              { id: "agent", label: "Agent" },
-              { id: "team", label: "Agent 团队" },
-              { id: "mine", label: "我的" },
+              { id: "all", label: t("agentHub:categories.all") },
+              { id: "agent", label: t("agentHub:agent") },
+              { id: "team", label: t("agentHub:categories.team") },
+              { id: "mine", label: t("agentHub:categories.mine") },
             ]}
           />
           <div className="flex items-center gap-3">
             <span className="hidden text-xs text-muted-foreground sm:inline">
-              共 {filtered.length} 个专家
+              {t("agentHub:expertCount", { count: filtered.length })}
             </span>
             <ToggleGroup
               className="h-8"
@@ -418,10 +449,18 @@ export function AgentHubPage() {
                 if (value === "grid" || value === "list") setViewMode(value);
               }}
             >
-              <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+              <ToggleGroupItem
+                value="grid"
+                aria-label={t("agentHub:gridView")}
+                className="size-8 p-0"
+              >
                 <LayoutGridIcon className="size-3.5" />
               </ToggleGroupItem>
-              <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+              <ToggleGroupItem
+                value="list"
+                aria-label={t("agentHub:listView")}
+                className="size-8 p-0"
+              >
                 <ListIcon className="size-3.5" />
               </ToggleGroupItem>
             </ToggleGroup>
@@ -437,28 +476,26 @@ export function AgentHubPage() {
                     <SearchIcon />
                   </EmptyMedia>
                   <EmptyTitle>
-                    {query.trim() ? "没有匹配的 Agent" : "当前分类还没有 Agent"}
+                    {query.trim() ? t("agentHub:noMatchTitle") : t("agentHub:emptyCategoryTitle")}
                   </EmptyTitle>
                   <EmptyDescription>
-                    {query.trim()
-                      ? "换个关键词试试，或者清空搜索查看全部 Agent。"
-                      : "手动创建一个 Agent，或者用 AI 根据一句话描述生成。"}
+                    {query.trim() ? t("agentHub:noMatchDesc") : t("agentHub:emptyCategoryDesc")}
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent className="flex-row justify-center gap-2">
                   {query.trim() ? (
                     <Button variant="outline" onClick={() => setQuery("")}>
                       <SearchIcon />
-                      清空搜索
+                      {t("agentHub:clearSearch")}
                     </Button>
                   ) : null}
                   <Button onClick={() => openCreate("agent")}>
                     <PlusIcon />
-                    手动创建
+                    {t("agentHub:manualCreate")}
                   </Button>
                   <Button variant="outline" onClick={() => openAssist("agent")}>
                     <SparklesIcon />
-                    AI 创建
+                    {t("agentHub:aiCreate")}
                   </Button>
                 </EmptyContent>
               </Empty>
@@ -501,13 +538,17 @@ export function AgentHubPage() {
         {totalPages > 1 ? (
           <div className="flex items-center justify-between border-t px-5 py-2.5 bg-background/80 backdrop-blur-xs">
             <span className="text-xs text-muted-foreground">
-              第 {safePage} / {totalPages} 页 · 共 {filtered.length} 项
+              {t("agentHub:pageInfo", {
+                current: safePage,
+                total: totalPages,
+                count: filtered.length,
+              })}
             </span>
             <Pagination className="mx-0 w-auto">
               <PaginationContent>
                 <PaginationItem>
                   <PaginationPrevious
-                    text="上一页"
+                    text={t("agentHub:prevPage")}
                     className={cn(
                       "h-8 cursor-pointer text-xs",
                       safePage <= 1 && "pointer-events-none opacity-40",
@@ -540,7 +581,7 @@ export function AgentHubPage() {
                 )}
                 <PaginationItem>
                   <PaginationNext
-                    text="下一页"
+                    text={t("agentHub:nextPage")}
                     className={cn(
                       "h-8 cursor-pointer text-xs",
                       safePage >= totalPages && "pointer-events-none opacity-40",
@@ -560,14 +601,16 @@ export function AgentHubPage() {
       <Dialog open={assistOpen} onOpenChange={setAssistOpen}>
         <DialogContent className="max-w-xl sm:max-w-xl">
           <DialogHeader className="pr-6">
-            <DialogTitle>AI 创建{assistType === "team" ? " Agent 团队" : " Agent"}</DialogTitle>
-            <DialogDescription>
-              用一句话描述目标、专业领域和工作方式。生成的草稿会打开编辑器,你可以在保存前微调。
-            </DialogDescription>
+            <DialogTitle>
+              {t("agentHub:aiCreateModalTitle", {
+                type: assistType === "team" ? t("agentHub:team") : t("agentHub:agent"),
+              })}
+            </DialogTitle>
+            <DialogDescription>{t("agentHub:aiCreateModalDesc")}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 px-0.5 py-1">
             <fieldset className="grid gap-2 border-0 p-0">
-              <legend className="text-sm font-medium">创建类型</legend>
+              <legend className="text-sm font-medium">{t("agentHub:createType")}</legend>
               <ToggleGroup
                 className="flex w-fit gap-2"
                 variant="outline"
@@ -579,23 +622,25 @@ export function AgentHubPage() {
               >
                 <ToggleGroupItem value="agent">
                   <BotIcon />
-                  Agent
+                  {t("agentHub:agent")}
                 </ToggleGroupItem>
                 <ToggleGroupItem value="team">
                   <UsersRoundIcon />
-                  Agent 团队
+                  {t("agentHub:team")}
                 </ToggleGroupItem>
               </ToggleGroup>
             </fieldset>
             <Field>
-              <FieldLabel htmlFor="agent-assist-description">你想让它负责什么?</FieldLabel>
+              <FieldLabel htmlFor="agent-assist-description">
+                {t("agentHub:whatToResponsible")}
+              </FieldLabel>
               <Textarea
                 id="agent-assist-description"
                 autoFocus
                 className="min-h-36 resize-y"
                 value={assistDescription}
                 onChange={(event) => setAssistDescription(event.target.value)}
-                placeholder="例如: 审查 React 项目的性能和安全问题,输出按优先级排序的修改建议。"
+                placeholder={t("agentHub:responsibilityPlaceholder")}
               />
             </Field>
           </div>
@@ -603,7 +648,7 @@ export function AgentHubPage() {
             <DialogClose
               render={
                 <Button variant="outline" disabled={assisting}>
-                  取消
+                  {t("agentHub:cancel")}
                 </Button>
               }
             />
@@ -616,7 +661,7 @@ export function AgentHubPage() {
               ) : (
                 <SparklesIcon />
               )}
-              {assisting ? "正在生成…" : "生成草稿"}
+              {assisting ? t("agentHub:generating") : t("agentHub:generateDraft")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -629,20 +674,20 @@ export function AgentHubPage() {
         <DialogContent className="flex max-h-[min(90vh,52rem)] max-w-2xl sm:max-w-2xl flex-col">
           <DialogHeader className="pr-6">
             <DialogTitle>
-              {editing ? "编辑" : "确认"}
-              {draft.type === "team" ? " Agent 团队" : " Agent"}
+              {t("agentHub:editOrConfirm", {
+                action: editing ? t("agentHub:edit") : t("agentHub:confirm"),
+                type: draft.type === "team" ? t("agentHub:team") : t("agentHub:agent"),
+              })}
             </DialogTitle>
             <DialogDescription>
-              {editing
-                ? "只保留会影响执行的配置,模型与密钥沿用设置中的供应商。"
-                : "AI 已填好基础配置,确认或微调后即可使用。"}
+              {editing ? t("agentHub:editSubtitle") : t("agentHub:confirmSubtitle")}
             </DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 flex-1 px-1">
             <div className="grid gap-4 px-1 py-2">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field>
-                  <FieldLabel htmlFor="agent-display-name">名称</FieldLabel>
+                  <FieldLabel htmlFor="agent-display-name">{t("agentHub:nameLabel")}</FieldLabel>
                   <Input
                     id="agent-display-name"
                     value={draft.displayName}
@@ -650,7 +695,7 @@ export function AgentHubPage() {
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="agent-profession">定位</FieldLabel>
+                  <FieldLabel htmlFor="agent-profession">{t("agentHub:positionLabel")}</FieldLabel>
                   <Input
                     id="agent-profession"
                     value={draft.profession}
@@ -659,7 +704,7 @@ export function AgentHubPage() {
                 </Field>
               </div>
               <Field>
-                <FieldLabel htmlFor="agent-description">简介</FieldLabel>
+                <FieldLabel htmlFor="agent-description">{t("agentHub:introLabel")}</FieldLabel>
                 <Textarea
                   id="agent-description"
                   className="min-h-20 resize-y"
@@ -668,7 +713,9 @@ export function AgentHubPage() {
                 />
               </Field>
               <Field>
-                <FieldLabel htmlFor="agent-instructions">工作指令</FieldLabel>
+                <FieldLabel htmlFor="agent-instructions">
+                  {t("agentHub:instructionsLabel")}
+                </FieldLabel>
                 <Textarea
                   id="agent-instructions"
                   className="min-h-32 resize-y"
@@ -679,7 +726,7 @@ export function AgentHubPage() {
               {draft.type === "team" ? (
                 <>
                   <fieldset className="grid gap-2 border-0 p-0 text-sm font-medium">
-                    <legend>执行策略</legend>
+                    <legend>{t("agentHub:executionStrategy")}</legend>
                     <ToggleGroup
                       className="flex w-full flex-wrap gap-2"
                       variant="outline"
@@ -696,53 +743,59 @@ export function AgentHubPage() {
                         }
                       }}
                     >
-                      {STRATEGY_OPTIONS.map((option) => (
+                      {STRATEGY_KEYS.map((option) => (
                         <ToggleGroupItem
                           key={option.value}
                           value={option.value}
                           className="h-8 px-3 text-xs"
                         >
-                          {option.label}
+                          {t(option.labelKey)}
                         </ToggleGroupItem>
                       ))}
                     </ToggleGroup>
                     <span className="text-xs font-normal text-muted-foreground">
-                      Workflows 策略会按配置生成显式 Mastra
-                      Workflow；其中可使用分支、循环和人工审批节点。
+                      {t("agentHub:workflowStrategyHint")}
                     </span>
                     <TeamFlowPreview
                       strategy={draft.workflowStrategy}
-                      members={membersFromText(draft.memberText).map((member) => member.name)}
+                      members={membersFromText(
+                        draft.memberText,
+                        defaultMemberName,
+                        defaultMemberDuty,
+                      ).map((member) => member.name)}
                     />
                   </fieldset>
                   <Field>
-                    <FieldLabel htmlFor="agent-team-members">团队成员</FieldLabel>
+                    <FieldLabel htmlFor="agent-team-members">
+                      {t("agentHub:teamMembers")}
+                    </FieldLabel>
                     <Textarea
                       id="agent-team-members"
                       className="min-h-28 resize-y"
-                      placeholder="每行一位: 姓名 | 专业职责 | 成员指令 | 技能ID(可选)"
+                      placeholder={t("agentHub:teamMembersPlaceholder")}
                       value={draft.memberText}
                       onChange={(event) => updateDraft("memberText", event.target.value)}
                     />
                     <FieldDescription className="text-xs text-muted-foreground">
-                      每位成员都会注册为独立 Mastra Agent,并按上方策略执行。
+                      {t("agentHub:teamMembersHint")}
                     </FieldDescription>
                   </Field>
                   {draft.workflowStrategy === "workflow" ? (
                     <Field>
-                      <FieldLabel htmlFor="agent-workflow-steps">编排节点(JSON)</FieldLabel>
+                      <FieldLabel htmlFor="agent-workflow-steps">
+                        {t("agentHub:workflowSteps")}
+                      </FieldLabel>
                       <Textarea
                         id="agent-workflow-steps"
                         className="min-h-40 resize-y font-mono text-xs"
                         value={draft.workflowStepsJson}
                         onChange={(event) => updateDraft("workflowStepsJson", event.target.value)}
                         placeholder={
-                          '[{"id":"review","kind":"approval","approval":{"title":"确认发布","description":"请确认后继续"}}]'
+                          '[{"id":"review","kind":"approval","approval":{"title":"Review","description":"Please approve to continue"}}]'
                         }
                       />
                       <FieldDescription className="text-xs text-muted-foreground">
-                        节点 kind 支持 agent、approval、branch、loop；branch 使用
-                        branch.onTrueMemberId/onFalseMemberId，loop 使用 loop.mode/maxIterations。
+                        {t("agentHub:workflowStepsHint")}
                       </FieldDescription>
                     </Field>
                   ) : null}
@@ -754,13 +807,13 @@ export function AgentHubPage() {
             <DialogClose
               render={
                 <Button variant="outline" disabled={saving}>
-                  取消
+                  {t("agentHub:cancel")}
                 </Button>
               }
             />
             <Button disabled={saving} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
-              {saving ? "保存中…" : "保存并使用"}
+              {saving ? t("agentHub:saving") : t("agentHub:saveAndUse")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -784,6 +837,7 @@ function TeamFlowPreview({
   strategy: Draft["workflowStrategy"];
   members: string[];
 }) {
+  const { t } = useTranslation();
   const containerRef = React.useRef<HTMLDivElement>(null);
   const hubRef = React.useRef<HTMLDivElement>(null);
   const visible = members
@@ -799,7 +853,12 @@ function TeamFlowPreview({
   if (visible.length === 0) return null;
 
   const chained = strategy === "handoff" || strategy === "workflow";
-  const hubLabel = strategy === "supervisor" ? "调度" : strategy === "council" ? "汇总" : null;
+  const hubLabel =
+    strategy === "supervisor"
+      ? t("agentHub:strategySupervisor")
+      : strategy === "council"
+        ? t("agentHub:strategyCouncil")
+        : null;
   const hubFirst = strategy === "supervisor";
 
   const beams = chained
@@ -917,12 +976,13 @@ function AgentContextMenuWrapper({
   onDelete: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
 
   const handleCopyInfo = () => {
     void navigator.clipboard.writeText(profile.displayName);
-    toast.success("已复制专家名称");
+    toast.success(t("agentHub:copiedName"));
   };
 
   return (
@@ -933,11 +993,11 @@ function AgentContextMenuWrapper({
           <ContextMenuLabel className="max-w-44 truncate">{profile.displayName}</ContextMenuLabel>
           <ContextMenuItem onClick={onUse}>
             <Icon className="text-muted-foreground" />
-            <span>立即使用此专家</span>
+            <span>{t("agentHub:useExpertNow")}</span>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleCopyInfo}>
             <CopyIcon className="text-muted-foreground" />
-            <span>复制专家名称</span>
+            <span>{t("agentHub:copyExpertName")}</span>
           </ContextMenuItem>
         </ContextMenuGroup>
         {!isDefault ? (
@@ -946,12 +1006,12 @@ function AgentContextMenuWrapper({
             <ContextMenuGroup>
               <ContextMenuItem onClick={onEdit}>
                 <PencilIcon className="text-muted-foreground" />
-                <span>编辑配置</span>
+                <span>{t("agentHub:editConfig")}</span>
                 <ContextMenuShortcut>F2</ContextMenuShortcut>
               </ContextMenuItem>
               <ContextMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2Icon className="text-muted-foreground" />
-                <span>删除专家</span>
+                <span>{t("agentHub:deleteExpert")}</span>
                 <ContextMenuShortcut>⌫</ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
@@ -975,6 +1035,7 @@ function AgentGridCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
   const isTeam = profile.type === "team";
@@ -1003,26 +1064,26 @@ function AgentGridCard({
                   {profile.displayName}
                 </CardTitle>
                 <CardDescription className="truncate text-xs">
-                  {profile.profession || (isTeam ? "Agent 团队" : "通用 Agent")}
+                  {profile.profession || (isTeam ? t("agentHub:team") : t("agentHub:generalAgent"))}
                 </CardDescription>
               </div>
             </div>
             {active ? (
               <Badge variant="default" className="shrink-0 px-1.5 py-0 text-[10px] font-normal">
-                使用中
+                {t("agentHub:inUse")}
               </Badge>
             ) : isTeam ? (
               <Badge
                 variant="outline"
                 className="shrink-0 px-1.5 py-0 text-[10px] text-muted-foreground"
               >
-                {profile.members.length} 人团队
+                {t("agentHub:teamMemberCount", { count: profile.members.length })}
               </Badge>
             ) : null}
           </div>
         </CardHeader>
 
-        <CardContent className="min-h-0 flex-1 p-4 pt-1">
+        <CardContent className="min-h-0 flex-1 p-2 pt-1">
           <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
             {profile.description || profile.instructions}
           </p>
@@ -1059,10 +1120,10 @@ function AgentGridCard({
             {active ? (
               <>
                 <CheckIcon className="mr-1 size-3.5" />
-                使用中
+                {t("agentHub:inUse")}
               </>
             ) : (
-              "选用"
+              t("agentHub:select")
             )}
           </Button>
           {!isDefault ? (
@@ -1071,8 +1132,8 @@ function AgentGridCard({
                 size="icon-sm"
                 variant="ghost"
                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                title="编辑"
-                aria-label="编辑"
+                title={t("agentHub:edit")}
+                aria-label={t("agentHub:edit")}
                 onClick={onEdit}
               >
                 <PencilIcon className="size-3.5" />
@@ -1081,8 +1142,8 @@ function AgentGridCard({
                 size="icon-sm"
                 variant="ghost"
                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                title="删除"
-                aria-label="删除"
+                title={t("agentHub:deleteExpert")}
+                aria-label={t("agentHub:deleteExpert")}
                 onClick={onDelete}
               >
                 <Trash2Icon className="size-3.5" />
@@ -1108,6 +1169,7 @@ function AgentListItem({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation();
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
   const isTeam = profile.type === "team";
@@ -1135,12 +1197,12 @@ function AgentListItem({
               <span className="truncate text-sm font-medium">{profile.displayName}</span>
               {active ? (
                 <Badge variant="default" className="h-4 shrink-0 px-1 py-0 text-[10px] font-normal">
-                  当前
+                  {t("agentHub:current")}
                 </Badge>
               ) : null}
             </div>
             <p className="truncate text-xs text-muted-foreground">
-              {profile.profession || (isTeam ? "Agent 团队" : "通用 Agent")}
+              {profile.profession || (isTeam ? t("agentHub:team") : t("agentHub:generalAgent"))}
             </p>
           </div>
 
@@ -1162,7 +1224,7 @@ function AgentListItem({
             ))}
             {isTeam ? (
               <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-muted-foreground">
-                {profile.members.length} 人团队
+                {t("agentHub:teamMemberCount", { count: profile.members.length })}
               </Badge>
             ) : null}
           </div>
@@ -1181,10 +1243,10 @@ function AgentListItem({
             {active ? (
               <>
                 <CheckIcon className="mr-1 size-3" />
-                使用中
+                {t("agentHub:inUse")}
               </>
             ) : (
-              "选用"
+              t("agentHub:select")
             )}
           </Button>
           {!isDefault ? (
@@ -1193,8 +1255,8 @@ function AgentListItem({
                 size="icon-sm"
                 variant="ghost"
                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                title="编辑"
-                aria-label="编辑"
+                title={t("agentHub:edit")}
+                aria-label={t("agentHub:edit")}
                 onClick={onEdit}
               >
                 <PencilIcon className="size-3.5" />
@@ -1203,8 +1265,8 @@ function AgentListItem({
                 size="icon-sm"
                 variant="ghost"
                 className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                title="删除"
-                aria-label="删除"
+                title={t("agentHub:deleteExpert")}
+                aria-label={t("agentHub:deleteExpert")}
                 onClick={onDelete}
               >
                 <Trash2Icon className="size-3.5" />

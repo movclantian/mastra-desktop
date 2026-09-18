@@ -430,6 +430,21 @@
   }
 }
 
+/* 官方 message-demo 打字指示器的文字流光效果(MarkerContent shimmer) */
+@utility shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted-foreground) 25%,
+    var(--foreground) 50%,
+    var(--muted-foreground) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 @layer base {
   * {
     border-color: var(--color-border);

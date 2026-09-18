@@ -18,10 +18,17 @@ export function changeLanguage(path: string): string {
   return LANGUAGE_BY_EXTENSION[extension] ?? "text";
 }
 
-export function changeLabel(change: WorkspaceFileChange): string {
-  if (change.kind === "created") return "新增";
-  if (change.kind === "deleted") return "删除";
-  return "修改";
+import { i18n } from "@/shared/i18n";
+
+export function changeLabel(change: WorkspaceFileChange, t?: (key: string) => string): string {
+  if (t) {
+    if (change.kind === "created") return t("workspace:changeCreated");
+    if (change.kind === "deleted") return t("workspace:changeDeleted");
+    return t("workspace:changeModified");
+  }
+  if (change.kind === "created") return i18n.t("workspace:changeCreated");
+  if (change.kind === "deleted") return i18n.t("workspace:changeDeleted");
+  return i18n.t("workspace:changeModified");
 }
 
 export interface WorkspaceChangeGroup {

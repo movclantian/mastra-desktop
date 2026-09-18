@@ -1,156 +1,60 @@
-/**
- * 终端 IPC 契约:渲染进程 ↔ 主进程共享的频道名、载荷类型与解析校验函数。
- * 所有跨进程消息必须先过这里的 parse*,不可信输入在边界处拒绝。
- */
+import { z } from "zod";
+
 export const TERMINAL_CREATE_CHANNEL = "terminal:create";
 export const TERMINAL_WRITE_CHANNEL = "terminal:write";
 export const TERMINAL_RESIZE_CHANNEL = "terminal:resize";
 export const TERMINAL_CLOSE_CHANNEL = "terminal:close";
 export const TERMINAL_EVENT_CHANNEL = "terminal:event";
 
-const TERMINAL_MIN_COLS = 2;
-const TERMINAL_MAX_COLS = 500;
-const TERMINAL_MIN_ROWS = 2;
-const TERMINAL_MAX_ROWS = 300;
-const TERMINAL_MAX_INPUT_LENGTH = 65_536;
+export const TerminalSessionIdSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[a-z0-9][a-z0-9._:-]*$/iu);
+const TerminalColsSchema = z.number().int().min(2).max(500);
+const TerminalRowsSchema = z.number().int().min(2).max(300);
 
-export interface TerminalCreateRequest {
-  readonly cwd?: string;
-  readonly cols: number;
-  readonly rows: number;
-}
+export const TerminalCreateRequestSchema = z.strictObject({
+  cwd: z
+    .string()
+    .min(1)
+    .max(4_096)
+    .refine((value) => value.trim() === value && !value.includes("\0"))
+    .optional(),
+  cols: TerminalColsSchema,
+  rows: TerminalRowsSchema,
+});
+export const TerminalCreateResultSchema = z.strictObject({ sessionId: TerminalSessionIdSchema });
+export const TerminalWriteRequestSchema = z.strictObject({
+  sessionId: TerminalSessionIdSchema,
+  data: z.string().max(65_536),
+});
+export const TerminalResizeRequestSchema = z.strictObject({
+  sessionId: TerminalSessionIdSchema,
+  cols: TerminalColsSchema,
+  rows: TerminalRowsSchema,
+});
+export const TerminalEventSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.literal("data"),
+    sessionId: TerminalSessionIdSchema,
+    data: z.string().max(65_536),
+  }),
+  z.strictObject({
+    type: z.literal("exit"),
+    sessionId: TerminalSessionIdSchema,
+    exitCode: z.number().int().optional(),
+    signal: z.number().int().optional(),
+  }),
+  z.strictObject({
+    type: z.literal("error"),
+    sessionId: TerminalSessionIdSchema,
+    message: z.string().min(1).max(2_048),
+  }),
+]);
 
-export interface TerminalCreateResult {
-  readonly sessionId: string;
-}
-
-export interface TerminalWriteRequest {
-  readonly sessionId: string;
-  readonly data: string;
-}
-
-export interface TerminalResizeRequest {
-  readonly sessionId: string;
-  readonly cols: number;
-  readonly rows: number;
-}
-
-export type TerminalEvent =
-  | { readonly type: "data"; readonly sessionId: string; readonly data: string }
-  | {
-      readonly type: "exit";
-      readonly sessionId: string;
-      readonly exitCode?: number;
-      readonly signal?: number;
-    }
-  | { readonly type: "error"; readonly sessionId: string; readonly message: string };
-
-function record(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new TypeError("terminal request must be an object");
-  }
-  return value as Record<string, unknown>;
-}
-
-function sessionId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 128 ||
-    !/^[a-z0-9][a-z0-9._:-]*$/iu.test(value)
-  ) {
-    throw new TypeError("invalid terminal session id");
-  }
-  return value;
-}
-
-function dimension(value: unknown, minimum: number, maximum: number): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < minimum || value > maximum) {
-    throw new TypeError("invalid terminal dimensions");
-  }
-  return value;
-}
-
-function cwd(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > 4_096 ||
-    value.trim() !== value
-  ) {
-    throw new TypeError("invalid terminal working directory");
-  }
-  return value;
-}
-
-export function parseTerminalCreateRequest(value: unknown): TerminalCreateRequest {
-  const input = record(value);
-  const workingDirectory = cwd(input.cwd);
-  return {
-    ...(workingDirectory === undefined ? {} : { cwd: workingDirectory }),
-    cols: dimension(input.cols, TERMINAL_MIN_COLS, TERMINAL_MAX_COLS),
-    rows: dimension(input.rows, TERMINAL_MIN_ROWS, TERMINAL_MAX_ROWS),
-  };
-}
-
-export function parseTerminalCreateResult(value: unknown): TerminalCreateResult {
-  const input = record(value);
-  return { sessionId: sessionId(input.sessionId) };
-}
-
-export function parseTerminalWriteRequest(value: unknown): TerminalWriteRequest {
-  const input = record(value);
-  if (typeof input.data !== "string" || input.data.length > TERMINAL_MAX_INPUT_LENGTH) {
-    throw new TypeError("invalid terminal input");
-  }
-  return { sessionId: sessionId(input.sessionId), data: input.data };
-}
-
-export function parseTerminalResizeRequest(value: unknown): TerminalResizeRequest {
-  const input = record(value);
-  return {
-    sessionId: sessionId(input.sessionId),
-    cols: dimension(input.cols, TERMINAL_MIN_COLS, TERMINAL_MAX_COLS),
-    rows: dimension(input.rows, TERMINAL_MIN_ROWS, TERMINAL_MAX_ROWS),
-  };
-}
-
-export function parseTerminalSessionId(value: unknown): string {
-  return sessionId(value);
-}
-
-export function parseTerminalEvent(value: unknown): TerminalEvent {
-  const input = record(value);
-  const id = sessionId(input.sessionId);
-  if (
-    input.type === "data" &&
-    typeof input.data === "string" &&
-    input.data.length <= TERMINAL_MAX_INPUT_LENGTH
-  ) {
-    return { type: "data", sessionId: id, data: input.data };
-  }
-  if (input.type === "exit") {
-    const exitCode =
-      typeof input.exitCode === "number" && Number.isInteger(input.exitCode)
-        ? input.exitCode
-        : undefined;
-    const signal =
-      typeof input.signal === "number" && Number.isInteger(input.signal) ? input.signal : undefined;
-    return {
-      type: "exit",
-      sessionId: id,
-      ...(exitCode === undefined ? {} : { exitCode }),
-      ...(signal === undefined ? {} : { signal }),
-    };
-  }
-  if (
-    input.type === "error" &&
-    typeof input.message === "string" &&
-    input.message.length > 0 &&
-    input.message.length <= 2_048
-  ) {
-    return { type: "error", sessionId: id, message: input.message };
-  }
-  throw new TypeError("invalid terminal event");
-}
+export type TerminalCreateRequest = z.infer<typeof TerminalCreateRequestSchema>;
+export type TerminalCreateResult = z.infer<typeof TerminalCreateResultSchema>;
+export type TerminalWriteRequest = z.infer<typeof TerminalWriteRequestSchema>;
+export type TerminalResizeRequest = z.infer<typeof TerminalResizeRequestSchema>;
+export type TerminalEvent = z.infer<typeof TerminalEventSchema>;

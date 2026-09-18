@@ -6,6 +6,7 @@ export interface CitationSource {
   url: string;
   title: string;
   description?: string;
+  quote?: string;
 }
 
 export type CitationEntries = Map<string, CitationSource[]>;
@@ -60,12 +61,12 @@ function parseDefinitionBody(body: string): CitationSource[] {
   }
   for (const match of rest.matchAll(BARE_URL)) push(match[0]);
 
-  const description = rest
+  const quote = rest
     .replace(BARE_URL, " ")
     .replace(/[\s—–|·]+/g, " ")
     .replace(/^[-:,;.]+|[-:,;]+$/g, "")
     .trim();
-  if (description) for (const source of sources) source.description = description;
+  if (quote) for (const source of sources) source.quote = quote;
   return sources;
 }
 
@@ -80,7 +81,7 @@ export function parseFootnoteEntries(markdown: string): CitationEntries {
 
 function harvestSourceDetails(
   value: unknown,
-  into: Map<string, { title?: string; description?: string }>,
+  into: Map<string, { title?: string; description?: string; quote?: string }>,
   depth = 0,
 ): void {
   if (depth > 6 || value === null || typeof value !== "object") return;
@@ -94,11 +95,8 @@ function harvestSourceDetails(
     const previous = into.get(url);
     into.set(url, {
       title: previous?.title ?? asString(row.title),
-      description:
-        previous?.description ??
-        asString(row.snippet) ??
-        asString(row.summary) ??
-        asString(row.description),
+      description: previous?.description ?? asString(row.summary) ?? asString(row.description),
+      quote: previous?.quote ?? asString(row.snippet) ?? asString(row.text)?.slice(0, 360),
     });
   }
   for (const child of Object.values(row)) harvestSourceDetails(child, into, depth + 1);
@@ -119,20 +117,21 @@ export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries
         {
           url: source.url,
           title: source.filename || hostnameOf(source.url),
-          description: source.snippet,
+          quote: source.snippet,
         },
       ]);
     }
   }
   if (entries.size === 0) return entries;
 
-  const details = new Map<string, { title?: string; description?: string }>();
+  const details = new Map<string, { title?: string; description?: string; quote?: string }>();
   harvestSourceDetails(parts, details);
   for (const sources of entries.values()) {
     for (const source of sources) {
       const detail = details.get(source.url);
       if (!detail) continue;
       source.description ??= detail.description;
+      source.quote ??= detail.quote;
       if (detail.title && source.title === hostnameOf(source.url)) source.title = detail.title;
     }
   }

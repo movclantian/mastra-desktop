@@ -7,6 +7,7 @@ import {
   libraryUploadChunkUrl,
 } from "@/entities/library";
 import { getAuthToken } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 
 export interface LibraryUploadTarget {
   folderId: string | null;
@@ -23,6 +24,7 @@ export interface LibraryUploadTarget {
  * onUploaded:全部文件完成后回调(调用方刷新资产列表)。
  */
 export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<void>) {
+  const { t } = useTranslation();
   const [uploading, setUploading] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState(0);
   const [retryFiles, setRetryFiles] = React.useState<File[]>([]);
@@ -38,15 +40,15 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
   const uploadFiles = async (files: File[], target: LibraryUploadTarget) => {
     if (files.length === 0) return;
     if (files.length > 10) {
-      toast.error("一次最多上传 10 个文件");
+      toast.error(t("library:maxFilesLimit"));
       return;
     }
     if (files.some((file) => file.size > 50 * 1024 * 1024)) {
-      toast.error("单个文件不能超过 50 MB");
+      toast.error(t("library:maxFileSizeLimit"));
       return;
     }
     if (files.reduce((sum, file) => sum + file.size, 0) > 100 * 1024 * 1024) {
-      toast.error("一次上传总大小不能超过 100 MB");
+      toast.error(t("library:maxTotalSizeLimit"));
       return;
     }
     setRetryFiles(files);
@@ -89,10 +91,11 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
           if (completed.has(index)) continue;
           const start = index * session.chunkSize;
           const chunk = file.slice(start, Math.min(file.size, start + session.chunkSize));
+
           await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            xhr.open("PUT", libraryUploadChunkUrl(session.id, resourceId, index));
             activeUploadXhrRef.current = xhr;
+            xhr.open("PUT", libraryUploadChunkUrl(session.id, resourceId, index));
             xhr.setRequestHeader("Content-Type", "application/octet-stream");
             const token = getAuthToken();
             if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
@@ -104,19 +107,20 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
                 ),
               );
             };
-            xhr.onerror = () => reject(new Error("上传连接失败"));
-            xhr.onabort = () => reject(new Error("上传已取消"));
+            xhr.onerror = () => reject(new Error(t("library:uploadConnFailed")));
+            xhr.onabort = () => reject(new Error(t("library:uploadCancelled")));
             xhr.onload = () => {
               if (xhr.status >= 200 && xhr.status < 300) resolve();
               else {
                 try {
                   reject(
                     new Error(
-                      (JSON.parse(xhr.responseText) as { error?: string }).error || "上传分片失败",
+                      (JSON.parse(xhr.responseText) as { error?: string }).error ||
+                        t("library:chunkUploadFailed"),
                     ),
                   );
                 } catch {
-                  reject(new Error("上传分片失败"));
+                  reject(new Error(t("library:chunkUploadFailed")));
                 }
               }
             };
@@ -131,10 +135,10 @@ export function useLibraryUpload(resourceId: string, onUploaded: () => Promise<v
       }
       setUploadProgress(100);
       setRetryFiles([]);
-      toast.success("文件已保存到资料库");
+      toast.success(t("library:filesSaved"));
       await onUploaded();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "上传失败";
+      const message = error instanceof Error ? error.message : t("library:uploadFailed");
       setUploadError(message);
       toast.error(message);
     } finally {

@@ -1,16 +1,31 @@
 import type { IpcRenderer } from "electron";
+import {
+  DetectIdesResultSchema,
+  OpenExternalRequestSchema,
+  OpenExternalResultSchema,
+  type OpenInAppRequest,
+  OpenInAppRequestSchema,
+  OpenInAppResultSchema,
+  WORKSPACE_CHANNELS,
+} from "../../shared/workspace-contract";
 
 export function createWorkspaceApi(ipcRenderer: IpcRenderer) {
   return {
-    detectIdes: () =>
-      ipcRenderer.invoke("detect-ides") as Promise<
-        Array<{ id: string; name: string; command: string; category: "ide" | "system" }>
-      >,
-    openInApp: (app: string, targetPath: string) =>
-      ipcRenderer.invoke("open-in-app", { app, targetPath }) as Promise<{
-        ok: boolean;
-        error?: string;
-      }>,
-    openExternal: (url: string) => ipcRenderer.invoke("open-external", url) as Promise<void>,
+    detectIdes: async () =>
+      DetectIdesResultSchema.parse(await ipcRenderer.invoke(WORKSPACE_CHANNELS.detectIdes)),
+    openInApp: async (app: OpenInAppRequest["app"], targetPath: string) =>
+      OpenInAppResultSchema.parse(
+        await ipcRenderer.invoke(
+          WORKSPACE_CHANNELS.openInApp,
+          OpenInAppRequestSchema.parse({ app, targetPath }),
+        ),
+      ),
+    openExternal: async (url: string) =>
+      OpenExternalResultSchema.parse(
+        await ipcRenderer.invoke(
+          WORKSPACE_CHANNELS.openExternal,
+          OpenExternalRequestSchema.parse(url),
+        ),
+      ),
   };
 }

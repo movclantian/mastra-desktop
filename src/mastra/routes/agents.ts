@@ -1,6 +1,5 @@
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { generateText, Output } from "ai";
 import { z } from "zod";
 import {
   type AgentProfile,
@@ -12,7 +11,7 @@ import {
   upsertAgentProfile,
 } from "../agents/custom";
 import { errorText } from "../errors";
-import { resolveDefaultLanguageModel } from "../models";
+import { createEphemeralAgent, resolveDefaultLanguageModel } from "../models";
 
 const agentProfileInputSchema = z.object({
   id: z.string().optional(),
@@ -163,13 +162,22 @@ export const assistAgentProfileRoute = registerApiRoute("/work/agents/assist", {
         );
       }
 
-      const result = await generateText({
-        model: selectedModel,
-        output: Output.object({ schema: agentDraftSchema }),
-        prompt: `根据用户描述生成一个可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
-        abortSignal: c.req.raw.signal,
+      const assistant = createEphemeralAgent(selectedModel, {
+        id: "mastra-work-agent-assist",
+        name: "MastraWork Agent Assistant",
+        instructions: "根据用户描述生成可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。",
       });
-      return c.json({ draft: result.output });
+      const result = await assistant.generate(
+        `类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
+        {
+          structuredOutput: {
+            schema: agentDraftSchema,
+            jsonPromptInjection: "auto",
+          },
+          abortSignal: c.req.raw.signal,
+        },
+      );
+      return c.json({ draft: result.object });
     } catch (error) {
       return c.json({ error: `AI 创建失败: ${errorText(error)}` }, 503);
     }

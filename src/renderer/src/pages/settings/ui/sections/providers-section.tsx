@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ExternalLinkIcon,
   FlaskConicalIcon,
@@ -25,11 +26,16 @@ import {
   invalidateProviderModelsCache,
   normalizeGatewayUrl,
   type ProviderConfig,
+  qk,
   type RegistryProvider,
+  saveProviderConfig,
   testProviderModel,
+  useCatalogQuery,
+  useOpenBrowserUrl,
+  useProviderConfigQuery,
   useRegistry,
-  useWorkbench,
 } from "@/entities/workbench";
+import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { ModelSelectorLogo } from "@/shared/ui/ai-elements/model-selector";
 import { Badge } from "@/shared/ui/badge";
@@ -52,6 +58,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/shared/ui/separator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Switch } from "@/shared/ui/switch";
+import { providerCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { CapabilityBadges } from "../controls";
 
 // ---------------------------------------------------------------------------
@@ -67,12 +74,50 @@ type Selection = { kind: "provider"; id: string } | { kind: "registry"; id: stri
 
 type ConnectionDialogMode = { kind: "gateway" } | { kind: "edit"; provider: ProviderConfig };
 
+function useProviderEditor() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const configQuery = useProviderConfigQuery();
+  const providers = configQuery.data?.providers ?? [];
+  const setProviders = React.useCallback(
+    (updater: ProviderConfig[] | ((current: ProviderConfig[]) => ProviderConfig[])) => {
+      const current = queryClient.getQueryData<ReturnType<typeof useProviderConfigQuery>["data"]>(
+        qk.providerConfig(),
+      );
+      const prev = current?.providers ?? [];
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      queryClient.setQueryData(qk.providerConfig(), (_prev: typeof current) => ({
+        providers: next,
+        modelSelection: current?.modelSelection ?? null,
+      }));
+      void saveProviderConfig({ providers: next }).catch(() =>
+        toast.error(t("settings:providers.saveFailed")),
+      );
+    },
+    [queryClient, t],
+  );
+  const saveProviders = React.useCallback(
+    async (next: ProviderConfig[]) => {
+      await saveProviderConfig({ providers: next });
+      queryClient.setQueryData(
+        qk.providerConfig(),
+        (current: ReturnType<typeof useProviderConfigQuery>["data"]) => ({
+          providers: next,
+          modelSelection: current?.modelSelection ?? null,
+        }),
+      );
+    },
+    [queryClient],
+  );
+  const openBrowserUrl = useOpenBrowserUrl();
+  return { providers, setProviders, saveProviders, openBrowserUrl };
+}
+
 /** 供应商 logo:与模型选择器同源,直接取 models.dev/logos/{id}.svg */
 function ProviderLogo({ provider, className }: { provider: string; className?: string }) {
   return <ModelSelectorLogo provider={provider} className={cn("size-4.5", className)} />;
 }
 
-/** 状态角标点:实心绿 = 已配置且启用(已填 Key),灰 = 已配置但禁用,浅灰 = 未配置 */
 function StatusDot({
   configured,
   disabled,
@@ -82,9 +127,16 @@ function StatusDot({
   disabled?: boolean;
   className?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <span
-      title={configured ? (disabled ? "已配置(已禁用)" : "已启用") : "未配置"}
+      title={
+        configured
+          ? disabled
+            ? t("settings:providers.disabledStatus")
+            : t("settings:providers.enabledStatus")
+          : t("common:empty")
+      }
       className={cn(
         "size-2 shrink-0 rounded-full transition-colors",
         configured
@@ -103,7 +155,7 @@ function StatusDot({
 // ---------------------------------------------------------------------------
 
 export function ProvidersSection() {
-  const { providers } = useWorkbench();
+  const { providers } = useProviderEditor();
   const registry = useRegistry();
   const [selected, setSelected] = React.useState<Selection | null>(null);
   const [dialogMode, setDialogMode] = React.useState<ConnectionDialogMode | null>(null);
@@ -206,6 +258,7 @@ function ProviderListSidebar({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useTranslation();
   const [search, setSearch] = React.useState("");
 
   const q = search.trim().toLowerCase();
@@ -276,7 +329,7 @@ function ProviderListSidebar({
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="搜索供应商..."
+                  placeholder={t("settings:providers.searchPlaceholder")}
                   className="h-8 bg-transparent pl-8 pr-2 text-xs shadow-none"
                 />
               </div>
@@ -284,8 +337,8 @@ function ProviderListSidebar({
                 variant="ghost"
                 size="icon-sm"
                 className="shrink-0"
-                title="添加自定义网关"
-                aria-label="添加自定义网关"
+                title={t("settings:providers.addGateway")}
+                aria-label={t("settings:providers.addGateway")}
                 onClick={onAddGateway}
               >
                 <PlusIcon />
@@ -296,8 +349,8 @@ function ProviderListSidebar({
               variant="ghost"
               size="icon-sm"
               className="mx-auto"
-              title="展开供应商列表"
-              aria-label="展开供应商列表"
+              title={t("settings:providers.expandList")}
+              aria-label={t("settings:providers.expandList")}
               onClick={onToggle}
             >
               <SearchIcon />
@@ -308,14 +361,14 @@ function ProviderListSidebar({
         <ScrollArea className="min-h-0 flex-1 p-1.5 group-data-[collapsible=icon]/sidebar:p-1">
           {filteredProviders.length === 0 && filteredUnconfigured.length === 0 ? (
             <div className="py-6 text-center text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-              没有匹配的供应商
+              {t("settings:providers.noMatching")}
             </div>
           ) : null}
 
           {filteredProviders.length > 0 ? (
             <div className="mb-2">
               <div className="px-2 pt-1.5 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                已配置
+                {t("settings:providers.configured")}
               </div>
               <SidebarMenu>
                 {filteredProviders.map((provider) =>
@@ -336,7 +389,7 @@ function ProviderListSidebar({
           {filteredUnconfigured.length > 0 ? (
             <div>
               <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wide text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                全部供应商
+                {t("settings:providers.allProviders")}
               </div>
               <SidebarMenu>
                 {filteredUnconfigured.map((r) =>
@@ -360,6 +413,7 @@ function ProviderListSidebar({
 }
 
 function EmptyDetail({ listOpen, onToggleList }: { listOpen: boolean; onToggleList: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex size-full flex-col">
       <PanelHeader className="px-4">
@@ -367,8 +421,12 @@ function EmptyDetail({ listOpen, onToggleList }: { listOpen: boolean; onToggleLi
           size="icon-sm"
           variant="ghost"
           className="-ml-1"
-          title={listOpen ? "收起供应商列表" : "展开供应商列表"}
-          aria-label={listOpen ? "收起供应商列表" : "展开供应商列表"}
+          title={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
+          aria-label={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
           onClick={onToggleList}
         >
           <PanelLeftIcon />
@@ -377,9 +435,7 @@ function EmptyDetail({ listOpen, onToggleList }: { listOpen: boolean; onToggleLi
       <div className="flex size-full flex-1 items-center justify-center p-8">
         <div className="flex max-w-md flex-col items-center gap-2 text-center">
           <ServerIcon className="size-8 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">
-            从左侧选择一个供应商填入 API Key,或添加自定义网关。
-          </p>
+          <p className="text-sm text-muted-foreground">{t("settings:providers.selectToStart")}</p>
         </div>
       </div>
     </div>
@@ -403,33 +459,50 @@ function RegistryIntro({
   onToggleList: () => void;
   onAdded: (providerId: string) => void;
 }) {
-  const { providers, setProviders, openBrowserUrl } = useWorkbench();
+  const { t } = useTranslation();
+  const { providers, saveProviders, openBrowserUrl } = useProviderEditor();
   const [apiKey, setApiKey] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
   const handleSubmit = async () => {
     if (!apiKey.trim()) {
-      toast.error("请填写 API Key");
+      toast.error(t("settings:providers.pleaseEnterKey"));
       return;
     }
     setSubmitting(true);
+    const id = `provider-${nanoid(6)}`;
     try {
+      const credential = await window.api.credentials.put({
+        purpose: providerCredentialPurpose(id),
+        value: apiKey.trim(),
+      });
       const provider: ProviderConfig = {
-        id: `provider-${nanoid(6)}`,
+        id,
         name: registryProvider.name,
         registryId: registryProvider.id,
-        apiKey: apiKey.trim(),
+        ...credential,
         enabledModels: [],
       };
       // 新配置的供应商排列到顶部
-      setProviders([provider, ...providers]);
+      await saveProviders([provider, ...providers]);
       try {
         const models = await fetchProviderModels(provider, registry);
-        toast.success(`已添加 ${provider.name},共 ${models.length} 个可用模型`);
+        toast.success(
+          t("settings:providers.addedSuccess", {
+            name: provider.name,
+            count: models.length,
+          }),
+        );
       } catch (error) {
-        toast.warning(`供应商已添加,但模型列表拉取失败:${(error as Error).message}`);
+        toast.warning(
+          t("settings:providers.addedFetchError", {
+            error: (error as Error).message,
+          }),
+        );
       }
       onAdded(provider.id);
+    } catch (error) {
+      toastError(error, t("settings:providers.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -442,8 +515,12 @@ function RegistryIntro({
           size="icon-sm"
           variant="ghost"
           className="-ml-1"
-          title={listOpen ? "收起供应商列表" : "展开供应商列表"}
-          aria-label={listOpen ? "收起供应商列表" : "展开供应商列表"}
+          title={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
+          aria-label={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
           onClick={onToggleList}
         >
           <PanelLeftIcon />
@@ -454,7 +531,7 @@ function RegistryIntro({
             <ProviderLogo provider={registryProvider.id} />
             <span className="truncate">{registryProvider.name}</span>
             <Badge variant="outline" className="shrink-0 text-[10px]">
-              内置供应商
+              {t("settings:providers.builtin")}
             </Badge>
           </p>
           <p className="truncate text-xs text-muted-foreground" title={registryProvider.id}>
@@ -465,8 +542,8 @@ function RegistryIntro({
           <Button
             variant="ghost"
             size="icon-sm"
-            title="供应商官网 / 获取 API Key"
-            aria-label="供应商官网 / 获取 API Key"
+            title={t("settings:providers.docLink")}
+            aria-label={t("settings:providers.docLink")}
             onClick={() => openBrowserUrl(registryProvider.docUrl)}
           >
             <ExternalLinkIcon />
@@ -478,7 +555,7 @@ function RegistryIntro({
           <ProviderLogo provider={registryProvider.id} className="size-10" />
           <p className="text-sm font-medium">{registryProvider.name}</p>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            填入 API Key 即可启用该供应商,启用后会排列到列表顶部并出现在对话的模型选择器中。
+            {t("settings:providers.introDesc")}
           </p>
           <div className="flex w-full flex-col gap-1.5">
             <Input
@@ -502,7 +579,9 @@ function RegistryIntro({
               ) : (
                 <KeyRoundIcon />
               )}
-              {submitting ? "正在验证..." : "保存并启用"}
+              {submitting
+                ? t("settings:providers.verifying")
+                : t("settings:providers.saveAndEnable")}
             </Button>
           </div>
           {registryProvider.docUrl ? (
@@ -513,7 +592,7 @@ function RegistryIntro({
               onClick={() => openBrowserUrl(registryProvider.docUrl)}
             >
               <ExternalLinkIcon />
-              前往官网获取 API Key
+              {t("settings:providers.getApiKey")}
             </Button>
           ) : null}
         </div>
@@ -537,7 +616,8 @@ function ProviderConnectionDialog({
   onOpenChange: (open: boolean) => void;
   onSaved: (providerId: string) => void;
 }) {
-  const { providers, setProviders } = useWorkbench();
+  const { t } = useTranslation();
+  const { providers, saveProviders } = useProviderEditor();
   const [name, setName] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
   const [protocol, setProtocol] = React.useState<GatewayProtocol>("openai");
@@ -554,7 +634,7 @@ function ProviderConnectionDialog({
     setSubmitting(false);
     if (mode.kind === "edit") {
       setName(mode.provider.name);
-      setApiKey(mode.provider.apiKey);
+      setApiKey("");
       setProtocol(mode.provider.protocol ?? "openai");
       setBaseUrl(mode.provider.baseUrl ?? "");
       setUseResponses(Boolean(mode.provider.useResponses));
@@ -567,64 +647,97 @@ function ProviderConnectionDialog({
     }
   }, [mode]);
 
-  const title = mode?.kind === "gateway" ? "添加自定义网关" : "连接配置";
+  const title =
+    mode?.kind === "gateway"
+      ? t("settings:providers.addCustomGatewayTitle")
+      : t("settings:providers.connectionConfig");
   const description =
     mode?.kind === "gateway"
-      ? "OpenAI Compatible / Anthropic / Gemini 三种协议。"
-      : "修改连接信息保存后将自动重新拉取模型列表。";
+      ? t("settings:providers.gatewayProtocolsHint")
+      : t("settings:providers.editConnectionDesc");
 
   const handleSubmit = async () => {
     if (!mode) return;
-    if (!apiKey.trim()) {
-      toast.error("请填写 API Key");
+    if (mode.kind === "gateway" && !apiKey.trim()) {
+      toast.error(t("settings:providers.pleaseEnterKey"));
       return;
     }
     if (showGatewayFields && !name.trim()) {
-      toast.error("请填写供应商名称");
+      toast.error(t("settings:providers.pleaseEnterName"));
       return;
     }
     if (showGatewayFields && !baseUrl.trim()) {
-      toast.error("请填写网关 Base URL");
+      toast.error(t("settings:providers.pleaseEnterUrl"));
       return;
     }
     setSubmitting(true);
     try {
       if (mode.kind === "edit") {
+        const credential = apiKey.trim()
+          ? await window.api.credentials.put({
+              purpose: providerCredentialPurpose(mode.provider.id),
+              value: apiKey.trim(),
+            })
+          : {
+              credentialRef: mode.provider.credentialRef,
+              credentialHint: mode.provider.credentialHint,
+              hasCredential: true as const,
+            };
         const updated: ProviderConfig = showGatewayFields
           ? {
               ...mode.provider,
-              apiKey: apiKey.trim(),
+              ...credential,
               name: name.trim(),
               protocol,
               baseUrl: normalizeGatewayUrl(baseUrl, protocol),
               useResponses: protocol === "openai" ? useResponses : false,
             }
-          : { ...mode.provider, apiKey: apiKey.trim() };
+          : { ...mode.provider, ...credential };
         // 连接信息变了立即失效模型列表缓存,详情面板检测到变化后自动重拉
         invalidateProviderModelsCache(updated.id);
-        setProviders(providers.map((p) => (p.id === updated.id ? updated : p)));
-        toast.success(`已更新 ${updated.name}`);
+        await saveProviders(providers.map((p) => (p.id === updated.id ? updated : p)));
+        toast.success(
+          t("settings:providers.updatedSuccess", {
+            name: updated.name,
+          }),
+        );
         onOpenChange(false);
         return;
       }
+      const id = `provider-${nanoid(6)}`;
+      const credential = await window.api.credentials.put({
+        purpose: providerCredentialPurpose(id),
+        value: apiKey.trim(),
+      });
       const provider: ProviderConfig = {
-        id: `provider-${nanoid(6)}`,
+        id,
         name: name.trim(),
         protocol,
         baseUrl: normalizeGatewayUrl(baseUrl, protocol),
         useResponses: protocol === "openai" ? useResponses : false,
-        apiKey: apiKey.trim(),
+        ...credential,
         enabledModels: [],
       };
       // 新配置的供应商排列到顶部
-      setProviders([provider, ...providers]);
+      await saveProviders([provider, ...providers]);
       try {
         const models = await fetchProviderModels(provider, registry);
-        toast.success(`已添加 ${provider.name},共 ${models.length} 个可用模型`);
+        toast.success(
+          t("settings:providers.addedSuccess", {
+            name: provider.name,
+            count: models.length,
+          }),
+        );
       } catch (error) {
-        toast.warning(`供应商已添加,但模型列表拉取失败:${(error as Error).message}`);
+        toast.warning(
+          t("settings:providers.addedFetchError", {
+            error: (error as Error).message,
+          }),
+        );
       }
       onSaved(provider.id);
+    } catch (error) {
+      toastError(error, t("settings:providers.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -643,16 +756,16 @@ function ProviderConnectionDialog({
           {showGatewayFields ? (
             <>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="connection-name">供应商名称</Label>
+                <Label htmlFor="connection-name">{t("settings:providers.providerName")}</Label>
                 <Input
                   id="connection-name"
-                  placeholder="例如:我的聚合网关"
+                  placeholder={t("settings:providers.providerNamePlaceholder")}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label>网关协议</Label>
+                <Label>{t("settings:providers.gatewayProtocol")}</Label>
                 <Select
                   items={protocolItems}
                   value={protocol}
@@ -671,19 +784,19 @@ function ProviderConnectionDialog({
                 </Select>
                 <p className="text-xs leading-relaxed text-muted-foreground">
                   {protocol === "anthropic"
-                    ? "走 Anthropic 官方 Messages API({baseURL}/messages),API Key 环境变量名同内置供应商"
+                    ? t("settings:providers.anthropicProtocolHint")
                     : protocol === "gemini"
-                      ? "走 Google Gemini 原生 API({baseURL}/models/…:generateContent)"
-                      : "走 OpenAI Chat Completions({baseURL}/chat/completions);勾选 Responses 则走 {baseURL}/responses"}
+                      ? t("settings:providers.geminiProtocolHint")
+                      : t("settings:providers.openaiProtocolHint")}
                 </p>
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="connection-url">Base URL</Label>
+                <Label htmlFor="connection-url">{t("settings:providers.baseUrl")}</Label>
                 <div className="flex items-center gap-3">
                   <Input
                     id="connection-url"
                     className="flex-1"
-                    placeholder="www.example.com/v1"
+                    placeholder={t("settings:providers.serviceAddressPlaceholder")}
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
                     // 失焦即归一化回显:裸域名在 openai 协议下自动补 /v1
@@ -699,7 +812,7 @@ function ProviderConnectionDialog({
                         checked={useResponses}
                         onCheckedChange={(v) => setUseResponses(Boolean(v))}
                       />
-                      Responses
+                      {t("settings:providers.useResponses")}
                     </label>
                   ) : null}
                 </div>
@@ -707,11 +820,17 @@ function ProviderConnectionDialog({
             </>
           ) : null}
           <div className="flex flex-col gap-2">
-            <Label htmlFor="connection-key">API Key</Label>
+            <Label htmlFor="connection-key">{t("settings:providers.apiKey")}</Label>
             <Input
               id="connection-key"
               type="password"
-              placeholder="sk-..."
+              placeholder={
+                mode?.kind === "edit"
+                  ? t("settings:providers.credentialConfigured", {
+                      hint: mode.provider.credentialHint,
+                    })
+                  : t("settings:providers.accessKeyPlaceholder")
+              }
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               onKeyDown={(e) => {
@@ -722,15 +841,15 @@ function ProviderConnectionDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
+            {t("common:cancel")}
           </Button>
           <Button disabled={submitting} onClick={() => void handleSubmit()}>
             {submitting ? (
               <DotmCircular4 size={15} dotSize={1.7} colorPreset="solid-theme" />
             ) : mode?.kind === "edit" ? (
-              "保存"
+              t("common:save")
             ) : (
-              "添加"
+              t("settings:providers.addGateway")
             )}
           </Button>
         </DialogFooter>
@@ -756,7 +875,8 @@ function ProviderDetail({
   listOpen: boolean;
   onToggleList: () => void;
 }) {
-  const { providers, setProviders, openBrowserUrl } = useWorkbench();
+  const { t } = useTranslation();
+  const { providers, setProviders, openBrowserUrl } = useProviderEditor();
   const provider = providers.find((p) => p.id === providerId);
   const [models, setModels] = React.useState<EnabledModel[] | null>(
     provider ? getCachedProviderModels(provider.id) : null,
@@ -772,7 +892,7 @@ function ProviderDetail({
   // 连接身份(协议/端点/Key/Responses)变化 = 缓存已失效(保存时已清),自动重拉;
   // 有缓存(含网关列表快照)则直接复用
   const connectionKey = provider
-    ? `${provider.protocol ?? ""}|${provider.baseUrl ?? ""}|${provider.apiKey}|${provider.useResponses ?? false}`
+    ? `${provider.protocol ?? ""}|${provider.baseUrl ?? ""}|${provider.credentialRef}|${provider.useResponses ?? false}`
     : "";
   React.useEffect(() => {
     if (!provider) return;
@@ -838,8 +958,12 @@ function ProviderDetail({
           size="icon-sm"
           variant="ghost"
           className="-ml-1"
-          title={listOpen ? "收起供应商列表" : "展开供应商列表"}
-          aria-label={listOpen ? "收起供应商列表" : "展开供应商列表"}
+          title={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
+          aria-label={
+            listOpen ? t("settings:providers.collapseList") : t("settings:providers.expandList")
+          }
           onClick={onToggleList}
         >
           <PanelLeftIcon />
@@ -851,7 +975,7 @@ function ProviderDetail({
             <span className="truncate">{provider.name}</span>
             {provider.disabled ? (
               <Badge variant="secondary" className="shrink-0">
-                已禁用
+                {t("settings:providers.disabledStatus")}
               </Badge>
             ) : null}
           </p>
@@ -859,12 +983,12 @@ function ProviderDetail({
             className="truncate text-xs text-muted-foreground"
             title={
               provider.registryId
-                ? `内置 · ${provider.registryId}`
+                ? `${t("settings:providers.builtin")} · ${provider.registryId}`
                 : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`
             }
           >
             {provider.registryId
-              ? `内置 · ${provider.registryId}`
+              ? `${t("settings:providers.builtin")} · ${provider.registryId}`
               : `${protocolLabel}${provider.useResponses ? " · Responses" : ""} · ${provider.baseUrl}`}
           </p>
         </div>
@@ -872,8 +996,8 @@ function ProviderDetail({
           <Button
             variant="ghost"
             size="icon-sm"
-            title="供应商官网 / 获取 API Key"
-            aria-label="供应商官网 / 获取 API Key"
+            title={t("settings:providers.docLink")}
+            aria-label={t("settings:providers.docLink")}
             onClick={() => openBrowserUrl(registryProvider.docUrl)}
           >
             <ExternalLinkIcon />
@@ -883,22 +1007,26 @@ function ProviderDetail({
           variant="ghost"
           size="icon-sm"
           onClick={() => onEditConnection(provider)}
-          aria-label="连接配置"
-          title="连接配置"
+          aria-label={t("settings:providers.connectionConfig")}
+          title={t("settings:providers.connectionConfig")}
         >
           <KeyRoundIcon />
         </Button>
         <Switch
           checked={!provider.disabled}
           onCheckedChange={toggleDisabled}
-          aria-label={provider.disabled ? "启用供应商" : "禁用供应商"}
+          aria-label={
+            provider.disabled
+              ? t("settings:providers.enableProvider")
+              : t("settings:providers.disableProvider")
+          }
         />
         <Button
           variant="ghost"
           size="icon-sm"
           onClick={removeProvider}
-          aria-label="删除供应商"
-          title="删除供应商"
+          aria-label={t("settings:providers.deleteProvider")}
+          title={t("settings:providers.deleteProvider")}
         >
           <Trash2Icon />
         </Button>
@@ -908,7 +1036,7 @@ function ProviderDetail({
       {loadingModels ? (
         <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
           <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
-          正在拉取模型列表...
+          {t("settings:providers.fetchingModels")}
         </div>
       ) : models ? (
         <ModelListSection
@@ -921,7 +1049,7 @@ function ProviderDetail({
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <Button variant="outline" size="sm" onClick={() => void refreshModels()}>
             <RefreshCwIcon />
-            拉取模型列表
+            {t("settings:providers.fetchModels")}
           </Button>
         </div>
       )}
@@ -941,7 +1069,9 @@ export function ModelListSection({
   onRefresh: () => void;
   refreshing: boolean;
 }) {
-  const { providers, setProviders, catalog } = useWorkbench();
+  const { t } = useTranslation();
+  const { providers, setProviders } = useProviderEditor();
+  const catalog = useCatalogQuery().data ?? [];
   const [models, setModels] = React.useState(initialModels);
   const [query, setQuery] = React.useState("");
   const [testingId, setTestingId] = React.useState<string | null>(null);
@@ -991,7 +1121,7 @@ export function ModelListSection({
     setModels((prev) => (prev.some((model) => model.id === id) ? prev : [...prev, customModel]));
     patchProvider({ enabledModels: [...provider.enabledModels, { id, name: id }] });
     setQuery("");
-    toast.success(`已添加自定义模型 ${id}`);
+    toast.success(t("settings:providers.customModelAdded", { id }));
   };
 
   const runTest = async (modelId: string) => {
@@ -1001,9 +1131,20 @@ export function ModelListSection({
       const result = await testProviderModel(provider, modelId);
       const elapsed = Math.round(performance.now() - startedAt);
       if (result.ok) {
-        toast.success(`${modelId} 连接成功(${elapsed}ms):${result.reply ?? ""}`);
+        toast.success(
+          t("settings:providers.testSuccess", {
+            id: modelId,
+            ms: elapsed,
+            reply: result.reply ?? "",
+          }),
+        );
       } else {
-        toast.error(`${modelId} 测试失败:${result.error ?? "未知错误"}`);
+        toast.error(
+          t("settings:providers.testFailed", {
+            id: modelId,
+            error: result.error ?? t("common:unknown"),
+          }),
+        );
       }
     } finally {
       setTestingId(null);
@@ -1016,7 +1157,7 @@ export function ModelListSection({
       <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2">
         <Input
           className="h-8 min-w-0 flex-1 text-sm"
-          placeholder="搜索模型(id 或名称,支持模糊)..."
+          placeholder={t("settings:providers.searchModels")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -1026,8 +1167,10 @@ export function ModelListSection({
           className="shrink-0"
           disabled={refreshing}
           onClick={onRefresh}
-          title={refreshing ? "正在拉取…" : "重新拉取模型列表"}
-          aria-label="重新拉取模型列表"
+          title={
+            refreshing ? t("settings:providers.refreshing") : t("settings:providers.refreshModels")
+          }
+          aria-label={t("settings:providers.refreshModels")}
         >
           <RefreshCwIcon className={refreshing ? "size-3.5 animate-spin" : "size-3.5"} />
         </Button>
@@ -1055,7 +1198,9 @@ export function ModelListSection({
                         className="text-[10px]"
                         title={`${contextWindow.toLocaleString("en-US")} tokens`}
                       >
-                        上下文 {formatModelContextWindow(contextWindow)}
+                        {t("settings:providers.context", {
+                          size: formatModelContextWindow(contextWindow),
+                        })}
                       </Badge>
                     ) : null}
                   </div>
@@ -1065,7 +1210,8 @@ export function ModelListSection({
                   size="icon-sm"
                   disabled={testingId !== null}
                   onClick={() => void runTest(model.id)}
-                  aria-label={`测试 ${model.id}`}
+                  aria-label={`${t("settings:providers.testModel")} ${model.id}`}
+                  title={`${t("settings:providers.testModel")} ${model.id}`}
                 >
                   {testingId === model.id ? (
                     <DotmCircular4 size={15} dotSize={1.7} colorPreset="solid-theme" />
@@ -1086,20 +1232,24 @@ export function ModelListSection({
                       setModels((current) => current.filter((item) => item.id !== model.id));
                     }
                   }}
-                  aria-label={`启用 ${displayName}`}
+                  aria-label={`${t("settings:providers.enableModel")} ${displayName}`}
                 />
               </div>
             );
           })}
           {filtered.length === 0 && !canAddCustom ? (
-            <p className="px-4 py-6 text-center text-sm text-muted-foreground">没有匹配的模型</p>
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+              {t("settings:providers.noMatchingModels")}
+            </p>
           ) : null}
         </div>
         {canAddCustom ? (
           <div className="p-3">
             <Button variant="outline" size="sm" className="w-full" onClick={addCustomModel}>
               <PlusIcon />
-              添加自定义模型 "{query.trim()}"
+              {t("settings:providers.addCustomModel", {
+                id: query.trim(),
+              })}
             </Button>
           </div>
         ) : null}

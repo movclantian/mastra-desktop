@@ -12,6 +12,7 @@ import {
   InlineCitationCarouselItem,
   InlineCitationCarouselNext,
   InlineCitationCarouselPrev,
+  InlineCitationQuote,
   InlineCitationSource,
 } from "@/shared/ui/ai-elements/inline-citation";
 import type { CitationEntries, CitationSource } from "../lib/citation-utils";
@@ -94,7 +95,11 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
                     description={source.description}
                     title={source.title}
                     url={source.url}
-                  />
+                  >
+                    {source.quote ? (
+                      <InlineCitationQuote>{source.quote}</InlineCitationQuote>
+                    ) : null}
+                  </InlineCitationSource>
                 </InlineCitationCarouselItem>
               ))}
             </InlineCitationCarouselContent>

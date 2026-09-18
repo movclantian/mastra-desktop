@@ -1,0 +1,2103 @@
+{
+  "aiElements": {
+    "attachments.tsx": {
+      "totalExports": 25,
+      "exports": [
+        {
+          "name": "AttachmentData",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentMediaCategory",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentVariant",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "getMediaCategory",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "getAttachmentLabel",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "useAttachmentsContext",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "useAttachmentContext",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Attachments",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "AttachmentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Attachment",
+          "usedCount": 4,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/shared/ui/attachment.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/message-list.tsx"
+          ]
+        },
+        {
+          "name": "AttachmentPreviewProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentPreview",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "AttachmentInfoProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentInfo",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "AttachmentRemoveProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentRemove",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "AttachmentHoverCardProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentHoverCard",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentHoverCardTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentHoverCardTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentHoverCardContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentHoverCardContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentEmptyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "AttachmentEmpty",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "chain-of-thought.tsx": {
+      "totalExports": 14,
+      "exports": [
+        {
+          "name": "ChainOfThoughtProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThought",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "ChainOfThoughtHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "ChainOfThoughtStepProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtStep",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/model/types.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "ChainOfThoughtSearchResultsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtSearchResults",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtSearchResultProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtSearchResult",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "ChainOfThoughtImageProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ChainOfThoughtImage",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "code-block.tsx": {
+      "totalExports": 20,
+      "exports": [
+        {
+          "name": "highlightCode",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockContainer",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/file-preview.tsx"]
+        },
+        {
+          "name": "CodeBlockHeader",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockTitle",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockFilename",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockActions",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/file-preview.tsx"]
+        },
+        {
+          "name": "CodeBlock",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/shared/ui/ai-elements/tool.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "CodeBlockCopyButtonProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockCopyButton",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "CodeBlockLanguageSelectorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelector",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorValueProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorValue",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "CodeBlockLanguageSelectorItem",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "context.tsx": {
+      "totalExports": 14,
+      "exports": [
+        {
+          "name": "ContextProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Context",
+          "usedCount": 5,
+          "usedIn": [
+            "src/mastra/connections/mcp.ts",
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/shared/ui/ai-elements/code-block.tsx"
+          ]
+        },
+        {
+          "name": "ContextTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        },
+        {
+          "name": "ContextContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        },
+        {
+          "name": "ContextContentHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextContentHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        },
+        {
+          "name": "ContextContentBodyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextContentBody",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        },
+        {
+          "name": "ContextContentBreakdownProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextContentBreakdown",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        },
+        {
+          "name": "ContextContentFooterProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ContextContentFooter",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/context-usage.tsx"]
+        }
+      ]
+    },
+    "file-tree.tsx": {
+      "totalExports": 12,
+      "exports": [
+        {
+          "name": "FileTreeProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTree",
+          "usedCount": 3,
+          "usedIn": [
+            "src/mastra/routes/workspace.ts",
+            "src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx",
+            "src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"
+          ]
+        },
+        {
+          "name": "FileTreeIconProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeIcon",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeNameProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeName",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeFolderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeFolder",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx",
+            "src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"
+          ]
+        },
+        {
+          "name": "FileTreeFileProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeFile",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx",
+            "src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"
+          ]
+        },
+        {
+          "name": "FileTreeActionsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTreeActions",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"]
+        }
+      ]
+    },
+    "file-type-icon.tsx": {
+      "totalExports": 4,
+      "exports": [
+        {
+          "name": "MaterialIcon",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "VscodeIcon",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "FileTypeIcon",
+          "usedCount": 3,
+          "usedIn": [
+            "src/renderer/src/pages/library/ui/knowledge-library-page.tsx",
+            "src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx",
+            "src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"
+          ]
+        },
+        {
+          "name": "FolderTypeIcon",
+          "usedCount": 3,
+          "usedIn": [
+            "src/renderer/src/pages/library/ui/knowledge-library-page.tsx",
+            "src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx",
+            "src/renderer/src/widgets/workspace-drawer/ui/workspace-drawer.tsx"
+          ]
+        }
+      ]
+    },
+    "inline-citation.tsx": {
+      "totalExports": 28,
+      "exports": [
+        {
+          "name": "InlineCitationProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitation",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationTextProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationText",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCardProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCard",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCardTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCardTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCardBodyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCardBody",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarousel",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselItem",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselIndexProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselIndex",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselPrevProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselPrev",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationCarouselNextProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationCarouselNext",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationSourceProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationSource",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/citations.tsx"]
+        },
+        {
+          "name": "InlineCitationQuoteProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "InlineCitationQuote",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "message.tsx": {
+      "totalExports": 12,
+      "exports": [
+        {
+          "name": "MessageProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Message",
+          "usedCount": 9,
+          "usedIn": [
+            "src/mastra/errors.ts",
+            "src/mastra/routes/chat.ts",
+            "src/mastra/routes/threads/messages.ts"
+          ]
+        },
+        {
+          "name": "MessageContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageContent",
+          "usedCount": 4,
+          "usedIn": [
+            "src/renderer/src/shared/ui/message.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/agent-member-stream.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/chat-panel.tsx"
+          ]
+        },
+        {
+          "name": "MessageActionsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageActions",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageActionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageAction",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageResponseProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageResponse",
+          "usedCount": 5,
+          "usedIn": [
+            "src/renderer/src/pages/skills/ui/skill-hub-page.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/agent-member-stream.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"
+          ]
+        },
+        {
+          "name": "MessageToolbarProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "MessageToolbar",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "model-selector.tsx": {
+      "totalExports": 28,
+      "exports": [
+        {
+          "name": "ModelSelectorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelector",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorDialogProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorDialog",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorInputProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorInput",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorListProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorList",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorEmptyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorEmpty",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorGroupProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorGroup",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorItem",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorShortcutProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorShortcut",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorSeparatorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorSeparator",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorLogoProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorLogo",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/pages/settings/ui/sections/providers-section.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/model-selector.tsx"
+          ]
+        },
+        {
+          "name": "ModelSelectorLogoGroupProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorLogoGroup",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorNameProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ModelSelectorName",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/model-selector.tsx"]
+        }
+      ]
+    },
+    "plan.tsx": {
+      "totalExports": 16,
+      "exports": [
+        {
+          "name": "PlanProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Plan",
+          "usedCount": 3,
+          "usedIn": [
+            "src/mastra/agents/index.ts",
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"
+          ]
+        },
+        {
+          "name": "PlanHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanTitleProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanTitle",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanDescriptionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanDescription",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanActionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanAction",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanFooterProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanFooter",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "PlanTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PlanTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        }
+      ]
+    },
+    "prompt-input.tsx": {
+      "totalExports": 82,
+      "exports": [
+        {
+          "name": "AttachmentsContext",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/shared/ui/ai-elements/attachments.tsx"]
+        },
+        {
+          "name": "TextInputContext",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputControllerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "usePromptInputController",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "useProviderAttachments",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputProviderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputProvider",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/chat-panel.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "usePromptInputAttachments",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "ReferencedSourcesContext",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "LocalReferencedSourcesContext",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "usePromptInputReferencedSources",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionAddAttachmentsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionAddAttachments",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionAddScreenshotProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionAddScreenshot",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputMessage",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputFileDescriptor",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInput",
+          "usedCount": 3,
+          "usedIn": [
+            "src/renderer/src/shared/ui/input-group.tsx",
+            "src/renderer/src/widgets/chat-panel/model/types.ts",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "PromptInputBodyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputBody",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputTextareaProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTextarea",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputFooterProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputFooter",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputToolsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTools",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputButtonTooltip",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputButtonProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputButton",
+          "usedCount": 6,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-selector.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/approval-selector.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/mode-selector.tsx"
+          ]
+        },
+        {
+          "name": "PromptInputActionMenuProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenu",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputActionMenuItem",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSubmitProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSubmit",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "PromptInputSelectProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelect",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectItem",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectValueProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputSelectValue",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCardProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCard",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCardTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCardTrigger",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCardContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputHoverCardContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabsListProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabsList",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTab",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabLabelProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabLabel",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabBodyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabBody",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputTabItem",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommand",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandInputProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandInput",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandListProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandList",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandEmptyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandEmpty",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandGroupProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandGroup",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandItem",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandSeparatorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "PromptInputCommandSeparator",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    },
+    "queue.tsx": {
+      "totalExports": 33,
+      "exports": [
+        {
+          "name": "QueueMessagePart",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueMessage",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueTodo",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItem",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueItemIndicatorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemIndicator",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"]
+        },
+        {
+          "name": "QueueItemContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemContent",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueItemDescriptionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemDescription",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "QueueItemActionsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemActions",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "QueueItemActionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemAction",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"]
+        },
+        {
+          "name": "QueueItemAttachmentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemAttachment",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemImageProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemImage",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemFileProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueItemFile",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueListProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueList",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueSectionProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueSection",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueSectionTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueSectionTrigger",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueSectionLabelProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueSectionLabel",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueSectionContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "QueueSectionContent",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx",
+            "src/renderer/src/widgets/chat-panel/ui/prompt-input.tsx"
+          ]
+        },
+        {
+          "name": "QueueProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Queue",
+          "usedCount": 6,
+          "usedIn": [
+            "src/mastra/memory/index.ts",
+            "src/renderer/src/widgets/chat-panel/model/types.ts",
+            "src/renderer/src/widgets/chat-panel/ui/agent-panels.tsx"
+          ]
+        }
+      ]
+    },
+    "reasoning.tsx": {
+      "totalExports": 7,
+      "exports": [
+        {
+          "name": "useReasoning",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ReasoningProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Reasoning",
+          "usedCount": 4,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/shared/i18n/locales/zh.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "ReasoningTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ReasoningTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "ReasoningContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ReasoningContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        }
+      ]
+    },
+    "sandbox.tsx": {
+      "totalExports": 16,
+      "exports": [
+        {
+          "name": "SandboxRootProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Sandbox",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "SandboxHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxTabsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxTabs",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxTabsBarProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxTabsBar",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxTabsListProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxTabsList",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxTabsTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxTabsTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "SandboxTabContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "SandboxTabContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        }
+      ]
+    },
+    "shimmer.tsx": {
+      "totalExports": 2,
+      "exports": [
+        {
+          "name": "TextShimmerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Shimmer",
+          "usedCount": 4,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/shared/i18n/locales/zh.ts",
+            "src/renderer/src/shared/ui/ai-elements/plan.tsx"
+          ]
+        }
+      ]
+    },
+    "stack-trace.tsx": {
+      "totalExports": 20,
+      "exports": [
+        {
+          "name": "StackTraceProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTrace",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceHeader",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceErrorProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceError",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceErrorTypeProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceErrorType",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceErrorMessageProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceErrorMessage",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceActionsProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceActions",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceCopyButtonProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceCopyButton",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceExpandButtonProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceExpandButton",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "StackTraceFramesProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "StackTraceFrames",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        }
+      ]
+    },
+    "task.tsx": {
+      "totalExports": 10,
+      "exports": [
+        {
+          "name": "TaskItemFileProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "TaskItemFile",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "TaskItemProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "TaskItem",
+          "usedCount": 2,
+          "usedIn": [
+            "src/mastra/routes/session.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "TaskProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Task",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/shared/i18n/locales/en.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "TaskTriggerProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "TaskTrigger",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "TaskContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "TaskContent",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        }
+      ]
+    },
+    "tool.tsx": {
+      "totalExports": 12,
+      "exports": [
+        {
+          "name": "ToolProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "Tool",
+          "usedCount": 4,
+          "usedIn": [
+            "src/mastra/connections/mcp.ts",
+            "src/mastra/routes/chat.ts",
+            "src/renderer/src/shared/i18n/locales/en.ts"
+          ]
+        },
+        {
+          "name": "ToolPart",
+          "usedCount": 2,
+          "usedIn": [
+            "src/renderer/src/widgets/chat-panel/model/types.ts",
+            "src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"
+          ]
+        },
+        {
+          "name": "ToolHeaderProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "getStatusBadge",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/shared/ui/ai-elements/sandbox.tsx"]
+        },
+        {
+          "name": "ToolHeader",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ToolContentProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ToolContent",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ToolInputProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ToolInput",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        },
+        {
+          "name": "ToolOutputProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "ToolOutput",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/chat-panel/ui/assistant-trace.tsx"]
+        }
+      ]
+    },
+    "web-preview.tsx": {
+      "totalExports": 13,
+      "exports": [
+        {
+          "name": "WebPreviewContextValue",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreview",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/browser-view.tsx"]
+        },
+        {
+          "name": "WebPreviewNavigationProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewNavigation",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/browser-view.tsx"]
+        },
+        {
+          "name": "WebPreviewNavigationButtonProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewNavigationButton",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/browser-view.tsx"]
+        },
+        {
+          "name": "WebPreviewUrlProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewUrl",
+          "usedCount": 1,
+          "usedIn": ["src/renderer/src/widgets/workspace-drawer/ui/browser-view.tsx"]
+        },
+        {
+          "name": "WebPreviewBodyProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewBody",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewConsoleProps",
+          "usedCount": 0,
+          "usedIn": []
+        },
+        {
+          "name": "WebPreviewConsole",
+          "usedCount": 0,
+          "usedIn": []
+        }
+      ]
+    }
+  },
+  "sharedUi": {
+    "bubble.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "attachment.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "message.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "message-scroller.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "input-group.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "field.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "item.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "marker.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "button-group.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "combobox.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "questionnaire.tsx": {
+      "totalExports": 0,
+      "exports": []
+    },
+    "sidebar.tsx": {
+      "totalExports": 0,
+      "exports": []
+    }
+  }
+}

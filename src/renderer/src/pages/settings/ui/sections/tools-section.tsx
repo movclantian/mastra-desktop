@@ -1,13 +1,15 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import {
   isSearchEngineReady,
-  SEARCH_ENGINE_META,
+  qk,
   type SearchEngine,
   type ToolsConfig,
-  useWorkbench,
+  useToolsConfigQuery,
 } from "@/entities/workbench";
+import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
 import { Field, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
@@ -17,7 +19,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/shared/ui/input-group";
-import { fetchSettingsTools, saveSettingsTools } from "../../api/settings-api";
+import { saveSettingsTools } from "../../api/settings-api";
 import { SettingCard } from "../controls";
 
 // ---------------------------------------------------------------------------
@@ -27,9 +29,9 @@ import { SettingCard } from "../controls";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TOOLS_CONFIG: ToolsConfig = {
-  tavily: { apiKey: "" },
-  firecrawl: { apiKey: "", apiUrl: "" },
-  anysearch: { apiKey: "" },
+  tavily: { hasCredential: false },
+  firecrawl: { hasCredential: false, apiUrl: "" },
+  anysearch: { hasCredential: false },
 };
 
 type KeyedSearchEngine = Exclude<SearchEngine, "provider">;
@@ -45,7 +47,7 @@ const ENGINE_DOCS_URL: Record<KeyedSearchEngine, string> = {
 const API_KEY_PLACEHOLDER: Record<KeyedSearchEngine, string> = {
   tavily: "tvly-...",
   firecrawl: "fc-...",
-  anysearch: "as-...(留空走匿名额度)",
+  anysearch: "as-...",
 };
 
 /** 密钥输入行:基于 InputGroup 的复合密码框,内置显隐切换按钮 */
@@ -55,27 +57,36 @@ function SecretKeyInput({
   onChange,
   show,
   onToggle,
+  configuredHint,
 }: {
   engine: KeyedSearchEngine;
   value: string;
   onChange: (value: string) => void;
   show: boolean;
   onToggle: () => void;
+  configuredHint?: string;
 }) {
+  const { t } = useTranslation();
   return (
     <InputGroup>
       <InputGroupInput
         autoComplete="off"
         className="font-mono text-xs"
         onChange={(e) => onChange(e.target.value)}
-        placeholder={API_KEY_PLACEHOLDER[engine]}
+        placeholder={
+          configuredHint
+            ? t("settings:tools.credentialConfigured", { hint: configuredHint })
+            : engine === "anysearch"
+              ? t("settings:tools.anysearchPlaceholder")
+              : API_KEY_PLACEHOLDER[engine]
+        }
         spellCheck={false}
         type={show ? "text" : "password"}
         value={value}
       />
       <InputGroupAddon align="inline-end">
         <InputGroupButton
-          aria-label={show ? "隐藏密钥" : "显示密钥"}
+          aria-label={show ? t("settings:tools.hideKey") : t("settings:tools.showKey")}
           onClick={onToggle}
           size="icon-xs"
           variant="ghost"
@@ -88,9 +99,18 @@ function SecretKeyInput({
 }
 
 export function ToolsSection() {
-  const { refreshToolsConfig } = useWorkbench();
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const toolsQuery = useToolsConfigQuery();
   const [draft, setDraft] = React.useState<ToolsConfig>(DEFAULT_TOOLS_CONFIG);
+  const [keyDraft, setKeyDraft] = React.useState<Record<KeyedSearchEngine, string>>({
+    tavily: "",
+    firecrawl: "",
+    anysearch: "",
+  });
   const [loaded, setLoaded] = React.useState(false);
+  const [dirty, setDirty] = React.useState(false);
+  const editVersion = React.useRef(0);
   // 各引擎独立的明文开关
   const [showKeys, setShowKeys] = React.useState<Record<KeyedSearchEngine, boolean>>({
     tavily: false,
@@ -100,30 +120,33 @@ export function ToolsSection() {
 
   React.useEffect(() => {
     if (loaded) return;
-    fetchSettingsTools()
-      .then((config) => setDraft(config))
-      .catch(() => undefined)
-      .finally(() => setLoaded(true));
-  }, [loaded]);
+    if (toolsQuery.data) setDraft(toolsQuery.data);
+    setLoaded(!toolsQuery.isPending);
+  }, [loaded, toolsQuery.data, toolsQuery.isPending]);
 
   // 自动保存:任何修改 800ms 无后续变化后静默写入,并刷新工作台配置
   // (输入区的联网检索菜单据此解锁对应引擎)。
   React.useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !dirty) return;
+    const version = editVersion.current;
     const timer = window.setTimeout(() => {
-      void saveSettingsTools(draft)
-        .then(() => refreshToolsConfig())
-        .catch(() => toast.error("工具配置自动保存失败,请确认 Mastra 服务已启动"));
+      void saveSettingsTools(draft, keyDraft)
+        .then((saved) => {
+          if (editVersion.current !== version) return;
+          setDraft(saved);
+          setKeyDraft({ tavily: "", firecrawl: "", anysearch: "" });
+          setDirty(false);
+          queryClient.setQueryData(qk.toolsConfig(), saved);
+        })
+        .catch(() => toast.error(t("settings:tools.saveFailed")));
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draft, loaded, refreshToolsConfig]);
+  }, [dirty, draft, keyDraft, loaded, queryClient, t]);
 
   const setApiKey = (engine: KeyedSearchEngine, apiKey: string) => {
-    setDraft((prev) => {
-      if (engine === "tavily") return { ...prev, tavily: { apiKey } };
-      if (engine === "firecrawl") return { ...prev, firecrawl: { ...prev.firecrawl, apiKey } };
-      return { ...prev, anysearch: { apiKey } };
-    });
+    editVersion.current += 1;
+    setKeyDraft((prev) => ({ ...prev, [engine]: apiKey }));
+    setDirty(true);
   };
 
   const toggleShow = (engine: KeyedSearchEngine) =>
@@ -132,19 +155,19 @@ export function ToolsSection() {
   return (
     <>
       {KEYED_ENGINES.map((engine) => {
-        const meta = SEARCH_ENGINE_META[engine];
-        const ready = isSearchEngineReady(engine, loaded ? draft : null);
+        const ready =
+          Boolean(keyDraft[engine].trim()) || isSearchEngineReady(engine, loaded ? draft : null);
         return (
           <SettingCard
             action={
               <>
                 {ready ? (
                   <Badge className="text-[10px]" variant="secondary">
-                    可用
+                    {t("settings:tools.available")}
                   </Badge>
                 ) : (
                   <Badge className="text-[10px] text-muted-foreground" variant="outline">
-                    未配置
+                    {t("settings:tools.unconfigured")}
                   </Badge>
                 )}
                 <a
@@ -153,14 +176,14 @@ export function ToolsSection() {
                   rel="noreferrer"
                   target="_blank"
                 >
-                  获取 Key
+                  {t("settings:tools.getKey")}
                   <ExternalLinkIcon className="size-3" />
                 </a>
               </>
             }
             key={engine}
-            description={meta.description}
-            title={meta.label}
+            description={t(`chat:search.engines.${engine}.desc`)}
+            title={t(`chat:search.engines.${engine}.label`)}
           >
             <div className="space-y-2 py-3">
               <SecretKeyInput
@@ -168,7 +191,10 @@ export function ToolsSection() {
                 show={showKeys[engine]}
                 onChange={(apiKey) => setApiKey(engine, apiKey)}
                 onToggle={() => toggleShow(engine)}
-                value={draft[engine].apiKey}
+                value={keyDraft[engine]}
+                configuredHint={
+                  draft[engine].hasCredential ? draft[engine].credentialHint : undefined
+                }
               />
               {engine === "firecrawl" ? (
                 <Field className="pt-1">
@@ -176,18 +202,20 @@ export function ToolsSection() {
                     htmlFor="firecrawl-api-url"
                     className="text-xs text-muted-foreground font-normal"
                   >
-                    自托管 API 根地址 (仅自托管实例需要)
+                    {t("settings:tools.selfHostedApiUrl")}
                   </FieldLabel>
                   <Input
                     id="firecrawl-api-url"
                     className="font-mono text-xs"
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      editVersion.current += 1;
+                      setDirty(true);
                       setDraft((prev) => ({
                         ...prev,
                         firecrawl: { ...prev.firecrawl, apiUrl: e.target.value },
-                      }))
-                    }
-                    placeholder="https://firecrawl.your-domain.com"
+                      }));
+                    }}
+                    placeholder={t("settings:tools.serviceAddressPlaceholder")}
                     spellCheck={false}
                     value={draft.firecrawl.apiUrl}
                   />

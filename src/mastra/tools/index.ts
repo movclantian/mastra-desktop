@@ -10,6 +10,7 @@ export {
   getConfiguredMcpTools,
   getMcpConfig,
   type McpServerConfig,
+  parseMcpServerConfig,
   saveMcpConfig,
   summarizeMcpServer,
   testMcpServer,

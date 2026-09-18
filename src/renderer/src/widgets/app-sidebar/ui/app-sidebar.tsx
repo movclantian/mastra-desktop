@@ -1,5 +1,7 @@
+import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   ArchiveIcon,
+  ArrowLeftIcon,
   BotIcon,
   CalendarClockIcon,
   ChevronsUpDown,
@@ -16,8 +18,18 @@ import {
   WaypointsIcon,
 } from "lucide-react";
 import * as React from "react";
-import { useWorkbench, type WorkThread } from "@/entities/workbench";
+import {
+  useActiveThreadResolver,
+  useCreateThreadMutation,
+  useRenameThreadMutation,
+  useThreadsQuery,
+} from "@/entities/workbench/model/queries/threads";
+import type { MainView, WorkThread } from "@/entities/workbench/model/types";
+import { viewFromPath } from "@/entities/workbench/model/types";
+import { useAuth } from "@/features/auth";
 import { ThreadSearchDialog } from "@/features/thread-search";
+import { useTranslation } from "@/shared/i18n";
+import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
 import { Avatar, AvatarFallback } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
@@ -79,7 +91,6 @@ import {
 import {
   DirectThreadItem,
   sortThreads,
-  ThreadFolder,
   ThreadListSkeleton,
   ThreadWorkspaceTree,
   WorkspaceGroup,
@@ -91,12 +102,13 @@ import {
 //   可折叠文件夹 + 工作区文件树懒加载)
 
 function SidebarHeaderBrand() {
+  const { t } = useTranslation();
   const { toggleSidebar } = useSidebar();
 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size="sm" tooltip="收起侧边栏" onClick={toggleSidebar}>
+        <SidebarMenuButton size="sm" tooltip={t("sidebar:collapseSidebar")} onClick={toggleSidebar}>
           <div className="flex aspect-square size-6 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
             <WaypointsIcon className="size-3.5" />
           </div>
@@ -109,9 +121,19 @@ function SidebarHeaderBrand() {
 
 // 参考 docs/examples/base/sidebar-footer.tsx / sidebar-demo.tsx 的 NavUser
 function NavUser() {
+  const { t } = useTranslation();
   const { isMobile } = useSidebar();
-  const { user, openSettings } = useWorkbench();
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const openSettings = (section?: string) => {
+    void navigate({
+      to: "/settings",
+      search: (prev) => ({ ...prev, ...(section ? { section } : {}) }),
+    });
+  };
   const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
+
+  if (!user) return null;
 
   return (
     <SidebarMenu>
@@ -163,7 +185,7 @@ function NavUser() {
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <PaletteIcon className="text-muted-foreground" />
-                  <span>主题风格</span>
+                  <span>{t("sidebar:theme")}</span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-48">
                   <DropdownMenuRadioGroup
@@ -189,7 +211,7 @@ function NavUser() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => openSettings("themes")}>
                     <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
-                    <span>主题参数调优…</span>
+                    <span>{t("sidebar:themeCustomize")}</span>
                   </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
@@ -198,7 +220,7 @@ function NavUser() {
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
                   <SunMediumIcon className="text-muted-foreground" />
-                  <span>色彩模式</span>
+                  <span>{t("sidebar:colorMode")}</span>
                 </DropdownMenuSubTrigger>
                 <DropdownMenuSubContent className="w-40">
                   <DropdownMenuRadioGroup
@@ -207,15 +229,15 @@ function NavUser() {
                   >
                     <DropdownMenuRadioItem value="light">
                       <SunMediumIcon className="text-muted-foreground" />
-                      浅色
+                      {t("sidebar:lightMode")}
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="dark">
                       <MoonIcon className="text-muted-foreground" />
-                      深色
+                      {t("sidebar:darkMode")}
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="system">
                       <LaptopIcon className="text-muted-foreground" />
-                      跟随系统
+                      {t("sidebar:systemMode")}
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
@@ -223,7 +245,7 @@ function NavUser() {
 
               <DropdownMenuItem onClick={() => openSettings("providers")}>
                 <Settings2Icon />
-                系统设置
+                {t("sidebar:settings")}
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -234,25 +256,58 @@ function NavUser() {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const {
-    threads,
-    threadsLoading,
-    createThread,
-    renameThread,
-    activeView,
-    setActiveView,
-    openSettings,
-  } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const navigate = useNavigate();
+  const location = useLocation();
+  const threadsQuery = useThreadsQuery(userId);
+  const threads = threadsQuery.data ?? [];
+  const threadsLoading = threadsQuery.isPending;
+  const createThreadMutation = useCreateThreadMutation(userId);
+  const renameThreadMutation = useRenameThreadMutation(userId);
+  const activeView = viewFromPath(location.pathname);
+  useActiveThreadResolver(threads);
   const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
+
+  const createThread = (title?: string) =>
+    createThreadMutation.isPending
+      ? Promise.resolve(null)
+      : createThreadMutation.mutateAsync(title).catch(() => null);
+  const renameThread = (threadId: string, title: string) =>
+    renameThreadMutation.mutateAsync({ threadId, title }).catch(() => undefined);
+  const setActiveView = (view: MainView) => {
+    void navigate({ to: `/${view}` });
+  };
+  const openSettings = (section?: string) => {
+    void navigate({
+      to: "/settings",
+      search: (prev) => ({ ...prev, ...(section ? { section } : {}) }),
+    });
+  };
 
   const [renaming, setRenaming] = React.useState<WorkThread | null>(null);
   const [renameValue, setRenameValue] = React.useState("");
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [fileManagerThreadId, setFileManagerThreadId] = React.useState<string | null>(null);
+  const [showArchived, setShowArchived] = React.useState(false);
+
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
 
   // metadata 经后端归一化为对象,这里仍用可选链兜底:null 会炸掉整个 UI
   const activeThreads = threads.filter((t) => !t.metadata?.archivedAt);
   const archivedThreads = sortThreads(threads.filter((t) => Boolean(t.metadata?.archivedAt)));
+  const activeThreadIsArchived = Boolean(
+    activeThreadId &&
+      threads.some((thread) => thread.id === activeThreadId && thread.metadata.archivedAt),
+  );
+
+  // 若当前 URL 指定的会话本身就是已归档会话，自动切到归档视图以便定位高亮
+  React.useEffect(() => {
+    if (activeThreadIsArchived) setShowArchived(true);
+  }, [activeThreadId, activeThreadIsArchived]);
   const fileManagerThread = fileManagerThreadId
     ? threads.find((thread) => thread.id === fileManagerThreadId)
     : undefined;
@@ -314,7 +369,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarMenu>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="新建任务"
+                      tooltip={t("sidebar:newTask")}
                       onClick={() => {
                         setFileManagerThreadId(null);
                         setActiveView("chat");
@@ -322,7 +377,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       }}
                     >
                       <SquarePenIcon />
-                      <span>新建任务</span>
+                      <span>{t("sidebar:newTask")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
@@ -332,15 +387,15 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                         setFileManagerThreadId(null);
                         setActiveView("skills");
                       }}
-                      tooltip="技能套件"
+                      tooltip={t("sidebar:skills")}
                     >
                       <SparklesIcon />
-                      <span>技能套件</span>
+                      <span>{t("sidebar:skills")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="资料库"
+                      tooltip={t("sidebar:library")}
                       isActive={activeView === "library"}
                       onClick={() => {
                         setFileManagerThreadId(null);
@@ -348,12 +403,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       }}
                     >
                       <LibraryBigIcon />
-                      <span>资料库</span>
+                      <span>{t("sidebar:library")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="专家"
+                      tooltip={t("sidebar:agents")}
                       isActive={activeView === "agents"}
                       onClick={() => {
                         setFileManagerThreadId(null);
@@ -361,12 +416,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       }}
                     >
                       <BotIcon />
-                      <span>专家</span>
+                      <span>{t("sidebar:agents")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      tooltip="已安排"
+                      tooltip={t("sidebar:schedules")}
                       isActive={activeView === "schedules"}
                       onClick={() => {
                         setFileManagerThreadId(null);
@@ -374,7 +429,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                       }}
                     >
                       <CalendarClockIcon />
-                      <span>已安排</span>
+                      <span>{t("sidebar:schedules")}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 </SidebarMenu>
@@ -393,21 +448,81 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               </SidebarGroup>
             ) : (
               <SidebarGroup>
-                {/* 官方 sidebar-group-action.tsx 模式:label 右侧操作(检索线程消息) */}
-                <SidebarGroupLabel>
-                  任务列表
+                <SidebarGroupLabel className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 min-w-0 pr-6">
+                    <span className="shrink-0">{t("sidebar:taskList")}</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowArchived((prev) => !prev)}
+                      className={cn(
+                        "flex h-5 items-center gap-1 rounded-md px-1.5 text-[11px] transition-all cursor-pointer select-none",
+                        showArchived
+                          ? "bg-primary text-primary-foreground font-medium shadow-xs ring-1 ring-primary/30"
+                          : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground border border-transparent hover:border-border/60",
+                      )}
+                      title={
+                        showArchived ? t("sidebar:returnToActive") : t("sidebar:archivedTitle")
+                      }
+                    >
+                      <ArchiveIcon className="size-3 shrink-0" />
+                      <span>{t("sidebar:archived")}</span>
+                      {archivedThreads.length > 0 ? (
+                        <span
+                          className={cn(
+                            "rounded px-1 py-0.2 text-[10px] tabular-nums font-semibold leading-none",
+                            showArchived
+                              ? "bg-primary-foreground/20 text-primary-foreground"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {archivedThreads.length}
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
                   <SidebarGroupAction
-                    title="检索线程消息"
+                    title={t("sidebar:searchPlaceholder")}
                     onClick={() => setSearchOpen(true)}
-                    aria-label="检索线程消息"
+                    aria-label={t("sidebar:searchMessages")}
                   >
                     <SearchIcon />
-                    <span className="sr-only">检索线程消息</span>
+                    <span className="sr-only">{t("sidebar:searchMessages")}</span>
                   </SidebarGroupAction>
                 </SidebarGroupLabel>
                 <SidebarGroupContent>
                   {threadsLoading ? (
                     <ThreadListSkeleton />
+                  ) : showArchived ? (
+                    <SidebarMenu>
+                      <div className="flex items-center justify-between px-2 py-1 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1.5 font-medium text-foreground">
+                          <ArchiveIcon className="size-3.5 text-primary" />
+                          <span>{t("sidebar:archivedTitle")}</span>
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            ({archivedThreads.length})
+                          </span>
+                        </span>
+                        <Button type="button" onClick={() => setShowArchived(false)} size="sm">
+                          <ArrowLeftIcon data-icon="inline-start" />
+                          {t("sidebar:returnToActive")}
+                        </Button>
+                      </div>
+                      {archivedThreads.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground">
+                          <ArchiveIcon className="mb-2 size-7 opacity-30" />
+                          <span>{t("sidebar:noArchived")}</span>
+                        </div>
+                      ) : (
+                        archivedThreads.map((thread) => (
+                          <DirectThreadItem
+                            key={thread.id}
+                            thread={thread}
+                            onOpenFileManager={openFileManager}
+                            onRename={openRename}
+                          />
+                        ))
+                      )}
+                    </SidebarMenu>
                   ) : (
                     <SidebarMenu>
                       {/* 直接线程(未显式绑定目录) */}
@@ -429,17 +544,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           onRename={openRename}
                         />
                       ))}
-                      {/* 已归档:默认收起的文件夹 */}
-                      {archivedThreads.length > 0 ? (
-                        <ThreadFolder
-                          name="已归档"
-                          icon={ArchiveIcon}
-                          threads={archivedThreads}
-                          defaultOpen={false}
-                          onOpenFileManager={openFileManager}
-                          onRename={openRename}
-                        />
-                      ) : null}
                     </SidebarMenu>
                   )}
                 </SidebarGroupContent>
@@ -449,7 +553,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </ContextMenuTrigger>
         <ContextMenuContent className="w-52">
           <ContextMenuGroup>
-            <ContextMenuLabel>快捷操作</ContextMenuLabel>
+            <ContextMenuLabel>{t("sidebar:quickActions")}</ContextMenuLabel>
             <ContextMenuItem
               onClick={() => {
                 setFileManagerThreadId(null);
@@ -458,18 +562,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               }}
             >
               <SquarePenIcon className="text-muted-foreground" />
-              <span>新建任务</span>
+              <span>{t("sidebar:newTask")}</span>
               <ContextMenuShortcut>⌘N</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => setSearchOpen(true)}>
               <SearchIcon className="text-muted-foreground" />
-              <span>检索消息</span>
+              <span>{t("sidebar:searchMessages")}</span>
               <ContextMenuShortcut>⌘F</ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />
           <ContextMenuGroup>
-            <ContextMenuLabel>模块导航</ContextMenuLabel>
+            <ContextMenuLabel>{t("sidebar:navigation")}</ContextMenuLabel>
             <ContextMenuItem
               onClick={() => {
                 setFileManagerThreadId(null);
@@ -477,7 +581,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               }}
             >
               <SparklesIcon className="text-muted-foreground" />
-              <span>技能套件</span>
+              <span>{t("sidebar:skills")}</span>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -486,7 +590,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               }}
             >
               <LibraryBigIcon className="text-muted-foreground" />
-              <span>资料库</span>
+              <span>{t("sidebar:library")}</span>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -495,7 +599,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               }}
             >
               <BotIcon className="text-muted-foreground" />
-              <span>专家</span>
+              <span>{t("sidebar:agents")}</span>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -504,7 +608,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               }}
             >
               <CalendarClockIcon className="text-muted-foreground" />
-              <span>已安排</span>
+              <span>{t("sidebar:schedules")}</span>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />
@@ -512,7 +616,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <ContextMenuSub>
               <ContextMenuSubTrigger>
                 <PaletteIcon className="text-muted-foreground" />
-                <span>主题风格</span>
+                <span>{t("sidebar:theme")}</span>
               </ContextMenuSubTrigger>
               <ContextMenuSubContent className="w-48">
                 <ContextMenuRadioGroup
@@ -538,14 +642,14 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <ContextMenuSeparator />
                 <ContextMenuItem onClick={() => openSettings("themes")}>
                   <SlidersHorizontalIcon className="size-3.5 text-muted-foreground" />
-                  <span>主题参数调优…</span>
+                  <span>{t("sidebar:themeCustomize")}</span>
                 </ContextMenuItem>
               </ContextMenuSubContent>
             </ContextMenuSub>
             <ContextMenuSub>
               <ContextMenuSubTrigger>
                 <SunMediumIcon className="text-muted-foreground" />
-                <span>色彩模式</span>
+                <span>{t("sidebar:colorMode")}</span>
               </ContextMenuSubTrigger>
               <ContextMenuSubContent className="w-40">
                 <ContextMenuRadioGroup
@@ -554,22 +658,22 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 >
                   <ContextMenuRadioItem value="light">
                     <SunMediumIcon className="text-muted-foreground" />
-                    浅色
+                    {t("sidebar:lightMode")}
                   </ContextMenuRadioItem>
                   <ContextMenuRadioItem value="dark">
                     <MoonIcon className="text-muted-foreground" />
-                    深色
+                    {t("sidebar:darkMode")}
                   </ContextMenuRadioItem>
                   <ContextMenuRadioItem value="system">
                     <LaptopIcon className="text-muted-foreground" />
-                    跟随系统
+                    {t("sidebar:systemMode")}
                   </ContextMenuRadioItem>
                 </ContextMenuRadioGroup>
               </ContextMenuSubContent>
             </ContextMenuSub>
             <ContextMenuItem onClick={() => openSettings("providers")}>
               <Settings2Icon className="text-muted-foreground" />
-              <span>系统设置</span>
+              <span>{t("sidebar:settings")}</span>
               <ContextMenuShortcut>⌘,</ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
@@ -590,12 +694,12 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             }}
           >
             <DialogHeader>
-              <DialogTitle>重命名会话</DialogTitle>
-              <DialogDescription>为这个会话线程输入新名称。</DialogDescription>
+              <DialogTitle>{t("sidebar:renameDialogTitle")}</DialogTitle>
+              <DialogDescription>{t("sidebar:renameDialogDesc")}</DialogDescription>
             </DialogHeader>
             <Field className="py-4">
               <FieldLabel htmlFor="rename-thread-input" className="sr-only">
-                会话名称
+                {t("sidebar:threadName")}
               </FieldLabel>
               <Input
                 id="rename-thread-input"
@@ -605,8 +709,8 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               />
             </Field>
             <DialogFooter>
-              <DialogClose render={<Button variant="outline">取消</Button>} />
-              <Button type="submit">保存</Button>
+              <DialogClose render={<Button variant="outline">{t("common:cancel")}</Button>} />
+              <Button type="submit">{t("common:save")}</Button>
             </DialogFooter>
           </form>
         </DialogContent>

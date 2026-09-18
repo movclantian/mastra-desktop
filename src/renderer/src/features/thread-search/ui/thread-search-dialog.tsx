@@ -1,6 +1,10 @@
 import { MessageCircleIcon, SearchIcon, SparklesIcon } from "lucide-react";
 import * as React from "react";
-import { type MessageSearchHit, useWorkbench } from "@/entities/workbench";
+import { type MessageSearchHit, searchMemory } from "@/entities/workbench";
+import { useSelectThread } from "@/entities/workbench/model/queries/threads";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
 import {
   CommandDialog,
@@ -25,7 +29,10 @@ export function ThreadSearchDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { searchMessages, setActiveThreadId, setPendingJump } = useWorkbench();
+  const { t, i18n } = useTranslation();
+  const { user } = useAuth();
+  const selectThread = useSelectThread();
+  const setPendingJump = useWorkbenchStore((state) => state.setPendingJump);
   const [query, setQuery] = React.useState("");
   const [hits, setHits] = React.useState<MessageSearchHit[] | null>(null);
   const [searching, setSearching] = React.useState(false);
@@ -43,7 +50,7 @@ export function ThreadSearchDialog({
 
       setSearching(true);
       try {
-        const nextHits = await searchMessages(q);
+        const nextHits = await searchMemory(user?.id ?? "anonymous", q);
         if (requestId === searchRequestRef.current) setHits(nextHits);
       } catch {
         if (requestId === searchRequestRef.current) setHits([]);
@@ -51,7 +58,7 @@ export function ThreadSearchDialog({
         if (requestId === searchRequestRef.current) setSearching(false);
       }
     },
-    [searchMessages],
+    [user?.id],
   );
 
   React.useEffect(() => {
@@ -71,7 +78,7 @@ export function ThreadSearchDialog({
   }, [open]);
 
   const jumpTo = (hit: MessageSearchHit) => {
-    setActiveThreadId(hit.threadId);
+    selectThread(hit.threadId);
     setPendingJump({ threadId: hit.threadId, messageId: hit.messageId });
     onOpenChange(false);
   };
@@ -80,14 +87,14 @@ export function ThreadSearchDialog({
     <CommandDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="检索线程消息"
-      description="搜索全部会话中的消息"
+      title={t("threadSearch:title")}
+      description={t("threadSearch:description")}
       className="sm:max-w-2xl"
       commandProps={{ shouldFilter: false }}
     >
       <CommandInput
         autoFocus
-        placeholder="输入消息内容，即时搜索…"
+        placeholder={t("threadSearch:inputPlaceholder")}
         value={query}
         onValueChange={setQuery}
       />
@@ -99,7 +106,7 @@ export function ThreadSearchDialog({
                 <EmptyMedia variant="icon">
                   <DotmCircular4 size={16} dotSize={2} colorPreset="solid-theme" />
                 </EmptyMedia>
-                <EmptyTitle>正在搜索会话历史…</EmptyTitle>
+                <EmptyTitle>{t("threadSearch:searching")}</EmptyTitle>
               </EmptyHeader>
             </Empty>
           </CommandEmpty>
@@ -110,8 +117,8 @@ export function ThreadSearchDialog({
                 <EmptyMedia variant="icon">
                   <SearchIcon />
                 </EmptyMedia>
-                <EmptyTitle>搜索会话消息</EmptyTitle>
-                <EmptyDescription>输入内容后会自动搜索全部会话中的消息。</EmptyDescription>
+                <EmptyTitle>{t("threadSearch:emptyTitle")}</EmptyTitle>
+                <EmptyDescription>{t("threadSearch:emptyDesc")}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           </CommandEmpty>
@@ -122,13 +129,13 @@ export function ThreadSearchDialog({
                 <EmptyMedia variant="icon">
                   <SearchIcon />
                 </EmptyMedia>
-                <EmptyTitle>没有匹配的消息</EmptyTitle>
-                <EmptyDescription>尝试更换关键词或语义表述。</EmptyDescription>
+                <EmptyTitle>{t("threadSearch:noResultsTitle")}</EmptyTitle>
+                <EmptyDescription>{t("threadSearch:noResultsDesc")}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           </CommandEmpty>
         ) : (
-          <CommandGroup heading={`消息结果 (${hits.length})`}>
+          <CommandGroup heading={t("threadSearch:resultsCount", { count: hits.length })}>
             {hits.map((hit) => (
               <CommandItem
                 key={`${hit.threadId}-${hit.messageId}`}
@@ -143,16 +150,20 @@ export function ThreadSearchDialog({
                       {hit.threadTitle}
                     </span>
                     <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px]">
-                      {hit.role === "user" ? "我" : "助手"}
+                      {hit.role === "user"
+                        ? t("threadSearch:userRole")
+                        : t("threadSearch:assistantRole")}
                     </Badge>
                     {hit.semantic ? (
                       <Badge variant="secondary" className="h-4 shrink-0 gap-1 px-1 text-[10px]">
                         <SparklesIcon className="size-2.5" />
-                        语义
+                        {t("threadSearch:semanticBadge")}
                       </Badge>
                     ) : null}
                     <time className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                      {new Date(hit.createdAt).toLocaleString()}
+                      {new Date(hit.createdAt).toLocaleString(
+                        i18n.language.startsWith("zh") ? "zh-CN" : "en-US",
+                      )}
                     </time>
                   </div>
                   <p className="line-clamp-2 text-sm text-foreground/90">{hit.text}</p>

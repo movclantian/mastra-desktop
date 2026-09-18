@@ -19,6 +19,7 @@ import {
   fetchSkillMarketplaces,
   fetchSkillsShList,
 } from "@/entities/skill";
+import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 
 const DEFAULT_OFFICIAL_MAKERS: CuratedOwner[] = [
@@ -143,10 +144,10 @@ export function useSkillHubData({
       const { skills: nextSkills, skillsShError } = await fetchRegistrySkills(search, force);
       if (!search) memRegistrySkills = nextSkills;
       setRegistrySkills(nextSkills);
-      if (skillsShError) toast.error(`skills.sh 暂时不可用: ${skillsShError}`);
+      if (skillsShError) toast.error(`skills.sh: ${skillsShError}`);
     } catch (error) {
       if (memRegistrySkills.length === 0) setRegistrySkills([]);
-      toastError(error, "技能市场暂时不可用");
+      toastError(error, i18n.t("skills:marketplaceUnavailable"));
     } finally {
       setRegistryLoading(false);
     }
@@ -220,7 +221,7 @@ export function useSkillHubData({
           memCuratedOwners = res.curatedOwners;
         }
       } catch (error) {
-        toastError(error, "获取技能列表失败");
+        toastError(error, i18n.t("skills:fetchSkillListFailed"));
       } finally {
         setListLoading(false);
       }
@@ -242,7 +243,7 @@ export function useSkillHubData({
     try {
       await Promise.all([loadInstalled(), loadMcp(), loadMarketplaces(), loadCurated()]);
     } catch (error) {
-      toastError(error, "读取技能套件失败");
+      toastError(error, i18n.t("skills:readSkillSuiteFailed"));
     } finally {
       setLoading(false);
     }
@@ -282,7 +283,9 @@ export function useSkillHubData({
       })
       .catch((error) => {
         if (!cancelled) {
-          setDetailError(error instanceof Error ? error.message : "读取技能详情失败");
+          setDetailError(
+            error instanceof Error ? error.message : i18n.t("skills:readSkillDetailFailed"),
+          );
         }
       })
       .finally(() => {

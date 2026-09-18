@@ -1,4 +1,5 @@
 import { apiFetch } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 
 interface EditorModelSelection {
   providerId: string;
@@ -59,7 +60,11 @@ export async function requestInlineEdit({
     error?: unknown;
   } | null;
   if (!response.ok) {
-    throw new Error(typeof payload?.error === "string" ? payload.error : "内联修改请求失败");
+    throw new Error(
+      typeof payload?.error === "string"
+        ? payload.error
+        : i18n.t("workspace:inlineModifyRequestFailed"),
+    );
   }
   return payload ?? {};
 }

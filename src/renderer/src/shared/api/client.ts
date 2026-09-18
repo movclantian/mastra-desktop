@@ -1,3 +1,4 @@
+import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload, type WorkErrorPayload } from "@/shared/lib";
 
 export const MASTRA_SERVER_URL = import.meta.env.VITE_MASTRA_SERVER_URL ?? "http://localhost:4111";
@@ -37,12 +38,13 @@ export async function apiFetch(path: string, init: ApiRequestInit = {}): Promise
 export async function requestJson<T>(
   path: string,
   init: ApiRequestInit = {},
-  fallback = "请求失败",
+  fallback?: string,
 ): Promise<T> {
+  const fallbackMessage = fallback ?? i18n.t("common:requestFailed");
   const response = await apiFetch(path, init);
   if (!response.ok) {
-    const payload = await readErrorPayload(response, fallback);
-    throw apiError(payload, fallback);
+    const payload = await readErrorPayload(response, fallbackMessage);
+    throw apiError(payload, fallbackMessage);
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
@@ -51,12 +53,13 @@ export async function requestJson<T>(
 export async function requestText(
   path: string,
   init: ApiRequestInit = {},
-  fallback = "请求失败",
+  fallback?: string,
 ): Promise<string> {
+  const fallbackMessage = fallback ?? i18n.t("common:requestFailed");
   const response = await apiFetch(path, init);
   if (!response.ok) {
-    const payload = await readErrorPayload(response, fallback);
-    throw apiError(payload, fallback);
+    const payload = await readErrorPayload(response, fallbackMessage);
+    throw apiError(payload, fallbackMessage);
   }
   return response.text();
 }

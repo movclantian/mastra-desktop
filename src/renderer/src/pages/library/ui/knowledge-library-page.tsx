@@ -1,3 +1,4 @@
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   ChevronDownIcon,
   DownloadIcon,
@@ -36,12 +37,15 @@ import {
   saveLibrarySettings,
   statusLabel,
 } from "@/entities/library";
-import { useWorkbench } from "@/entities/workbench";
+import { useCreateThreadMutation } from "@/entities/workbench/model/queries/threads";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
 import {
   type LibraryUploadTarget,
   useLibraryData,
   useLibraryUpload,
 } from "@/features/library-upload";
+import { i18n, useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-icon";
 import { Badge } from "@/shared/ui/badge";
@@ -122,7 +126,7 @@ async function downloadLibraryAsset(
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
   } catch {
-    toast.error("文件下载失败");
+    toast.error(i18n.t("library:downloadFailed"));
   }
 }
 
@@ -141,7 +145,15 @@ export function KnowledgeLibraryPage({
   settingsOpen,
   onSettingsOpenChange,
 }: KnowledgeLibraryProps) {
-  const { user, activeThreadId, createThread, queueLibraryFiles, setActiveView } = useWorkbench();
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { user: authUser } = useAuth();
+  const user = authUser ?? { id: "anonymous", name: "Guest", email: "guest@example.com" };
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const createThreadMutation = useCreateThreadMutation(user?.id ?? "anonymous");
+  const queueLibraryFiles = useWorkbenchStore((state) => state.queueLibraryFiles);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [folderId, setFolderId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
@@ -273,7 +285,7 @@ export function KnowledgeLibraryPage({
       setFolderParentId(null);
       await refresh();
     } catch (error) {
-      toastError(error, "创建文件夹失败");
+      toastError(error, t("library:createFolderFailed"));
     }
   };
 
@@ -294,10 +306,12 @@ export function KnowledgeLibraryPage({
     kind: "document" | "spreadsheet",
     target: LibraryUploadTarget = uploadTarget,
   ) => {
+    const docName = t("library:unnamedDoc");
+    const tableName = t("library:unnamedTable");
     const file =
       kind === "document"
-        ? new File(["# 未命名文档\n\n"], "未命名文档.md", { type: "text/markdown" })
-        : new File(["列1,列2\n\n"], "未命名表格.csv", { type: "text/csv" });
+        ? new File([`# ${docName}\n\n`], `${docName}.md`, { type: "text/markdown" })
+        : new File(["col1,col2\n\n"], `${tableName}.csv`, { type: "text/csv" });
     void uploadFiles([file], target);
   };
 
@@ -306,9 +320,9 @@ export function KnowledgeLibraryPage({
       await deleteLibraryAsset(asset.id, user.id);
       setSelectedId((current) => (current === asset.id ? null : current));
       setAssets((current) => current.filter((item) => item.id !== asset.id));
-      toast.success("文件及其向量索引已删除");
+      toast.success(t("library:fileAndVectorDeleted"));
     } catch (error) {
-      toastError(error, "删除文件失败");
+      toastError(error, t("library:deleteFileFailed"));
     }
   };
 
@@ -324,7 +338,7 @@ export function KnowledgeLibraryPage({
       setRenameTarget(null);
       await refresh(true);
     } catch (error) {
-      toastError(error, "重命名失败");
+      toastError(error, t("library:renameFailed"));
     }
   };
 
@@ -339,7 +353,7 @@ export function KnowledgeLibraryPage({
       });
       await refresh(true);
     } catch (error) {
-      toastError(error, "删除文件夹失败");
+      toastError(error, t("library:deleteFolderFailed"));
     }
   };
 
@@ -349,11 +363,7 @@ export function KnowledgeLibraryPage({
   };
 
   const referenceInNewThread = async (asset: LibraryAsset) => {
-    const thread = await createThread();
-    if (!thread) {
-      toast.error("创建新会话失败");
-      return;
-    }
+    const thread = await createThreadMutation.mutateAsync();
     queueLibraryFiles([
       {
         type: "file",
@@ -363,8 +373,8 @@ export function KnowledgeLibraryPage({
         url: libraryAssetContentUrl(asset.id, user.id),
       },
     ]);
-    setActiveView("chat");
-    toast.success("已在新会话中引用资料");
+    void navigate({ to: "/chat", search: { thread: thread.id } });
+    toast.success(t("library:referenceInNewChatSuccess"));
   };
 
   const reindexOne = async (asset: LibraryAsset) => {
@@ -373,9 +383,9 @@ export function KnowledgeLibraryPage({
       await reindexLibraryAsset(asset.id, user.id);
       await refresh(true);
       window.setTimeout(() => void refresh(true), 1_000);
-      toast.success(`已重新开始索引「${asset.filename}」`);
+      toast.success(t("library:reindexingFile", { filename: asset.filename }));
     } catch (error) {
-      toastError(error, "重新索引失败");
+      toastError(error, t("library:reindexFailed"));
     } finally {
       setReindexingIds((current) => {
         const next = new Set(current);
@@ -391,9 +401,9 @@ export function KnowledgeLibraryPage({
       const assetIds = await reindexFailedLibraryAssets(user.id);
       await refresh(true);
       window.setTimeout(() => void refresh(true), 1_000);
-      toast.success(`已重新开始 ${assetIds.length} 个索引任务`);
+      toast.success(t("library:reindexingBatch", { count: assetIds.length }));
     } catch (error) {
-      toastError(error, "批量重新索引失败");
+      toastError(error, t("library:batchReindexFailed"));
     } finally {
       setBatchReindexing(false);
     }
@@ -427,7 +437,7 @@ export function KnowledgeLibraryPage({
                       ? ` · ${indexStageLabel(asset.indexStage)}`
                       : ""}
                     {asset.status === "error" && asset.indexAttempt > 0
-                      ? ` · 第 ${asset.indexAttempt} 次`
+                      ? t("library:attemptNumber", { attempt: asset.indexAttempt })
                       : ""}
                   </span>
                 </span>
@@ -447,7 +457,7 @@ export function KnowledgeLibraryPage({
               <ContextMenuLabel className="truncate max-w-48">{asset.filename}</ContextMenuLabel>
               <ContextMenuItem onClick={() => void referenceInNewThread(asset)}>
                 <ExternalLinkIcon className="text-muted-foreground" />
-                <span>在新会话中引用</span>
+                <span>{t("library:referenceInNewChat")}</span>
               </ContextMenuItem>
               {asset.status === "error" || asset.status === "unsupported" ? (
                 <ContextMenuItem
@@ -460,14 +470,14 @@ export function KnowledgeLibraryPage({
                       reindexingIds.has(asset.id) && "animate-spin",
                     )}
                   />
-                  <span>重新索引</span>
+                  <span>{t("library:reindex")}</span>
                 </ContextMenuItem>
               ) : null}
               <ContextMenuItem
                 onClick={() => openRename({ kind: "asset", id: asset.id, name: asset.filename })}
               >
                 <PencilIcon className="text-muted-foreground" />
-                <span>重命名</span>
+                <span>{t("common:rename")}</span>
                 <ContextMenuShortcut>F2</ContextMenuShortcut>
               </ContextMenuItem>
               <ContextMenuItem
@@ -486,14 +496,14 @@ export function KnowledgeLibraryPage({
                 }
               >
                 <DownloadIcon className="text-muted-foreground" />
-                <span>下载原文件</span>
+                <span>{t("library:downloadOriginal")}</span>
               </ContextMenuItem>
             </ContextMenuGroup>
             <ContextMenuSeparator />
             <ContextMenuGroup>
               <ContextMenuItem variant="destructive" onClick={() => void removeAsset(asset)}>
                 <Trash2Icon className="text-muted-foreground" />
-                <span>删除文件</span>
+                <span>{t("library:deleteFile")}</span>
                 <ContextMenuShortcut>⌫</ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
@@ -504,7 +514,7 @@ export function KnowledgeLibraryPage({
             render={
               <SidebarMenuAction
                 showOnHover
-                title="文件操作"
+                title={t("library:fileActions")}
                 className="group-data-[collapsible=icon]/sidebar:hidden"
               >
                 <MoreVerticalIcon />
@@ -518,18 +528,18 @@ export function KnowledgeLibraryPage({
                 onClick={() => void reindexOne(asset)}
               >
                 <RefreshCwIcon className={cn(reindexingIds.has(asset.id) && "animate-spin")} />
-                <span>重新索引</span>
+                <span>{t("library:reindex")}</span>
               </DropdownMenuItem>
             ) : null}
             <DropdownMenuItem
               onClick={() => openRename({ kind: "asset", id: asset.id, name: asset.filename })}
             >
               <PencilIcon />
-              <span>重命名</span>
+              <span>{t("common:rename")}</span>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => void referenceInNewThread(asset)}>
               <ExternalLinkIcon />
-              <span>在新会话中引用</span>
+              <span>{t("library:referenceInNewChat")}</span>
             </DropdownMenuItem>
             <DropdownMenuItem
               render={
@@ -547,11 +557,11 @@ export function KnowledgeLibraryPage({
               }
             >
               <DownloadIcon />
-              <span>下载原文件</span>
+              <span>{t("library:downloadOriginal")}</span>
             </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" onClick={() => void removeAsset(asset)}>
               <Trash2Icon />
-              <span>删除文件</span>
+              <span>{t("library:deleteFile")}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -564,9 +574,9 @@ export function KnowledgeLibraryPage({
       const nextSettings = await saveLibrarySettings(settings);
       setSettings(nextSettings);
       onSettingsOpenChange(false);
-      toast.success("资料库设置已保存");
+      toast.success(t("library:settingsSaved"));
     } catch {
-      toast.error("保存资料库设置失败");
+      toast.error(t("library:saveSettingsFailed"));
     }
   };
 
@@ -592,10 +602,12 @@ export function KnowledgeLibraryPage({
                   <SidebarMenuButton
                     isActive={view === "search"}
                     onClick={() => setFileSearchOpen(true)}
-                    tooltip="搜索资料"
+                    tooltip={t("library:searchDocs")}
                   >
                     <SearchIcon />
-                    <span className="group-data-[collapsible=icon]/sidebar:hidden">搜索资料</span>
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">
+                      {t("library:searchDocs")}
+                    </span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
@@ -606,10 +618,12 @@ export function KnowledgeLibraryPage({
                       setFolderId(null);
                       setQuery("");
                     }}
-                    tooltip="会话文件"
+                    tooltip={t("library:sessionFiles")}
                   >
                     <HardDriveIcon />
-                    <span className="group-data-[collapsible=icon]/sidebar:hidden">会话文件</span>
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">
+                      {t("library:sessionFiles")}
+                    </span>
                   </SidebarMenuButton>
                   <SidebarMenuBadge className="group-data-[collapsible=icon]/sidebar:hidden">
                     {sessionAssetCount}
@@ -622,16 +636,18 @@ export function KnowledgeLibraryPage({
                       setView("documents");
                       setQuery("");
                     }}
-                    tooltip="我的文档"
+                    tooltip={t("library:myDocuments")}
                   >
-                    <FolderTypeIcon name="资料库" open={view === "documents"} />
-                    <span className="group-data-[collapsible=icon]/sidebar:hidden">我的文档</span>
+                    <FolderTypeIcon name="library" open={view === "documents"} />
+                    <span className="group-data-[collapsible=icon]/sidebar:hidden">
+                      {t("library:myDocuments")}
+                    </span>
                   </SidebarMenuButton>
                   {failedAssetCount > 0 ? (
                     <SidebarMenuAction
                       showOnHover
                       onClick={() => void reindexFailed()}
-                      title={`重新索引 ${failedAssetCount} 个失败文件`}
+                      title={t("library:reindexFailedFiles", { count: failedAssetCount })}
                       className="group-data-[collapsible=icon]/sidebar:hidden"
                     >
                       <RefreshCwIcon
@@ -650,7 +666,7 @@ export function KnowledgeLibraryPage({
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     className="h-8 bg-background pl-8 text-xs"
-                    placeholder="过滤文件名..."
+                    placeholder={t("library:filterPlaceholder")}
                   />
                 </div>
               ) : null}
@@ -660,7 +676,11 @@ export function KnowledgeLibraryPage({
             <div className="min-h-0 flex-1 flex flex-col p-2 overflow-hidden">
               <div className="flex h-8 shrink-0 items-center justify-between px-1 text-xs font-medium text-sidebar-foreground/70">
                 <span className="group-data-[collapsible=icon]/sidebar:hidden">
-                  {view === "documents" ? "文档目录" : view === "session" ? "会话附件" : "搜索结果"}
+                  {view === "documents"
+                    ? t("library:docDirectory")
+                    : view === "session"
+                      ? t("library:sessionAttachments")
+                      : t("library:searchResults")}
                 </span>
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -669,7 +689,7 @@ export function KnowledgeLibraryPage({
                         size="icon-xs"
                         variant="ghost"
                         className="size-5 rounded-md p-0 group-data-[collapsible=icon]/sidebar:mx-auto"
-                        title="添加文档、表格或文件夹"
+                        title={t("library:addDocTableFolder")}
                       >
                         <PlusIcon className="size-3.5" />
                       </Button>
@@ -682,26 +702,26 @@ export function KnowledgeLibraryPage({
                       ) : (
                         <UploadIcon />
                       )}
-                      <span>上传文件</span>
+                      <span>{t("library:uploadFile")}</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={uploading}
                       onClick={() => createBlankFile("document", uploadTarget)}
                     >
                       <FileTextIcon />
-                      <span>新建文档（Markdown）</span>
+                      <span>{t("library:newMarkdownDoc")}</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={uploading}
                       onClick={() => createBlankFile("spreadsheet", uploadTarget)}
                     >
                       <FileSpreadsheetIcon />
-                      <span>新建表格（CSV）</span>
+                      <span>{t("library:newCsvTable")}</span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => openCreateFolder(folderId)}>
                       <FolderPlusIcon />
-                      <span>新建文件夹</span>
+                      <span>{t("library:newFolder")}</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -722,16 +742,16 @@ export function KnowledgeLibraryPage({
                 <SidebarMenu>
                   {loading ? (
                     <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                      正在读取…
+                      {t("library:loading")}
                     </p>
                   ) : null}
                   {!loading && view !== "documents" && visibleAssets.length === 0 ? (
                     <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
                       {view === "search"
-                        ? "没有匹配的文件"
+                        ? t("library:noMatchingFiles")
                         : view === "session" && !activeThreadId
-                          ? "当前没有活动会话"
-                          : "这里还没有文件"}
+                          ? t("library:noActiveSession")
+                          : t("library:emptyFiles")}
                     </p>
                   ) : null}
                   {!loading && view === "documents"
@@ -746,8 +766,8 @@ export function KnowledgeLibraryPage({
                                 style={{ marginLeft: `${entry.depth * 12}px` }}
                                 title={
                                   collapsedFolderIds.has(entry.folder.id)
-                                    ? "展开文件夹"
-                                    : "折叠文件夹"
+                                    ? t("library:expandFolder")
+                                    : t("library:collapseFolder")
                                 }
                                 onClick={() =>
                                   setCollapsedFolderIds((current) => {
@@ -794,7 +814,7 @@ export function KnowledgeLibraryPage({
                                       }
                                     >
                                       <UploadIcon className="text-muted-foreground" />
-                                      <span>上传文件到此文件夹</span>
+                                      <span>{t("library:uploadToFolder")}</span>
                                     </ContextMenuItem>
                                     <ContextMenuItem
                                       disabled={uploading}
@@ -806,7 +826,7 @@ export function KnowledgeLibraryPage({
                                       }
                                     >
                                       <FileTextIcon className="text-muted-foreground" />
-                                      <span>新建文档（Markdown）</span>
+                                      <span>{t("library:newMarkdownDoc")}</span>
                                     </ContextMenuItem>
                                     <ContextMenuItem
                                       disabled={uploading}
@@ -818,13 +838,13 @@ export function KnowledgeLibraryPage({
                                       }
                                     >
                                       <FileSpreadsheetIcon className="text-muted-foreground" />
-                                      <span>新建表格（CSV）</span>
+                                      <span>{t("library:newCsvTable")}</span>
                                     </ContextMenuItem>
                                     <ContextMenuItem
                                       onClick={() => openCreateFolder(entry.folder.id)}
                                     >
                                       <FolderPlusIcon className="text-muted-foreground" />
-                                      <span>新建子文件夹</span>
+                                      <span>{t("library:newSubfolder")}</span>
                                     </ContextMenuItem>
                                   </ContextMenuGroup>
                                   <ContextMenuSeparator />
@@ -839,7 +859,7 @@ export function KnowledgeLibraryPage({
                                       }
                                     >
                                       <FolderPenIcon className="text-muted-foreground" />
-                                      <span>重命名</span>
+                                      <span>{t("common:rename")}</span>
                                       <ContextMenuShortcut>F2</ContextMenuShortcut>
                                     </ContextMenuItem>
                                     <ContextMenuItem
@@ -847,7 +867,7 @@ export function KnowledgeLibraryPage({
                                       onClick={() => void removeFolder(entry.folder)}
                                     >
                                       <Trash2Icon className="text-muted-foreground" />
-                                      <span>删除文件夹</span>
+                                      <span>{t("library:deleteFolder")}</span>
                                       <ContextMenuShortcut>⌫</ContextMenuShortcut>
                                     </ContextMenuItem>
                                   </ContextMenuGroup>
@@ -859,7 +879,7 @@ export function KnowledgeLibraryPage({
                                 render={
                                   <SidebarMenuAction
                                     showOnHover
-                                    title="文件夹操作"
+                                    title={t("library:folderActions")}
                                     className="group-data-[collapsible=icon]/sidebar:hidden"
                                   >
                                     <MoreVerticalIcon />
@@ -874,7 +894,7 @@ export function KnowledgeLibraryPage({
                                   }
                                 >
                                   <UploadIcon />
-                                  <span>上传文件到此文件夹</span>
+                                  <span>{t("library:uploadToFolder")}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   disabled={uploading}
@@ -886,7 +906,7 @@ export function KnowledgeLibraryPage({
                                   }
                                 >
                                   <FileTextIcon />
-                                  <span>新建文档（Markdown）</span>
+                                  <span>{t("library:newMarkdownDoc")}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   disabled={uploading}
@@ -898,11 +918,11 @@ export function KnowledgeLibraryPage({
                                   }
                                 >
                                   <FileSpreadsheetIcon />
-                                  <span>新建表格（CSV）</span>
+                                  <span>{t("library:newCsvTable")}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openCreateFolder(entry.folder.id)}>
                                   <FolderPlusIcon />
-                                  <span>新建子文件夹</span>
+                                  <span>{t("library:newSubfolder")}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
@@ -915,14 +935,14 @@ export function KnowledgeLibraryPage({
                                   }
                                 >
                                   <FolderPenIcon />
-                                  <span>重命名</span>
+                                  <span>{t("common:rename")}</span>
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
                                   variant="destructive"
                                   onClick={() => void removeFolder(entry.folder)}
                                 >
                                   <Trash2Icon />
-                                  <span>删除文件夹</span>
+                                  <span>{t("library:deleteFolder")}</span>
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -934,7 +954,7 @@ export function KnowledgeLibraryPage({
                     : null}
                   {!loading && view === "documents" && visibleAssets.length === 0 ? (
                     <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                      这里还没有文件
+                      {t("library:emptyFiles")}
                     </p>
                   ) : null}
                   {!loading && view !== "documents"
@@ -950,7 +970,9 @@ export function KnowledgeLibraryPage({
                 <div className="space-y-1.5 bg-background/40 p-2 rounded-md group-data-[collapsible=icon]/sidebar:hidden">
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate">
-                      {uploadError ? uploadError : `正在上传 ${retryFiles.length} 个文件`}
+                      {uploadError
+                        ? uploadError
+                        : t("library:uploadingCount", { count: retryFiles.length })}
                     </span>
                     <span className="shrink-0 tabular-nums">{uploadProgress}%</span>
                   </div>
@@ -962,7 +984,7 @@ export function KnowledgeLibraryPage({
                       variant="ghost"
                       onClick={() => void cancelUpload()}
                     >
-                      取消上传
+                      {t("library:cancelUpload")}
                     </Button>
                   ) : null}
                   {uploadError && !uploading ? (
@@ -972,7 +994,7 @@ export function KnowledgeLibraryPage({
                       variant="outline"
                       onClick={retryUpload}
                     >
-                      从断点重试
+                      {t("library:retryFromBreakpoint")}
                     </Button>
                   ) : null}
                 </div>
@@ -988,7 +1010,7 @@ export function KnowledgeLibraryPage({
               size="icon-sm"
               variant="ghost"
               className="-ml-1"
-              title={directoryOpen ? "收起资料目录" : "展开资料目录"}
+              title={directoryOpen ? t("library:collapseDir") : t("library:expandDir")}
               onClick={() => setDirectoryOpen(!directoryOpen)}
             >
               <PanelLeftIcon />
@@ -999,7 +1021,7 @@ export function KnowledgeLibraryPage({
                 {selected ? (
                   <FileTypeIcon mediaType={selected.mediaType} name={selected.filename} />
                 ) : null}
-                <span className="truncate">{selected?.filename ?? "文件预览"}</span>
+                <span className="truncate">{selected?.filename ?? t("library:filePreview")}</span>
               </span>
             </p>
             {selected ? <Badge variant="outline">{statusLabel(selected.status)}</Badge> : null}
@@ -1015,7 +1037,7 @@ export function KnowledgeLibraryPage({
                     selected.filename,
                   )
                 }
-                title="下载文件"
+                title={t("library:downloadFile")}
               >
                 <DownloadIcon className="size-4" />
               </a>
@@ -1027,7 +1049,9 @@ export function KnowledgeLibraryPage({
                 className="min-w-0 flex-1 truncate text-destructive"
                 title={selected.indexError ?? undefined}
               >
-                {selected.indexStage ? `${indexStageLabel(selected.indexStage)}失败` : "索引失败"}
+                {selected.indexStage
+                  ? t("library:stageFailed", { stage: indexStageLabel(selected.indexStage) })
+                  : t("library:indexFailed")}
                 {selected.indexError ? `：${selected.indexError}` : ""}
               </span>
               <Button
@@ -1038,7 +1062,7 @@ export function KnowledgeLibraryPage({
                 onClick={() => void reindexOne(selected)}
               >
                 <RefreshCwIcon className={cn(reindexingIds.has(selected.id) && "animate-spin")} />
-                重试
+                {t("common:retry")}
               </Button>
             </div>
           ) : null}
@@ -1048,7 +1072,7 @@ export function KnowledgeLibraryPage({
                 fallback={
                   <div className="flex size-full items-center justify-center gap-2 text-sm text-muted-foreground">
                     <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
-                    正在加载预览器
+                    {t("library:loadingPreviewer")}
                   </div>
                 }
               >
@@ -1057,7 +1081,7 @@ export function KnowledgeLibraryPage({
             ) : (
               <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">
                 <FileTypeIcon className="size-8" name="" />
-                <p className="text-sm">选择一个文件进行预览</p>
+                <p className="text-sm">{t("library:selectToPreview")}</p>
               </div>
             )}
           </div>
@@ -1067,16 +1091,14 @@ export function KnowledgeLibraryPage({
       <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>新建文件夹</DialogTitle>
+            <DialogTitle>{t("library:createFolder")}</DialogTitle>
             <DialogDescription>
-              {folderParentId
-                ? "将在当前文件夹中创建子文件夹。"
-                : "用文件夹组织长期资料；会话附件会另外按线程自动归类。"}
+              {folderParentId ? t("library:createSubfolderHint") : t("library:createFolderHint")}
             </DialogDescription>
           </DialogHeader>
           <Field>
             <FieldLabel htmlFor="create-folder-name" className="sr-only">
-              文件夹名称
+              {t("library:folderName")}
             </FieldLabel>
             <Input
               id="create-folder-name"
@@ -1086,12 +1108,12 @@ export function KnowledgeLibraryPage({
               onKeyDown={(event) => {
                 if (event.key === "Enter") void createFolder();
               }}
-              placeholder="文件夹名称"
+              placeholder={t("library:folderName")}
             />
           </Field>
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
-            <Button onClick={() => void createFolder()}>创建</Button>
+            <DialogClose render={<Button variant="outline" />}>{t("common:cancel")}</DialogClose>
+            <Button onClick={() => void createFolder()}>{t("library:create")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1105,13 +1127,15 @@ export function KnowledgeLibraryPage({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {renameTarget?.kind === "folder" ? "重命名文件夹" : "重命名文件"}
+              {renameTarget?.kind === "folder"
+                ? t("library:renameFolder")
+                : t("library:renameFile")}
             </DialogTitle>
-            <DialogDescription>名称只影响资料库显示，不会改变已保存的文件内容。</DialogDescription>
+            <DialogDescription>{t("library:renameDesc")}</DialogDescription>
           </DialogHeader>
           <Field>
             <FieldLabel htmlFor="rename-target-name" className="sr-only">
-              新名称
+              {t("library:newName")}
             </FieldLabel>
             <Input
               id="rename-target-name"
@@ -1124,8 +1148,8 @@ export function KnowledgeLibraryPage({
             />
           </Field>
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
-            <Button onClick={() => void saveRename()}>保存</Button>
+            <DialogClose render={<Button variant="outline" />}>{t("common:cancel")}</DialogClose>
+            <Button onClick={() => void saveRename()}>{t("common:save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1133,16 +1157,16 @@ export function KnowledgeLibraryPage({
       <Dialog open={settingsOpen} onOpenChange={onSettingsOpenChange}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>资料库设置</DialogTitle>
-            <DialogDescription>
-              使用本机 FastEmbed Small(384 维)。向量与原文件都保存在当前 LibSQL 存储目录。
-            </DialogDescription>
+            <DialogTitle>{t("library:librarySettings")}</DialogTitle>
+            <DialogDescription>{t("library:settingsDesc")}</DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 max-h-[min(32rem,calc(100svh-12rem))] pr-3">
             <FieldGroup className="gap-4">
               <div className="grid grid-cols-2 gap-4">
                 <Field>
-                  <FieldLabel htmlFor="settings-chunk-strategy">分块策略</FieldLabel>
+                  <FieldLabel htmlFor="settings-chunk-strategy">
+                    {t("library:chunkStrategy")}
+                  </FieldLabel>
                   <Select
                     value={settings.chunkStrategy}
                     onValueChange={(value) =>
@@ -1175,7 +1199,7 @@ export function KnowledgeLibraryPage({
                   </Select>
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="settings-chunk-size">分块大小</FieldLabel>
+                  <FieldLabel htmlFor="settings-chunk-size">{t("library:chunkSize")}</FieldLabel>
                   <Input
                     id="settings-chunk-size"
                     type="number"
@@ -1191,7 +1215,9 @@ export function KnowledgeLibraryPage({
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="settings-chunk-overlap">重叠字符数</FieldLabel>
+                  <FieldLabel htmlFor="settings-chunk-overlap">
+                    {t("library:chunkOverlap")}
+                  </FieldLabel>
                   <Input
                     id="settings-chunk-overlap"
                     type="number"
@@ -1207,7 +1233,7 @@ export function KnowledgeLibraryPage({
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="settings-top-k">召回数量</FieldLabel>
+                  <FieldLabel htmlFor="settings-top-k">{t("library:topK")}</FieldLabel>
                   <Input
                     id="settings-top-k"
                     type="number"
@@ -1220,7 +1246,7 @@ export function KnowledgeLibraryPage({
                   />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="settings-min-score">最低相似度</FieldLabel>
+                  <FieldLabel htmlFor="settings-min-score">{t("library:minScore")}</FieldLabel>
                   <Input
                     id="settings-min-score"
                     type="number"
@@ -1242,7 +1268,7 @@ export function KnowledgeLibraryPage({
                   <FieldLabel htmlFor="settings-graph-rag" className="cursor-pointer font-medium">
                     Graph RAG
                   </FieldLabel>
-                  <FieldDescription>为相关分块建立关联图并扩展检索结果</FieldDescription>
+                  <FieldDescription>{t("library:graphDesc")}</FieldDescription>
                 </FieldContent>
                 <Switch
                   id="settings-graph-rag"
@@ -1255,7 +1281,9 @@ export function KnowledgeLibraryPage({
               {settings.graphRag ? (
                 <div className="grid grid-cols-3 gap-3">
                   <Field>
-                    <FieldLabel htmlFor="settings-graph-threshold">图阈值</FieldLabel>
+                    <FieldLabel htmlFor="settings-graph-threshold">
+                      {t("library:graphThreshold")}
+                    </FieldLabel>
                     <Input
                       id="settings-graph-threshold"
                       type="number"
@@ -1272,7 +1300,9 @@ export function KnowledgeLibraryPage({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-graph-walk-steps">随机游走步数</FieldLabel>
+                    <FieldLabel htmlFor="settings-graph-walk-steps">
+                      {t("library:walkSteps")}
+                    </FieldLabel>
                     <Input
                       id="settings-graph-walk-steps"
                       type="number"
@@ -1288,7 +1318,9 @@ export function KnowledgeLibraryPage({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-graph-restart-prob">重启概率</FieldLabel>
+                    <FieldLabel htmlFor="settings-graph-restart-prob">
+                      {t("library:restartProb")}
+                    </FieldLabel>
                     <Input
                       id="settings-graph-restart-prob"
                       type="number"
@@ -1309,11 +1341,9 @@ export function KnowledgeLibraryPage({
               <Field orientation="horizontal" className="justify-between rounded-lg border p-3">
                 <FieldContent>
                   <FieldLabel htmlFor="settings-rerank" className="cursor-pointer font-medium">
-                    模型重排
+                    {t("library:modelRerank")}
                   </FieldLabel>
-                  <FieldDescription>
-                    当前请求模型可直接调用时，对向量召回结果进行语义重排，会增加一次模型调用
-                  </FieldDescription>
+                  <FieldDescription>{t("library:rerankDesc")}</FieldDescription>
                 </FieldContent>
                 <Switch
                   id="settings-rerank"
@@ -1326,7 +1356,9 @@ export function KnowledgeLibraryPage({
               {settings.rerank ? (
                 <div className="grid grid-cols-3 gap-3">
                   <Field className="col-span-3">
-                    <FieldLabel htmlFor="settings-rerank-scorer">重排评分器</FieldLabel>
+                    <FieldLabel htmlFor="settings-rerank-scorer">
+                      {t("library:rerankScorer")}
+                    </FieldLabel>
                     <Select
                       value={settings.rerankScorer}
                       onValueChange={(value) =>
@@ -1346,7 +1378,9 @@ export function KnowledgeLibraryPage({
                     </Select>
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-rerank-semantic-weight">语义权重</FieldLabel>
+                    <FieldLabel htmlFor="settings-rerank-semantic-weight">
+                      {t("library:semanticWeight")}
+                    </FieldLabel>
                     <Input
                       id="settings-rerank-semantic-weight"
                       type="number"
@@ -1363,7 +1397,9 @@ export function KnowledgeLibraryPage({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-rerank-vector-weight">向量权重</FieldLabel>
+                    <FieldLabel htmlFor="settings-rerank-vector-weight">
+                      {t("library:vectorWeight")}
+                    </FieldLabel>
                     <Input
                       id="settings-rerank-vector-weight"
                       type="number"
@@ -1380,7 +1416,9 @@ export function KnowledgeLibraryPage({
                     />
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor="settings-rerank-position-weight">位置权重</FieldLabel>
+                    <FieldLabel htmlFor="settings-rerank-position-weight">
+                      {t("library:positionWeight")}
+                    </FieldLabel>
                     <Input
                       id="settings-rerank-position-weight"
                       type="number"
@@ -1399,10 +1437,8 @@ export function KnowledgeLibraryPage({
                 </div>
               ) : null}
               <FieldSet className="rounded-lg border p-3">
-                <FieldLegend variant="label">元数据抽取</FieldLegend>
-                <FieldDescription>
-                  索引时使用当前选定模型生成可检索的标题、摘要、问题与关键词。
-                </FieldDescription>
+                <FieldLegend variant="label">{t("library:metadataExtraction")}</FieldLegend>
+                <FieldDescription>{t("library:metadataDesc")}</FieldDescription>
                 <div className="mt-1 grid grid-cols-2 gap-3">
                   <Field orientation="horizontal" className="items-center">
                     <Switch
@@ -1413,7 +1449,7 @@ export function KnowledgeLibraryPage({
                       }
                     />
                     <FieldLabel htmlFor="settings-extract-title" className="cursor-pointer">
-                      标题
+                      {t("library:metaTitle")}
                     </FieldLabel>
                   </Field>
                   <Field orientation="horizontal" className="items-center">
@@ -1425,7 +1461,7 @@ export function KnowledgeLibraryPage({
                       }
                     />
                     <FieldLabel htmlFor="settings-extract-summary" className="cursor-pointer">
-                      摘要
+                      {t("library:metaSummary")}
                     </FieldLabel>
                   </Field>
                   <Field orientation="horizontal" className="items-center">
@@ -1437,7 +1473,7 @@ export function KnowledgeLibraryPage({
                       }
                     />
                     <FieldLabel htmlFor="settings-extract-questions" className="cursor-pointer">
-                      问题
+                      {t("library:metaQuestions")}
                     </FieldLabel>
                   </Field>
                   <Field orientation="horizontal" className="items-center">
@@ -1449,7 +1485,7 @@ export function KnowledgeLibraryPage({
                       }
                     />
                     <FieldLabel htmlFor="settings-extract-keywords" className="cursor-pointer">
-                      关键词
+                      {t("library:metaKeywords")}
                     </FieldLabel>
                   </Field>
                 </div>
@@ -1457,8 +1493,8 @@ export function KnowledgeLibraryPage({
             </FieldGroup>
           </ScrollArea>
           <DialogFooter className="shrink-0">
-            <DialogClose render={<Button variant="outline" />}>取消</DialogClose>
-            <Button onClick={() => void saveSettings()}>保存</Button>
+            <DialogClose render={<Button variant="outline" />}>{t("common:cancel")}</DialogClose>
+            <Button onClick={() => void saveSettings()}>{t("common:save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1469,23 +1505,23 @@ export function KnowledgeLibraryPage({
           setFileSearchOpen(open);
           if (!open) setFileSearchQuery("");
         }}
-        title="搜索资料库文件"
-        description="按文件名快速定位资料库中的文件"
+        title={t("library:searchLibraryFiles")}
+        description={t("library:searchLibraryDesc")}
         className="sm:max-w-xl"
       >
         <CommandInput
           autoFocus
-          placeholder="搜索文件名…"
+          placeholder={t("library:searchPlaceholder")}
           value={fileSearchQuery}
           onValueChange={setFileSearchQuery}
         />
         <CommandList className="max-h-[min(60vh,32rem)]">
           {loading ? (
-            <CommandEmpty>正在读取文件…</CommandEmpty>
+            <CommandEmpty>{t("library:readingFiles")}</CommandEmpty>
           ) : assets.length === 0 ? (
-            <CommandEmpty>资料库中还没有文件</CommandEmpty>
+            <CommandEmpty>{t("library:noFilesInLibrary")}</CommandEmpty>
           ) : (
-            <CommandGroup heading="文件">
+            <CommandGroup heading={t("library:filesGroup")}>
               {assets.map((asset) => (
                 <CommandItem
                   key={asset.id}

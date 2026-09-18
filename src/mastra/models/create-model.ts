@@ -16,7 +16,12 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { type GatewayLanguageModel, getProviderConfig } from "@mastra/core/llm";
+import { Agent } from "@mastra/core/agent";
+import {
+  type GatewayLanguageModel,
+  getProviderConfig,
+  modelSupportsStructuredOutput,
+} from "@mastra/core/llm";
 import { defaultSettingsMiddleware, wrapLanguageModel } from "ai";
 
 export type { GatewayLanguageModel };
@@ -24,6 +29,14 @@ export type { GatewayLanguageModel };
 export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export const WORKBENCH_GATEWAY_ID = "mastra-work";
+
+/** One-shot Mastra Agent for isolated route work: no registry, memory, or tools. */
+export function createEphemeralAgent(
+  model: GatewayLanguageModel,
+  options: { id: string; name: string; instructions: string },
+): Agent {
+  return new Agent({ ...options, model });
+}
 
 /** Resolve the SDK protocol from Mastra's provider registry metadata. */
 export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
@@ -62,6 +75,7 @@ export function normalizeGatewayBaseUrl(
 
 export function createGatewayModel(options: {
   modelId: string;
+  modelRouterId?: string;
   apiKey: string;
   baseUrl?: string;
   protocol: GatewayProtocol | undefined;
@@ -75,9 +89,13 @@ export function createGatewayModel(options: {
     apiKey,
     ...(providerName?.trim() ? { name: providerName.trim() } : {}),
   };
+  const supportsStructuredOutputs = options.modelRouterId
+    ? modelSupportsStructuredOutput(options.modelRouterId)
+    : undefined;
+  let model: GatewayLanguageModel;
   switch (protocol) {
     case "anthropic":
-      return wrapLanguageModel({
+      model = wrapLanguageModel({
         model: createAnthropic({
           ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
           ...common,
@@ -86,27 +104,38 @@ export function createGatewayModel(options: {
           settings: { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
         }),
       });
+      break;
     case "gemini":
-      return createGoogleGenerativeAI({
+      model = createGoogleGenerativeAI({
         ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
         ...common,
       })(modelId);
+      break;
     default: {
       if (useResponses) {
         const openai = createOpenAI({
           ...(normalizedBaseUrl ? { baseURL: normalizedBaseUrl } : {}),
           ...common,
         });
-        return openai.responses(modelId);
+        model = openai.responses(modelId);
+        break;
       }
       if (normalizedBaseUrl) {
-        return createOpenAICompatible({
+        model = createOpenAICompatible({
           baseURL: normalizedBaseUrl,
           name: providerName?.trim() || "openai-compatible",
           apiKey,
+          ...(supportsStructuredOutputs !== undefined ? { supportsStructuredOutputs } : {}),
         }).chatModel(modelId);
+        break;
       }
-      return createOpenAI({ ...common }).chat(modelId);
+      model = createOpenAI({ ...common }).chat(modelId);
+      break;
     }
   }
+
+  if (supportsStructuredOutputs !== undefined) {
+    Object.assign(model, { supportsStructuredOutputs });
+  }
+  return model;
 }

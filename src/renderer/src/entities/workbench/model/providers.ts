@@ -2,6 +2,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import { readErrorPayload } from "@/shared/lib";
 
 export interface RegistryProvider {
@@ -26,7 +27,9 @@ export interface ProviderConfig {
   protocol?: GatewayProtocol;
   baseUrl?: string;
   useResponses?: boolean;
-  apiKey: string;
+  credentialRef: string;
+  credentialHint: string;
+  hasCredential: true;
   disabled?: boolean;
   enabledModels: EnabledModel[];
 }
@@ -36,6 +39,7 @@ export interface CatalogModel {
   name: string;
   reasoning: boolean;
   tools: boolean;
+  structuredOutput: boolean;
   vision: boolean;
   audio: boolean;
   contextWindow: number;
@@ -58,6 +62,7 @@ export interface ModelCapabilities {
   vision: boolean;
   audio: boolean;
   tools: boolean;
+  structuredOutput: boolean;
 }
 
 export type ReasoningEffort =
@@ -72,21 +77,33 @@ export type ReasoningEffort =
 
 export interface RequestModelPayload {
   id: string;
-  apiKey: string;
-  url?: string;
-  protocol?: GatewayProtocol;
-  useResponses?: boolean;
 }
 
 export const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
-  "provider-default": "自动",
-  none: "关闭",
-  minimal: "极简",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "超高",
-  max: "最大",
+  get "provider-default"() {
+    return i18n.t("chat:models.efforts.provider-default");
+  },
+  get none() {
+    return i18n.t("chat:models.efforts.none");
+  },
+  get minimal() {
+    return i18n.t("chat:models.efforts.minimal");
+  },
+  get low() {
+    return i18n.t("chat:models.efforts.low");
+  },
+  get medium() {
+    return i18n.t("chat:models.efforts.medium");
+  },
+  get high() {
+    return i18n.t("chat:models.efforts.high");
+  },
+  get xhigh() {
+    return i18n.t("chat:models.efforts.xhigh");
+  },
+  get max() {
+    return i18n.t("chat:models.efforts.max");
+  },
 };
 
 export function getReasoningEfforts(provider: ProviderConfig): ReasoningEffort[] {
@@ -140,7 +157,10 @@ export function loadRegistry(): Promise<RegistryProvider[]> {
   registryPromise ??= apiFetch(`${MASTRA_SERVER_URL}/work/providers/registry`)
     .then(async (response) => {
       if (!response.ok) {
-        throw new Error((await readErrorPayload(response, "拉取内置供应商列表失败")).error);
+        throw new Error(
+          (await readErrorPayload(response, i18n.t("settings:providers.fetchBuiltinListFailed")))
+            .error,
+        );
       }
       const { providers } = (await response.json()) as { providers: RegistryProvider[] };
       return providers;
@@ -167,7 +187,11 @@ export function useRegistry(): RegistryProvider[] {
       .catch((error: unknown) => {
         if (!active) return;
         setRegistry([]);
-        toast.error(`内置供应商列表加载失败：${(error as Error).message}`);
+        toast.error(
+          i18n.t("settings:providers.fetchBuiltinListFailedWithDetail", {
+            error: (error as Error).message,
+          }),
+        );
       });
     return () => {
       active = false;
@@ -259,9 +283,11 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
     // 通过 Mastra 服务端代理拉取(渲染进程 CSP 禁止直连外网,且服务端已缓存 1 小时)
     const response = await apiFetch(`${MASTRA_SERVER_URL}/work/providers/catalog`);
     if (!response.ok) {
-      throw new Error((await readErrorPayload(response, "拉取模型目录失败")).error);
+      throw new Error(
+        (await readErrorPayload(response, i18n.t("settings:providers.fetchCatalogFailed"))).error,
+      );
     }
-    // models.dev api.json 模型字段:reasoning / tool_call /
+    // models.dev api.json 模型字段:reasoning / tool_call / structured_output /
     // modalities.input 含 image|audio / limit.context / cost
     const raw = (await response.json()) as Record<
       string,
@@ -273,6 +299,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
             name?: string;
             reasoning?: boolean;
             tool_call?: boolean;
+            structured_output?: boolean;
             modalities?: { input?: string[] | string };
             limit?: { context?: number | string };
             cost?: {
@@ -303,6 +330,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
           name: m.name ?? modelId,
           reasoning: Boolean(m.reasoning),
           tools: Boolean(m.tool_call),
+          structuredOutput: Boolean(m.structured_output),
           vision: inputModalities.some(
             (modality) => modality === "image" || modality.startsWith("image/"),
           ),
@@ -456,7 +484,7 @@ export function calculateCostUSD(
  */
 export function formatCostUSD(cost: number | null): string {
   if (cost === null || cost === undefined || Number.isNaN(cost)) {
-    return "未定价";
+    return i18n.t("chat:models.costUnpriced");
   }
   if (cost === 0) return "$0.00";
   if (cost < 0.0001) return `< $0.0001`;
@@ -488,7 +516,7 @@ export async function fetchProviderModels(
     // 内置供应商:模型清单直接来自 provider-registry(无需网络请求)
     const registryProvider = registry.find((p) => p.id === provider.registryId);
     if (!registryProvider) {
-      throw new Error(`未找到内置供应商 ${provider.registryId}`);
+      throw new Error(i18n.t("settings:providers.builtinNotFound", { id: provider.registryId }));
     }
     models = registryProvider.models.map((id) => ({ id, name: id }));
   } else {
@@ -497,13 +525,16 @@ export async function fetchProviderModels(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        providerId: provider.id,
         protocol: provider.protocol ?? "openai",
         url: provider.baseUrl,
-        apiKey: provider.apiKey,
+        credentialRef: provider.credentialRef,
       }),
     });
     if (!response.ok) {
-      throw new Error((await readErrorPayload(response, "拉取模型列表失败")).error);
+      throw new Error(
+        (await readErrorPayload(response, i18n.t("settings:providers.fetchModelListFailed"))).error,
+      );
     }
     ({ models } = (await response.json()) as { models: EnabledModel[] });
   }
@@ -519,7 +550,7 @@ export function getCachedProviderModels(providerId: string): EnabledModel[] | nu
   return providerModelsCache.get(providerId) ?? null;
 }
 
-/** 失效某供应商的模型列表缓存:编辑(baseUrl/apiKey/协议变了)或删除供应商时调用 */
+/** 失效某供应商的模型列表缓存:编辑(baseUrl/凭据/协议变了)或删除供应商时调用 */
 export function invalidateProviderModelsCache(providerId: string): void {
   providerModelsCache.delete(providerId);
 }
@@ -556,7 +587,13 @@ export function getModelCapabilities(
 ): ModelCapabilities {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId || /^(?:https?|wss?):\/\//i.test(normalizedModelId)) {
-    return { reasoning: false, vision: false, audio: false, tools: false };
+    return {
+      reasoning: false,
+      vision: false,
+      audio: false,
+      tools: false,
+      structuredOutput: false,
+    };
   }
   const providerModel = provider.registryId
     ? catalog
@@ -572,6 +609,7 @@ export function getModelCapabilities(
     vision: models.some((model) => model.vision),
     audio: models.some((model) => model.audio),
     tools: models.some((model) => model.tools),
+    structuredOutput: models.some((model) => model.structuredOutput),
   };
 }
 
@@ -691,7 +729,7 @@ export async function testProviderModel(
   } catch (error) {
     const message =
       error instanceof Error && error.name === "AbortError"
-        ? "请求超时(60s)"
+        ? i18n.t("settings:providers.requestTimeout")
         : (error as Error).message;
     return { ok: false, error: message };
   } finally {
@@ -700,27 +738,9 @@ export async function testProviderModel(
 }
 
 // ---------------------------------------------------------------------------
-// BYOK → 后端请求模型对象
-// 参考 docs/en/models/index.mdx:内置 provider 用 "provider/model" + apiKey;
-// 自定义网关带 url + protocol + useResponses,由后端(src/mastra/models/gateways.ts)用官方
-// provider 包解析为真实端点:anthropic → Messages API,gemini → 原生 API,
-// openai → Responses(useResponses)或 Chat Completions
+// BYOK → 后端请求模型引用。URL、协议与凭据只在服务端按 provider id 解析。
 // ---------------------------------------------------------------------------
 
 export function buildRequestModel(provider: ProviderConfig, modelId: string): RequestModelPayload {
-  // 内置供应商:registry id 即 model router 的 provider 前缀
-  if (provider.registryId) {
-    return {
-      id: `${provider.registryId}/${modelId}`,
-      apiKey: provider.apiKey,
-    };
-  }
-  // 自定义网关:必须带 baseUrl(base URL,非具体 chat 端点)
-  return {
-    id: `${provider.id}/${modelId}`,
-    url: provider.baseUrl,
-    apiKey: provider.apiKey,
-    ...(provider.protocol ? { protocol: provider.protocol } : {}),
-    ...(provider.protocol === "openai" && provider.useResponses ? { useResponses: true } : {}),
-  };
+  return { id: `${provider.registryId ?? provider.id}/${modelId}` };
 }

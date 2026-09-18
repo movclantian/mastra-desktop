@@ -10,7 +10,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { useAuth } from "@/features/auth";
 import { reportWorkbenchNotification } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import {
   ContextMenu,
@@ -23,11 +25,11 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
-import type { TerminalEvent } from "../../../../../shared/terminal-contract";
-import type { TerminalStatus } from "../model/terminal";
+import { useThreadsQuery } from "../model/queries/threads";
+import type { TerminalEvent, TerminalStatus } from "../model/terminal";
 import { getTerminalApi } from "../model/terminal";
 import type { TerminalRequest } from "../model/types";
-import { useWorkbench } from "../model/workbench-context";
+import { useWorkbenchStore } from "../model/workbench-store";
 
 function cssColor(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -113,7 +115,12 @@ export function TerminalSession({
   pendingRequest?: TerminalRequest | null;
   onHandledRequest?: () => void;
 }) {
-  const { user, activeThreadId, threads, reportTerminalSession } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const threads = useThreadsQuery(userId).data ?? [];
+  const activeThreadId = useWorkbenchStore((state) => state.lastKnownThreadId);
+  const reportTerminalSession = useWorkbenchStore((state) => state.reportTerminalSession);
   const targetThreadId = threadId ?? activeThreadId;
   const workingDirectory =
     cwd ?? threads.find((thread) => thread.id === targetThreadId)?.metadata.workspacePath;
@@ -201,7 +208,7 @@ export function TerminalSession({
         setLastExitCode(event.exitCode);
         setSettledAt(Date.now());
         if (targetThreadId && Date.now() - startedAt >= LONG_SESSION_MS) {
-          reportWorkbenchNotification(targetThreadId, user.id, {
+          reportWorkbenchNotification(targetThreadId, userId, {
             source: "terminal",
             kind: "session-exited",
             summary: "Terminal session exited",
@@ -268,7 +275,7 @@ export function TerminalSession({
       fitRef.current = null;
       term.dispose();
     };
-  }, [sessionId, workingDirectory, targetThreadId, user.id, restart, fitTerminal]);
+  }, [sessionId, workingDirectory, targetThreadId, userId, restart, fitTerminal]);
 
   React.useEffect(() => {
     if (!active) return;
@@ -292,15 +299,17 @@ export function TerminalSession({
       setLastExitCode(undefined);
       setSettledAt(undefined);
     } else {
-      toast.error("Unsupported terminal command");
+      toast.error(t("workspace:unsupportedCommand"));
     }
     onHandledRequest?.();
-  }, [active, pendingRequest, status, onHandledRequest]);
+  }, [active, pendingRequest, status, onHandledRequest, t]);
 
   const handleCopySelection = () => {
     const text = xtermRef.current?.getSelection();
     if (text) {
-      void navigator.clipboard.writeText(text).catch((error) => toastError(error, "Copy failed"));
+      void navigator.clipboard
+        .writeText(text)
+        .catch((error) => toastError(error, t("workspace:copyFailed")));
     }
   };
 
@@ -309,7 +318,7 @@ export function TerminalSession({
       const text = await navigator.clipboard.readText();
       if (text && ptyIdRef.current) xtermRef.current?.paste(text);
     } catch (error) {
-      toastError(error, "Paste failed");
+      toastError(error, t("workspace:pasteFailed"));
     }
   };
 
@@ -334,25 +343,25 @@ export function TerminalSession({
           {status === "connecting" ? (
             <div
               className="pointer-events-none absolute right-3 bottom-2 flex items-center gap-1.5 rounded-md border border-border/60 bg-background/85 px-2 py-1 text-[11px] text-muted-foreground shadow-xs backdrop-blur-xs"
-              title="连接终端"
+              title={t("workspace:connectTerminal")}
             >
               <DotmSquare10 size={12} dotSize={2} colorPreset="solid-theme" />
-              <span>连接中</span>
+              <span>{t("workspace:connecting")}</span>
             </div>
           ) : null}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuGroup>
-          <ContextMenuLabel className="text-xs">终端操作</ContextMenuLabel>
+          <ContextMenuLabel className="text-xs">{t("workspace:terminalActions")}</ContextMenuLabel>
           <ContextMenuItem onClick={handleCopySelection}>
             <TerminalIcon className="text-muted-foreground" />
-            <span>复制选中</span>
+            <span>{t("workspace:copySelection")}</span>
             <ContextMenuShortcut>⌘C</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={() => void handlePaste()}>
             <ClipboardPasteIcon className="text-muted-foreground" />
-            <span>粘贴剪贴板</span>
+            <span>{t("workspace:pasteClipboard")}</span>
             <ContextMenuShortcut>⌘V</ContextMenuShortcut>
           </ContextMenuItem>
         </ContextMenuGroup>
@@ -360,17 +369,17 @@ export function TerminalSession({
         <ContextMenuGroup>
           <ContextMenuItem onClick={handleInterrupt} disabled={status !== "ready"}>
             <SquareIcon className="text-muted-foreground" />
-            <span>中断 (Ctrl+C)</span>
+            <span>{t("workspace:interrupt")}</span>
             <ContextMenuShortcut>^C</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleClear}>
             <EraserIcon className="text-muted-foreground" />
-            <span>清屏</span>
+            <span>{t("workspace:clear")}</span>
             <ContextMenuShortcut>⌘K</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleRestart} disabled={status === "connecting"}>
             <RefreshCwIcon className="text-muted-foreground" />
-            <span>重启会话</span>
+            <span>{t("workspace:restartSession")}</span>
           </ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuContent>

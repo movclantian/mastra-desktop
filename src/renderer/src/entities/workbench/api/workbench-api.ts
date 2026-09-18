@@ -1,6 +1,8 @@
 import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
+import type { WorkspaceApp } from "../../../../../shared/workspace-contract";
 import type { ProviderConfig } from "../model/providers";
 import type {
   AgentProfile,
@@ -12,6 +14,7 @@ import type {
   WorkspaceChangeSnapshot,
   WorkspaceFileChange,
   WorkThread,
+  WorkUserOption,
 } from "../model/types";
 
 function resourceQuery(resourceId: string): string {
@@ -36,7 +39,7 @@ export async function fetchThreads(resourceId: string): Promise<WorkThread[]> {
     const payload = await requestJson<{ threads: MemoryThread[]; hasMore: boolean }>(
       `/api/memory/threads?${resourceQuery(resourceId)}&agentId=${MEMORY_AGENT_ID}&page=${page}&perPage=100`,
       {},
-      "加载任务列表失败",
+      i18n.t("sidebar:fetchThreadsFailed"),
     );
     threads.push(...payload.threads.map(workThread));
     if (!payload.hasMore) return threads;
@@ -55,7 +58,7 @@ export async function createThreadRequest(
       const history = await requestJson<{ messages: unknown[] }>(
         `/api/memory/threads/${encodeURIComponent(draft.id)}/messages?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}&perPage=1`,
         {},
-        "读取草稿失败",
+        i18n.t("sidebar:readDraftFailed"),
       );
       if (history.messages.length === 0) return draft;
     }
@@ -64,7 +67,7 @@ export async function createThreadRequest(
     await requestJson<MemoryThread>(
       `/api/memory/threads?agentId=${MEMORY_AGENT_ID}`,
       { method: "POST", body: { ...body, resourceId } },
-      "创建任务失败",
+      i18n.t("sidebar:createThreadFailed"),
     ),
   );
 }
@@ -75,7 +78,7 @@ export async function updateThread(
   body: Record<string, unknown>,
 ): Promise<void> {
   const path = `/api/memory/threads/${encodeURIComponent(threadId)}?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}`;
-  const current = await requestJson<MemoryThread>(path, {}, "读取任务失败");
+  const current = await requestJson<MemoryThread>(path, {}, i18n.t("sidebar:readThreadFailed"));
   await requestJson(
     path,
     {
@@ -88,7 +91,7 @@ export async function updateThread(
           : {}),
       },
     },
-    "更新任务失败",
+    i18n.t("sidebar:updateThreadFailed"),
   );
 }
 
@@ -96,7 +99,7 @@ export async function deleteThreadRequest(threadId: string, resourceId: string):
   await requestJson(
     `/api/memory/threads/${encodeURIComponent(threadId)}?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}`,
     { method: "DELETE" },
-    "删除任务失败",
+    i18n.t("sidebar:deleteThreadFailed"),
   );
 }
 
@@ -109,7 +112,7 @@ export async function updateThreadModel(
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/model?${resourceQuery(resourceId)}`,
     { method: "PATCH", body: { selection, modeId } },
-    "保存模型选择失败",
+    i18n.t("sidebar:saveModelFailed"),
   );
 }
 
@@ -121,7 +124,7 @@ export async function updateThreadMode(
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/mode?${resourceQuery(resourceId)}`,
     { method: "PATCH", body: { modeId } },
-    "保存会话模式失败",
+    i18n.t("sidebar:saveModeFailed"),
   );
 }
 
@@ -136,7 +139,7 @@ export async function updateThreadPermissions(
   await requestJson(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/permissions?${resourceQuery(resourceId)}`,
     { method: "PATCH", body: rules },
-    "保存工具审批规则失败",
+    i18n.t("sidebar:savePermissionsFailed"),
   );
 }
 
@@ -147,9 +150,87 @@ export async function generateThreadTitle(
   const payload = await requestJson<{ title?: string }>(
     `/work/threads/${encodeURIComponent(threadId)}/generate-title`,
     { method: "POST", body: { resourceId } },
-    "生成任务标题失败",
+    i18n.t("sidebar:generateTitleFailed"),
   );
   return typeof payload.title === "string" ? payload.title : null;
+}
+
+/** 克隆/分叉会话(官方 memory.copyThread):带 upToMessageId 时仅复制截至该消息(含)的历史 */
+export async function cloneThreadRequest(
+  threadId: string,
+  resourceId: string,
+  options?: { upToMessageId?: string },
+): Promise<WorkThread> {
+  const payload = await requestJson<{ thread: MemoryThread }>(
+    `/work/threads/${encodeURIComponent(threadId)}/clone`,
+    {
+      method: "POST",
+      body: {
+        resourceId,
+        ...(options?.upToMessageId ? { upToMessageId: options.upToMessageId } : {}),
+      },
+    },
+    i18n.t("sidebar:cloneFailed"),
+  );
+  return workThread(payload.thread);
+}
+
+/** 分支会话的来源线程(官方 isClone / getSourceThread),非分支或来源已删除返回 null */
+export async function fetchThreadSource(
+  threadId: string,
+  resourceId: string,
+): Promise<{ id: string; title: string } | null> {
+  const payload = await requestJson<{ source?: { id?: string; title?: string } | null }>(
+    `/work/threads/${encodeURIComponent(threadId)}/source?${resourceQuery(resourceId)}`,
+    {},
+    i18n.t("sidebar:readSourceFailed"),
+  );
+  const source = payload.source;
+  return typeof source?.id === "string" && typeof source.title === "string"
+    ? { id: source.id, title: source.title }
+    : null;
+}
+
+export interface ThreadSummaryResult {
+  summary: string;
+  todos: string[];
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+}
+
+/** 生成本次对话纪要与核心待办(官方 memory.summarizeThread + Extractor) */
+export async function summarizeThreadRequest(
+  threadId: string,
+  resourceId: string,
+  model?: unknown,
+): Promise<ThreadSummaryResult> {
+  return requestJson<ThreadSummaryResult>(
+    `/work/threads/${encodeURIComponent(threadId)}/summarize`,
+    { method: "POST", body: { resourceId, ...(model !== undefined ? { model } : {}) } },
+    i18n.t("sidebar:summarizeThreadFailed"),
+  );
+}
+
+/** 会话所有权迁移(官方 memory.updateThreadResourceId):线程及全部消息转移给目标账户 */
+export async function transferThreadRequest(
+  threadId: string,
+  resourceId: string,
+  targetResourceId: string,
+): Promise<void> {
+  await requestJson(
+    `/work/threads/${encodeURIComponent(threadId)}/transfer`,
+    { method: "POST", body: { resourceId, targetResourceId } },
+    i18n.t("sidebar:transferThreadFailed"),
+  );
+}
+
+/** 注册账户列表(会话迁移目标候选) */
+export async function fetchWorkUsers(): Promise<WorkUserOption[]> {
+  const payload = await requestJson<{ users?: WorkUserOption[] }>(
+    "/work/users",
+    {},
+    i18n.t("sidebar:loadAccountsFailed"),
+  );
+  return Array.isArray(payload.users) ? payload.users : [];
 }
 
 export async function searchMemory(resourceId: string, query: string): Promise<MessageSearchHit[]> {
@@ -169,7 +250,7 @@ export async function searchMemory(resourceId: string, query: string): Promise<M
       createdAt?: string;
     }>;
     searchType?: string;
-  }>(`/api/memory/search?${params.toString()}`, {}, "搜索历史消息失败");
+  }>(`/work/threads/search?${params.toString()}`, {}, i18n.t("sidebar:searchMessagesFailed"));
   const semantic = payload.searchType === "semantic";
   return (payload.results ?? []).flatMap((result) => {
     if (
@@ -203,7 +284,7 @@ export async function fetchProviderConfig(): Promise<{
   const payload = await requestJson<{
     providers?: ProviderConfig[];
     modelSelection?: ModelSelection | null;
-  }>("/work/providers/config", {}, "加载模型供应商配置失败");
+  }>("/work/providers/config", {}, i18n.t("settings:api.fetchProvidersFailed"));
   return { providers: payload.providers ?? [], modelSelection: payload.modelSelection ?? null };
 }
 
@@ -214,12 +295,12 @@ export async function saveProviderConfig(config: {
   await requestJson(
     "/work/providers/config",
     { method: "POST", body: config },
-    "保存模型供应商配置失败",
+    i18n.t("settings:api.saveProvidersFailed"),
   );
 }
 
 export async function fetchToolsConfig(): Promise<ToolsConfig> {
-  return requestJson<ToolsConfig>("/work/tools", {}, "加载工具配置失败");
+  return requestJson<ToolsConfig>("/work/tools", {}, i18n.t("settings:api.fetchToolsFailed"));
 }
 
 // ---- Agents API --------------------------------------------------------------
@@ -228,7 +309,7 @@ export async function fetchAgents(): Promise<AgentProfile[]> {
   const payload = await requestJson<{ agents?: AgentProfile[] }>(
     "/work/agents",
     {},
-    "加载专家失败",
+    i18n.t("agentHub:fetchAgentsFailed"),
   );
   return Array.isArray(payload.agents) ? payload.agents : [];
 }
@@ -252,7 +333,7 @@ export async function generateAgentAssist(
       method: "POST",
       body: { type, description },
     },
-    "AI 创建失败",
+    i18n.t("agentHub:aiCreateFailed"),
   );
   return payload.draft;
 }
@@ -261,7 +342,7 @@ export async function saveAgent(payload: Record<string, unknown>): Promise<Agent
   const result = await requestJson<{ agent?: AgentProfile }>(
     "/work/agents",
     { method: "POST", body: payload },
-    "保存 Agent 失败",
+    i18n.t("agentHub:saveFailed"),
   );
   return result.agent ?? null;
 }
@@ -270,7 +351,7 @@ export async function deleteAgent(id: string): Promise<void> {
   await requestJson<void>(
     `/work/agents/${encodeURIComponent(id)}`,
     { method: "DELETE" },
-    "删除 Agent 失败",
+    i18n.t("agentHub:deleteFailed"),
   );
 }
 
@@ -280,7 +361,7 @@ export async function fetchRecentWorkspaces(): Promise<RecentWorkspace[]> {
   const payload = await requestJson<{ recent?: RecentWorkspace[] }>(
     "/work/workspace/recent",
     {},
-    "加载最近工作区失败",
+    i18n.t("workspace:fetchRecentWorkspacesFailed"),
   );
   return Array.isArray(payload.recent) ? payload.recent : [];
 }
@@ -295,7 +376,7 @@ export async function fetchTree(
   const payload = await requestJson<{ entries?: TreeEntry[] }>(
     `/work/threads/${encodeURIComponent(threadId)}/tree?${query}`,
     {},
-    "加载工作区文件树失败",
+    i18n.t("workspace:fetchTreeFailed"),
   );
   return Array.isArray(payload.entries) ? payload.entries : [];
 }
@@ -307,7 +388,7 @@ export async function fetchChanges(
   const payload = await requestJson<{ changes?: WorkspaceFileChange[] }>(
     `/work/threads/${encodeURIComponent(threadId)}/changes?${resourceQuery(resourceId)}`,
     {},
-    "加载工作区变更失败",
+    i18n.t("workspace:fetchChangesFailed"),
   );
   return Array.isArray(payload.changes) ? payload.changes : [];
 }
@@ -323,7 +404,7 @@ export async function fetchChangeContent(
     `/work/threads/${encodeURIComponent(threadId)}/changes/${encodeURIComponent(changeId)}/content?${params}`,
   );
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error("加载工作区变更内容失败");
+  if (!response.ok) throw new Error(i18n.t("workspace:fetchDiffFailed"));
   return (await response.json()) as {
     content: string;
     binary: boolean;
@@ -349,7 +430,7 @@ export async function fetchWorkspaceFile(
   const payload = await requestJson<WorkspaceFileResponse & { error?: string }>(
     `/work/threads/${encodeURIComponent(threadId)}/file?${new URLSearchParams({ resourceId, path })}`,
     {},
-    "文件读取失败",
+    i18n.t("workspace:readFileFailed"),
   );
   return payload;
 }
@@ -367,7 +448,7 @@ export async function createWorkspaceEntry(
   await requestJson(
     `/work/threads/${encodeURIComponent(threadId)}/tree?${new URLSearchParams({ resourceId })}`,
     { method: "POST", body: { path, type } },
-    type === "dir" ? "新建文件夹失败" : "添加文件失败",
+    type === "dir" ? i18n.t("workspace:createDirFailed") : i18n.t("workspace:createFileFailed"),
   );
 }
 
@@ -380,34 +461,22 @@ export async function saveWorkspaceFile(
   await requestJson(
     `/work/threads/${encodeURIComponent(threadId)}/file?${new URLSearchParams({ resourceId, path })}`,
     { method: "PUT", body: { content } },
-    "保存失败",
+    i18n.t("workspace:saveFailed"),
   );
 }
 
 export async function openPathInApp(
-  appId: string,
+  appId: WorkspaceApp,
   targetPath: string,
   appName: string,
 ): Promise<void> {
   try {
-    if (window.api?.workspace?.openInApp) {
-      const result = await window.api.workspace.openInApp(appId, targetPath);
-      if (result && !result.ok && result.error) {
-        throw new Error(result.error);
-      }
-    } else {
-      const response = await apiFetch(`${MASTRA_SERVER_URL}/work/workspace/open-in`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ app: appId, path: targetPath }),
-      });
-      if (!response.ok) {
-        const payload = (await response.json()) as { error?: string; message?: string };
-        throw new Error(payload.error || payload.message || "启动应用失败");
-      }
+    const result = await window.api.workspace.openInApp(appId, targetPath);
+    if (!result.ok && result.error) {
+      throw new Error(result.error);
     }
-    toast.success(`已在 ${appName} 中打开工作区`);
+    toast.success(i18n.t("workspace:openedToast", { name: appName }));
   } catch (error) {
-    toastError(error, `在 ${appName} 中打开失败`);
+    toastError(error, i18n.t("workspace:openFailedToast", { name: appName }));
   }
 }

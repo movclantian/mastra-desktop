@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { useWorkbench } from "@/entities/workbench";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
 import { CHAT_LAYOUT_ID, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MIN_HEIGHT } from "@/shared/config";
 import { cn } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
@@ -49,8 +50,9 @@ function drawerHandleProps(open: boolean) {
 }
 
 export function ChatPage({ userId }: { userId?: string }) {
-  const { user, terminalPanelOpen } = useWorkbench();
-  const effectiveUserId = userId || user.id;
+  const { user: authUser } = useAuth();
+  const terminalPanelOpen = useWorkbenchStore((state) => state.terminalPanelOpen);
+  const effectiveUserId = userId || authUser?.id || "anonymous";
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: `${CHAT_LAYOUT_ID}:${encodeURIComponent(effectiveUserId)}`,

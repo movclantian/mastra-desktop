@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
-import { type ComponentProps, forwardRef } from "react";
+import { type ComponentProps, forwardRef, type ReactNode } from "react";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -169,27 +169,33 @@ export const QueueSection = ({ className, defaultOpen = true, ...props }: QueueS
 );
 
 // QueueSectionTrigger - section header/trigger
-export type QueueSectionTriggerProps = ComponentProps<"button">;
+export type QueueSectionTriggerProps = ComponentProps<"button"> & {
+  action?: ReactNode;
+};
 
 export const QueueSectionTrigger = ({
   children,
   className,
+  action,
   ...props
 }: QueueSectionTriggerProps) => (
-  <CollapsibleTrigger
-    render={
-      <button
-        className={cn(
-          "group flex w-full items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-left font-medium text-muted-foreground text-sm transition-colors hover:bg-muted",
-          className,
-        )}
-        type="button"
-        {...props}
-      />
-    }
-  >
-    {children}
-  </CollapsibleTrigger>
+  <div className="flex min-w-0 items-center gap-1">
+    <CollapsibleTrigger
+      render={
+        <button
+          className={cn(
+            "group flex min-w-0 flex-1 items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-left font-medium text-muted-foreground text-sm transition-colors hover:bg-muted",
+            className,
+          )}
+          type="button"
+          {...props}
+        />
+      }
+    >
+      {children}
+    </CollapsibleTrigger>
+    {action}
+  </div>
 );
 
 // QueueSectionLabel - label content with icon and count

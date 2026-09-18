@@ -1,44 +1,39 @@
+import { Outlet, useLocation, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
-import { useWorkbench, WorkbenchProvider } from "@/entities/workbench";
-import { LoginScreen, useAuth } from "@/features/auth";
-import { AgentHubPage } from "@/pages/agents";
-import { ChatPage } from "@/pages/chat";
-import { SchedulesPage } from "@/pages/schedules";
+import {
+  hydrateWorkbenchStore,
+  useOpenBrowserUrl,
+  useWorkbenchStateReporter,
+  useWorkbenchStore,
+} from "@/entities/workbench";
+import { useSyncThreadToStore } from "@/entities/workbench/model/queries/threads";
+import { viewFromPath } from "@/entities/workbench/model/types";
+import { useAuth } from "@/features/auth";
 import { SettingsPage } from "@/pages/settings";
-import { SkillHubPage } from "@/pages/skills";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
-import { BlurFade } from "@/shared/ui/blur-fade";
-import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { SidebarInset, SidebarProvider } from "@/shared/ui/sidebar";
-import { SmoothCursor } from "@/shared/ui/smooth-cursor";
-import { Toaster } from "@/shared/ui/sonner";
-import { TooltipProvider } from "@/shared/ui/tooltip";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
-const KnowledgeLibraryPage = React.lazy(() =>
-  import("@/pages/library").then((module) => ({ default: module.KnowledgeLibraryPage })),
-);
-
-function PanelFallback() {
-  return (
-    <div className="flex size-full items-center justify-center bg-background">
-      <Dotm3x3_1 size={20} dotSize={3} colorPreset="solid-theme" />
-    </div>
-  );
-}
-
-function WorkspaceDrawerContainer({ open, minWidth }: { open: boolean; minWidth: number }) {
+function WorkspaceDrawerContainer({
+  open,
+  minWidth,
+  docked,
+}: {
+  open: boolean;
+  minWidth: number;
+  docked: boolean;
+}) {
   return (
     <div
-      style={{ minWidth }}
+      style={{ minWidth: docked && open ? minWidth : 0 }}
       className={cn(
         "flex h-full min-h-0 w-full flex-col bg-background transition-opacity duration-200 ease-linear",
-        open ? "opacity-100" : "opacity-0 pointer-events-none",
+        open ? "opacity-100" : "pointer-events-none opacity-0",
       )}
     >
       <WorkspaceDrawer />
@@ -50,6 +45,8 @@ const DRAWER_TRANSITION =
   "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-linear";
 
 const PANEL_CLIP = { overflow: "hidden" } as const;
+const SHELL_PANEL_IDS = ["content", "workspace"];
+const CLOSED_SHELL_LAYOUT = { content: 100, workspace: 0 };
 
 function useDrawerTransition() {
   const [ready, setReady] = React.useState(false);
@@ -87,14 +84,30 @@ function drawerHandleProps(open: boolean) {
   };
 }
 
-function AppShell() {
-  const { user, activeView, workspacePanelOpen, openBrowserUrl, promptMinWidth } = useWorkbench();
-  const [librarySettingsOpen, setLibrarySettingsOpen] = React.useState(false);
+/**
+ * 主应用壳:视图由路由驱动(Outlet),/settings 路由脱离主壳独立全屏。
+ * hash 路由刷新/崩溃恢复后仍能还原当前视图;客户端 UI 态来自 zustand store。
+ */
+export function RootShell() {
+  const { user } = useAuth();
+  const location = useLocation();
+  const activeView = viewFromPath(location.pathname);
+  const urlThread = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
 
+  const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
+  const workspacePanelMode = useWorkbenchStore((state) => state.workspacePanelMode);
+  const promptMinWidth = useWorkbenchStore((state) => state.promptMinWidth);
+  const openBrowserUrl = useOpenBrowserUrl();
+
+  // 登录后注入用户 + 从 localStorage 恢复面板模式与会话草稿(幂等)
   React.useEffect(() => {
-    if (activeView !== "library") setLibrarySettingsOpen(false);
-  }, [activeView]);
+    if (user) hydrateWorkbenchStore(user.id);
+  }, [user]);
 
+  useSyncThreadToStore(urlThread);
+  useWorkbenchStateReporter(urlThread, activeView);
   useHorizontalWheelScroll();
   useLinkRouting(openBrowserUrl);
 
@@ -105,16 +118,18 @@ function AppShell() {
   if (!transition.resizing) frozenChatMinWidth.current = chatMinWidth;
   const panelMinWidth = transition.resizing ? frozenChatMinWidth.current : chatMinWidth;
   const wantsWorkspace = workspacePanelOpen && activeView === "chat";
+  const dockedWorkspace = wantsWorkspace && workspacePanelMode === "docked";
 
   const groupRef = React.useRef<HTMLDivElement>(null);
   useWindowMinWidth({
     elementRef: groupRef,
     contentMinWidth: panelMinWidth,
-    reservedWidth: wantsWorkspace ? WORKSPACE_MIN_WIDTH : 0,
+    reservedWidth: dockedWorkspace ? WORKSPACE_MIN_WIDTH : 0,
   });
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: `${SHELL_LAYOUT_ID}:${encodeURIComponent(user.id)}`,
+    id: `${SHELL_LAYOUT_ID}:${encodeURIComponent(user?.id ?? "anonymous")}`,
+    panelIds: SHELL_PANEL_IDS,
     storage: localStorage,
     onlySaveAfterUserInteractions: true,
   });
@@ -123,97 +138,67 @@ function AppShell() {
   React.useEffect(() => {
     const panel = workspaceRef.current;
     if (!panel) return;
-    if (wantsWorkspace) panel.expand();
+    if (wantsWorkspace && workspacePanelMode === "docked") panel.expand();
     else panel.collapse();
-  }, [wantsWorkspace, workspaceRef]);
+  }, [workspacePanelMode, wantsWorkspace, workspaceRef]);
+
+  if (!user) return null;
 
   // 设置是全局页面:脱离主应用壳(主侧边栏/顶栏/工作台抽屉),占满整屏,
   // 通过设置菜单 sidebar 顶部的「返回应用」回到 chat
-  if (activeView === "settings") {
+  if (location.pathname.startsWith("/settings")) {
     return <SettingsPage />;
   }
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
       <AppSidebar />
-      <SidebarInset className="overflow-hidden border shadow-sm">
+      <SidebarInset
+        className={cn(
+          "border shadow-sm",
+          workspacePanelMode === "fullscreen" ? "overflow-visible" : "overflow-hidden",
+        )}
+      >
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={groupRef}
-          defaultLayout={defaultLayout}
+          defaultLayout={dockedWorkspace ? defaultLayout : CLOSED_SHELL_LAYOUT}
           onLayoutChanged={onLayoutChanged}
           className={cn("min-h-0 min-w-0 overflow-hidden bg-background", transition.className)}
         >
           <ResizablePanel
+            id="content"
             minSize={panelMinWidth}
             style={PANEL_CLIP}
             className="flex min-w-0 flex-col"
           >
-            <AppTopBar onOpenLibrarySettings={() => setLibrarySettingsOpen(true)} />
+            <AppTopBar />
             <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-              {activeView === "agents" ? (
-                <BlurFade key="agent-hub" duration={0.2} blur="3px" className="size-full">
-                  <AgentHubPage />
-                </BlurFade>
-              ) : activeView === "skills" ? (
-                <BlurFade key="skill-hub" duration={0.2} blur="3px" className="size-full">
-                  <SkillHubPage />
-                </BlurFade>
-              ) : activeView === "library" ? (
-                <BlurFade key="library-hub" duration={0.2} blur="3px" className="size-full">
-                  <React.Suspense fallback={<PanelFallback />}>
-                    <KnowledgeLibraryPage
-                      settingsOpen={librarySettingsOpen}
-                      onSettingsOpenChange={setLibrarySettingsOpen}
-                    />
-                  </React.Suspense>
-                </BlurFade>
-              ) : activeView === "schedules" ? (
-                <BlurFade key="schedules" duration={0.2} blur="3px" className="size-full">
-                  <SchedulesPage />
-                </BlurFade>
-              ) : (
-                <ChatPage userId={user.id} />
-              )}
+              <Outlet />
             </main>
           </ResizablePanel>
-          <ResizableHandle {...transition.handleProps} {...drawerHandleProps(wantsWorkspace)} />
+          <ResizableHandle {...transition.handleProps} {...drawerHandleProps(dockedWorkspace)} />
           <ResizablePanel
+            id="workspace"
             panelRef={workspaceRef}
             collapsible
             collapsedSize={0}
             minSize={WORKSPACE_MIN_WIDTH}
             groupResizeBehavior="preserve-pixel-size"
-            style={PANEL_CLIP}
+            style={
+              workspacePanelMode === "docked"
+                ? { ...PANEL_CLIP, ...(wantsWorkspace ? {} : { display: "none" }) }
+                : { overflow: "visible", ...(wantsWorkspace ? {} : { display: "none" }) }
+            }
           >
-            <WorkspaceDrawerContainer open={wantsWorkspace} minWidth={WORKSPACE_MIN_WIDTH} />
+            <WorkspaceDrawerContainer
+              docked={workspacePanelMode === "docked"}
+              open={wantsWorkspace}
+              minWidth={WORKSPACE_MIN_WIDTH}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
     </SidebarProvider>
-  );
-}
-
-export default function App(): React.JSX.Element {
-  const { user, token, setSession } = useAuth();
-
-  if (!user || !token) {
-    return (
-      <TooltipProvider>
-        <LoginScreen onAuthenticated={setSession} />
-        <SmoothCursor />
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
-    );
-  }
-
-  return (
-    <WorkbenchProvider user={user}>
-      <TooltipProvider>
-        <AppShell />
-        <SmoothCursor />
-        <Toaster position="bottom-right" />
-      </TooltipProvider>
-    </WorkbenchProvider>
   );
 }

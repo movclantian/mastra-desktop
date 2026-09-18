@@ -1,6 +1,8 @@
 import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
+import { useRouterState } from "@tanstack/react-router";
 import { type FileUIPart, isToolUIPart, type LanguageModelUsage } from "ai";
+import { GitBranchIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
@@ -8,18 +10,32 @@ import type { AgentMemberDefinition, AgentProfile, ToolCategory } from "@/entiti
 import {
   buildReasoningRequest,
   buildRequestModel,
+  fetchThreadSource,
   getModelCapabilities,
   getModelContextWindow,
-  useWorkbench,
+  withCategoryPolicy,
 } from "@/entities/workbench";
+import { useCatalogQuery } from "@/entities/workbench/model/queries/config";
+import {
+  useCloneThreadMutation,
+  useCreateThreadMutation,
+  useInvalidateThreads,
+  useSelectThread,
+  useThreadsQuery,
+} from "@/entities/workbench/model/queries/threads";
+import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { readErrorPayload, toastError } from "@/shared/lib";
-import type { ContextUsageBreakdown } from "@/shared/ui/ai-elements/context";
 import { PromptInputProvider } from "@/shared/ui/ai-elements/prompt-input";
 import { Queue } from "@/shared/ui/ai-elements/queue";
 import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
 import { BlurFade } from "@/shared/ui/blur-fade";
+import { Button } from "@/shared/ui/button";
 import { DotPattern } from "@/shared/ui/dot-pattern";
 import { DotmSquare3 } from "@/shared/ui/dotm-square-3";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/shared/ui/item";
 import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
 import {
@@ -30,22 +46,24 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
   useMessageScroller,
+  useMessageScrollerVisibility,
 } from "@/shared/ui/message-scroller";
 import { Meteors } from "@/shared/ui/meteors";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SparklesText } from "@/shared/ui/sparkles-text";
 import { TypingAnimation } from "@/shared/ui/typing-animation";
 import { WordRotate } from "@/shared/ui/word-rotate";
 import {
   abortThread,
   enqueueFollowUp,
-  fetchDisplayState as fetchDisplayStateRequest,
-  fetchThreadMessages as fetchThreadMessagesRequest,
-  grantToolCategory,
+  fetchThreadMessagesPage,
   runWorkflowAction,
+  toggleThreadMessageReaction,
 } from "../api/chat-api";
 import { persistAttachments as uploadAttachments } from "../lib/attachments";
-import { buildDisplayMessages } from "../lib/display";
+import { buildDisplayMessages, type DisplayMessage } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
+import { useFetchDisplayStateQuery } from "../model/display-state-query";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -53,7 +71,6 @@ import {
   type BackgroundTaskState,
   getActiveToolsFromMessages,
   getBackgroundTasksFromMessages,
-  getMessageInteractions,
   getSubagentsFromMessages,
   getTasksFromMessages,
   getToolName,
@@ -61,13 +78,13 @@ import {
   getWorkflowStateFromMessages,
   type LibraryFilePart,
   type MessageFileReference,
-  mergeInteractions,
+  type MessageReaction,
   mergeWorkflowRuntimeStates,
   parseSuspendedRuns,
   type QueuedRequest,
+  toggleMessageReactions,
   type WorkDisplayState,
   type WorkflowRuntimeRun,
-  type WorkUIMessage,
 } from "../model/types";
 import { usePlaceholderChat, useThreadChats } from "../model/use-thread-chats";
 import {
@@ -127,29 +144,123 @@ function ChatPanelScrollerController({
 }
 
 // ---------------------------------------------------------------------------
+// 官方 message-actions:发送失败的行内提示需要防闪烁 —— 瞬时错误自动重连期间
+// status 会短暂停在 error,立刻亮起“发送失败”再消失会误导用户。
+// 值持续为 true 超过 delayMs 才确认,false 立即复位。
+// ---------------------------------------------------------------------------
+
+function useDelayedTrue(value: boolean, delayMs: number): boolean {
+  const [confirmed, setConfirmed] = React.useState(false);
+  React.useEffect(() => {
+    if (!value) {
+      setConfirmed(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setConfirmed(true), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+  return confirmed;
+}
+
+// ---------------------------------------------------------------------------
+// 官方 message-scroller-visibility:会话大纲(Transcript Outline)。
+// 触发按钮是竖排小条(当前锚点轮次高亮),HoverCard 展示可点击跳转的提问列表。
+// ---------------------------------------------------------------------------
+
+interface OutlineEntry {
+  id: string;
+  text: string;
+}
+
+function TranscriptOutline({ entries }: { entries: OutlineEntry[] }) {
+  const { t } = useTranslation();
+  const { scrollToMessage } = useMessageScroller();
+  const { currentAnchorId } = useMessageScrollerVisibility();
+
+  return (
+    <HoverCard>
+      <HoverCardTrigger
+        render={
+          <button
+            aria-label={t("chat:welcome.outlineAriaLabel")}
+            className="pointer-events-auto flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            type="button"
+          />
+        }
+      >
+        {entries.map((entry) => (
+          <span
+            className="h-0.5 w-4 rounded-full bg-muted-foreground/40 data-[current=true]:bg-foreground"
+            data-current={entry.id === currentAnchorId}
+            key={entry.id}
+          />
+        ))}
+      </HoverCardTrigger>
+      <HoverCardContent
+        align="center"
+        className="flex w-64 flex-col gap-1 rounded-2xl p-1"
+        side="left"
+        sideOffset={-28}
+      >
+        <ScrollArea className="max-h-72">
+          <div className="flex flex-col gap-1 pr-2">
+            {entries.map((entry) => (
+              <button
+                aria-current={currentAnchorId === entry.id ? "location" : undefined}
+                className="flex min-h-7 items-center rounded-xl px-2 py-1.5 text-left text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground aria-current:bg-accent aria-current:text-accent-foreground"
+                key={entry.id}
+                onClick={() =>
+                  scrollToMessage(entry.id, {
+                    align: "start",
+                    behavior: "smooth",
+                  })
+                }
+                type="button"
+              >
+                <span className="min-w-0 whitespace-normal break-words">{entry.text}</span>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      </HoverCardContent>
+    </HoverCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 会话面板
 // ---------------------------------------------------------------------------
 
 export function ChatPanel() {
+  const { t } = useTranslation();
+  const { user: authUser } = useAuth();
+  const user = authUser ?? { id: "anonymous", name: "Guest", email: "guest@example.com" };
+  const userId = user?.id ?? "anonymous";
+  const threads = useThreadsQuery(userId).data ?? [];
+  // URL ?thread= 即当前线程(真相在 Router)
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const createThreadMutation = useCreateThreadMutation(userId);
+  const cloneThreadMutation = useCloneThreadMutation(userId);
+  const invalidateThreads = useInvalidateThreads();
+  const selectThread = useSelectThread();
+  const catalog = useCatalogQuery().data ?? [];
   const {
-    user,
-    threads,
-    activeThreadId,
-    createThread,
     providers,
     modelSelection,
     agentSelection,
     searchSelection,
-    refreshThreads,
-    pendingJump,
-    setPendingJump,
-    catalog,
+    permissionRules,
+    setPermissionRules,
     refreshThreadSettings,
-    setThreadBusy,
-    setAgentBusy,
-    openWorkspacePanel,
-    setTerminalPanelOpen,
-  } = useWorkbench();
+  } = useSessionSettings(userId, activeThreadId);
+  const pendingJump = useWorkbenchStore((state) => state.pendingJump);
+  const setPendingJump = useWorkbenchStore((state) => state.setPendingJump);
+  const setThreadBusy = useWorkbenchStore((state) => state.setThreadBusy);
+  const setAgentBusy = useWorkbenchStore((state) => state.setAgentBusy);
+  const openWorkspacePanel = useWorkbenchStore((state) => state.openWorkspacePanel);
+  const cloneThreadAsync = cloneThreadMutation.mutateAsync;
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   // 工作区选定(promptInput 顶部选择器):随未锁定线程的首条消息以
@@ -164,12 +275,45 @@ export function ChatPanel() {
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
   const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
   const [activeMemberId, setActiveMemberId] = React.useState<string | null>(null);
+  const [dismissedMemberActivitySignature, setDismissedMemberActivitySignature] = React.useState<
+    string | null
+  >(null);
+  const [dismissedQueueSignature, setDismissedQueueSignature] = React.useState<string | null>(null);
   const [resolvedInteractionKeys, setResolvedInteractionKeys] = React.useState<Set<string>>(
     () => new Set(),
   );
-  const [estimatedContextTokens, setEstimatedContextTokens] = React.useState(0);
   const displayStateRequestId = React.useRef(0);
   const rewriteRefreshRef = React.useRef(false);
+  // 分支来源(官方 isClone / getSourceThread):非分支线程为 undefined,分支线程
+  // 在 effect 里取回 { id, title };来源已删除/查询失败为 null
+  const [cloneSource, setCloneSource] = React.useState<
+    | {
+        id: string;
+        title: string;
+      }
+    | null
+    | undefined
+  >(undefined);
+
+  React.useEffect(() => {
+    const sourceThreadId = activeThread?.metadata.clone?.sourceThreadId;
+    if (!activeThreadId || !sourceThreadId) {
+      setCloneSource(undefined);
+      return;
+    }
+    let disposed = false;
+    setCloneSource(undefined);
+    void fetchThreadSource(activeThreadId, user.id)
+      .then((source) => {
+        if (!disposed) setCloneSource(source);
+      })
+      .catch(() => {
+        if (!disposed) setCloneSource(null);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeThread?.metadata.clone?.sourceThreadId, activeThreadId, user.id]);
 
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   const selectedContextWindow = React.useMemo(
@@ -198,6 +342,9 @@ export function ChatPanel() {
   // memoized transport 持有旧值的竞态
   const activeThreadIdRef = React.useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
+  // 新线程首条消息发送期间,路由会先切到新线程。此时不能用尚为空的
+  // 服务端历史覆盖 Chat 即将写入的乐观用户消息。
+  const initialSendRef = React.useRef<{ threadId: string | null } | null>(null);
   // 工作区路径/锁定状态同样经 ref 透传给 memoized transport
   const pendingWorkspacePathRef = React.useRef(pendingWorkspacePath);
   pendingWorkspacePathRef.current = pendingWorkspacePath;
@@ -214,7 +361,7 @@ export function ChatPanel() {
     ...(selectedProvider && modelSelection
       ? { model: buildRequestModel(selectedProvider, modelSelection.modelId) }
       : {}),
-    // 模型形态快照(不含 Key/url):服务端写进 thread.metadata.modelSelection,
+    // 模型形态快照:服务端写进 thread.metadata.modelSelection,
     // 切回本线程时前端据此恢复模型与思考等级选择
     ...(modelSelection
       ? {
@@ -273,6 +420,17 @@ export function ChatPanel() {
     throttle: 50,
   });
 
+  // 历史分页(官方 message-scroller-load-history):每线程已加载页数与
+  // “还有更早历史”只驱动命令式加载,不参与渲染,全部走 ref。
+  const historyPageCountRef = React.useRef(new Map<string, number>());
+  const hasEarlierHistoryRef = React.useRef(false);
+  const loadingEarlierHistoryRef = React.useRef(false);
+  // 消息最新快照:handleToggleReaction 等回调要读当前 reactions 做乐观更新,
+  // 但不能把 messages 放进 useCallback 依赖 —— 流式期间每 50ms 一变会让
+  // memoized MessageItem 全体失效。
+  const messagesRef = React.useRef(messages);
+  messagesRef.current = messages;
+
   // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器
   const workspaceLocked = Boolean(activeThread?.metadata.workspacePath) || messages.length > 0;
   workspaceLockedRef.current = workspaceLocked;
@@ -289,8 +447,14 @@ export function ChatPanel() {
     if (!activeThreadId || messages.length === 0 || activeThread?.metadata.workspacePath) return;
     if (workspaceSyncedThreadsRef.current.has(activeThreadId)) return;
     workspaceSyncedThreadsRef.current.add(activeThreadId);
-    void refreshThreads();
-  }, [activeThread?.metadata.workspacePath, activeThreadId, messages.length, refreshThreads]);
+    void invalidateThreads(userId);
+  }, [
+    activeThread?.metadata.workspacePath,
+    activeThreadId,
+    invalidateThreads,
+    messages.length,
+    userId,
+  ]);
 
   // 首轮会话流式完成时（状态由 streaming 变为 ready）：立即刷新线程列表，实时呈现服务端智能起名的标题
   const previousStatusRef = React.useRef(status);
@@ -298,25 +462,46 @@ export function ChatPanel() {
     const wasStreaming = previousStatusRef.current === "streaming";
     previousStatusRef.current = status;
     if (wasStreaming && status === "ready" && activeThreadId) {
-      void refreshThreads();
+      void invalidateThreads(userId);
     }
-  }, [activeThreadId, refreshThreads, status]);
+  }, [activeThreadId, invalidateThreads, status, userId]);
 
   // 从服务端拉取历史消息并重建消息流(线程切换 / 压缩后刷新共用)。
   //
   // setMessages 恒定写「当前」Chat(useChat 里它闭包的是一个永久稳定的 ref),
   // 所以必须校验归属:快速切换时 A 的历史可能在 B 已激活后才返回,写进去等于
   // 用 A 的旧历史覆盖 B —— B 若正在流式,这一下就把流打断在视觉上。
+  //
+  // 分页(官方 message-scroller-load-history):并行拉取该线程已加载深度的
+  // 全部页(page 0 最新),向上加载过更早历史后刷新不会把已读内容收回去。
   const reloadMessages = React.useCallback((): Promise<boolean> => {
     const threadId = activeThreadId;
     if (!threadId) {
       setMessages([]);
       return Promise.resolve(true);
     }
-    return fetchThreadMessagesRequest(threadId, user.id)
-      .then((data: { messages: WorkUIMessage[] }) => {
+    const pageCount = historyPageCountRef.current.get(threadId) ?? 1;
+    return Promise.all(
+      Array.from({ length: pageCount }, (_, page) =>
+        fetchThreadMessagesPage(threadId, user.id, page),
+      ),
+    )
+      .then((pages) => {
         if (activeThreadIdRef.current !== threadId) return false;
-        setMessages(data.messages ?? []);
+        // 页数组倒序(最旧在前)再 flat 得到时间正序;按 id 去重防页界重叠
+        const seen = new Set<string>();
+        const loaded = pages
+          .slice()
+          .reverse()
+          .flatMap((page) => page.messages)
+          .filter((message) => {
+            if (seen.has(message.id)) return false;
+            seen.add(message.id);
+            return true;
+          });
+        // hasMore 指向更旧的页:取已加载的最旧一页(数组末项)判断
+        hasEarlierHistoryRef.current = pages[pages.length - 1]?.hasMore ?? false;
+        setMessages(loaded);
         return true;
       })
       .catch(() => {
@@ -327,9 +512,38 @@ export function ChatPanel() {
       });
   }, [activeThreadId, setMessages, user.id]);
 
+  // 向上滚动到顶部附近时加载更早一页历史:前置插入 + preserveScrollOnPrepend
+  // (MessageScrollerViewport 默认启用)保持阅读位置不跳动。
+  const loadEarlierHistory = React.useCallback(() => {
+    const threadId = activeThreadIdRef.current;
+    if (!threadId || loadingEarlierHistoryRef.current || !hasEarlierHistoryRef.current) return;
+    loadingEarlierHistoryRef.current = true;
+    const nextPage = historyPageCountRef.current.get(threadId) ?? 1;
+    fetchThreadMessagesPage(threadId, user.id, nextPage)
+      .then((page) => {
+        if (activeThreadIdRef.current !== threadId) return;
+        historyPageCountRef.current.set(threadId, nextPage + 1);
+        hasEarlierHistoryRef.current = page.hasMore;
+        setMessages((current) => {
+          const existingIds = new Set(current.map((message) => message.id));
+          return [...page.messages.filter((message) => !existingIds.has(message.id)), ...current];
+        });
+      })
+      .catch(() => {
+        toast.error(t("chat:welcome.toastLoadEarlierFailed"));
+      })
+      .finally(() => {
+        loadingEarlierHistoryRef.current = false;
+      });
+  }, [setMessages, user.id]);
+
+  // display-state 请求经 Query 缓存(按 threadId keyed,同线程并发读取自动去重),
+  // 派生拆分(tasks/interactions/backgroundRuns)仍留本地 —— 它们驱动的是
+  // 逐字段相等性比较的渲染优化,不是可复用的服务端状态。
+  const fetchDisplayStateQuery = useFetchDisplayStateQuery();
   const fetchDisplayState = React.useCallback(
     async (threadId: string) => {
-      const payload = await fetchDisplayStateRequest(threadId, user.id);
+      const payload = await fetchDisplayStateQuery(userId, threadId);
       if (!payload.displayState) return undefined;
       return {
         ...payload.displayState,
@@ -337,7 +551,7 @@ export function ChatPanel() {
         suspendedRuns: parseSuspendedRuns(payload.displayState.suspendedRuns),
       } satisfies WorkDisplayState;
     },
-    [user.id],
+    [fetchDisplayStateQuery, userId],
   );
 
   const reloadDisplayState = React.useCallback(async () => {
@@ -386,7 +600,13 @@ export function ChatPanel() {
   // 正在增长的消息覆盖成服务端尚未落库的旧历史,等于把流打断在视觉上。
   // 因此只有「这个 Chat 还没装载过历史」时才拉:实例是新建的(切换/首次)且当前空闲。
   React.useEffect(() => {
-    if (activeChat.messages.length === 0 && activeChat.status === "ready") {
+    // 换线程后“还有更早历史”未知,reloadMessages 完成后会重新赋值
+    hasEarlierHistoryRef.current = false;
+    const initialSend = initialSendRef.current;
+    const isInitialSendThread =
+      initialSend !== null &&
+      (initialSend.threadId === null || initialSend.threadId === activeThreadId);
+    if (!isInitialSendThread && activeChat.messages.length === 0 && activeChat.status === "ready") {
       void reloadMessages();
     }
     setTasks([]);
@@ -439,6 +659,33 @@ export function ChatPanel() {
       void activeChat.sendMessage({ text, messageId });
     },
     [activeChat],
+  );
+
+  // 表情反应(官方 BubbleReactions 业务对接):乐观更新 + 服务端持久化。
+  // messageId 是聚合显示消息的 id(= 末条源消息 id),与服务端存储行一致。
+  const handleToggleReaction = React.useCallback(
+    (messageId: string, emoji: string) => {
+      const threadId = activeThreadIdRef.current;
+      if (!threadId) return;
+      const target = messagesRef.current.find((message) => message.id === messageId);
+      const previous = target?.metadata?.reactions;
+      const applyReactions = (reactions: MessageReaction[]) =>
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? { ...message, metadata: { ...message.metadata, reactions } }
+              : message,
+          ),
+        );
+      applyReactions(toggleMessageReactions(previous, emoji, user.id));
+      void toggleThreadMessageReaction(threadId, user.id, messageId, emoji)
+        .then((result) => applyReactions(result.reactions))
+        .catch(() => {
+          applyReactions(previous ?? []);
+          toast.error(t("chat:welcome.toastReactionFailed"));
+        });
+    },
+    [setMessages, user.id],
   );
 
   // Refresh once after an edit/regenerate stream completes.
@@ -515,14 +762,15 @@ export function ChatPanel() {
         if (!toolName) continue;
         if (toolName.startsWith("browser_")) {
           openWorkspacePanel("browser");
-        } else if (toolName === "mastra_workspace_execute_command") {
-          setTerminalPanelOpen(true);
-        } else if (toolName.startsWith("mastra_workspace_")) {
+        } else if (
+          toolName.startsWith("mastra_workspace_") &&
+          toolName !== "mastra_workspace_execute_command"
+        ) {
           openWorkspacePanel("files");
         }
       }
     }
-  }, [isBusy, messages, openWorkspacePanel, setTerminalPanelOpen]);
+  }, [isBusy, messages, openWorkspacePanel]);
   const streamedBackgroundTasks = React.useMemo(
     () => getBackgroundTasksFromMessages(messages),
     [messages],
@@ -558,7 +806,7 @@ export function ChatPanel() {
       addMember({
         id: `runtime-${subagent.agentType || index + 1}`,
         name: subagent.displayName ?? subagent.agentType,
-        profession: "子 Agent",
+        profession: t("chat:agents.subagent"),
         description: subagent.task,
         instructions: subagent.task,
         skills: [],
@@ -576,16 +824,16 @@ export function ChatPanel() {
       addMember({
         id: `runtime-${agentType}`,
         name: displayName,
-        profession: "子 Agent",
-        description: `后台任务: ${task.toolName}`,
-        instructions: `后台任务: ${task.toolName}`,
+        profession: t("chat:agents.subagent"),
+        description: t("chat:panels.backgroundTaskDescription", { name: task.toolName }),
+        instructions: t("chat:panels.backgroundTaskDescription", { name: task.toolName }),
         skills: [],
         memoryScope: "thread",
       });
     }
 
     return [...members.values()];
-  }, [subagents, visibleBackgroundTasks]);
+  }, [subagents, t, visibleBackgroundTasks]);
   const multiAgentProfile = React.useMemo<AgentProfile | null>(() => {
     if (agentSelection.type === "team") {
       const knownMemberIds = new Set(agentSelection.members.map((member) => member.id));
@@ -606,7 +854,7 @@ export function ChatPanel() {
     const rootMember: AgentMemberDefinition = {
       id: agentSelection.id,
       name: agentSelection.displayName || agentSelection.name,
-      profession: agentSelection.profession || "主 Agent",
+      profession: agentSelection.profession || t("chat:agents.mainAgent"),
       description: agentSelection.description,
       instructions: agentSelection.instructions,
       skills: agentSelection.skills,
@@ -632,6 +880,21 @@ export function ChatPanel() {
   const hasMultiAgentActivity =
     multiAgentMembers.length > 1 &&
     (subagents.length > 0 || workflow !== null || visibleBackgroundTasks.length > 0);
+  const memberActivitySignature = React.useMemo(
+    () =>
+      [
+        multiAgentMembers.map((member) => member.id).join(","),
+        subagents.map((subagent) => `${subagent.agentType}:${subagent.status}`).join(","),
+        visibleBackgroundTasks.map((task) => `${task.id}:${task.status}`).join(","),
+        workflow?.runs.map((run) => `${run.runId}:${run.status}`).join(",") ?? "",
+      ].join("|"),
+    [multiAgentMembers, subagents, visibleBackgroundTasks, workflow],
+  );
+  const showMemberSwitcher =
+    hasMultiAgentActivity && dismissedMemberActivitySignature !== memberActivitySignature;
+  const allSubagentsFinished =
+    subagents.length > 0 &&
+    subagents.every((subagent) => subagent.status === "completed" || subagent.status === "error");
   // 普通 Agent 的成员组第一项是主 Agent 本身。选中它时继续走原始
   // displayMessages -> MessageItem 渲染，确保与未打开成员视图完全一致。
   const mainAgentMemberId = agentSelection.type === "agent" ? agentSelection.id : null;
@@ -641,16 +904,17 @@ export function ChatPanel() {
       : undefined;
   const memberScopeKey = `${activeThreadId ?? "new"}:${agentSelection.id}`;
   React.useEffect(() => {
-    if (!memberScopeKey || !hasMultiAgentActivity) {
-      setActiveMemberId(null);
-      return;
-    }
+    setActiveMemberId(null);
+    setDismissedMemberActivitySignature(null);
+    setDismissedQueueSignature(null);
+  }, [memberScopeKey]);
+  React.useEffect(() => {
     setActiveMemberId((current) =>
-      current && multiAgentMembers.some((member) => member.id === current)
+      hasMultiAgentActivity && current && multiAgentMembers.some((member) => member.id === current)
         ? current
-        : (multiAgentMembers[0]?.id ?? null),
+        : null,
     );
-  }, [hasMultiAgentActivity, memberScopeKey, multiAgentMembers]);
+  }, [hasMultiAgentActivity, multiAgentMembers]);
   const handleWorkflowAction = React.useCallback(
     async (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => {
       if (!activeThreadId) return;
@@ -664,7 +928,7 @@ export function ChatPanel() {
           resumeData,
         );
         if (!response.ok) {
-          toastError(await readErrorPayload(response, "Workflow 操作失败"));
+          toastError(await readErrorPayload(response, t("chat:welcome.toastWorkflowFailed")));
           return;
         }
         // Resume/restart are UI streams. Consume the response so the official
@@ -673,19 +937,35 @@ export function ChatPanel() {
         await reloadDisplayState();
         await reloadMessages();
       } catch (error) {
-        toastError(error, "Workflow 操作失败");
+        toastError(error, t("chat:welcome.toastWorkflowFailed"));
       }
     },
-    [activeThreadId, reloadDisplayState, reloadMessages, user.id],
+    [activeThreadId, reloadDisplayState, reloadMessages, t, user.id],
   );
   const interactions = React.useMemo(
     () =>
-      mergeInteractions(getMessageInteractions(messages), persistedInteractions).filter(
-        (interaction) => !resolvedInteractionKeys.has(interaction.key),
-      ),
-    [messages, persistedInteractions, resolvedInteractionKeys],
+      persistedInteractions.filter((interaction) => !resolvedInteractionKeys.has(interaction.key)),
+    [persistedInteractions, resolvedInteractionKeys],
   );
+  const visibleInteractions = status === "submitted" || status === "streaming" ? [] : interactions;
   const displayMessages = React.useMemo(() => buildDisplayMessages(messages), [messages]);
+
+  // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
+  const outlineEntries = React.useMemo(
+    () =>
+      displayMessages
+        .filter((entry) => entry.message.role === "user")
+        .map((entry) => ({
+          id: entry.message.id,
+          text: entry.message.parts
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n")
+            .trim(),
+        }))
+        .filter((entry) => entry.text.length > 0),
+    [displayMessages],
+  );
   const [resumingKeys, setResumingKeys] = React.useState<Set<string>>(new Set());
   const resumingKeysRef = React.useRef(new Set<string>());
 
@@ -710,7 +990,7 @@ export function ChatPanel() {
         if (!stillPending) {
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
           setPersistedInteractions(pending);
-          toast.error("这次工具交互已过期(可能已在别处处理),已从待办中移除");
+          toast.error(t("chat:welcome.toastToolExpired"));
           return;
         }
 
@@ -719,15 +999,11 @@ export function ChatPanel() {
             ? (resumeData as { approved?: unknown; reason?: unknown })
             : undefined;
         if (interaction.requiresApproval && typeof decision?.approved !== "boolean")
-          throw new Error("工具审批响应缺少 approved 字段");
+          throw new Error("Missing approved field in tool approval response");
 
-        // 先从输入区移除已提交的交互,避免旧历史 part 在 resume 流期间继续覆盖 PromptInput。
+        // 恢复期间由 visibleInteractions 隐藏面板;只有流成功完成后才标记解决,
+        // 失败时保留卡片供用户重试,避免竞态错误把审批项永久吞掉。
         setQueueCanDispatch(false);
-        setResolvedInteractionKeys((current) => {
-          const next = new Set(current);
-          next.add(interaction.key);
-          return next;
-        });
         await chat.sendMessage(undefined, {
           body: {
             runId: interaction.runId,
@@ -735,17 +1011,26 @@ export function ChatPanel() {
             ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
           },
         });
-        if (activeThreadIdRef.current === threadId) await reloadMessages();
+        setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
         // 计划获批时服务端会按 transitionsTo 切模式,重新采纳线程设置让选择器跟上
         if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId)
           await refreshThreadSettings();
-      } catch {
-        setResolvedInteractionKeys((current) => {
-          const next = new Set(current);
-          next.delete(interaction.key);
-          return next;
-        });
-        toast.error("无法继续 Agent 工具调用,请重试");
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error ?? "");
+        if (
+          /expired|no longer pending|no suspended|no tool invocation|pending task/i.test(detail)
+        ) {
+          setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
+          setPersistedInteractions(await fetchSuspendedInteractions(threadId).catch(() => []));
+          toast.error(t("chat:welcome.toastToolExpired"));
+        } else {
+          setResolvedInteractionKeys((current) => {
+            const next = new Set(current);
+            next.delete(interaction.key);
+            return next;
+          });
+          toast.error(t("chat:welcome.toastToolFailed"));
+        }
       } finally {
         resumingKeysRef.current.delete(resumeKey);
         setResumingKeys((current) => {
@@ -755,13 +1040,7 @@ export function ChatPanel() {
         });
       }
     },
-    [
-      activeThreadId,
-      fetchSuspendedInteractions,
-      getThreadChat,
-      refreshThreadSettings,
-      reloadMessages,
-    ],
+    [activeThreadId, fetchSuspendedInteractions, getThreadChat, refreshThreadSettings],
   );
 
   /**
@@ -772,14 +1051,14 @@ export function ChatPanel() {
   const handleAlwaysAllowCategory = React.useCallback(
     async (category: ToolCategory) => {
       if (!activeThreadId) return;
-      await grantToolCategory(activeThreadId, user.id, category);
+      await setPermissionRules(withCategoryPolicy(permissionRules, category, "allow"));
     },
-    [activeThreadId, user.id],
+    [activeThreadId, permissionRules, setPermissionRules],
   );
 
   const lastMessage = messages.at(-1);
   // 优先读取本次响应的 metadata;刷新后则从线程元数据恢复最后一次真实用量
-  // (压缩后服务端写入预估 token,下次真实响应自动覆盖)。
+  // —— 两者都来自模型供应商 usage,不再用消息字符数推算。
   const streamedUsage = (
     [...messages].reverse().find((m) => m.role === "assistant")?.metadata as
       | { usage?: LanguageModelUsage }
@@ -787,59 +1066,7 @@ export function ChatPanel() {
   )?.usage;
   const persistedUsage = activeThread?.metadata.contextUsage as LanguageModelUsage | undefined;
   const latestUsage = streamedUsage ?? persistedUsage;
-  React.useEffect(() => {
-    if (status === "submitted" || status === "streaming") return;
-    const conversationCharacters = messages.reduce(
-      (total, message) =>
-        total +
-        message.parts.reduce((partTotal, part) => {
-          if (part.type === "text") return partTotal + part.text.length;
-          if (part.type === "file") return partTotal + 512;
-          return partTotal;
-        }, 0),
-      0,
-    );
-    setEstimatedContextTokens(Math.ceil(conversationCharacters / 4));
-  }, [messages, status]);
-  const usedContextTokens =
-    latestUsage?.inputTokens && latestUsage.inputTokens > 0
-      ? latestUsage.inputTokens
-      : Math.max(latestUsage?.totalTokens ?? 0, estimatedContextTokens);
-  const estimatedContextBreakdown = React.useMemo<ContextUsageBreakdown>(() => {
-    const totals: Required<ContextUsageBreakdown> = {
-      "system-prompt": 0,
-      "tools-and-subagents": 0,
-      conversation: 0,
-      mcp: 0,
-      skills: 0,
-    };
-    for (const message of messages) {
-      for (const part of message.parts) {
-        const chars =
-          part.type === "text"
-            ? part.text.length
-            : part.type === "file"
-              ? 512
-              : (JSON.stringify(part)?.length ?? 0);
-        const tokens = Math.ceil(chars / 4);
-        if (isToolUIPart(part)) {
-          const toolName = getToolName(part) ?? "";
-          if (toolName.startsWith("mcp_") || toolName.includes("_mcp_")) totals.mcp += tokens;
-          else totals["tools-and-subagents"] += tokens;
-        } else {
-          totals.conversation += tokens;
-        }
-      }
-      const skillNames = (message.metadata as { skillNames?: unknown } | undefined)?.skillNames;
-      if (Array.isArray(skillNames)) {
-        totals.skills += skillNames.reduce(
-          (sum, skill) => sum + (typeof skill === "string" ? Math.ceil(skill.length / 4) : 0),
-          0,
-        );
-      }
-    }
-    return totals;
-  }, [messages]);
+  const usedContextTokens = Math.max(0, latestUsage?.inputTokens ?? 0);
   const responseReserve = Math.min(8_192, Math.floor((selectedContextWindow ?? 32_000) * 0.1));
   const attachmentTokenBudget = Math.max(
     0,
@@ -850,6 +1077,68 @@ export function ChatPanel() {
   }, [attachmentTokenBudget]);
   const streamingMessageId =
     status === "streaming" && lastMessage?.role === "assistant" ? lastMessage.id : undefined;
+
+  // 官方 message-actions:发送失败的行内常驻提示。瞬时错误自动重连期间
+  // status 短暂为 error,延迟 2s 确认避免闪烁(见 useDelayedTrue)。
+  const failedUserMessage =
+    status === "error" && lastMessage?.role === "user" ? lastMessage : undefined;
+  const sendFailed = useDelayedTrue(Boolean(failedUserMessage), 2000);
+
+  // 行内重试:同 messageId 的 sendMessage 会替换该用户消息并重新触发请求
+  // (AI SDK 语义),服务端 chat 路由按 submit-message + messageId 截断重跑。
+  const handleRetrySend = React.useCallback(() => {
+    const failed = failedUserMessage;
+    if (!failed) return;
+    setQueueCanDispatch(false);
+    rewriteRefreshRef.current = true;
+    const text = failed.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
+    const files = failed.parts.filter((part) => part.type === "file");
+    void activeChat.sendMessage(
+      text
+        ? { text, files, metadata: failed.metadata, messageId: failed.id }
+        : { files, metadata: failed.metadata, messageId: failed.id },
+    );
+  }, [activeChat, failedUserMessage]);
+
+  // 从某条消息处创建分支(官方 cloneThread 的 messageFilter 截断):复制截至
+  // 该消息(含)的历史到新线程并切换过去。聚合助手消息的 id 是末条源消息 id,
+  // 截断点恰好包含整轮回复。
+  const handleForkFromMessage = React.useCallback(
+    async (messageId: string) => {
+      const threadId = activeThreadId;
+      if (!threadId) return;
+      const clone = await cloneThreadAsync({ threadId, upToMessageId: messageId }).catch(
+        () => null,
+      );
+      if (clone) toast.success(t("chat:welcome.toastBranchCreated", { title: clone.title }));
+      else toast.error(t("chat:welcome.toastBranchFailed"));
+    },
+    [activeThreadId, cloneThreadAsync, t],
+  );
+
+  // 始终返回同一层级的 MessageScrollerItem,避免相邻用户消息出现时因增加
+  // Fragment/分组父节点而重建旧锚点。showAvatar 只控制视觉,不改变 DOM 身份。
+  const renderMessageItem = (entry: DisplayMessage, showAvatar = true) => (
+    <MessageItem
+      isGenerating={isBusy}
+      isStreaming={entry.sourceIds.includes(streamingMessageId ?? "")}
+      key={entry.sourceIds[0]}
+      message={entry.message}
+      onEdit={handleEdit}
+      onForkFromMessage={handleForkFromMessage}
+      onRetry={handleRetry}
+      onRetrySend={handleRetrySend}
+      onToggleReaction={handleToggleReaction}
+      showAvatar={showAvatar}
+      sendFailed={
+        sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id
+      }
+      userId={user.id}
+    />
+  );
 
   const handleSubmit = async (
     message: {
@@ -905,7 +1194,7 @@ export function ChatPanel() {
           },
         ]);
       } catch (error) {
-        toastError(error, "附件保存失败");
+        toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
         return;
       }
       clearPrompt();
@@ -915,24 +1204,35 @@ export function ChatPanel() {
     // 未锁定线程的首条消息会消费工作区选定(workspaceLocked 在发送前快照)
     const consumesWorkspaceSelection = !workspaceLocked;
 
-    // 无激活线程时,先创建线程再发送
-    if (!activeThreadId) {
-      const thread = await createThread();
+    // 无激活线程时,先创建线程再发送。标记必须早于 mutation:mutation 的
+    // onSuccess 会先切路由,随后 mutateAsync 才把新线程返回到这里。
+    const initialSend: { threadId: string | null } | null = activeThreadId
+      ? null
+      : { threadId: null };
+    if (initialSend) {
+      initialSendRef.current = initialSend;
+      const thread = await createThreadMutation.mutateAsync().catch(() => null);
       if (!thread) {
-        toast.error("创建会话失败,请确认 Mastra 服务已启动");
+        if (initialSendRef.current === initialSend) initialSendRef.current = null;
+        toast.error(t("chat:welcome.toastCreateSessionFailed"));
         return;
       }
+      initialSend.threadId = thread.id;
       // 立即更新 ref:sendMessage 读到的是最新 threadId,不等 re-render
       activeThreadIdRef.current = thread.id;
     }
 
     const targetThreadId = activeThreadIdRef.current;
-    if (!targetThreadId) return;
+    if (!targetThreadId) {
+      if (initialSendRef.current === initialSend) initialSendRef.current = null;
+      return;
+    }
     let persistedFiles: LibraryFilePart[];
     try {
       persistedFiles = await persistAttachments(files, targetThreadId);
     } catch (error) {
-      toastError(error, "附件保存失败");
+      if (initialSendRef.current === initialSend) initialSendRef.current = null;
+      toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
       return;
     }
     clearPrompt();
@@ -940,27 +1240,31 @@ export function ChatPanel() {
     selectedSkillNamesRef.current = message.skills ?? [];
     // 显式发到目标线程自己的 Chat 实例:新建线程时渲染层还没切过去,
     // 用渲染时绑定的实例会把消息发进上一条线程。
-    await getThreadChat(targetThreadId).sendMessage(
-      text
-        ? {
-            text,
-            files: persistedFiles,
-            metadata: {
-              skillNames: message.skills ?? [],
-              fileReferences: message.fileReferences ?? [],
+    await getThreadChat(targetThreadId)
+      .sendMessage(
+        text
+          ? {
+              text,
+              files: persistedFiles,
+              metadata: {
+                skillNames: message.skills ?? [],
+                fileReferences: message.fileReferences ?? [],
+              },
+            }
+          : {
+              files: persistedFiles,
+              metadata: {
+                skillNames: message.skills ?? [],
+                fileReferences: message.fileReferences ?? [],
+              },
             },
-          }
-        : {
-            files: persistedFiles,
-            metadata: {
-              skillNames: message.skills ?? [],
-              fileReferences: message.fileReferences ?? [],
-            },
-          },
-    );
+      )
+      .finally(() => {
+        if (initialSendRef.current === initialSend) initialSendRef.current = null;
+      });
     // prepareThreadSession 已将首条消息携带的显式目录写入线程元数据;
     // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
-    await refreshThreads();
+    await invalidateThreads(userId);
     selectedSkillNamesRef.current = [];
     // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
     if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
@@ -989,7 +1293,7 @@ export function ChatPanel() {
       const targetThreadId = activeThreadIdRef.current;
       if (!targetThreadId || sendingQueuedRequest.current) return;
       if (request.files.length > 0) {
-        toast.error("带附件的排队请求会在当前回合结束后发送");
+        toast.error(t("chat:welcome.toastQueueWithAttachments"));
         return;
       }
       sendingQueuedRequest.current = true;
@@ -1018,14 +1322,14 @@ export function ChatPanel() {
       })()
         .catch(() => {
           setQueuedRequests((current) => [request, ...current]);
-          toast.error("无法立即转向当前任务,请稍后重试");
+          toast.error(t("chat:welcome.toastSteerFailed"));
         })
         .finally(() => {
           sendingQueuedRequest.current = false;
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [agentSelection.id, getThreadChat],
+    [agentSelection.id, getThreadChat, t],
   );
 
   const sendingQueuedRequest = React.useRef(false);
@@ -1078,7 +1382,7 @@ export function ChatPanel() {
         setQueuedRequests((current) => current.filter((queued) => queued.id !== nextRequest.id));
       })
       .catch(() => {
-        toast.error("排队请求发送失败,请检查服务连接后重试");
+        toast.error(t("chat:welcome.toastQueueSendFailed"));
       })
       .finally(() => {
         selectedSkillNamesRef.current = [];
@@ -1099,8 +1403,20 @@ export function ChatPanel() {
 
   // 输入区(Queue 卡片 + 工作区卡片 + 输入框):新会话时垂直居中展示,
   // 有消息后固定底部 —— 同一份 JSX,两种布局复用。
+  const queueContentSignature = React.useMemo(
+    () =>
+      [
+        visibleTasks.map((task) => `${task.id}:${task.status}`).join(","),
+        activeTools.map((tool) => `${tool.toolCallId}:${tool.status}`).join(","),
+        queuedRequests.filter((request) => request.queuedOnServer).length,
+      ].join("|"),
+    [activeTools, queuedRequests, visibleTasks],
+  );
+  const showAgentQueue =
+    !dismissedQueueSignature || dismissedQueueSignature !== queueContentSignature;
   const hasQueueCard =
-    queuedRequests.length > 0 || visibleTasks.length > 0 || activeTools.length > 0;
+    queuedRequests.length > 0 ||
+    (showAgentQueue && (visibleTasks.length > 0 || activeTools.length > 0));
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1110,12 +1426,22 @@ export function ChatPanel() {
           做的任务。
           外层 max-w-3xl 容器与下方输入框同宽基准,w-[96%] 才是"略窄于输入框"
           (工作区卡片同规格,见 workspace-selector.tsx)。 */}
-      {hasMultiAgentActivity ? (
+      {showMemberSwitcher ? (
         <div className="mx-auto mb-1 w-full max-w-3xl px-1">
           <AgentMemberSwitcher
             activeMemberId={activeMemberId}
             members={multiAgentMembers}
-            onSelect={setActiveMemberId}
+            onSelect={(memberId) =>
+              setActiveMemberId((current) => (current === memberId ? null : memberId))
+            }
+            onClose={
+              allSubagentsFinished
+                ? () => {
+                    setActiveMemberId(null);
+                    setDismissedMemberActivitySignature(memberActivitySignature);
+                  }
+                : undefined
+            }
             runtimes={agentMemberRuntimes}
           />
         </div>
@@ -1131,8 +1457,9 @@ export function ChatPanel() {
             />
             <AgentQueuePanel
               activeTools={activeTools}
+              onClose={() => setDismissedQueueSignature(queueContentSignature)}
               queuedFollowUps={queuedRequests.filter((request) => request.queuedOnServer).length}
-              tasks={visibleTasks}
+              tasks={showAgentQueue ? visibleTasks : []}
             />
           </Queue>
         </div>
@@ -1143,13 +1470,13 @@ export function ChatPanel() {
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
           busyKeys={resumingKeys}
-          interactions={interactions}
+          interactions={visibleInteractions}
           messages={messages}
           onAlwaysAllow={handleAlwaysAllowCategory}
           onResume={handleResumeInteraction}
           threadId={activeThreadId}
         />
-        {interactions.length === 0 ? (
+        {visibleInteractions.length === 0 ? (
           <>
             {/* 工作区卡片与输入框相接;上方还有 Queue 卡片时去掉顶边连成一体 */}
             {!workspaceLocked ? (
@@ -1162,8 +1489,6 @@ export function ChatPanel() {
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
               usage={latestUsage}
-              estimatedUsedTokens={estimatedContextTokens}
-              estimatedBreakdown={estimatedContextBreakdown}
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}
@@ -1216,13 +1541,13 @@ export function ChatPanel() {
               <div className="flex flex-col items-center text-center gap-2">
                 <div className="flex items-center gap-2">
                   <SparklesText
-                    text="Mastra AI 智能工作台"
+                    text={t("chat:welcome.title")}
                     className="text-xl md:text-2xl font-bold tracking-tight"
                   />
                 </div>
                 {activeThread ? (
                   <AnimatedShinyText className="text-xs text-muted-foreground max-w-md">
-                    {`继续对话「${activeThread.title}」或选择快捷卡片探索`}
+                    {t("chat:welcome.continueOrExplore", { title: activeThread.title })}
                   </AnimatedShinyText>
                 ) : (
                   /* 逐句打字轮播:比一句静态副标题更能说清这个工作台能做什么 */
@@ -1232,12 +1557,10 @@ export function ChatPanel() {
                     deleteSpeed={22}
                     pauseDelay={2200}
                     loop
-                    words={[
-                      "全功能多 Agent 协作工作台",
-                      "工具链调用 · 沙箱执行 · 命令行",
-                      "本地工作区读写与代码变更追踪",
-                      "知识库检索与 MCP 外部能力接入",
-                    ]}
+                    words={(() => {
+                      const subtitles = t("chat:welcome.subtitles", { returnObjects: true });
+                      return Array.isArray(subtitles) ? (subtitles as string[]) : [];
+                    })()}
                   />
                 )}
               </div>
@@ -1248,24 +1571,24 @@ export function ChatPanel() {
               <ItemGroup className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {[
                   {
-                    title: "🔍 分析当前工作区架构",
-                    desc: "深度扫描项目目录结构，梳理核心依赖与模块分层关系",
-                    prompt: "请详细分析当前工作区目录架构与核心模块关系，给出分层设计总结。",
+                    title: t("chat:welcome.starters.archTitle"),
+                    desc: t("chat:welcome.starters.archDesc"),
+                    prompt: t("chat:welcome.starters.archPrompt"),
                   },
                   {
-                    title: "⚡ 编排多 Agent 协作工作流",
-                    desc: "构建具备子智能体派发、状态监听与自动汇总的流水线",
-                    prompt: "请帮我规划并设计一个多 Agent 协作的工作流，明确各自职责分工。",
+                    title: t("chat:welcome.starters.workflowTitle"),
+                    desc: t("chat:welcome.starters.workflowDesc"),
+                    prompt: t("chat:welcome.starters.workflowPrompt"),
                   },
                   {
-                    title: "🧪 生成自动化测试与类型",
-                    desc: "基于核心函数与业务逻辑自动补充严苛的 TypeScript 契约",
-                    prompt: "请分析核心代码并编写全套单元测试用例与边界异常处理。",
+                    title: t("chat:welcome.starters.testTitle"),
+                    desc: t("chat:welcome.starters.testDesc"),
+                    prompt: t("chat:welcome.starters.testPrompt"),
                   },
                   {
-                    title: "📚 检索与总结知识库文档",
-                    desc: "提炼核心知识库与 MCP 工具文档，生成可执行的最佳实践",
-                    prompt: "请结合当前知识库与工具规范，总结并输出完整的开发指南。",
+                    title: t("chat:welcome.starters.kbTitle"),
+                    desc: t("chat:welcome.starters.kbDesc"),
+                    prompt: t("chat:welcome.starters.kbPrompt"),
                   },
                 ].map((starter, index) => (
                   /* 逐张错位浮现(与 skill-hub 卡片列表同一手法),而不是整块一起淡入 */
@@ -1305,8 +1628,36 @@ export function ChatPanel() {
           </div>
         ) : (
           <>
+            {/* 分支溯源横幅(官方 isClone / getSourceThread):点击跳回原会话 */}
+            {activeThread?.metadata.clone ? (
+              <div className="flex min-h-0 shrink-0 items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs">
+                <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 truncate text-muted-foreground">
+                  {t("chat:welcome.forkedFrom")}
+                  <span className="font-medium text-foreground">
+                    {cloneSource?.title ?? t("chat:welcome.originalSession")}
+                  </span>
+                </span>
+                {cloneSource ? (
+                  <Button
+                    className="h-6 shrink-0 px-2 text-xs"
+                    onClick={() => selectThread(cloneSource.id)}
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    {t("chat:welcome.viewOriginal")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             <MessageScroller className="flex-1">
-              <MessageScrollerViewport>
+              <MessageScrollerViewport
+                onScroll={(event) => {
+                  // 官方 message-scroller-load-history:接近顶部时加载更早历史
+                  if (event.currentTarget.scrollTop <= 64) loadEarlierHistory();
+                }}
+              >
                 <MessageScrollerContent
                   aria-busy={isBusy}
                   className="mx-auto w-full max-w-3xl px-4 py-6"
@@ -1321,22 +1672,19 @@ export function ChatPanel() {
                       }
                     />
                   ) : (
-                    displayMessages.map(({ message, sourceIds }) => (
-                      // key 取合并组的**首条**源消息 id:每跨一个工具/推理边界,Mastra 就再封
-                      // 一条 assistant 行并被合并进同一组(见 buildDisplayMessages),sourceIds
-                      // 因此在流式途中不断增长。用全量拼接当 key 会让 key 每次都变,React 于是
-                      // 销毁重建整条消息的 DOM —— 既白扔掉工具卡片的展开态,又让 MessageScroller
-                      // 把全新元素当成没锚定过的新锚点反复重锚,滚动状态store 每轮同步翻新一次,
-                      // 嵌套更新计数一路累加到上限。组的起点一旦建立就不再变,是唯一稳定的身份。
-                      <MessageItem
-                        key={sourceIds[0]}
-                        message={message}
-                        isStreaming={sourceIds.includes(streamingMessageId ?? "")}
-                        onEdit={handleEdit}
-                        userId={user.id}
-                        onRetry={handleRetry}
-                      />
-                    ))
+                    // key 取合并消息的**首条**源消息 id:每跨一个工具/推理边界,Mastra 就再封
+                    // 一条 assistant 行并被合并进同一组(见 buildDisplayMessages),sourceIds
+                    // 因此在流式途中不断增长。用全量拼接当 key 会让 key 每次都变,React 于是
+                    // 销毁重建整条消息的 DOM —— 既白扔掉工具卡片的展开态,又让 MessageScroller
+                    // 把全新元素当成没锚定过的新锚点反复重锚,滚动状态store 每轮同步翻新一次,
+                    // 嵌套更新计数一路累加到上限。组的起点一旦建立就不再变,是唯一稳定的身份。
+                    displayMessages.map((entry, index) =>
+                      renderMessageItem(
+                        entry,
+                        entry.message.role !== "user" ||
+                          displayMessages[index + 1]?.message.role !== "user",
+                      ),
+                    )
                   )}
                   {!activeMember && isBusy && lastMessage?.role !== "assistant" ? (
                     <MessageScrollerItem messageId="typing-indicator">
@@ -1349,13 +1697,12 @@ export function ChatPanel() {
                           <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
                             <DotmSquare3 size={15} dotSize={2} colorPreset="solid-theme" />
                             <WordRotate
-                              words={[
-                                "正在深入推理中...",
-                                "正在解析指令与上下文...",
-                                "正在检索工具库与工作区...",
-                                "正在调度智能体组织回复...",
-                              ]}
-                              duration={2200}
+                              words={
+                                t("chat:welcome.deepThinkingRotations", {
+                                  returnObjects: true,
+                                }) as string[]
+                              }
+                              duration={6000}
                               className="text-xs text-primary"
                             />
                           </div>
@@ -1369,6 +1716,13 @@ export function ChatPanel() {
                 </MessageScrollerContent>
               </MessageScrollerViewport>
               <MessageScrollerButton />
+              {/* 官方 message-scroller-visibility:右侧会话大纲(≥2 个提问轮次才出现)。
+                  容器 pointer-events-none 防挡住消息区滚动,触发按钮自身恢复交互。 */}
+              {outlineEntries.length >= 2 ? (
+                <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
+                  <TranscriptOutline entries={outlineEntries} />
+                </div>
+              ) : null}
             </MessageScroller>
             <div className="relative z-10 shrink-0 bg-background px-4 pb-4">{promptArea}</div>
           </>

@@ -1,9 +1,56 @@
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react";
-import type * as React from "react";
+import * as React from "react";
 import { cn } from "@/shared/lib";
 
-const Select = SelectPrimitive.Root;
+function extractSelectItems(
+  children: React.ReactNode,
+): Array<{ value: any; label: React.ReactNode }> {
+  const itemsMap = new Map<any, React.ReactNode>();
+
+  function traverse(node: React.ReactNode) {
+    React.Children.forEach(node, (child) => {
+      if (!React.isValidElement(child)) return;
+
+      const props = child.props as Record<string, unknown> | undefined;
+      if (
+        typeof child.type !== "string" &&
+        props &&
+        "value" in props &&
+        props.value !== undefined &&
+        ("children" in props || "label" in props)
+      ) {
+        const label = (props.label ?? props.children) as React.ReactNode;
+        itemsMap.set(props.value, label);
+      }
+
+      if (props?.children) {
+        traverse(props.children as React.ReactNode);
+      }
+    });
+  }
+
+  traverse(children);
+  return Array.from(itemsMap.entries()).map(([value, label]) => ({ value, label }));
+}
+
+function Select<Value, Multiple extends boolean | undefined = false>({
+  items,
+  children,
+  ...props
+}: SelectPrimitive.Root.Props<Value, Multiple>) {
+  const resolvedItems = React.useMemo(() => {
+    if (items !== undefined) return items;
+    const extracted = extractSelectItems(children);
+    return extracted.length > 0 ? extracted : undefined;
+  }, [items, children]);
+
+  return (
+    <SelectPrimitive.Root items={resolvedItems} {...props}>
+      {children}
+    </SelectPrimitive.Root>
+  );
+}
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
@@ -19,7 +66,7 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
-      className={cn("flex flex-1 text-left", className)}
+      className={cn("flex flex-1 text-left min-w-0", className)}
       {...props}
     />
   );

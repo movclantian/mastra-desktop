@@ -1,5 +1,5 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
-import { toast } from "sonner";
 import {
   DEFAULT_LIBRARY_SETTINGS,
   fetchLibraryContents,
@@ -8,6 +8,8 @@ import {
   type LibraryFolder,
   type LibrarySettings,
 } from "@/entities/library";
+import { qk } from "@/entities/workbench";
+import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 
 interface UseLibraryDataOptions {
@@ -30,43 +32,77 @@ export function useLibraryData({
   resourceId,
   settingsOpen,
 }: UseLibraryDataOptions): LibraryDataState {
-  const [assets, setAssets] = React.useState<LibraryAsset[]>([]);
-  const [folders, setFolders] = React.useState<LibraryFolder[]>([]);
-  const [loading, setLoading] = React.useState(true);
-  const [settings, setSettings] = React.useState<LibrarySettings>(DEFAULT_LIBRARY_SETTINGS);
-
-  const refresh = React.useCallback(
-    async (silent = false) => {
-      if (!silent) setLoading(true);
-      try {
-        const next = await fetchLibraryContents(resourceId);
-        setAssets(next.assets);
-        setFolders(next.folders);
-      } catch (error) {
-        toastError(error, "读取资料库失败");
-      } finally {
-        if (!silent) setLoading(false);
-      }
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const contentsQuery = useQuery<{ assets: LibraryAsset[]; folders: LibraryFolder[] }>({
+    queryKey: qk.libraryContents(resourceId),
+    queryFn: () => fetchLibraryContents(resourceId),
+    refetchInterval: (query) =>
+      query.state.data?.assets.some((asset) => asset.status === "indexing") ? 1_500 : false,
+  });
+  const settingsQuery = useQuery({
+    queryKey: qk.librarySettings(),
+    queryFn: fetchLibrarySettings,
+    enabled: settingsOpen,
+    staleTime: 30_000,
+  });
+  const assets = contentsQuery.data?.assets ?? [];
+  const folders = contentsQuery.data?.folders ?? [];
+  const settings = settingsQuery.data ?? DEFAULT_LIBRARY_SETTINGS;
+  const setAssets = React.useCallback<React.Dispatch<React.SetStateAction<LibraryAsset[]>>>(
+    (updater) => {
+      queryClient.setQueryData<{ assets: LibraryAsset[]; folders: LibraryFolder[] }>(
+        qk.libraryContents(resourceId),
+        (current) => {
+          const data = current ?? { assets: [], folders: [] };
+          return {
+            ...data,
+            assets: typeof updater === "function" ? updater(data.assets) : updater,
+          };
+        },
+      );
     },
-    [resourceId],
+    [queryClient, resourceId],
+  );
+  const setFolders = React.useCallback<React.Dispatch<React.SetStateAction<LibraryFolder[]>>>(
+    (updater) => {
+      queryClient.setQueryData<{ assets: LibraryAsset[]; folders: LibraryFolder[] }>(
+        qk.libraryContents(resourceId),
+        (current) => {
+          const data = current ?? { assets: [], folders: [] };
+          return {
+            ...data,
+            folders: typeof updater === "function" ? updater(data.folders) : updater,
+          };
+        },
+      );
+    },
+    [queryClient, resourceId],
+  );
+  const setSettings = React.useCallback<React.Dispatch<React.SetStateAction<LibrarySettings>>>(
+    (updater) => {
+      queryClient.setQueryData<LibrarySettings>(qk.librarySettings(), (current) =>
+        typeof updater === "function" ? updater(current ?? DEFAULT_LIBRARY_SETTINGS) : updater,
+      );
+    },
+    [queryClient],
   );
 
-  React.useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  React.useEffect(() => {
-    if (!assets.some((asset) => asset.status === "indexing")) return;
-    const timer = window.setTimeout(() => void refresh(true), 1_500);
-    return () => window.clearTimeout(timer);
-  }, [assets, refresh]);
-
-  React.useEffect(() => {
-    if (!settingsOpen) return;
-    void fetchLibrarySettings()
-      .then((nextSettings) => setSettings(nextSettings))
-      .catch(() => toast.error("读取资料库设置失败"));
-  }, [settingsOpen]);
+  const refresh = React.useCallback(
+    async (_silent = false) => {
+      try {
+        const next = await queryClient.fetchQuery({
+          queryKey: qk.libraryContents(resourceId),
+          queryFn: () => fetchLibraryContents(resourceId),
+          staleTime: 0,
+        });
+        queryClient.setQueryData(qk.libraryContents(resourceId), next);
+      } catch (error) {
+        toastError(error, t("library:readLibraryFailed"));
+      }
+    },
+    [queryClient, resourceId, t],
+  );
 
   return {
     assets,
@@ -75,7 +111,7 @@ export function useLibraryData({
     setFolders,
     settings,
     setSettings,
-    loading,
+    loading: contentsQuery.isPending,
     refresh,
   };
 }

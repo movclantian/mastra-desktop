@@ -28,7 +28,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { useWorkbench } from "@/entities/workbench";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import {
   Attachment,
   AttachmentInfo,
@@ -36,25 +38,43 @@ import {
   AttachmentRemove,
   Attachments,
 } from "@/shared/ui/ai-elements/attachments";
-import type { ContextUsageBreakdown } from "@/shared/ui/ai-elements/context";
 import {
   PromptInput,
+  PromptInputActionAddAttachments,
+  PromptInputActionAddScreenshot,
+  PromptInputActionMenu,
+  PromptInputActionMenuContent,
+  PromptInputActionMenuTrigger,
   PromptInputBody,
-  PromptInputButton,
+  PromptInputCommand,
+  PromptInputCommandEmpty,
+  PromptInputCommandGroup,
+  PromptInputCommandInput,
+  PromptInputCommandItem,
+  PromptInputCommandList,
   type PromptInputFileDescriptor,
   PromptInputFooter,
   PromptInputHeader,
+  PromptInputHoverCard,
+  PromptInputHoverCardContent,
+  PromptInputHoverCardTrigger,
   PromptInputSubmit,
+  PromptInputTabsList,
+  PromptInputTextarea,
   PromptInputTools,
   usePromptInputAttachments,
   usePromptInputController,
+  usePromptInputReferencedSources,
 } from "@/shared/ui/ai-elements/prompt-input";
 import {
   QueueItem,
   QueueItemAction,
   QueueItemActions,
+  QueueItemAttachment,
   QueueItemContent,
   QueueItemDescription,
+  QueueItemFile,
+  QueueItemImage,
   QueueList,
   QueueSection,
   QueueSectionContent,
@@ -63,17 +83,8 @@ import {
 } from "@/shared/ui/ai-elements/queue";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandItem,
-  CommandList,
-  CommandSeparator,
-} from "@/shared/ui/command";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
-import { fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
+import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
 import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
 import { ChatAgentSelector } from "./agent-selector";
 import { ChatContextUsage } from "./context-usage";
@@ -87,32 +98,31 @@ import { ChatSearchSelector } from "./search-selector";
 // 必须位于 PromptInputProvider 内部以访问附件上下文
 // ---------------------------------------------------------------------------
 
-function PromptInputActions() {
-  const attachments = usePromptInputAttachments();
+function PromptInputActions({ screenshotEnabled }: { screenshotEnabled: boolean }) {
+  const { t } = useTranslation();
 
   return (
     // 基类自带 min-w-0,整组可随容器收缩;收缩只发生在各按钮的文字标签上
     // (审批/检索的按钮标签可能 truncate),按钮尺寸与图标不受影响。
     <PromptInputTools>
       {/* 附件 → Agent / Agent 团队 → 联网检索,依次排在整个输入区的左侧 */}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <PromptInputButton
-              type="button"
-              size="icon-sm"
-              variant="outline"
-              aria-label="添加附件"
-              onClick={attachments.openFileDialog}
-            />
-          }
+      <PromptInputActionMenu>
+        <PromptInputActionMenuTrigger
+          aria-label={t("chat:addAttachment")}
+          size="icon-sm"
+          title={t("chat:addAttachment")}
+          type="button"
+          variant="outline"
         >
           <PaperclipIcon className="text-muted-foreground" />
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>添加附件</p>
-        </TooltipContent>
-      </Tooltip>
+        </PromptInputActionMenuTrigger>
+        <PromptInputActionMenuContent>
+          <PromptInputActionAddAttachments label={t("chat:addAttachment")} />
+          {screenshotEnabled ? (
+            <PromptInputActionAddScreenshot label={t("chat:prompt.takeScreenshot")} />
+          ) : null}
+        </PromptInputActionMenuContent>
+      </PromptInputActionMenu>
       <ChatAgentSelector />
       <ChatSearchSelector />
     </PromptInputTools>
@@ -120,6 +130,7 @@ function PromptInputActions() {
 }
 
 function PromptInputAttachments() {
+  const { t } = useTranslation();
   const attachments = usePromptInputAttachments();
   if (attachments.files.length === 0) return null;
 
@@ -137,7 +148,11 @@ function PromptInputAttachments() {
             >
               <AttachmentPreview />
               <AttachmentInfo className="text-xs" />
-              <AttachmentRemove label={`移除 ${file.filename ?? "附件"}`} />
+              <AttachmentRemove
+                label={t("chat:prompt.removeAttachment", {
+                  filename: file.filename ?? t("chat:file"),
+                })}
+              />
             </Attachment>
           ))}
         </Attachments>
@@ -157,75 +172,8 @@ interface FileReferenceOption extends MessageFileReference {
   byteSize: number;
 }
 
-const skillTokenAttribute = "data-skill-token";
-
-function serializeEditableNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
-  if (!(node instanceof HTMLElement)) return "";
-  const skillToken = node.getAttribute(skillTokenAttribute);
-  if (skillToken) return skillToken;
-  if (node.tagName === "BR") return "\n";
-  const content = Array.from(node.childNodes).map(serializeEditableNode).join("");
-  return ["DIV", "P"].includes(node.tagName) && node.nextSibling ? `${content}\n` : content;
-}
-
-function serializeEditable(editor: HTMLElement): string {
-  return Array.from(editor.childNodes).map(serializeEditableNode).join("");
-}
-
-function selectedSkillNames(editor: HTMLElement): string[] {
-  return Array.from(editor.querySelectorAll<HTMLElement>(`[${skillTokenAttribute}]`))
-    .map((node) => node.getAttribute(skillTokenAttribute)?.slice(1) ?? "")
-    .filter(Boolean)
-    .filter((name, index, names) => names.indexOf(name) === index);
-}
-
-function renderEditableContent(editor: HTMLElement, value: string, skills: string[]) {
-  editor.replaceChildren();
-  const skillSet = new Set(skills);
-  const tokenPattern = /\/[a-zA-Z0-9_-]+/g;
-  let cursor = 0;
-  for (const match of value.matchAll(tokenPattern)) {
-    const token = match[0];
-    const name = token.slice(1);
-    if (!skillSet.has(name)) continue;
-    const start = match.index ?? cursor;
-    if (start > cursor) {
-      editor.append(document.createTextNode(value.slice(cursor, start)));
-    }
-    const badge = document.createElement("span");
-    badge.setAttribute(skillTokenAttribute, token);
-    badge.setAttribute("contenteditable", "false");
-    badge.className = `mx-0.5 inline-flex select-none items-center rounded-md border px-1.5 py-0.5 align-baseline text-xs font-medium leading-4 ${referenceBadgeClass("skill", name)}`;
-    badge.setAttribute("aria-label", `技能引用 ${name}`);
-    badge.textContent = name;
-    editor.append(badge);
-    cursor = start + token.length;
-  }
-  if (cursor < value.length) editor.append(document.createTextNode(value.slice(cursor)));
-}
-
-function focusEditableEnd(editor: HTMLElement) {
-  editor.focus();
-  const selection = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(editor);
-  range.collapse(false);
-  selection?.removeAllRanges();
-  selection?.addRange(range);
-}
-
 function removeTrailingCommandToken(value: string, token: "/" | "@") {
-  return value.replace(new RegExp(`\\${token}[a-zA-Z0-9_.-]*$`), "");
-}
-
-function removeSkillTokens(value: string, skills: string[]) {
-  let result = value;
-  for (const skill of skills) {
-    const escaped = skill.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(`\\/${escaped}`, "g"), "");
-  }
-  return result.replace(/[ \t]{2,}/g, " ").trim();
+  return token === "/" ? value.replace(/\/[a-zA-Z0-9_-]*$/, "") : value.replace(/@[^\s@]*$/, "");
 }
 
 function SkillAwareTextarea({
@@ -241,40 +189,31 @@ function SkillAwareTextarea({
   onChangeFileReferences: (files: MessageFileReference[]) => void;
   placeholder: string;
 }) {
+  const { t } = useTranslation();
   const controller = usePromptInputController();
-  const attachments = usePromptInputAttachments();
-  const { user } = useWorkbench();
-  const editorRef = React.useRef<HTMLDivElement>(null);
-  const [isComposing, setIsComposing] = React.useState(false);
+  const referencedSources = usePromptInputReferencedSources();
+  const { user } = useAuth();
+  const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [skills, setSkills] = React.useState<SkillOption[]>([]);
   const [files, setFiles] = React.useState<FileReferenceOption[]>([]);
   const [query, setQuery] = React.useState("");
   const [command, setCommand] = React.useState<"skill" | "file" | null>(null);
+  const deferredQuery = React.useDeferredValue(query.toLocaleLowerCase());
 
   React.useEffect(() => {
-    void Promise.all([fetchChatSkills<SkillOption>(), fetchChatLibraryAssets(user.id)])
+    void Promise.all([
+      fetchChatSkills<SkillOption>(),
+      fetchChatLibraryAssets(user?.id ?? "anonymous"),
+    ])
       .then(([nextSkills, nextFiles]) => {
         setSkills(nextSkills);
         setFiles(nextFiles);
       })
       .catch(() => undefined);
-  }, [user.id]);
+  }, [user?.id]);
 
-  React.useLayoutEffect(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    if (serializeEditable(editor) !== controller.textInput.value) {
-      renderEditableContent(editor, controller.textInput.value, selectedSkills);
-    }
-  }, [controller.textInput.value, selectedSkills]);
-
-  const handleTextChange = (event: React.FormEvent<HTMLDivElement>) => {
-    const value = serializeEditable(event.currentTarget);
-    const nextSkills = selectedSkillNames(event.currentTarget);
-    controller.textInput.setInput(value);
-    if (nextSkills.join("\u0000") !== selectedSkills.join("\u0000")) {
-      onChangeSkills(nextSkills);
-    }
+  const handleTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = event.currentTarget.value;
     const skillMatch = /(?:^|\s)\/([a-zA-Z0-9_-]*)$/.exec(value);
     const fileMatch = /(?:^|\s)@([^\s@]*)$/.exec(value);
     if (skillMatch) {
@@ -290,45 +229,43 @@ function SkillAwareTextarea({
   };
 
   const visibleSkills = skills.filter((skill) => {
-    const needle = query.toLocaleLowerCase();
     return (
-      !needle ||
-      skill.name.toLocaleLowerCase().includes(needle) ||
-      skill.description.toLocaleLowerCase().includes(needle)
+      !deferredQuery ||
+      skill.name.toLocaleLowerCase().includes(deferredQuery) ||
+      skill.description.toLocaleLowerCase().includes(deferredQuery)
     );
   });
 
   const visibleFiles = files.filter((file) => {
-    const needle = query.toLocaleLowerCase();
-    return !needle || file.filename.toLocaleLowerCase().includes(needle);
+    return !deferredQuery || file.filename.toLocaleLowerCase().includes(deferredQuery);
   });
 
   const removeCommandToken = (token: "/" | "@") =>
     removeTrailingCommandToken(controller.textInput.value, token);
 
-  const selectSkill = (skill: SkillOption) => {
-    const prefix = removeCommandToken("/");
-    const nextSkills = selectedSkills.includes(skill.name)
-      ? selectedSkills
-      : [...selectedSkills, skill.name];
-    const nextValue = `${prefix}${prefix && !/\s$/.test(prefix) ? " " : ""}/${skill.name} `;
-    controller.textInput.setInput(nextValue);
-    onChangeSkills(nextSkills);
-    if (editorRef.current) {
-      renderEditableContent(editorRef.current, nextValue, nextSkills);
-      focusEditableEnd(editorRef.current);
-    }
-    setCommand(null);
+  const switchCommand = (nextCommand: "skill" | "file") => {
+    const prefix = removeCommandToken(command === "skill" ? "/" : "@").trimEnd();
+    const token = nextCommand === "skill" ? "/" : "@";
+    controller.textInput.setInput(prefix ? `${prefix} ${token}` : token);
+    setCommand(nextCommand);
     setQuery("");
   };
 
+  const selectSkill = (skill: SkillOption) => {
+    const prefix = removeCommandToken("/").trimEnd();
+    const nextSkills = selectedSkills.includes(skill.name)
+      ? selectedSkills
+      : [...selectedSkills, skill.name];
+    controller.textInput.setInput(prefix ? `${prefix} ` : "");
+    onChangeSkills(nextSkills);
+    setCommand(null);
+    setQuery("");
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
   const selectFile = (file: FileReferenceOption) => {
-    const nextValue = removeCommandToken("@");
-    controller.textInput.setInput(nextValue);
-    if (editorRef.current) {
-      renderEditableContent(editorRef.current, nextValue, selectedSkills);
-      focusEditableEnd(editorRef.current);
-    }
+    const nextValue = removeCommandToken("@").trimEnd();
+    controller.textInput.setInput(nextValue ? `${nextValue} ` : "");
     if (!selectedFileReferences.some((item) => item.url === file.url)) {
       controller.attachments.restore([
         {
@@ -339,69 +276,121 @@ function SkillAwareTextarea({
         },
       ]);
       onChangeFileReferences([...selectedFileReferences, file]);
+      referencedSources.add({
+        type: "source-document",
+        sourceId: file.id,
+        mediaType: file.mediaType,
+        title: file.filename,
+        filename: file.filename,
+      });
     }
     setCommand(null);
     setQuery("");
-  };
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Backspace" && serializeEditable(event.currentTarget) === "") {
-      const lastAttachment = attachments.files.at(-1);
-      if (lastAttachment) {
-        event.preventDefault();
-        attachments.remove(lastAttachment.id);
-        return;
-      }
-    }
-    if (event.key !== "Enter" || isComposing || event.nativeEvent.isComposing || event.shiftKey) {
-      return;
-    }
-    event.preventDefault();
-    const form = event.currentTarget.closest("form") as HTMLFormElement | null;
-    const submitButton = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
-    if (!submitButton?.disabled) form?.requestSubmit();
-  };
-
-  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
-    const files = Array.from(event.clipboardData.items)
-      .filter((item) => item.kind === "file")
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file));
-    if (files.length === 0) return;
-    event.preventDefault();
-    attachments.add(files);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   return (
     <>
-      <div
-        aria-label="消息输入"
-        aria-multiline="true"
-        className="field-sizing-content max-h-48 min-h-16 w-full min-w-0 flex-1 resize-none overflow-y-auto whitespace-pre-wrap break-words rounded-none bg-transparent px-3 py-2 text-sm leading-6 outline-none before:pointer-events-none before:text-muted-foreground empty:before:content-[attr(data-placeholder)]"
-        contentEditable
-        data-placeholder={placeholder}
-        data-slot="input-group-control"
-        onCompositionEnd={() => setIsComposing(false)}
-        onCompositionStart={() => setIsComposing(true)}
-        onInput={handleTextChange}
-        onKeyDown={handleKeyDown}
-        onPaste={handlePaste}
-        ref={editorRef}
-        tabIndex={0}
-        role="textbox"
-        suppressContentEditableWarning
+      {selectedSkills.length > 0 ? (
+        <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
+          {selectedSkills.map((name) => {
+            const skill = skills.find((item) => item.name === name);
+            return (
+              <PromptInputHoverCard key={name}>
+                <PromptInputHoverCardTrigger
+                  render={
+                    <Badge
+                      className={`max-w-full gap-1 ${referenceBadgeClass("skill", name)}`}
+                      variant="outline"
+                    />
+                  }
+                >
+                  <SparklesIcon className="size-3 shrink-0" />
+                  <span className="max-w-52 truncate">{name}</span>
+                  <button
+                    aria-label={t("chat:prompt.removeSkill", { name })}
+                    className="rounded-sm hover:bg-primary/15"
+                    onClick={() => onChangeSkills(selectedSkills.filter((item) => item !== name))}
+                    type="button"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </PromptInputHoverCardTrigger>
+                <PromptInputHoverCardContent className="space-y-1">
+                  <p className="font-medium">/{name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {skill?.description || t("chat:prompt.noSkillDescription")}
+                  </p>
+                </PromptInputHoverCardContent>
+              </PromptInputHoverCard>
+            );
+          })}
+        </div>
+      ) : null}
+      <PromptInputTextarea
+        aria-label={t("chat:inputAriaLabel")}
+        className="w-full min-w-0 leading-6"
+        onChange={handleTextChange}
+        onKeyDown={(event) => {
+          if (!command || event.nativeEvent.isComposing) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setCommand(null);
+            setQuery("");
+            return;
+          }
+          if (event.key === "Enter" && !event.shiftKey) {
+            const first = command === "skill" ? visibleSkills[0] : visibleFiles[0];
+            if (!first) return;
+            event.preventDefault();
+            if (command === "skill") selectSkill(first as SkillOption);
+            else selectFile(first as FileReferenceOption);
+          }
+        }}
+        placeholder={placeholder}
+        ref={textareaRef}
       />
       {command ? (
         <div className="absolute bottom-full left-2 z-30 mb-2 w-[min(24rem,calc(100%-1rem))] overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-lg">
-          <Command shouldFilter={false}>
-            <CommandList className="max-h-64">
+          <PromptInputTabsList className="grid grid-cols-2 border-b bg-muted/30 p-1">
+            <Button
+              aria-pressed={command === "skill"}
+              className="h-7 text-xs"
+              onClick={() => switchCommand("skill")}
+              size="sm"
+              type="button"
+              variant={command === "skill" ? "secondary" : "ghost"}
+            >
+              / {t("chat:skillsAndCommands")}
+            </Button>
+            <Button
+              aria-pressed={command === "file"}
+              className="h-7 text-xs"
+              onClick={() => switchCommand("file")}
+              size="sm"
+              type="button"
+              variant={command === "file" ? "secondary" : "ghost"}
+            >
+              @ {t("chat:conversationFiles")}
+            </Button>
+          </PromptInputTabsList>
+          <PromptInputCommand shouldFilter={false}>
+            <PromptInputCommandInput
+              autoFocus
+              onValueChange={setQuery}
+              placeholder={
+                command === "skill" ? t("chat:prompt.searchSkills") : t("chat:prompt.searchFiles")
+              }
+              value={query}
+            />
+            <PromptInputCommandList className="max-h-64">
               {command === "skill" ? (
                 visibleSkills.length === 0 ? (
-                  <CommandEmpty>暂无匹配的技能</CommandEmpty>
+                  <PromptInputCommandEmpty>{t("chat:noMatchingSkills")}</PromptInputCommandEmpty>
                 ) : (
-                  <CommandGroup heading="技能与指令">
+                  <PromptInputCommandGroup heading={t("chat:skillsAndCommands")}>
                     {visibleSkills.map((skill) => (
-                      <CommandItem
+                      <PromptInputCommandItem
                         key={skill.name}
                         onSelect={() => selectSkill(skill)}
                         value={skill.name}
@@ -413,16 +402,16 @@ function SkillAwareTextarea({
                             {skill.description}
                           </span>
                         </span>
-                      </CommandItem>
+                      </PromptInputCommandItem>
                     ))}
-                  </CommandGroup>
+                  </PromptInputCommandGroup>
                 )
               ) : visibleFiles.length === 0 ? (
-                <CommandEmpty>暂无匹配的资料</CommandEmpty>
+                <PromptInputCommandEmpty>{t("chat:noMatchingFiles")}</PromptInputCommandEmpty>
               ) : (
-                <CommandGroup heading="对话文件">
+                <PromptInputCommandGroup heading={t("chat:conversationFiles")}>
                   {visibleFiles.map((file) => (
-                    <CommandItem
+                    <PromptInputCommandItem
                       key={file.id}
                       onSelect={() => selectFile(file)}
                       value={file.filename}
@@ -431,18 +420,15 @@ function SkillAwareTextarea({
                       <span className="min-w-0">
                         <span className="block truncate font-medium">@{file.filename}</span>
                         <span className="block whitespace-normal break-words text-xs text-muted-foreground">
-                          {file.mediaType || "文件"}
+                          {file.mediaType || t("chat:file")}
                         </span>
                       </span>
-                    </CommandItem>
+                    </PromptInputCommandItem>
                   ))}
-                </CommandGroup>
+                </PromptInputCommandGroup>
               )}
-              {(command === "skill" ? visibleSkills.length : visibleFiles.length) > 0 ? (
-                <CommandSeparator />
-              ) : null}
-            </CommandList>
-          </Command>
+            </PromptInputCommandList>
+          </PromptInputCommand>
         </div>
       ) : null}
     </>
@@ -456,28 +442,77 @@ function SelectedFileReferenceBadges({
   files: MessageFileReference[];
   onRemove: (file: MessageFileReference) => void;
 }) {
+  const { t } = useTranslation();
+  const referencedSources = usePromptInputReferencedSources();
   if (files.length === 0) return null;
   return (
     <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
       {files.map((file) => (
-        <Badge
-          className={`max-w-full gap-1 ${referenceBadgeClass("file", `${file.id}:${file.url}`)}`}
-          key={file.url}
-          variant="outline"
-        >
-          <FileIcon className="size-3 shrink-0" />
-          <span className="max-w-52 truncate">{file.filename}</span>
-          <button
-            aria-label={`移除文件引用 ${file.filename}`}
-            className="rounded-sm hover:bg-primary/15"
-            onClick={() => onRemove(file)}
-            type="button"
+        <PromptInputHoverCard key={file.url}>
+          <PromptInputHoverCardTrigger
+            render={
+              <Badge
+                className={`max-w-full gap-1 ${referenceBadgeClass("file", `${file.id}:${file.url}`)}`}
+                variant="outline"
+              />
+            }
           >
-            <XIcon className="size-3" />
-          </button>
-        </Badge>
+            <FileIcon className="size-3 shrink-0" />
+            <span className="max-w-52 truncate">{file.filename}</span>
+            <button
+              aria-label={t("chat:removeFileRef", { name: file.filename })}
+              className="rounded-sm hover:bg-primary/15"
+              onClick={(event) => {
+                event.stopPropagation();
+                const source = referencedSources.sources.find((item) => item.sourceId === file.id);
+                if (source) referencedSources.remove(source.id);
+                onRemove(file);
+              }}
+              type="button"
+            >
+              <XIcon className="size-3" />
+            </button>
+          </PromptInputHoverCardTrigger>
+          <PromptInputHoverCardContent className="min-w-0 space-y-1">
+            <p className="truncate font-medium" title={file.filename}>
+              {file.filename}
+            </p>
+            <p className="text-xs text-muted-foreground">{file.mediaType || t("chat:file")}</p>
+            <p className="line-clamp-2 break-all text-xs text-muted-foreground">{file.url}</p>
+          </PromptInputHoverCardContent>
+        </PromptInputHoverCard>
       ))}
     </div>
+  );
+}
+
+function QueuedFilePreview({ file }: { file: QueuedRequest["files"][number] }) {
+  const { t } = useTranslation();
+  const title = file.filename ?? t("chat:file");
+  const isImage = file.mediaType?.startsWith("image/") ?? false;
+  const [imageUrl, setImageUrl] = React.useState<string>();
+
+  React.useEffect(() => {
+    if (!isImage) return;
+    let disposed = false;
+    let objectUrl: string | undefined;
+    void fetchChatAssetBlob(file.url)
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        if (disposed) URL.revokeObjectURL(objectUrl);
+        else setImageUrl(objectUrl);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file.url, isImage]);
+
+  return imageUrl ? (
+    <QueueItemImage alt={title} src={imageUrl} title={title} />
+  ) : (
+    <QueueItemFile title={title}>{title}</QueueItemFile>
   );
 }
 
@@ -492,6 +527,7 @@ function SortableRequestItem({
   onRemove: (id: string) => void;
   onSteerNow?: (request: QueuedRequest) => void;
 }) {
+  const { t } = useTranslation();
   const {
     attributes,
     isDragging,
@@ -511,7 +547,7 @@ function SortableRequestItem({
       <div className="flex min-w-0 items-start gap-1">
         {!request.queuedOnServer ? (
           <Button
-            aria-label="拖动请求调整顺序"
+            aria-label={t("chat:dragToReorder")}
             className="mt-0.5 shrink-0 text-muted-foreground"
             ref={setActivatorNodeRef}
             size="icon-xs"
@@ -526,10 +562,14 @@ function SortableRequestItem({
         <div className="min-w-0 flex-1">
           <QueueItemContent className="line-clamp-2 whitespace-pre-wrap">
             {request.text ||
-              (request.skills?.length ? `技能引用: ${request.skills.join(", ")}` : "附件请求")}
+              (request.skills?.length
+                ? t("chat:prompt.skillRef", { skills: request.skills.join(", ") })
+                : t("chat:prompt.attachmentRequest"))}
           </QueueItemContent>
           {request.files.length > 0 ? (
-            <QueueItemDescription>{request.files.length} 个附件</QueueItemDescription>
+            <QueueItemDescription>
+              {t("chat:prompt.filesCount", { count: request.files.length })}
+            </QueueItemDescription>
           ) : null}
         </div>
         <QueueItemActions className="shrink-0">
@@ -540,17 +580,17 @@ function SortableRequestItem({
               follow-up 队列 */}
           {onSteerNow ? (
             <QueueItemAction
-              aria-label="立即转向到这条请求"
+              aria-label={t("chat:prompt.steerNow")}
               className="opacity-100"
               onClick={() => onSteerNow(request)}
-              title="立即转向:打断当前回合,直接发送这条请求"
+              title={t("chat:prompt.steerNowTitle")}
             >
               <WaypointsIcon />
             </QueueItemAction>
           ) : null}
           {!request.queuedOnServer ? (
             <QueueItemAction
-              aria-label="编辑排队请求"
+              aria-label={t("chat:prompt.editQueued")}
               className="opacity-100"
               onClick={() => onEdit(request)}
             >
@@ -559,7 +599,7 @@ function SortableRequestItem({
           ) : null}
           {!request.queuedOnServer ? (
             <QueueItemAction
-              aria-label="移除排队请求"
+              aria-label={t("chat:prompt.removeQueued")}
               className="opacity-100"
               onClick={() => onRemove(request.id)}
             >
@@ -568,6 +608,16 @@ function SortableRequestItem({
           ) : null}
         </QueueItemActions>
       </div>
+      {request.files.length > 0 ? (
+        <QueueItemAttachment className={request.queuedOnServer ? "ml-0" : "ml-8"}>
+          {request.files.map((file) => (
+            <QueuedFilePreview
+              file={file}
+              key={`${file.url}:${file.filename ?? file.mediaType ?? "file"}`}
+            />
+          ))}
+        </QueueItemAttachment>
+      ) : null}
     </QueueItem>
   );
 }
@@ -583,6 +633,7 @@ export function UserRequestQueuePanel({
   onReorder: (activeId: string, overId: string) => void;
   onSteerNow?: (request: QueuedRequest) => void;
 }) {
+  const { t } = useTranslation();
   const controller = usePromptInputController();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -611,7 +662,7 @@ export function UserRequestQueuePanel({
       <QueueSectionTrigger className="px-2 py-1">
         <QueueSectionLabel
           count={requests.length}
-          label="排队请求"
+          label={t("chat:prompt.queuedRequests")}
           icon={<ListTodoIcon className="size-4" />}
         />
       </QueueSectionTrigger>
@@ -642,8 +693,6 @@ export function UserRequestQueuePanel({
 export function ChatPromptInput({
   activeThread,
   usage,
-  estimatedUsedTokens,
-  estimatedBreakdown,
   onSubmit,
   status,
   onStop,
@@ -652,8 +701,6 @@ export function ChatPromptInput({
 }: {
   activeThread: boolean;
   usage: LanguageModelUsage | undefined;
-  estimatedUsedTokens?: number;
-  estimatedBreakdown?: ContextUsageBreakdown;
   onSubmit: (
     message: {
       text: string;
@@ -674,14 +721,13 @@ export function ChatPromptInput({
   attachmentTokenBudget?: number;
   attachmentCapabilities?: { vision: boolean; audio: boolean };
 }) {
+  const { t } = useTranslation();
   const controller = usePromptInputController();
-  const {
-    pendingLibraryFiles,
-    clearPendingLibraryFiles,
-    pendingPrompt,
-    setPendingPrompt,
-    reportPromptMinWidth,
-  } = useWorkbench();
+  const pendingLibraryFiles = useWorkbenchStore((state) => state.pendingLibraryFiles);
+  const clearPendingLibraryFiles = useWorkbenchStore((state) => state.clearPendingLibraryFiles);
+  const pendingPrompt = useWorkbenchStore((state) => state.pendingPrompt);
+  const setPendingPrompt = useWorkbenchStore((state) => state.setPendingPrompt);
+  const reportPromptMinWidth = useWorkbenchStore((state) => state.reportPromptMinWidth);
   /**
    * 实测输入区的最小边界并上报,由 AppShell 用来限制面板拖拽幅度与窗口最小宽度。
    *
@@ -765,7 +811,7 @@ export function ChatPromptInput({
       (sum, file) =>
         sum +
         estimateAttachmentTokens({
-          name: file.filename ?? "未命名附件",
+          name: file.filename ?? t("chat:messages.untitledAttachment"),
           size: file.byteSize ?? 0,
           type: file.mediaType ?? "",
           lastModified: 0,
@@ -777,7 +823,7 @@ export function ChatPromptInput({
     const accepted = pendingLibraryFiles.filter((file) => {
       if (acceptedCount >= capacity) return false;
       const fileTokens = estimateAttachmentTokens({
-        name: file.filename ?? "未命名附件",
+        name: file.filename ?? t("chat:messages.untitledAttachment"),
         size: file.byteSize ?? 0,
         type: file.mediaType ?? "",
         lastModified: 0,
@@ -790,7 +836,7 @@ export function ChatPromptInput({
     });
     if (accepted.length > 0) controller.attachments.restore(accepted);
     if (accepted.length < pendingLibraryFiles.length) {
-      toast.error("部分资料未添加: 已达到附件数量或上下文预算");
+      toast.error(t("chat:prompt.partialFilesAdded"));
     }
     clearPendingLibraryFiles();
   }, [
@@ -845,9 +891,11 @@ export function ChatPromptInput({
           onSubmit(
             {
               ...message,
-              text: removeSkillTokens(message.text, selectedSkills),
+              text: message.text,
               skills: selectedSkills,
-              fileReferences: selectedFileReferences,
+              fileReferences: selectedFileReferences.filter((reference) =>
+                message.files?.some((file) => file.url === reference.url),
+              ),
             },
             () => {
               controller.textInput.clear();
@@ -873,11 +921,7 @@ export function ChatPromptInput({
           <SkillAwareTextarea
             onChangeFileReferences={setSelectedFileReferences}
             onChangeSkills={setSelectedSkills}
-            placeholder={
-              activeThread
-                ? "继续对话…  @ 引用对话文件，/ 调用技能与指令"
-                : "今天帮你做些什么？  @ 引用对话文件，/ 调用技能与指令"
-            }
+            placeholder={activeThread ? t("chat:continuePrompt") : t("chat:welcomePrompt")}
             selectedFileReferences={selectedFileReferences}
             selectedSkills={selectedSkills}
           />
@@ -894,15 +938,11 @@ export function ChatPromptInput({
           className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2"
           ref={footerRef}
         >
-          <PromptInputActions />
+          <PromptInputActions screenshotEnabled={attachmentCapabilities?.vision === true} />
           <div className="ml-auto flex min-w-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
-              <ChatContextUsage
-                estimatedBreakdown={estimatedBreakdown}
-                estimatedUsedTokens={estimatedUsedTokens}
-                usage={usage}
-              />
+              <ChatContextUsage usage={usage} />
             </div>
             <ChatModeSelector />
             <ChatModelSelector />

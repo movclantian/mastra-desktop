@@ -89,6 +89,8 @@ export const DEFAULT_LIBRARY_SETTINGS: LibrarySettings = {
   extractKeywords: false,
 };
 
+import { i18n } from "@/shared/i18n";
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -96,17 +98,17 @@ export function formatBytes(bytes: number): string {
 }
 
 export function statusLabel(status: LibraryAsset["status"]): string {
-  if (status === "ready") return "已索引";
-  if (status === "indexing") return "索引中";
-  if (status === "unsupported") return "未建立文本索引";
-  return "索引失败";
+  if (status === "ready") return i18n.t("library:statusIndexed");
+  if (status === "indexing") return i18n.t("library:statusIndexing");
+  if (status === "unsupported") return i18n.t("library:statusNotIndexed");
+  return i18n.t("library:statusFailed");
 }
 
 export function indexStageLabel(stage: LibraryAsset["indexStage"]): string {
-  if (stage === "extract") return "文本抽取";
-  if (stage === "chunk") return "文档分块";
-  if (stage === "embedding") return "生成嵌入";
-  if (stage === "vector") return "写入向量库";
-  if (stage === "persist") return "保存索引状态";
-  return "未开始";
+  if (stage === "extract") return i18n.t("library:stageExtract");
+  if (stage === "chunk") return i18n.t("library:stageChunk");
+  if (stage === "embedding") return i18n.t("library:stageEmbedding");
+  if (stage === "vector") return i18n.t("library:stageVector");
+  if (stage === "persist") return i18n.t("library:stagePersist");
+  return i18n.t("library:stageNotStarted");
 }

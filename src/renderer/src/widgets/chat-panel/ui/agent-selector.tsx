@@ -1,6 +1,10 @@
+import { useRouterState } from "@tanstack/react-router";
 import { BotIcon, UsersRoundIcon } from "lucide-react";
 import * as React from "react";
-import { DEFAULT_AGENT_PROFILE, useWorkbench } from "@/entities/workbench";
+import { DEFAULT_AGENT_PROFILE } from "@/entities/workbench";
+import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
+import { useAuth } from "@/features/auth";
+import { useTranslation } from "@/shared/i18n";
 import { PromptInputButton } from "@/shared/ui/ai-elements/prompt-input";
 import { Badge } from "@/shared/ui/badge";
 import {
@@ -18,7 +22,15 @@ import {
 } from "@/shared/ui/combobox";
 
 export function ChatAgentSelector() {
-  const { agents, agentSelection, setAgentSelection } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const { agents, agentSelection, setAgentSelection } = useSessionSettings(
+    user?.id ?? "anonymous",
+    activeThreadId,
+  );
   const selected = agentSelection;
   const defaultAgent =
     agents.find((agent) => agent.id === DEFAULT_AGENT_PROFILE.id) ?? DEFAULT_AGENT_PROFILE;
@@ -29,11 +41,11 @@ export function ChatAgentSelector() {
 
   const groups = React.useMemo(
     () => [
-      { label: "默认 Agent", items: [defaultAgent] },
-      ...(personal.length > 0 ? [{ label: "我的 Agent", items: personal }] : []),
-      ...(teams.length > 0 ? [{ label: "Agent 团队", items: teams }] : []),
+      { label: t("chat:agents.defaultAgent"), items: [defaultAgent] },
+      ...(personal.length > 0 ? [{ label: t("chat:agents.myAgents"), items: personal }] : []),
+      ...(teams.length > 0 ? [{ label: t("chat:agents.agentTeams"), items: teams }] : []),
     ],
-    [defaultAgent, personal, teams],
+    [defaultAgent, personal, teams, t],
   );
 
   return (
@@ -52,10 +64,10 @@ export function ChatAgentSelector() {
       <ComboboxTrigger
         render={
           <PromptInputButton
-            aria-label="选择 Agent 或 Agent 团队"
+            aria-label={t("chat:agents.selectAgentOrTeam")}
             className="min-w-0"
             size="sm"
-            title={`${selected.type === "team" ? "Agent 团队" : "Agent"}: ${selected.displayName}`}
+            title={`${selected.type === "team" ? t("chat:agents.team") : t("chat:agents.agent")}: ${selected.displayName}`}
             type="button"
             variant="outline"
           />
@@ -69,9 +81,13 @@ export function ChatAgentSelector() {
         <span className="max-w-28 truncate text-xs">{selected.displayName}</span>
       </ComboboxTrigger>
       <ComboboxContent align="start" className="w-80 max-w-[min(90vw,24rem)] p-1">
-        <ComboboxInput showTrigger={false} placeholder="搜索 Agent 或团队..." autoFocus />
+        <ComboboxInput
+          showTrigger={false}
+          placeholder={t("chat:agents.searchPlaceholder")}
+          autoFocus
+        />
         <ComboboxEmpty className="py-4 text-xs text-center text-muted-foreground">
-          未找到匹配的 Agent
+          {t("chat:agents.noMatching")}
         </ComboboxEmpty>
         <ComboboxList className="max-h-[min(60vh,26rem)]">
           {(group, index) => (
@@ -101,7 +117,7 @@ export function ChatAgentSelector() {
                     </span>
                     {profile.type === "team" ? (
                       <Badge variant="secondary" className="shrink-0 text-[10px]">
-                        团队
+                        {t("chat:agents.teamBadge")}
                       </Badge>
                     ) : null}
                   </ComboboxItem>

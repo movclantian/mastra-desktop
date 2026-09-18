@@ -12,6 +12,7 @@ export interface SkillMetadata {
   name: string;
   path: string;
   description: string;
+  enabled?: boolean;
   metadata?: Record<string, unknown>;
   origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
   marketplaceId?: string;
@@ -63,18 +64,29 @@ export interface CuratedOwner {
 export interface McpFormServer {
   id: string;
   name: string;
-  type: "sse" | "stdio";
-  transport?: "http" | "stdio";
-  oauth?: { enabled: boolean };
+  transport: "http" | "stdio";
+  oauth?: {
+    enabled: boolean;
+    redirectUrl?: string;
+    clientName?: string;
+    clientId?: string;
+    clientSecretCredential?: CredentialPointer;
+    scopes?: string[];
+  };
   url?: string;
+  allowedHosts?: string[];
   command?: string;
   args?: string[];
-  headers?: Record<string, string>;
-  env?: Record<string, string>;
-  enabled?: boolean;
+  headerCredential?: CredentialPointer;
+  headerKeys?: string[];
+  envCredential?: CredentialPointer;
+  envKeys?: string[];
+  inheritDefaultEnv?: boolean;
+  requireToolApproval?: boolean;
+  enabled: boolean;
 }
 
-export interface McpSummary extends Omit<McpFormServer, "headers" | "env"> {
+export interface McpSummary extends McpFormServer {
   headerKeys: string[];
   envKeys: string[];
 }
@@ -91,3 +103,5 @@ export interface SkillMarketplace {
 export type SkillSection = "public" | "personal" | "mcp";
 export type MarketCategory = "official" | "leaderboard" | "builtin" | "marketplace";
 export type LeaderboardView = "all-time" | "trending" | "hot";
+
+import type { CredentialPointer } from "../../../../../shared/credential-contract";

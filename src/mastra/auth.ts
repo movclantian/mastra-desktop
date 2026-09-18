@@ -132,13 +132,25 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
   return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
 }
 
-async function findUserById(id: string): Promise<AuthUser | null> {
+export async function findUserById(id: string): Promise<AuthUser | null> {
   await ensureAuthSchema();
   const result = await (await getLibsqlClient()).execute({
     sql: `SELECT id, name, email, role FROM ${AUTH_USERS_TABLE} WHERE id = ? LIMIT 1`,
     args: [id],
   });
   return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
+}
+
+/** 列出全部注册账户(会话所有权迁移的目标候选,见 /work/threads/:id/transfer) */
+export async function listAuthUsers(): Promise<AuthUser[]> {
+  await ensureAuthSchema();
+  const result = await (await getLibsqlClient()).execute({
+    sql: `SELECT id, name, email, role FROM ${AUTH_USERS_TABLE} ORDER BY created_at ASC`,
+  });
+  return result.rows.flatMap((row) => {
+    const user = rowUser(row as Record<string, unknown>);
+    return user ? [user] : [];
+  });
 }
 
 async function findUserByEmail(email: string): Promise<{

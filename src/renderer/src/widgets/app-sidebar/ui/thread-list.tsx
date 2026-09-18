@@ -1,7 +1,9 @@
+import { useRouterState } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
+  ArrowLeftRightIcon,
   ChevronRightIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -9,6 +11,7 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   FolderTreeIcon,
+  GitForkIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PencilIcon,
@@ -23,8 +26,29 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import type { TreeEntry } from "@/entities/workbench";
-import { dirName, openPathInApp, useWorkbench, type WorkThread } from "@/entities/workbench";
+import {
+  dirName,
+  fetchTree,
+  fetchWorkUsers,
+  openPathInApp,
+  type WorkThread,
+  type WorkUserOption,
+} from "@/entities/workbench";
+import {
+  useArchiveThreadMutation,
+  useCloneThreadMutation,
+  useCreateThreadMutation,
+  useDeleteThreadMutation,
+  useGenerateThreadTitleMutation,
+  useIsThreadBusy,
+  usePinThreadMutation,
+  useSelectThread,
+  useTransferThreadMutation,
+} from "@/entities/workbench/model/queries/threads";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/shared/ui/ai-elements/file-tree";
 import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-icon";
@@ -44,6 +68,15 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import {
   DropdownMenu,
@@ -57,7 +90,6 @@ import { ShineBorder } from "@/shared/ui/shine-border";
 import {
   SidebarMenu,
   SidebarMenuAction,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
@@ -78,46 +110,180 @@ export function sortThreads(threads: WorkThread[]): WorkThread[] {
   });
 }
 
+/**
+ * 会话所有权迁移对话框(官方 memory.updateThreadResourceId 的产品落点):
+ * 选择目标账户后把线程及全部消息平滑转移过去。挂载在列表项层级而不是菜单内 ——
+ * 菜单关闭即卸载,放在里面对话框会跟着消失。
+ */
+function TransferThreadDialog({
+  thread,
+  open,
+  onOpenChange,
+}: {
+  thread: WorkThread;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const transferThreadMutation = useTransferThreadMutation(user?.id ?? "anonymous");
+  const transferThread = (threadId: string, targetResourceId: string) =>
+    transferThreadMutation.mutateAsync({ threadId, targetResourceId });
+  const userId = user?.id ?? "anonymous";
+  const [candidates, setCandidates] = React.useState<WorkUserOption[] | null>(null);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [transferring, setTransferring] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setCandidates(null);
+    setSelectedId(null);
+    let disposed = false;
+    void fetchWorkUsers()
+      .then((users) => {
+        if (!disposed) setCandidates(users.filter((candidate) => candidate.id !== userId));
+      })
+      .catch(() => {
+        if (!disposed) setCandidates([]);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [open, userId]);
+
+  const handleTransfer = async () => {
+    if (!selectedId || transferring) return;
+    setTransferring(true);
+    try {
+      await transferThread(thread.id, selectedId);
+      toast.success(t("sidebar:transferSuccess"));
+      onOpenChange(false);
+    } catch {
+      toast.error(t("sidebar:transferError"));
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t("sidebar:transferOwnership")}</DialogTitle>
+          <DialogDescription>
+            {t("sidebar:transferDesc", { title: thread.title })}
+          </DialogDescription>
+        </DialogHeader>
+        <ScrollArea className="max-h-64">
+          <div className="flex flex-col gap-1 pr-2">
+            {candidates === null ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                {t("sidebar:loadingAccounts")}
+              </p>
+            ) : candidates.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">
+                {t("sidebar:noOtherAccounts")}
+              </p>
+            ) : (
+              candidates.map((candidate) => (
+                <button
+                  aria-pressed={selectedId === candidate.id}
+                  className="flex min-w-0 items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:bg-accent aria-pressed:border-primary/40 aria-pressed:bg-accent"
+                  key={candidate.id}
+                  onClick={() => setSelectedId(candidate.id)}
+                  type="button"
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{candidate.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {candidate.email}
+                    </span>
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline">{t("common:cancel")}</Button>} />
+          <Button disabled={!selectedId || transferring} onClick={() => void handleTransfer()}>
+            {transferring ? t("sidebar:transferring") : t("sidebar:transfer")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ThreadContextMenuItems({
   thread,
   onRename,
   onOpenFileManager,
+  onTransfer,
 }: {
   thread: WorkThread;
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
+  onTransfer: () => void;
 }) {
-  const {
-    activeThreadId,
-    archiveThread,
-    deleteThread,
-    generateThreadTitle,
-    pinThread,
-    setActiveThreadId,
-    setTerminalPanelOpen,
-  } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const selectThread = useSelectThread();
+  const pinThreadMutation = usePinThreadMutation(userId);
+  const archiveThreadMutation = useArchiveThreadMutation(userId);
+  const deleteThreadMutation = useDeleteThreadMutation(userId);
+  const generateTitleMutation = useGenerateThreadTitleMutation(userId);
+  const cloneThreadMutation = useCloneThreadMutation(userId);
+
+  const pinThread = (threadId: string, pinned: boolean) =>
+    pinThreadMutation.mutateAsync({ threadId, pinned }).catch(() => undefined);
+  const archiveThread = (threadId: string, archived: boolean) =>
+    archiveThreadMutation.mutateAsync({ threadId, archived }).catch(() => undefined);
+  const deleteThread = (threadId: string) =>
+    deleteThreadMutation.mutateAsync(threadId).catch(() => undefined);
+  const setActiveThreadId = (id: string | null) => selectThread(id);
+
   const [generating, setGenerating] = React.useState(false);
+  const [cloning, setCloning] = React.useState(false);
   const workspacePath = thread.metadata.workspacePath;
 
   const handleGenerateTitle = async () => {
     setGenerating(true);
     try {
-      const newTitle = await generateThreadTitle(thread.id);
+      const newTitle = await generateTitleMutation.mutateAsync(thread.id).catch(() => null);
       if (newTitle) {
-        toast.success(`已提炼新标题: ${newTitle}`);
+        toast.success(t("sidebar:generatedTitle", { title: newTitle }));
       } else {
-        toast.error("未能生成标题，请稍后再试");
+        toast.error(t("sidebar:failedToGenerateTitle"));
       }
-    } catch {
-      toast.error("生成标题失败");
     } finally {
       setGenerating(false);
     }
   };
 
+  // 克隆(官方 copyThread):成功后由 mutation 切换到新分支
+  const handleClone = async () => {
+    if (cloning) return;
+    setCloning(true);
+    try {
+      const clone = await cloneThreadMutation
+        .mutateAsync({ threadId: thread.id })
+        .catch(() => null);
+      if (clone) toast.success(t("sidebar:branchCreated", { title: clone.title }));
+      else toast.error(t("sidebar:cloneFailed"));
+    } finally {
+      setCloning(false);
+    }
+  };
+
   const handleCopy = (text: string, label: string) => {
     void navigator.clipboard.writeText(text);
-    toast.success(`已复制${label}`);
+    toast.success(t("sidebar:copiedItem", { label }));
   };
 
   return (
@@ -130,32 +296,37 @@ function ThreadContextMenuItems({
           ) : (
             <PinIcon className="text-muted-foreground" />
           )}
-          <span>{thread.metadata.pinned ? "取消置顶" : "置顶会话"}</span>
+          <span>{thread.metadata.pinned ? t("sidebar:unpin") : t("sidebar:pinned")}</span>
           <ContextMenuShortcut>{thread.metadata.pinned ? "⇧⌘P" : "⌘P"}</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onClick={() => onRename(thread)}>
           <PencilIcon className="text-muted-foreground" />
-          <span>重命名</span>
+          <span>{t("common:rename")}</span>
           <ContextMenuShortcut>F2</ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem disabled={generating} onClick={() => void handleGenerateTitle()}>
           <SparklesIcon className="text-muted-foreground" />
-          <span>{generating ? "正在提炼标题…" : "AI 智能起名"}</span>
+          <span>{generating ? t("sidebar:generatingTitle") : t("sidebar:aiTitle")}</span>
+        </ContextMenuItem>
+        <ContextMenuItem disabled={cloning} onClick={() => void handleClone()}>
+          <GitForkIcon className="text-muted-foreground" />
+          <span>{cloning ? t("sidebar:cloning") : t("sidebar:cloneThread")}</span>
         </ContextMenuItem>
       </ContextMenuGroup>
 
       <ContextMenuSeparator />
 
       <ContextMenuGroup>
-        <ContextMenuLabel>工作区操作</ContextMenuLabel>
+        <ContextMenuLabel>{t("sidebar:workspaceActions")}</ContextMenuLabel>
         <ContextMenuItem
           disabled={!workspacePath}
           onClick={() => {
-            if (workspacePath) void openPathInApp("explorer", workspacePath, "文件资源管理器");
+            if (workspacePath)
+              void openPathInApp("explorer", workspacePath, t("sidebar:fileExplorer"));
           }}
         >
           <FolderOpenIcon className="text-muted-foreground" />
-          <span>在资源管理器打开</span>
+          <span>{t("sidebar:openInExplorer")}</span>
         </ContextMenuItem>
         <ContextMenuItem
           disabled={!workspacePath}
@@ -164,7 +335,7 @@ function ThreadContextMenuItems({
           }}
         >
           <FolderTreeIcon className="text-muted-foreground" />
-          <span>浏览文件树</span>
+          <span>{t("sidebar:browseFiles")}</span>
         </ContextMenuItem>
         <ContextMenuItem
           disabled={!workspacePath}
@@ -174,7 +345,7 @@ function ThreadContextMenuItems({
           }}
         >
           <TerminalIcon className="text-muted-foreground" />
-          <span>在终端中打开</span>
+          <span>{t("sidebar:openInTerminal")}</span>
         </ContextMenuItem>
       </ContextMenuGroup>
 
@@ -184,19 +355,21 @@ function ThreadContextMenuItems({
         <ContextMenuSub>
           <ContextMenuSubTrigger>
             <CopyIcon className="text-muted-foreground" />
-            <span>复制信息</span>
+            <span>{t("sidebar:copyInfo")}</span>
           </ContextMenuSubTrigger>
           <ContextMenuSubContent className="w-48">
             <ContextMenuGroup>
-              <ContextMenuItem onClick={() => handleCopy(thread.title, "会话标题")}>
-                复制标题
+              <ContextMenuItem onClick={() => handleCopy(thread.title, t("sidebar:copyTitle"))}>
+                {t("sidebar:copyTitle")}
               </ContextMenuItem>
-              <ContextMenuItem onClick={() => handleCopy(thread.id, "会话 ID")}>
-                复制会话 ID
+              <ContextMenuItem onClick={() => handleCopy(thread.id, t("sidebar:copyThreadId"))}>
+                {t("sidebar:copyThreadId")}
               </ContextMenuItem>
               {workspacePath ? (
-                <ContextMenuItem onClick={() => handleCopy(workspacePath, "工作区路径")}>
-                  复制工作区路径
+                <ContextMenuItem
+                  onClick={() => handleCopy(workspacePath, t("sidebar:copyWorkspacePath"))}
+                >
+                  {t("sidebar:copyWorkspacePath")}
                 </ContextMenuItem>
               ) : null}
             </ContextMenuGroup>
@@ -208,7 +381,13 @@ function ThreadContextMenuItems({
           ) : (
             <ArchiveIcon className="text-muted-foreground" />
           )}
-          <span>{thread.metadata.archivedAt ? "取消归档" : "归档会话"}</span>
+          <span>
+            {thread.metadata.archivedAt ? t("sidebar:unarchiveThread") : t("sidebar:archiveThread")}
+          </span>
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onTransfer}>
+          <ArrowLeftRightIcon className="text-muted-foreground" />
+          <span>{t("sidebar:transferThread")}</span>
         </ContextMenuItem>
       </ContextMenuGroup>
 
@@ -217,7 +396,7 @@ function ThreadContextMenuItems({
       <ContextMenuGroup>
         <ContextMenuItem variant="destructive" onClick={() => void deleteThread(thread.id)}>
           <Trash2Icon className="text-muted-foreground" />
-          <span>删除会话</span>
+          <span>{t("sidebar:deleteThread")}</span>
           <ContextMenuShortcut>⌫</ContextMenuShortcut>
         </ContextMenuItem>
       </ContextMenuGroup>
@@ -229,31 +408,61 @@ function ThreadActionMenu({
   thread,
   onRename,
   onOpenFileManager,
+  onTransfer,
   sub = false,
 }: {
   thread: WorkThread;
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
+  onTransfer: () => void;
   sub?: boolean;
 }) {
+  const { t } = useTranslation();
   const { isMobile } = useSidebar();
-  const { archiveThread, deleteThread, generateThreadTitle, pinThread } = useWorkbench();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const pinThreadMutation = usePinThreadMutation(userId);
+  const archiveThreadMutation = useArchiveThreadMutation(userId);
+  const deleteThreadMutation = useDeleteThreadMutation(userId);
+  const generateTitleMutation = useGenerateThreadTitleMutation(userId);
+  const cloneThreadMutation = useCloneThreadMutation(userId);
+
+  const pinThread = (threadId: string, pinned: boolean) =>
+    pinThreadMutation.mutateAsync({ threadId, pinned }).catch(() => undefined);
+  const archiveThread = (threadId: string, archived: boolean) =>
+    archiveThreadMutation.mutateAsync({ threadId, archived }).catch(() => undefined);
+  const deleteThread = (threadId: string) =>
+    deleteThreadMutation.mutateAsync(threadId).catch(() => undefined);
+
   const [generating, setGenerating] = React.useState(false);
+  const [cloning, setCloning] = React.useState(false);
   const workspacePath = thread.metadata.workspacePath;
 
   const handleGenerateTitle = async () => {
     setGenerating(true);
     try {
-      const newTitle = await generateThreadTitle(thread.id);
+      const newTitle = await generateTitleMutation.mutateAsync(thread.id).catch(() => null);
       if (newTitle) {
-        toast.success(`已提炼新标题: ${newTitle}`);
+        toast.success(t("sidebar:generatedTitle", { title: newTitle }));
       } else {
-        toast.error("未能生成标题，请稍后再试");
+        toast.error(t("sidebar:failedToGenerateTitle"));
       }
-    } catch {
-      toast.error("生成标题失败");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handleClone = async () => {
+    if (cloning) return;
+    setCloning(true);
+    try {
+      const clone = await cloneThreadMutation
+        .mutateAsync({ threadId: thread.id })
+        .catch(() => null);
+      if (clone) toast.success(t("sidebar:branchCreated", { title: clone.title }));
+      else toast.error(t("sidebar:cloneFailed"));
+    } finally {
+      setCloning(false);
     }
   };
 
@@ -285,16 +494,17 @@ function ThreadActionMenu({
           ) : (
             <PinIcon className="text-muted-foreground" />
           )}
-          <span>{thread.metadata.pinned ? "取消置顶" : "置顶"}</span>
+          <span>{thread.metadata.pinned ? t("sidebar:unpin") : t("sidebar:pin")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!workspacePath}
           onClick={() => {
-            if (workspacePath) void openPathInApp("explorer", workspacePath, "文件资源管理器");
+            if (workspacePath)
+              void openPathInApp("explorer", workspacePath, t("sidebar:fileExplorer"));
           }}
         >
           <FolderOpenIcon className="text-muted-foreground" />
-          <span>在资源管理器打开</span>
+          <span>{t("sidebar:openInExplorer")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           disabled={!workspacePath}
@@ -303,16 +513,20 @@ function ThreadActionMenu({
           }}
         >
           <FolderTreeIcon className="text-muted-foreground" />
-          <span>文件管理</span>
+          <span>{t("sidebar:fileManager")}</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem disabled={generating} onClick={() => void handleGenerateTitle()}>
           <SparklesIcon className="text-muted-foreground" />
-          <span>{generating ? "正在提炼标题…" : "AI 智能起名"}</span>
+          <span>{generating ? t("sidebar:generatingTitle") : t("sidebar:aiTitle")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={cloning} onClick={() => void handleClone()}>
+          <GitForkIcon className="text-muted-foreground" />
+          <span>{cloning ? t("sidebar:cloning") : t("sidebar:cloneThread")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onRename(thread)}>
           <PencilIcon className="text-muted-foreground" />
-          <span>重命名</span>
+          <span>{t("common:rename")}</span>
         </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() => void archiveThread(thread.id, !thread.metadata.archivedAt)}
@@ -322,12 +536,16 @@ function ThreadActionMenu({
           ) : (
             <ArchiveIcon className="text-muted-foreground" />
           )}
-          <span>{thread.metadata.archivedAt ? "取消归档" : "归档"}</span>
+          <span>{thread.metadata.archivedAt ? t("sidebar:unarchive") : t("sidebar:archive")}</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={onTransfer}>
+          <ArrowLeftRightIcon className="text-muted-foreground" />
+          <span>{t("sidebar:transferThread")}</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={() => void deleteThread(thread.id)}>
           <Trash2Icon className="text-muted-foreground" />
-          <span>删除</span>
+          <span>{t("common:delete")}</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -344,8 +562,16 @@ export function DirectThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId, isThreadBusy } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const selectThread = useSelectThread();
+  const setActiveThreadId = (id: string | null) => selectThread(id);
+  const isThreadBusy = useIsThreadBusy(user?.id ?? "anonymous");
   const isWorking = isThreadBusy(thread.id);
+  const [transferOpen, setTransferOpen] = React.useState(false);
 
   return (
     <BlurFade duration={0.2} blur="3px">
@@ -367,35 +593,43 @@ export function DirectThreadItem({
                 />
               ) : null}
               <MessageCircleIcon />
-              <span className="truncate">{thread.title}</span>
+              <span className="min-w-0 flex-1 truncate" title={thread.title}>
+                {thread.title}
+              </span>
               {isWorking ? (
                 <span
                   className="ml-auto flex items-center pr-1 text-primary"
-                  title="Agent 正在工作中…"
+                  title={t("sidebar:agentWorking")}
                 >
                   <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
                 </span>
+              ) : null}
+              {thread.metadata.pinned ? (
+                <PinIcon
+                  className={cn(
+                    "size-3 shrink-0 text-muted-foreground/80 group-data-[collapsible=icon]:hidden",
+                    !isWorking && "ml-auto",
+                  )}
+                />
               ) : null}
             </SidebarMenuButton>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-52">
             <ThreadContextMenuItems
-              thread={thread}
               onOpenFileManager={onOpenFileManager}
               onRename={onRename}
+              onTransfer={() => setTransferOpen(true)}
+              thread={thread}
             />
           </ContextMenuContent>
         </ContextMenu>
-        {thread.metadata.pinned ? (
-          <SidebarMenuBadge>
-            <PinIcon className="size-3" />
-          </SidebarMenuBadge>
-        ) : null}
         <ThreadActionMenu
-          thread={thread}
           onOpenFileManager={onOpenFileManager}
           onRename={onRename}
+          onTransfer={() => setTransferOpen(true)}
+          thread={thread}
         />
+        <TransferThreadDialog onOpenChange={setTransferOpen} open={transferOpen} thread={thread} />
       </SidebarMenuItem>
     </BlurFade>
   );
@@ -411,9 +645,17 @@ function WorkspaceThreadItem({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { activeThreadId, setActiveThreadId, isThreadBusy } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const selectThread = useSelectThread();
+  const setActiveThreadId = (id: string | null) => selectThread(id);
+  const isThreadBusy = useIsThreadBusy(user?.id ?? "anonymous");
   const isWorking = isThreadBusy(thread.id);
   const isActive = thread.id === activeThreadId;
+  const [transferOpen, setTransferOpen] = React.useState(false);
 
   return (
     <SidebarMenuSubItem>
@@ -433,31 +675,44 @@ function WorkspaceThreadItem({
               />
             ) : null}
             <MessageCircleIcon />
-            <span className="truncate">{thread.title}</span>
+            <span className="min-w-0 flex-1 truncate" title={thread.title}>
+              {thread.title}
+            </span>
             {isWorking ? (
               <span
                 className="ml-auto flex items-center pr-1 text-primary"
-                title="Agent 正在工作中…"
+                title={t("sidebar:agentWorking")}
               >
                 <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
               </span>
+            ) : null}
+            {thread.metadata.pinned ? (
+              <PinIcon
+                className={cn(
+                  "size-3 shrink-0 text-muted-foreground/80 group-data-[collapsible=icon]:hidden",
+                  !isWorking && "ml-auto",
+                )}
+              />
             ) : null}
           </SidebarMenuSubButton>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-52">
           <ThreadContextMenuItems
-            thread={thread}
             onOpenFileManager={onOpenFileManager}
             onRename={onRename}
+            onTransfer={() => setTransferOpen(true)}
+            thread={thread}
           />
         </ContextMenuContent>
       </ContextMenu>
       <ThreadActionMenu
-        thread={thread}
         onOpenFileManager={onOpenFileManager}
         onRename={onRename}
+        onTransfer={() => setTransferOpen(true)}
         sub
+        thread={thread}
       />
+      <TransferThreadDialog onOpenChange={setTransferOpen} open={transferOpen} thread={thread} />
     </SidebarMenuSubItem>
   );
 }
@@ -474,21 +729,28 @@ export function WorkspaceGroup({
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
 }) {
-  const { createThread, setActiveThreadId, setTerminalPanelOpen, isThreadBusy } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const createThreadMutation = useCreateThreadMutation(userId);
+  const selectThread = useSelectThread();
+  const setActiveThreadId = (id: string | null) => selectThread(id);
+  const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const isThreadBusy = useIsThreadBusy(userId);
   const sorted = sortThreads(threads);
   const [open, setOpen] = React.useState(false);
   const hasWorkingThread = sorted.some((t) => isThreadBusy(t.id));
 
   const handleCopyPath = () => {
     void navigator.clipboard.writeText(path);
-    toast.success("已复制工作区路径");
+    toast.success(t("sidebar:copiedWorkspacePath"));
   };
 
   const handleCreateThreadInWorkspace = async () => {
-    const newThread = await createThread();
+    const newThread = await createThreadMutation.mutateAsync(undefined).catch(() => null);
     if (newThread) {
       setActiveThreadId(newThread.id);
-      toast.success("已在工作区新建会话");
+      toast.success(t("sidebar:createdWorkspaceThread"));
     }
   };
 
@@ -508,7 +770,7 @@ export function WorkspaceGroup({
               {!open && hasWorkingThread ? (
                 <span
                   className="ml-auto mr-1 flex items-center text-primary"
-                  title="工作区中有正在运行的会话…"
+                  title={t("sidebar:workspaceRunning")}
                 >
                   <Dotm3x3_6 size={11} dotSize={1.8} colorPreset="solid-theme" />
                 </span>
@@ -527,17 +789,17 @@ export function WorkspaceGroup({
               <ContextMenuLabel className="truncate max-w-48">{dirName(path)}</ContextMenuLabel>
               <ContextMenuItem onClick={() => void handleCreateThreadInWorkspace()}>
                 <PlusIcon className="text-muted-foreground" />
-                <span>在此工作区新建会话</span>
+                <span>{t("sidebar:newThreadInWorkspace")}</span>
                 <ContextMenuShortcut>⌘N</ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
             <ContextMenuSeparator />
             <ContextMenuGroup>
               <ContextMenuItem
-                onClick={() => void openPathInApp("explorer", path, "文件资源管理器")}
+                onClick={() => void openPathInApp("explorer", path, t("sidebar:fileExplorer"))}
               >
                 <FolderOpenIcon className="text-muted-foreground" />
-                <span>在资源管理器打开</span>
+                <span>{t("sidebar:openInExplorer")}</span>
               </ContextMenuItem>
               <ContextMenuItem
                 onClick={() => {
@@ -545,7 +807,7 @@ export function WorkspaceGroup({
                 }}
               >
                 <FolderTreeIcon className="text-muted-foreground" />
-                <span>浏览文件管理</span>
+                <span>{t("sidebar:browseFileManager")}</span>
               </ContextMenuItem>
               <ContextMenuItem
                 onClick={() => {
@@ -554,18 +816,18 @@ export function WorkspaceGroup({
                 }}
               >
                 <TerminalIcon className="text-muted-foreground" />
-                <span>在终端中打开</span>
+                <span>{t("sidebar:openInTerminal")}</span>
               </ContextMenuItem>
-              <ContextMenuItem onClick={() => void openPathInApp("code", path, "VS Code")}>
+              <ContextMenuItem onClick={() => void openPathInApp("vscode", path, "VS Code")}>
                 <ExternalLinkIcon className="text-muted-foreground" />
-                <span>在 VS Code 中打开</span>
+                <span>{t("sidebar:openInVsCode")}</span>
               </ContextMenuItem>
             </ContextMenuGroup>
             <ContextMenuSeparator />
             <ContextMenuGroup>
               <ContextMenuItem onClick={handleCopyPath}>
                 <CopyIcon className="text-muted-foreground" />
-                <span>复制目录路径</span>
+                <span>{t("sidebar:copyDirPath")}</span>
               </ContextMenuItem>
             </ContextMenuGroup>
           </ContextMenuContent>
@@ -657,6 +919,7 @@ function InlineCreateRow({
   onSubmit: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation();
   const inputRef = React.useRef<HTMLInputElement>(null);
 
   React.useLayoutEffect(() => {
@@ -685,7 +948,7 @@ function InlineCreateRow({
             onCancel();
           }
         }}
-        placeholder={kind === "dir" ? "文件夹名称" : "文件名"}
+        placeholder={kind === "dir" ? t("sidebar:folderName") : t("sidebar:fileName")}
         ref={inputRef}
         value={value}
       />
@@ -700,7 +963,11 @@ export function ThreadWorkspaceTree({
   threadId: string;
   onBack: () => void;
 }) {
-  const { fetchTreeEntries, user } = useWorkbench();
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const fetchTreeEntries = (targetThreadId: string, path?: string) =>
+    fetchTree(targetThreadId, userId, path ?? "");
   const [entriesByPath, setEntriesByPath] = React.useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = React.useState(() => new Set<string>());
   const [creating, setCreating] = React.useState<{
@@ -720,10 +987,10 @@ export function ThreadWorkspaceTree({
         setEntriesByPath((current) => ({ ...current, [path]: entries }));
       } catch (error) {
         loadedPathsRef.current.delete(path);
-        toast.error(error instanceof Error ? error.message : "读取文件夹失败");
+        toast.error(error instanceof Error ? error.message : t("sidebar:readDirFailed"));
       }
     },
-    [fetchTreeEntries, threadId],
+    [fetchTreeEntries, t, threadId],
   );
 
   const refreshTree = React.useCallback(async () => {
@@ -738,11 +1005,11 @@ export function ThreadWorkspaceTree({
       loadedPathsRef.current.add("");
       setEntriesByPath({ "": entries });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "读取文件树失败");
+      toast.error(error instanceof Error ? error.message : t("sidebar:readTreeFailed"));
     } finally {
       setLoading(false);
     }
-  }, [fetchTreeEntries, threadId]);
+  }, [fetchTreeEntries, t, threadId]);
 
   React.useEffect(() => {
     void refreshTree();
@@ -778,13 +1045,13 @@ export function ThreadWorkspaceTree({
       return;
     }
     if (name.includes("/") || name.includes("\\")) {
-      toast.error("名称不能包含路径分隔符");
+      toast.error(t("sidebar:nameNoSeparator"));
       return;
     }
     const path = creating.parent ? `${creating.parent}/${name}` : name;
     try {
       const response = await apiFetch(
-        `${MASTRA_SERVER_URL}/work/threads/${threadId}/tree?resourceId=${encodeURIComponent(user.id)}`,
+        `${MASTRA_SERVER_URL}/work/threads/${threadId}/tree?resourceId=${encodeURIComponent(userId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -792,13 +1059,14 @@ export function ThreadWorkspaceTree({
         },
       );
       const payload = (await response.json()) as { error?: string; message?: string };
-      if (!response.ok) throw new Error(payload.error || payload.message || "创建失败");
+      if (!response.ok)
+        throw new Error(payload.error || payload.message || t("sidebar:createFailed"));
       cancelCreate();
       await refreshDirectory(creating.parent);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "创建失败");
+      toast.error(error instanceof Error ? error.message : t("sidebar:createFailed"));
     }
-  }, [cancelCreate, createName, creating, refreshDirectory, threadId, user.id]);
+  }, [cancelCreate, createName, creating, refreshDirectory, t, threadId, userId]);
 
   function renderEntries(entries: TreeEntry[]): React.ReactNode {
     return entries.map((entry) =>
@@ -822,7 +1090,7 @@ export function ThreadWorkspaceTree({
                 />
               ) : null}
               {expanded.has(entry.path) && !entriesByPath[entry.path] ? (
-                <p className="px-2 py-1 text-xs text-muted-foreground">正在读取…</p>
+                <p className="px-2 py-1 text-xs text-muted-foreground">{t("sidebar:reading")}</p>
               ) : null}
               {renderEntries(entriesByPath[entry.path] ?? [])}
             </FileTreeFolder>
@@ -838,7 +1106,7 @@ export function ThreadWorkspaceTree({
               }}
             >
               <FilePlus2Icon className="text-muted-foreground" />
-              新建文件
+              {t("sidebar:addFile")}
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -849,7 +1117,7 @@ export function ThreadWorkspaceTree({
               }}
             >
               <FolderPlusIcon className="text-muted-foreground" />
-              新建子文件夹
+              {t("sidebar:newSubFolder")}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
@@ -871,23 +1139,25 @@ export function ThreadWorkspaceTree({
     <div className="flex min-h-0 size-full flex-col">
       <div className="flex min-w-0 items-center gap-1 border-b px-2 py-1.5">
         <Button
-          aria-label="返回项目列表"
+          aria-label={t("sidebar:backToProjects")}
           className="size-7 shrink-0"
           onClick={onBack}
           size="icon-sm"
-          title="返回项目列表"
+          title={t("sidebar:backToProjects")}
           variant="ghost"
         >
           <ArrowLeftIcon />
         </Button>
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">文件管理</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {t("sidebar:fileManager")}
+        </span>
         <Button
-          aria-label="刷新文件树"
+          aria-label={t("sidebar:refreshTree")}
           className="size-7 shrink-0"
           disabled={loading}
           onClick={() => void refreshTree()}
           size="icon-sm"
-          title="刷新文件树"
+          title={t("sidebar:refreshTree")}
           variant="ghost"
         >
           <RefreshCwIcon className={cn(loading && "animate-spin")} />
@@ -896,10 +1166,10 @@ export function ThreadWorkspaceTree({
           <DropdownMenuTrigger
             render={
               <Button
-                aria-label="文件管理操作"
+                aria-label={t("sidebar:fileManagerAction")}
                 className="size-7 shrink-0"
                 size="icon-sm"
-                title="文件管理操作"
+                title={t("sidebar:fileManagerAction")}
                 variant="ghost"
               />
             }
@@ -914,7 +1184,7 @@ export function ThreadWorkspaceTree({
               }}
             >
               <FilePlus2Icon />
-              添加文件
+              {t("sidebar:addFile")}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
@@ -923,7 +1193,7 @@ export function ThreadWorkspaceTree({
               }}
             >
               <FolderPlusIcon />
-              新建文件夹
+              {t("sidebar:newFolder")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -944,9 +1214,9 @@ export function ThreadWorkspaceTree({
             />
           ) : null}
           {loading ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">正在读取目录…</p>
+            <p className="px-2 py-2 text-xs text-muted-foreground">{t("sidebar:readingDir")}</p>
           ) : rootEntries.length === 0 && !creating ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">空目录</p>
+            <p className="px-2 py-2 text-xs text-muted-foreground">{t("sidebar:emptyDir")}</p>
           ) : (
             renderEntries(rootEntries)
           )}

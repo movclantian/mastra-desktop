@@ -8,6 +8,7 @@ import {
   SquareIcon,
 } from "lucide-react";
 import type * as React from "react";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import {
   WebPreview,
@@ -18,10 +19,10 @@ import {
 import { Button } from "@/shared/ui/button";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
-import type { BrowserState } from "../api/browser-api";
+import type { BrowserAction, BrowserState } from "../api/browser-api";
 
 export interface BrowserSessionViewState {
-  action: (name: string, index?: number, url?: string) => Promise<void>;
+  action: (name: BrowserAction, index?: number, url?: string) => Promise<void>;
   busy: boolean;
   frame?: { data: string; viewport: { width: number; height: number } };
   frameState: "idle" | "connecting" | "connected" | "error";
@@ -46,6 +47,7 @@ export function BrowserView({
   onCloseBrowser: () => void;
   session: BrowserSessionViewState;
 }) {
+  const { t } = useTranslation();
   const {
     action,
     busy,
@@ -69,7 +71,7 @@ export function BrowserView({
           <EmptyMedia variant="icon">
             <Globe2Icon />
           </EmptyMedia>
-          <EmptyTitle>未选择会话</EmptyTitle>
+          <EmptyTitle>{t("workspace:noSessionSelected")}</EmptyTitle>
         </EmptyHeader>
       </Empty>
     );
@@ -86,21 +88,21 @@ export function BrowserView({
         <WebPreviewNavigationButton
           disabled={!state.active || busy}
           onClick={() => void action("back")}
-          tooltip="后退"
+          tooltip={t("workspace:back")}
         >
           <ArrowLeftIcon />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton
           disabled={!state.active || busy}
           onClick={() => void action("forward")}
-          tooltip="前进"
+          tooltip={t("workspace:forward")}
         >
           <ArrowRightIcon />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton
-          disabled={!state.active || busy}
+          disabled={(!state.active && state.tabs.length === 0) || busy}
           onClick={() => void action("reload")}
-          tooltip="刷新"
+          tooltip={t("workspace:refresh")}
         >
           <RefreshCwIcon className={cn(busy && "animate-spin")} />
         </WebPreviewNavigationButton>
@@ -110,14 +112,14 @@ export function BrowserView({
           onClick={() => {
             if (state.currentUrl) void window.api.workspace.openExternal(state.currentUrl);
           }}
-          tooltip="在系统浏览器中打开"
+          tooltip={t("workspace:openInSystemBrowser")}
         >
           <ExternalLinkIcon />
         </WebPreviewNavigationButton>
         <WebPreviewNavigationButton
-          disabled={!state.active}
+          disabled={!state.active && state.tabs.length === 0}
           onClick={onCloseBrowser}
-          tooltip="关闭浏览器"
+          tooltip={t("workspace:closeBrowser")}
         >
           <SquareIcon />
         </WebPreviewNavigationButton>
@@ -130,7 +132,7 @@ export function BrowserView({
       >
         {frame ? (
           <img
-            alt="Agent 浏览器实时画面"
+            alt={t("workspace:browserLiveView")}
             className="max-h-full max-w-full cursor-default object-contain select-none"
             draggable={false}
             onPointerDown={(event) => {
@@ -142,17 +144,21 @@ export function BrowserView({
             onWheel={injectWheel}
             src={`data:image/jpeg;base64,${frame.data}`}
           />
-        ) : state.active && frameState === "error" ? (
+        ) : (state.active || state.tabs.length > 0) && frameState === "error" ? (
           <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
-            <span>实时画面连接失败</span>
+            <span>{t("workspace:liveViewFailed")}</span>
             <Button onClick={retryFrame} size="sm" variant="outline">
-              重试连接
+              {t("workspace:retryConnection")}
             </Button>
           </div>
-        ) : state.active ? (
+        ) : state.active || state.tabs.length > 0 || busy ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <DotmCircular4 size={16} dotSize={1.8} colorPreset="solid-theme" />
-            {frameState === "connecting" ? "正在连接实时画面" : "等待浏览器画面"}
+            {frameState === "connecting"
+              ? t("workspace:connectingLiveView")
+              : busy
+                ? t("workspace:loadingBrowserPage")
+                : t("workspace:waitingBrowserView")}
           </div>
         ) : (
           <Empty className="text-muted-foreground">
@@ -160,7 +166,7 @@ export function BrowserView({
               <EmptyMedia variant="icon">
                 <BotIcon />
               </EmptyMedia>
-              <EmptyTitle className="text-zinc-200">浏览器未启动</EmptyTitle>
+              <EmptyTitle className="text-zinc-200">{t("workspace:browserNotStarted")}</EmptyTitle>
             </EmptyHeader>
           </Empty>
         )}

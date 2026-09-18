@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import {
   Command,
@@ -599,7 +600,7 @@ export const PromptInputActionAddScreenshot = ({
       } catch (error) {
         if (
           error instanceof DOMException &&
-          (error.name === "NotAllowedError" || error.name === "AbortError")
+          ["NotAllowedError", "AbortError", "NotSupportedError"].includes(error.name)
         ) {
           return;
         }
@@ -731,7 +732,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "当前模型或应用不支持这些文件类型",
+          message: i18n.t("chat:prompt.unsupportedFileTypes"),
         });
         return;
       }
@@ -740,7 +741,7 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "所选文件均超过单文件大小限制",
+          message: i18n.t("chat:prompt.fileExceedsLimit"),
         });
         return;
       }
@@ -754,7 +755,7 @@ export const PromptInput = ({
           (sum, file) =>
             sum +
             (estimateFileTokens?.({
-              name: file.filename ?? "未命名附件",
+              name: file.filename ?? i18n.t("chat:messages.untitledAttachment"),
               size: file.byteSize ?? 0,
               type: file.mediaType ?? "",
               lastModified: file.file?.lastModified ?? 0,
@@ -768,7 +769,7 @@ export const PromptInput = ({
           return true;
         });
         if (unique.length < sized.length) {
-          onError?.({ code: "duplicate", message: "已忽略重复附件" });
+          onError?.({ code: "duplicate", message: i18n.t("chat:prompt.duplicateAttachment") });
         }
         const withinTotal = unique.filter((file) => {
           if (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize)
@@ -787,7 +788,10 @@ export const PromptInput = ({
           return true;
         });
         if (withinTotal.length < unique.length) {
-          onError?.({ code: "max_total_file_size", message: "附件总大小超过上传限制或上下文预算" });
+          onError?.({
+            code: "max_total_file_size",
+            message: i18n.t("chat:prompt.maxTotalFileSize"),
+          });
         }
         const capacity =
           typeof maxFiles === "number" ? Math.max(0, maxFiles - prev.length) : undefined;
@@ -795,7 +799,7 @@ export const PromptInput = ({
         if (typeof capacity === "number" && withinTotal.length > capacity) {
           onError?.({
             code: "max_files",
-            message: "附件数量超过限制，部分文件未添加",
+            message: i18n.t("chat:prompt.attachmentCountExceeded"),
           });
         }
         const next: PromptAttachment[] = [];
@@ -850,7 +854,7 @@ export const PromptInput = ({
       if (incoming.length && accepted.length === 0) {
         onError?.({
           code: "accept",
-          message: "当前模型或应用不支持这些文件类型",
+          message: i18n.t("chat:prompt.unsupportedFileTypes"),
         });
         return;
       }
@@ -859,7 +863,7 @@ export const PromptInput = ({
       if (accepted.length > 0 && sized.length === 0) {
         onError?.({
           code: "max_file_size",
-          message: "所选文件均超过单文件大小限制",
+          message: i18n.t("chat:prompt.fileExceedsLimit"),
         });
         return;
       }
@@ -875,7 +879,7 @@ export const PromptInput = ({
         (file) => !existingFingerprints.has(`${file.name}:${file.size}:${file.lastModified}`),
       );
       if (unique.length < sized.length) {
-        onError?.({ code: "duplicate", message: "已忽略重复附件" });
+        onError?.({ code: "duplicate", message: i18n.t("chat:prompt.duplicateAttachment") });
       }
       let totalBytes = files.reduce(
         (sum, file) =>
@@ -886,7 +890,7 @@ export const PromptInput = ({
         (sum, file) =>
           sum +
           (estimateFileTokens?.({
-            name: file.filename ?? "未命名附件",
+            name: file.filename ?? i18n.t("chat:messages.untitledAttachment"),
             size: "byteSize" in file && typeof file.byteSize === "number" ? file.byteSize : 0,
             type: file.mediaType ?? "",
             lastModified: "file" in file && file.file instanceof File ? file.file.lastModified : 0,
@@ -912,7 +916,7 @@ export const PromptInput = ({
       if (withinTotal.length < unique.length) {
         onError?.({
           code: "max_total_file_size",
-          message: "附件总大小超过当前模型的可用上下文预算",
+          message: i18n.t("chat:prompt.budgetExceeded"),
         });
       }
 
@@ -923,7 +927,7 @@ export const PromptInput = ({
       if (typeof capacity === "number" && withinTotal.length > capacity) {
         onError?.({
           code: "max_files",
-          message: "附件数量超过限制，部分文件未添加",
+          message: i18n.t("chat:prompt.attachmentCountExceeded"),
         });
       }
 

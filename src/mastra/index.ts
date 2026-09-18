@@ -17,7 +17,8 @@ import { MastraEditor } from "@mastra/editor";
 import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
-import { mastraWorkAgent, workBrowser } from "./agents";
+import { mastraWorkAgent } from "./agents";
+import { getBrowserForRequest, getBrowserForResource } from "./agents/browser";
 import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
 import { listWorkModes } from "./agents/modes";
 import { toolCategoryOf } from "./agents/permissions";
@@ -79,7 +80,7 @@ const workAgentController = new AgentController({
   agent: mastraWorkAgent,
   modes: listWorkModes(),
   defaultModeId: "plan",
-  browser: workBrowser,
+  browser: ({ requestContext }) => getBrowserForRequest(requestContext),
   toolCategoryResolver: (toolName) => toolCategoryOf(toolName),
 });
 
@@ -87,7 +88,7 @@ const editorBrowserProvider: BrowserProvider = {
   id: "agent-browser",
   name: "Mastra Agent Browser",
   description: "Thread-scoped browser provided by the desktop workbench.",
-  createBrowser: () => workBrowser,
+  createBrowser: () => getBrowserForResource("default"),
 };
 
 const workEditor = new MastraEditor({

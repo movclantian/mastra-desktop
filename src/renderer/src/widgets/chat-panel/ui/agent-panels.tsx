@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { CATEGORY_META, type ToolCategory } from "@/entities/workbench";
+import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
@@ -75,22 +76,9 @@ import {
   type WorkflowRuntimeState,
 } from "../model/types";
 
-function workflowStatusLabel(status: string): string {
-  return (
-    {
-      running: "运行中",
-      success: "已完成",
-      failed: "失败",
-      suspended: "等待审批",
-      canceled: "已取消",
-      paused: "已暂停",
-      pending: "排队中",
-      waiting: "等待中",
-      tripwire: "已拦截",
-      bailed: "已中止",
-      skipped: "已跳过",
-    }[status] ?? status
-  );
+function workflowStatusLabel(status: string, t?: (key: string) => string): string {
+  const key = `chat.panels.workflowStatus.${status}`;
+  return t ? t(key) : i18n.t(key);
 }
 
 function workflowStepIcon(status: string) {
@@ -136,6 +124,7 @@ function WorkflowRunCard({
   onAction?: (run: WorkflowRuntimeRun, action: WorkflowRunAction) => void;
   onResume?: (run: WorkflowRuntimeRun) => void;
 }) {
+  const { t } = useTranslation();
   const events = run.events.slice(-6).reverse();
   const outputText = workflowOutputPreview(run.output);
   return (
@@ -147,7 +136,7 @@ function WorkflowRunCard({
           variant={run.status === "failed" || run.status === "tripwire" ? "destructive" : "outline"}
           className="shrink-0 text-[10px]"
         >
-          {workflowStatusLabel(run.status)}
+          {workflowStatusLabel(run.status, t)}
         </Badge>
       </div>
       {onAction && onResume ? (
@@ -155,42 +144,42 @@ function WorkflowRunCard({
           {run.status === "suspended" ? (
             /* 挂起的 Workflow 在等人操作 —— 脉冲扩散把"该你了"从一排同质按钮里拉出来 */
             <PulsatingButton
-              aria-label="恢复 Workflow"
+              aria-label={t("chat:panels.resumeWorkflow")}
               className="h-6 gap-1 rounded-md px-2 text-[10px]"
               duration="1.8s"
               distance="5px"
               onClick={() => onResume(run)}
-              title="恢复 Workflow"
+              title={t("chat:panels.resumeWorkflow")}
               variant="ripple"
             >
               <PlayIcon className="size-3" />
-              恢复
+              {t("chat:panels.resumeWorkflow").replace(" Workflow", "")}
             </PulsatingButton>
           ) : null}
           {["failed", "tripwire", "canceled", "bailed"].includes(run.status) ? (
             <Button
-              aria-label="重启 Workflow"
+              aria-label={t("chat:panels.restartWorkflow")}
               className="h-6 px-2 text-[10px]"
               onClick={() => onAction(run, "restart")}
               size="sm"
-              title="重启 Workflow"
+              title={t("chat:panels.restartWorkflow")}
               variant="outline"
             >
               <RotateCcwIcon />
-              重启
+              {t("chat:panels.restartWorkflow").replace(" Workflow", "")}
             </Button>
           ) : null}
           {["pending", "running", "waiting", "suspended", "paused"].includes(run.status) ? (
             <Button
-              aria-label="取消 Workflow"
+              aria-label={t("chat:panels.cancelWorkflow")}
               className="h-6 px-2 text-[10px]"
               onClick={() => onAction(run, "cancel")}
               size="sm"
-              title="取消 Workflow"
+              title={t("chat:panels.cancelWorkflow")}
               variant="ghost"
             >
               <XIcon />
-              取消
+              {t("common:cancel")}
             </Button>
           ) : null}
         </div>
@@ -217,9 +206,11 @@ function WorkflowRunCard({
       </div>
       {workflowTimeLabel(run.startedAt) || workflowTimeLabel(run.finishedAt ?? run.updatedAt) ? (
         <p className="mt-2 truncate border-t pt-2 text-[10px] text-muted-foreground">
-          开始 {workflowTimeLabel(run.startedAt) ?? "未知"}
+          {t("chat:panels.startedAt", {
+            time: workflowTimeLabel(run.startedAt) ?? t("chat:panels.unknown"),
+          })}
           {workflowTimeLabel(run.finishedAt ?? run.updatedAt)
-            ? ` · 更新 ${workflowTimeLabel(run.finishedAt ?? run.updatedAt)}`
+            ? ` · ${workflowTimeLabel(run.finishedAt ?? run.updatedAt)}`
             : ""}
         </p>
       ) : null}
@@ -241,11 +232,11 @@ function WorkflowRunCard({
           {events.map((event) => (
             <div className="flex min-w-0 gap-2" key={`${run.runId}:${event.id}`}>
               <span className="shrink-0 tabular-nums">
-                {event.at ? new Date(event.at).toLocaleTimeString() : "步骤"}
+                {event.at ? new Date(event.at).toLocaleTimeString() : t("chat:panels.step")}
               </span>
               <span className="min-w-0 truncate">
                 {event.stepId ? `${event.stepId}: ` : ""}
-                {event.message || workflowStatusLabel(event.status || event.type)}
+                {event.message || workflowStatusLabel(event.status || event.type, t)}
               </span>
             </div>
           ))}
@@ -262,6 +253,7 @@ export function WorkflowRunPanel({
   workflow: WorkflowRuntimeState | null;
   onAction?: (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => void;
 }) {
+  const { t } = useTranslation();
   const [resumeRun, setResumeRun] = React.useState<WorkflowRuntimeRun | null>(null);
   const [resumeText, setResumeText] = React.useState('{\n  "approved": true\n}');
   const [resumeError, setResumeError] = React.useState<string | null>(null);
@@ -278,7 +270,7 @@ export function WorkflowRunPanel({
       <div className="mx-auto mb-2 w-full max-w-3xl rounded-lg border bg-background shadow-xs">
         <div className="flex items-center gap-2 border-b px-3 py-2">
           <SparklesIcon className="size-4 text-primary" />
-          <span className="text-sm font-medium">Workflow 运行状态</span>
+          <span className="text-sm font-medium">{t("chat:panels.workflowRunStatus")}</span>
           <Badge
             className="ml-auto text-[10px]"
             variant={
@@ -287,7 +279,7 @@ export function WorkflowRunPanel({
                 : "secondary"
             }
           >
-            {badgeRun ? workflowStatusLabel(badgeRun.status) : "最近运行"}
+            {badgeRun ? workflowStatusLabel(badgeRun.status, t) : t("chat:panels.recentRun")}
           </Badge>
         </div>
         <ScrollArea className="max-h-72">
@@ -319,9 +311,9 @@ export function WorkflowRunPanel({
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>恢复 Workflow</DialogTitle>
+            <DialogTitle>{t("chat:panels.resumeWorkflow")}</DialogTitle>
             <DialogDescription>
-              {resumeDescription || "填写当前挂起步骤需要的 JSON resume data。"}
+              {resumeDescription || t("chat:panels.resumeDesc")}
             </DialogDescription>
           </DialogHeader>
           <Textarea
@@ -332,7 +324,7 @@ export function WorkflowRunPanel({
           {resumeError ? <p className="text-xs text-destructive">{resumeError}</p> : null}
           <DialogFooter>
             <Button onClick={() => setResumeRun(null)} variant="ghost">
-              取消
+              {t("common:cancel")}
             </Button>
             <Button
               onClick={() => {
@@ -343,12 +335,12 @@ export function WorkflowRunPanel({
                   setResumeError(null);
                   setResumeRun(null);
                 } catch {
-                  setResumeError("Resume data 必须是有效的 JSON。");
+                  setResumeError(t("chat:panels.invalidJson"));
                 }
               }}
             >
               <PlayIcon />
-              继续
+              {t("common:confirm")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -361,12 +353,20 @@ export function AgentQueuePanel({
   tasks,
   activeTools = [],
   queuedFollowUps = 0,
+  onClose,
 }: {
   tasks: AgentTask[];
   activeTools?: AgentToolState[];
   queuedFollowUps?: number;
+  onClose?: () => void;
 }) {
+  const { t } = useTranslation();
   if (tasks.length === 0 && activeTools.length === 0 && queuedFollowUps === 0) return null;
+  const completed =
+    tasks.length > 0 &&
+    tasks.every((task) => task.status === "completed") &&
+    activeTools.length === 0 &&
+    queuedFollowUps === 0;
 
   return (
     <>
@@ -374,10 +374,27 @@ export function AgentQueuePanel({
           一张 Queue 卡片(由 chat/panel.tsx 统一包裹),保持两个队列的视觉一体。 */}
       {tasks.length > 0 ? (
         <QueueSection defaultOpen>
-          <QueueSectionTrigger className="px-2 py-1">
+          <QueueSectionTrigger
+            action={
+              completed && onClose ? (
+                <Button
+                  aria-label={t("common:close")}
+                  className="size-7 shrink-0 text-muted-foreground"
+                  onClick={onClose}
+                  size="icon"
+                  title={t("common:close")}
+                  type="button"
+                  variant="ghost"
+                >
+                  <XIcon className="size-4" />
+                </Button>
+              ) : null
+            }
+            className="px-2 py-1"
+          >
             <QueueSectionLabel
               count={tasks.length}
-              label="任务"
+              label={t("chat:panels.task")}
               icon={<SparklesIcon className="size-4" />}
             />
           </QueueSectionTrigger>
@@ -398,7 +415,11 @@ export function AgentQueuePanel({
                         {task.content}
                       </QueueItemContent>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {completed ? "已完成" : task.status === "in_progress" ? "进行中" : "待处理"}
+                        {completed
+                          ? t("chat:panels.completed")
+                          : task.status === "in_progress"
+                            ? t("chat:panels.inProgress")
+                            : t("chat:panels.pending")}
                       </span>
                     </div>
                   </QueueItem>
@@ -413,7 +434,7 @@ export function AgentQueuePanel({
           <QueueSectionTrigger className="px-2 py-1">
             <QueueSectionLabel
               count={activeTools.length}
-              label="工具"
+              label={t("chat:panels.tool")}
               icon={<SparklesIcon className="size-4" />}
             />
           </QueueSectionTrigger>
@@ -426,10 +447,10 @@ export function AgentQueuePanel({
                     <QueueItemContent className="line-clamp-2">{tool.name}</QueueItemContent>
                     <span className="shrink-0 text-xs text-muted-foreground">
                       {tool.status === "error"
-                        ? "失败"
+                        ? t("chat:panels.failed")
                         : tool.status === "completed"
-                          ? "已完成"
-                          : "进行中"}
+                          ? t("chat:panels.completed")
+                          : t("chat:panels.inProgress")}
                     </span>
                   </div>
                 </QueueItem>
@@ -443,7 +464,7 @@ export function AgentQueuePanel({
           <QueueSectionTrigger className="px-2 py-1">
             <QueueSectionLabel
               count={queuedFollowUps}
-              label="后续消息"
+              label={t("chat:panels.followUp")}
               icon={<SparklesIcon className="size-4" />}
             />
           </QueueSectionTrigger>
@@ -464,8 +485,9 @@ export function AgentQuestionnairePanel({
   onResume: (resumeData: unknown) => void;
   completed?: boolean;
 }) {
+  const { t } = useTranslation();
   const payload = interaction.suspendPayload ?? {};
-  const question = asString(payload.question) ?? "Agent需要你的回答";
+  const question = asString(payload.question) ?? t("chat:panels.waitingAnswer");
   const selectionMode = payload.selectionMode === "multi_select" ? "multi_select" : "single_select";
   const options = Array.isArray(payload.options)
     ? payload.options.flatMap((option) => {
@@ -522,7 +544,7 @@ export function AgentQuestionnairePanel({
         )}
       >
         <CircleHelpIcon className="size-4 text-primary" />
-        {completed ? "已回答" : "Agent 正在等待你的回答"}
+        {completed ? t("chat:panels.answered") : t("chat:panels.waitingAnswer")}
       </div>
       <Questionnaire
         items={items}
@@ -533,7 +555,9 @@ export function AgentQuestionnairePanel({
           <QuestionnaireTitle>{question}</QuestionnaireTitle>
           {!completed && options.length > 0 ? (
             <QuestionnaireDescription>
-              {selectionMode === "multi_select" ? "可选择多个选项" : "请选择一个选项"}
+              {selectionMode === "multi_select"
+                ? t("chat:panels.multiSelectHint")
+                : t("chat:panels.singleSelectHint")}
             </QuestionnaireDescription>
           ) : null}
           <QuestionnaireChoices>
@@ -555,10 +579,12 @@ export function AgentQuestionnairePanel({
               ))
             ) : (
               <QuestionnaireInput
-                aria-label={completed ? "已回答内容" : "回答 Agent 的问题"}
-                defaultValue={completed ? formatInteractionValue(answerValue) : undefined}
+                aria-label={
+                  completed ? t("chat:panels.answeredContent") : t("chat:panels.answerQuestion")
+                }
+                defaultValue={completed ? formatInteractionValue(answerValue, t) : undefined}
                 disabled={completed}
-                placeholder={completed ? undefined : "输入你的回答..."}
+                placeholder={completed ? undefined : t("chat:panels.inputAnswerPlaceholder")}
               />
             )}
           </QuestionnaireChoices>
@@ -567,10 +593,10 @@ export function AgentQuestionnairePanel({
         {!completed ? (
           <QuestionnaireActions>
             <QuestionnaireSkip disabled={busy} onClick={() => onResume("")} type="button">
-              取消
+              {t("common:cancel")}
             </QuestionnaireSkip>
             <QuestionnaireSubmit disabled={busy}>
-              {busy ? "正在提交..." : "提交回答"}
+              {busy ? t("chat:panels.submitting") : t("chat:panels.submitAnswer")}
             </QuestionnaireSubmit>
           </QuestionnaireActions>
         ) : null}
@@ -590,10 +616,11 @@ export function AgentPlanPanel({
   onResume: (resumeData: unknown) => void;
   completed?: boolean;
 }) {
+  const { t } = useTranslation();
   const [feedback, setFeedback] = React.useState("");
   const payload = interaction.suspendPayload ?? {};
   const draft = interaction.plan;
-  const title = draft?.title ?? asString(payload.title) ?? "实施计划";
+  const title = draft?.title ?? asString(payload.title) ?? t("chat:panels.implementationPlan");
   const plan = draft?.plan ?? asString(payload.plan);
   const path = draft?.path ?? asString(payload.path);
 
@@ -606,7 +633,7 @@ export function AgentPlanPanel({
               <FileCheck2Icon className="size-4 shrink-0 text-primary" />
               <PlanTitle>{title}</PlanTitle>
             </div>
-            <PlanDescription>计划已完成审批并回显在历史消息中。</PlanDescription>
+            <PlanDescription>{t("chat:panels.planApprovedDesc")}</PlanDescription>
           </div>
           <PlanTrigger />
         </PlanHeader>
@@ -615,7 +642,9 @@ export function AgentPlanPanel({
             {plan ? (
               <MessageResponse>{plan}</MessageResponse>
             ) : (
-              <p className="text-sm text-muted-foreground">计划文件: {path ?? "未知"}</p>
+              <p className="text-sm text-muted-foreground">
+                {t("chat:panels.planFile", { path: path ?? t("chat:panels.unknown") })}
+              </p>
             )}
           </ScrollArea>
         </PlanContent>
@@ -641,7 +670,7 @@ export function AgentPlanPanel({
             <FileCheck2Icon className="size-4 shrink-0 text-primary" />
             <PlanTitle>{title}</PlanTitle>
           </div>
-          <PlanDescription>Agent 已提交一份实施计划,批准后才会继续执行。</PlanDescription>
+          <PlanDescription>{t("chat:panels.planSubmittedDesc")}</PlanDescription>
         </div>
         <PlanTrigger />
       </PlanHeader>
@@ -651,27 +680,27 @@ export function AgentPlanPanel({
             <MessageResponse>{plan}</MessageResponse>
           ) : (
             <p className="text-sm text-muted-foreground">
-              计划内容暂未随历史消息加载,文件路径: {path ?? "未知"}
+              {t("chat:panels.planNotLoaded", { path: path ?? t("chat:panels.unknown") })}
             </p>
           )}
         </ScrollArea>
         <Textarea
-          aria-label="计划反馈"
+          aria-label={t("chat:panels.planFeedback")}
           disabled={busy}
           onChange={(event) => setFeedback(event.target.value)}
-          placeholder="拒绝时可填写修改意见(可选)..."
+          placeholder={t("chat:panels.rejectFeedbackPlaceholder")}
           value={feedback}
         />
       </PlanContent>
       <PlanFooter className="justify-end gap-2">
         <PlanAction>
           <Button disabled={busy} onClick={() => resume("rejected")} size="sm" variant="outline">
-            拒绝并修改
+            {t("chat:panels.reject")}
           </Button>
         </PlanAction>
         <PlanAction>
           <Button disabled={busy} onClick={() => resume("approved")} size="sm">
-            批准执行
+            {t("chat:panels.approveExecution")}
           </Button>
         </PlanAction>
       </PlanFooter>
@@ -679,9 +708,10 @@ export function AgentPlanPanel({
   );
 }
 
-export function formatInteractionValue(value: unknown): string {
+export function formatInteractionValue(value: unknown, t?: (key: string) => string): string {
   if (typeof value === "string") return value;
-  if (value === undefined) return "未提供回答";
+  if (value === undefined)
+    return t ? t("chat:panels.noAnswerProvided") : i18n.t("chat:panels.noAnswerProvided");
   try {
     return JSON.stringify(value, null, 2);
   } catch {
@@ -708,17 +738,9 @@ export function AgentInteractionHistory({ interaction }: { interaction: AgentInt
   return null;
 }
 
-/**
- * 审批面板里的工具显示名。工作区工具统一去掉 mastra_workspace_ 前缀
- * (官方常量表就是这个前缀,见 workspace-class.mdx 的工具清单),
- * 因此这里不需要再抄一份工具名单 —— 只给少数自定义工具起中文名。
- */
-const APPROVAL_TOOL_LABELS: Record<string, string> = {
-  execute_typescript: "执行多工具编排",
-};
-
 function approvalToolLabel(toolName: string): string {
-  return APPROVAL_TOOL_LABELS[toolName] ?? toolName.replace(/^mastra_workspace_/, "");
+  if (toolName === "execute_typescript") return i18n.t("chat:panels.executeTypescript");
+  return toolName.replace(/^mastra_workspace_/, "");
 }
 
 export function AgentApprovalPanel({
@@ -733,6 +755,7 @@ export function AgentApprovalPanel({
   /** 「始终允许此类」:先把该类别写成 allow,再批准本次调用(官方 always_allow_category) */
   onAlwaysAllow?: (category: ToolCategory) => Promise<void> | void;
 }) {
+  const { t } = useTranslation();
   const [reason, setReason] = React.useState("");
   const label = approvalToolLabel(interaction.toolName);
   const category = interaction.category;
@@ -743,14 +766,16 @@ export function AgentApprovalPanel({
         <ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium">工具“{label}”等待批准</p>
+            <p className="text-sm font-medium">{t("chat:panels.toolWaitingApproval", { label })}</p>
             {category ? (
               <Badge className="text-[10px]" variant="outline">
                 {CATEGORY_META[category].label}
               </Badge>
             ) : null}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">确认后 Agent 才会继续这次操作。</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("chat:panels.confirmBeforeContinue")}
+          </p>
           {interaction.args !== undefined ? (
             <ScrollArea className="mt-2 max-h-32 rounded-md border bg-muted/30 p-2">
               <pre className="whitespace-pre-wrap break-words font-mono text-xs">
@@ -761,11 +786,11 @@ export function AgentApprovalPanel({
           {/* 拒绝理由会代替工具结果回给模型(human-in-the-loop.mdx「Explaining a decline」),
               模型据此调整而不是盲目重试;留空则回落官方默认文案。 */}
           <Textarea
-            aria-label="拒绝理由"
+            aria-label={t("chat:panels.rejectReason")}
             className="mt-2 min-h-16"
             disabled={busy}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="拒绝时可说明原因,模型会据此调整做法(可选)..."
+            placeholder={t("chat:panels.rejectPlaceholder")}
             value={reason}
           />
           <div className="mt-3 flex flex-wrap justify-end gap-2">
@@ -778,7 +803,7 @@ export function AgentApprovalPanel({
               type="button"
               variant="outline"
             >
-              拒绝
+              {t("chat:panels.reject")}
             </Button>
             {category && onAlwaysAllow ? (
               <Button
@@ -791,7 +816,7 @@ export function AgentApprovalPanel({
                 type="button"
                 variant="secondary"
               >
-                始终允许「{CATEGORY_META[category].label}」
+                {t("chat:panels.alwaysAllowCategory", { category: CATEGORY_META[category].label })}
               </Button>
             ) : null}
             {/* 阻塞式审批:Agent 正停在这里等人点。脉冲把主操作从"拒绝/始终允许"里区分出来 */}
@@ -803,7 +828,7 @@ export function AgentApprovalPanel({
               onClick={() => onResume({ approved: true })}
               type="button"
             >
-              批准执行
+              {t("chat:panels.approveExecution")}
             </PulsatingButton>
           </div>
         </div>

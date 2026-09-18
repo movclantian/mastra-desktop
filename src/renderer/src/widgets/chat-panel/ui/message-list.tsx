@@ -2,18 +2,28 @@ import type { FileUIPart, UIMessage } from "ai";
 import {
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
   FileTextIcon,
+  GitForkIcon,
   PencilIcon,
   RefreshCcwIcon,
+  SmilePlusIcon,
   SparklesIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
   XIcon,
 } from "lucide-react";
+import { search as searchEmojis } from "node-emoji";
 import * as React from "react";
 import { toast } from "sonner";
 import { MASTRA_SERVER_URL } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
   Attachment,
+  AttachmentAction,
+  AttachmentActions,
   AttachmentContent,
   AttachmentDescription,
   AttachmentGroup,
@@ -23,8 +33,8 @@ import {
 } from "@/shared/ui/attachment";
 import { Badge } from "@/shared/ui/badge";
 import { BlurFade } from "@/shared/ui/blur-fade";
-import { Bubble, BubbleContent } from "@/shared/ui/bubble";
-import { Button } from "@/shared/ui/button";
+import { Bubble, BubbleContent, BubbleReactions } from "@/shared/ui/bubble";
+import { Button, buttonVariants } from "@/shared/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -34,6 +44,7 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { DotmSquare3 } from "@/shared/ui/dotm-square-3";
+import { Input } from "@/shared/ui/input";
 import {
   Message,
   MessageAvatar,
@@ -42,6 +53,8 @@ import {
   MessageHeader,
 } from "@/shared/ui/message";
 import { MessageScrollerItem } from "@/shared/ui/message-scroller";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
 import { WordRotate } from "@/shared/ui/word-rotate";
 import { fetchChatAssetBlob } from "../api/chat-api";
@@ -56,6 +69,7 @@ import {
   getPlanDraft,
   getTraceStepStatus,
   type MessageFileReference,
+  type MessageReaction,
   referenceBadgeClass,
 } from "../model/types";
 import {
@@ -73,19 +87,24 @@ function AssistantPendingIndicator({
 }: {
   variant?: "initial" | "after-tool" | "after-interaction";
 }) {
-  const words =
-    variant === "after-tool"
-      ? ["已获取工具结果，正在组织回复…", "正在分析工具返回数据…", "正在综合信息生成解答…"]
-      : variant === "after-interaction"
-        ? ["已收到交互反馈，正在继续执行…", "正在组织下一步回复…"]
-        : ["正在深度思考与规划…", "正在解析指令与上下文…", "正在检索工具库与工作区…"];
+  const { t } = useTranslation();
+  const words = React.useMemo(() => {
+    const key =
+      variant === "after-tool"
+        ? "chat:messages.pendingAfterTool"
+        : variant === "after-interaction"
+          ? "chat:messages.pendingAfterInteraction"
+          : "chat:messages.pendingInitial";
+    const translated = t(key, { returnObjects: true });
+    return Array.isArray(translated) ? (translated as string[]) : [];
+  }, [variant, t]);
 
   return (
     <div className="flex items-center gap-2 py-1.5 text-xs font-medium text-muted-foreground animate-in fade-in duration-200">
       <DotmSquare3 size={15} dotSize={2} colorPreset="solid-theme" />
       <WordRotate
         words={words}
-        duration={2200}
+        duration={6000}
         className="text-xs font-medium text-muted-foreground"
       />
     </div>
@@ -94,7 +113,6 @@ function AssistantPendingIndicator({
 
 const CITATION_MARKDOWN_COMPONENTS = { section: MarkdownSection, sup: FootnoteCitation };
 const CITATION_REHYPE_PLUGINS = createCitationRehypePlugins();
-
 function MessageAttachments({
   files,
   messageId,
@@ -118,8 +136,9 @@ function MessageAttachments({
 }
 
 function MessageAttachment({ file }: { file: FileUIPart }) {
+  const { t } = useTranslation();
   const isImage = file.mediaType?.startsWith("image/") ?? false;
-  const title = file.filename ?? "未命名附件";
+  const title = file.filename ?? t("chat:messages.untitledAttachment");
   const [resolvedUrl, setResolvedUrl] = React.useState(file.url);
   const [loadState, setLoadState] = React.useState<"processing" | "error" | "done">("done");
 
@@ -171,38 +190,55 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
         <AttachmentTitle>{title}</AttachmentTitle>
         <AttachmentDescription>
           {loadState === "error"
-            ? "加载失败"
+            ? t("chat:messages.loadFailed")
             : loadState === "processing"
-              ? "加载中..."
-              : file.mediaType || "文件"}
+              ? t("chat:messages.loading")
+              : file.mediaType || t("chat:messages.file")}
         </AttachmentDescription>
       </AttachmentContent>
       {loadState === "done" && resolvedUrl ? (
-        <AttachmentTrigger
-          render={
-            <a href={resolvedUrl} target="_blank" rel="noreferrer" aria-label={`打开 ${title}`} />
-          }
-        />
+        <>
+          <AttachmentActions>
+            <AttachmentAction
+              aria-label={t("chat:messages.openAttachment", { title })}
+              render={<a href={resolvedUrl} rel="noreferrer" target="_blank" />}
+              title={t("chat:messages.openAttachment", { title })}
+            >
+              <ExternalLinkIcon />
+            </AttachmentAction>
+            <AttachmentAction
+              aria-label={t("chat:messages.downloadAttachment", { title })}
+              render={<a download={title} href={resolvedUrl} />}
+              title={t("chat:messages.downloadAttachment", { title })}
+            >
+              <DownloadIcon />
+            </AttachmentAction>
+            <AttachmentAction
+              aria-label={t("chat:messages.copyAttachmentAddress", { title })}
+              onClick={() => {
+                void navigator.clipboard.writeText(file.url);
+                toast.success(t("chat:messages.attachmentAddressCopied"));
+              }}
+              title={t("chat:messages.copyAttachmentAddress", { title })}
+            >
+              <CopyIcon />
+            </AttachmentAction>
+          </AttachmentActions>
+          <AttachmentTrigger
+            render={
+              <a
+                href={resolvedUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={t("chat:messages.openAttachment", {
+                  title,
+                })}
+              />
+            }
+          />
+        </>
       ) : null}
     </Attachment>
-  );
-}
-
-function MessageFileReferenceBadges({ references }: { references: MessageFileReference[] }) {
-  if (references.length === 0) return null;
-  return (
-    <div className="flex max-w-full flex-wrap justify-end gap-1">
-      {references.map((reference) => (
-        <Badge
-          className={`max-w-full gap-1 ${referenceBadgeClass("file", `${reference.id}:${reference.url}`)}`}
-          key={`${reference.id}:${reference.url}`}
-          variant="outline"
-        >
-          <FileTextIcon className="size-3 shrink-0" />
-          <span className="max-w-60 truncate">{reference.filename}</span>
-        </Badge>
-      ))}
-    </div>
   );
 }
 
@@ -215,26 +251,226 @@ function getMessageFileReferences(message: UIMessage): MessageFileReference[] {
     return (
       typeof item.id === "string" &&
       typeof item.filename === "string" &&
-      typeof item.url === "string"
+      typeof item.url === "string" &&
+      (item.mediaType === undefined || typeof item.mediaType === "string")
     );
   });
+}
+
+function getMessageFiles(message: UIMessage, references: MessageFileReference[]): FileUIPart[] {
+  const files = message.parts.filter((part): part is FileUIPart => part.type === "file");
+  const urls = new Set(files.map((file) => file.url));
+  return [
+    ...files,
+    ...references
+      .filter((reference) => !urls.has(reference.url))
+      .map(
+        (reference): FileUIPart => ({
+          type: "file",
+          url: reference.url,
+          filename: reference.filename,
+          mediaType: reference.mediaType ?? "application/octet-stream",
+        }),
+      ),
+  ];
+}
+
+function getMessageReactions(message: UIMessage): MessageReaction[] {
+  const raw = (message.metadata as { reactions?: unknown } | undefined)?.reactions;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((reaction): reaction is MessageReaction => {
+    if (typeof reaction !== "object" || reaction === null) return false;
+    const item = reaction as Record<string, unknown>;
+    return (
+      typeof item.emoji === "string" &&
+      item.emoji.length > 0 &&
+      Array.isArray(item.userIds) &&
+      item.userIds.every((id) => typeof id === "string")
+    );
+  });
+}
+
+function hasUserReaction(reactions: MessageReaction[], emoji: string, userId: string): boolean {
+  return reactions.some(
+    (reaction) => reaction.emoji === emoji && reaction.userIds.includes(userId),
+  );
+}
+
+const ALL_EMOJI_OPTIONS = searchEmojis("");
+const EMOJI_BATCH_SIZE = 80;
+
+function ReactionPickerButton({
+  messageId,
+  onToggleReaction,
+}: {
+  messageId: string;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [visibleCount, setVisibleCount] = React.useState(EMOJI_BATCH_SIZE);
+  const filteredEmojis = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return ALL_EMOJI_OPTIONS;
+    return ALL_EMOJI_OPTIONS.filter(
+      ({ emoji, name }) =>
+        emoji.includes(normalizedQuery) || name.toLowerCase().includes(normalizedQuery),
+    );
+  }, [query]);
+
+  const selectEmoji = (emoji: string) => {
+    onToggleReaction(messageId, emoji);
+    setOpen(false);
+    setQuery("");
+    setVisibleCount(EMOJI_BATCH_SIZE);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          setQuery("");
+          setVisibleCount(EMOJI_BATCH_SIZE);
+        }
+      }}
+    >
+      <PopoverTrigger
+        aria-label={t("chat:messages.addReaction")}
+        className={buttonVariants({ variant: "ghost", size: "icon-xs" })}
+        data-slot="button"
+        title={t("chat:messages.reaction")}
+        type="button"
+      >
+        <SmilePlusIcon />
+      </PopoverTrigger>
+      {open ? (
+        <PopoverContent align="end" className="w-80 gap-2 p-2">
+          <Input
+            aria-label={t("chat:messages.searchReactions")}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setVisibleCount(EMOJI_BATCH_SIZE);
+            }}
+            placeholder={t("chat:messages.searchReactions")}
+            value={query}
+          />
+          <ScrollArea className="h-64 w-full">
+            <div className="grid grid-cols-8 gap-0.5 pr-2">
+              {filteredEmojis.length > 0 ? (
+                filteredEmojis.slice(0, visibleCount).map(({ emoji, name }) => (
+                  <Button
+                    aria-label={t("chat:messages.reactionWithEmoji", { emoji })}
+                    className="text-base leading-none"
+                    key={name}
+                    onClick={() => selectEmoji(emoji)}
+                    size="icon-sm"
+                    title={`:${name}:`}
+                    type="button"
+                    variant="ghost"
+                  >
+                    {emoji}
+                  </Button>
+                ))
+              ) : (
+                <span className="col-span-full py-6 text-center text-xs text-muted-foreground">
+                  {t("chat:messages.noReactionsFound")}
+                </span>
+              )}
+              {visibleCount < filteredEmojis.length ? (
+                <Button
+                  className="col-span-full w-full"
+                  onClick={() => setVisibleCount((count) => count + EMOJI_BATCH_SIZE)}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  {t("chat:messages.moreReactions", {
+                    count: filteredEmojis.length - visibleCount,
+                  })}
+                </Button>
+              ) : null}
+            </div>
+          </ScrollArea>
+        </PopoverContent>
+      ) : null}
+    </Popover>
+  );
+}
+
+/** 气泡角标上的已有反应(官方 BubbleReactions):点击切换本人反应 */
+function MessageBubbleReactions({
+  messageId,
+  reactions,
+  userId,
+  onToggleReaction,
+}: {
+  messageId: string;
+  reactions: MessageReaction[];
+  userId: string;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+}) {
+  const { t } = useTranslation();
+  if (reactions.length === 0) return null;
+  return (
+    <BubbleReactions aria-label={t("chat:messages.messageReactions")}>
+      {reactions.map((reaction) => (
+        <button
+          aria-label={t("chat:messages.reactionsCount", {
+            emoji: reaction.emoji,
+            count: reaction.userIds.length,
+          })}
+          aria-pressed={reaction.userIds.includes(userId)}
+          className="flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs transition-colors hover:bg-accent aria-pressed:bg-accent"
+          key={reaction.emoji}
+          onClick={() => onToggleReaction(messageId, reaction.emoji)}
+          type="button"
+        >
+          <span>{reaction.emoji}</span>
+          {reaction.userIds.length > 1 ? (
+            <span className="text-muted-foreground">{reaction.userIds.length}</span>
+          ) : null}
+        </button>
+      ))}
+    </BubbleReactions>
+  );
 }
 
 export const MessageItem = React.memo(function MessageItem({
   message,
   isStreaming,
+  isGenerating = false,
   onRetry,
   onEdit,
   userId,
   readOnly = false,
+  showAvatar = true,
+  sendFailed = false,
+  onRetrySend,
+  onToggleReaction,
+  onForkFromMessage,
 }: {
   message: UIMessage;
   isStreaming: boolean;
+  /** Hide actions for every message while the thread is generating. */
+  isGenerating?: boolean;
   onRetry: (messageId: string) => void;
   onEdit: (messageId: string, text: string) => void;
   userId: string;
   readOnly?: boolean;
+  /** MessageGroup 分组中隐藏头像:连续同一发送者仅末条展示头像(官方 message-group) */
+  showAvatar?: boolean;
+  /** 用户消息发送失败:常驻"发送失败 + 行内重试"(官方 message-actions) */
+  sendFailed?: boolean;
+  onRetrySend?: () => void;
+  /** 表情反应切换(官方 BubbleReactions 业务对接) */
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  /** 从该消息处创建分支(官方 cloneThread 的 messageFilter 截断点) */
+  onForkFromMessage?: (messageId: string) => void;
 }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = React.useState(false);
   const [editText, setEditText] = React.useState("");
   const isUser = message.role === "user";
@@ -242,13 +478,16 @@ export const MessageItem = React.memo(function MessageItem({
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
-  const files = message.parts.filter((part) => part.type === "file");
 
   React.useEffect(() => {
     if (!editing) setEditText(text);
   }, [editing, text]);
 
   const assistantSegments = isUser ? [] : getAssistantSegments(message.parts, message.id);
+  // 官方 message-demo:reactions 角标只挂在合并消息的最后一个文本气泡上
+  const lastTextSegment = [...assistantSegments]
+    .reverse()
+    .find((segment) => segment.type === "text");
   const skillNames = Array.isArray(
     (message.metadata as { skillNames?: unknown } | undefined)?.skillNames,
   )
@@ -257,15 +496,19 @@ export const MessageItem = React.memo(function MessageItem({
       )
     : [];
   const fileReferences = getMessageFileReferences(message);
+  const files = getMessageFiles(message, fileReferences);
+  const reactions = getMessageReactions(message);
   const citationEntries = buildCitationEntries(message.parts);
   const actionFooterClassName =
     "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
   const bubbleActionFooterClassName =
     "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/actions:pointer-events-auto group-hover/actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
+  const hideActions = isStreaming || isGenerating;
+  const canReact = !hideActions && onToggleReaction !== undefined;
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(text);
-    toast.success("已复制到剪贴板");
+    toast.success(t("chat:messages.copiedToClipboard"));
   };
   const startEditing = () => {
     setEditText(text);
@@ -274,7 +517,7 @@ export const MessageItem = React.memo(function MessageItem({
   const editControls = (
     <>
       <Button
-        aria-label="取消编辑"
+        aria-label={t("chat:messages.cancelEdit")}
         onClick={() => setEditing(false)}
         size="icon-xs"
         type="button"
@@ -283,7 +526,7 @@ export const MessageItem = React.memo(function MessageItem({
         <XIcon />
       </Button>
       <Button
-        aria-label="保存编辑"
+        aria-label={t("chat:messages.saveEdit")}
         disabled={!editText.trim()}
         onClick={() => {
           onEdit(message.id, editText.trim());
@@ -302,8 +545,9 @@ export const MessageItem = React.memo(function MessageItem({
       <MessageScrollerItem messageId={message.id} scrollAnchor>
         <BlurFade duration={0.2} blur="3px">
           <Message align="end">
+            {/* 官方 message-group:分组中非末条消息渲染空头像占位,视觉上折叠连续消息 */}
             <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-              <UserAvatar userId={userId} />
+              {showAvatar ? <UserAvatar userId={userId} /> : null}
             </MessageAvatar>
             <MessageContent className="items-end">
               {editing ? (
@@ -318,7 +562,6 @@ export const MessageItem = React.memo(function MessageItem({
                 </div>
               ) : (
                 <div className="group/actions flex w-fit max-w-full flex-col items-end gap-0.5">
-                  <MessageFileReferenceBadges references={fileReferences} />
                   {skillNames.length > 0 ? (
                     <div className="flex max-w-full flex-wrap justify-end gap-1">
                       {skillNames.map((skill) => (
@@ -337,34 +580,93 @@ export const MessageItem = React.memo(function MessageItem({
                   {text ? (
                     <ContextMenu>
                       <ContextMenuTrigger className="max-w-full">
-                        <Bubble align="end" className="max-w-full">
+                        <Bubble
+                          align="end"
+                          className="max-w-full"
+                          variant={sendFailed ? "destructive" : "default"}
+                        >
                           <BubbleContent>{text}</BubbleContent>
+                          {canReact ? (
+                            <MessageBubbleReactions
+                              messageId={message.id}
+                              onToggleReaction={onToggleReaction}
+                              reactions={reactions}
+                              userId={userId}
+                            />
+                          ) : null}
                         </Bubble>
                       </ContextMenuTrigger>
                       <ContextMenuContent className="w-48">
                         <ContextMenuGroup>
                           <ContextMenuItem onClick={handleCopy}>
                             <CopyIcon className="text-muted-foreground" />
-                            <span>复制内容</span>
+                            <span>{t("chat:messages.copyContent")}</span>
                             <ContextMenuShortcut>⌘C</ContextMenuShortcut>
                           </ContextMenuItem>
                           {!readOnly ? (
                             <ContextMenuItem onClick={startEditing}>
                               <PencilIcon className="text-muted-foreground" />
-                              <span>编辑消息</span>
+                              <span>{t("chat:messages.editMessage")}</span>
+                            </ContextMenuItem>
+                          ) : null}
+                          {onForkFromMessage ? (
+                            <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
+                              <GitForkIcon className="text-muted-foreground" />
+                              <span>{t("chat:messages.forkFromMessage")}</span>
                             </ContextMenuItem>
                           ) : null}
                         </ContextMenuGroup>
                       </ContextMenuContent>
                     </ContextMenu>
                   ) : null}
-                  {!readOnly ? (
-                    <MessageFooter className={bubbleActionFooterClassName}>
+                  {sendFailed && onRetrySend ? (
+                    // 官方 message-actions:发送失败在 MessageFooter 常驻失败提示与行内重试
+                    <MessageFooter className="gap-2">
+                      <span className="font-normal text-destructive">
+                        {t("chat:messages.sendFailed")}
+                      </span>
                       <Button
-                        aria-label="编辑消息"
+                        aria-label={t("chat:messages.retrySend")}
+                        onClick={onRetrySend}
+                        size="icon-xs"
+                        title={t("chat:messages.retry")}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <RefreshCcwIcon />
+                      </Button>
+                    </MessageFooter>
+                  ) : !readOnly ? (
+                    <MessageFooter
+                      className={
+                        hideActions
+                          ? `${bubbleActionFooterClassName} invisible`
+                          : bubbleActionFooterClassName
+                      }
+                    >
+                      {canReact ? (
+                        <ReactionPickerButton
+                          messageId={message.id}
+                          onToggleReaction={onToggleReaction}
+                        />
+                      ) : null}
+                      {onForkFromMessage ? (
+                        <Button
+                          aria-label={t("chat:messages.forkFromMessage")}
+                          onClick={() => onForkFromMessage(message.id)}
+                          size="icon-xs"
+                          title={t("chat:messages.forkFromMessage")}
+                          type="button"
+                          variant="ghost"
+                        >
+                          <GitForkIcon />
+                        </Button>
+                      ) : null}
+                      <Button
+                        aria-label={t("chat:messages.editMessage")}
                         onClick={startEditing}
                         size="icon-xs"
-                        title="编辑"
+                        title={t("chat:messages.edit")}
                         type="button"
                         variant="ghost"
                       >
@@ -396,7 +698,11 @@ export const MessageItem = React.memo(function MessageItem({
             ) : null}
             <CitationProvider entries={citationEntries}>
               {assistantSegments.map((segment) =>
-                segment.type === "trace" ? (
+                segment.type === "event" ? (
+                  <Bubble className="max-w-full" key={segment.key} variant="tinted">
+                    <BubbleContent className="text-xs">{segment.text}</BubbleContent>
+                  </Bubble>
+                ) : segment.type === "trace" ? (
                   <AssistantTrace
                     key={segment.key}
                     isStreaming={isStreaming}
@@ -429,19 +735,33 @@ export const MessageItem = React.memo(function MessageItem({
                             {withResolvedFootnotes(segment.text, citationEntries)}
                           </MessageResponse>
                         </BubbleContent>
+                        {canReact && segment === lastTextSegment ? (
+                          <MessageBubbleReactions
+                            messageId={message.id}
+                            onToggleReaction={onToggleReaction}
+                            reactions={reactions}
+                            userId={userId}
+                          />
+                        ) : null}
                       </Bubble>
                     </ContextMenuTrigger>
                     <ContextMenuContent className="w-48">
                       <ContextMenuGroup>
                         <ContextMenuItem onClick={handleCopy}>
                           <CopyIcon className="text-muted-foreground" />
-                          <span>复制回答内容</span>
+                          <span>{t("chat:messages.copyAnswer")}</span>
                           <ContextMenuShortcut>⌘C</ContextMenuShortcut>
                         </ContextMenuItem>
+                        {onForkFromMessage ? (
+                          <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
+                            <GitForkIcon className="text-muted-foreground" />
+                            <span>{t("chat:messages.forkFromMessage")}</span>
+                          </ContextMenuItem>
+                        ) : null}
                         {!readOnly ? (
                           <ContextMenuItem onClick={() => onRetry(message.id)}>
                             <RefreshCcwIcon className="text-muted-foreground" />
-                            <span>重新生成</span>
+                            <span>{t("chat:messages.regenerate")}</span>
                             <ContextMenuShortcut>⌘R</ContextMenuShortcut>
                           </ContextMenuItem>
                         ) : null}
@@ -465,30 +785,76 @@ export const MessageItem = React.memo(function MessageItem({
                   return null;
                 })()}
             </CitationProvider>
-            {!isStreaming ? (
-              <MessageFooter className={actionFooterClassName}>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="复制"
-                  title="复制"
-                  onClick={handleCopy}
-                >
-                  <CopyIcon />
-                </Button>
-                {!readOnly ? (
+            <MessageFooter
+              className={hideActions ? `${actionFooterClassName} invisible` : actionFooterClassName}
+            >
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label={t("chat:messages.copyContent")}
+                title={t("chat:messages.copyContent")}
+                onClick={handleCopy}
+              >
+                <CopyIcon />
+              </Button>
+              {canReact ? (
+                <>
+                  {/* 官方 message-actions:助手消息 Like / Dislike 评分操作 */}
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="重试"
-                    title="重试"
-                    onClick={() => onRetry(message.id)}
+                    aria-label={t("chat:messages.like")}
+                    aria-pressed={hasUserReaction(reactions, "👍", userId)}
+                    title={t("chat:messages.like")}
+                    className={
+                      hasUserReaction(reactions, "👍", userId) ? "text-primary" : undefined
+                    }
+                    onClick={() => onToggleReaction?.(message.id, "👍")}
                   >
-                    <RefreshCcwIcon />
+                    <ThumbsUpIcon />
                   </Button>
-                ) : null}
-              </MessageFooter>
-            ) : null}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={t("chat:messages.dislike")}
+                    aria-pressed={hasUserReaction(reactions, "👎", userId)}
+                    title={t("chat:messages.dislike")}
+                    className={
+                      hasUserReaction(reactions, "👎", userId) ? "text-primary" : undefined
+                    }
+                    onClick={() => onToggleReaction?.(message.id, "👎")}
+                  >
+                    <ThumbsDownIcon />
+                  </Button>
+                  <ReactionPickerButton
+                    messageId={message.id}
+                    onToggleReaction={onToggleReaction}
+                  />
+                </>
+              ) : null}
+              {onForkFromMessage ? (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("chat:messages.forkFromMessage")}
+                  title={t("chat:messages.forkFromMessage")}
+                  onClick={() => onForkFromMessage(message.id)}
+                >
+                  <GitForkIcon />
+                </Button>
+              ) : null}
+              {!readOnly ? (
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={t("chat:messages.retry")}
+                  title={t("chat:messages.retry")}
+                  onClick={() => onRetry(message.id)}
+                >
+                  <RefreshCcwIcon />
+                </Button>
+              ) : null}
+            </MessageFooter>
           </MessageContent>
         </Message>
       </BlurFade>

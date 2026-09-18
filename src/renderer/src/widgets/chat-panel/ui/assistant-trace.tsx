@@ -1,12 +1,27 @@
-import { CheckIcon, ChevronDownIcon, WrenchIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  FileCode2Icon,
+  FileIcon,
+  WrenchIcon,
+  XIcon,
+} from "lucide-react";
 import * as React from "react";
+import { useTranslation } from "@/shared/i18n";
 import {
   ChainOfThought,
   ChainOfThoughtContent,
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from "@/shared/ui/ai-elements/chain-of-thought";
-import { CodeBlock, CodeBlockCopyButton } from "@/shared/ui/ai-elements/code-block";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockCopyButton,
+  CodeBlockFilename,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/shared/ui/ai-elements/code-block";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/shared/ui/ai-elements/reasoning";
 import {
   Sandbox,
@@ -30,7 +45,13 @@ import {
   StackTraceFrames,
   StackTraceHeader,
 } from "@/shared/ui/ai-elements/stack-trace";
-import { Task, TaskContent, TaskItem, TaskTrigger } from "@/shared/ui/ai-elements/task";
+import {
+  Task,
+  TaskContent,
+  TaskItem,
+  TaskItemFile,
+  TaskTrigger,
+} from "@/shared/ui/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/shared/ui/ai-elements/tool";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
@@ -55,24 +76,22 @@ import { getTraceStepStatus, type TracePart } from "../model/types";
  * 核心涟漪 = 其余通用工具调用。
  */
 function ToolRunningMatrix({ name }: { name: string }) {
-  const id = name.toLowerCase();
-  if (id.includes("execute_typescript") || id.includes("execute_command")) {
-    return <DotmSquare10 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  if (name.includes("bash") || name.includes("command") || name.includes("typescript")) {
+    return <DotmSquare10 size={14} dotSize={1.6} colorPreset="solid-theme" />;
   }
-  if (
-    id.includes("search") ||
-    id.includes("tavily") ||
-    id.includes("fetch") ||
-    id.includes("web")
-  ) {
-    return <DotmCircular4 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  if (name.includes("search") || name.includes("browser") || name.includes("fetch")) {
+    return <DotmCircular4 size={14} dotSize={1.6} colorPreset="solid-theme" />;
   }
-  if (id.includes("rag") || id.includes("knowledge") || id.includes("library")) {
-    return <DotmHex1 size={15} dotSize={1.8} colorPreset="solid-theme" />;
+  if (name.includes("rag") || name.includes("knowledge") || name.includes("retriev")) {
+    return <DotmHex1 size={14} dotSize={1.6} colorPreset="solid-theme" />;
   }
-  return <Dotm3x3_6 size={13} dotSize={2} colorPreset="solid-theme" />;
+  return <Dotm3x3_6 size={14} dotSize={1.8} colorPreset="solid-theme" />;
 }
 
+/**
+ * 推理步骤:直接作为 ChainOfThoughtStep 渲染(脑图图标 + 折叠触发器 + ReasoningContent)。
+ * ReasoningContent 内部由 Streamdown 增量渲染 Markdown,避免纯文本与富文本切换时的闪变。
+ */
 const ReasoningStepItem = React.memo(function ReasoningStepItem({
   part,
   isStreaming,
@@ -80,7 +99,10 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
   part: Extract<TracePart, { type: "reasoning" }>;
   isStreaming: boolean;
 }) {
-  const partStreaming = isStreaming && part.state === "streaming";
+  const { t } = useTranslation();
+  const active = getTraceStepStatus(part) === "active";
+  const partStreaming = isStreaming && active;
+
   return (
     <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
       <Reasoning className="mb-0" defaultOpen={partStreaming} isStreaming={partStreaming}>
@@ -97,7 +119,7 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
          * (MessageResponse)同一条渲染路径,不存在"每 token 全量重跑"。
          * 之前流式态用纯文本、结束后切 Markdown,会造成完成瞬间的排版闪变。
          */}
-        <ReasoningContent>{part.text || "此模型未返回可展示的推理摘要"}</ReasoningContent>
+        <ReasoningContent>{part.text || t("chat:trace.noReasoningSummary")}</ReasoningContent>
       </Reasoning>
     </ChainOfThoughtStep>
   );
@@ -109,6 +131,7 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
  * (默认收起,需要时再看,不再无条件倾倒原始数据)。
  */
 const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart }) {
+  const { t } = useTranslation();
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
   const typescriptSandbox = name === "execute_typescript";
   const commandSandbox = name === "mastra_workspace_execute_command";
@@ -120,17 +143,28 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
   const hasInput = part.input !== undefined;
   const output = "output" in part ? part.output : undefined;
   const input = (part.input ?? {}) as Record<string, unknown>;
-  // 参数摘要:取第一个有值的短字符串(query/url/path 等关键参数通常排在最前)
-  const hint = Object.values(input).find(
-    (value): value is string => typeof value === "string" && value.trim().length > 0,
-  );
+  const filePaths = [
+    ...new Set(
+      Object.entries(input).flatMap(([key, value]) =>
+        /(?:path|file)/i.test(key) && typeof value === "string" && value.trim()
+          ? [value.trim()]
+          : [],
+      ),
+    ),
+  ].slice(0, 3);
+  // 文件参数单独用 TaskItemFile 展示；摘要取第一个其余短字符串。
+  const hintValue = Object.entries(input).find(
+    ([key, value]) =>
+      !/(?:path|file)/i.test(key) && typeof value === "string" && value.trim().length > 0,
+  )?.[1];
+  const hint = typeof hintValue === "string" ? hintValue : undefined;
   const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
   const hasDetails = hasInput || output !== undefined;
 
   const sandboxOutput = React.useMemo(() => {
     if (!sandboxTool) return "";
-    if (failed) return errorText ?? "执行失败";
-    if (output === undefined) return active ? "正在执行..." : "";
+    if (failed) return errorText ?? t("chat:trace.executionFailed");
+    if (output === undefined) return active ? t("chat:trace.executing") : "";
     if (typeof output === "string") return output;
     if (commandSandbox) {
       return typeof output === "string" ? output : JSON.stringify(output, null, 2);
@@ -150,16 +184,30 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
       );
     }
     return lines.join("\n");
-  }, [active, commandSandbox, errorText, failed, output, sandboxTool]);
+  }, [active, commandSandbox, errorText, failed, output, sandboxTool, t]);
 
   const summary = (
-    <>
-      {name}
-      {hintLabel ? <span className="text-muted-foreground/70"> · {hintLabel}</span> : null}
-      {failed ? (
-        <span className="block text-destructive text-xs">{errorText ?? "调用失败"}</span>
+    <div className="min-w-0 space-y-1">
+      <div className="break-words">
+        {name}
+        {hintLabel ? <span className="text-muted-foreground/70"> · {hintLabel}</span> : null}
+      </div>
+      {filePaths.length > 0 ? (
+        <div className="flex min-w-0 flex-wrap gap-1">
+          {filePaths.map((path) => (
+            <TaskItemFile className="max-w-full" key={path} title={path}>
+              <FileIcon className="size-3 shrink-0" />
+              <span className="truncate">{path}</span>
+            </TaskItemFile>
+          ))}
+        </div>
       ) : null}
-    </>
+      {failed ? (
+        <span className="block text-destructive text-xs">
+          {errorText ?? t("chat:trace.callFailed")}
+        </span>
+      ) : null}
+    </div>
   );
 
   return (
@@ -183,11 +231,11 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
               />
             }
           >
-            <span className="min-w-0 flex-1 break-words">{summary}</span>
+            <div className="min-w-0 flex-1">{summary}</div>
             <ChevronDownIcon className="mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[panel-open]/trigger:rotate-180 group-data-[open]/trigger:rotate-180" />
           </CollapsibleTrigger>
         ) : (
-          <span className="min-w-0 flex-1 break-words">{summary}</span>
+          <div className="min-w-0 flex-1">{summary}</div>
         )}
       </TaskItem>
       {hasDetails ? (
@@ -197,14 +245,20 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
               <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
                 <SandboxHeader
                   state={part.state}
-                  title={commandSandbox ? "工作区命令" : "TypeScript 工作区脚本"}
+                  title={
+                    commandSandbox
+                      ? t("chat:trace.workspaceCommand")
+                      : t("chat:trace.typescriptScript")
+                  }
                 />
                 <SandboxContent className="min-w-0">
                   <SandboxTabs defaultValue="code">
                     <SandboxTabsBar>
                       <SandboxTabsList>
-                        <SandboxTabsTrigger value="code">代码</SandboxTabsTrigger>
-                        <SandboxTabsTrigger value="output">输出</SandboxTabsTrigger>
+                        <SandboxTabsTrigger value="code">{t("chat:trace.code")}</SandboxTabsTrigger>
+                        <SandboxTabsTrigger value="output">
+                          {t("chat:trace.output")}
+                        </SandboxTabsTrigger>
                       </SandboxTabsList>
                     </SandboxTabsBar>
                     <SandboxTabContent value="code">
@@ -214,15 +268,25 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
                           commandSandbox
                             ? typeof input.command === "string"
                               ? input.command
-                              : "# 正在生成命令..."
+                              : t("chat:trace.generatingCommand")
                             : typeof input.code === "string"
                               ? input.code
-                              : "// 正在生成代码..."
+                              : t("chat:trace.generatingCode")
                         }
                         language={commandSandbox ? "bash" : "typescript"}
                         showLineNumbers
                       >
-                        <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                        <CodeBlockHeader>
+                          <CodeBlockTitle>
+                            <FileCode2Icon className="size-3.5" />
+                            <CodeBlockFilename>
+                              {commandSandbox ? "command.sh" : "script.ts"}
+                            </CodeBlockFilename>
+                          </CodeBlockTitle>
+                          <CodeBlockActions>
+                            <CodeBlockCopyButton size="icon-xs" />
+                          </CodeBlockActions>
+                        </CodeBlockHeader>
                       </CodeBlock>
                     </SandboxTabContent>
                     <SandboxTabContent value="output">
@@ -230,7 +294,7 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
                         <StackTrace
                           className="rounded-none border-0"
                           defaultOpen
-                          trace={sandboxOutput || errorText || "执行失败"}
+                          trace={sandboxOutput || errorText || t("chat:trace.executionFailed")}
                         >
                           <StackTraceHeader>
                             <StackTraceError>
@@ -249,10 +313,18 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
                       ) : (
                         <CodeBlock
                           className="min-w-0 max-w-full rounded-none border-0"
-                          code={sandboxOutput || "正在等待输出…"}
+                          code={sandboxOutput || t("chat:trace.waitingOutput")}
                           language="log"
                         >
-                          <CodeBlockCopyButton className="absolute top-2 right-2" size="sm" />
+                          <CodeBlockHeader>
+                            <CodeBlockTitle>
+                              <FileCode2Icon className="size-3.5" />
+                              <CodeBlockFilename>output.log</CodeBlockFilename>
+                            </CodeBlockTitle>
+                            <CodeBlockActions>
+                              <CodeBlockCopyButton size="icon-xs" />
+                            </CodeBlockActions>
+                          </CodeBlockHeader>
                         </CodeBlock>
                       )}
                     </SandboxTabContent>
@@ -279,15 +351,20 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
  * 和推理步骤错开一个图标列的宽度,层级就断了。
  */
 function ToolGroup({ tools }: { tools: ToolPart[] }) {
+  const { t } = useTranslation();
   const active = tools.some((tool) => getTraceStepStatus(tool) === "active");
+  const toolTitle = t("chat:trace.toolCallsCount", {
+    count: tools.length,
+  });
+
   return (
     <ChainOfThoughtStep label="" status={active ? "active" : "complete"}>
       <Task className="w-full">
         {/* w-full:折叠头占满整行,chevron 与外层 Header 的一样右对齐 */}
-        <TaskTrigger className="w-full" title={`工具调用 · ${tools.length} 步`}>
+        <TaskTrigger className="w-full" title={toolTitle}>
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
             <WrenchIcon className="size-4" />
-            <p className="flex-1 text-left text-sm">工具调用 · {tools.length} 步</p>
+            <p className="flex-1 text-left text-sm">{toolTitle}</p>
             <ChevronDownIcon className="size-4 transition-transform duration-200 group-data-[state=open]:rotate-180 group-data-[open]:rotate-180" />
           </div>
         </TaskTrigger>
@@ -308,12 +385,16 @@ export function AssistantTrace({
   parts: TracePart[];
   isStreaming: boolean;
 }) {
+  const { t } = useTranslation();
   const reasoningCount = parts.filter((part) => part.type === "reasoning").length;
   const toolCount = parts.length - reasoningCount;
   const active = parts.some((part) => getTraceStepStatus(part) === "active");
-  const summary = [reasoningCount ? "思考" : null, toolCount ? "工具调用" : null]
+  const summary = [
+    reasoningCount ? t("chat:trace.thinking") : null,
+    toolCount ? t("chat:trace.toolCall") : null,
+  ]
     .filter(Boolean)
-    .join("与");
+    .join(t("chat:trace.and"));
   const [open, setOpen] = React.useState(isStreaming && active);
   const wasStreaming = React.useRef(isStreaming);
 
@@ -354,7 +435,12 @@ export function AssistantTrace({
   return (
     <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
       <ChainOfThoughtHeader>
-        {active ? "正在处理" : `${summary || "执行轨迹"} · ${parts.length} 个步骤`}
+        {active
+          ? t("chat:trace.processing")
+          : t("chat:trace.stepsCount", {
+              count: parts.length,
+              summary: summary || t("chat:trace.executionTrace"),
+            })}
       </ChainOfThoughtHeader>
       {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
           Header 的 BrainIcon 那一列,步骤正文与 Header 文字起点对齐;

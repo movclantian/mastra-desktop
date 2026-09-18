@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import type { WorkspaceFileChange } from "@/entities/workbench";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { CodeComparison } from "@/shared/ui/code-comparison";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -32,6 +33,7 @@ export function CodeChangeRow({
   onOpenChange: (open: boolean) => void;
   fetchContent: FetchChangeContent;
 }) {
+  const { t } = useTranslation();
   const ChangeIcon =
     change.kind === "created" ? CheckCircle2Icon : change.kind === "deleted" ? XIcon : FileDiffIcon;
   const [content, setContent] = React.useState<{ before: string; after: string } | null>(null);
@@ -98,7 +100,7 @@ export function CodeChangeRow({
           )}
         />
         <span className="min-w-0 flex-1 truncate text-xs">
-          <span className="font-medium">{changeLabel(change)}</span>
+          <span className="font-medium">{changeLabel(change, t)}</span>
           <span className="ml-2 font-mono text-muted-foreground">
             {change.toolName.replace(/^mastra_workspace_/, "")}
           </span>
@@ -116,16 +118,16 @@ export function CodeChangeRow({
               <EmptyMedia variant="icon">
                 <BinaryIcon />
               </EmptyMedia>
-              <EmptyTitle className="text-xs">二进制快照</EmptyTitle>
+              <EmptyTitle className="text-xs">{t("workspace:binarySnapshot")}</EmptyTitle>
               <EmptyDescription className="text-[11px]">
-                二进制快照已完整保存，可通过对象引用读取元数据
+                {t("workspace:binarySnapshotDesc")}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
         ) : contentLoading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
             <DotmCircular4 size={15} dotSize={1.8} colorPreset="solid-theme" />
-            <span>正在读取完整快照…</span>
+            <span>{t("workspace:readingFullSnapshot")}</span>
           </div>
         ) : contentError ? (
           <Empty className="py-6">
@@ -133,9 +135,11 @@ export function CodeChangeRow({
               <EmptyMedia variant="icon">
                 <AlertCircleIcon className="text-destructive" />
               </EmptyMedia>
-              <EmptyTitle className="text-xs text-destructive">快照读取失败</EmptyTitle>
+              <EmptyTitle className="text-xs text-destructive">
+                {t("workspace:snapshotReadFailed")}
+              </EmptyTitle>
               <EmptyDescription className="text-[11px]">
-                无法载入该变更版本的完整历史快照
+                {t("workspace:snapshotReadFailedDesc")}
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
@@ -174,6 +178,7 @@ export function CodeChangeGroup({
   onChangeOpen: (changeId: string, open: boolean) => void;
   fetchContent: FetchChangeContent;
 }) {
+  const { t } = useTranslation();
   const latest = group.changes[0];
   const LatestIcon =
     latest.kind === "created" ? CheckCircle2Icon : latest.kind === "deleted" ? XIcon : FileDiffIcon;
@@ -201,7 +206,7 @@ export function CodeChangeGroup({
           {group.path}
         </span>
         <span className="shrink-0 text-[10px] text-muted-foreground">
-          {group.changes.length} 次变更
+          {t("workspace:changesCount", { count: group.changes.length })}
         </span>
         <time className="shrink-0 text-[10px] text-muted-foreground" dateTime={latest.createdAt}>
           {Number.isNaN(latestTimestamp.getTime())

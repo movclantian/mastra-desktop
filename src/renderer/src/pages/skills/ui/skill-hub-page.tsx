@@ -1,3 +1,4 @@
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   ArrowUpRightIcon,
   AwardIcon,
@@ -49,8 +50,9 @@ import {
   skillIcon,
   skillSourceLabel,
 } from "@/entities/skill";
-import { useWorkbench } from "@/entities/workbench";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useSkillActions, useSkillHubData } from "@/features/skill-actions";
+import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { AnimatedGradientText } from "@/shared/ui/animated-gradient-text";
@@ -97,12 +99,33 @@ import {
 } from "@/shared/ui/pagination";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { Separator } from "@/shared/ui/separator";
+import { Switch } from "@/shared/ui/switch";
 import { Textarea } from "@/shared/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/shared/ui/toggle-group";
 import { McpDialog } from "@/widgets/mcp-dialog";
 
 export function SkillHubPage() {
-  const { setPendingPrompt, setActiveView, activeSkill, setActiveSkill } = useWorkbench();
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const activeSkillPath = useRouterState({
+    select: (state) => (state.location.search as { skill?: string }).skill ?? null,
+  });
+  const setPendingPrompt = useWorkbenchStore((state) => state.setPendingPrompt);
+  const [activeSkill, setActiveSkillState] = React.useState<SkillMetadata | null>(null);
+  const setActiveSkill = React.useCallback(
+    (skill: SkillMetadata | null) => {
+      setActiveSkillState(skill);
+      void navigate({
+        to: "/skills",
+        search: (prev) => ({ ...prev, skill: skill?.path ?? undefined }),
+      });
+    },
+    [navigate],
+  );
+  const setActiveView = React.useCallback(
+    (view: string) => void navigate({ to: `/${view}` }),
+    [navigate],
+  );
   const [section, setSection] = React.useState<SkillSection>("public");
   const [marketCategory, setMarketCategory] = React.useState<MarketCategory>("leaderboard");
   const [leaderboardView, setLeaderboardView] = React.useState<LeaderboardView>("all-time");
@@ -145,6 +168,23 @@ export function SkillHubPage() {
     page,
     pageSize,
   });
+
+  React.useEffect(() => {
+    if (!activeSkillPath) {
+      setActiveSkillState(null);
+      return;
+    }
+    if (activeSkill?.path === activeSkillPath) return;
+    const match = [...skills, ...registrySkills, ...displaySkills].find(
+      (skill) => skill.path === activeSkillPath || skill.name === activeSkillPath,
+    );
+    if (match) {
+      setActiveSkillState(match);
+      return;
+    }
+    const name = decodeURIComponent(activeSkillPath.split("/").pop() || activeSkillPath);
+    setActiveSkillState({ name, path: activeSkillPath, description: "" });
+  }, [activeSkill, activeSkillPath, displaySkills, registrySkills, skills]);
   const [addSkillOpen, setAddSkillOpen] = React.useState(false);
   const [mcpOpen, setMcpOpen] = React.useState(false);
   const [editingMcp, setEditingMcp] = React.useState<McpSummary | null>(null);
@@ -159,7 +199,9 @@ export function SkillHubPage() {
     installBuiltin,
     removeSkill,
     updateSkill,
+    toggleSkill,
     removeMcp,
+    toggleMcp,
     authenticateMcp,
   } = useSkillActions({
     activeSkill,
@@ -200,9 +242,9 @@ export function SkillHubPage() {
           origin: "skills-sh" as const,
           isOfficial: s.isOfficial ?? true,
           owner: owner.owner,
-          marketplaceName: "官方认证",
+          marketplaceName: t("skills:officialVerified"),
           path: `skills-sh:${s.source}/${s.slug}`,
-          description: s.description || "来自 skills.sh 的社区技能",
+          description: s.description || t("skills:communitySkillFromSkillsSh"),
           sourceUrl: s.url || `https://skills.sh/${s.source}/${s.slug}`,
           skillsShSource: s.source,
           skillsShSlug: s.slug,
@@ -210,7 +252,7 @@ export function SkillHubPage() {
       );
     }
     return registrySkills.filter((s) => s.isOfficial || s.origin === "skills-sh");
-  }, [curatedOwners, registrySkills]);
+  }, [curatedOwners, registrySkills, t]);
 
   const totalPages = Math.max(1, Math.ceil(totalSkillsCount / pageSize));
   const currentSkills = displaySkills;
@@ -263,38 +305,36 @@ export function SkillHubPage() {
           {/* 顶栏标题与核心操作 */}
           <header className="flex items-start justify-between gap-4">
             <div>
-              <h1 className="text-3xl font-semibold tracking-tight">插件与技能市场</h1>
-              <p className="mt-2 text-base text-muted-foreground">
-                汇聚技术原厂认证技能、skills.sh 社区生态榜单与 MCP 扩展能力
-              </p>
+              <h1 className="text-3xl font-semibold tracking-tight">{t("skills:hubTitle")}</h1>
+              <p className="mt-2 text-base text-muted-foreground">{t("skills:hubSubtitle")}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <Button
-                aria-label="管理技能市场"
+                aria-label={t("skills:manageMarketplace")}
                 onClick={() => setMarketplacesOpen(true)}
                 size="icon"
                 variant="outline"
-                title="管理自定义 GitHub 技能市场"
+                title={t("skills:manageMarketplaceDesc")}
               >
                 <Settings2Icon />
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger render={<Button />}>
                   <PlusIcon />
-                  新建 / 导入
+                  {t("skills:createOrImport")}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onClick={() => setAddSkillOpen(true)}>
                     <UploadIcon />
-                    导入本地/远程技能
+                    {t("skills:importLocalOrRemote")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setMcpOpen(true)}>
                     <PlugZapIcon />
-                    添加 MCP 外部工具
+                    {t("skills:addMcpExternal")}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setMarketplacesOpen(true)}>
                     <StoreIcon />
-                    管理技能市场源
+                    {t("skills:manageMarketplaceSources")}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -305,11 +345,11 @@ export function SkillHubPage() {
           <section className="mt-2">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold tracking-tight text-foreground/90">
-                已启用技能
+                {t("skills:enabledSkills")}
               </h2>
               {skills.length > 0 ? (
                 <Badge variant="secondary" className="text-xs">
-                  {skills.length} 个
+                  {t("skills:skillCount", { count: skills.length })}
                 </Badge>
               ) : null}
             </div>
@@ -323,7 +363,7 @@ export function SkillHubPage() {
                     onClick={() => {
                       setActiveSkill(skill);
                     }}
-                    title={`${skill.name} - ${skill.description || "点击查看详情"}`}
+                    title={`${skill.name} - ${skill.description || t("skills:clickForDetail")}`}
                     type="button"
                   >
                     <span>{skillIcon(skill, index)}</span>
@@ -331,7 +371,7 @@ export function SkillHubPage() {
                 ))}
                 {skills.length === 0 && (
                   <p className="py-2 text-xs text-muted-foreground">
-                    暂未安装任何技能，在下方市场中挑选并点击「安装」即可开始使用。
+                    {t("skills:emptyEnabledSkills")}
                   </p>
                 )}
               </div>
@@ -349,7 +389,7 @@ export function SkillHubPage() {
                   colorFrom="var(--primary)"
                   colorTo="var(--accent)"
                 >
-                  精选推荐
+                  {t("skills:featured")}
                 </AnimatedGradientText>
               </div>
               <Marquee className="mt-2 [--duration:52s] [--gap:0.625rem]" pauseOnHover repeat={3}>
@@ -367,7 +407,7 @@ export function SkillHubPage() {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-xs font-medium">{skill.name}</span>
                       <span className="block truncate text-[11px] text-muted-foreground">
-                        {skill.description || "官方认证技能"}
+                        {skill.description || t("skills:officialCertifiedSkill")}
                       </span>
                     </span>
                   </button>
@@ -383,17 +423,17 @@ export function SkillHubPage() {
               onChange={(value) => setSection(value as SkillSection)}
               layoutId="skill-hub-section"
               variant="line"
-              aria-label="技能中心分区"
+              aria-label={t("skills:hubTabsAria")}
               className="border-b-0 pb-0 text-sm"
               tabs={[
                 {
                   id: "public",
-                  label: "探索市场",
+                  label: t("skills:tabExplore"),
                   icon: <StoreIcon className="size-4" />,
                 },
                 {
                   id: "personal",
-                  label: "个人管理",
+                  label: t("skills:tabLibrary"),
                   icon: <SparklesIcon className="size-4" />,
                   badge:
                     skills.length > 0 ? (
@@ -404,7 +444,7 @@ export function SkillHubPage() {
                 },
                 {
                   id: "mcp",
-                  label: "MCP 外部工具",
+                  label: t("skills:tabMcp"),
                   icon: <PlugZapIcon className="size-4" />,
                   badge:
                     mcpServers.length > 0 ? (
@@ -422,6 +462,7 @@ export function SkillHubPage() {
             <McpSection
               mcpServers={mcpServers}
               onDelete={(server) => void removeMcp(server)}
+              onToggle={(server, enabled) => void toggleMcp(server, enabled)}
               onAuthenticate={(server) => void authenticateMcp(server)}
               onEdit={(server) => {
                 setEditingMcp(server);
@@ -438,6 +479,7 @@ export function SkillHubPage() {
               onSelect={setActiveSkill}
               onEdit={(skill) => setEditingSkill(skill)}
               onDelete={(skill) => void removeSkill(skill)}
+              onToggle={(skill, enabled) => void toggleSkill(skill, enabled)}
               onAddSkill={() => setAddSkillOpen(true)}
               onExploreMarket={() => setSection("public")}
             />
@@ -458,7 +500,7 @@ export function SkillHubPage() {
                     className="rounded-full text-xs font-medium gap-1.5 h-8 shrink-0"
                   >
                     <FlameIcon className="size-3.5 text-rose-500" />
-                    <span>🔥 社区排行榜</span>
+                    <span>{t("skills:communityLeaderboard")}</span>
                     <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
                       {sourceCounts.skillsSh}
                     </Badge>
@@ -480,7 +522,7 @@ export function SkillHubPage() {
                     className="rounded-full text-xs font-medium gap-1.5 h-8 shrink-0"
                   >
                     <ShieldCheckIcon className="size-3.5 text-emerald-500" />
-                    <span>⭐ 原厂认证</span>
+                    <span>{t("skills:officialCertified")}</span>
                     <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
                       {sourceCounts.official}
                     </Badge>
@@ -522,7 +564,7 @@ export function SkillHubPage() {
                     className="rounded-full text-xs font-medium gap-1.5 h-8 shrink-0"
                   >
                     <SparklesIcon className="size-3.5 text-blue-500" />
-                    <span>✨ Mastra 内置</span>
+                    <span>{t("skills:mastraBuiltin")}</span>
                     <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
                       {sourceCounts.builtin}
                     </Badge>
@@ -541,7 +583,7 @@ export function SkillHubPage() {
                       className="rounded-full text-xs font-medium gap-1.5 h-8 shrink-0"
                     >
                       <StoreIcon className="size-3.5 text-purple-500" />
-                      <span>📦 GitHub 市场</span>
+                      <span>{t("skills:githubMarketplace")}</span>
                       <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
                         {sourceCounts.marketplace}
                       </Badge>
@@ -564,7 +606,7 @@ export function SkillHubPage() {
                     }}
                   >
                     <AwardIcon className="size-3.5 text-amber-500" />
-                    All Time (总榜)
+                    {t("skills:allTimeRank")}
                   </Button>
                   <Button
                     size="sm"
@@ -576,7 +618,7 @@ export function SkillHubPage() {
                     }}
                   >
                     <TrendingUpIcon className="size-3.5 text-blue-500" />
-                    Trending 24h (飙升)
+                    {t("skills:trendingRank")}
                   </Button>
                   <Button
                     size="sm"
@@ -588,7 +630,7 @@ export function SkillHubPage() {
                     }}
                   >
                     <FlameIcon className="size-3.5 text-rose-500" />
-                    Hot (实时热门)
+                    {t("skills:hotRank")}
                   </Button>
                 </div>
               ) : null}
@@ -597,9 +639,9 @@ export function SkillHubPage() {
               {marketCategory === "official" && selectedMaker ? (
                 <div className="flex items-center justify-between border-b pb-2 text-xs text-muted-foreground">
                   <span>
-                    已筛选厂商：
+                    {t("skills:filteredVendor")}
                     <strong className="font-mono text-foreground">@{selectedMaker}</strong> (
-                    {currentSkills.length} 个技能)
+                    {t("skills:vendorSkillCount", { count: currentSkills.length })}
                   </span>
                   <Button
                     size="xs"
@@ -610,7 +652,7 @@ export function SkillHubPage() {
                       setPage(1);
                     }}
                   >
-                    清除厂商筛选
+                    {t("skills:clearVendorFilter")}
                   </Button>
                 </div>
               ) : null}
@@ -626,7 +668,7 @@ export function SkillHubPage() {
                       setQuery(event.target.value);
                       setPage(1);
                     }}
-                    placeholder="搜索技能名称、描述、厂商或关键词..."
+                    placeholder={t("skills:searchPlaceholder")}
                     value={query}
                   />
                   <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
@@ -667,7 +709,7 @@ export function SkillHubPage() {
                           setPage(1);
                         }}
                       >
-                        {size}条/页
+                        {t("skills:pageSize", { size })}
                       </Button>
                     ))}
                   </div>
@@ -676,7 +718,7 @@ export function SkillHubPage() {
                     variant="outline"
                     className="size-8"
                     onClick={() => void refreshAll()}
-                    title="刷新技能数据"
+                    title={t("skills:refresh")}
                   >
                     <RefreshCwIcon
                       className={cn(
@@ -692,11 +734,11 @@ export function SkillHubPage() {
               {loading || listLoading || (registryLoading && registrySkills.length === 0) ? (
                 <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                   <Dotm3x3_1 size={18} dotSize={2.6} colorPreset="solid-theme" />
-                  正在读取技能中心数据…
+                  {t("skills:loadingHub")}
                 </div>
               ) : currentSkills.length === 0 ? (
                 <EmptyState
-                  label="未找到匹配的技能或插件"
+                  label={t("skills:noMatching")}
                   icon={<StoreIcon className="size-8" />}
                 />
               ) : (
@@ -727,7 +769,12 @@ export function SkillHubPage() {
               {totalPages > 1 ? (
                 <div className="mt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t pt-5">
                   <span className="text-xs text-muted-foreground">
-                    共 {totalSkillsCount} 个技能 · 第 {page} / {totalPages} 页 · 每页 {pageSize} 条
+                    {t("skills:pageInfo", {
+                      total: totalSkillsCount,
+                      current: page,
+                      pages: totalPages,
+                      pageSize,
+                    })}
                   </span>
                   <Pagination className="mx-0 w-auto">
                     <PaginationContent>
@@ -742,7 +789,7 @@ export function SkillHubPage() {
                           className="gap-1 pl-2.5 h-8 text-xs"
                         >
                           <ChevronLeftIcon className="size-3.5" />
-                          <span>上一页</span>
+                          <span>{t("skills:prevPage")}</span>
                         </Button>
                       </PaginationItem>
 
@@ -773,7 +820,7 @@ export function SkillHubPage() {
                           }}
                           className="gap-1 pr-2.5 h-8 text-xs"
                         >
-                          <span>下一页</span>
+                          <span>{t("skills:nextPage")}</span>
                           <ChevronRightIcon className="size-3.5" />
                         </Button>
                       </PaginationItem>
@@ -842,6 +889,7 @@ const SkillCard = React.memo(function SkillCard({
   onInstall,
   onSelect,
 }: SkillCardProps) {
+  const { t } = useTranslation();
   return (
     <ContextMenu>
       <ContextMenuTrigger className="block h-full">
@@ -852,7 +900,7 @@ const SkillCard = React.memo(function SkillCard({
           className="flex h-full min-w-0 items-center justify-between gap-3 rounded-xl border border-border bg-card p-3.5 shadow-xs transition-colors duration-200 hover:border-primary/40"
         >
           <button
-            aria-label={`查看技能 ${skill.name}`}
+            aria-label={t("skills:viewSkillDetail")}
             className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
             onClick={() => onSelect(skill)}
             type="button"
@@ -894,7 +942,7 @@ const SkillCard = React.memo(function SkillCard({
                     className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 shrink-0 gap-0.5"
                   >
                     <ShieldCheckIcon className="size-2.5" />
-                    官方认证
+                    {t("skills:officialVerified")}
                   </Badge>
                 ) : (
                   <Badge
@@ -911,7 +959,7 @@ const SkillCard = React.memo(function SkillCard({
                 ) : null}
               </div>
               <span className="mt-1 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
-                {skill.description || "未提供描述"}
+                {skill.description || t("skills:noDescription")}
               </span>
 
               {/* 安装量与热度指标 */}
@@ -933,7 +981,7 @@ const SkillCard = React.memo(function SkillCard({
           {installed ? (
             <Badge variant="secondary" className="shrink-0 h-7 text-xs">
               <CheckIcon className="size-3 mr-1 text-emerald-500" />
-              已安装
+              {t("skills:installed")}
             </Badge>
           ) : (
             <InteractiveHoverButton
@@ -943,7 +991,7 @@ const SkillCard = React.memo(function SkillCard({
                 if (!installing) onInstall(skill);
               }}
             >
-              {installing ? "安装中" : "安装"}
+              {installing ? t("skills:installing") : t("skills:install")}
             </InteractiveHoverButton>
           )}
         </MagicCard>
@@ -955,16 +1003,16 @@ const SkillCard = React.memo(function SkillCard({
           </ContextMenuLabel>
           <ContextMenuItem onClick={() => onSelect(skill)}>
             <SparklesIcon className="text-muted-foreground" />
-            <span>查看技能详情</span>
+            <span>{t("skills:viewSkillDetail")}</span>
           </ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
               void navigator.clipboard.writeText(skill.name);
-              toast.success("已复制技能名称");
+              toast.success(t("skills:copiedName"));
             }}
           >
             <CopyIcon className="text-muted-foreground" />
-            <span>复制技能名称</span>
+            <span>{t("skills:copyName")}</span>
           </ContextMenuItem>
         </ContextMenuGroup>
         <ContextMenuSeparator />
@@ -972,7 +1020,7 @@ const SkillCard = React.memo(function SkillCard({
           {!installed ? (
             <ContextMenuItem onClick={() => onInstall(skill)}>
               <PlusIcon className="text-muted-foreground" />
-              <span>安装此技能</span>
+              <span>{t("skills:installThisSkill")}</span>
             </ContextMenuItem>
           ) : null}
         </ContextMenuGroup>
@@ -986,6 +1034,7 @@ function InstalledSection({
   onSelect,
   onEdit,
   onDelete,
+  onToggle,
   onAddSkill,
   onExploreMarket,
 }: {
@@ -993,9 +1042,11 @@ function InstalledSection({
   onSelect: (skill: SkillMetadata) => void;
   onEdit?: (skill: SkillMetadata) => void;
   onDelete?: (skill: SkillMetadata) => void;
+  onToggle?: (skill: SkillMetadata, enabled: boolean) => void;
   onAddSkill?: () => void;
   onExploreMarket?: () => void;
 }) {
+  const { t } = useTranslation();
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
   const [page, setPage] = React.useState(1);
   const pageSize = 12;
@@ -1010,13 +1061,13 @@ function InstalledSection({
     <div className="mt-2">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-semibold">个人技能库</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            当前已安装到本机的技能与插件，可在与 Agent 对话时直接调度。
-          </p>
+          <h2 className="text-xl font-semibold">{t("skills:personalLibraryTitle")}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t("skills:personalLibraryDesc")}</p>
         </div>
         <div className="flex items-center gap-2.5">
-          <Badge variant="secondary">{skills.length} 个技能</Badge>
+          <Badge variant="secondary">
+            {t("skills:personalLibraryCount", { count: skills.length })}
+          </Badge>
           <ToggleGroup
             className="h-8"
             variant="outline"
@@ -1026,17 +1077,17 @@ function InstalledSection({
               if (value === "grid" || value === "list") setViewMode(value);
             }}
           >
-            <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+            <ToggleGroupItem value="grid" aria-label={t("skills:gridView")} className="size-8 p-0">
               <LayoutGridIcon className="size-3.5" />
             </ToggleGroupItem>
-            <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+            <ToggleGroupItem value="list" aria-label={t("skills:listView")} className="size-8 p-0">
               <ListIcon className="size-3.5" />
             </ToggleGroupItem>
           </ToggleGroup>
           {onAddSkill ? (
             <Button size="sm" onClick={onAddSkill} className="gap-1.5 h-8">
               <PlusIcon className="size-3.5" />
-              导入本地技能
+              {t("skills:importLocal")}
             </Button>
           ) : null}
         </div>
@@ -1047,16 +1098,15 @@ function InstalledSection({
           <span className="flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3 shadow-2xs">
             <SparklesIcon className="size-7" />
           </span>
-          <h3 className="text-base font-semibold">暂未安装任何技能</h3>
+          <h3 className="text-base font-semibold">{t("skills:emptyPersonalTitle")}</h3>
           <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-            你可以在「探索市场」中直接一键安装社区或官方认证技能，也可以导入本地包含 SKILL.md 的 ZIP
-            技能包。
+            {t("skills:emptyPersonalDesc")}
           </p>
           <div className="mt-2 flex items-center gap-3">
             {onExploreMarket ? (
               <Button size="sm" onClick={onExploreMarket} className="gap-1.5 cursor-pointer">
                 <StoreIcon className="size-3.5" />
-                去市场挑选
+                {t("skills:pickFromMarket")}
               </Button>
             ) : null}
             {onAddSkill ? (
@@ -1067,7 +1117,7 @@ function InstalledSection({
                 className="gap-1.5 cursor-pointer"
               >
                 <FolderOpenIcon className="size-3.5" />
-                导入本地技能
+                {t("skills:importLocal")}
               </Button>
             ) : null}
           </div>
@@ -1098,20 +1148,39 @@ function InstalledSection({
                         </Badge>
                       </div>
                       <span className="mt-0.5 block line-clamp-1 text-xs text-muted-foreground">
-                        {skill.description || "未提供描述"}
+                        {skill.description || t("skills:noDescription")}
                       </span>
                     </div>
                     <div
                       className="flex items-center gap-1 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {onToggle ? (
+                        <Switch
+                          size="sm"
+                          checked={skill.enabled !== false}
+                          onCheckedChange={(checked) => void onToggle(skill, checked)}
+                          aria-label={t("skills:toggleSkillAria", {
+                            action:
+                              skill.enabled === false
+                                ? t("skills:enableSkill")
+                                : t("skills:disableSkill"),
+                            name: skill.name,
+                          })}
+                          title={
+                            skill.enabled === false
+                              ? t("skills:enableSkill")
+                              : t("skills:disableSkill")
+                          }
+                        />
+                      ) : null}
                       {onEdit ? (
                         <Button
                           size="icon-xs"
                           variant="ghost"
                           className="size-7 text-muted-foreground hover:text-foreground cursor-pointer"
                           onClick={() => onEdit(skill)}
-                          title="编辑技能配置"
+                          title={t("skills:editSkillConfig")}
                         >
                           <PencilIcon className="size-3.5" />
                         </Button>
@@ -1122,7 +1191,7 @@ function InstalledSection({
                           variant="ghost"
                           className="size-7 text-muted-foreground hover:text-destructive cursor-pointer"
                           onClick={() => onDelete(skill)}
-                          title="删除技能"
+                          title={t("skills:deleteSkill")}
                         >
                           <Trash2Icon className="size-3.5" />
                         </Button>
@@ -1141,22 +1210,22 @@ function InstalledSection({
                     </ContextMenuLabel>
                     <ContextMenuItem onClick={() => onSelect(skill)}>
                       <SparklesIcon className="text-muted-foreground" />
-                      <span>查看技能详情</span>
+                      <span>{t("skills:viewSkillDetail")}</span>
                     </ContextMenuItem>
                     {onEdit ? (
                       <ContextMenuItem onClick={() => onEdit(skill)}>
                         <PencilIcon className="text-muted-foreground" />
-                        <span>编辑技能配置</span>
+                        <span>{t("skills:editSkillConfig")}</span>
                       </ContextMenuItem>
                     ) : null}
                     <ContextMenuItem
                       onClick={() => {
                         void navigator.clipboard.writeText(skill.name);
-                        toast.success("已复制技能名称");
+                        toast.success(t("skills:copiedName"));
                       }}
                     >
                       <CopyIcon className="text-muted-foreground" />
-                      <span>复制技能名称</span>
+                      <span>{t("skills:copyName")}</span>
                     </ContextMenuItem>
                     {onDelete ? (
                       <>
@@ -1166,7 +1235,7 @@ function InstalledSection({
                           onClick={() => onDelete(skill)}
                         >
                           <Trash2Icon className="text-destructive" />
-                          <span>删除技能</span>
+                          <span>{t("skills:deleteSkill")}</span>
                         </ContextMenuItem>
                       </>
                     ) : null}
@@ -1206,7 +1275,7 @@ function InstalledSection({
                           className="mt-0.5 truncate text-xs text-muted-foreground"
                           title={skill.description}
                         >
-                          {skill.description || "未提供描述"}
+                          {skill.description || t("skills:noDescription")}
                         </p>
                       </div>
                     </div>
@@ -1214,13 +1283,32 @@ function InstalledSection({
                       className="flex items-center gap-1 shrink-0"
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {onToggle ? (
+                        <Switch
+                          size="sm"
+                          checked={skill.enabled !== false}
+                          onCheckedChange={(checked) => void onToggle(skill, checked)}
+                          aria-label={t("skills:toggleSkillAria", {
+                            action:
+                              skill.enabled === false
+                                ? t("skills:enableSkill")
+                                : t("skills:disableSkill"),
+                            name: skill.name,
+                          })}
+                          title={
+                            skill.enabled === false
+                              ? t("skills:enableSkill")
+                              : t("skills:disableSkill")
+                          }
+                        />
+                      ) : null}
                       {onEdit ? (
                         <Button
                           size="icon-xs"
                           variant="ghost"
                           className="size-7 text-muted-foreground hover:text-foreground cursor-pointer"
                           onClick={() => onEdit(skill)}
-                          title="编辑技能配置"
+                          title={t("skills:editSkillConfig")}
                         >
                           <PencilIcon className="size-3.5" />
                         </Button>
@@ -1231,7 +1319,7 @@ function InstalledSection({
                           variant="ghost"
                           className="size-7 text-muted-foreground hover:text-destructive cursor-pointer"
                           onClick={() => onDelete(skill)}
-                          title="删除技能"
+                          title={t("skills:deleteSkill")}
                         >
                           <Trash2Icon className="size-3.5" />
                         </Button>
@@ -1250,22 +1338,22 @@ function InstalledSection({
                     </ContextMenuLabel>
                     <ContextMenuItem onClick={() => onSelect(skill)}>
                       <SparklesIcon className="text-muted-foreground" />
-                      <span>查看技能详情</span>
+                      <span>{t("skills:viewSkillDetail")}</span>
                     </ContextMenuItem>
                     {onEdit ? (
                       <ContextMenuItem onClick={() => onEdit(skill)}>
                         <PencilIcon className="text-muted-foreground" />
-                        <span>编辑技能配置</span>
+                        <span>{t("skills:editSkillConfig")}</span>
                       </ContextMenuItem>
                     ) : null}
                     <ContextMenuItem
                       onClick={() => {
                         void navigator.clipboard.writeText(skill.name);
-                        toast.success("已复制技能名称");
+                        toast.success(t("skills:copiedName"));
                       }}
                     >
                       <CopyIcon className="text-muted-foreground" />
-                      <span>复制技能名称</span>
+                      <span>{t("skills:copyName")}</span>
                     </ContextMenuItem>
                     {onDelete ? (
                       <>
@@ -1275,7 +1363,7 @@ function InstalledSection({
                           onClick={() => onDelete(skill)}
                         >
                           <Trash2Icon className="text-destructive" />
-                          <span>删除技能</span>
+                          <span>{t("skills:deleteSkill")}</span>
                         </ContextMenuItem>
                       </>
                     ) : null}
@@ -1290,7 +1378,12 @@ function InstalledSection({
       {totalPages > 1 ? (
         <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t pt-4">
           <span className="text-xs text-muted-foreground">
-            第 {safePage} / {totalPages} 页 · 共 {skills.length} 个技能 · 每页 {pageSize} 条
+            {t("skills:pageInfoPersonal", {
+              current: safePage,
+              pages: totalPages,
+              total: skills.length,
+              pageSize,
+            })}
           </span>
           <Pagination className="mx-0 w-auto">
             <PaginationContent>
@@ -1303,7 +1396,7 @@ function InstalledSection({
                   className="gap-1 pl-2.5 h-8 text-xs cursor-pointer"
                 >
                   <ChevronLeftIcon className="size-3.5" />
-                  <span>上一页</span>
+                  <span>{t("skills:prevPage")}</span>
                 </Button>
               </PaginationItem>
               {getPaginationRange(safePage, totalPages).map((item, idx) => (
@@ -1330,7 +1423,7 @@ function InstalledSection({
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   className="gap-1 pr-2.5 h-8 text-xs cursor-pointer"
                 >
-                  <span>下一页</span>
+                  <span>{t("skills:nextPage")}</span>
                   <ChevronRightIcon className="size-3.5" />
                 </Button>
               </PaginationItem>
@@ -1345,16 +1438,19 @@ function InstalledSection({
 function McpSection({
   mcpServers,
   onDelete,
+  onToggle,
   onAuthenticate,
   onEdit,
   onAddMcp,
 }: {
   mcpServers: McpSummary[];
   onDelete: (server: McpSummary) => void;
+  onToggle: (server: McpSummary, enabled: boolean) => void;
   onAuthenticate: (server: McpSummary) => void;
   onEdit?: (server: McpSummary) => void;
   onAddMcp?: () => void;
 }) {
+  const { t } = useTranslation();
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
   const [page, setPage] = React.useState(1);
   const pageSize = 10;
@@ -1370,12 +1466,10 @@ function McpSection({
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            <h2 className="text-xl font-semibold">MCP 外部能力</h2>
-            <Badge variant="secondary">{mcpServers.length} 个服务</Badge>
+            <h2 className="text-xl font-semibold">{t("skills:mcpExternalTitle")}</h2>
+            <Badge variant="secondary">{t("skills:mcpCount", { count: mcpServers.length })}</Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            连接外部 MCP 服务，为 Agent 提供数据库、文件系统、终端和三方 API 访问支持。
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{t("skills:mcpExternalDesc")}</p>
         </div>
         <div className="flex items-center gap-2.5">
           <ToggleGroup
@@ -1387,17 +1481,17 @@ function McpSection({
               if (value === "grid" || value === "list") setViewMode(value);
             }}
           >
-            <ToggleGroupItem value="grid" aria-label="网格视图" className="size-8 p-0">
+            <ToggleGroupItem value="grid" aria-label={t("skills:gridView")} className="size-8 p-0">
               <LayoutGridIcon className="size-3.5" />
             </ToggleGroupItem>
-            <ToggleGroupItem value="list" aria-label="列表视图" className="size-8 p-0">
+            <ToggleGroupItem value="list" aria-label={t("skills:listView")} className="size-8 p-0">
               <ListIcon className="size-3.5" />
             </ToggleGroupItem>
           </ToggleGroup>
           {onAddMcp ? (
             <Button size="sm" onClick={onAddMcp} className="gap-1.5 h-8 cursor-pointer">
               <PlusIcon className="size-3.5" />
-              添加 MCP
+              {t("skills:addMcp")}
             </Button>
           ) : null}
         </div>
@@ -1408,14 +1502,12 @@ function McpSection({
           <span className="flex size-14 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground mb-3 shadow-2xs">
             <PlugZapIcon className="size-7" />
           </span>
-          <h3 className="text-base font-semibold">还没有配置 MCP 外部能力</h3>
-          <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-            你可以连接远程 Streamable HTTP / SSE 服务或本地 stdio 进程，为 Agent 扩展工具库。
-          </p>
+          <h3 className="text-base font-semibold">{t("skills:emptyMcpTitle")}</h3>
+          <p className="mt-1 max-w-sm text-xs text-muted-foreground">{t("skills:emptyMcpDesc")}</p>
           {onAddMcp ? (
             <Button size="sm" onClick={onAddMcp} className="gap-1.5 mt-4 cursor-pointer">
               <PlusIcon className="size-3.5" />
-              添加第一个 MCP 服务
+              {t("skills:addFirstMcp")}
             </Button>
           ) : null}
         </div>
@@ -1438,13 +1530,24 @@ function McpSection({
                 </p>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <Switch
+                  size="sm"
+                  checked={server.enabled !== false}
+                  onCheckedChange={(checked) => onToggle(server, checked)}
+                  aria-label={t("skills:toggleMcpAria", {
+                    action:
+                      server.enabled === false ? t("skills:enableMcp") : t("skills:disableMcp"),
+                    name: server.name,
+                  })}
+                  title={server.enabled === false ? t("skills:enableMcp") : t("skills:disableMcp")}
+                />
                 {server.transport === "http" && server.oauth?.enabled ? (
                   <Button
                     size="icon-xs"
                     variant="ghost"
                     className="text-muted-foreground hover:text-foreground cursor-pointer"
                     onClick={() => onAuthenticate(server)}
-                    title="OAuth 授权"
+                    title={t("skills:oauthAuth")}
                   >
                     <ShieldCheckIcon className="size-3.5" />
                   </Button>
@@ -1455,7 +1558,7 @@ function McpSection({
                     variant="ghost"
                     className="text-muted-foreground hover:text-foreground cursor-pointer"
                     onClick={() => onEdit(server)}
-                    title="编辑 MCP 配置"
+                    title={t("skills:editMcpConfig")}
                   >
                     <PencilIcon className="size-3.5" />
                   </Button>
@@ -1465,7 +1568,7 @@ function McpSection({
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive cursor-pointer"
                   onClick={() => onDelete(server)}
-                  title="移除 MCP"
+                  title={t("skills:removeMcp")}
                 >
                   <Trash2Icon className="size-3.5" />
                 </Button>
@@ -1502,13 +1605,24 @@ function McpSection({
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <Switch
+                  size="sm"
+                  checked={server.enabled !== false}
+                  onCheckedChange={(checked) => onToggle(server, checked)}
+                  aria-label={t("skills:toggleMcpAria", {
+                    action:
+                      server.enabled === false ? t("skills:enableMcp") : t("skills:disableMcp"),
+                    name: server.name,
+                  })}
+                  title={server.enabled === false ? t("skills:enableMcp") : t("skills:disableMcp")}
+                />
                 {server.transport === "http" && server.oauth?.enabled ? (
                   <Button
                     size="icon-xs"
                     variant="ghost"
                     className="text-muted-foreground hover:text-foreground cursor-pointer"
                     onClick={() => onAuthenticate(server)}
-                    title="OAuth 授权"
+                    title={t("skills:oauthAuth")}
                   >
                     <ShieldCheckIcon className="size-3.5" />
                   </Button>
@@ -1519,7 +1633,7 @@ function McpSection({
                     variant="ghost"
                     className="text-muted-foreground hover:text-foreground cursor-pointer"
                     onClick={() => onEdit(server)}
-                    title="编辑 MCP 配置"
+                    title={t("skills:editMcpConfig")}
                   >
                     <PencilIcon className="size-3.5" />
                   </Button>
@@ -1529,7 +1643,7 @@ function McpSection({
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive cursor-pointer"
                   onClick={() => onDelete(server)}
-                  title="移除 MCP"
+                  title={t("skills:removeMcp")}
                 >
                   <Trash2Icon className="size-3.5" />
                 </Button>
@@ -1542,7 +1656,12 @@ function McpSection({
       {totalPages > 1 ? (
         <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t pt-4">
           <span className="text-xs text-muted-foreground">
-            第 {safePage} / {totalPages} 页 · 共 {mcpServers.length} 个服务 · 每页 {pageSize} 条
+            {t("skills:pageInfoMcp", {
+              current: safePage,
+              pages: totalPages,
+              total: mcpServers.length,
+              pageSize,
+            })}
           </span>
           <Pagination className="mx-0 w-auto">
             <PaginationContent>
@@ -1555,7 +1674,7 @@ function McpSection({
                   className="gap-1 pl-2.5 h-8 text-xs cursor-pointer"
                 >
                   <ChevronLeftIcon className="size-3.5" />
-                  <span>上一页</span>
+                  <span>{t("skills:prevPage")}</span>
                 </Button>
               </PaginationItem>
               {getPaginationRange(safePage, totalPages).map((item, idx) => (
@@ -1582,7 +1701,7 @@ function McpSection({
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   className="gap-1 pr-2.5 h-8 text-xs cursor-pointer"
                 >
-                  <span>下一页</span>
+                  <span>{t("skills:nextPage")}</span>
                   <ChevronRightIcon className="size-3.5" />
                 </Button>
               </PaginationItem>
@@ -1609,6 +1728,7 @@ function SkillTopBarActions({
   onRemove: () => void;
   onEdit?: () => void;
 }) {
+  const { t } = useTranslation();
   const [container, setContainer] = React.useState<HTMLElement | null>(null);
 
   React.useEffect(() => {
@@ -1636,7 +1756,7 @@ function SkillTopBarActions({
               className="h-7 cursor-pointer gap-1 px-2.5 text-xs"
             >
               <PencilIcon className="size-3.5" />
-              编辑配置
+              {t("skills:editConfig")}
             </Button>
           ) : null}
           <Button
@@ -1646,7 +1766,7 @@ function SkillTopBarActions({
             className="h-7 cursor-pointer gap-1 px-2.5 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
           >
             <Trash2Icon className="size-3.5 text-destructive" />
-            移除技能
+            {t("skills:removeSkill")}
           </Button>
         </>
       ) : (
@@ -1661,7 +1781,7 @@ function SkillTopBarActions({
           ) : (
             <PlusIcon className="size-3.5" />
           )}
-          {installing ? "正在安装…" : "安装技能"}
+          {installing ? t("skills:installingSkill") : t("skills:installSkill")}
         </Button>
       )}
     </div>,
@@ -1690,6 +1810,7 @@ function SkillDetailPage({
   onEdit?: () => void;
   onUsePrompt: (prompt: string) => void;
 }) {
+  const { t } = useTranslation();
   const [showTopBarButton, setShowTopBarButton] = React.useState(false);
   const heroActionRef = React.useRef<HTMLDivElement>(null);
 
@@ -1717,9 +1838,9 @@ function SkillDetailPage({
   }, [detail?.name]);
 
   const examplePrompts = [
-    "把我的笔记整理成一份排版好的文档",
-    "把这份 PDF 里的表格提取成电子表格",
-    "用这份 CSV 做一份带图表的工作簿",
+    t("skills:examplePrompt1"),
+    t("skills:examplePrompt2"),
+    t("skills:examplePrompt3"),
   ];
   return (
     <div className="flex size-full min-h-0 flex-col bg-background">
@@ -1760,19 +1881,19 @@ function SkillDetailPage({
                           className="text-xs px-2 py-0.5 font-normal text-emerald-600 dark:text-emerald-400 border-emerald-500/30 bg-emerald-500/10 gap-1"
                         >
                           <ShieldCheckIcon className="size-3.5" />
-                          官方原厂认证
+                          {t("skills:officialCertifiedBadge")}
                         </Badge>
                       ) : null}
                     </div>
                     <p className="mt-2 max-w-2xl text-base text-muted-foreground">
-                      {detail.description || "未提供描述"}
+                      {detail.description || t("skills:noDescription")}
                     </p>
                     <div className="mt-3 flex items-center gap-2 flex-wrap">
                       <Badge variant="outline">{skillSourceLabel(detail)}</Badge>
                       {detail.installs ? (
                         <Badge variant="secondary" className="font-mono text-xs gap-1">
                           <DownloadIcon className="size-3" />
-                          {formatInstalls(detail.installs)} 次安装
+                          {t("skills:installCount", { count: formatInstalls(detail.installs) })}
                         </Badge>
                       ) : null}
                       {detail.sourceUrl ? (
@@ -1783,7 +1904,7 @@ function SkillDetailPage({
                           className="text-xs text-primary hover:underline flex items-center gap-1 ml-2"
                         >
                           <GlobeIcon className="size-3.5" />
-                          查看源仓库
+                          {t("skills:viewRepo")}
                           <ArrowUpRightIcon className="size-3" />
                         </a>
                       ) : null}
@@ -1803,7 +1924,7 @@ function SkillDetailPage({
                           className="cursor-pointer gap-1.5"
                         >
                           <PencilIcon className="size-4" />
-                          编辑配置
+                          {t("skills:editConfig")}
                         </Button>
                       ) : null}
                       <Button
@@ -1813,7 +1934,7 @@ function SkillDetailPage({
                         className="cursor-pointer gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30"
                       >
                         <Trash2Icon className="size-4 text-destructive" />
-                        移除技能
+                        {t("skills:removeSkill")}
                       </Button>
                     </>
                   ) : (
@@ -1828,7 +1949,7 @@ function SkillDetailPage({
                       ) : (
                         <PlusIcon className="size-4" />
                       )}
-                      {installing ? "正在安装…" : "安装技能"}
+                      {installing ? t("skills:installingSkill") : t("skills:installSkill")}
                     </Button>
                   )}
                 </div>
@@ -1839,8 +1960,8 @@ function SkillDetailPage({
                 <div className="mt-2 flex items-center gap-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3.5 text-xs text-emerald-800 dark:text-emerald-300">
                   <ShieldCheckIcon className="size-5 shrink-0 text-emerald-500" />
                   <span>
-                    <strong>技术原厂权威认证</strong>
-                    ：该技能由产品官方团队维护，符合第一方工具规范与自动化调用安全要求。
+                    <strong>{t("skills:officialCertifiedBannerTitle")}</strong>
+                    {t("skills:officialCertifiedBannerDesc")}
                   </span>
                 </div>
               ) : null}
@@ -1850,7 +1971,7 @@ function SkillDetailPage({
                 <section className="mt-2">
                   <h2 className="text-lg font-semibold flex items-center gap-2">
                     <ShieldCheckIcon className="size-5 text-emerald-500" />
-                    多维度安全审计
+                    {t("skills:auditTitle")}
                   </h2>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {detail.audits.map((audit) => (
@@ -1871,13 +1992,16 @@ function SkillDetailPage({
                                 : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/10",
                             )}
                           >
-                            {audit.status === "pass" ? "Pass (安全通过)" : "Warn (需复核)"}
+                            {audit.status === "pass"
+                              ? t("skills:auditPass")
+                              : t("skills:auditWarn")}
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground mt-2">{audit.summary}</p>
                         {audit.riskLevel ? (
                           <span className="text-[10px] text-muted-foreground/80 mt-2">
-                            风险等级: <span className="font-mono">{audit.riskLevel}</span>
+                            {t("skills:riskLevel")}:{" "}
+                            <span className="font-mono">{audit.riskLevel}</span>
                           </span>
                         ) : null}
                       </div>
@@ -1890,9 +2014,11 @@ function SkillDetailPage({
               <section className="mt-2 w-full min-w-0 rounded-xl border bg-muted/20 p-4 sm:p-5">
                 <div className="grid min-w-0 gap-3">
                   <div>
-                    <p className="text-xs font-medium text-muted-foreground">使用示例</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {t("skills:usageExamples")}
+                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      选择一个示例，将它填入新会话输入框后再按需修改。
+                      {t("skills:usageExamplesDesc")}
                     </p>
                   </div>
                   <div className="grid gap-2">
@@ -1920,7 +2046,7 @@ function SkillDetailPage({
 
               {/* 技能说明与系统提示词 */}
               <section className="mt-2 w-full min-w-0">
-                <h2 className="text-lg font-semibold">技能指令与执行说明</h2>
+                <h2 className="text-lg font-semibold">{t("skills:instructionsAndExecution")}</h2>
                 <div className="mt-3 min-w-0 rounded-xl border bg-muted/30 p-4">
                   <MessageResponse className="w-full max-w-none text-sm leading-relaxed">
                     {detail.instructions}
@@ -1931,7 +2057,7 @@ function SkillDetailPage({
               {/* 关联文件与资源包 */}
               <section className="mt-2">
                 <h2 className="text-lg font-semibold">
-                  技能关联文件{" "}
+                  {t("skills:associatedFiles")}{" "}
                   {detail.references.length + detail.scripts.length + detail.assets.length > 0 ? (
                     <span className="text-sm font-normal text-muted-foreground">
                       ({detail.references.length + detail.scripts.length + detail.assets.length})
@@ -1957,11 +2083,11 @@ function SkillDetailPage({
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-blue-600 dark:text-blue-400"
                           >
-                            参考文档
+                            {t("skills:docsReference")}
                           </Badge>
                         </div>
                         <span className="mt-0.5 block text-xs text-muted-foreground">
-                          技能执行时引用的领域知识、规范说明或 API 参考手册
+                          {t("skills:docsReferenceDesc")}
                         </span>
                       </span>
                     </div>
@@ -1983,11 +2109,11 @@ function SkillDetailPage({
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-emerald-600 dark:text-emerald-400"
                           >
-                            执行脚本
+                            {t("skills:execScripts")}
                           </Badge>
                         </div>
                         <span className="mt-0.5 block text-xs text-muted-foreground">
-                          供 Agent 调用的可执行自动化脚本或分析程序
+                          {t("skills:execScriptsDesc")}
                         </span>
                       </span>
                     </div>
@@ -2009,11 +2135,11 @@ function SkillDetailPage({
                             variant="outline"
                             className="text-[10px] px-1.5 py-0 h-4 font-normal text-amber-600 dark:text-amber-400"
                           >
-                            资源模版
+                            {t("skills:resourceTemplates")}
                           </Badge>
                         </div>
                         <span className="mt-0.5 block text-xs text-muted-foreground">
-                          模版代码、样式文件、静态数据或媒体资源
+                          {t("skills:resourceTemplatesDesc")}
                         </span>
                       </span>
                     </div>
@@ -2021,10 +2147,13 @@ function SkillDetailPage({
                   {detail.references.length + detail.scripts.length + detail.assets.length ===
                     0 && (
                     <div className="py-5 text-sm text-muted-foreground">
-                      <p className="font-medium text-foreground/80">此技能为纯指令型技能</p>
+                      <p className="font-medium text-foreground/80">
+                        {t("skills:pureInstructionTitle")}
+                      </p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        由 <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code>{" "}
-                        中的系统提示词与执行规则全权驱动，无需额外附带脚本或资源文件。
+                        {t("skills:pureInstructionPrefix")}{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 font-mono">SKILL.md</code>{" "}
+                        {t("skills:pureInstructionDesc")}
                       </p>
                     </div>
                   )}
@@ -2034,12 +2163,12 @@ function SkillDetailPage({
           ) : detailLoading ? (
             <div className="flex items-center gap-2 py-16 text-sm text-muted-foreground">
               <Dotm3x3_1 size={16} dotSize={2.4} colorPreset="solid-theme" />
-              正在读取技能详情…
+              {t("skills:loadingDetail")}
             </div>
           ) : (
             <div className="grid gap-3 py-16 text-sm">
-              <p className="text-destructive">{detailError || "读取技能详情失败"}</p>
-              <p className="text-muted-foreground">请返回市场后重试。</p>
+              <p className="text-destructive">{detailError || t("skills:loadDetailFailed")}</p>
+              <p className="text-muted-foreground">{t("skills:retryAfterBack")}</p>
             </div>
           )}
         </main>
@@ -2059,6 +2188,7 @@ function SkillEditDialog({
   skill: SkillMetadata | null;
   onSave: (name: string, patch: { description?: string; instructions?: string }) => Promise<void>;
 }) {
+  const { t } = useTranslation();
   const [description, setDescription] = React.useState("");
   const [instructions, setInstructions] = React.useState("");
   const [loading, setLoading] = React.useState(false);
@@ -2080,12 +2210,12 @@ function SkillEditDialog({
         }
       })
       .catch((err) => {
-        toastError(err, "获取技能详情失败");
+        toastError(err, t("skills:getSkillDetailFailed"));
       })
       .finally(() => {
         setLoading(false);
       });
-  }, [open, skill]);
+  }, [open, skill, t]);
 
   const handleSave = async () => {
     if (!skill) return;
@@ -2113,7 +2243,9 @@ function SkillEditDialog({
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
-                <DialogTitle className="text-base font-semibold">编辑技能配置</DialogTitle>
+                <DialogTitle className="text-base font-semibold">
+                  {t("skills:editSkillConfig")}
+                </DialogTitle>
                 {skill ? (
                   <Badge variant="outline" className="font-mono text-xs">
                     {skill.name}
@@ -2121,48 +2253,50 @@ function SkillEditDialog({
                 ) : null}
               </div>
               <DialogDescription className="mt-0.5 text-xs">
-                修改该技能在本地的简要描述及 SKILL.md 中的执行说明指令。
+                {t("skills:editModalDesc")}
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="grid gap-4 px-6 py-4 pb-6">
+          <div className="grid gap-4 px-6 py-4 pb-2">
             {loading ? (
               <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
                 <Dotm3x3_1 size={16} dotSize={2.4} colorPreset="solid-theme" />
-                正在读取技能详情…
+                {t("skills:loadingDetail")}
               </div>
             ) : (
               <>
                 <Field>
-                  <FieldLabel className="text-xs font-medium">技能简要描述</FieldLabel>
+                  <FieldLabel className="text-xs font-medium">
+                    {t("skills:briefDescLabel")}
+                  </FieldLabel>
                   <Textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    placeholder="简述该技能的功能与触发场景..."
+                    placeholder={t("skills:briefDescPlaceholder")}
                     className="resize-none text-xs"
                     rows={2}
                   />
                   <FieldDescription className="text-[11px]">
-                    用于在技能列表或 Agent 工具栏中快速展示功能摘要。
+                    {t("skills:briefDescHint")}
                   </FieldDescription>
                 </Field>
 
                 <Field>
                   <FieldLabel className="text-xs font-medium">
-                    执行说明与系统提示词 (SKILL.md)
+                    {t("skills:systemPromptLabel")}
                   </FieldLabel>
                   <Textarea
                     value={instructions}
                     onChange={(e) => setInstructions(e.target.value)}
-                    placeholder="输入该技能的详细执行指引、约束与系统提示词..."
+                    placeholder={t("skills:systemPromptPlaceholder")}
                     className="font-mono text-xs leading-relaxed resize-y min-h-[220px]"
                     rows={10}
                   />
                   <FieldDescription className="text-[11px]">
-                    当调用此技能时，这些指令将被注入给 Agent 作为执行指引。
+                    {t("skills:systemPromptHint")}
                   </FieldDescription>
                 </Field>
               </>
@@ -2171,7 +2305,9 @@ function SkillEditDialog({
         </ScrollArea>
 
         <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none border-0 border-t bg-background px-5 py-3 sm:flex-row sm:items-center sm:justify-end gap-2">
-          <DialogClose render={<Button variant="ghost" size="sm" />}>取消</DialogClose>
+          <DialogClose render={<Button variant="ghost" size="sm" />}>
+            {t("common:cancel")}
+          </DialogClose>
           <Button
             size="sm"
             disabled={loading || saving}
@@ -2183,7 +2319,7 @@ function SkillEditDialog({
             ) : (
               <CheckIcon className="size-3.5" />
             )}
-            {saving ? "正在保存…" : "保存修改"}
+            {saving ? t("skills:saving") : t("skills:saveChanges")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2205,6 +2341,7 @@ function SkillAddDialog({
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   uploading: boolean;
 }) {
+  const { t } = useTranslation();
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
 
   React.useEffect(() => {
@@ -2232,9 +2369,11 @@ function SkillAddDialog({
               <FolderOpenIcon className="size-4" />
             </span>
             <div>
-              <DialogTitle className="text-base font-semibold">导入本地技能</DialogTitle>
+              <DialogTitle className="text-base font-semibold">
+                {t("skills:importLocalTitle")}
+              </DialogTitle>
               <DialogDescription className="mt-0.5 text-xs">
-                从本地选择包含 SKILL.md 的 ZIP 技能压缩包导入到个人技能库。
+                {t("skills:importLocalDesc")}
               </DialogDescription>
             </div>
           </div>
@@ -2260,14 +2399,16 @@ function SkillAddDialog({
                   {selectedFile.name}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {(selectedFile.size / 1024).toFixed(1)} KB · 准备导入
+                  {t("skills:readyToImport", { size: (selectedFile.size / 1024).toFixed(1) })}
                 </p>
               </div>
             ) : (
               <div>
-                <p className="text-xs font-semibold text-foreground">点击选择本地 ZIP 技能包</p>
+                <p className="text-xs font-semibold text-foreground">
+                  {t("skills:clickSelectZip")}
+                </p>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  支持包含 SKILL.md 及相关脚本/文档资源的标准压缩包
+                  {t("skills:zipSupportHint")}
                 </p>
               </div>
             )}
@@ -2275,7 +2416,9 @@ function SkillAddDialog({
         </div>
 
         <DialogFooter className="mt-2 flex items-center justify-between sm:justify-end gap-2">
-          <DialogClose render={<Button variant="ghost" size="sm" />}>取消</DialogClose>
+          <DialogClose render={<Button variant="ghost" size="sm" />}>
+            {t("common:cancel")}
+          </DialogClose>
           <Button
             size="sm"
             disabled={uploading || !selectedFile}
@@ -2287,7 +2430,7 @@ function SkillAddDialog({
             ) : (
               <PlusIcon className="size-3.5" />
             )}
-            {uploading ? "正在解压导入…" : "确认导入"}
+            {uploading ? t("skills:unpacking") : t("skills:confirmImport")}
           </Button>
         </DialogFooter>
         <input
@@ -2313,6 +2456,7 @@ function MarketplacesDialog({
   marketplaces: SkillMarketplace[];
   onSaved: () => void;
 }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = React.useState<SkillMarketplace | null>(null);
   const [name, setName] = React.useState("");
   const [url, setUrl] = React.useState("");
@@ -2353,32 +2497,32 @@ function MarketplacesDialog({
     try {
       await saveSkillMarketplace({
         id: editing?.id,
-        name: name.trim() || "GitHub 技能市场",
+        name: name.trim() || t("skills:defaultMarketplaceName"),
         url: url.trim(),
         branch: branch.trim() || "main",
         enabled: true,
       });
-      toast.success(editing ? "技能市场已更新" : "技能市场已添加");
+      toast.success(editing ? t("skills:marketplaceUpdated") : t("skills:marketplaceAdded"));
       reset();
       onSaved();
     } catch (error) {
-      toastError(error, "保存技能市场失败");
+      toastError(error, t("skills:saveMarketplaceFailed"));
     } finally {
       setSaving(false);
     }
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm("确定删除这个技能市场吗？")) return;
+    if (!window.confirm(t("skills:deleteMarketplaceConfirm"))) return;
     try {
       await deleteSkillMarketplace(id);
     } catch {
-      toast.error("删除技能市场失败");
+      toast.error(t("skills:deleteMarketplaceFailed"));
       return;
     }
     if (editing?.id === id) reset();
     onSaved();
-    toast.success("技能市场已删除");
+    toast.success(t("skills:marketplaceDeleted"));
   };
 
   return (
@@ -2390,9 +2534,11 @@ function MarketplacesDialog({
               <StoreIcon className="size-4" />
             </span>
             <div>
-              <DialogTitle className="text-base font-semibold">技能市场源管理</DialogTitle>
+              <DialogTitle className="text-base font-semibold">
+                {t("skills:marketplaceManageTitle")}
+              </DialogTitle>
               <DialogDescription className="mt-0.5 text-xs leading-normal">
-                添加 GitHub 技能合集仓库。仓库可在根目录或 skills/ 下放置多个包含 SKILL.md 的技能。
+                {t("skills:marketplaceManageDesc")}
               </DialogDescription>
             </div>
           </div>
@@ -2427,7 +2573,7 @@ function MarketplacesDialog({
               </div>
               <div className="flex items-center gap-1">
                 <Button
-                  aria-label="编辑技能市场"
+                  aria-label={t("skills:editMarketplace")}
                   onClick={() => edit(marketplace)}
                   size="icon-xs"
                   variant="ghost"
@@ -2435,7 +2581,7 @@ function MarketplacesDialog({
                   <PencilIcon className="size-3.5" />
                 </Button>
                 <Button
-                  aria-label="删除技能市场"
+                  aria-label={t("skills:deleteMarketplace")}
                   onClick={() => void remove(marketplace.id)}
                   size="icon-xs"
                   variant="ghost"
@@ -2448,7 +2594,7 @@ function MarketplacesDialog({
           ))}
           {marketplaces.length === 0 ? (
             <div className="rounded-xl border border-dashed p-4 text-center text-xs text-muted-foreground">
-              还没有添加任何第三方 GitHub 技能市场源。
+              {t("skills:emptyMarketplaces")}
             </div>
           ) : null}
         </div>
@@ -2459,13 +2605,13 @@ function MarketplacesDialog({
         <FieldGroup className="gap-3">
           <div>
             <span className="text-xs font-semibold text-foreground/90">
-              {editing ? "编辑市场源" : "添加新市场源"}
+              {editing ? t("skills:editMarketplaceSource") : t("skills:addMarketplaceSource")}
             </span>
           </div>
 
           <Field>
             <FieldLabel htmlFor="market-url" className="text-xs">
-              GitHub 仓库地址 <span className="text-destructive">*</span>
+              {t("skills:repoUrl")} <span className="text-destructive">*</span>
             </FieldLabel>
             <Input
               id="market-url"
@@ -2479,19 +2625,19 @@ function MarketplacesDialog({
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_8rem] gap-2.5">
             <Field>
               <FieldLabel htmlFor="market-name" className="text-xs">
-                市场显示名称
+                {t("skills:marketplaceDisplayName")}
               </FieldLabel>
               <Input
                 id="market-name"
                 className="text-xs"
                 onChange={(event) => setName(event.target.value)}
-                placeholder="例如：Anthropic 官方技能"
+                placeholder={t("skills:marketplaceNamePlaceholder")}
                 value={name}
               />
             </Field>
             <Field>
               <FieldLabel htmlFor="market-branch" className="text-xs">
-                分支 (Branch)
+                {t("skills:branch")}
               </FieldLabel>
               <Input
                 id="market-branch"
@@ -2507,10 +2653,12 @@ function MarketplacesDialog({
         <DialogFooter className="mt-1 flex items-center justify-between sm:justify-end gap-2">
           {editing ? (
             <Button onClick={reset} variant="ghost" size="sm">
-              取消编辑
+              {t("skills:cancelEdit")}
             </Button>
           ) : (
-            <DialogClose render={<Button variant="ghost" size="sm" />}>关闭</DialogClose>
+            <DialogClose render={<Button variant="ghost" size="sm" />}>
+              {t("common:close")}
+            </DialogClose>
           )}
           <Button
             size="sm"
@@ -2523,7 +2671,7 @@ function MarketplacesDialog({
             ) : (
               <PlusIcon className="size-3.5" />
             )}
-            {editing ? "保存修改" : "添加市场"}
+            {editing ? t("skills:saveChanges") : t("skills:addMarketplace")}
           </Button>
         </DialogFooter>
       </DialogContent>

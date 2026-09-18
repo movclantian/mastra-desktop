@@ -1,3 +1,4 @@
+import { i18n } from "@/shared/i18n";
 import type { WorkUIMessage } from "../model/types";
 
 // ---------------------------------------------------------------------------
@@ -22,26 +23,17 @@ export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[
   for (const message of messages) {
     const previous = display.at(-1);
     const previousMessage = previous?.message;
-    if (
-      message.role === "assistant" &&
-      previousMessage?.role === "assistant" &&
-      previous !== undefined
-    ) {
+    if (previous && previousMessage?.role === "assistant" && message.role === "assistant") {
       previous.message = {
         ...previousMessage,
-        id: message.id,
         parts: [...previousMessage.parts, ...message.parts],
-        metadata: {
-          ...previousMessage.metadata,
-          ...message.metadata,
-        },
       };
       previous.sourceIds.push(message.id);
       continue;
     }
 
     display.push({
-      message,
+      message: { ...message },
       sourceIds: [message.id],
     });
   }
@@ -59,7 +51,7 @@ export function isTransientStreamError(error: unknown): boolean {
 export function streamErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const trimmed = message.trim();
-  if (!trimmed) return "流式响应意外中断";
+  if (!trimmed) return i18n.t("chat:messages.streamInterrupted");
 
   // Hono/Mastra errors arrive through the AI SDK as a JSON-encoded Error
   // message. Show the server's user-facing text instead of the entire envelope.

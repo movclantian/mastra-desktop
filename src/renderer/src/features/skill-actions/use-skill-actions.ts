@@ -7,9 +7,11 @@ import {
   deleteSkill,
   importSkill as importSkillRequest,
   installSkill as installSkillRequest,
+  setMcpServerEnabled,
   updateSkill as updateSkillRequest,
   uploadSkillArchive,
 } from "@/entities/skill";
+import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 
 interface UseSkillActionsOptions {
@@ -32,9 +34,11 @@ export interface SkillActionsState {
   removeSkill: (targetSkill?: SkillMetadata) => Promise<void>;
   updateSkill: (
     name: string,
-    patch: { description?: string; instructions?: string },
+    patch: { description?: string; instructions?: string; enabled?: boolean },
   ) => Promise<void>;
+  toggleSkill: (skill: SkillMetadata, enabled: boolean) => Promise<void>;
   removeMcp: (server: McpSummary) => Promise<void>;
+  toggleMcp: (server: McpSummary, enabled: boolean) => Promise<void>;
   authenticateMcp: (server: McpSummary) => Promise<void>;
 }
 
@@ -47,6 +51,7 @@ export function useSkillActions({
   loadInstalled,
   loadMcp,
 }: UseSkillActionsOptions): SkillActionsState {
+  const { t } = useTranslation();
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [installing, setInstalling] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -55,7 +60,7 @@ export function useSkillActions({
     async (file: File | undefined) => {
       if (!file) return;
       if (!file.name.toLowerCase().endsWith(".zip")) {
-        toast.error("技能包必须是 ZIP 文件");
+        toast.error(t("skills:zipRequired"));
         return;
       }
       setUploading(true);
@@ -65,15 +70,15 @@ export function useSkillActions({
         setSection("personal");
         setActiveSkill(skill);
         setAddSkillOpen(false);
-        toast.success(`技能「${skill.name}」已添加`);
+        toast.success(t("skills:addSuccess", { name: skill.name }));
       } catch (error) {
-        toastError(error, "添加技能失败");
+        toastError(error, t("skills:addFailed"));
       } finally {
         setUploading(false);
         if (inputRef.current) inputRef.current.value = "";
       }
     },
-    [loadInstalled, setActiveSkill, setAddSkillOpen, setSection],
+    [loadInstalled, setActiveSkill, setAddSkillOpen, setSection, t],
   );
 
   const importSkill = React.useCallback(
@@ -85,14 +90,14 @@ export function useSkillActions({
         setSection("personal");
         setActiveSkill(skill);
         setAddSkillOpen(false);
-        toast.success(`技能「${skill.name}」已导入`);
+        toast.success(t("skills:importSuccess", { name: skill.name }));
       } catch (error) {
-        toastError(error, "导入技能失败");
+        toastError(error, t("skills:importFailed"));
       } finally {
         setUploading(false);
       }
     },
-    [loadInstalled, setActiveSkill, setAddSkillOpen, setSection],
+    [loadInstalled, setActiveSkill, setAddSkillOpen, setSection, t],
   );
 
   const installBuiltin = React.useCallback(
@@ -101,24 +106,28 @@ export function useSkillActions({
       try {
         const installedSkill = await installSkillRequest(skill);
         await loadInstalled();
-        toast.success(`技能「${installedSkill.name}」已安装`);
+        toast.success(t("skills:installSuccess", { name: installedSkill.name }));
       } catch (error) {
-        toastError(error, "安装技能失败");
+        toastError(error, t("skills:installFailed"));
       } finally {
         setInstalling(null);
       }
     },
-    [loadInstalled],
+    [loadInstalled, t],
   );
 
   const removeSkill = React.useCallback(
     async (targetSkill?: SkillMetadata) => {
       const skillToDelete = targetSkill || activeSkill;
-      if (!skillToDelete || !window.confirm(`确定删除技能「${skillToDelete.name}」吗？`)) return;
+      if (
+        !skillToDelete ||
+        !window.confirm(t("skills:deleteConfirm", { name: skillToDelete.name }))
+      )
+        return;
       try {
         await deleteSkill(skillToDelete.name);
       } catch {
-        toast.error("删除技能失败");
+        toast.error(t("skills:deleteFailed"));
         return;
       }
       if (activeSkill?.name === skillToDelete.name) {
@@ -126,54 +135,94 @@ export function useSkillActions({
         setDetail(null);
       }
       await loadInstalled();
-      toast.success("技能已删除");
+      toast.success(t("skills:deleteSuccess"));
     },
-    [activeSkill, loadInstalled, setActiveSkill, setDetail],
+    [activeSkill, loadInstalled, setActiveSkill, setDetail, t],
   );
 
   const updateSkill = React.useCallback(
-    async (name: string, patch: { description?: string; instructions?: string }) => {
+    async (
+      name: string,
+      patch: { description?: string; instructions?: string; enabled?: boolean },
+    ) => {
       try {
         const updated = await updateSkillRequest(name, patch);
         await loadInstalled();
         setDetail((prev) => (prev && prev.name === name ? { ...prev, ...updated } : prev));
-        toast.success("技能配置已保存");
+        toast.success(t("skills:saveSuccess"));
       } catch (error) {
-        toastError(error, "更新技能失败");
+        toastError(error, t("skills:saveFailed"));
         throw error;
       }
     },
-    [loadInstalled, setDetail],
+    [loadInstalled, setDetail, t],
+  );
+
+  const toggleSkill = React.useCallback(
+    async (skill: SkillMetadata, enabled: boolean) => {
+      try {
+        await updateSkillRequest(skill.name, { enabled });
+        await loadInstalled();
+        toast.success(
+          enabled
+            ? t("skills:statusEnabled", { name: skill.name })
+            : t("skills:statusDisabled", { name: skill.name }),
+        );
+      } catch (error) {
+        toastError(error, t("skills:statusUpdateFailed"));
+      }
+    },
+    [loadInstalled, t],
   );
 
   const removeMcp = React.useCallback(
     async (server: McpSummary) => {
-      if (!window.confirm(`确定移除 MCP「${server.name}」吗？`)) return;
+      if (!window.confirm(t("mcp:deleteConfirm", { name: server.name }))) return;
       try {
         await deleteMcpServer(server.id);
       } catch {
-        toast.error("移除 MCP 失败");
+        toast.error(t("mcp:deleteFailed"));
         return;
       }
       await loadMcp();
-      toast.success("MCP 已移除");
+      toast.success(t("mcp:deleteSuccess"));
     },
-    [loadMcp],
+    [loadMcp, t],
   );
 
-  const authenticateMcp = React.useCallback(async (server: McpSummary) => {
-    try {
-      const result = await authenticateMcpServer(server.id);
-      if (result.authorizationUrl) {
-        await window.api.workspace.openExternal(result.authorizationUrl);
-        toast.success("已打开 MCP 授权页面，完成后服务会自动连接");
-      } else if (result.authenticated) {
-        toast.success("MCP 已完成授权");
+  const authenticateMcp = React.useCallback(
+    async (server: McpSummary) => {
+      try {
+        const result = await authenticateMcpServer(server.id);
+        if (result.authorizationUrl) {
+          await window.api.workspace.openExternal(result.authorizationUrl);
+          toast.success(t("mcp:oauthOpened"));
+        } else if (result.authenticated) {
+          toast.success(t("mcp:oauthSuccess"));
+        }
+      } catch (error) {
+        toastError(error, t("mcp:oauthFailed"));
       }
-    } catch (error) {
-      toastError(error, "MCP OAuth 授权失败");
-    }
-  }, []);
+    },
+    [t],
+  );
+
+  const toggleMcp = React.useCallback(
+    async (server: McpSummary, enabled: boolean) => {
+      try {
+        await setMcpServerEnabled(server.id, enabled);
+        await loadMcp();
+        toast.success(
+          enabled
+            ? t("mcp:statusEnabled", { name: server.name })
+            : t("mcp:statusDisabled", { name: server.name }),
+        );
+      } catch (error) {
+        toastError(error, t("mcp:statusUpdateFailed"));
+      }
+    },
+    [loadMcp, t],
+  );
 
   return {
     inputRef,
@@ -184,7 +233,9 @@ export function useSkillActions({
     installBuiltin,
     removeSkill,
     updateSkill,
+    toggleSkill,
     removeMcp,
+    toggleMcp,
     authenticateMcp,
   };
 }

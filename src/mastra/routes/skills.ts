@@ -635,7 +635,11 @@ export const updateSkillRoute = registerApiRoute("/work/skills/:name", {
     const target = resolve(root, name);
     if (!isWithin(root, target) || target === root) throw workError("SKILL_MANAGED_ONLY");
 
-    const payload = (await c.req.json()) as { description?: string; instructions?: string };
+    const payload = (await c.req.json()) as {
+      description?: string;
+      instructions?: string;
+      enabled?: boolean;
+    };
     const skillMdPath = resolve(target, "SKILL.md");
     let existingContent = "";
     try {
@@ -658,9 +662,16 @@ export const updateSkillRoute = registerApiRoute("/work/skills/:name", {
           fmBody += `\ndescription: "${payload.description.replaceAll('"', '\\"')}"\n`;
         }
       }
+      if (payload.enabled !== undefined) {
+        if (/enabled\s*:/.test(fmBody)) {
+          fmBody = fmBody.replace(/enabled\s*:.*(\r?\n|$)/, `enabled: ${payload.enabled}$1`);
+        } else {
+          fmBody += `\nenabled: ${payload.enabled}\n`;
+        }
+      }
       frontmatter = `---\n${fmBody.trim()}\n---\n\n`;
-    } else if (payload.description !== undefined) {
-      frontmatter = `---\nname: "${name}"\ndescription: "${payload.description.replaceAll('"', '\\"')}"\n---\n\n`;
+    } else if (payload.description !== undefined || payload.enabled !== undefined) {
+      frontmatter = `---\nname: "${name}"\ndescription: "${(payload.description ?? "未提供描述").replaceAll('"', '\\"')}"\n${payload.enabled === undefined ? "" : `enabled: ${payload.enabled}\n`}---\n\n`;
     }
 
     const newInstructions =

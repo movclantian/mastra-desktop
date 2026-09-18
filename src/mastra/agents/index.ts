@@ -34,12 +34,12 @@ import {
   webSearchInstructions,
 } from "../tools";
 import {
-  getManagedSkillsDirectory,
+  getManagedSkillPaths,
   getThreadWorkspace,
+  SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
-import { workBrowser } from "./browser";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   type AgentMemberDefinition,
@@ -65,8 +65,6 @@ import {
   resolveSharedTools,
   workSubagents,
 } from "./subagents";
-
-export { workBrowser } from "./browser";
 
 export const SESSION_EXECUTION_CONTEXT_KEY = "mastra-work:execution-options";
 
@@ -333,12 +331,18 @@ function createWorkAgent(
         ? [
             codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
+            ...(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
+              ? [resolveMode("build").instructions]
+              : []),
             member.instructions ||
               `你是团队成员 ${member.name},负责${member.profession || "完成分配的专业任务"}。`,
           ]
         : [
             codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
+            ...(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
+              ? [resolveMode("build").instructions]
+              : []),
             ...(isCodeModeAvailable(requestContext) ? [codeMode.instructions] : []),
             profile.instructions,
           ].filter(Boolean);
@@ -378,7 +382,6 @@ function createWorkAgent(
     },
     model: async ({ requestContext }) => {
       const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
-        | { id: `${string}/${string}`; apiKey: string }
         | GatewayLanguageModel
         | undefined;
       if (requestModel) return requestModel;
@@ -407,7 +410,7 @@ function createWorkAgent(
         ));
       const configuredPaths =
         profile.id === DEFAULT_AGENT_PROFILE_ID
-          ? [getManagedSkillsDirectory(resourceId)]
+          ? await getManagedSkillPaths(resourceId)
           : await resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
       const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
       const selectedPaths =
@@ -461,7 +464,6 @@ function createWorkAgent(
       );
       return workflowResult ? { teamWorkflow: workflowResult.workflow } : {};
     },
-    browser: workBrowser,
     backgroundTasks: {
       tools: Object.fromEntries(
         [
@@ -472,8 +474,8 @@ function createWorkAgent(
       ),
       waitTimeoutMs: 900_000,
     },
-    // Keep the official process.cwd() fallback while allowing the workspace
-    // setting to opt out explicitly by resolving `undefined`.
+    // Workspace is always present; process.cwd() remains the official fallback
+    // for direct calls that do not carry a thread workspace context.
     workspace,
     tools: async ({ requestContext }) => {
       const tools = await resolveSharedTools(requestContext);
@@ -493,7 +495,7 @@ function createWorkAgent(
       return {
         ...processorRetries,
         delegation: WORK_DELEGATION,
-        requireToolApproval: true,
+        requireToolApproval: requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) !== true,
       };
     },
   });

@@ -8,10 +8,10 @@ import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace"
 /** Workbench category catalog and persisted native Controller permission rules. */
 const DEFAULT_CATEGORY_POLICIES = {
   read: "allow",
-  edit: "ask",
-  execute: "ask",
-  mcp: "ask",
-  other: "ask",
+  edit: "allow",
+  execute: "allow",
+  mcp: "allow",
+  other: "allow",
 } satisfies Record<ToolCategory, PermissionPolicy>;
 
 const PERMISSION_POLICY_KEYS = {
@@ -30,9 +30,7 @@ export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
 
 /**
- * 默认策略:只放开 read,其余沿用官方兜底 "ask"。
- * 官方在没有任何类别策略时对所有工具兜底 ask;我们显式写全五个类别,
- * 让「默认行为」在代码里可读,而不是依赖框架兜底。
+ * 默认策略:工作台默认完全访问;交互型工具仍显式允许,避免进入审批门。
  */
 export const DEFAULT_PERMISSION_RULES: PermissionRules = {
   categories: { ...DEFAULT_CATEGORY_POLICIES },

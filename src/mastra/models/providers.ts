@@ -7,6 +7,13 @@
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
 import type { GatewayLanguageModel } from "@mastra/core/llm";
+import { z } from "zod";
+import {
+  CredentialHintSchema,
+  providerCredentialPurpose,
+  SecretRefSchema,
+} from "../../shared/credential-contract";
+import { deleteCredential, resolveCredential } from "../credential-broker";
 import { getAppConfig, setAppConfig } from "../storage";
 import {
   createGatewayModel,
@@ -33,7 +40,9 @@ export interface UserProviderConfig {
   baseUrl?: string;
   /** OpenAI 协议专用: 是否使用 Responses 端点 */
   useResponses?: boolean;
-  apiKey: string;
+  credentialRef: string;
+  credentialHint: string;
+  hasCredential: true;
   /** 禁用后不再出现在模型选择器中 (已启用的模型保留配置) */
   disabled?: boolean;
   enabledModels: EnabledModel[];
@@ -54,6 +63,40 @@ interface ProvidersUserConfig {
 
 const PROVIDERS_CONFIG_KEY = "providers";
 
+const enabledModelSchema = z.object({ id: z.string().min(1), name: z.string() }).strict();
+const providerSchema = z
+  .object({
+    id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    name: z.string().min(1).max(128),
+    registryId: z.string().min(1).max(128).optional(),
+    protocol: z.enum(["openai", "anthropic", "gemini"]).optional(),
+    baseUrl: z.url().optional(),
+    useResponses: z.boolean().optional(),
+    credentialRef: SecretRefSchema,
+    credentialHint: CredentialHintSchema,
+    hasCredential: z.literal(true),
+    disabled: z.boolean().optional(),
+    enabledModels: z.array(enabledModelSchema),
+  })
+  .strict();
+const modelSelectionSchema = z
+  .object({
+    providerId: z.string().min(1),
+    modelId: z.string().min(1),
+    modelName: z.string(),
+    reasoningEffort: z.string(),
+  })
+  .strict();
+const providersConfigSchema = z
+  .object({ providers: z.array(providerSchema), modelSelection: modelSelectionSchema.nullable() })
+  .strict();
+const providersPatchSchema = z
+  .object({
+    providers: z.array(providerSchema).optional(),
+    modelSelection: modelSelectionSchema.nullable().optional(),
+  })
+  .strict();
+
 const DEFAULT_PROVIDERS_CONFIG: ProvidersUserConfig = { providers: [], modelSelection: null };
 const providersConfigCache = new Map<string, ProvidersUserConfig>();
 
@@ -71,11 +114,7 @@ export async function getProvidersConfig(resourceId?: string): Promise<Providers
     return DEFAULT_PROVIDERS_CONFIG;
   }
   try {
-    const parsed = JSON.parse(raw) as Partial<ProvidersUserConfig>;
-    const config = {
-      providers: Array.isArray(parsed.providers) ? parsed.providers : [],
-      modelSelection: parsed.modelSelection ?? null,
-    };
+    const config = providersConfigSchema.parse(JSON.parse(raw));
     providersConfigCache.set(scope, config);
     return config;
   } catch {
@@ -88,24 +127,37 @@ export async function getProvidersConfig(resourceId?: string): Promise<Providers
  * 写入供应商配置。按字段合并:
  * 只传 providers 只覆盖供应商清单, 只传 modelSelection 只覆盖默认选定模型。
  */
-export async function saveProvidersConfig(
-  config: Partial<ProvidersUserConfig>,
-  resourceId?: string,
-): Promise<void> {
+export async function saveProvidersConfig(config: unknown, resourceId?: string): Promise<void> {
+  const patch = providersPatchSchema.parse(config);
   const current = await getProvidersConfig(resourceId);
   const next: ProvidersUserConfig = {
-    providers: config.providers ?? current.providers,
+    providers: patch.providers ?? current.providers,
     modelSelection:
-      config.modelSelection !== undefined ? config.modelSelection : current.modelSelection,
+      patch.modelSelection !== undefined ? patch.modelSelection : current.modelSelection,
   };
+  if (patch.providers) {
+    await Promise.all(patch.providers.map(resolveProviderCredential));
+  }
   await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
   providersConfigCache.set(providerScopeKey(resourceId), next);
+  if (patch.providers) {
+    const nextById = new Map(next.providers.map((provider) => [provider.id, provider]));
+    await Promise.all(
+      current.providers
+        .filter((provider) => nextById.get(provider.id)?.credentialRef !== provider.credentialRef)
+        .map((provider) =>
+          deleteCredential(provider.credentialRef, providerCredentialPurpose(provider.id)).catch(
+            () => undefined,
+          ),
+        ),
+    );
+  }
 }
 
 /** 可用供应商 = 未禁用、有 Key、且至少启用了一个模型 */
 export function usableProviders(config: ProvidersUserConfig): UserProviderConfig[] {
   return config.providers.filter(
-    (provider) => !provider.disabled && provider.apiKey && provider.enabledModels.length > 0,
+    (provider) => !provider.disabled && provider.hasCredential && provider.enabledModels.length > 0,
   );
 }
 
@@ -129,16 +181,16 @@ export function splitRouterId(routerId: string): { providerId: string; modelId: 
 
 interface RequestModel {
   id: string;
-  apiKey: string;
-  url?: string;
-  protocol?: GatewayProtocol;
-  useResponses?: boolean;
 }
 
 function isRequestModel(value: unknown): value is RequestModel {
   if (typeof value !== "object" || value === null) return false;
   const model = value as Record<string, unknown>;
-  return typeof model.id === "string" && typeof model.apiKey === "string";
+  return typeof model.id === "string" && Object.keys(model).every((key) => key === "id");
+}
+
+export async function resolveProviderCredential(provider: UserProviderConfig): Promise<string> {
+  return resolveCredential(provider.credentialRef, providerCredentialPurpose(provider.id));
 }
 
 export interface ModelSelectionInput {
@@ -177,12 +229,13 @@ export async function resolveConfiguredModel(
     config.providers.find((candidate) => routerPrefix(candidate) === providerId) ??
     config.providers.find((candidate) => candidate.id === providerId);
 
-  if (!provider || provider.disabled || !provider.apiKey || !modelId) return undefined;
+  if (!provider || provider.disabled || !provider.hasCredential || !modelId) return undefined;
   // A route is valid only when the model is explicitly enabled for this
   // provider. This keeps persisted subagent selections and request overrides
   // aligned with the same catalog used by the model picker.
   if (!provider.enabledModels.some((model) => model.id === modelId)) return undefined;
   if (!provider.registryId && !provider.baseUrl) return undefined;
+  const apiKey = await resolveProviderCredential(provider);
 
   // The registered Mastra gateway is also used by Studio's global model router,
   // but that router has no resourceId argument. BYOK settings are tenant-scoped,
@@ -191,7 +244,8 @@ export async function resolveConfiguredModel(
   if (provider.baseUrl) {
     return createGatewayModel({
       modelId,
-      apiKey: provider.apiKey,
+      modelRouterId: `${routerPrefix(provider)}/${modelId}`,
+      apiKey,
       baseUrl: provider.baseUrl,
       protocol: provider.protocol,
       useResponses: provider.useResponses,
@@ -203,7 +257,8 @@ export async function resolveConfiguredModel(
   if (!protocol) return undefined;
   return createGatewayModel({
     modelId,
-    apiKey: provider.apiKey,
+    modelRouterId: `${routerPrefix(provider)}/${modelId}`,
+    apiKey,
     protocol,
     useResponses: provider.useResponses,
     providerName: provider.name,
@@ -212,7 +267,7 @@ export async function resolveConfiguredModel(
 
 /** 当前请求模型的家族名 (Mastra registry id) */
 export function requestModelFamily(value: unknown): string | undefined {
-  if (!isRequestModel(value) || value.url) return undefined;
+  if (!isRequestModel(value)) return undefined;
   return splitRouterId(value.id).providerId || undefined;
 }
 
@@ -238,7 +293,7 @@ export async function usesOpenAIResponses(
   return Boolean(
     provider &&
       !provider.disabled &&
-      provider.apiKey &&
+      provider.hasCredential &&
       !provider.registryId &&
       provider.baseUrl &&
       provider.protocol === "openai" &&
@@ -269,7 +324,7 @@ export async function resolveDefaultModelId(
     if (
       !provider ||
       provider.disabled ||
-      !provider.apiKey ||
+      !provider.hasCredential ||
       !provider.enabledModels.some((model) => model.id === selection.modelId)
     )
       return undefined;
@@ -292,7 +347,7 @@ export async function resolveDefaultLanguageModel(
   if (
     !provider ||
     provider.disabled ||
-    !provider.apiKey ||
+    !provider.hasCredential ||
     !provider.enabledModels.some(
       (model) => model.id === (selection?.modelId ?? provider.enabledModels[0]?.id),
     )

@@ -50,6 +50,8 @@ export function editorExtension(path: string) {
   return [];
 }
 
+import { i18n } from "@/shared/i18n";
+
 export function syntaxLinter(view: EditorView): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   syntaxTree(view.state)
@@ -58,7 +60,7 @@ export function syntaxLinter(view: EditorView): Diagnostic[] {
       if (!node.type.isError) return;
       diagnostics.push({
         from: node.from,
-        message: "语法错误",
+        message: i18n.t("workspace:syntaxError"),
         severity: "error",
         source: "CodeMirror",
         to: Math.max(node.to, node.from + 1),

@@ -1,5 +1,11 @@
 import { registerApiRoute } from "@mastra/core/server";
-import { authUserFromContext, loginAuthUser, registerAuthUser, revokeAuthSession } from "../auth";
+import {
+  authUserFromContext,
+  listAuthUsers,
+  loginAuthUser,
+  registerAuthUser,
+  revokeAuthSession,
+} from "../auth";
 import { workError } from "../errors";
 
 async function readJson<T extends Record<string, unknown>>(c: {
@@ -54,6 +60,22 @@ export const authMeRoute = registerApiRoute("/work/auth/me", {
         email: user.email,
         role: user.role,
       },
+    });
+  },
+});
+
+/** 注册账户列表:会话所有权迁移(updateThreadResourceId)的目标候选 */
+export const workUsersRoute = registerApiRoute("/work/users", {
+  method: "GET",
+  handler: async (c) => {
+    const users = await listAuthUsers();
+    return c.json({
+      users: users.map((user) => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      })),
     });
   },
 });

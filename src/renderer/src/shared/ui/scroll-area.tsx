@@ -29,6 +29,7 @@ function ScrollArea({
   });
 
   const hasExplicitScrollbars = scrollbarChildren.length > 0;
+  const scrollsHorizontally = orientation === "horizontal" || orientation === "both";
 
   return (
     <ScrollAreaPrimitive.Root
@@ -40,7 +41,10 @@ function ScrollArea({
         data-slot="scroll-area-viewport"
         className="size-full flex-1 min-h-0 max-h-full rounded-[inherit] transition-[color,box-shadow] outline-none overscroll-contain focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
       >
-        <ScrollAreaPrimitive.Content className="min-w-full">
+        <ScrollAreaPrimitive.Content
+          className={scrollsHorizontally ? "min-w-full" : "w-full"}
+          style={scrollsHorizontally ? undefined : { minWidth: "100%" }}
+        >
           {contentChildren}
         </ScrollAreaPrimitive.Content>
       </ScrollAreaPrimitive.Viewport>

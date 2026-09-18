@@ -1,4 +1,5 @@
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import i18n from "@/shared/i18n";
 import { apiError, type WorkErrorPayload } from "@/shared/lib";
 import type {
   CuratedOwner,
@@ -18,7 +19,7 @@ async function readPayload<T extends object>(response: Response, fallback: strin
 export async function fetchInstalledSkills(): Promise<SkillMetadata[]> {
   const payload = await readPayload<{ skills?: SkillMetadata[] }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills`),
-    "读取已安装技能失败",
+    i18n.t("skills:readInstalledSkillsFailed"),
   );
   return payload.skills ?? [];
 }
@@ -61,7 +62,7 @@ export async function fetchSkillsShList(options: FetchSkillsShListOptions = {}):
   const response = await apiFetch(
     `${MASTRA_SERVER_URL}/work/skills/skills-sh/list?${params.toString()}`,
   );
-  return await readPayload(response, "读取技能榜单失败");
+  return await readPayload(response, i18n.t("skills:readLeaderboardFailed"));
 }
 
 export async function fetchRegistrySkills(
@@ -74,14 +75,14 @@ export async function fetchRegistrySkills(
   const payload = await readPayload<{
     skills?: SkillMetadata[];
     skillsShError?: string;
-  }>(response, "技能市场暂时不可用");
+  }>(response, i18n.t("skills:marketplaceUnavailable"));
   return { skills: payload.skills ?? [], skillsShError: payload.skillsShError };
 }
 
 export async function fetchMcpServers(): Promise<McpSummary[]> {
   const payload = await readPayload<{ servers?: McpSummary[] }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/mcp`),
-    "读取 MCP 失败",
+    i18n.t("skills:readMcpFailed"),
   );
   return payload.servers ?? [];
 }
@@ -89,7 +90,7 @@ export async function fetchMcpServers(): Promise<McpSummary[]> {
 export async function fetchSkillMarketplaces(): Promise<SkillMarketplace[]> {
   const payload = await readPayload<{ marketplaces?: SkillMarketplace[] }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills/marketplaces`),
-    "读取技能市场失败",
+    i18n.t("skills:readMarketplacesFailed"),
   );
   return payload.marketplaces ?? [];
 }
@@ -105,9 +106,9 @@ export async function fetchSkillDetail(skill: SkillMetadata): Promise<SkillDetai
           : `${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(skill.name)}`;
   const payload = await readPayload<{ skill?: SkillDetail }>(
     await apiFetch(endpoint),
-    "读取技能详情失败",
+    i18n.t("skills:readSkillDetailFailed"),
   );
-  if (!payload.skill) throw new Error("读取技能详情失败");
+  if (!payload.skill) throw new Error(i18n.t("skills:readSkillDetailFailed"));
   return payload.skill;
 }
 
@@ -116,9 +117,9 @@ export async function uploadSkillArchive(file: File): Promise<SkillMetadata> {
   form.set("archive", file, file.name);
   const payload = await readPayload<{ skill?: SkillMetadata }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills`, { method: "POST", body: form }),
-    "添加技能失败",
+    i18n.t("skills:addFailed"),
   );
-  if (!payload.skill) throw new Error("添加技能失败");
+  if (!payload.skill) throw new Error(i18n.t("skills:addFailed"));
   return payload.skill;
 }
 
@@ -128,9 +129,9 @@ export async function importSkill(source: string): Promise<SkillMetadata> {
       method: "POST",
       body: { source },
     }),
-    "导入技能失败",
+    i18n.t("skills:importFailed"),
   );
-  if (!payload.skill) throw new Error("导入技能失败");
+  if (!payload.skill) throw new Error(i18n.t("skills:importFailed"));
   return payload.skill;
 }
 
@@ -150,8 +151,11 @@ export async function installSkill(skill: SkillMetadata): Promise<SkillMetadata>
             `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(skill.sourcePath || skill.name)}/install`,
             { method: "POST" },
           );
-  const payload = await readPayload<{ skill?: SkillMetadata }>(response, "安装技能失败");
-  if (!payload.skill) throw new Error("安装技能失败");
+  const payload = await readPayload<{ skill?: SkillMetadata }>(
+    response,
+    i18n.t("skills:installFailed"),
+  );
+  if (!payload.skill) throw new Error(i18n.t("skills:installFailed"));
   return payload.skill;
 }
 
@@ -160,13 +164,13 @@ export async function deleteSkill(name: string): Promise<void> {
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
-    "删除技能失败",
+    i18n.t("skills:deleteFailed"),
   );
 }
 
 export async function updateSkill(
   name: string,
-  patch: { description?: string; instructions?: string },
+  patch: { description?: string; instructions?: string; enabled?: boolean },
 ): Promise<SkillDetail> {
   const payload = await readPayload<{ skill?: SkillDetail }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(name)}`, {
@@ -174,25 +178,37 @@ export async function updateSkill(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     }),
-    "更新技能失败",
+    i18n.t("skills:saveFailed"),
   );
-  if (!payload.skill) throw new Error("更新技能失败");
+  if (!payload.skill) throw new Error(i18n.t("skills:saveFailed"));
   return payload.skill;
+}
+
+export async function setMcpServerEnabled(id: string, enabled: boolean): Promise<void> {
+  const server = await getMcpServer(id);
+  await readPayload(
+    await apiFetch(`${MASTRA_SERVER_URL}/work/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ server: { ...server, enabled } }),
+    }),
+    i18n.t("skills:updateMcpStatusFailed"),
+  );
 }
 
 export async function getMcpServer(id: string): Promise<McpFormServer> {
   const payload = await readPayload<{ server?: McpFormServer }>(
     await apiFetch(`${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(id)}`),
-    "获取 MCP 配置失败",
+    i18n.t("skills:getMcpConfigFailed"),
   );
-  if (!payload.server) throw new Error("获取 MCP 配置失败");
+  if (!payload.server) throw new Error(i18n.t("skills:getMcpConfigFailed"));
   return payload.server;
 }
 
 export async function deleteMcpServer(id: string): Promise<void> {
   await readPayload(
     await apiFetch(`${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(id)}`, { method: "DELETE" }),
-    "移除 MCP 失败",
+    i18n.t("skills:removeMcpFailed"),
   );
 }
 
@@ -207,7 +223,7 @@ export async function authenticateMcpServer(id: string): Promise<{
     await apiFetch(`${MASTRA_SERVER_URL}/work/mcp/${encodeURIComponent(id)}/authenticate`, {
       method: "POST",
     }),
-    "MCP OAuth 授权失败",
+    i18n.t("skills:mcpOAuthFailed"),
   );
   return payload;
 }
@@ -224,7 +240,7 @@ export async function saveSkillMarketplace(input: {
       method: "POST",
       body: input,
     }),
-    "保存技能市场失败",
+    i18n.t("skills:saveMarketplaceFailed"),
   );
 }
 
@@ -233,6 +249,6 @@ export async function deleteSkillMarketplace(id: string): Promise<void> {
     await apiFetch(`${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
-    "删除技能市场失败",
+    i18n.t("skills:deleteMarketplaceFailed"),
   );
 }

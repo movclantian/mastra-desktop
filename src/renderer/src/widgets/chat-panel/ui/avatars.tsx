@@ -1,6 +1,7 @@
 import { WaypointsIcon } from "lucide-react";
 import * as React from "react";
 import { apiFetch } from "@/shared/api";
+import { useTranslation } from "@/shared/i18n";
 import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar";
 
 // ---------------------------------------------------------------------------
@@ -116,11 +117,12 @@ export const AssistantAvatar = React.memo(function AssistantAvatar() {
 });
 
 export function UserAvatar({ userId }: { userId: string }) {
+  const { t } = useTranslation();
   return (
     <RandomHeadAvatar
-      alt="用户头像"
+      alt={t("chat:avatars.userAvatar")}
       cacheKey={`mastra-work:user-head-url:${userId}`}
-      fallback="我"
+      fallback={t("chat:avatars.userFallback")}
       fallbackClassName="bg-primary text-primary-foreground"
     />
   );

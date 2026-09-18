@@ -2,6 +2,7 @@ import { Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 
+import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 
 export type TransitionVariant =
@@ -303,9 +304,11 @@ export const AnimatedThemeToggler = ({
     >
       {isDark ? <Sun className="size-4 shrink-0" /> : <Moon className="size-4 shrink-0" />}
       {showLabel ? (
-        <span className="text-xs font-medium">{isDark ? "深色模式" : "浅色模式"}</span>
+        <span className="text-xs font-medium">
+          {isDark ? i18n.t("common:darkMode") : i18n.t("common:lightMode")}
+        </span>
       ) : (
-        <span className="sr-only">Toggle theme</span>
+        <span className="sr-only">{i18n.t("common:toggleTheme")}</span>
       )}
     </button>
   );
