@@ -6,6 +6,7 @@ import { useThreadsQuery } from "@/entities/workbench/model/queries/threads";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { TerminalSession } from "@/entities/workbench/ui/terminal-session";
 import { useAuth } from "@/features/auth";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -25,6 +26,7 @@ const TAB_DND_TYPE = "application/x-mastra-tab";
 
 export function TerminalPanel() {
   const { t } = useTranslation();
+  const isMac = React.useMemo(() => isMacPlatform(), []);
   const { user } = useAuth();
   const threads = useThreadsQuery(user?.id ?? "anonymous").data ?? [];
   const activeThreadId = useRouterState({
@@ -191,7 +193,9 @@ export function TerminalPanel() {
                     <ContextMenuItem onClick={() => closeSession(id)}>
                       <XIcon className="text-muted-foreground" />
                       <span>{t("workspace:closeTab")}</span>
-                      <ContextMenuShortcut>⌘W</ContextMenuShortcut>
+                      <ContextMenuShortcut>
+                        {formatShortcutDisplay(["Mod", "W"], isMac)}
+                      </ContextMenuShortcut>
                     </ContextMenuItem>
                     <ContextMenuItem
                       disabled={sessionIds.length <= 1}

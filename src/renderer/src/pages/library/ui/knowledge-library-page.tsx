@@ -45,6 +45,7 @@ import {
   useLibraryData,
   useLibraryUpload,
 } from "@/features/library-upload";
+import { isEditableTarget, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { i18n, useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-icon";
@@ -169,6 +170,7 @@ export function KnowledgeLibraryPage({
   const [renameValue, setRenameValue] = React.useState("");
   const [reindexingIds, setReindexingIds] = React.useState<Set<string>>(() => new Set());
   const [batchReindexing, setBatchReindexing] = React.useState(false);
+  const isMac = React.useMemo(() => isMacPlatform(), []);
 
   const { assets, setAssets, folders, settings, setSettings, loading, refresh } = useLibraryData({
     resourceId: user.id,
@@ -413,7 +415,19 @@ export function KnowledgeLibraryPage({
     return (
       <SidebarMenuItem key={`${keyPrefix}-${asset.id}`}>
         <ContextMenu>
-          <ContextMenuTrigger className="w-full block">
+          <ContextMenuTrigger
+            className="w-full block"
+            onKeyDown={(event) => {
+              if (event.isComposing || isEditableTarget(event.target)) return;
+              if (event.key === "F2") {
+                event.preventDefault();
+                openRename({ kind: "asset", id: asset.id, name: asset.filename });
+              } else if (event.key === "Delete" || (isMac && event.key === "Backspace")) {
+                event.preventDefault();
+                void removeAsset(asset);
+              }
+            }}
+          >
             <SidebarMenuButton
               isActive={selectedId === asset.id}
               onClick={() => setSelectedId(asset.id)}
@@ -504,7 +518,7 @@ export function KnowledgeLibraryPage({
               <ContextMenuItem variant="destructive" onClick={() => void removeAsset(asset)}>
                 <Trash2Icon className="text-muted-foreground" />
                 <span>{t("library:deleteFile")}</span>
-                <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                <ContextMenuShortcut>{isMac ? "⌫" : "Del"}</ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
           </ContextMenuContent>
@@ -786,7 +800,23 @@ export function KnowledgeLibraryPage({
                                 />
                               </Button>
                               <ContextMenu>
-                                <ContextMenuTrigger className="min-w-0 flex-1">
+                                <ContextMenuTrigger
+                                  className="min-w-0 flex-1"
+                                  onKeyDown={(event) => {
+                                    if (event.isComposing || isEditableTarget(event.target)) return;
+                                    if (event.key === "F2") {
+                                      event.preventDefault();
+                                      openRename({
+                                        kind: "folder",
+                                        id: entry.folder.id,
+                                        name: entry.folder.name,
+                                      });
+                                    } else if (event.key === "Delete" || (isMac && event.key === "Backspace")) {
+                                      event.preventDefault();
+                                      void removeFolder(entry.folder);
+                                    }
+                                  }}
+                                >
                                   <SidebarMenuButton
                                     isActive={folderId === entry.folder.id}
                                     onClick={() => setFolderId(entry.folder.id)}
@@ -868,7 +898,7 @@ export function KnowledgeLibraryPage({
                                     >
                                       <Trash2Icon className="text-muted-foreground" />
                                       <span>{t("library:deleteFolder")}</span>
-                                      <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                                      <ContextMenuShortcut>{isMac ? "⌫" : "Del"}</ContextMenuShortcut>
                                     </ContextMenuItem>
                                   </ContextMenuGroup>
                                 </ContextMenuContent>

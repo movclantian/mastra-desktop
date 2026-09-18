@@ -10,6 +10,7 @@ import {
 import { useSyncThreadToStore } from "@/entities/workbench/model/queries/threads";
 import { viewFromPath } from "@/entities/workbench/model/types";
 import { useAuth } from "@/features/auth";
+import { GlobalCommandPalette } from "@/features/command-palette";
 import { SettingsPage } from "@/pages/settings";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
@@ -147,7 +148,12 @@ export function RootShell() {
   // 设置是全局页面:脱离主应用壳(主侧边栏/顶栏/工作台抽屉),占满整屏,
   // 通过设置菜单 sidebar 顶部的「返回应用」回到 chat
   if (location.pathname.startsWith("/settings")) {
-    return <SettingsPage />;
+    return (
+      <>
+        <SettingsPage />
+        <GlobalCommandPalette />
+      </>
+    );
   }
 
   return (
@@ -199,6 +205,7 @@ export function RootShell() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
+      <GlobalCommandPalette />
     </SidebarProvider>
   );
 }

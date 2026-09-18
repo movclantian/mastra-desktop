@@ -47,6 +47,7 @@ import {
 } from "@/entities/workbench/model/queries/threads";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
@@ -286,6 +287,8 @@ function ThreadContextMenuItems({
     toast.success(t("sidebar:copiedItem", { label }));
   };
 
+  const isMac = React.useMemo(() => isMacPlatform(), []);
+
   return (
     <>
       <ContextMenuGroup>
@@ -297,7 +300,12 @@ function ThreadContextMenuItems({
             <PinIcon className="text-muted-foreground" />
           )}
           <span>{thread.metadata.pinned ? t("sidebar:unpin") : t("sidebar:pinned")}</span>
-          <ContextMenuShortcut>{thread.metadata.pinned ? "⇧⌘P" : "⌘P"}</ContextMenuShortcut>
+          <ContextMenuShortcut>
+            {formatShortcutDisplay(
+              thread.metadata.pinned ? ["Mod", "Shift", "P"] : ["Mod", "P"],
+              isMac,
+            )}
+          </ContextMenuShortcut>
         </ContextMenuItem>
         <ContextMenuItem onClick={() => onRename(thread)}>
           <PencilIcon className="text-muted-foreground" />
@@ -397,7 +405,7 @@ function ThreadContextMenuItems({
         <ContextMenuItem variant="destructive" onClick={() => void deleteThread(thread.id)}>
           <Trash2Icon className="text-muted-foreground" />
           <span>{t("sidebar:deleteThread")}</span>
-          <ContextMenuShortcut>⌫</ContextMenuShortcut>
+          <ContextMenuShortcut>{isMac ? "⌫" : "Del"}</ContextMenuShortcut>
         </ContextMenuItem>
       </ContextMenuGroup>
     </>
@@ -730,6 +738,7 @@ export function WorkspaceGroup({
   onOpenFileManager: (threadId: string) => void;
 }) {
   const { t } = useTranslation();
+  const isMac = React.useMemo(() => isMacPlatform(), []);
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
   const createThreadMutation = useCreateThreadMutation(userId);
@@ -790,7 +799,9 @@ export function WorkspaceGroup({
               <ContextMenuItem onClick={() => void handleCreateThreadInWorkspace()}>
                 <PlusIcon className="text-muted-foreground" />
                 <span>{t("sidebar:newThreadInWorkspace")}</span>
-                <ContextMenuShortcut>⌘N</ContextMenuShortcut>
+                <ContextMenuShortcut>
+                  {formatShortcutDisplay(["Mod", "N"], isMac)}
+                </ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
             <ContextMenuSeparator />

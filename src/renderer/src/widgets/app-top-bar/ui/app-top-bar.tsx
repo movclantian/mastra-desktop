@@ -1,6 +1,7 @@
 import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   CopyIcon,
+  KeyboardIcon,
   Loader2Icon,
   NotebookPenIcon,
   PanelBottomCloseIcon,
@@ -11,6 +12,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { CommandPaletteTrigger } from "@/features/command-palette";
 import {
   buildRequestModel,
   summarizeThreadRequest,
@@ -60,7 +62,8 @@ function ThreadSummaryButton() {
   });
   const providers = useProviderConfigQuery().data?.providers ?? [];
   const modelSelection = useWorkbenchStore((state) => state.modelSelection);
-  const [open, setOpen] = React.useState(false);
+  const open = useWorkbenchStore((state) => state.threadSummaryOpen);
+  const setOpen = useWorkbenchStore((state) => state.setThreadSummaryOpen);
   const [loading, setLoading] = React.useState(false);
   const [failed, setFailed] = React.useState(false);
   const [result, setResult] = React.useState<ThreadSummaryResult | null>(null);
@@ -70,7 +73,7 @@ function ThreadSummaryButton() {
       ? buildRequestModel(selectedProvider, modelSelection.modelId)
       : undefined;
 
-  const runSummary = async () => {
+  const runSummary = React.useCallback(async () => {
     if (!activeThreadId) return;
     setLoading(true);
     setFailed(false);
@@ -81,7 +84,13 @@ function ThreadSummaryButton() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeThreadId, userId, model]);
+
+  React.useEffect(() => {
+    if (open && !result && !loading && !failed && activeThreadId) {
+      void runSummary();
+    }
+  }, [open, result, loading, failed, activeThreadId, runSummary]);
 
   const handleCopy = () => {
     if (!result) return;
@@ -100,24 +109,35 @@ function ThreadSummaryButton() {
     toast.success(t("topbar:copiedSummary"));
   };
 
+  const handleTrigger = () => {
+    setResult(null);
+    setFailed(false);
+    setOpen(true);
+    void runSummary();
+  };
+
   return (
     <>
       <Button
         aria-label={t("topbar:btnAriaLabel")}
         disabled={!activeThreadId}
-        onClick={() => {
-          setResult(null);
-          setFailed(false);
-          setOpen(true);
-          void runSummary();
-        }}
+        onClick={handleTrigger}
         size="icon-sm"
         title={t("topbar:btnTitle")}
         variant="ghost"
       >
         <NotebookPenIcon />
       </Button>
-      <Dialog onOpenChange={setOpen} open={open}>
+      <Dialog
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) {
+            setResult(null);
+            setFailed(false);
+          }
+        }}
+        open={open}
+      >
         <DialogContent className="flex max-h-[min(80vh,40rem)] max-w-lg flex-col">
           <DialogHeader>
             <DialogTitle>{t("topbar:summaryTitle")}</DialogTitle>
@@ -201,6 +221,7 @@ export function AppTopBar() {
   const setWorkspacePanelOpen = useWorkbenchStore((state) => state.setWorkspacePanelOpen);
   const terminalPanelOpen = useWorkbenchStore((state) => state.terminalPanelOpen);
   const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const setShortcutsHelpOpen = useWorkbenchStore((state) => state.setShortcutsHelpOpen);
   const isThreadBusy = useIsThreadBusy(userId);
 
   const title =
@@ -266,6 +287,19 @@ export function AppTopBar() {
             )}
           </BreadcrumbList>
         </Breadcrumb>
+      </div>
+      {/* 全局命令面板快捷入口与快捷键指南 */}
+      <div className="flex items-center gap-1.5 shrink-0 mx-1">
+        <CommandPaletteTrigger />
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setShortcutsHelpOpen(true)}
+          title={t("commandPalette:shortcutsGuide")}
+          aria-label={t("commandPalette:shortcutsGuide")}
+        >
+          <KeyboardIcon />
+        </Button>
       </div>
       {/* 动态页面动作插槽: 供当前页面或详情模式挂载顶栏快捷按钮 */}
       <div id="app-top-bar-actions" className="flex items-center gap-2 shrink-0 empty:hidden" />

@@ -5,6 +5,7 @@ import {
   BotIcon,
   CalendarClockIcon,
   ChevronsUpDown,
+  KeyboardIcon,
   LaptopIcon,
   LibraryBigIcon,
   MoonIcon,
@@ -26,8 +27,9 @@ import {
 } from "@/entities/workbench/model/queries/threads";
 import type { MainView, WorkThread } from "@/entities/workbench/model/types";
 import { viewFromPath } from "@/entities/workbench/model/types";
+import { useWorkbenchStore } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
-import { ThreadSearchDialog } from "@/features/thread-search";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
@@ -286,11 +288,21 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     });
   };
 
-  const [renaming, setRenaming] = React.useState<WorkThread | null>(null);
+  const renaming = useWorkbenchStore((state) => state.renamingThread);
+  const setRenaming = useWorkbenchStore((state) => state.setRenamingThread);
   const [renameValue, setRenameValue] = React.useState("");
-  const [searchOpen, setSearchOpen] = React.useState(false);
+  const setSearchOpen = useWorkbenchStore((state) => state.setThreadSearchOpen);
+  const setCommandPaletteOpen = useWorkbenchStore((state) => state.setCommandPaletteOpen);
+  const setShortcutsHelpOpen = useWorkbenchStore((state) => state.setShortcutsHelpOpen);
+  const isMac = React.useMemo(() => isMacPlatform(), []);
   const [fileManagerThreadId, setFileManagerThreadId] = React.useState<string | null>(null);
   const [showArchived, setShowArchived] = React.useState(false);
+
+  React.useEffect(() => {
+    if (renaming) {
+      setRenameValue(renaming.title);
+    }
+  }, [renaming]);
 
   const activeThreadId = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
@@ -551,9 +563,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             )}
           </SidebarContent>
         </ContextMenuTrigger>
-        <ContextMenuContent className="w-52">
+        <ContextMenuContent className="w-56">
           <ContextMenuGroup>
             <ContextMenuLabel>{t("sidebar:quickActions")}</ContextMenuLabel>
+            <ContextMenuItem onClick={() => setCommandPaletteOpen(true)}>
+              <SearchIcon className="text-muted-foreground" />
+              <span>{t("commandPalette:actionCommandPalette")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "K"], isMac)}
+              </ContextMenuShortcut>
+            </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
                 setFileManagerThreadId(null);
@@ -563,12 +582,23 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <SquarePenIcon className="text-muted-foreground" />
               <span>{t("sidebar:newTask")}</span>
-              <ContextMenuShortcut>⌘N</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "N"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => setSearchOpen(true)}>
               <SearchIcon className="text-muted-foreground" />
               <span>{t("sidebar:searchMessages")}</span>
-              <ContextMenuShortcut>⌘F</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "F"], isMac)}
+              </ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => setShortcutsHelpOpen(true)}>
+              <KeyboardIcon className="text-muted-foreground" />
+              <span>{t("commandPalette:shortcutsGuide")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "/"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />
@@ -577,11 +607,26 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <ContextMenuItem
               onClick={() => {
                 setFileManagerThreadId(null);
+                setActiveView("chat");
+              }}
+            >
+              <WaypointsIcon className="text-muted-foreground" />
+              <span>{t("sidebar:newChat")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "1"], isMac)}
+              </ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem
+              onClick={() => {
+                setFileManagerThreadId(null);
                 setActiveView("skills");
               }}
             >
               <SparklesIcon className="text-muted-foreground" />
               <span>{t("sidebar:skills")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "2"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -591,6 +636,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <LibraryBigIcon className="text-muted-foreground" />
               <span>{t("sidebar:library")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "3"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -600,6 +648,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <BotIcon className="text-muted-foreground" />
               <span>{t("sidebar:agents")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "4"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem
               onClick={() => {
@@ -609,6 +660,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             >
               <CalendarClockIcon className="text-muted-foreground" />
               <span>{t("sidebar:schedules")}</span>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "5"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />
@@ -674,7 +728,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
             <ContextMenuItem onClick={() => openSettings("providers")}>
               <Settings2Icon className="text-muted-foreground" />
               <span>{t("sidebar:settings")}</span>
-              <ContextMenuShortcut>⌘,</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", ","], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
         </ContextMenuContent>
@@ -715,9 +771,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* 线程消息检索弹窗(Memory.recall 语义检索) */}
-      <ThreadSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
     </Sidebar>
   );
 }

@@ -45,6 +45,7 @@ import {
   type PendingJump,
   type SearchSelection,
   type TerminalRequest,
+  type WorkThread,
   type WorkspacePanelMode,
 } from "./types";
 
@@ -92,6 +93,18 @@ export interface WorkbenchStore {
   setThreadBusy: (threadId: string, busy: boolean) => void;
   agentBusyFlag: boolean;
   setAgentBusy: (busy: boolean) => void;
+
+  // ---- overlays & shortcuts ----------------------------------------------
+  commandPaletteOpen: boolean;
+  setCommandPaletteOpen: (open: boolean) => void;
+  threadSearchOpen: boolean;
+  setThreadSearchOpen: (open: boolean) => void;
+  shortcutsHelpOpen: boolean;
+  setShortcutsHelpOpen: (open: boolean) => void;
+  threadSummaryOpen: boolean;
+  setThreadSummaryOpen: (open: boolean) => void;
+  renamingThread: WorkThread | null;
+  setRenamingThread: (thread: WorkThread | null) => void;
 
   // ---- panels:右侧/底部工作面板 -------------------------------------------
   workspacePanelOpen: boolean;
@@ -185,6 +198,17 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   },
   agentBusyFlag: false,
   setAgentBusy: (busy) => set({ agentBusyFlag: busy }),
+
+  commandPaletteOpen: false,
+  setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+  threadSearchOpen: false,
+  setThreadSearchOpen: (open) => set({ threadSearchOpen: open }),
+  shortcutsHelpOpen: false,
+  setShortcutsHelpOpen: (open) => set({ shortcutsHelpOpen: open }),
+  threadSummaryOpen: false,
+  setThreadSummaryOpen: (open) => set({ threadSummaryOpen: open }),
+  renamingThread: null,
+  setRenamingThread: (thread) => set({ renamingThread: thread }),
 
   workspacePanelOpen: false,
   setWorkspacePanelOpen: (open) => set({ workspacePanelOpen: open }),

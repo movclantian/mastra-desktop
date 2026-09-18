@@ -11,6 +11,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { reportWorkbenchNotification } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
@@ -142,6 +143,7 @@ export function TerminalSession({
   const [lastCommand, setLastCommand] = React.useState<string>();
   const [lastExitCode, setLastExitCode] = React.useState<number>();
   const [settledAt, setSettledAt] = React.useState<number>();
+  const isMac = React.useMemo(() => isMacPlatform(), []);
 
   React.useEffect(() => {
     reportTerminalSession(sessionId, { title, status, lastCommand, lastExitCode, settledAt });
@@ -231,6 +233,15 @@ export function TerminalSession({
     const titleSub = term.onTitleChange((nextTitle) => {
       setTitle(nextTitle);
       onTitleChangeRef.current?.(nextTitle);
+    });
+    term.attachCustomKeyEventHandler((event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        if (event.type === "keydown") {
+          term.clear();
+        }
+        return false;
+      }
+      return true;
     });
     const frame = requestAnimationFrame(() => {
       if (!api) {
@@ -360,12 +371,12 @@ export function TerminalSession({
           <ContextMenuItem onClick={handleCopySelection}>
             <TerminalIcon className="text-muted-foreground" />
             <span>{t("workspace:copySelection")}</span>
-            <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+            <ContextMenuShortcut>{isMac ? "⌘C" : "Ctrl+Shift+C"}</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={() => void handlePaste()}>
             <ClipboardPasteIcon className="text-muted-foreground" />
             <span>{t("workspace:pasteClipboard")}</span>
-            <ContextMenuShortcut>⌘V</ContextMenuShortcut>
+            <ContextMenuShortcut>{isMac ? "⌘V" : "Ctrl+Shift+V"}</ContextMenuShortcut>
           </ContextMenuItem>
         </ContextMenuGroup>
         <ContextMenuSeparator />
@@ -373,12 +384,14 @@ export function TerminalSession({
           <ContextMenuItem onClick={handleInterrupt} disabled={status !== "ready"}>
             <SquareIcon className="text-muted-foreground" />
             <span>{t("workspace:interrupt")}</span>
-            <ContextMenuShortcut>^C</ContextMenuShortcut>
+            <ContextMenuShortcut>{isMac ? "^C" : "Ctrl+C"}</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleClear}>
             <EraserIcon className="text-muted-foreground" />
             <span>{t("workspace:clear")}</span>
-            <ContextMenuShortcut>⌘K</ContextMenuShortcut>
+            <ContextMenuShortcut>
+              {formatShortcutDisplay(["Mod", "K"], isMac)}
+            </ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleRestart} disabled={status === "connecting"}>
             <RefreshCwIcon className="text-muted-foreground" />

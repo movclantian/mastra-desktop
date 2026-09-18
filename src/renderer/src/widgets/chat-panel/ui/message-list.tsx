@@ -18,6 +18,7 @@ import { search as searchEmojis } from "node-emoji";
 import * as React from "react";
 import { toast } from "sonner";
 import { MASTRA_SERVER_URL } from "@/shared/api";
+import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
@@ -505,10 +506,32 @@ export const MessageItem = React.memo(function MessageItem({
     "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/actions:pointer-events-auto group-hover/actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
   const hideActions = isStreaming || isGenerating;
   const canReact = !hideActions && onToggleReaction !== undefined;
+  const isMac = React.useMemo(() => isMacPlatform(), []);
 
   const handleCopy = () => {
     void navigator.clipboard.writeText(text);
     toast.success(t("chat:messages.copiedToClipboard"));
+  };
+
+  const handleUserBubbleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.isComposing) return;
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (mod && (event.key === "c" || event.key === "C") && !window.getSelection()?.toString()) {
+      event.preventDefault();
+      handleCopy();
+    }
+  };
+
+  const handleAssistantBubbleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.isComposing) return;
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (mod && (event.key === "c" || event.key === "C") && !window.getSelection()?.toString()) {
+      event.preventDefault();
+      handleCopy();
+    } else if (mod && (event.key === "r" || event.key === "R") && !readOnly) {
+      event.preventDefault();
+      onRetry(message.id);
+    }
   };
   const startEditing = () => {
     setEditText(text);
@@ -579,7 +602,7 @@ export const MessageItem = React.memo(function MessageItem({
                   <MessageAttachments align="end" files={files} messageId={message.id} />
                   {text ? (
                     <ContextMenu>
-                      <ContextMenuTrigger className="max-w-full">
+                      <ContextMenuTrigger className="max-w-full" onKeyDown={handleUserBubbleKeyDown}>
                         <Bubble
                           align="end"
                           className="max-w-full"
@@ -601,7 +624,7 @@ export const MessageItem = React.memo(function MessageItem({
                           <ContextMenuItem onClick={handleCopy}>
                             <CopyIcon className="text-muted-foreground" />
                             <span>{t("chat:messages.copyContent")}</span>
-                            <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                            <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
                           </ContextMenuItem>
                           {!readOnly ? (
                             <ContextMenuItem onClick={startEditing}>
@@ -725,7 +748,7 @@ export const MessageItem = React.memo(function MessageItem({
                   />
                 ) : (
                   <ContextMenu key={segment.key}>
-                    <ContextMenuTrigger className="w-full">
+                    <ContextMenuTrigger className="w-full" onKeyDown={handleAssistantBubbleKeyDown}>
                       <Bubble variant="ghost">
                         <BubbleContent>
                           <MessageResponse
@@ -750,7 +773,7 @@ export const MessageItem = React.memo(function MessageItem({
                         <ContextMenuItem onClick={handleCopy}>
                           <CopyIcon className="text-muted-foreground" />
                           <span>{t("chat:messages.copyAnswer")}</span>
-                          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+                          <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
                         </ContextMenuItem>
                         {onForkFromMessage ? (
                           <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
@@ -762,7 +785,7 @@ export const MessageItem = React.memo(function MessageItem({
                           <ContextMenuItem onClick={() => onRetry(message.id)}>
                             <RefreshCcwIcon className="text-muted-foreground" />
                             <span>{t("chat:messages.regenerate")}</span>
-                            <ContextMenuShortcut>⌘R</ContextMenuShortcut>
+                            <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "R"], isMac)}</ContextMenuShortcut>
                           </ContextMenuItem>
                         ) : null}
                       </ContextMenuGroup>

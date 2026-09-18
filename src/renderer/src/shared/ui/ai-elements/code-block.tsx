@@ -27,6 +27,8 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
+import { toast } from "sonner";
+import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -419,19 +421,32 @@ export const CodeBlock = ({
   const [showLineNumbers, setShowLineNumbers] = useState(initialShowLineNumbers);
   const contextValue = useMemo(() => ({ code }), [code]);
 
+  const isMac = useMemo(() => isMacPlatform(), []);
+
   const handleCopyCode = () => {
     void navigator.clipboard.writeText(code);
+    toast.success(t("common:copied") || "Copied to clipboard");
   };
 
   const handleCopyMarkdown = () => {
     const formatted = `\`\`\`${language}\n${code}\n\`\`\``;
     void navigator.clipboard.writeText(formatted);
+    toast.success(t("common:copied") || "Copied to clipboard");
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.isComposing) return;
+    const mod = isMac ? event.metaKey : event.ctrlKey;
+    if (mod && event.shiftKey && (event.key === "c" || event.key === "C")) {
+      event.preventDefault();
+      handleCopyMarkdown();
+    }
   };
 
   return (
     <CodeBlockContext.Provider value={contextValue}>
       <ContextMenu>
-        <ContextMenuTrigger className="w-full block">
+        <ContextMenuTrigger className="w-full block" onKeyDown={handleKeyDown}>
           <CodeBlockContainer className={className} language={language} {...props}>
             {children}
             <CodeBlockContent code={code} language={language} showLineNumbers={showLineNumbers} />
@@ -445,12 +460,14 @@ export const CodeBlock = ({
             <ContextMenuItem onClick={handleCopyCode}>
               <CopyIcon className="text-muted-foreground" />
               <span>{t("common:copyCode")}</span>
-              <ContextMenuShortcut>⌘C</ContextMenuShortcut>
+              <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={handleCopyMarkdown}>
               <Code2Icon className="text-muted-foreground" />
               <span>{t("common:copyMarkdown")}</span>
-              <ContextMenuShortcut>⇧⌘C</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "Shift", "C"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />

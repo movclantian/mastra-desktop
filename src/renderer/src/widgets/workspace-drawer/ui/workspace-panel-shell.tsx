@@ -14,6 +14,7 @@ import {
 import * as React from "react";
 import { TerminalSession } from "@/entities/workbench";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -126,7 +127,7 @@ export function WorkspacePanelShell() {
     React.useState<FloatingBounds>(getInitialFloatingBounds);
   const floatingBoundsRef = React.useRef<FloatingBounds>(floatingBounds);
   floatingBoundsRef.current = floatingBounds;
-
+  const isMac = React.useMemo(() => isMacPlatform(), []);
   const [activeInteraction, setActiveInteraction] = React.useState<DragOrResizeMode | null>(null);
 
   React.useEffect(() => {
@@ -517,7 +518,9 @@ export function WorkspacePanelShell() {
                       <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
                         <XIcon className="text-muted-foreground" />
                         <span>{t("workspace:closeTab")}</span>
-                        <ContextMenuShortcut>⌘W</ContextMenuShortcut>
+                        <ContextMenuShortcut>
+                          {formatShortcutDisplay(["Mod", "W"], isMac)}
+                        </ContextMenuShortcut>
                       </ContextMenuItem>
                       <ContextMenuItem
                         onClick={() => {

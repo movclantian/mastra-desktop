@@ -26,6 +26,7 @@ import {
   useSessionSettings,
 } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
+import { isEditableTarget, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { AnimatedBeam } from "@/shared/ui/animated-beam";
@@ -979,15 +980,32 @@ function AgentContextMenuWrapper({
   const { t } = useTranslation();
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isMac = React.useMemo(() => isMacPlatform(), []);
 
   const handleCopyInfo = () => {
     void navigator.clipboard.writeText(profile.displayName);
     toast.success(t("agentHub:copiedName"));
   };
 
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (event.isComposing || isEditableTarget(event.target)) return;
+
+    if (!isDefault) {
+      if (event.key === "F2") {
+        event.preventDefault();
+        onEdit();
+      } else if (event.key === "Delete" || (isMac && event.key === "Backspace")) {
+        event.preventDefault();
+        onDelete();
+      }
+    }
+  };
+
   return (
     <ContextMenu>
-      <ContextMenuTrigger className="block h-full">{children}</ContextMenuTrigger>
+      <ContextMenuTrigger className="block h-full" onKeyDown={handleKeyDown}>
+        {children}
+      </ContextMenuTrigger>
       <ContextMenuContent className="w-48">
         <ContextMenuGroup>
           <ContextMenuLabel className="max-w-44 truncate">{profile.displayName}</ContextMenuLabel>
@@ -1012,7 +1030,7 @@ function AgentContextMenuWrapper({
               <ContextMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2Icon className="text-muted-foreground" />
                 <span>{t("agentHub:deleteExpert")}</span>
-                <ContextMenuShortcut>⌫</ContextMenuShortcut>
+                <ContextMenuShortcut>{isMac ? "⌫" : "Del"}</ContextMenuShortcut>
               </ContextMenuItem>
             </ContextMenuGroup>
           </>
