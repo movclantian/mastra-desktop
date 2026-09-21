@@ -13,7 +13,7 @@
 - 冻结前工作树指纹（`git diff --binary` SHA-256）：`352d3931eed2762a7e91c2d0dea9060cc2509cdfb36fb7ee2b760f818d0929ea`
 - 远端：`origin/main`
 - 当前状态：成果已推送到 `origin/codex/freeze-audited-results`；尚未创建/合并 PR、发布 Release 或上传安装包
-- 当前本地提交：`0d571f0`、`b030954`、`6a1f493`、`0b42216`、`2500a47`、`d78f97f`、`eeb5ad8`、`5b578fc`
+- 当前本地提交：`0d571f0`、`b030954`、`6a1f493`、`0b42216`、`2500a47`、`d78f97f`、`eeb5ad8`、`5b578fc`、`48f2954`、`bc7f008`、`19a0efd`、`50dc0ee`
 - 当前工作区剩余：`tests/shots/` 本地截图证据未跟踪，不进入第一次推送快照
 
 ## 成果分组

@@ -9,8 +9,8 @@
 | --- | --- |
 | 上游基线 | `origin/main@90312644ff0af8d938552207345a416c88f2db9f` |
 | 当前分支 | `codex/freeze-audited-results` |
-| 基线差异 | 92 个文件，+5202 / -467 行 |
-| 本地提交 | 8 个，均未推送 |
+| 基线差异 | 93 个文件，+5335 / -467 行 |
+| 本地提交 | 12 个，已推送到功能分支 |
 | 未跟踪内容 | `tests/shots/` 本地截图证据，不纳入第一次推送 |
 | 远端动作 | 未执行 `git push`、未执行 force-push、未发布 Release |
 
@@ -124,4 +124,3 @@ Remove-Item Env:REGRESSION_BASELINE
 - 推送前必须由 Owner 决定是否接受 Node 22/pnpm 12 环境差异，并完成至少一次桌面手测。
 
 建议第一次 PR 使用当前分支完整提交链，保留“不 force-push、不瘦身、不发布 Release”的边界；桌面手测失败时，以同一 code identity 追加修复提交，不改写基线。
-
