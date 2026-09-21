@@ -17,7 +17,7 @@
 - 已完成：后台 SSE 任务事件在 120ms 窗口批量写入任务卡；不再对每个 output chunk 拉取 display-state；仅终态以 500ms 有界刷新持久化快照。
 - 已完成：display-state 回写采用终态单调合并，避免终态 SSE 到达后被尚未落库的 running 快照短暂覆盖。
 - 已完成：已完成的 `execute_typescript` / 工作区命令详情默认折叠，运行中 sandbox 自动展开并在完成时收起；普通工具不被强制展开，详情仍可手动打开。
-- 证据：Biome、`pnpm run typecheck`、`pnpm run test:regression`（34/34）、`git diff --check` 通过；fresh-context 复核待本次二次调整完成后回报。
+- 证据：Biome、`pnpm run typecheck`、`pnpm run test:regression`（34/34）、`git diff --check` 通过；fresh-context spot check 确认终态单调合并、缺失任务保留和 sandbox 展开边界，无剩余 P1/P2。
 - 未闭环：真实桌面窗口中的鼠标/滚动响应和流式中断仍未 TRIAL；当前修复基于源码调用链和专项门禁，不宣称桌面端已完全通过。
 - fresh review 追加风险已处理：若终态 SSE 先于持久化快照，或快照因分页暂时不含该任务，合并逻辑保留本地已观察任务，不会让任务卡消失。
 

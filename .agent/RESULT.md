@@ -16,6 +16,7 @@
 - Follow-up：合并持久化快照时保留当前 SSE 已观察但快照暂缺的任务，覆盖分页/落库竞态，避免终态任务在刷新后消失。
 - Verification：Biome 通过；`pnpm run typecheck` 通过；`pnpm run test:regression` 34/34 通过；`git diff --check` 通过；本机 5173 renderer 和 4111 `/health` 均返回 200。
 - Runtime evidence：当前没有可附着的用户桌面浏览器/长任务时间窗；CUA/browser-harness 不可用，因此只能标记 partial，不能声称鼠标卡顿或流中断已在真实桌面消失。
+- Review：fresh-context spot check 确认终态 SSE 不会被 stale running 快照覆盖，分页/落库延迟时本地已观察任务不会从 UI 消失；未发现剩余 P1/P2。
 - Known issues：长消息投影和富文本渲染仍可能是第二级负载来源；若用户复测仍卡顿，下一轮只针对该调用链取证，不回退到全库盲改。
 
 ## 2026-09-21：批准卡死与长任务记录停滞（验证中）
