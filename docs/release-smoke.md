@@ -30,7 +30,7 @@
 如果开发态进程仍在运行，只能停止已确认属于本项目的进程树；不要按端口无条件杀进程。停止后确认 `5173`、`4111` 均释放，再使用隔离 userData 启动目录包：
 
 ```text
-dist\\win-unpacked\\mastra-desktop.exe --user-data-dir=D:\\temp\\mastrawork-packaged-smoke
+dist\\win-unpacked\\mastra-desktop.exe --user-data-dir=%TEMP%\\mastrawork-packaged-smoke
 ```
 
 启动通过必须同时满足：窗口标题为 `MastraWork` 且存在有效窗口句柄；Mastra 子进程命令行来自目录包 `resources\\app.asar\\.mastra\\output\\index.mjs`（安装后也必须来自 `resources\\app.asar\\.mastra\\output\\index.mjs`，不能从 `app.asar.unpacked` 启动）；`4111` 的监听 PID 属于该进程树；`/health` 返回 200。单独的 `/health` 200 不足以证明目录包启动成功。
@@ -65,5 +65,5 @@ dist\\win-unpacked\\mastra-desktop.exe --user-data-dir=D:\\temp\\mastrawork-pack
 
 - 首轮安装后启动 FAIL：Mastra 从 `app.asar.unpacked\\.mastra\\output\\index.mjs` 启动，报 `ERR_MODULE_NOT_FOUND: @mastra/core`；同时发现 sandbox preload 外部依赖未 bundle，`resources/icon.png` 未显式纳入包体。
 - 修复：Mastra 入口改在 `app.asar` 内运行；preload 单文件 bundle；显式打包 `resources/icon.png`；排除 `.mastra/output/node_modules`。
-- 修复版安装 PASS：安装到 `C:\Users\chenfeng\AppData\Local\Programs\mastra-desktop-0.0.1-smoke-20260919-fix`，窗口标题 `MastraWork`，4111 `/health` 返回 200，关闭后 Electron、Mastra 和端口均退出。
+- 修复版安装 PASS：安装到 `%LOCALAPPDATA%\Programs\mastra-desktop-0.0.1-smoke-20260919-fix`，窗口标题 `MastraWork`，4111 `/health` 返回 200，关闭后 Electron、Mastra 和端口均退出。
 - 安装器解压未超过 10 分钟阈值；安装目录约 2.02 GB。完整核心用户路径、跨平台和签名验收仍待后续进行。

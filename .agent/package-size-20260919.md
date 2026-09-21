@@ -45,7 +45,7 @@ pnpm exec electron-builder --dir
 - `pnpm run verify:package:dir` 已通过，确认目录包 EXE、`app.asar` 和 Chromium 可执行文件齐全。
 - `pnpm run verify:package` 已通过，确认 setup/blockmap/目录包属于同一份新鲜产物。
 - 修复版 setup.exe 约 656.33 MB，SHA-256 为 `A1A6DD9CABFE513C81C128A5211FEB2787AECA92095DFB549F0D4B5D22A8A3A5`。
-- 修复版 NSIS 安装到 `C:\Users\chenfeng\AppData\Local\Programs\mastra-desktop-0.0.1-smoke-20260919-fix` 后，窗口标题为 `MastraWork`，4111 `/health` 返回 200，关闭后进程/端口均释放。
+- 修复版 NSIS 安装到 `%LOCALAPPDATA%\Programs\mastra-desktop-0.0.1-smoke-20260919-fix` 后，窗口标题为 `MastraWork`，4111 `/health` 返回 200，关闭后进程/端口均释放。
 - 安装后 Mastra 命令行为 `resources\\app.asar\\.mastra\\output\\index.mjs`；静态检查确认 `resources\\icon.png` 和 bundled preload 依赖存在，`.mastra\\output\\node_modules` 不存在。
 - 已停止确认属于项目的开发态进程树后，用隔离 userData 完成目录包 packaged smoke：窗口标题 `MastraWork`，4111 监听归属该进程树，`/health` 返回 200；关闭窗口后主进程、后端和端口均清理。
 - 首轮安装包启动失败的历史证据为 `ERR_MODULE_NOT_FOUND: @mastra/core`，发生在 `app.asar.unpacked\\.mastra\\output\\index.mjs`；这不是修复版路径。

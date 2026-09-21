@@ -170,7 +170,7 @@ implemented/partially verified：源码和配置修复已完成；首轮 Windows
 
 - `pnpm run typecheck` 已通过（当前 Node 24/pnpm 11，和项目声明的 Node 22/pnpm 12 不一致）；`verify:release` 与本轮 6 文件只读 lint 已通过。此前修复版 NSIS 的启动/健康/退出 smoke 证据仍保留，但不代表本轮 Provider/上传补丁已重新打包验收；完整 lint、核心用户路径和跨平台 smoke 仍未完成。
 - Windows 安装证据：`mastra-desktop-0.0.1-setup.exe` 约 1.64 GB；安装器运行约 10.6 分钟仍停留在 `%TEMP%\\nssBC21.tmp`，临时目录约 7.14 GB、约 209,130 个文件，安装目标为 0 个文件，随后终止；终止后临时目录约 7.54 GB，证据记录完成后已清理。
-- packaged smoke 证据：停止确认属于项目的开发态进程树后，以 `dist/win-unpacked/mastra-desktop.exe --user-data-dir=D:\\temp\\mastrawork-packaged-smoke-20260919` 启动；主进程 PID `24284`，窗口标题 `MastraWork` 且有窗口句柄；Mastra 子进程 PID `26828` 的命令行来自 `dist/win-unpacked/resources/app.asar.unpacked/.mastra/output/index.mjs`；4111 监听归属该子进程，`/health` 返回 200；关闭窗口后 Electron、Mastra 和 4111 均退出。
+- packaged smoke 证据：停止确认属于项目的开发态进程树后，以 `dist/win-unpacked/mastra-desktop.exe --user-data-dir=%TEMP%\\mastrawork-packaged-smoke-20260919` 启动；主进程 PID `24284`，窗口标题 `MastraWork` 且有窗口句柄；Mastra 子进程 PID `26828` 的命令行来自 `dist/win-unpacked/resources/app.asar.unpacked/.mastra/output/index.mjs`；4111 监听归属该子进程，`/health` 返回 200；关闭窗口后 Electron、Mastra 和 4111 均退出。
 - 上述目录包 smoke 是修复前证据，曾证明目录包能运行但不能代表安装后依赖解析正确；首轮 NSIS 安装后启动则复现 `ERR_MODULE_NOT_FOUND: @mastra/core`，原因是入口从 `app.asar.unpacked` 启动。
 - 修复版目录包与 NSIS 安装 smoke 均通过：修复版 setup 约 656.33 MB（SHA-256 `A1A6DD9CABFE513C81C128A5211FEB2787AECA92095DFB549F0D4B5D22A8A3A5`）；安装目录约 2.02 GB；窗口标题 `MastraWork`，4111 `/health` 返回 200；安装后的 Mastra 子进程命令行来自 `resources\\app.asar\\.mastra\\output\\index.mjs`；关闭后 Electron、Mastra 和 4111 均退出。
 - 安装后的 `app.asar` 静态检查通过：包含 `.mastra\\output\\index.mjs`、`resources\\icon.png` 和 `node_modules\\@electron-toolkit\\preload`，不包含 `.mastra\\output\\node_modules`。这是此前修复版安装包的证据，不是本轮 Provider/上传补丁的重新构建证据。

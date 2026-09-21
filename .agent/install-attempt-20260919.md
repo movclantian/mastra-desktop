@@ -3,13 +3,13 @@
 ## 结果
 
 - 安装包：`dist/mastra-desktop-0.0.1-setup.exe`
-- 安装目标：`C:\Users\chenfeng\AppData\Local\Programs\mastra-desktop`
+- 安装目标：`%LOCALAPPDATA%\Programs\mastra-desktop`
 - 安装方式：NSIS 静默安装，使用 `/S` 和显式 `/D` 目标目录
 - 安装器进程：`mastra-desktop-0.0.1-setup.exe`，PID `5276`
 - 启动时间：`2026-09-19 13:05:46`
 - 终止时间：约 `2026-09-19 13:16:25`，运行约 `10.6` 分钟
 - 终止前状态：进程仍响应，CPU 累计约 `621.61` 秒
-- 终止前临时目录：`C:\Users\chenfeng\AppData\Local\Temp\nssBC21.tmp`
+- 终止前临时目录：`%LOCALAPPDATA%\Temp\nssBC21.tmp`
 - 终止前临时目录大小：约 `7.14 GB`
 - 终止前临时文件数：约 `209,130`
 - 安装目标文件数：`0`

@@ -149,7 +149,7 @@
 | --- | --- | --- | --- |
 | `submit_plan` 返回“Plan approved”但用户未点击批准 | P1 安全/授权 | **需要复现确认**。仓库默认将 `submit_plan` 设为允许，但真正的计划工具还应通过挂起/恢复链路等待用户；当前相关模式、路由和 UI 文件均未被本轮修改。 | 初步属于上游审批链路风险；必须用新线程做“提交计划→不点击批准→确认是否进入 build”回归，不可凭一条工具报告下定论。 |
 | 子代理输出编造或混入主线程上下文 | P1 可信度 | 工具输出是外部不可信数据；当前代码已有“fresh-context review”约束，但没有自动 provenance 校验。 | 属于 Agent 编排/上下文隔离问题，不是安装包裁剪；后续增加 agent 输出来源、线程和证据引用校验。 |
-| AGENTS.md 要求 `browser-harness`，当前环境没有该技能 | P2 工程环境 | 已确认是环境/指令漂移：`C:\Users\chenfeng\AGENTS.md` 引用不可用工具，仓库本身不依赖它。 | 不属于产品运行时；应修正环境说明或提供可用的截图工具，不能把未执行截图伪报为完成。 |
+| AGENTS.md 要求 `browser-harness`，当前环境没有该技能 | P2 工程环境 | 已确认是环境/指令漂移：`%USERPROFILE%\AGENTS.md` 引用不可用工具，仓库本身不依赖它。 | 不属于产品运行时；应修正环境说明或提供可用的截图工具，不能把未执行截图伪报为完成。 |
 | 文件工具失败只有纯文本，没有 `error` 标记 | P2 API 语义 | 报告显示确有可误判空间，但当前未在本轮复现响应 schema。 | 先在 workspace 工具路由补统一错误 envelope 和前端判定，再与上游工具协议逐项比较。 |
 | `library_document_chunker` Markdown 标题被改写、metadata 为空 | P2 数据正确性 | 当前 `src/mastra/rag/tools.ts` 未被本轮修改，逻辑直接透传 Mastra MDocument 结果。 | 初步是上游/依赖行为；需补固定输入的回归样例，确认应保留原始 Markdown 标题还是接受分块规范化。 |
 | `execute_typescript` 的 ESM warning | P3 开发体验 | 非失败，不影响功能；更像 Node module type 声明缺失。 | 上游/运行环境问题，后续加 `type: module` 或显式 loader，避免把 warning 当错误。 |
