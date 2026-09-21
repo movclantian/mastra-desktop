@@ -1,0 +1,65 @@
+# 推送概览与成果冻结
+
+更新时间：2026-09-21  
+基线提交：`90312644ff0af8d938552207345a416c88f2db9f`（`main` 与 `origin/main` 一致）
+
+## 目的
+
+把当前工作树的历史成果固定成可回滚的本地里程碑，再从这个里程碑单独处理“长任务中断 / 页面卡顿”。本文件只描述推送准备，不代表已经推送到远端，也不把隔离测试当作桌面端验收。
+
+## 当前代码身份
+
+- 上游基线：`9031264`
+- 冻结前工作树指纹（`git diff --binary` SHA-256）：`352d3931eed2762a7e91c2d0dea9060cc2509cdfb36fb7ee2b760f818d0929ea`
+- 远端：`origin/main`
+- 当前状态：未提交改动；尚未执行 `git push`、Release 或安装包发布
+
+## 成果分组
+
+### A. 产品与运行时改进（待冻结）
+
+包含 Provider URL/测试、DeepSeek 请求兼容、上传与媒体读取、Mastra 会话/后台任务、工作区进程、Electron 主进程与桌面图标等源码和构建配置。
+
+验收边界：类型检查、针对性回归和本地服务健康检查已做；真实桌面长任务、安装后完整用户旅程仍未通过。
+
+### B. 工程验证与发布门禁（待冻结）
+
+包含回归脚本、工具探针、`verify:release` / `verify:package`、内置技能资源、依赖 patch 说明和发布 smoke 文档。
+
+验收边界：脚本级结果可复现；浏览器自动化能力不可用时，不能写成桌面视觉通过。
+
+### C. 审计与交接文档（待冻结）
+
+包含 `docs/project-audit/`、`.agent/` 下的 DESIGN/PLAN/CURRENT_STATE/RESULT、安装和包体证据。
+
+验收边界：文档中的“已完成”仅对应其记录的 code identity 和证据；旧报告中的未复现问题不自动成为当前缺陷。
+
+### D. 不进入推送快照的运行证据
+
+- `.agent/core-patch/`
+- `.agent/runtime-evidence/`
+- 本地 dev 进程、`node_modules`、`dist`、用户数据和凭据
+- `tests/shots/` 截图只作为审计证据，是否纳入远端需在 PR 前单独决定
+
+## 本地里程碑建议
+
+1. `chore: freeze audited desktop improvements`：冻结 A/B/C 的源码、测试、门禁和文档成果。
+2. `fix: stabilize long-task stream and renderer workload`：只处理本轮新增的中断/卡顿证据；必须有专项回归和 fresh-context review。
+3. `docs: record release and manual acceptance`：在真实桌面手测后补充最终结果；未通过时保留 `partial`，不改成 PASS。
+
+提交 1 和提交 2 应保持可独立回滚。当前只建立本地分支和提交，不推送远端。
+
+## 已知未闭环问题
+
+1. 长任务中流式响应仍可能中断，尚缺一次同一代码身份下的服务端/renderer 时间窗证据。
+2. 长任务运行期间页面卡顿、滚动和鼠标响应异常，已观察到高频后台事件与前端状态更新路径，但尚未完成定量验证。
+3. `pnpm run typecheck` / 回归脚本通过不等于真实 Electron 长任务通过。
+4. CUA/browser-harness 当前不可用；隔离浏览器不能代替用户当前桌面窗口。
+5. 安装包瘦身、强推、Release 暂不纳入本批修复。
+
+## 推送前门槛
+
+- 基线、提交顺序和目标远端由 Owner 确认；本文件不授予 A2 push 权限。
+- 卡顿/中断专项修复必须通过类型检查、回归测试、`git diff --check`，并保留失败时的日志和 code identity。
+- 至少完成一次真实桌面手测：单工具、长工具链、连续两轮消息、滚动/鼠标响应、流结束收敛。
+- 只有门槛全部满足后，才准备 PR；不执行 force-push 覆盖 `origin/main`。
