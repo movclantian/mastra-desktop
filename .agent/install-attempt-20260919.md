@@ -1,0 +1,34 @@
+# Windows 安装包安装尝试记录
+
+## 结果
+
+- 安装包：`dist/mastra-desktop-0.0.1-setup.exe`
+- 安装目标：`C:\Users\chenfeng\AppData\Local\Programs\mastra-desktop`
+- 安装方式：NSIS 静默安装，使用 `/S` 和显式 `/D` 目标目录
+- 安装器进程：`mastra-desktop-0.0.1-setup.exe`，PID `5276`
+- 启动时间：`2026-09-19 13:05:46`
+- 终止时间：约 `2026-09-19 13:16:25`，运行约 `10.6` 分钟
+- 终止前状态：进程仍响应，CPU 累计约 `621.61` 秒
+- 终止前临时目录：`C:\Users\chenfeng\AppData\Local\Temp\nssBC21.tmp`
+- 终止前临时目录大小：约 `7.14 GB`
+- 终止前临时文件数：约 `209,130`
+- 安装目标文件数：`0`
+- 终止后安装器进程：不存在
+- 终止后临时目录：证据记录完成后已清理，目录当前不存在；C 盘空间已释放
+
+## 产物时间线
+
+- `mastra-desktop-0.0.1-setup.exe`：约 `1.64 GB`，最后修改时间 `2026-09-18 20:34:45`
+- `mastra-desktop-0.0.1-x64.nsis.7z`：约 `1.58 GB`，最后修改时间 `2026-09-19 13:03:08`
+- 本次安装使用的是 setup EXE；其时间戳早于本次最新 NSIS 压缩包，后续需要确认为什么没有生成同时间的新 setup EXE。
+
+## 初步判断
+
+安装器没有进入把文件复制到目标目录的阶段，主要耗时在 NSIS 临时目录解压。临时解压目录达到安装包体积数倍并产生约 20.9 万个文件，说明当前打包内容过大、依赖树过于膨胀。现阶段不能据此判断桌面应用本身无法启动。
+
+## 下一步建议
+
+1. 已保留现场证据并清理 `nssBC21.tmp`，释放约 7.5 GB。
+2. 直接运行 `dist/win-unpacked/mastra-desktop.exe` 做桌面启动验收，绕过 NSIS 安装器。
+3. 排查 electron-builder 的依赖收集：重复依赖、跨平台 optionalDependencies、开发依赖和未使用运行时包。
+4. 修复发布流程，确保每次构建都生成与当前 `win-unpacked` 同时间的新 setup EXE，并记录最终退出码。
