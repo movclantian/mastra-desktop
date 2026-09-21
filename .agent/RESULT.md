@@ -13,6 +13,7 @@
 
 - State：修复已完成，尚未推送；在冻结提交 `0b42216` 之后形成独立工作树改动。
 - Changed：后台任务 SSE output 不再逐事件调用 `reloadDisplayState()`；任务卡状态以 120ms 批量刷新；终态以 500ms 有界持久化刷新；终态状态对 stale running snapshot 单调保护；完成的 sandbox 工具详情默认收起、运行中保持可见。
+- Follow-up：合并持久化快照时保留当前 SSE 已观察但快照暂缺的任务，覆盖分页/落库竞态，避免终态任务在刷新后消失。
 - Verification：Biome 通过；`pnpm run typecheck` 通过；`pnpm run test:regression` 34/34 通过；`git diff --check` 通过；本机 5173 renderer 和 4111 `/health` 均返回 200。
 - Runtime evidence：当前没有可附着的用户桌面浏览器/长任务时间窗；CUA/browser-harness 不可用，因此只能标记 partial，不能声称鼠标卡顿或流中断已在真实桌面消失。
 - Known issues：长消息投影和富文本渲染仍可能是第二级负载来源；若用户复测仍卡顿，下一轮只针对该调用链取证，不回退到全库盲改。

@@ -115,7 +115,8 @@ function mergeBackgroundTaskSnapshot(
   snapshot: BackgroundTaskState[],
 ): BackgroundTaskState[] {
   const currentById = new Map(current.map((task) => [task.id, task]));
-  return snapshot.map((task) => {
+  const snapshotIds = new Set(snapshot.map((task) => task.id));
+  const merged = snapshot.map((task) => {
     const previous = currentById.get(task.id);
     // A terminal SSE event can arrive just before persistence commits. Do not
     // let that older running snapshot visibly reopen a completed task.
@@ -125,6 +126,10 @@ function mergeBackgroundTaskSnapshot(
       ? previous
       : task;
   });
+  // The durable endpoint is a bounded/paginated view and can briefly lag an
+  // SSE event. Keep locally observed tasks that are absent from that snapshot
+  // instead of making a just-finished task disappear until navigation.
+  return [...current.filter((task) => !snapshotIds.has(task.id)), ...merged];
 }
 
 // ---------------------------------------------------------------------------
