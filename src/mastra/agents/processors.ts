@@ -13,8 +13,8 @@ import {
   getLibraryAssetId,
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
-  MAX_LIBRARY_INLINE_MEDIA_BYTES,
   LIBRARY_RESOURCE_CONTEXT_KEY,
+  MAX_LIBRARY_INLINE_MEDIA_BYTES,
 } from "../rag";
 import { appStorage } from "../storage";
 
@@ -30,29 +30,78 @@ const CHARS_PER_TOKEN_APPROX = 3;
 const IMAGE_BYTES_PER_TOKEN = 1_024;
 const AUDIO_BYTES_PER_TOKEN = 512;
 const MIN_MEDIA_ATTACHMENT_TOKENS = 1_024;
+const UNKNOWN_ATTACHMENT_MEDIA_TYPE = "application/octet-stream";
+
+/**
+ * AI SDK file parts must carry a real media type before they reach a provider.
+ * A browser/File fallback of application/octet-stream is not a usable contract:
+ * some providers reject it, while others interpret it inconsistently. Keep the
+ * provider capabilities intact, but turn only unknown file parts into an
+ * explicit user-visible marker at our boundary.
+ */
+function hasUnknownAttachmentMediaType(mediaType: unknown): boolean {
+  return (
+    typeof mediaType !== "string" ||
+    mediaType.trim().length === 0 ||
+    mediaType.trim().toLowerCase() === UNKNOWN_ATTACHMENT_MEDIA_TYPE
+  );
+}
+
+function unsupportedAttachmentText(filename: unknown): string {
+  const label = typeof filename === "string" && filename.trim() ? filename : "未命名附件";
+  return `[附件「${label}」未注入: 无法识别文件类型，请重新上传或选择支持的格式]`;
+}
 
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
   async processInputStep({ messages, requestContext }) {
     const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
-    if (!resourceId) return;
     const capabilities = requestContext?.get(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY) as
       | { vision?: boolean; audio?: boolean }
       | undefined;
     let changed = false;
     const resolvedMessages = await Promise.all(
       messages.map(async (message) => {
-        if (message.role !== "user" && message.role !== "assistant") return message;
-        const parts = (message.content as { parts?: unknown[] } | undefined)?.parts;
+        // AgentController persists live chat turns as `role: "signal"`.
+        // Treat those the same as ordinary user/assistant messages; otherwise
+        // protected library URLs bypass this processor and Mastra's generic
+        // downloader retries them without the resource authorization context.
+        if (message.role !== "user" && message.role !== "assistant" && message.role !== "signal") {
+          return message;
+        }
+        // Mastra 1.67 can expose either raw content parts or the format-2
+        // wrapper. Normalize both before MessageList.llmPrompt downloads URLs.
+        const rawContent = message.content as unknown;
+        const parts = Array.isArray(rawContent)
+          ? rawContent
+          : (rawContent as { parts?: unknown[] } | undefined)?.parts;
         if (!Array.isArray(parts)) return message;
         const resolvedParts = await Promise.all(
           parts.map(async (part) => {
             if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "file") {
               return part;
             }
-            const record = part as { data?: unknown; filename?: string; mediaType?: string };
-            const assetId = getLibraryAssetId(record.data);
-            if (!assetId) return part;
+            const record = part as {
+              data?: unknown;
+              url?: unknown;
+              image?: unknown;
+              filename?: string;
+              mediaType?: string;
+            };
+            const assetId =
+              getLibraryAssetId(record.data) ??
+              getLibraryAssetId(record.url) ??
+              getLibraryAssetId(record.image);
+            if (!assetId) {
+              if (!hasUnknownAttachmentMediaType(record.mediaType)) return part;
+              changed = true;
+              return { type: "text", text: unsupportedAttachmentText(record.filename) };
+            }
+            if (!resourceId) {
+              if (!hasUnknownAttachmentMediaType(record.mediaType)) return part;
+              changed = true;
+              return { type: "text", text: unsupportedAttachmentText(record.filename) };
+            }
             changed = true;
             const context = await getAssetContext(resourceId, assetId, {
               maxMediaBytes: MAX_LIBRARY_INLINE_MEDIA_BYTES,
@@ -97,7 +146,9 @@ export const libraryAttachmentProcessor: InputProcessor = {
         if (!resolvedParts.some((part, index) => part !== parts[index])) return message;
         return {
           ...message,
-          content: { ...message.content, parts: resolvedParts },
+          content: Array.isArray(rawContent)
+            ? resolvedParts
+            : { ...message.content, parts: resolvedParts },
         } as typeof message;
       }),
     );
@@ -105,7 +156,6 @@ export const libraryAttachmentProcessor: InputProcessor = {
   },
   async processLLMRequest({ prompt, requestContext }) {
     const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
-    if (!resourceId) return;
     const tokenBudget = requestContext?.get(LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY);
     const capabilities = requestContext?.get(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY) as
       | { vision?: boolean; audio?: boolean }
@@ -116,7 +166,13 @@ export const libraryAttachmentProcessor: InputProcessor = {
     const resolvedPrompt = [...prompt];
     for (let messageIndex = prompt.length - 1; messageIndex >= 0; messageIndex -= 1) {
       const message = prompt[messageIndex];
-      if (message.role !== "user" && message.role !== "assistant") continue;
+      // `processLLMRequest` receives the provider prompt (`LanguageModelV2Prompt`),
+      // whose role union intentionally excludes Mastra's persisted `signal` role.
+      // Signal messages are normalized in `processInputStep` above; do not widen
+      // this provider-bound type check with an impossible role.
+      if (message.role !== "user" && message.role !== "assistant") {
+        continue;
+      }
       const content = [];
       for (const part of message.content) {
         if (part.type !== "file") {
@@ -125,7 +181,27 @@ export const libraryAttachmentProcessor: InputProcessor = {
         }
         const assetId = getLibraryAssetId(part.data);
         if (!assetId) {
+          if (hasUnknownAttachmentMediaType(part.mediaType)) {
+            changed = true;
+            content.push({
+              type: "text" as const,
+              text: unsupportedAttachmentText(part.filename),
+            });
+            continue;
+          }
           content.push(part);
+          continue;
+        }
+        if (!resourceId) {
+          if (hasUnknownAttachmentMediaType(part.mediaType)) {
+            changed = true;
+            content.push({
+              type: "text" as const,
+              text: unsupportedAttachmentText(part.filename),
+            });
+          } else {
+            content.push(part);
+          }
           continue;
         }
         changed = true;

@@ -729,11 +729,16 @@ export const PromptInput = ({
     (fileList: File[] | FileList) => {
       const incoming = [...fileList];
       const accepted = incoming.filter((f) => matchesAccept(f));
-      if (incoming.length && accepted.length === 0) {
+      const rejected = incoming.filter((f) => !matchesAccept(f));
+      if (rejected.length > 0) {
         onError?.({
           code: "accept",
-          message: i18n.t("chat:prompt.unsupportedFileTypes"),
+          message: `${i18n.t("chat:prompt.unsupportedFileTypes")}: ${rejected
+            .map((file) => file.name)
+            .join(", ")}`,
         });
+      }
+      if (incoming.length && accepted.length === 0) {
         return;
       }
       const withinSize = (f: File) => (maxFileSize ? f.size <= maxFileSize : true);
@@ -851,11 +856,16 @@ export const PromptInput = ({
     (fileList: File[] | FileList) => {
       const incoming = [...fileList];
       const accepted = incoming.filter((f) => matchesAccept(f));
-      if (incoming.length && accepted.length === 0) {
+      const rejected = incoming.filter((f) => !matchesAccept(f));
+      if (rejected.length > 0) {
         onError?.({
           code: "accept",
-          message: i18n.t("chat:prompt.unsupportedFileTypes"),
+          message: `${i18n.t("chat:prompt.unsupportedFileTypes")}: ${rejected
+            .map((file) => file.name)
+            .join(", ")}`,
         });
+      }
+      if (incoming.length && accepted.length === 0) {
         return;
       }
       const withinSize = (f: File) => (maxFileSize ? f.size <= maxFileSize : true);

@@ -303,7 +303,7 @@ function rendererContentSecurityPolicy(): string {
     `connect-src 'self' ${MASTRA_SERVER_URL}${devConnectSources} https://v2.xxapi.cn`,
     `script-src ${scriptSources}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' data: blob: https://images.xxapi.cn https://models.dev",
+    `img-src 'self' data: blob: ${MASTRA_SERVER_URL} https://images.xxapi.cn https://models.dev`,
     "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",
     "base-uri 'self'",

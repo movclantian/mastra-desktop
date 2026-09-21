@@ -741,6 +741,7 @@ export function ChatPromptInput({
    * 被报上去,下限就会随容器一起缩,约束越放越松,挤压于是被固化而不是被纠正。
    */
   const footerRef = React.useRef<HTMLDivElement>(null);
+  const lastReportedPromptWidthRef = React.useRef<number | null>(null);
   React.useEffect(() => {
     const footer = footerRef.current;
     const left = footer?.firstElementChild;
@@ -750,19 +751,30 @@ export function ChatPromptInput({
     /**
      * 读一组在「不被 flex 压缩」时的宽度。
      *
-     * 两组都带 min-w-0,容器一紧就是它们先让步,所以直接量 offsetWidth 量到的是
-     * 压缩后的值 —— 正是上面那条不变量禁止上报的东西。这里临时用 max-content
-     * 顶开压缩再读:写-读-还原在同一个同步块内,浏览器只多算一次布局、不会绘制
-     * 中间态;回调结束时尺寸已复原,也不会引起 ResizeObserver 自激。内部 label 的
-     * max-w 上限依然生效,量到的正是「标签完整显示」时的宽度,而不是无限伸展。
+     * 不能在 ResizeObserver 回调里给被观察的原节点写 min-width:那会同步改变
+     * 观察目标的盒模型,在窗口拖动/长任务刷新时形成 observer → setState → layout
+     * → observer 的反馈环,最终触发 "ResizeObserver loop completed" 并拖慢滚动。
+     * 改为测量脱离布局流的克隆节点,原节点不再被读-写-还原。
      */
     const naturalWidth = (element: HTMLElement) => {
-      const previous = element.style.minWidth;
-      element.style.minWidth = "max-content";
-      const width = element.offsetWidth;
-      element.style.minWidth = previous;
+      const clone = element.cloneNode(true) as HTMLElement;
+      Object.assign(clone.style, {
+        position: "absolute",
+        left: "-100000px",
+        top: "0",
+        visibility: "hidden",
+        pointerEvents: "none",
+        width: "max-content",
+        minWidth: "max-content",
+        maxWidth: "none",
+        flex: "none",
+      });
+      footer.appendChild(clone);
+      const width = clone.getBoundingClientRect().width;
+      clone.remove();
       return width;
     };
+    let frame: number | null = null;
     const measure = () => {
       const styles = getComputedStyle(footer);
       // 列间距和内距一样是 footer 自己吃掉的固定宽度,少算它下限就偏小。
@@ -781,15 +793,28 @@ export function ChatPromptInput({
        * 那次判断省下的是一次固有尺寸计算(浏览器本身有缓存),换来的却是
        * 整条不变量失效,不值得。
        */
-      reportPromptMinWidth(naturalWidth(left) + naturalWidth(right) + fixed);
+      const width = naturalWidth(left) + naturalWidth(right) + fixed;
+      if (lastReportedPromptWidthRef.current === Math.ceil(width)) return;
+      lastReportedPromptWidthRef.current = Math.ceil(width);
+      reportPromptMinWidth(width);
     };
-    measure();
+    const scheduleMeasure = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        measure();
+      });
+    };
+    scheduleMeasure();
     // 同时观察两组自身:换模型、开关检索都会改变它们的宽度,而 footer 尺寸未必变
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(scheduleMeasure);
     observer.observe(footer);
     observer.observe(left);
     observer.observe(right);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, [reportPromptMinWidth]);
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<

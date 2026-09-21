@@ -85,6 +85,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
@@ -710,6 +711,10 @@ export function KnowledgeLibraryPage({
                     }
                   />
                   <DropdownMenuContent align="end">
+                    <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">
+                      {t("library:uploadCapabilities")}
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem disabled={uploading} onClick={() => openUpload(uploadTarget)}>
                       {uploading ? (
                         <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />

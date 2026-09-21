@@ -2523,7 +2523,7 @@ export const en = {
     readLibraryFailed: "Failed to load knowledge library",
     statusIndexed: "Indexed",
     statusIndexing: "Indexing",
-    statusNotIndexed: "Not indexed",
+    statusNotIndexed: "Saved, not text-indexed",
     statusFailed: "Indexing failed",
     stageExtract: "Text Extraction",
     stageChunk: "Chunking",
@@ -2568,6 +2568,8 @@ export const en = {
     searchResults: "Search Results",
     addDocTableFolder: "Add document, table, or folder",
     uploadFile: "Upload File",
+    uploadCapabilities:
+      "Text, PDF, Word, and Excel files can be parsed and indexed. Images are stored and require a vision model to send. ZIP and PPT files are stored only.",
     newMarkdownDoc: "New Document (Markdown)",
     newCsvTable: "New Table (CSV)",
     newFolder: "New Folder",

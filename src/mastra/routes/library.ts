@@ -222,6 +222,7 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       if (!resourceId) throw new Error("resourceId is required");
       const folderId = requireResourceId(parsed.fields.folderId) ?? undefined;
       const threadId = requireResourceId(parsed.fields.threadId) ?? undefined;
+      const promoteToLibrary = parsed.fields.promoteToLibrary === "true";
       const assets = [];
       for (const file of parsed.files) {
         assets.push(
@@ -234,6 +235,7 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
             byteSize: file.byteSize,
             sha256: file.sha256,
             mediaType: file.mediaType,
+            promoteToLibrary,
           }),
         );
         await rm(file.tempPath, { force: true }).catch(() => undefined);

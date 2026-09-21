@@ -35,6 +35,8 @@ type AssetUploadMetadata = {
   mediaType?: string;
   folderId?: string;
   threadId?: string;
+  /** Chat uploads can retain the thread ref and also promote extractable docs to the library. */
+  promoteToLibrary?: boolean;
 };
 
 type AssetUploadSource = {
@@ -68,6 +70,9 @@ async function storeAsset(
 
   if (existingRow) {
     const asset = rowToAsset(existingRow);
+    if (input.promoteToLibrary && isExtractable(asset.filename, asset.mediaType)) {
+      await attachAssetReference(input.resourceId, asset.id);
+    }
     await attachAssetReference(input.resourceId, asset.id, input.folderId, input.threadId);
     return asset;
   }
@@ -103,7 +108,7 @@ async function storeAsset(
     const timestamp = now();
 
     await withClient(async (client) => {
-      await client.batch([
+      const statements = [
         {
           sql: `INSERT INTO library_assets
           (id, resource_id, filename, media_type, byte_size, sha256, storage_path, status, extracted_text, created_at, updated_at)
@@ -128,7 +133,18 @@ async function storeAsset(
           VALUES (?, ?, ?, ?, ?)`,
           args: [id, input.resourceId, input.folderId ?? "", input.threadId ?? "", timestamp],
         },
-      ]);
+        ...(input.promoteToLibrary && extractable && input.threadId
+          ? [
+              {
+                sql: `INSERT OR IGNORE INTO library_asset_refs
+                (asset_id, resource_id, folder_id, thread_id, created_at)
+                VALUES (?, ?, ?, ?, ?)`,
+                args: [id, input.resourceId, "", "", timestamp],
+              },
+            ]
+          : []),
+      ];
+      await client.batch(statements);
     });
 
     createdAsset = {

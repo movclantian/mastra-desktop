@@ -1,5 +1,6 @@
 import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { type FileUIPart, isToolUIPart, type LanguageModelUsage } from "ai";
 import { GitBranchIcon } from "lucide-react";
@@ -13,6 +14,7 @@ import {
   fetchThreadSource,
   getModelCapabilities,
   getModelContextWindow,
+  qk,
   withCategoryPolicy,
 } from "@/entities/workbench";
 import { useCatalogQuery } from "@/entities/workbench/model/queries/config";
@@ -263,6 +265,7 @@ function TranscriptOutline({ entries }: { entries: OutlineEntry[] }) {
 
 export function ChatPanel() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const { user: authUser } = useAuth();
   const user = authUser ?? { id: "anonymous", name: "Guest", email: "guest@example.com" };
   const userId = user?.id ?? "anonymous";
@@ -366,8 +369,12 @@ export function ChatPanel() {
   const selectedSkillNamesRef = React.useRef<string[]>([]);
 
   const persistAttachments = React.useCallback(
-    (files: FileUIPart[], threadId: string) => uploadAttachments(files, user.id, threadId),
-    [user.id],
+    async (files: FileUIPart[], threadId: string) => {
+      const persisted = await uploadAttachments(files, user.id, threadId);
+      await queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
+      return persisted;
+    },
+    [queryClient, user.id],
   );
 
   // 最新 threadId 的 ref:解决「首条消息先建线程再发送」时
@@ -541,9 +548,9 @@ export function ChatPanel() {
         return true;
       })
       .catch(() => {
-        if (activeThreadIdRef.current === threadId) {
-          setMessages([]);
-        }
+        // A transient history/API failure must not erase the optimistic/live
+        // conversation. Keep the current messages and let the next bounded
+        // reconciliation retry fetch the server truth.
         return false;
       });
   }, [activeThreadId, setMessages, user.id]);
@@ -1416,17 +1423,21 @@ export function ChatPanel() {
     // 未锁定线程的首条消息会消费工作区选定(workspaceLocked 在发送前快照)
     const consumesWorkspaceSelection = !workspaceLocked;
 
-    // 无激活线程时,先创建线程再发送。标记必须早于 mutation:mutation 的
-    // onSuccess 会先切路由,随后 mutateAsync 才把新线程返回到这里。
+    // 无激活线程时先准备线程再发送。带附件时延后切路由，避免上传/预检
+    // 失败后用户被切到一个看起来像“刷新”的空白新页面。
     const initialSend: { threadId: string | null } | null = activeThreadId
       ? null
       : { threadId: null };
     if (initialSend) {
       initialSendRef.current = initialSend;
+      const deferThreadSelection = files.length > 0;
       // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
       // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
       const thread = await createThreadMutation
-        .mutateAsync({ modeId: useWorkbenchStore.getState().modeId })
+        .mutateAsync({
+          modeId: useWorkbenchStore.getState().modeId,
+          ...(deferThreadSelection ? { deferSelection: true } : {}),
+        })
         .catch(() => null);
       if (!thread) {
         if (initialSendRef.current === initialSend) initialSendRef.current = null;
@@ -1450,6 +1461,11 @@ export function ChatPanel() {
       if (initialSendRef.current === initialSend) initialSendRef.current = null;
       toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
       return;
+    }
+    if (initialSend && !activeThreadId) {
+      // 只有附件已成功持久化，才把用户带到新线程；这样 401/上传失败
+      // 保留在当前页面，错误提示不会被路由切换掩盖。
+      selectThread(targetThreadId);
     }
     clearPrompt();
     setQueueCanDispatch(false);

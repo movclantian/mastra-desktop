@@ -2459,7 +2459,7 @@ export const zh = {
     readLibraryFailed: "读取资料库失败",
     statusIndexed: "已索引",
     statusIndexing: "索引中",
-    statusNotIndexed: "未建立文本索引",
+    statusNotIndexed: "已保存，未建立文本索引",
     statusFailed: "索引失败",
     stageExtract: "文本抽取",
     stageChunk: "文档分块",
@@ -2504,6 +2504,8 @@ export const zh = {
     searchResults: "搜索结果",
     addDocTableFolder: "添加文档、表格或文件夹",
     uploadFile: "上传文件",
+    uploadCapabilities:
+      "文本、PDF、Word、Excel 可解析并建立索引；图片可保存，需视觉模型才能发送；ZIP、PPT 等仅保存原文件。",
     newMarkdownDoc: "新建文档（Markdown）",
     newCsvTable: "新建表格（CSV）",
     newFolder: "新建文件夹",

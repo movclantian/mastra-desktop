@@ -1,5 +1,128 @@
 # 工程问题修复计划
 
+## 2026-09-21：聊天文档与长期资料库语义对齐（当前批次）
+
+状态：计划已批准，开始实施；范围为附件归类、索引可见性和缓存刷新，不重打包、不推送。
+
+目标：符合产品约定——文本/PDF/Word/Excel 等可解析聊天附件保存后进入长期资料库并建立索引，同时保留当前会话引用；图片/音频/视频仍只作为会话附件；ZIP/PPT/PPTX 不新增解析能力。
+
+实施：
+
+1. 后端 multipart 聊天上传为可解析格式增加长期资料引用，不删除原有 `threadId` 引用；已有同 SHA 资产也能补长期引用。
+2. 聊天上传完成后失效资料库查询缓存，让已打开的资料库页面立即看到新资产并轮询索引状态。
+3. 保持上传响应与异步索引解耦，但让长期资料目录中的 `indexing/error` 状态可见、可重试。
+4. 增加契约回归：文本聊天附件双引用、媒体不自动晋升、聊天上传后刷新资料库查询。
+
+不做：不把图片做 FastEmbed 文本索引；不把 ZIP/PPT/PPTX 送入模型；不改资料库分片上传协议；不引入第二套资产表。
+
+验收：定向回归、全量回归、类型检查、改动文件 lint；真实桌面验证聊天上传文本/PDF 后出现在“文档目录”并从“会话附件”仍可引用，图片仍只在会话附件，索引失败可见且可重试。
+
+本轮验证结果（2026-09-21）：定向附件回归 16/16、全量回归 50/50、`pnpm run typecheck`、改动文件 Biome lint、`git diff --check` 均通过。未执行生产安装包构建；开发服务保持运行。仍需真实桌面确认文档目录出现、会话附件引用和索引状态刷新。
+
+## 2026-09-21：附件语义与能力边界修补（当前批次）
+
+状态：代码修补完成，静态/自动化验证通过；等待真实桌面回归；不重打包、不推送。
+
+- 附件动作若渲染为链接，显式关闭 Base UI 的 `nativeButton`，避免运行时语义告警；普通复制按钮继续保留原生按钮语义。
+- 消息气泡的 `ContextMenuTrigger` 使用 Base UI 原生 `div` 触发器，不额外伪造按钮属性；本批只修复已在源码栈中确认的 `AttachmentAction` 链接按钮告警。
+- 资料库上传菜单增加能力说明；“未建立文本索引”改成“已保存，未建立文本索引”，区分存储成功与索引能力边界。
+- 不改变 FastEmbed 文本向量策略，不放开 ZIP/PPT/PPTX 到模型原生输入；后续若需要技能包导入，另立协议和验收项。
+
+验收门槛：附件定点回归新增原生语义和能力提示断言；三套 typecheck、改动文件 Biome、`git diff --check`；随后用户复测附件打开/下载、资料库上传和不支持格式提示。
+
+验证证据（2026-09-21）：附件定点回归 14/14、全量回归 48/48、`pnpm run typecheck`、改动文件 Biome lint、`git diff --check` 均通过；`mastra build --force` 与 `electron-vite build` 通过。普通 `pnpm run build` 首次被正在运行的 dev server（PID 31260）保护性阻止，未杀用户进程，改用显式 `--force` 完成生产构建。构建仅保留已知 Node engine、package-lock fallback 和 `INEFFECTIVE_DYNAMIC_IMPORT` 警告。
+
+真实桌面验收仍由用户执行：重启开发服务后，验证附件打开/下载、资料库上传、图片/未知格式提示，并确认 Base UI `nativeButton` 告警不再出现。本轮未宣称 React 更新深度、鼠标/滚动卡顿或长任务流恢复已解决。
+
+## 2026-09-21：双路调研后第一批修复结果
+
+状态：定向修复完成，等待真实桌面回归；不重打包、不推送。
+
+- `src/main/index.ts` 的 `img-src` 已精确加入 `${MASTRA_SERVER_URL}`，闭合资料库图片 URL 的 CSP 回归，不放开通配符。
+- `src/mastra/agents/processors.ts` 在输入处理和 provider 边界拦截空 MIME/`application/octet-stream`；只把未知文件转为明确提示，识别出的图片/音频及已有文本/资产路径不变。即使没有 `resourceId`，未知 MIME 也不会继续下发。
+- `normalizeTraceParts` 在助手轨迹最后渲染边界按有效 `toolCallId` 保留最新快照；空/非法 ID 不合并，避免重连脏数据互相覆盖。
+- PromptInput 宽度测量改为脱离布局流的克隆节点 + `requestAnimationFrame`，不再在 `ResizeObserver` 回调中改写被观察节点；相同宽度不重复上报，降低 observer/layout 反馈环风险。
+
+证据：附件定点回归 12/12、全量回归 46/46、三套 typecheck、`git diff --check` 通过；新增行为级测试覆盖未知 MIME 分类和空 toolCallId。全仓 `pnpm run lint` 仍被工作树已有 `.agent/core-patch` 生成文件及 CRLF/大批非本轮格式诊断阻断，未把它计为本批通过。
+
+未宣称：真实桌面 React 更新深度、鼠标/滚动流畅度、长任务流恢复和多供应商实机行为仍需重启开发态后手测；本批没有构建安装包。
+
+## 2026-09-21：双路调研结果（仅审查，不改业务代码）
+
+### 源码审查结论
+
+- **P1 / 当前分支明确问题**：renderer CSP 的 `img-src` 未包含 `http://localhost:4111`，而资料库图片 URL 正是该来源；报告中的浏览器阻断与 [src/main/index.ts:306](../src/main/index.ts:306) 直接对应。该行由 `6a1f493b` 引入，属于本次改动造成的回归候选。
+- **P1 / 上游缺口 + 当前边界未封口**：`application/octet-stream` 仍可从文件引用/未知 MIME 进入 OpenAI-compatible provider。AI SDK 会拒绝该 file part；当前处理器只覆盖可识别的资料库资产形状，不能把所有原始 FileUIPart 当成可发送媒体。
+- **P1 / 当前修复不完整**：`normalizeAgentTools` 和队列最后一道去重已存在，但报告仍出现原始 `toolCallId` 重复 key，说明重复数据可能在更早的消息/trace 投影或另一层列表产生；不能再加无证据的第三层去重。
+- **P1 / 上游布局反馈环候选**：PromptInput 的 ResizeObserver→Zustand `promptMinWidth`→AppShell `chatMinWidth` 链路来自较早上游代码；它不是 `6a1f493b` 首次引入，但报告已证明当前运行时发出 loop warning，应通过帧级测量计数与滚动性能取证后再决定是否改。
+- **P2 / 错误边界**：空工作区导致 `Thread has no browsable workspace` 属于测试前置条件；renderer 仍把错误和非预期响应冒泡为未捕获 Promise/ZodError，是真实 UX 缺陷。
+- **P2 / 语义警告**：`MessageItem` 上的 Base UI `nativeButton` 警告需要修，但目前没有证据表明它是卡顿根因。
+
+### 外部方案调研结论
+
+- Mastra durable agents 用 `runId`、PubSub、事件缓存和 `observe(runId)` 支持断线续接；长任务应由后端继续运行，renderer 只重连和投影，不重新提交用户消息。
+- Vercel/Cloudflare/Anthropic/LangGraph 的共同边界是：事件带唯一 ID/序号，重连按游标补发，客户端按 `eventId → toolCallId → messageId` 分层幂等。
+- AI SDK 文件上传契约要求显式且正确的 `mediaType`；流式字节无法 sniff 时会回退为 `application/octet-stream`。OpenAI-compatible provider 不应被假设支持任意文件 part。
+- ResizeObserver 官方建议避免回调内形成同步布局反馈环；必要时使用 `requestAnimationFrame`/节流，并区分“测量”与“写布局”。
+
+### 下一步顺序
+
+1. 先做附件能力矩阵：可上传、可预览、可索引、可注入模型分别记录；覆盖 txt/md/pdf/docx/xlsx/csv/pptx/zip/图片/音频/视频/未知二进制。
+2. 最小修复 CSP 和 provider MIME 边界，并为每个失败保留请求/响应证据。
+3. 增加运行时事件日志（runId/eventId/toolCallId/messageId），定位重复 key 的第一生产点，再修消息投影。
+4. 对 ResizeObserver 做 60 秒桌面 TRIAL，记录 loop 次数、帧响应、鼠标和滚动；未证实前不盲改布局。
+5. 最后再做 durable/resume 方案评估，不在当前阶段直接引入外部队列或 Redis。
+
+外部依据：Mastra Durable Agents、AI SDK File Uploads、Vercel AI SDK Resume Streams；本轮只完成调研和归因，未构建、未打包、未推送。
+
+## 当前执行结果（2026-09-21）
+
+已完成附件边界的第一步确定性修复与门禁：混合选择时不再静默丢弃不支持的文件，而是列出被拒绝的文件名；ZIP/PPT/PPTX 仍明确不进入聊天模型输入，资料库保留与模型可注入能力分开验证。新增 `scripts/test-library-attachment-regressions.mjs`，覆盖 6 项附件契约与边界断言。
+
+本地证据：附件定点测试 6/6、全量回归 40/40、三套 typecheck 通过、Biome lint（改动文件）通过、`git diff --check` 通过。pnpm 仅报告 Node/pnpm engine warning；本轮没有构建、安装包或推送。
+
+长任务主阻断仍未关闭：React 更新深度错误、鼠标/滚动卡顿和长任务记录停更尚未取得同一时间窗的 renderer/Mastra/SSE 原始证据，因此暂不继续扩大业务补丁。下一步是让用户重启开发态后跑固定短/长任务，回传时间、线程 URL、截图和三类日志，再按官方“可恢复流 + runId/rejoin + 持久化快照”模式定位事件重复或渲染压力。
+
+## 2026-09-21：长任务稳定性与附件能力边界（当前执行批次）
+
+状态：执行中；不重打包、不推送、不扩大模型能力声明。
+
+复杂度/风险/动作：`C2 + R-runtime + R-protocol + R-ui + A0`。本批跨 renderer、SSE/任务状态和资料库附件协议；先做确定性 UX 修复，再以真实证据定位长任务更新循环。
+
+### 已确认的设计参考
+
+- OpenAI Agents SDK：必须等待 `stream.completed`，取消/续跑复用原 `state`。
+- Vercel AI SDK：长流需要持久化 stream，刷新或断线按 chat/run 标识恢复。
+- LangChain join/rejoin：服务端继续执行，客户端用 `run_id` 重新加入并补收事件。
+- 本仓库 Mastra durable-agent 文档：用 checkpoint、PubSub、`observe(runId)` 和持久化快照承载长任务。
+
+这些是约束和参考，不直接复制另一套运行时。当前旧问题仍是主阻断：`Maximum update depth exceeded`、鼠标/滚动卡顿、长任务记录停止更新；已有消息去重/限频/快照合并只算局部缓解，不能宣称已解决。
+
+### 执行顺序
+
+1. **上传边界（本轮先落地）**：混合选择时明确列出被拒绝文件名和原因；保留 ZIP/PPT 等不具备模型解析链路的类型为明确“不支持”，不静默丢弃。
+2. **上传回归矩阵**：覆盖文本/代码、PDF/DOCX/XLSX/CSV、图片、音频、视频、ZIP、PPTX 和未知二进制，分别记录可上传、可预览、可索引、可注入模型四种结果。
+3. **长任务证据**：以一次短工具链和一次长工具链为固定输入，采集 renderer/main/Mastra 同一时间窗的首个重复 `toolCallId`、首个 `Maximum update depth`、SSE 终态和快照状态；先找到根因再改。
+4. **最小流式修复**：若根因是事件重复，按 `eventId → toolCallId → messageId` 分层幂等；若根因是渲染压力，继续沿用缓冲/限频并减少已完成轨迹 DOM，不新增第二套消息事实源。
+5. **验收**：静态回归 + 类型检查后，真实桌面连续 3 次长任务必须满足：无 React 更新深度错误、无重复 key、任务记录实时更新、无需切换会话、鼠标和滚动可用；附件矩阵中每一类必须给出明确结果。
+
+### 本批非目标
+
+- 不继续瘦身安装包、不重打包、不推送/force-push。
+- 不把“余额不足导致的 `network error`”当作本地 React 卡顿根因。
+- 不在没有解析器和安全边界的情况下放开 ZIP/PPT 等文件到模型原生输入。
+
+## 2026-09-21：资料库附件 401 与首条上传跳页修复（当前批次）
+
+状态：定向修复完成，等待真实桌面回归；不重打包、不推送。
+
+证据：后台日志显示 `DOWNLOAD_ASSETS_FAILED`，Mastra 服务端访问
+`/work/library/assets/:assetId/content?resourceId=...` 返回 401；该 URL 是渲染层带用户会话使用的受保护地址，服务端模型下载器没有浏览器 Authorization。与此同时，首条消息在附件持久化和模型请求前就创建并选中新线程，失败后用户看到空白/新页面。
+
+修复：修正 `libraryAttachmentProcessor`，同时识别 Mastra 的 `content: [...]` 与 `content: { parts: [...] }` 两种输入形状，并兼容 `data/url/image` 载荷；处理器在框架下载资源前把文本/媒体转换为模型可用内容，不改写原始消息历史。新线程首条消息带附件时延后路由选择，上传成功后才切换；无附件首条消息保持原行为。
+
+回归：新增 `scripts/test-library-attachment-regressions.mjs`，验证服务端预解析、首条附件延后切换和资源 URL 边界；`pnpm run typecheck`、`pnpm run test:regression`（37/37）与 `git diff --check` 通过。仍需用户在开发态上传一个文档并发送“生成技能包”验证真实流；若仍中断，保留时间、线程 URL、renderer/主进程日志。
+
 ## 2026-09-21：成果冻结与基线修复（当前批次）
 
 状态：成果已冻结为本地提交；进入专项修复；不推送、不 force-push、不重打包。

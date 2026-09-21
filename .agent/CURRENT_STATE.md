@@ -1,5 +1,54 @@
 # 工程问题修复当前状态
 
+## 2026-09-21：聊天文档与长期资料库语义对齐（当前批次）
+
+- Goal：让可解析的聊天文档同时进入长期资料库和当前会话，消除“已上传但默认文档目录看不到”的语义错位。
+- Boundary：图片/音频/视频保持会话附件；ZIP/PPT/PPTX 仍仅保存或不进入聊天模型输入；FastEmbed 仍只处理抽取文本。
+- Phase：已完成源码审查和计划，准备实施后端双引用与前端查询失效。
+- Acceptance：文本/PDF/Word/Excel 聊天上传后在文档目录可见、索引状态实时更新；同一文件在会话附件仍可引用；媒体和不支持格式行为不变。
+- Blocker：真实桌面验收尚未执行。
+
+验证结果：定向附件回归 16/16、全量回归 50/50、`pnpm run typecheck`、改动文件 Biome lint、`git diff --check` 通过。未重打包，开发服务未停止；下一步由用户在桌面端上传文本/PDF 并确认“文档目录”和“会话附件”两处均符合预期。
+
+## 2026-09-21：附件语义与能力边界修补（当前批次）
+
+- 已改：`AttachmentAction` 在渲染 `<a>` 时传递 `nativeButton=false`；消息气泡继续使用 Base UI 原生 `div` ContextMenuTrigger，不伪造按钮属性。
+- 已改：资料库上传菜单说明文本/图片/ZIP/PPT 的存储、索引和模型注入边界；unsupported 状态明确标注“已保存，未建立文本索引”。
+- 未改：FastEmbed、图片不建文本向量索引、ZIP/PPT/PPTX 解析器和技能包导入协议；这些属于产品能力边界，不在本批扩大范围。
+- 已验收：附件定点回归 14/14、全量回归 48/48、`pnpm run typecheck`、改动文件 Biome lint、`git diff --check`、`mastra build --force` 与 `electron-vite build` 均通过。
+- 待验收：真实桌面附件操作；本批不重打包、不推送。普通 `pnpm run build` 曾因 dev server PID 31260 被保护性阻止，未杀进程；显式 `--force` 构建成功。
+- 已知非阻断警告：Node engine 版本、package-lock fallback、`INEFFECTIVE_DYNAMIC_IMPORT`；未把它们当成业务失败。
+
+## 2026-09-21：双路调研第一批修复检查点
+
+- 已修复：CSP 精确允许 `http://localhost:4111` 资料库图片；未知/缺失 MIME 在输入与 provider 边界转为明确提示；助手轨迹对有效 `toolCallId` 去重并保留最新状态，空 ID 不合并；PromptInput 宽度测量改为克隆节点测量并按帧调度，避免观察目标自激。
+- 证据：附件定点测试 12/12、全量回归 46/46、`pnpm run typecheck`、`git diff --check` 通过；行为级测试直接执行 MIME helper 和 trace normalizer。
+- 仍待真实桌面：重启开发服务后验证图片、未知附件、重复工具重连、长任务滚动/鼠标和流结束；未重打包、未推送。
+- 全仓 lint 的失败来自已有 `.agent/core-patch` 生成产物以及工作树 CRLF/非本轮格式诊断，不据此修改无关文件。
+
+## 2026-09-21：双路调研检查点
+
+- 状态：完成源码审查与外部方案调研，未修改业务代码。
+- 已确认的当前分支回归候选：CSP `img-src` 未允许 Mastra 资源源；对应 `src/main/index.ts:306`，由 `6a1f493b` 引入。
+- 已确认的协议缺口：未知/缺失 MIME 可能以 `application/octet-stream` 进入 OpenAI-compatible provider；需要在 provider 边界阻断或转文本，不把“已上传”宣称为“可发送”。
+- 已确认的未闭环项：重复 `toolCallId` 的第一生产点、ResizeObserver loop 与实际卡顿的因果、空工作区 API 错误边界、其他文件类型的预览/索引/模型注入能力。
+- 外部可借鉴模式：Mastra durable agent 的 `runId + observe + PubSub/cache`；Vercel/Cloudflare/Anthropic/LangGraph 的事件 ID/游标重连与分层幂等；AI SDK 的显式 MIME/Provider file contract。
+- 下一步：先做附件矩阵和运行时事件证据，再实施最小 CSP/MIME 修复；不直接引入 durable 基础设施，不重打包、不推送。
+
+## 2026-09-21：附件边界第一步执行结果
+
+- 已执行：混合附件选择现在会报告每个被拒绝文件名，不再只保留可接受文件而静默丢弃；没有解析器的 ZIP/PPT/PPTX 继续保持明确“不支持”，不扩大模型能力声明。
+- 证据：`scripts/test-library-attachment-regressions.mjs` 6/6；`pnpm run test:regression` 40/40；`pnpm run typecheck` 通过；改动文件 Biome lint 通过；`git diff --check` 通过。
+- 类型检查中发现的 `processors.ts` 角色判断错误已按 `LanguageModelV2Prompt` 的真实 role union 做最小修正；Mastra 持久化 `signal` 只在前置消息处理阶段兼容，未把不可能的 role 强塞进 provider prompt。
+- 未宣称：桌面端 React 崩溃、鼠标/滚动卡顿、长任务停更仍未被这轮静态/隔离回归证明解决；未构建、未安装、未推送。
+- 下一步：用户重启开发服务后执行固定短任务和长工具链，收集同一时间窗的 renderer console、主进程/Mastra 日志与截图；先定位首个重复 `toolCallId`/SSE 终态/`Maximum update depth`，再做最小修复。
+
+## 2026-09-21：资料库附件 401 与首条上传跳页修复
+
+- 根因：浏览器消息中保存的资料库附件 URL 受 `/work/*` 认证保护；Mastra core 的服务端 asset downloader 不带浏览器 Authorization，收到 URL 后返回 401，最终表现为模型 fallback exhausted。首条带附件发送又先创建并选中新线程，导致失败看起来像页面刷新/跳转。
+- 修复：`libraryAttachmentProcessor` 兼容 Mastra 两种消息形状，并在框架资源下载前把资料库 URL 转为文本或 `data:` 媒体；首条带附件消息的线程选择延后到上传成功，原始附件历史不被展开内容替换。
+- 证据：`pnpm run typecheck` 通过；`pnpm run test:regression` 37/37 通过；新增 `scripts/test-library-attachment-regressions.mjs`；未重打包、未推送，仍待真实桌面附件回归。
+
 ## 2026-09-21：成果冻结与基线修复（当前阶段）
 
 - Goal：固定当前改进成果，拆分本地可回滚提交，并在同一基线上修复长任务中断/页面卡顿。
@@ -162,3 +211,14 @@ P1-SOURCE-ACCEPTANCE：安装包体积收敛按用户要求暂停；当前等待
 - 已新增 DeepSeek request transform 回归用例；`pnpm run typecheck` 通过，`pnpm run test:regression` 现为 31/31 通过。
 - 已停止占用 `4111` 的旧 dev server，完成一次干净 `pnpm run build`（成功，保留非致命 Vite dynamic import 与 Node 版本警告），随后重新启动 `pnpm run dev`；当前 `4111/health` 返回 200，renderer `http://[::1]:5173/` 返回 200。
 - 仍未宣称真实桌面长任务已通过：CUA/browser-harness 当前不可用，必须由用户在重启后的窗口执行一次最小工具调用和一次长工具链；若再次失败，应以新的主进程日志和错误时间窗继续定位，而不是重复全量扫。
+## 2026-09-21：稳定性与附件能力边界批次
+
+- Goal：先解决长期反复的长任务/React 卡顿问题，再完整核对所有附件类型；不再用新问题覆盖旧问题。
+- Product core：保留工具链、长任务后台执行、消息实时更新和本地资料库能力；不以修复为由缩减能力。
+- Decision：参考 OpenAI Agents、Vercel AI SDK、LangChain 的 durable run、事件游标、断线重连和稳定 ID 模式；先证据定位，禁止盲目叠加去重层。
+- Implemented this turn：建立当前执行计划；尚未新增业务代码。
+- Confirmed upload boundary：聊天白名单只包含文本/代码、PDF/DOCX/XLS/XLSX，按模型能力可选图片/音频；ZIP/PPTX/视频等仍存在上传后不可索引或不可注入模型的缺口。
+- Main blocker：`Maximum update depth exceeded`、鼠标/滚动卡顿、长任务记录停止更新仍未真实桌面闭环。
+- Verification required：混合文件选择不能静默丢弃；附件矩阵必须区分可上传/可预览/可索引/可注入；长任务连续 3 次无需切换会话即可更新。
+- Non-goals：不重打包、不推送、不继续安装包瘦身、不扩大 ZIP/PPT 等模型能力声明。
+- Next：先提交混合文件拒绝提示和附件矩阵回归；随后用固定长任务样本采集 renderer/main/Mastra 同时间窗证据，再做最小流式修复。

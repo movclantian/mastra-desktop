@@ -142,6 +142,10 @@ function AttachmentAction({
       size={size}
       className={cn(className)}
       {...props}
+      // Base UI renders a native <button> by default. Attachment actions may
+      // deliberately render an <a> for open/download, so opt out explicitly
+      // instead of producing a runtime nativeButton warning.
+      nativeButton={props.render ? false : props.nativeButton}
     />
   );
 }

@@ -133,6 +133,8 @@ export interface CreateThreadOptions {
   title?: string;
   /** 提交瞬间的模式快照，避免新线程创建与输入栏切换发生竞态。 */
   modeId?: WorkModeId;
+  /** 首条附件上传完成前暂不切换路由，避免失败时把用户带到空白线程。 */
+  deferSelection?: boolean;
 }
 
 /** 新建线程:默认值取自 sessionDraft store(原 getThreadDefaults ref) */
@@ -160,9 +162,11 @@ export function useCreateThreadMutation(userId: string) {
         },
       });
     },
-    onSuccess: (thread) => {
+    onSuccess: (thread, input) => {
       void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
-      selectThread(thread.id);
+      if (typeof input !== "object" || input?.deferSelection !== true) {
+        selectThread(thread.id);
+      }
     },
   });
 }

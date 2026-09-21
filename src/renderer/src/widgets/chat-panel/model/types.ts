@@ -126,6 +126,39 @@ export interface AgentToolState {
 export type MessagePart = UIMessage["parts"][number];
 export type TracePart = Extract<MessagePart, { type: "reasoning" }> | ToolPart;
 
+/**
+ * A reconnect can replay several snapshots of one tool invocation into the
+ * same assistant message. Keep the first position (so reasoning order stays
+ * stable), but render only the latest snapshot for each toolCallId. Parts
+ * without a tool id are never coalesced.
+ */
+export function normalizeTraceParts(parts: TracePart[]): TracePart[] {
+  const result: TracePart[] = [];
+  const toolPositions = new Map<string, number>();
+  for (const part of parts) {
+    if (!isToolUIPart(part)) {
+      result.push(part);
+      continue;
+    }
+    const toolCallId =
+      typeof part.toolCallId === "string" && part.toolCallId.trim().length > 0
+        ? part.toolCallId
+        : undefined;
+    if (!toolCallId) {
+      result.push(part);
+      continue;
+    }
+    const position = toolPositions.get(toolCallId);
+    if (position === undefined) {
+      toolPositions.set(toolCallId, result.length);
+      result.push(part);
+    } else {
+      result[position] = part;
+    }
+  }
+  return result;
+}
+
 export type AssistantSegment =
   | { key: string; text: string; type: "text" }
   | { key: string; parts: TracePart[]; type: "trace" }
@@ -1158,7 +1191,11 @@ export function getAssistantSegments(
 
   const flushTrace = () => {
     if (traceParts.length > 0) {
-      segments.push({ key: `trace-${segments.length}`, parts: traceParts, type: "trace" });
+      segments.push({
+        key: `trace-${segments.length}`,
+        parts: normalizeTraceParts(traceParts),
+        type: "trace",
+      });
       traceParts = [];
     }
   };
