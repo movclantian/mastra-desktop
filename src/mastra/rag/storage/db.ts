@@ -246,6 +246,7 @@ export function rowToAsset(row: Record<string, unknown>): LibraryAsset {
     resourceId: String(row.resource_id),
     folderIds: [],
     threadIds: [],
+    hasLibraryReference: false,
     filename: String(row.filename),
     mediaType: String(row.media_type),
     byteSize: Number(row.byte_size),

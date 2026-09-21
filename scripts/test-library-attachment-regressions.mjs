@@ -177,6 +177,14 @@ test("chat document uploads retain the thread ref and promote extractable files"
   assert.match(route, /promoteToLibrary,/);
   assert.match(assets, /input\.promoteToLibrary && isExtractable\(asset\.filename, asset\.mediaType\)/);
   assert.match(assets, /input\.promoteToLibrary && extractable && input\.threadId/);
+  assert.match(assets, /asset\.hasLibraryReference = libraryAssetIds\.has\(asset\.id\)/);
+});
+
+test("promoted chat documents remain visible in the document directory", () => {
+  const page = read("src/renderer/src/pages/library/ui/knowledge-library-page.tsx");
+  const types = read("src/renderer/src/entities/library/model/types.ts");
+  assert.match(page, /asset\.hasLibraryReference/);
+  assert.match(types, /hasLibraryReference: boolean/);
 });
 
 test("chat upload invalidates the shared library query", () => {

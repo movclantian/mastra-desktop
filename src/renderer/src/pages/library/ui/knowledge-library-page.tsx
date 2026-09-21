@@ -209,6 +209,7 @@ export function KnowledgeLibraryPage({
       return assets.filter(
         (asset) =>
           asset.folderIds.some((id) => documentFolderIds.has(id)) ||
+          asset.hasLibraryReference ||
           (asset.folderIds.length === 0 && asset.threadIds.length === 0),
       );
     }

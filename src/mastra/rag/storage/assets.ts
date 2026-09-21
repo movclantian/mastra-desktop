@@ -152,6 +152,7 @@ async function storeAsset(
       resourceId: input.resourceId,
       folderIds: input.folderId ? [input.folderId] : [],
       threadIds: input.threadId ? [input.threadId] : [],
+      hasLibraryReference: Boolean(input.promoteToLibrary && extractable && input.threadId),
       filename: normalized,
       mediaType,
       byteSize: source.byteSize,
@@ -261,10 +262,12 @@ export async function listAssets(resourceId: string, threadId?: string): Promise
 
   const folderMap = new Map<string, Set<string>>();
   const threadMap = new Map<string, Set<string>>();
+  const libraryAssetIds = new Set<string>();
   for (const ref of refRows) {
     const assetId = String(ref.asset_id);
     const folderId = String(ref.folder_id || "");
     const thread = String(ref.thread_id || "");
+    if (!folderId && !thread) libraryAssetIds.add(assetId);
     if (folderId) {
       if (!folderMap.has(assetId)) folderMap.set(assetId, new Set());
       folderMap.get(assetId)?.add(folderId);
@@ -279,6 +282,7 @@ export async function listAssets(resourceId: string, threadId?: string): Promise
     const asset = rowToAsset(row);
     asset.folderIds = Array.from(folderMap.get(asset.id) ?? []);
     asset.threadIds = Array.from(threadMap.get(asset.id) ?? []);
+    asset.hasLibraryReference = libraryAssetIds.has(asset.id);
     const run = runsMap.get(asset.id);
     if (run) {
       asset.indexAttempt = run.attempt;

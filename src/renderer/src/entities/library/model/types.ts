@@ -5,6 +5,7 @@ export interface LibraryAsset {
   resourceId: string;
   folderIds: string[];
   threadIds: string[];
+  hasLibraryReference: boolean;
   filename: string;
   mediaType: string;
   byteSize: number;

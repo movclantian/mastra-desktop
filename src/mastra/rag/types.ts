@@ -104,6 +104,8 @@ export interface LibraryAsset {
   resourceId: string;
   folderIds: string[];
   threadIds: string[];
+  /** True when the asset has a global (non-thread) library reference. */
+  hasLibraryReference: boolean;
   filename: string;
   mediaType: string;
   byteSize: number;
