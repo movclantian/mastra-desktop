@@ -103,6 +103,30 @@ import {
 } from "./";
 import type { WorkflowRunAction } from "./agent-panels";
 
+const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+function mergeBackgroundTaskSnapshot(
+  current: BackgroundTaskState[],
+  snapshot: BackgroundTaskState[],
+): BackgroundTaskState[] {
+  const currentById = new Map(current.map((task) => [task.id, task]));
+  return snapshot.map((task) => {
+    const previous = currentById.get(task.id);
+    // A terminal SSE event can arrive just before persistence commits. Do not
+    // let that older running snapshot visibly reopen a completed task.
+    return previous &&
+      TERMINAL_BACKGROUND_TASK_STATUSES.has(previous.status) &&
+      !TERMINAL_BACKGROUND_TASK_STATUSES.has(task.status)
+      ? previous
+      : task;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // 官方 MessageScroller 命令式滚动驱动器 (负责跨会话/搜索结果跳转)
 // ---------------------------------------------------------------------------
@@ -579,7 +603,9 @@ export function ChatPanel() {
       const nextTasks = displayState?.tasks ?? [];
       setTasks((current) => (areTasksEqual(current, nextTasks) ? current : nextTasks));
       setPersistedInteractions(displayState?.suspendedRuns ?? []);
-      setBackgroundTasks(displayState?.backgroundTasks ?? []);
+      setBackgroundTasks((current) =>
+        mergeBackgroundTaskSnapshot(current, displayState?.backgroundTasks ?? []),
+      );
       setWorkflowRuns(displayState?.workflowRuns ?? []);
       setTaskSnapshotLoaded(Boolean(displayState));
       return displayState;
@@ -821,13 +847,52 @@ export function ChatPanel() {
   // this global status lane.
   React.useEffect(() => {
     if (!activeThreadId) return;
-    return subscribeBackgroundTaskStream(activeThreadId, user.id, (task) => {
-      setBackgroundTasks((current) => [task, ...current.filter((entry) => entry.id !== task.id)]);
-      // A background task can update the persistent task list after the
-      // foreground chat stream has already settled. Pull that snapshot once
-      // per lifecycle event so the task card does not wait for navigation.
-      void reloadDisplayState();
+    const pendingTasks = new Map<string, BackgroundTaskState>();
+    let taskFlushTimer: number | undefined;
+    let displayStateRefreshTimer: number | undefined;
+
+    const flushTasks = () => {
+      taskFlushTimer = undefined;
+      if (pendingTasks.size === 0) return;
+      const updates = [...pendingTasks.values()];
+      pendingTasks.clear();
+      setBackgroundTasks((current) => {
+        let next = current;
+        for (const task of updates) {
+          next = [task, ...next.filter((entry) => entry.id !== task.id)];
+        }
+        return next;
+      });
+    };
+
+    const scheduleDisplayStateRefresh = () => {
+      if (displayStateRefreshTimer !== undefined) return;
+      // Output chunks are already represented by the SSE task state. Only
+      // refresh the durable snapshot at a low rate, otherwise a long-running
+      // tool turns every output chunk into a fetch + React tree update.
+      displayStateRefreshTimer = window.setTimeout(() => {
+        displayStateRefreshTimer = undefined;
+        void reloadDisplayState();
+      }, 500);
+    };
+
+    const unsubscribe = subscribeBackgroundTaskStream(activeThreadId, user.id, (task) => {
+      pendingTasks.set(task.id, task);
+      if (taskFlushTimer === undefined) {
+        taskFlushTimer = window.setTimeout(flushTasks, 120);
+      }
+      // The 1200ms foreground poll covers running/output updates. A durable
+      // refresh is needed when a task leaves the running state so the final
+      // result/interaction snapshot is visible without navigating away.
+      if (task.status !== "running") scheduleDisplayStateRefresh();
     });
+
+    return () => {
+      unsubscribe();
+      if (taskFlushTimer !== undefined) window.clearTimeout(taskFlushTimer);
+      if (displayStateRefreshTimer !== undefined) window.clearTimeout(displayStateRefreshTimer);
+      pendingTasks.clear();
+    };
   }, [activeThreadId, reloadDisplayState, user.id]);
   // 同步到 workbench:设置页(存储位置迁移会重启服务)据此判断是否需要二次确认
   React.useEffect(() => {

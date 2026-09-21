@@ -136,8 +136,18 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
   const typescriptSandbox = name === "execute_typescript";
   const commandSandbox = name === "mastra_workspace_execute_command";
   const sandboxTool = typescriptSandbox || commandSandbox;
-  const [open, setOpen] = React.useState(sandboxTool);
   const active = getTraceStepStatus(part) === "active";
+  // Keep a live command visible while it is running, but do not mount every
+  // completed command's code editor and output log in a long tool chain.
+  // Details remain available through the existing collapsible trigger.
+  const [open, setOpen] = React.useState(() => sandboxTool && active);
+  const wasActiveRef = React.useRef(active);
+  React.useEffect(() => {
+    if (!sandboxTool) return;
+    if (active) setOpen(true);
+    else if (wasActiveRef.current) setOpen(false);
+    wasActiveRef.current = active;
+  }, [active, sandboxTool]);
   const failed = part.state === "output-error";
   const errorText = "errorText" in part ? part.errorText : undefined;
   const hasInput = part.input !== undefined;

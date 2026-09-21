@@ -2,7 +2,7 @@
 
 ## 2026-09-21：成果冻结与基线修复（当前批次）
 
-状态：先冻结成果，后修复；不推送、不 force-push、不重打包。
+状态：成果已冻结为本地提交；进入专项修复；不推送、不 force-push、不重打包。
 
 复杂度/风险/动作：`C2 + R-runtime + R-protocol + R-ui + A0/A1`。本批涉及跨模块运行态、流协议和用户体验；本地提交用于可回滚里程碑，远端 push 仍需 Owner 单独授权。
 
@@ -10,9 +10,17 @@
 
 当前调用链证据：后台 SSE `background-task-output` → `ChatPanel` 事件回调 → `reloadDisplayState()` → Query 请求与多组 React state 更新；消息流更新同时触发 `buildDisplayMessages(messages)` 和长工具轨迹渲染。该路径先做定量/针对性验证，再决定修复范围。
 
-成果分组与提交顺序见 [docs/push-overview.md](../docs/push-overview.md)。冻结前只做文档和版本控制整理，不改业务逻辑。
+成果分组与提交顺序见 [docs/push-overview.md](../docs/push-overview.md)。冻结前只做文档和版本控制整理，不改业务逻辑；冻结后新增修复必须进入独立提交并可单独回滚。
 
 验收：冻结提交可从基线单独回滚；`pnpm run typecheck`、`pnpm run test:regression`、`git diff --check` 通过；卡顿/中断专项修复必须有对应回归；静态测试不能替代桌面 TRIAL。
+
+当前冻结提交：`0d571f0`（审计工件）、`b030954`（推送概览）、`6a1f493`（产品/运行时）、`0b42216`（测试/发布门禁）。
+
+专项修复顺序：
+
+1. 先移除后台输出事件到 display-state 的逐事件请求，按终态/限频刷新，并批量提交任务卡 UI 状态。
+2. 再降低已完成工具轨迹的默认 DOM 负载，保留手动展开能力。
+3. 用专项回归和类型检查验证；若仍有卡顿，再从消息投影/长 Markdown 渲染切入，不扩大修改面。
 
 ## 2026-09-21：批准卡死与长任务记录停滞（当前批次）
 

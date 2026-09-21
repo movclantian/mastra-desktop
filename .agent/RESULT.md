@@ -9,6 +9,14 @@
 - Known issues：后台 SSE 输出事件会进入前端状态刷新路径；消息列表和工具输出可能形成高渲染负载；这只是待验证根因，不是已修复结论。
 - Evidence refs：`docs/push-overview.md`、`.agent/PLAN.md`、`.agent/CURRENT_STATE.md`。
 
+## 2026-09-21：长任务卡顿/中断专项修复（待桌面 TRIAL）
+
+- State：修复已完成，尚未推送；在冻结提交 `0b42216` 之后形成独立工作树改动。
+- Changed：后台任务 SSE output 不再逐事件调用 `reloadDisplayState()`；任务卡状态以 120ms 批量刷新；终态以 500ms 有界持久化刷新；终态状态对 stale running snapshot 单调保护；完成的 sandbox 工具详情默认收起、运行中保持可见。
+- Verification：Biome 通过；`pnpm run typecheck` 通过；`pnpm run test:regression` 34/34 通过；`git diff --check` 通过；本机 5173 renderer 和 4111 `/health` 均返回 200。
+- Runtime evidence：当前没有可附着的用户桌面浏览器/长任务时间窗；CUA/browser-harness 不可用，因此只能标记 partial，不能声称鼠标卡顿或流中断已在真实桌面消失。
+- Known issues：长消息投影和富文本渲染仍可能是第二级负载来源；若用户复测仍卡顿，下一轮只针对该调用链取证，不回退到全库盲改。
+
 ## 2026-09-21：批准卡死与长任务记录停滞（验证中）
 
 根因已由 fresh-context review 与源码调用链交叉确认：UI busy 生命周期错误、重连流生命周期参数丢失、后台任务重放计数缺口，以及前台流结束后的任务快照刷新缺口。当前工作树已完成最小定向修复；测试结果将在本节追加。此批不包含安装包、推送或安全/体积改动。
