@@ -141,7 +141,10 @@ jobs:
         run: pnpm run clean:package
 
       - name: Package installer
-        run: pnpm exec electron-builder ${{ matrix.builder_args }}
+        # electron-builder auto-publishes when invoked from a tag. Release assets
+        # are published by the dedicated release job below, so keep packaging
+        # side-effect free and avoid requiring GH_TOKEN in build runners.
+        run: pnpm exec electron-builder ${{ matrix.builder_args }} --publish never
 
       - name: Verify packaged artifacts
         env:
