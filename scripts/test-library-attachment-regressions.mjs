@@ -176,6 +176,7 @@ test("chat document uploads retain the thread ref and promote extractable files"
   assert.match(route, /parsed\.fields\.promoteToLibrary === "true"/);
   assert.match(route, /promoteToLibrary,/);
   assert.match(assets, /input\.promoteToLibrary && isExtractable\(asset\.filename, asset\.mediaType\)/);
+  assert.match(assets, /asset\.hasLibraryReference = true/);
   assert.match(assets, /input\.promoteToLibrary && extractable && input\.threadId/);
   assert.match(assets, /asset\.hasLibraryReference = libraryAssetIds\.has\(asset\.id\)/);
 });

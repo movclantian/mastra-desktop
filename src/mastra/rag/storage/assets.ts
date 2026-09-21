@@ -72,6 +72,7 @@ async function storeAsset(
     const asset = rowToAsset(existingRow);
     if (input.promoteToLibrary && isExtractable(asset.filename, asset.mediaType)) {
       await attachAssetReference(input.resourceId, asset.id);
+      asset.hasLibraryReference = true;
     }
     await attachAssetReference(input.resourceId, asset.id, input.folderId, input.threadId);
     return asset;
