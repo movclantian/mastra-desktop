@@ -43,16 +43,18 @@
 
 ## 本地里程碑建议
 
-1. `chore: freeze audited desktop improvements`：冻结 A/B/C 的源码、测试、门禁和文档成果。
-2. `fix: stabilize long-task stream and renderer workload`：只处理本轮新增的中断/卡顿证据；必须有专项回归和 fresh-context review。
-3. `docs: record release and manual acceptance`：在真实桌面手测后补充最终结果；未通过时保留 `partial`，不改成 PASS。
+1. `0d571f0` + `b030954`：冻结审计交接文档和推送概览。
+2. `6a1f493`：冻结产品运行时、Provider、上传、Electron 和能力资源改进。
+3. `0b42216`：冻结回归测试、包体/发布门禁和可复现脚本。
+4. `2500a47` + `d78f97f`：独立修复长任务输出限频、sandbox 详情负载和 stale/paginated snapshot 竞态。
+5. 后续再以 `docs: record release and manual acceptance` 补充真实桌面手测结果；未通过时保留 `partial`，不改成 PASS。
 
 提交 1 和提交 2 应保持可独立回滚。当前只建立本地分支和提交，不推送远端。
 
 ## 已知未闭环问题
 
 1. 长任务中流式响应仍可能中断，尚缺一次同一代码身份下的服务端/renderer 时间窗证据。
-2. 长任务运行期间页面卡顿、滚动和鼠标响应异常，已观察到高频后台事件与前端状态更新路径，但尚未完成定量验证。
+2. 长任务运行期间页面卡顿、滚动和鼠标响应异常，已观察到高频后台事件与前端状态更新路径；本地源码修复已完成，但尚未完成真实桌面定量验证。
 3. `pnpm run typecheck` / 回归脚本通过不等于真实 Electron 长任务通过。
 4. CUA/browser-harness 当前不可用；隔离浏览器不能代替用户当前桌面窗口。
 5. 安装包瘦身、强推、Release 暂不纳入本批修复。
