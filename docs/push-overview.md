@@ -5,30 +5,32 @@
 
 ## 目的
 
-把当前工作树的历史成果固定成可回滚的本地里程碑，再从这个里程碑单独处理“长任务中断 / 页面卡顿”。本文件只描述推送准备，不代表已经推送到远端，也不把隔离测试当作桌面端验收。
+把当前工作树的历史成果固定成可回滚的本地里程碑，再从这个里程碑单独处理“长任务中断 / 页面卡顿”。本文件只描述推送准备，不代表已经推送到远端，也不把隔离测试当作桌面端验收。完整的差异归因和数据边界见 [`docs/project-audit/11-first-push-review.md`](project-audit/11-first-push-review.md)。
 
 ## 当前代码身份
 
 - 上游基线：`9031264`
 - 冻结前工作树指纹（`git diff --binary` SHA-256）：`352d3931eed2762a7e91c2d0dea9060cc2509cdfb36fb7ee2b760f818d0929ea`
 - 远端：`origin/main`
-- 当前状态：未提交改动；尚未执行 `git push`、Release 或安装包发布
+- 当前状态：成果已提交到本地分支 `codex/freeze-audited-results`；尚未执行 `git push`、Release 或安装包发布
+- 当前本地提交：`0d571f0`、`b030954`、`6a1f493`、`0b42216`、`2500a47`、`d78f97f`、`eeb5ad8`、`5b578fc`
+- 当前工作区剩余：`tests/shots/` 本地截图证据未跟踪，不进入第一次推送快照
 
 ## 成果分组
 
-### A. 产品与运行时改进（待冻结）
+### A. 产品与运行时改进（已冻结）
 
 包含 Provider URL/测试、DeepSeek 请求兼容、上传与媒体读取、Mastra 会话/后台任务、工作区进程、Electron 主进程与桌面图标等源码和构建配置。
 
 验收边界：类型检查、针对性回归和本地服务健康检查已做；真实桌面长任务、安装后完整用户旅程仍未通过。
 
-### B. 工程验证与发布门禁（待冻结）
+### B. 工程验证与发布门禁（已冻结）
 
 包含回归脚本、工具探针、`verify:release` / `verify:package`、内置技能资源、依赖 patch 说明和发布 smoke 文档。
 
 验收边界：脚本级结果可复现；浏览器自动化能力不可用时，不能写成桌面视觉通过。
 
-### C. 审计与交接文档（待冻结）
+### C. 审计与交接文档（已冻结）
 
 包含 `docs/project-audit/`、`.agent/` 下的 DESIGN/PLAN/CURRENT_STATE/RESULT、安装和包体证据。
 
@@ -47,9 +49,10 @@
 2. `6a1f493`：冻结产品运行时、Provider、上传、Electron 和能力资源改进。
 3. `0b42216`：冻结回归测试、包体/发布门禁和可复现脚本。
 4. `2500a47` + `d78f97f`：独立修复长任务输出限频、sandbox 详情负载和 stale/paginated snapshot 竞态。
-5. 后续再以 `docs: record release and manual acceptance` 补充真实桌面手测结果；未通过时保留 `partial`，不改成 PASS。
+5. `eeb5ad8` + `5b578fc`：记录冻结状态和 fresh-context renderer 复核。
+6. 后续再以 `docs: record release and manual acceptance` 补充真实桌面手测结果；未通过时保留 `partial`，不改成 PASS。
 
-提交 1 和提交 2 应保持可独立回滚。当前只建立本地分支和提交，不推送远端。
+提交 1 和提交 2 应保持可独立回滚。当前只建立本地分支和提交，不推送远端。上游差异、改进归因和 A/B 证据边界见 `docs/project-audit/11-first-push-review.md`。
 
 ## 已知未闭环问题
 
