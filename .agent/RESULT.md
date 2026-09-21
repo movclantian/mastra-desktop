@@ -1,12 +1,13 @@
 # 工程问题修复结果
 
-## 2026-09-21：第一次推送候选已记录
+## 2026-09-21：第一次推送已完成
 
-- State：第一次推送候选已固定在 `codex/freeze-audited-results`；基线为 `origin/main@9031264`，当前基线前进 9 个本地提交。
+- State：第一次推送已完成；分支 `codex/freeze-audited-results` 已发布到 `origin/codex/freeze-audited-results`，基线为 `origin/main@9031264`。
 - Recorded：已记录技能迁移、Electron/媒体/上传边界、回归测试抽取器、长任务限频与快照合并的引入原因、后果和未归因现象；完整复核见 `docs/project-audit/11-first-push-review.md`。
 - Verification：`pnpm run typecheck` 通过；`pnpm run test:regression` 为 34/34；`pnpm run verify:release` 通过；基线 `origin/main` 已 fetch 且当前分支无落后提交。
-- Push boundary：只允许推送当前分支，不改写 `origin/main`，不执行 force-push、不发布 Release；`tests/shots/` 仅为本地截图证据，不进入推送快照。
+- Push boundary：只推送当前分支，没有改写 `origin/main`，没有执行 force-push、没有发布 Release；`tests/shots/` 仅为本地截图证据，不进入推送快照。
 - Limitation：上游没有本次新增回归脚本，不能把历史 2/14 vs 14/14 当作可复现 A/B；真实桌面长任务、云端 CI/Release 和最新安装包仍未宣称通过。
+- Remote PR entry：`https://github.com/movclantian/mastra-desktop/pull/new/codex/freeze-audited-results`
 
 ## 2026-09-21：成果冻结准备（进行中）
 

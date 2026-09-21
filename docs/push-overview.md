@@ -12,7 +12,7 @@
 - 上游基线：`9031264`
 - 冻结前工作树指纹（`git diff --binary` SHA-256）：`352d3931eed2762a7e91c2d0dea9060cc2509cdfb36fb7ee2b760f818d0929ea`
 - 远端：`origin/main`
-- 当前状态：成果已提交到本地分支 `codex/freeze-audited-results`；尚未执行 `git push`、Release 或安装包发布
+- 当前状态：成果已推送到 `origin/codex/freeze-audited-results`；尚未创建/合并 PR、发布 Release 或上传安装包
 - 当前本地提交：`0d571f0`、`b030954`、`6a1f493`、`0b42216`、`2500a47`、`d78f97f`、`eeb5ad8`、`5b578fc`
 - 当前工作区剩余：`tests/shots/` 本地截图证据未跟踪，不进入第一次推送快照
 
@@ -52,7 +52,7 @@
 5. `eeb5ad8` + `5b578fc`：记录冻结状态和 fresh-context renderer 复核。
 6. 后续再以 `docs: record release and manual acceptance` 补充真实桌面手测结果；未通过时保留 `partial`，不改成 PASS。
 
-提交 1 和提交 2 应保持可独立回滚。当前只建立本地分支和提交，不推送远端。上游差异、改进归因和 A/B 证据边界见 `docs/project-audit/11-first-push-review.md`。
+提交 1 和提交 2 应保持可独立回滚。第一次推送仅创建功能分支，不改写 `origin/main`；上游差异、改进归因和 A/B 证据边界见 `docs/project-audit/11-first-push-review.md`。
 
 ## 已知未闭环问题
 
