@@ -2,9 +2,11 @@
  * RAG 数据库存储层(docs/en/reference/rag/database-config.mdx):
  * 共享 LibSQL 客户端、library_* 表建表与索引运行状态记录。
  */
+import { readdir, rm, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { Client } from "@libsql/client";
 import { nanoid } from "nanoid";
-import { getLibsqlClient } from "../../storage";
+import { getLibsqlClient, getStorageDirectory } from "../../storage";
 import type {
   LibraryAsset,
   LibraryIndexRunStatus,
@@ -19,6 +21,89 @@ export function now(): string {
 
 export async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   return run(await getLibsqlClient());
+}
+
+const uploadChunksDirectory = () => join(getStorageDirectory(), "library", "_chunks");
+
+const UPLOAD_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+
+async function cleanupOrphanedUploadDirectories(client: Client): Promise<void> {
+  const entries = await readdir(uploadChunksDirectory(), { withFileTypes: true }).catch(() => []);
+  const directories = entries.filter((entry) => entry.isDirectory());
+  if (directories.length === 0) return;
+
+  const placeholders = directories.map(() => "?").join(", ");
+  const active = await client.execute({
+    sql: `SELECT id FROM library_upload_sessions WHERE id IN (${placeholders})`,
+    args: directories.map((entry) => entry.name),
+  });
+  const activeIds = new Set(active.rows.map((row) => String(row.id ?? "")));
+  const cutoff = Date.now() - UPLOAD_ORPHAN_GRACE_MS;
+  await Promise.all(
+    directories.map(async (entry) => {
+      if (activeIds.has(entry.name)) return;
+      const directory = join(uploadChunksDirectory(), entry.name);
+      const details = await stat(directory).catch(() => null);
+      if (!details || details.mtimeMs > cutoff) return;
+      await rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    }),
+  );
+}
+
+async function cleanupExpiredUploadSessions(client: Client): Promise<void> {
+  const expired = await client.execute({
+    sql: "SELECT id FROM library_upload_sessions WHERE expires_at <= ?",
+    args: [now()],
+  });
+  const sessionIds = expired.rows
+    .map((row) => (typeof row.id === "string" ? row.id : String(row.id ?? "")))
+    .filter(Boolean);
+  if (sessionIds.length > 0) {
+    const removedIds = (
+      await Promise.all(
+        sessionIds.map(async (sessionId) => {
+          try {
+            await rm(join(uploadChunksDirectory(), sessionId), { recursive: true, force: true });
+            return sessionId;
+          } catch {
+            // Keep the database row so a later startup/request can retry the disk cleanup.
+            return undefined;
+          }
+        }),
+      )
+    ).filter((sessionId): sessionId is string => Boolean(sessionId));
+    if (removedIds.length > 0) {
+      const removedPlaceholders = removedIds.map(() => "?").join(", ");
+      await client.batch([
+        {
+          sql: `DELETE FROM library_upload_chunks WHERE session_id IN (${removedPlaceholders})`,
+          args: removedIds,
+        },
+        {
+          sql: `DELETE FROM library_upload_sessions WHERE id IN (${removedPlaceholders})`,
+          args: removedIds,
+        },
+      ]);
+    }
+  }
+
+  await cleanupOrphanedUploadDirectories(client);
+}
+
+let uploadCleanupPromise: Promise<void> | undefined;
+let nextUploadCleanupAt = 0;
+
+/** Best-effort maintenance: one scan at a time, at most once per five minutes. */
+export function cleanupExpiredLibraryUploadSessions(): Promise<void> {
+  if (uploadCleanupPromise) return uploadCleanupPromise;
+  if (Date.now() < nextUploadCleanupAt) return Promise.resolve();
+  uploadCleanupPromise = withClient((client) => cleanupExpiredUploadSessions(client)).finally(
+    () => {
+      nextUploadCleanupAt = Date.now() + 5 * 60 * 1000;
+      uploadCleanupPromise = undefined;
+    },
+  );
+  return uploadCleanupPromise;
 }
 
 let schemaPromise: Promise<void> | undefined;
@@ -142,7 +227,14 @@ export async function ensureLibrarySchema(): Promise<void> {
           sql: "CREATE INDEX IF NOT EXISTS library_upload_sessions_resource_idx ON library_upload_sessions(resource_id, updated_at)",
           args: [],
         },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_upload_sessions_expires_idx ON library_upload_sessions(expires_at)",
+          args: [],
+        },
       ]);
+      void cleanupExpiredLibraryUploadSessions().catch((error) => {
+        console.warn("[library-upload] startup cleanup deferred", error);
+      });
     });
   }
   await schemaPromise;

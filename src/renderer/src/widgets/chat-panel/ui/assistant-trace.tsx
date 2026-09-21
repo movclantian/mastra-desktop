@@ -369,8 +369,8 @@ function ToolGroup({ tools }: { tools: ToolPart[] }) {
           </div>
         </TaskTrigger>
         <TaskContent>
-          {tools.map((tool) => (
-            <ToolStepItem key={tool.toolCallId} part={tool} />
+          {tools.map((tool, index) => (
+            <ToolStepItem key={`${tool.toolCallId}:${index}`} part={tool} />
           ))}
         </TaskContent>
       </Task>
@@ -411,11 +411,15 @@ export function AssistantTrace({
   // 按原始顺序铺开:推理步骤原位渲染,连续工具 part 聚成一个 Task 组
   const items: Array<{ key: string; node: React.ReactNode }> = [];
   let toolRun: ToolPart[] = [];
+  let toolGroupIndex = 0;
   const flushTools = () => {
     if (toolRun.length === 0) return;
     const tools = toolRun;
     toolRun = [];
-    items.push({ key: `tools-${tools[0].toolCallId}`, node: <ToolGroup tools={tools} /> });
+    items.push({
+      key: `tools-${toolGroupIndex++}-${tools[0].toolCallId}`,
+      node: <ToolGroup tools={tools} />,
+    });
   };
   parts.forEach((part, index) => {
     if (part.type === "reasoning") {

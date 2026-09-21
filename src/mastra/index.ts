@@ -49,6 +49,36 @@ if (process.env.MASTRA_DESKTOP_RUNTIME === "true") {
   process.env.NODE_ENV = "production";
 }
 
+/**
+ * Renderer origins that may call the local API. Packaged Electron pages send a
+ * `null` origin for their file:// URL; development uses the actual Vite origin
+ * inherited from ELECTRON_RENDERER_URL (with the standard fallback ports).
+ */
+function getRendererCorsOrigins(): Set<string> {
+  const origins = new Set(["null", "http://localhost:5173", "http://127.0.0.1:5173"]);
+  const configuredUrl = process.env.ELECTRON_RENDERER_URL;
+  if (!configuredUrl) return origins;
+
+  try {
+    const url = new URL(configuredUrl);
+    if (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    ) {
+      origins.add(url.origin);
+    }
+  } catch {
+    // An invalid renderer URL will be rejected by the Electron main process.
+  }
+  return origins;
+}
+
+const rendererCorsOrigins = getRendererCorsOrigins();
+
+function rendererCorsOrigin(origin: string): string | undefined {
+  return rendererCorsOrigins.has(origin) ? origin : undefined;
+}
+
 // Electron passes the resolved system proxy through the standard environment variables.
 if (
   process.env.http_proxy ||
@@ -155,9 +185,9 @@ export const mastra = new Mastra({
     ],
     onError: handleWorkError,
     cors: {
-      origin: "*",
-      allowMethods: ["*"],
-      allowHeaders: ["*"],
+      origin: rendererCorsOrigin,
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowHeaders: ["Authorization", "Content-Type"],
     },
     apiRoutes: [workChatRoute, ...workRoutes],
   },

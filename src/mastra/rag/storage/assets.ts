@@ -3,8 +3,10 @@
  * 表结构见 ./db.ts(docs/en/reference/rag/database-config.mdx)。
  */
 import { createHash } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { nanoid } from "nanoid";
 import { getStorageDirectory } from "../../storage";
 import {
@@ -15,7 +17,11 @@ import {
 } from "../document/extract";
 import { queueAssetIndex, waitForAssetIndexing } from "../document/indexing";
 import { getLibrarySettings } from "../settings";
-import { type LibraryAsset, MAX_LIBRARY_FILE_BYTES } from "../types";
+import {
+  type LibraryAsset,
+  MAX_LIBRARY_FILE_BYTES,
+  MAX_LIBRARY_INLINE_MEDIA_BYTES,
+} from "../types";
 import { ensureLibrarySchema, getLatestLibraryIndexRuns, now, rowToAsset, withClient } from "./db";
 
 /**
@@ -23,32 +29,39 @@ import { ensureLibrarySchema, getLatestLibraryIndexRuns, now, rowToAsset, withCl
  * 上传、入库、关联绑定与读取二进制。
  */
 
-export async function uploadAsset(
-  input: {
-    resourceId: string;
-    filename: string;
-    bytes: Uint8Array;
-    mediaType?: string;
-    folderId?: string;
-    threadId?: string;
-  },
-  skipIndexing = false,
+type AssetUploadMetadata = {
+  resourceId: string;
+  filename: string;
+  mediaType?: string;
+  folderId?: string;
+  threadId?: string;
+};
+
+type AssetUploadSource = {
+  byteSize: number;
+  sha256: string;
+  writeTo: (destination: string) => Promise<void>;
+  readBytes: () => Promise<Uint8Array>;
+};
+
+async function storeAsset(
+  input: AssetUploadMetadata,
+  source: AssetUploadSource,
+  skipIndexing: boolean,
 ): Promise<LibraryAsset> {
-  if (input.bytes.byteLength === 0) throw new Error("文件内容不能为空");
-  if (input.bytes.byteLength > MAX_LIBRARY_FILE_BYTES) {
+  if (source.byteSize === 0) throw new Error("文件内容不能为空");
+  if (source.byteSize > MAX_LIBRARY_FILE_BYTES) {
     throw new Error(`单个文件不能超过 ${MAX_LIBRARY_FILE_BYTES / (1024 * 1024)} MB`);
   }
-
   await ensureLibrarySchema();
   const normalized = normalizeFilename(input.filename);
   const mediaType = resolveMediaType(normalized, input.mediaType || "");
-  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
   const baseDir = getStorageDirectory();
 
   const existingRow = await withClient(async (client) => {
     const result = await client.execute({
       sql: "SELECT * FROM library_assets WHERE resource_id = ? AND sha256 = ? LIMIT 1",
-      args: [input.resourceId, sha256],
+      args: [input.resourceId, source.sha256],
     });
     return result.rows[0];
   });
@@ -65,71 +78,149 @@ export async function uploadAsset(
   const absDir = join(baseDir, relDir);
   const absPath = join(baseDir, relPath);
   await mkdir(absDir, { recursive: true });
-  await writeFile(absPath, input.bytes);
+  try {
+    await source.writeTo(absPath);
+  } catch (error) {
+    await unlink(absPath).catch(() => undefined);
+    throw error;
+  }
 
-  const extractable = isExtractable(normalized, mediaType);
-  const status: LibraryAsset["status"] = extractable
-    ? skipIndexing
-      ? "ready"
-      : "indexing"
-    : "unsupported";
-  const extracted = extractable ? await extractText(input.bytes, normalized, mediaType) : null;
-  const timestamp = now();
+  let extractable = false;
+  let createdAsset: LibraryAsset | undefined;
+  try {
+    extractable = isExtractable(normalized, mediaType);
+    const status: LibraryAsset["status"] = extractable
+      ? skipIndexing
+        ? "ready"
+        : "indexing"
+      : "unsupported";
+    // Media files stay on disk. Text/PDF/office formats are read once only when
+    // the existing extractor needs bytes; this avoids a second in-memory copy
+    // for the common image/audio/video upload path.
+    const extracted = extractable
+      ? await extractText(await source.readBytes(), normalized, mediaType)
+      : null;
+    const timestamp = now();
 
-  await withClient(async (client) => {
-    await client.batch([
-      {
-        sql: `INSERT INTO library_assets
+    await withClient(async (client) => {
+      await client.batch([
+        {
+          sql: `INSERT INTO library_assets
           (id, resource_id, filename, media_type, byte_size, sha256, storage_path, status, extracted_text, created_at, updated_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          id,
-          input.resourceId,
-          normalized,
-          mediaType,
-          input.bytes.byteLength,
-          sha256,
-          relPath,
-          status,
-          extracted,
-          timestamp,
-          timestamp,
-        ],
-      },
-      {
-        sql: `INSERT INTO library_asset_refs
+          args: [
+            id,
+            input.resourceId,
+            normalized,
+            mediaType,
+            source.byteSize,
+            source.sha256,
+            relPath,
+            status,
+            extracted,
+            timestamp,
+            timestamp,
+          ],
+        },
+        {
+          sql: `INSERT INTO library_asset_refs
           (asset_id, resource_id, folder_id, thread_id, created_at)
           VALUES (?, ?, ?, ?, ?)`,
-        args: [id, input.resourceId, input.folderId ?? "", input.threadId ?? "", timestamp],
-      },
-    ]);
-  });
+          args: [id, input.resourceId, input.folderId ?? "", input.threadId ?? "", timestamp],
+        },
+      ]);
+    });
 
-  const createdAsset: LibraryAsset = {
-    id,
-    resourceId: input.resourceId,
-    folderIds: input.folderId ? [input.folderId] : [],
-    threadIds: input.threadId ? [input.threadId] : [],
-    filename: normalized,
-    mediaType,
-    byteSize: input.bytes.byteLength,
-    sha256,
-    status,
-    extractedText: extracted,
-    indexAttempt: 0,
-    indexStage: null,
-    indexError: null,
-    indexStartedAt: null,
-    indexCompletedAt: null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  };
+    createdAsset = {
+      id,
+      resourceId: input.resourceId,
+      folderIds: input.folderId ? [input.folderId] : [],
+      threadIds: input.threadId ? [input.threadId] : [],
+      filename: normalized,
+      mediaType,
+      byteSize: source.byteSize,
+      sha256: source.sha256,
+      status,
+      extractedText: extracted,
+      indexAttempt: 0,
+      indexStage: null,
+      indexError: null,
+      indexStartedAt: null,
+      indexCompletedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+  } catch (error) {
+    await unlink(absPath).catch(() => undefined);
+    throw error;
+  }
 
+  if (!createdAsset) throw new Error("资产入库未生成记录");
   if (extractable && !skipIndexing) {
-    const settings = await getLibrarySettings(input.resourceId);
-    void queueAssetIndex(createdAsset, extracted ?? "", settings).catch(() => undefined);
+    try {
+      const settings = await getLibrarySettings(input.resourceId);
+      void queueAssetIndex(createdAsset, createdAsset.extractedText ?? "", settings).catch(
+        () => undefined,
+      );
+    } catch {
+      // The asset is already durable; recovery can retry indexing later.
+    }
   }
   return createdAsset;
+}
+
+async function hashFile(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+export async function uploadAsset(
+  input: AssetUploadMetadata & { bytes: Uint8Array },
+  skipIndexing = false,
+): Promise<LibraryAsset> {
+  const sha256 = createHash("sha256").update(input.bytes).digest("hex");
+  return storeAsset(
+    input,
+    {
+      byteSize: input.bytes.byteLength,
+      sha256,
+      writeTo: (destination) => writeFile(destination, input.bytes),
+      readBytes: async () => input.bytes,
+    },
+    skipIndexing,
+  );
+}
+
+/**
+ * Store an already streamed temporary file without materializing media bytes
+ * in the request handler. Extractable document formats may still be read once
+ * by the parser, while binary media is copied and hashed as streams.
+ */
+export async function uploadAssetFromFile(
+  input: AssetUploadMetadata & {
+    filePath: string;
+    byteSize: number;
+    sha256?: string;
+  },
+  skipIndexing = false,
+): Promise<LibraryAsset> {
+  const file = await stat(input.filePath);
+  if (file.size !== input.byteSize) {
+    throw new Error(`临时上传文件大小不匹配: ${file.size}/${input.byteSize}`);
+  }
+  const sha256 = input.sha256 ?? (await hashFile(input.filePath));
+  return storeAsset(
+    input,
+    {
+      byteSize: file.size,
+      sha256,
+      writeTo: (destination) =>
+        pipeline(createReadStream(input.filePath), createWriteStream(destination, { flags: "wx" })),
+      readBytes: () => readFile(input.filePath),
+    },
+    skipIndexing,
+  );
 }
 
 export async function listAssets(resourceId: string, threadId?: string): Promise<LibraryAsset[]> {
@@ -211,6 +302,23 @@ export async function readAssetBytes(
   resourceId: string,
   id: string,
 ): Promise<{ bytes: Uint8Array; asset: LibraryAsset } | null> {
+  const asset = await getLibraryAsset(resourceId, id);
+  if (!asset) return null;
+  const relPath = await withClient(async (client) => {
+    const result = await client.execute({
+      sql: "SELECT storage_path FROM library_assets WHERE id = ? AND resource_id = ? LIMIT 1",
+      args: [id, resourceId],
+    });
+    return result.rows[0]?.storage_path ? String(result.rows[0].storage_path) : null;
+  });
+  if (!relPath) return null;
+  const absPath = join(getStorageDirectory(), relPath);
+  const buffer = await readFile(absPath).catch(() => null);
+  if (!buffer) return null;
+  return { bytes: new Uint8Array(buffer), asset };
+}
+
+async function getLibraryAsset(resourceId: string, id: string): Promise<LibraryAsset | null> {
   await ensureLibrarySchema();
   const row = await withClient(async (client) => {
     const result = await client.execute({
@@ -219,13 +327,7 @@ export async function readAssetBytes(
     });
     return result.rows[0];
   });
-  if (!row) return null;
-  const asset = rowToAsset(row);
-  const relPath = String(row.storage_path || "");
-  const absPath = join(getStorageDirectory(), relPath);
-  const buffer = await readFile(absPath).catch(() => null);
-  if (!buffer) return null;
-  return { bytes: new Uint8Array(buffer), asset };
+  return row ? rowToAsset(row) : null;
 }
 
 export async function deleteAsset(resourceId: string, id: string): Promise<boolean> {
@@ -285,6 +387,7 @@ export interface LibraryAttachmentContext {
   asset: LibraryAsset;
   text?: string;
   dataUrl?: string;
+  skipped?: "media-too-large";
 }
 
 export function getLibraryAssetId(urlOrPath: unknown): string | null {
@@ -299,17 +402,22 @@ export function getLibraryAssetId(urlOrPath: unknown): string | null {
 export async function getAssetContext(
   resourceId: string,
   assetId: string,
+  options?: { maxMediaBytes?: number },
 ): Promise<LibraryAttachmentContext | null> {
   await waitForAssetIndexing(resourceId, assetId);
-  const result = await readAssetBytes(resourceId, assetId);
-  if (!result) return null;
-  const { bytes, asset } = result;
+  const asset = await getLibraryAsset(resourceId, assetId);
+  if (!asset) return null;
   if (asset.extractedText) return { asset, text: asset.extractedText };
   if (
     asset.mediaType.startsWith("image/") ||
     asset.mediaType.startsWith("audio/") ||
     asset.mediaType.startsWith("video/")
   ) {
+    const maxMediaBytes = options?.maxMediaBytes ?? MAX_LIBRARY_INLINE_MEDIA_BYTES;
+    if (asset.byteSize > maxMediaBytes) return { asset, skipped: "media-too-large" };
+    const result = await readAssetBytes(resourceId, assetId);
+    if (!result) return null;
+    const { bytes } = result;
     const base64 = Buffer.from(bytes).toString("base64");
     return { asset, dataUrl: `data:${asset.mediaType};base64,${base64}` };
   }

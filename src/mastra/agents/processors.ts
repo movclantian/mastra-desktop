@@ -13,6 +13,7 @@ import {
   getLibraryAssetId,
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
+  MAX_LIBRARY_INLINE_MEDIA_BYTES,
   LIBRARY_RESOURCE_CONTEXT_KEY,
 } from "../rag";
 import { appStorage } from "../storage";
@@ -53,7 +54,9 @@ export const libraryAttachmentProcessor: InputProcessor = {
             const assetId = getLibraryAssetId(record.data);
             if (!assetId) return part;
             changed = true;
-            const context = await getAssetContext(resourceId, assetId);
+            const context = await getAssetContext(resourceId, assetId, {
+              maxMediaBytes: MAX_LIBRARY_INLINE_MEDIA_BYTES,
+            });
             if (!context) {
               return {
                 type: "text",
@@ -84,7 +87,10 @@ export const libraryAttachmentProcessor: InputProcessor = {
             }
             return {
               type: "text",
-              text: `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
+              text:
+                context.skipped === "media-too-large"
+                  ? `[附件「${context.asset.filename}」未注入: 媒体文件超过 ${MAX_LIBRARY_INLINE_MEDIA_BYTES / (1024 * 1024)} MB 的上下文上限]`
+                  : `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
             };
           }),
         );
@@ -123,7 +129,9 @@ export const libraryAttachmentProcessor: InputProcessor = {
           continue;
         }
         changed = true;
-        const context = await getAssetContext(resourceId, assetId);
+        const context = await getAssetContext(resourceId, assetId, {
+          maxMediaBytes: MAX_LIBRARY_INLINE_MEDIA_BYTES,
+        });
         if (!context) {
           content.push({
             type: "text" as const,
@@ -182,7 +190,10 @@ export const libraryAttachmentProcessor: InputProcessor = {
         }
         content.push({
           type: "text" as const,
-          text: `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
+          text:
+            context.skipped === "media-too-large"
+              ? `[附件「${context.asset.filename}」未注入: 媒体文件超过 ${MAX_LIBRARY_INLINE_MEDIA_BYTES / (1024 * 1024)} MB 的上下文上限]`
+              : `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
         });
       }
       resolvedPrompt[messageIndex] = { ...message, content } as (typeof resolvedPrompt)[number];

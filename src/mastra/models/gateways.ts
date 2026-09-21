@@ -11,7 +11,12 @@ import {
   type ProviderConfig as GatewayProviderConfig,
   MastraModelGateway,
 } from "@mastra/core/llm";
-import { createGatewayModel, inferGatewayProtocol, WORKBENCH_GATEWAY_ID } from "./create-model";
+import {
+  createGatewayModel,
+  getRegistryProviderBaseUrl,
+  inferGatewayProtocol,
+  WORKBENCH_GATEWAY_ID,
+} from "./create-model";
 import {
   getProvidersConfig,
   resolveProviderCredential,
@@ -49,7 +54,12 @@ export class WorkbenchGateway extends MastraModelGateway {
           models: provider.enabledModels.map((model) => model.id),
           apiKeyEnvVar: [],
           gateway: this.id,
-          ...(provider.baseUrl ? { url: provider.baseUrl } : {}),
+          ...(() => {
+            const url =
+              provider.baseUrl ??
+              (provider.registryId ? getRegistryProviderBaseUrl(provider.registryId) : undefined);
+            return url ? { url } : {};
+          })(),
         } satisfies GatewayProviderConfig,
       ]),
     );
@@ -73,7 +83,10 @@ export class WorkbenchGateway extends MastraModelGateway {
 
   async buildUrl(modelId: string): Promise<string | undefined> {
     const provider = await this.findProviderForModel(modelId);
-    return provider?.baseUrl || undefined;
+    return (
+      provider?.baseUrl ??
+      (provider?.registryId ? getRegistryProviderBaseUrl(provider.registryId) : undefined)
+    );
   }
 
   async resolveLanguageModel(args: {
@@ -82,15 +95,19 @@ export class WorkbenchGateway extends MastraModelGateway {
     apiKey: string;
   }): Promise<GatewayLanguageModel> {
     const provider = await this.findProvider(args.providerId);
-    const baseUrl = provider?.baseUrl;
+    const baseUrl =
+      provider?.baseUrl ??
+      (provider?.registryId ? getRegistryProviderBaseUrl(provider.registryId) : undefined);
+    const protocol =
+      provider?.protocol ?? inferGatewayProtocol(provider?.registryId ?? args.providerId);
     if (!baseUrl) {
       // 未知 registry 的宿主回退仍按 OpenAI 处理;具体映射集中在 create-model.ts。
-      const protocol = inferGatewayProtocol(args.providerId) ?? "openai";
       return createGatewayModel({
         modelId: args.modelId,
         modelRouterId: `${args.providerId}/${args.modelId}`,
+        registryId: provider?.registryId,
         apiKey: args.apiKey,
-        protocol,
+        protocol: protocol ?? "openai",
         useResponses: provider?.useResponses,
         providerName: provider?.name,
       });
@@ -98,9 +115,10 @@ export class WorkbenchGateway extends MastraModelGateway {
     return createGatewayModel({
       modelId: args.modelId,
       modelRouterId: `${args.providerId}/${args.modelId}`,
+      registryId: provider?.registryId,
       apiKey: args.apiKey,
       baseUrl,
-      protocol: provider?.protocol,
+      protocol,
       useResponses: provider?.useResponses,
       providerName: provider?.name,
     });

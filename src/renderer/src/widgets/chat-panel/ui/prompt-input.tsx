@@ -693,6 +693,7 @@ export function UserRequestQueuePanel({
 export function ChatPromptInput({
   activeThread,
   usage,
+  billingUsage,
   onSubmit,
   status,
   onStop,
@@ -701,6 +702,7 @@ export function ChatPromptInput({
 }: {
   activeThread: boolean;
   usage: LanguageModelUsage | undefined;
+  billingUsage?: LanguageModelUsage;
   onSubmit: (
     message: {
       text: string;
@@ -857,6 +859,7 @@ export function ChatPromptInput({
     ".yaml",
     ".yml",
     ".html",
+    ".htm",
     ".pdf",
     ".docx",
     ".xlsx",
@@ -866,11 +869,20 @@ export function ChatPromptInput({
     ".ts",
     ".tsx",
     ".css",
+    ".scss",
+    ".less",
     ".py",
     ".go",
     ".rs",
     ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
     ".sql",
+    ".sh",
+    ".ps1",
+    ".log",
     ...(attachmentCapabilities?.vision ? ["image/*"] : []),
     ...(attachmentCapabilities?.audio ? ["audio/*"] : []),
   ].join(",");
@@ -942,7 +954,7 @@ export function ChatPromptInput({
           <div className="ml-auto flex min-w-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
-              <ChatContextUsage usage={usage} />
+              <ChatContextUsage usage={usage} billingUsage={billingUsage} />
             </div>
             <ChatModeSelector />
             <ChatModelSelector />

@@ -1,3 +1,4 @@
+import { isToolUIPart } from "ai";
 import { i18n } from "@/shared/i18n";
 import type { WorkUIMessage } from "../model/types";
 
@@ -19,23 +20,34 @@ export interface DisplayMessage {
  */
 export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[] {
   const display: DisplayMessage[] = [];
+  let toolPositions = new Map<string, number>();
 
   for (const message of messages) {
     const previous = display.at(-1);
     const previousMessage = previous?.message;
+    let entry: DisplayMessage;
     if (previous && previousMessage?.role === "assistant" && message.role === "assistant") {
-      previous.message = {
-        ...previousMessage,
-        parts: [...previousMessage.parts, ...message.parts],
-      };
-      previous.sourceIds.push(message.id);
-      continue;
+      entry = previous;
+      entry.sourceIds.push(message.id);
+    } else {
+      entry = { message: { ...message, parts: [] }, sourceIds: [message.id] };
+      display.push(entry);
+      toolPositions = new Map();
     }
-
-    display.push({
-      message: { ...message },
-      sourceIds: [message.id],
-    });
+    // One call may appear in multiple persisted/streamed rows as its state
+    // advances. Keep its first position but render only the latest snapshot.
+    // Mutate only our display array, never the SDK's source message/parts.
+    for (const part of message.parts) {
+      if (message.role === "assistant" && isToolUIPart(part)) {
+        const position = toolPositions.get(part.toolCallId);
+        if (position !== undefined) {
+          entry.message.parts[position] = part;
+          continue;
+        }
+        toolPositions.set(part.toolCallId, entry.message.parts.length);
+      }
+      entry.message.parts.push(part);
+    }
   }
 
   return display;

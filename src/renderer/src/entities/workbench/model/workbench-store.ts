@@ -197,7 +197,8 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     });
   },
   agentBusyFlag: false,
-  setAgentBusy: (busy) => set({ agentBusyFlag: busy }),
+  setAgentBusy: (busy) =>
+    set((state) => (state.agentBusyFlag === busy ? state : { agentBusyFlag: busy })),
 
   commandPaletteOpen: false,
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),

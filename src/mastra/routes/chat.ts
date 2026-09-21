@@ -70,6 +70,8 @@ import type { ThreadMetadata } from "./threads/types";
 /** 消息 metadata:用量 + 用户显式引用,前端据此恢复附件展示 */
 interface WorkMessageMetadata {
   usage?: LanguageModelUsage;
+  contextUsage?: LanguageModelUsage | null;
+  contextUsageVersion?: number;
   skillNames?: string[];
   fileReferences?: Array<{
     id: string;
@@ -390,7 +392,7 @@ function durableClientStream<C>(
   stream: ReadableStream<C>,
   options: {
     librarySources: LibraryCitationSource[];
-    onFinish: (usage: LanguageModelUsage | undefined) => Promise<void>;
+    onFinish: (metadata: WorkMessageMetadata | undefined) => Promise<void>;
   },
 ): ReadableStream<C> {
   const persistingStream = streamLibrarySources(
@@ -401,11 +403,11 @@ function durableClientStream<C>(
       async transform(value, controller) {
         const raw = value as {
           type?: unknown;
-          messageMetadata?: { usage?: LanguageModelUsage };
+          messageMetadata?: WorkMessageMetadata;
         };
         if (raw.type === "finish") {
           try {
-            await options.onFinish(raw.messageMetadata?.usage);
+            await options.onFinish(raw.messageMetadata);
           } catch {
             // The Agent message is already durable; auxiliary metadata must not
             // convert a successful run into an AI SDK transport error.
@@ -435,7 +437,7 @@ function durableClientStream<C>(
 async function persistLatestUsage(
   threadId: string | undefined,
   resourceId: string | undefined,
-  usage: LanguageModelUsage | undefined,
+  metadata: WorkMessageMetadata | undefined,
   requestContext: RequestContext,
 ) {
   if (!threadId) return;
@@ -448,7 +450,13 @@ async function persistLatestUsage(
   await memory.updateThread({
     id: threadId,
     // draft 一经产生真实消息往来即失效(新会话线程 = 无任何历史消息)
-    metadata: { ...thread.metadata, draft: false, ...(usage ? { contextUsage: usage } : {}) },
+    metadata: {
+      ...thread.metadata,
+      draft: false,
+      totalUsage: metadata?.usage ?? null,
+      contextUsage: metadata?.contextUsageVersion === 2 ? (metadata.contextUsage ?? null) : null,
+      contextUsageVersion: 2,
+    },
   });
 }
 
@@ -916,11 +924,11 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const prepareClientStream = <C>(stream: ReadableStream<C>) =>
       durableClientStream(stream, {
         librarySources: librarySources ?? [],
-        onFinish: async (usage) => {
+        onFinish: async (metadata) => {
           await persistLatestUsage(
             body.memory?.thread,
             body.memory?.resource,
-            usage,
+            metadata,
             requestContext,
           );
         },
@@ -974,6 +982,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           ...explicitResumeTarget,
           toolName: tool.toolName ?? "",
         });
+        // ControllerSession owns submit_plan's transition to the default mode;
+        // keep the route as a thin resume boundary so it cannot drift from the
+        // installed Mastra core's private transition machinery.
         await controllerSession.respondToToolSuspension({
           toolCallId: tool.toolCallId,
           resumeData: body.resumeData,

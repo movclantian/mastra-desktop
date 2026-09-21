@@ -228,6 +228,7 @@ export function SettingsPage() {
     <SidebarProvider
       className="h-svh w-full items-stretch"
       style={{ "--sidebar-width": "15rem", minHeight: 0 } as React.CSSProperties}
+      disableKeyboardShortcut
     >
       <Sidebar collapsible="none" className="shrink-0 border-r border-border bg-sidebar">
         {/* 与供应商列/详情列的 header 统一 h-12 + border-b,保证水平分割线对齐 */}

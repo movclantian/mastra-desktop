@@ -36,7 +36,9 @@ export interface ThreadMetadata {
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;
-  contextUsage?: Record<string, unknown>;
+  contextUsage?: Record<string, unknown> | null;
+  contextUsageVersion?: number;
+  totalUsage?: Record<string, unknown> | null;
   isWorking?: boolean;
   activeRunId?: string | null;
   /** 克隆/分支溯源(memory.copyThread 自动写入,官方 clone-utilities) */

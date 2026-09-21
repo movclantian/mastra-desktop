@@ -112,6 +112,28 @@ async function ensureVectorIndex(vector: LibSQLVector, dimension: number): Promi
 }
 
 export async function chunkDocument(doc: MDocument, settings: LibrarySettings) {
+  if (settings.chunkStrategy === "markdown") {
+    // The default Markdown splitter can reinsert its heading regex as text.
+    // Split literal headings first, retaining their text and hierarchy metadata.
+    await doc.chunk({
+      strategy: "markdown",
+      headers: [
+        ["#", "Header 1"],
+        ["##", "Header 2"],
+        ["###", "Header 3"],
+        ["####", "Header 4"],
+        ["#####", "Header 5"],
+        ["######", "Header 6"],
+      ],
+      stripHeaders: false,
+    });
+    // Header splitting alone ignores maxSize/overlap in the current dependency.
+    return doc.chunk({
+      strategy: "recursive",
+      maxSize: settings.chunkSize,
+      overlap: settings.chunkOverlap,
+    });
+  }
   const params = {
     strategy: settings.chunkStrategy,
     maxSize: settings.chunkSize,

@@ -26,6 +26,7 @@ export {
   readAssetBytes,
   renameAsset,
   uploadAsset,
+  uploadAssetFromFile,
 } from "./storage/assets";
 export {
   ensureLibrarySchema,
@@ -59,6 +60,7 @@ export {
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
   LIBRARY_UPLOAD_CHUNK_BYTES,
+  MAX_LIBRARY_INLINE_MEDIA_BYTES,
   type LibrarySettings,
   type LibrarySettingsUpdate,
   MAX_LIBRARY_FILE_BYTES,

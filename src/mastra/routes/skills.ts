@@ -3,7 +3,6 @@
  * 官方文档:docs/en/docs/skills.mdx;市场实现见 src/mastra/skills/marketplaces.ts。
  */
 import { access, cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
@@ -32,10 +31,12 @@ import { getManagedSkillsDirectory } from "../workspace";
 const MAX_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_UNPACKED_BYTES = 100 * 1024 * 1024;
 const MAX_SKILL_ENTRIES = 2_000;
-const require = createRequire(import.meta.url);
-
 function builtinSkillsDirectory(): string {
-  return resolve(dirname(require.resolve("@mastra/editor")), "ee", "workspace", "skills");
+  // Built-ins are shipped from this repository. Do not reach into @mastra/editor/ee:
+  // that directory is covered by a separate Enterprise Edition license.
+  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (browsersPath) return resolve(dirname(browsersPath), "builtin-skills");
+  return resolve(process.cwd(), "resources", "builtin-skills");
 }
 
 function resourceIdFromRequest(c: {

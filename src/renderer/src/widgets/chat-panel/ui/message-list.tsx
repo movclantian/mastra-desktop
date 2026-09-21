@@ -514,7 +514,7 @@ export const MessageItem = React.memo(function MessageItem({
   };
 
   const handleUserBubbleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.isComposing) return;
+    if (event.nativeEvent.isComposing) return;
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (mod && (event.key === "c" || event.key === "C") && !window.getSelection()?.toString()) {
       event.preventDefault();
@@ -523,7 +523,7 @@ export const MessageItem = React.memo(function MessageItem({
   };
 
   const handleAssistantBubbleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.isComposing) return;
+    if (event.nativeEvent.isComposing) return;
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (mod && (event.key === "c" || event.key === "C") && !window.getSelection()?.toString()) {
       event.preventDefault();

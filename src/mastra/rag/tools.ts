@@ -13,8 +13,33 @@ import {
   LIBRARY_GRAPH_SEARCH_TOOL_ID,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_VECTOR_SEARCH_TOOL_ID,
+  type LibrarySettings,
   VALID_CHUNK_STRATEGIES,
 } from "./types";
+
+export function resolveChunkerSettings(
+  defaults: LibrarySettings,
+  overrides: {
+    strategy?: LibrarySettings["chunkStrategy"];
+    chunkSize?: number;
+    chunkOverlap?: number;
+  },
+): LibrarySettings {
+  const chunkSize = overrides.chunkSize ?? defaults.chunkSize;
+  const chunkOverlap =
+    overrides.chunkOverlap ??
+    (defaults.chunkOverlap < chunkSize ? defaults.chunkOverlap : Math.floor(chunkSize / 5));
+  if (!Number.isInteger(chunkSize) || chunkSize < 1) throw new Error("chunkSize 必须为正整数");
+  if (!Number.isInteger(chunkOverlap) || chunkOverlap < 0 || chunkOverlap >= chunkSize) {
+    throw new Error("chunkOverlap 必须为非负整数且小于 chunkSize");
+  }
+  return {
+    ...defaults,
+    chunkStrategy: overrides.strategy ?? defaults.chunkStrategy,
+    chunkSize,
+    chunkOverlap,
+  };
+}
 
 export const libraryVectorSearchTool = createTool({
   id: LIBRARY_VECTOR_SEARCH_TOOL_ID,
@@ -97,12 +122,7 @@ export const libraryDocumentChunkerTool = createTool({
       | string
       | undefined;
     const defaultSettings = await getLibrarySettings(resourceId);
-    const settings = {
-      ...defaultSettings,
-      ...(strategy ? { chunkStrategy: strategy } : {}),
-      ...(chunkSize ? { chunkSize } : {}),
-      ...(chunkOverlap !== undefined ? { chunkOverlap } : {}),
-    };
+    const settings = resolveChunkerSettings(defaultSettings, { strategy, chunkSize, chunkOverlap });
     const format =
       strategy === "markdown"
         ? "text/markdown"

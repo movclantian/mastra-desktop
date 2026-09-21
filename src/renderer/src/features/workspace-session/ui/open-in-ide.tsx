@@ -135,7 +135,11 @@ export function OpenInIde({ className }: { className?: string }) {
     let cancelled = false;
     async function loadInstalledIdes() {
       try {
-        const rawList = await window.api.workspace.detectIdes();
+        // 浏览器开发态没有 Electron preload；IDE 检测不是页面渲染的前置条件。
+        // 缺少宿主能力时直接保留内置候选项，不把预期的能力缺失当成异常刷屏。
+        const detectIdes = window.api?.workspace?.detectIdes;
+        if (typeof detectIdes !== "function") return;
+        const rawList = await detectIdes();
         if (cancelled || !rawList || rawList.length === 0) return;
 
         const mapped: LocalIdeItem[] = rawList.map((item) => ({

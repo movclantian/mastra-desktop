@@ -112,7 +112,12 @@ function SidebarHeaderBrand() {
       <SidebarMenuItem>
         <SidebarMenuButton size="sm" tooltip={t("sidebar:collapseSidebar")} onClick={toggleSidebar}>
           <div className="flex aspect-square size-6 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-            <WaypointsIcon className="size-3.5" />
+            <img
+              src="./icon.png"
+              alt=""
+              className="size-6 rounded-md object-cover"
+              draggable={false}
+            />
           </div>
           <span className="truncate font-semibold">MastraWork</span>
         </SidebarMenuButton>

@@ -418,7 +418,7 @@ export function KnowledgeLibraryPage({
           <ContextMenuTrigger
             className="w-full block"
             onKeyDown={(event) => {
-              if (event.isComposing || isEditableTarget(event.target)) return;
+              if (event.nativeEvent.isComposing || isEditableTarget(event.target)) return;
               if (event.key === "F2") {
                 event.preventDefault();
                 openRename({ kind: "asset", id: asset.id, name: asset.filename });
@@ -803,7 +803,7 @@ export function KnowledgeLibraryPage({
                                 <ContextMenuTrigger
                                   className="min-w-0 flex-1"
                                   onKeyDown={(event) => {
-                                    if (event.isComposing || isEditableTarget(event.target)) return;
+                                    if (event.nativeEvent.isComposing || isEditableTarget(event.target)) return;
                                     if (event.key === "F2") {
                                       event.preventDefault();
                                       openRename({

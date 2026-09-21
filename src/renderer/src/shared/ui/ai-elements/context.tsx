@@ -59,6 +59,7 @@ type ModelId = string;
 interface ContextSchema {
   maxTokens: number;
   usage?: LanguageModelUsage;
+  billingUsage?: LanguageModelUsage;
   modelId?: ModelId;
   catalog?: CatalogProvider[];
 }
@@ -166,10 +167,17 @@ const getContextUsageMetrics = (
 
 export type ContextProps = ComponentProps<typeof HoverCard> & ContextSchema;
 
-export const Context = ({ maxTokens, usage, modelId, catalog, ...props }: ContextProps) => {
+export const Context = ({
+  maxTokens,
+  usage,
+  billingUsage,
+  modelId,
+  catalog,
+  ...props
+}: ContextProps) => {
   const contextValue = useMemo(
-    () => ({ catalog, input: splitInputTokens(usage), maxTokens, modelId, usage }),
-    [catalog, maxTokens, modelId, usage],
+    () => ({ catalog, input: splitInputTokens(usage), maxTokens, modelId, usage, billingUsage }),
+    [catalog, maxTokens, modelId, usage, billingUsage],
   );
 
   return (
@@ -224,7 +232,7 @@ const ContextIcon = () => {
 export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, className, ...props }: ContextTriggerProps) => {
-  const { input, maxTokens } = useContextValue();
+  const { input, maxTokens, usage } = useContextValue();
   const percentNumber = getUsagePercent(input.total, maxTokens);
 
   return (
@@ -241,7 +249,13 @@ export const ContextTrigger = ({ children, className, ...props }: ContextTrigger
           {...props}
         >
           <span className="flex items-center gap-0.5 font-medium tabular-nums">
-            <SlidingNumber number={percentNumber} decimalPlaces={1} />%
+            {usage?.inputTokens === undefined ? (
+              "—"
+            ) : (
+              <>
+                <SlidingNumber number={percentNumber} decimalPlaces={1} />%
+              </>
+            )}
           </span>
           <ContextIcon />
         </Button>
@@ -270,7 +284,7 @@ export const ContextContentHeader = ({
   ...props
 }: ContextContentHeaderProps) => {
   const { t } = useTranslation();
-  const { input, maxTokens } = useContextValue();
+  const { input, maxTokens, usage } = useContextValue();
   const metrics = getContextUsageMetrics(input, t);
   const percentNumber = getUsagePercent(input.total, maxTokens);
   const cachePercent = input.hasCacheDetails
@@ -288,12 +302,20 @@ export const ContextContentHeader = ({
           </div>
           <div className="flex items-baseline justify-between gap-3">
             <p className="flex items-baseline gap-0.5 text-lg font-bold tabular-nums text-foreground">
-              <SlidingNumber number={percentNumber} decimalPlaces={1} />
-              <span className="text-xs font-semibold">%</span>
+              {usage?.inputTokens === undefined ? (
+                "—"
+              ) : (
+                <>
+                  <SlidingNumber number={percentNumber} decimalPlaces={1} />
+                  <span className="text-xs font-semibold">%</span>
+                </>
+              )}
             </p>
             <p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
               <span>{t("chat:context.used")}</span>
-              <span>{formatCompactTokens(input.total)}</span>
+              <span>
+                {usage?.inputTokens === undefined ? "—" : formatCompactTokens(input.total)}
+              </span>
               <span>/</span>
               <span>{formatCompactTokens(maxTokens)}</span>
               <span aria-hidden="true">·</span>
@@ -304,7 +326,7 @@ export const ContextContentHeader = ({
             aria-label={t("chat:context.categoryUsage")}
             aria-valuemax={PERCENT_MAX}
             aria-valuemin={0}
-            aria-valuenow={percentNumber}
+            aria-valuenow={usage?.inputTokens === undefined ? undefined : percentNumber}
             className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted"
             role="progressbar"
           >
@@ -341,8 +363,11 @@ export type ContextContentBreakdownProps = ComponentProps<"div">;
 
 export const ContextContentBreakdown = ({ className, ...props }: ContextContentBreakdownProps) => {
   const { t } = useTranslation();
-  const { input, maxTokens } = useContextValue();
+  const { input, maxTokens, usage } = useContextValue();
   const metrics = getContextUsageMetrics(input, t);
+
+  if (usage?.inputTokens === undefined)
+    return <p className="p-3 text-muted-foreground">{t("chat:context.unknownUsage")}</p>;
 
   return (
     <div className={cn("w-full space-y-1.5", className)} role="list" {...props}>
@@ -383,12 +408,21 @@ export const ContextContentFooter = ({
   ...props
 }: ContextContentFooterProps) => {
   const { t } = useTranslation();
-  const { modelId, usage, input, catalog } = useContextValue();
-  const inputTokens = input.total;
-  const outputTokens = usage?.outputTokens ?? 0;
-
-  const cost = modelId ? calculateCostUSD(modelId, inputTokens, outputTokens, catalog) : null;
-  const formattedCost = formatCostUSD(cost);
+  const { modelId, billingUsage, catalog } = useContextValue();
+  const inputTokens = billingUsage?.inputTokens;
+  const outputTokens = billingUsage?.outputTokens;
+  const hasBillingUsage =
+    inputTokens !== undefined &&
+    Number.isFinite(inputTokens) &&
+    inputTokens >= 0 &&
+    outputTokens !== undefined &&
+    Number.isFinite(outputTokens) &&
+    outputTokens >= 0;
+  const cost =
+    modelId && hasBillingUsage
+      ? calculateCostUSD(modelId, inputTokens, outputTokens, catalog)
+      : null;
+  const formattedCost = hasBillingUsage ? formatCostUSD(cost) : "—";
 
   return (
     <div

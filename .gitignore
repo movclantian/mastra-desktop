@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-review-*
 out
 .DS_Store
 .eslintcache
@@ -8,8 +9,12 @@ out
 .workbuddy
 .mastra
 public
+!src/renderer/public/
+!src/renderer/public/icon.png
 .env
 resources/browsers
 data
 storage-location.json
 .zvec-grep
+.agent/core-patch/
+.agent/runtime-evidence/

@@ -15,7 +15,7 @@ import {
   createWorkflowStateReader,
   type WorkflowState,
 } from "@mastra/core/workflows";
-import { createUIMessageStreamResponse } from "ai";
+import { createUIMessageStreamResponse, type LanguageModelUsage } from "ai";
 import { z } from "zod";
 import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents";
 import {
@@ -466,6 +466,35 @@ function isTerminalAgentChunk(chunk: {
   return finishReason !== "tool-calls" && payload?.stepResult?.reason !== "tool-calls";
 }
 
+const BACKGROUND_TASK_START_CHUNKS = new Set([
+  "background-task-started",
+  "background-task-running",
+  "background-task-resumed",
+  "background-task-output",
+]);
+const BACKGROUND_TASK_END_CHUNKS = new Set([
+  "background-task-completed",
+  "background-task-failed",
+  "background-task-cancelled",
+  "background-task-suspended",
+  "background-task-timed-out",
+]);
+
+/** Keep background-task tracking correct even while a reconnect replays old chunks. */
+export function trackBackgroundTaskChunk(
+  backgroundTasks: Set<string>,
+  chunk: { type?: unknown; payload?: unknown },
+): void {
+  if (typeof chunk.type !== "string") return;
+  const payload =
+    typeof chunk.payload === "object" && chunk.payload !== null
+      ? (chunk.payload as { taskId?: unknown })
+      : undefined;
+  if (typeof payload?.taskId !== "string") return;
+  if (BACKGROUND_TASK_START_CHUNKS.has(chunk.type)) backgroundTasks.add(payload.taskId);
+  else if (BACKGROUND_TASK_END_CHUNKS.has(chunk.type)) backgroundTasks.delete(payload.taskId);
+}
+
 type StreamReplayMode = { kind: "approval"; toolCallId: string } | { kind: "terminal" };
 
 /** Wait for the native run to stop before any destructive history operation. */
@@ -489,6 +518,20 @@ export async function abortWorkbenchSession(session: ControllerSession) {
 }
 
 /** Session owns the run; the official Agent subscription supplies AI SDK transport chunks. */
+export function createUsageMetadata() {
+  let contextUsage: LanguageModelUsage | undefined;
+  return ({
+    part,
+  }: {
+    part: { type: string; usage?: LanguageModelUsage; totalUsage?: LanguageModelUsage };
+  }) => {
+    if (part.type === "start") contextUsage = undefined;
+    if (part.type === "finish-step") contextUsage = part.usage;
+    if (part.type !== "finish") return undefined;
+    return { usage: part.totalUsage, contextUsage: contextUsage ?? null, contextUsageVersion: 2 };
+  };
+}
+
 export async function streamWorkbenchSession(
   c: ContextWithMastra,
   session: ControllerSession,
@@ -504,6 +547,27 @@ export async function streamWorkbenchSession(
     threadId,
     resourceId: session.identity.getResourceId(),
   });
+  const initialBackgroundTasks = new Set<string>();
+  if (keepUntilIdle) {
+    const manager = c.get("mastra").backgroundTaskManager;
+    if (manager) {
+      try {
+        const listed = await manager.listTasks({
+          resourceId: session.identity.getResourceId(),
+          threadId,
+          orderBy: "createdAt",
+          orderDirection: "desc",
+          perPage: 100,
+        });
+        for (const task of listed.tasks) {
+          if (task.status === "pending" || task.status === "running")
+            initialBackgroundTasks.add(task.id);
+        }
+      } catch {
+        // The stream itself remains authoritative if the snapshot is unavailable.
+      }
+    }
+  }
   let discardReplay = replayMode !== undefined && subscription.activeRunId() !== null;
   let closed = false;
   let unsubscribeEvents: (() => void) | undefined;
@@ -536,9 +600,13 @@ export async function streamWorkbenchSession(
       }
       void (async () => {
         let automaticApproval = false;
-        const backgroundTasks = new Set<string>();
+        const backgroundTasks = new Set(initialBackgroundTasks);
         for await (const chunk of subscription.stream) {
           if (closed) break;
+          // Track before replay filtering. A reconnect can replay the task start
+          // before the resume boundary; skipping it makes the later finish look
+          // terminal and closes the stream while the task is still running.
+          if (keepUntilIdle) trackBackgroundTaskChunk(backgroundTasks, chunk);
           // A subscription replays the parked segment before the resumed one.
           // The client already holds that message; discard through its boundary.
           if (discardReplay) {
@@ -563,33 +631,6 @@ export async function streamWorkbenchSession(
             automaticApproval = false;
             continue;
           }
-          if (keepUntilIdle && typeof chunk.type === "string") {
-            const payload =
-              "payload" in chunk && typeof chunk.payload === "object" && chunk.payload !== null
-                ? (chunk.payload as { taskId?: unknown })
-                : undefined;
-            const taskId = typeof payload?.taskId === "string" ? payload.taskId : undefined;
-            if (
-              taskId &&
-              [
-                "background-task-started",
-                "background-task-running",
-                "background-task-resumed",
-              ].includes(chunk.type)
-            ) {
-              backgroundTasks.add(taskId);
-            } else if (
-              taskId &&
-              [
-                "background-task-completed",
-                "background-task-failed",
-                "background-task-cancelled",
-                "background-task-suspended",
-              ].includes(chunk.type)
-            ) {
-              backgroundTasks.delete(taskId);
-            }
-          }
           controller.enqueue(chunk);
           if (isTerminalAgentChunk(chunk) && (!keepUntilIdle || backgroundTasks.size === 0)) break;
         }
@@ -612,8 +653,7 @@ export async function streamWorkbenchSession(
     from: "agent",
     version: "v7",
     sendReasoning: true,
-    messageMetadata: ({ part }) =>
-      part.type === "finish" ? { usage: part.totalUsage } : undefined,
+    messageMetadata: createUsageMetadata(),
   });
 }
 
@@ -625,7 +665,17 @@ export const sessionStreamRoute = registerApiRoute(
       const result = await sessionFor(c);
       if (!result.controllerSession.stream.isActive()) return new Response(null, { status: 204 });
       return createUIMessageStreamResponse({
-        stream: await streamWorkbenchSession(c, result.controllerSession),
+        // Reconnects must use the same background-task lifecycle semantics as
+        // the initial POST stream; otherwise the first terminal replay chunk
+        // truncates a long tool chain.
+        stream: await streamWorkbenchSession(
+          c,
+          result.controllerSession,
+          undefined,
+          undefined,
+          undefined,
+          true,
+        ),
       });
     },
   },

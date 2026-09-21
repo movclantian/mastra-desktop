@@ -32,9 +32,12 @@ export const LIBRARY_ATTACHMENTS_CONTEXT_KEY = "libraryAttachments";
 
 // 上传限制(路由层校验用)
 export const MAX_LIBRARY_FILE_BYTES = 50 * 1024 * 1024;
+/** Maximum media bytes allowed to become an in-memory model data URL. */
+export const MAX_LIBRARY_INLINE_MEDIA_BYTES = MAX_LIBRARY_FILE_BYTES;
 export const MAX_LIBRARY_FILES_PER_REQUEST = 10;
 export const MAX_LIBRARY_TOTAL_BYTES_PER_REQUEST = 100 * 1024 * 1024;
-export const LIBRARY_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024;
+// The chunk endpoint and resumable-session default must share one limit.
+export const LIBRARY_UPLOAD_CHUNK_BYTES = 20 * 1024 * 1024;
 export const MAX_LIBRARY_UPLOAD_CHUNK_BYTES = 20 * 1024 * 1024;
 export const MIN_LIBRARY_UPLOAD_CHUNK_BYTES = 100 * 1024;
 

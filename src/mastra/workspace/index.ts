@@ -371,6 +371,9 @@ interface WorkspaceRuntime {
   cache: Map<string, Workspace>;
 }
 
+const WORKSPACE_CACHE_LIMIT = 32;
+const RUNTIME_SCOPE_LIMIT = 32;
+
 function cachedWorkspacesForPath(runtime: WorkspaceRuntime, workspacePath: string) {
   return [...runtime.cache.entries()].filter(
     ([key]) => key === workspacePath || key.startsWith(`${workspacePath}\u0000`),
@@ -379,12 +382,38 @@ function cachedWorkspacesForPath(runtime: WorkspaceRuntime, workspacePath: strin
 
 const runtimeByScope = new Map<string, WorkspaceRuntime>();
 
+function evictTerminalWorkspace(
+  cache: Map<string, Workspace>,
+  limit: number,
+): boolean {
+  if (cache.size <= limit) return false;
+  for (const [cacheKey, workspace] of cache) {
+    // Workspace does not expose an in-flight operation counter. Never destroy
+    // a pending/ready workspace from an LRU path: an Agent, Sandbox, or LSP
+    // operation may still hold the instance after this lookup returns.
+    if (workspace.status !== "error" && workspace.status !== "destroyed") continue;
+    cache.delete(cacheKey);
+    void workspace.destroy().catch(() => undefined);
+    return true;
+  }
+  return false;
+}
+
 function getRuntime(resourceId?: string): WorkspaceRuntime {
   const key = scopeKey(resourceId);
   let runtime = runtimeByScope.get(key);
-  if (!runtime) {
-    runtime = { config: defaultWorkspaceConfig(resourceId), cache: new Map() };
+  if (runtime) {
+    runtimeByScope.delete(key);
     runtimeByScope.set(key, runtime);
+    return runtime;
+  }
+  runtime = { config: defaultWorkspaceConfig(resourceId), cache: new Map() };
+  runtimeByScope.set(key, runtime);
+  if (runtimeByScope.size > RUNTIME_SCOPE_LIMIT) {
+    const oldest = runtimeByScope.entries().next().value as [string, WorkspaceRuntime] | undefined;
+    if (oldest && oldest[1].cache.size === 0) {
+      runtimeByScope.delete(oldest[0]);
+    }
   }
   return runtime;
 }
@@ -451,7 +480,13 @@ export function getThreadWorkspace(
   const config = runtime.config;
   const cacheKey = [workspacePath, threadId, resourceId].filter(Boolean).join("\u0000");
   const cached = runtime.cache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) {
+    // Map insertion order is used as a small LRU: active workspaces stay warm,
+    // while long-lived sessions cannot retain an unbounded number of runtimes.
+    runtime.cache.delete(cacheKey);
+    runtime.cache.set(cacheKey, cached);
+    return cached;
+  }
 
   const managedSkillsDirectory = getManagedSkillsDirectory(resourceId);
   const allowedPaths = [
@@ -521,6 +556,7 @@ export function getThreadWorkspace(
   };
   const workspace = new Workspace(workspaceConfig) as Workspace;
   runtime.cache.set(cacheKey, workspace);
+  evictTerminalWorkspace(runtime.cache, WORKSPACE_CACHE_LIMIT);
   return workspace;
 }
 

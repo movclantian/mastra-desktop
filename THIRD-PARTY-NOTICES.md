@@ -54,7 +54,7 @@ This project is distributed under the Apache License 2.0 (see [LICENSE](LICENSE)
 
 `@mastra/editor` ships a mixed license. Everything outside `ee/` is Apache-2.0. Anything under a directory named `ee/` — including `dist/ee/workspace/skills/**` — falls under the Mastra Enterprise Edition License v1.0 (Copyright (c) 2026 Kepler Software, Inc.), which permits production use **only** under a written agreement with Kepler Software, Inc. and explicitly forbids copying, merging, publishing, distributing, sublicensing and selling the software.
 
-The current source tree reaches into that directory in `src/mastra/routes/skills.ts` (`builtinSkillsDirectory()`), surfaces the contents as built-in skills, and copies them into the user's skills directory. **This is flagged as an open compliance item and is not part of the project's open-source grant.** Removing this dependency on `ee/` content is a required pre-release fix; until it lands, no `ee/` content is covered by this project's Apache-2.0 license or by any published artifact.
+The current source tree no longer reaches into that directory. `src/mastra/routes/skills.ts` now reads built-in skills only from the repository-owned `resources/builtin-skills/` directory, and `electron-builder.yml` excludes the editor package's `ee/` paths from packaged files. **The source-level compliance fix is complete; a clean packaged-artifact scan remains required before release.**
 
 ## Category 2 — models and data
 
@@ -192,7 +192,7 @@ Geist · Geist Mono · Inter · Noto Serif SC · Bricolage Grotesque · Public S
 
 | # | Item | Status | Plan |
 | --- | --- | --- | --- |
-| 1 | `@mastra/editor` `ee/` content is reachable and copied at runtime | **Must fix before release** | Remove the dependency on `ee/` — point built-in skills at our own `assets/builtin-skills/` and re-evaluate whether `MastraEditor` is needed at all |
+| 1 | `@mastra/editor` `ee/` content is reachable and copied at runtime | **Source fixed; artifact scan pending** | Keep built-in skills under `resources/builtin-skills/`, retain the package exclusion, and scan a clean packaged artifact before release |
 | 2 | `css-value@0.0.1` declares no license | Disclosed | Drop the `webdriverio` chain if possible to remove the ambiguity entirely |
 | 3 | Per-file licenses of `shiki` TextMate grammars and themes | Pending | Verify file by file and extend this notice |
 | 4 | Third-party notices bundled inside the Playwright Chromium binary | Pending | Retain Chromium's own license files in the packaged artifact and reference them here |

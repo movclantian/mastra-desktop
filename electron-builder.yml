@@ -1,5 +1,6 @@
 appId: com.mastra.desktop
 productName: mastra-desktop
+icon: build/icon
 directories:
   buildResources: build
 files:
@@ -7,8 +8,20 @@ files:
   # 必须显式带上应用自身的构建产物 out/(main/preload/renderer)
   - 'out/**'
   - '.mastra/output/**'
+  # The packaged Mastra entry runs from app.asar and resolves these imports
+  # against the app-level production dependencies. Do not duplicate the
+  # deployer's pnpm tree in app.asar.unpacked.
+  - '!.mastra/output/node_modules/**'
+  - 'resources/icon.png'
   - 'resources/browsers/**'
+  - 'resources/builtin-skills/**'
   - '!**/.vscode/*'
+  # Source maps are useful for development but are not loaded by the packaged
+  # runtime. Keeping them duplicated across app.asar and Mastra deploy output
+  # adds hundreds of MB and a large number of installer files.
+  - '!**/*.map'
+  - '!**/node_modules/@mastra/editor/dist/ee/**'
+  - '!**/node_modules/@mastra/editor/ee/**'
   - '!src/*'
   - '!.mastra/.build/**'
   - '!.mastra/dev.lock'
@@ -19,8 +32,11 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
-  - resources/**
-  - '.mastra/output/**'
+  # Only these directories are consumed through filesystem paths outside the
+  # asar. The icon is loaded from app.asar by the main-process asset import;
+  # keeping all of resources/** unpacked duplicated it in every installer.
+  - resources/browsers/**
+  - resources/builtin-skills/**
   - 'node_modules/node-pty/**'
 win:
   executableName: mastra-desktop

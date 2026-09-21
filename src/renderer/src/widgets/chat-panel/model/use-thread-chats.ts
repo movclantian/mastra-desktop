@@ -31,6 +31,7 @@ export function useThreadChats(
   userId: string,
   buildRequestBody: (threadId: string) => Record<string, unknown>,
   onThreadBusyChange?: (threadId: string, isBusy: boolean) => void,
+  onThreadSettled?: (threadId: string) => void,
 ): ThreadChats {
   const chatsRef = React.useRef(new Map<string, Chat<WorkUIMessage>>());
   const reconnectAttemptsRef = React.useRef(new Map<string, number>());
@@ -40,6 +41,8 @@ export function useThreadChats(
   buildRequestBodyRef.current = buildRequestBody;
   const onThreadBusyChangeRef = React.useRef(onThreadBusyChange);
   onThreadBusyChangeRef.current = onThreadBusyChange;
+  const onThreadSettledRef = React.useRef(onThreadSettled);
+  onThreadSettledRef.current = onThreadSettled;
 
   React.useEffect(
     () => () => {
@@ -101,16 +104,22 @@ export function useThreadChats(
             }
             onThreadBusyChangeRef.current?.(threadId, false);
           }
+          // AI SDK 的 onFinish 只更新本地流状态；服务端消息/工具快照可能在
+          // 同一个 tick 之后才落库。通知面板做一次有界的服务端真相对账，
+          // 否则长工具链会出现“服务端已完成、界面直到重新打开线程才显示”的假死。
+          onThreadSettledRef.current?.(threadId);
         },
         onError: (error) => {
           if (resumeRequestsRef.current.delete(threadId)) {
             onThreadBusyChangeRef.current?.(threadId, false);
+            onThreadSettledRef.current?.(threadId);
             return;
           }
           const detail = streamErrorMessage(error);
           if (!isTransientStreamError(error)) {
             onThreadBusyChangeRef.current?.(threadId, false);
             toast.error(i18n.t("chat:messages.turnFailed", { detail }));
+            onThreadSettledRef.current?.(threadId);
             return;
           }
 
@@ -119,6 +128,7 @@ export function useThreadChats(
           if (attempt > STREAM_RECONNECT_LIMIT) {
             onThreadBusyChangeRef.current?.(threadId, false);
             toast.error(i18n.t("chat:messages.streamInterruptedDetail", { detail }));
+            onThreadSettledRef.current?.(threadId);
             return;
           }
 
@@ -141,10 +151,12 @@ export function useThreadChats(
                   reconnectAttemptsRef.current.delete(threadId);
                   onThreadBusyChangeRef.current?.(threadId, false);
                   toast.error(i18n.t("chat:messages.streamInterruptedDetail", { detail }));
+                  onThreadSettledRef.current?.(threadId);
                 }
               })
               .catch(() => {
                 onThreadBusyChangeRef.current?.(threadId, false);
+                onThreadSettledRef.current?.(threadId);
               });
           }, delay);
           reconnectTimersRef.current.set(threadId, timer);

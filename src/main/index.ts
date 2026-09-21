@@ -282,6 +282,35 @@ function isTrustedRendererUrl(value: string): boolean {
   }
 }
 
+function rendererContentSecurityPolicy(): string {
+  const rendererUrl = is.dev ? process.env.ELECTRON_RENDERER_URL : undefined;
+  let devConnectSources = "";
+  if (rendererUrl) {
+    try {
+      const devOrigin = new URL(rendererUrl).origin;
+      const devWebSocketOrigin = devOrigin.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+      devConnectSources = ` ${devOrigin} ${devWebSocketOrigin}`;
+    } catch {
+      // The renderer URL is still checked by isTrustedRendererUrl before loading.
+    }
+  }
+
+  const scriptSources = is.dev
+    ? "'self' 'unsafe-inline' 'wasm-unsafe-eval'"
+    : "'self' 'wasm-unsafe-eval'";
+  return [
+    "default-src 'self'",
+    `connect-src 'self' ${MASTRA_SERVER_URL}${devConnectSources} https://v2.xxapi.cn`,
+    `script-src ${scriptSources}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https://images.xxapi.cn https://models.dev",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+}
+
 function isTrustedIpcSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean {
   const window = mainWindow;
   return Boolean(
@@ -449,10 +478,12 @@ function getMastraCliEntry(projectRoot: string): string {
 }
 
 function getPackagedMastraEntry(): string {
-  // asarUnpack 的产物位于 app.asar.unpacked/ 下，路径与 asar 内部相对结构一致
-  const appPath = app.getAppPath();
-  const unpackedRoot = appPath.endsWith(".asar") ? `${appPath}.unpacked` : appPath;
-  return join(unpackedRoot, ".mastra", "output", "index.mjs");
+  // Keep the ESM entry inside app.asar. Node's ESM resolver can then resolve
+  // the bundled production dependencies from app.asar/node_modules. Launching
+  // the same file from app.asar.unpacked breaks package resolution after NSIS
+  // installation because the unpacked tree intentionally contains only native
+  // modules and browser assets.
+  return join(app.getAppPath(), ".mastra", "output", "index.mjs");
 }
 
 function getPackagedResourceDirectory(): string {
@@ -540,6 +571,9 @@ function showCrashDialog(detail: string): void {
       if (response === 0) {
         try {
           await stopMastra();
+          // stopMastra marks the current process tree as stopping. A crash
+          // restart starts a new tree, so clear the guard before spawning it.
+          isMastraStopping = false;
           mastraStartPromise = null;
           await ensureMastraRunning();
         } catch (err) {
@@ -728,12 +762,33 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    ...(process.platform === "linux" ? { icon } : {}),
+    // The packaged app uses icon.ico/icon.icns for its shell icon. Reuse the
+    // same asset for the Windows/Linux window so dev and packaged runs do not
+    // show Electron's default icon. macOS gets its icon from the app bundle.
+    ...(process.platform !== "darwin" ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
-      sandbox: false,
     },
   });
+
+  const rendererSession = mainWindow.webContents.session;
+  const handleRendererHeaders = (
+    details: Electron.OnHeadersReceivedListenerDetails,
+    callback: (response: Electron.HeadersReceivedResponse) => void,
+  ) => {
+    if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
+      callback({});
+      return;
+    }
+
+    const responseHeaders = { ...details.responseHeaders };
+    const hasCsp = Object.keys(responseHeaders).some(
+      (name) => name.toLowerCase() === "content-security-policy",
+    );
+    if (!hasCsp) responseHeaders["Content-Security-Policy"] = [rendererContentSecurityPolicy()];
+    callback({ responseHeaders });
+  };
+  rendererSession.webRequest.onHeadersReceived(handleRendererHeaders);
 
   const displayMediaSession = mainWindow.webContents.session;
   displayMediaSession.setDisplayMediaRequestHandler((request, callback) => {
@@ -797,6 +852,7 @@ function createWindow(): void {
   ipcMain.on(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
 
   mainWindow.on("closed", () => {
+    rendererSession.webRequest.onHeadersReceived(null);
     displayMediaSession.setDisplayMediaRequestHandler(null);
     ipcMain.removeHandler(TERMINAL_CREATE_CHANNEL);
     ipcMain.removeListener(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
@@ -815,6 +871,38 @@ function createWindow(): void {
     if (url.success) void shell.openExternal(url.data);
     return { action: "deny" };
   });
+
+  // Keep renderer failures distinguishable from a Mastra/SSE failure.  These
+  // diagnostics are deliberately limited to lifecycle/error metadata and do
+  // not capture message contents or credentials.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    console.error(
+      `[Renderer] process gone: reason=${details.reason}, exitCode=${details.exitCode}`,
+    );
+  });
+  mainWindow.on("unresponsive", () => {
+    console.error("[Renderer] window became unresponsive");
+  });
+  mainWindow.on("responsive", () => {
+    console.info("[Renderer] window became responsive");
+  });
+  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    if (
+      level >= 2 ||
+      /maximum update depth|network error|uncaught error/i.test(message)
+    ) {
+      console.error(`[Renderer] console level=${level} ${sourceId}:${line}: ${message}`);
+    }
+  });
+
+  const handleUntrustedNavigation = (event: Electron.Event, url: string) => {
+    if (isTrustedRendererUrl(url)) return;
+    event.preventDefault();
+    const externalUrl = ExternalUrlSchema.safeParse(url);
+    if (externalUrl.success) void shell.openExternal(externalUrl.data);
+  };
+  mainWindow.webContents.on("will-navigate", handleUntrustedNavigation);
+  mainWindow.webContents.on("will-redirect", handleUntrustedNavigation);
 
   // HMR for renderer base on electron-vite cli.
   // Load the remote URL for development or the local html file for production.

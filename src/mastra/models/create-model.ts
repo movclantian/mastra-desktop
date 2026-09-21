@@ -49,6 +49,50 @@ export function inferGatewayProtocol(registryId: string): GatewayProtocol | unde
   return undefined;
 }
 
+/**
+ * Resolve the endpoint shipped in Mastra's provider registry.
+ *
+ * Built-in BYOK providers persist only their registry id and credential. The
+ * registry URL is therefore the only safe endpoint for providers such as
+ * DeepSeek, Groq, and other OpenAI-compatible gateways; falling back to the
+ * OpenAI SDK default would send their keys to api.openai.com.
+ */
+export function getRegistryProviderBaseUrl(registryId: string): string | undefined {
+  const provider = getProviderConfig(registryId.trim());
+  const url = typeof provider?.url === "string" ? provider.url.trim() : "";
+  if (!url) return undefined;
+  return url;
+}
+
+/**
+ * DeepSeek thinking requests must replay reasoning_content on every assistant
+ * message that precedes a tool call. Keep this transform pure so the provider
+ * boundary can be regression-tested without making a network request.
+ */
+export function transformDeepSeekRequestBody(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Array.isArray(body.messages)) return body;
+  return {
+    ...body,
+    messages: body.messages.map((message) => {
+      if (
+        typeof message !== "object" ||
+        message === null ||
+        (message as { role?: unknown }).role !== "assistant"
+      ) {
+        return message;
+      }
+      const assistant = message as Record<string, unknown>;
+      return {
+        ...assistant,
+        reasoning_content:
+          typeof assistant.reasoning_content === "string" ? assistant.reasoning_content : "",
+      };
+    }),
+  };
+}
+
 export function normalizeGatewayBaseUrl(
   baseUrl: string | undefined,
   protocol: GatewayProtocol | undefined,
@@ -76,6 +120,7 @@ export function normalizeGatewayBaseUrl(
 export function createGatewayModel(options: {
   modelId: string;
   modelRouterId?: string;
+  registryId?: string;
   apiKey: string;
   baseUrl?: string;
   protocol: GatewayProtocol | undefined;
@@ -121,11 +166,14 @@ export function createGatewayModel(options: {
         break;
       }
       if (normalizedBaseUrl) {
+        const transformRequestBody =
+          options.registryId === "deepseek" ? transformDeepSeekRequestBody : undefined;
         model = createOpenAICompatible({
           baseURL: normalizedBaseUrl,
           name: providerName?.trim() || "openai-compatible",
           apiKey,
           ...(supportsStructuredOutputs !== undefined ? { supportsStructuredOutputs } : {}),
+          ...(transformRequestBody ? { transformRequestBody } : {}),
         }).chatModel(modelId);
         break;
       }

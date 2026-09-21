@@ -2,7 +2,8 @@
  * 分片断点续传:会话创建、分块上传、合并入库与过期清理。
  */
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, open, rm, stat, type FileHandle, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
 import { getStorageDirectory } from "../../storage";
@@ -14,13 +15,28 @@ import {
   MAX_LIBRARY_UPLOAD_CHUNK_BYTES,
   MIN_LIBRARY_UPLOAD_CHUNK_BYTES,
 } from "../types";
-import { uploadAsset } from "./assets";
-import { ensureLibrarySchema, now, rowToUploadSession, withClient } from "./db";
+import { uploadAssetFromFile } from "./assets";
+import {
+  cleanupExpiredLibraryUploadSessions,
+  ensureLibrarySchema,
+  now,
+  rowToUploadSession,
+  withClient,
+} from "./db";
 
 /**
  * 分片断点续传服务:
  * 会话创建、块上传、分片合并与清理。
  */
+
+async function writeFullChunk(file: FileHandle, chunk: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await file.write(chunk, offset, chunk.byteLength - offset);
+    if (bytesWritten <= 0) throw new Error("上传合并写入失败: 未写入任何字节");
+    offset += bytesWritten;
+  }
+}
 
 function sanitizeChunkSize(chunkSize?: number): number {
   if (!chunkSize || Number.isNaN(chunkSize)) return MAX_LIBRARY_UPLOAD_CHUNK_BYTES;
@@ -53,6 +69,9 @@ export async function createLibraryUploadSession(input: {
   }
 
   await ensureLibrarySchema();
+  void cleanupExpiredLibraryUploadSessions().catch((error) => {
+    console.warn("[library-upload] cleanup deferred", error);
+  });
   const id = nanoid();
   const filename = normalizeFilename(input.filename);
   const mediaType = resolveMediaType(filename, input.mediaType || "");
@@ -107,8 +126,8 @@ export async function getLibraryUploadSession(
   await ensureLibrarySchema();
   const [sessionRow, chunkRows] = await withClient(async (client) => {
     const session = await client.execute({
-      sql: "SELECT * FROM library_upload_sessions WHERE id = ? AND resource_id = ? LIMIT 1",
-      args: [sessionId, resourceId],
+      sql: "SELECT * FROM library_upload_sessions WHERE id = ? AND resource_id = ? AND expires_at > ? LIMIT 1",
+      args: [sessionId, resourceId, now()],
     });
     const chunks = await client.execute({
       sql: "SELECT chunk_index FROM library_upload_chunks WHERE session_id = ? ORDER BY chunk_index ASC",
@@ -180,49 +199,71 @@ export async function completeLibraryUploadSession(
     );
   }
 
-  const parts: Uint8Array[] = [];
-  let totalBytes = 0;
-  for (let index = 0; index < session.totalChunks; index++) {
-    const chunkPath = uploadChunkPath(session.id, index);
-    const chunkBuffer = await readFile(chunkPath).catch(() => null);
-    if (!chunkBuffer) throw new Error(`分片 ${index} 读取失败，请重试`);
-    parts.push(new Uint8Array(chunkBuffer));
-    totalBytes += chunkBuffer.byteLength;
-  }
+  const mergedPath = join(uploadSessionDirectory(session.id), `.merged-${nanoid()}.tmp`);
+  let mergedFile: FileHandle | undefined;
+  try {
+    mergedFile = await open(mergedPath, "wx");
+    let totalBytes = 0;
+    for (let index = 0; index < session.totalChunks; index++) {
+      const chunkPath = uploadChunkPath(session.id, index);
+      const chunkFile = await stat(chunkPath).catch(() => null);
+      if (!chunkFile) throw new Error(`分片 ${index} 读取失败，请重试`);
+      for await (const chunk of createReadStream(chunkPath)) {
+        totalBytes += chunk.byteLength;
+        if (totalBytes > session.byteSize) {
+          throw new Error("上传分片总大小超过会话声明的文件大小");
+        }
+        await writeFullChunk(mergedFile, chunk);
+      }
+    }
+    await mergedFile.close();
+    mergedFile = undefined;
 
-  const merged = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const part of parts) {
-    merged.set(part, offset);
-    offset += part.byteLength;
-  }
+    if (totalBytes !== session.byteSize) {
+      throw new Error(`上传分片总大小不匹配: ${totalBytes}/${session.byteSize}`);
+    }
 
-  const asset = await uploadAsset({
-    resourceId: session.resourceId,
-    filename: session.filename,
-    bytes: merged,
-    mediaType: session.mediaType,
-    folderId: session.folderId,
-    threadId: session.threadId,
-  });
+    const asset = await uploadAssetFromFile({
+      resourceId: session.resourceId,
+      filename: session.filename,
+      filePath: mergedPath,
+      byteSize: totalBytes,
+      mediaType: session.mediaType,
+      folderId: session.folderId,
+      threadId: session.threadId,
+    });
 
-  await withClient((client) =>
-    client.batch([
-      {
-        sql: "DELETE FROM library_upload_chunks WHERE session_id = ?",
-        args: [session.id],
+    // Make the database the completion source of truth before best-effort disk
+    // cleanup. If the DB delete fails, the chunk rows/files remain available for
+    // an idempotent retry; if disk cleanup fails after the delete, only an
+    // orphaned temp directory remains and the durable asset is still successful.
+    await withClient((client) =>
+      client.batch([
+        {
+          sql: "DELETE FROM library_upload_chunks WHERE session_id = ?",
+          args: [session.id],
+        },
+        {
+          sql: "DELETE FROM library_upload_sessions WHERE id = ?",
+          args: [session.id],
+        },
+      ]),
+    );
+    await rm(uploadSessionDirectory(session.id), { recursive: true, force: true }).catch(
+      (error) => {
+        console.warn(
+          `[library-upload] completed session cleanup deferred (${session.id}): ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       },
-      {
-        sql: "DELETE FROM library_upload_sessions WHERE id = ?",
-        args: [session.id],
-      },
-    ]),
-  );
-  await rm(uploadSessionDirectory(session.id), { recursive: true, force: true }).catch(
-    () => undefined,
-  );
+    );
 
-  return asset;
+    return asset;
+  } finally {
+    if (mergedFile) await mergedFile.close().catch(() => undefined);
+    await rm(mergedPath, { force: true }).catch(() => undefined);
+  }
 }
 
 export async function cancelLibraryUploadSession(

@@ -42,5 +42,7 @@ export type ThreadMetadata = {
   workspacePath?: string;
   /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录(两者都可浏览) */
   workspaceExplicit?: boolean;
-  contextUsage?: Record<string, unknown>;
+  contextUsage?: Record<string, unknown> | null;
+  contextUsageVersion?: number;
+  totalUsage?: Record<string, unknown> | null;
 };

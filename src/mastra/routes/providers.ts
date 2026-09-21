@@ -7,10 +7,11 @@
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
 import { resolveCredential } from "../credential-broker";
-import { errorText, workError } from "../errors";
+import { errorText, WorkApiError, workError } from "../errors";
 import {
   createEphemeralAgent,
   getProvidersConfig,
@@ -260,7 +261,26 @@ const providerModelsRequestSchema = z
   })
   .strict();
 
-// POST /work/providers/test — 用一次性 Mastra Agent 测试文本与结构化输出,
+function providerErrorStatus(error: unknown): number | undefined {
+  const values: unknown[] = [error];
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    values.push(record.cause, record.response);
+  }
+  for (const value of values) {
+    if (!value || typeof value !== "object") continue;
+    const record = value as Record<string, unknown>;
+    for (const key of ["statusCode", "responseStatusCode", "status"]) {
+      const status = record[key];
+      if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599) {
+        return status;
+      }
+    }
+  }
+  return undefined;
+}
+
+// POST /work/providers/test — 用一次性 Mastra Agent 测试纯文本连通性,
 // 不创建线程或写入 Memory。
 export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
   method: "POST",
@@ -279,23 +299,28 @@ export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
       const testAgent = createEphemeralAgent(model, {
         id: "mastra-work-model-test",
         name: "MastraWork Model Test",
-        instructions: "返回一个简短问候语,并严格按结构化字段输出。",
+        instructions: "只返回简短的纯文本问候语。",
       });
-      const result = await testAgent.generate("请回复一个简短的 hi。", {
-        structuredOutput: {
-          schema: z.object({ reply: z.string().min(1) }),
-          jsonPromptInjection: "auto",
-        },
+      // This endpoint verifies connectivity and credentials, not structured-output
+      // support. A plain text probe avoids false negatives for valid providers whose
+      // selected model does not advertise JSON/schema output.
+      const result = await testAgent.generate("请只回复一个简短的 hi。", {
         abortSignal: c.req.raw.signal,
       });
-      return c.json({ ok: true, reply: result.object.reply.trim().slice(0, 120) });
+      const reply = result.text.trim().slice(0, 120);
+      if (!reply) throw new Error("模型返回了空响应");
+      return c.json({ ok: true, reply });
     } catch (error) {
+      if (error instanceof WorkApiError) throw error;
+      const upstreamStatus = providerErrorStatus(error);
+      const status = (upstreamStatus ?? 502) as ContentfulStatusCode;
       return c.json(
         {
           ok: false,
           error: errorText(error, "模型连接测试失败"),
+          ...(upstreamStatus ? { upstreamStatus } : {}),
         },
-        400,
+        status,
       );
     }
   },

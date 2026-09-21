@@ -1,5 +1,4 @@
 # pnpm 12 配置
-dangerouslyAllowAllBuilds: true
 # onnxruntime-node(@mastra/fastembed 的原生依赖)有构建脚本:部署时 deployer 复制本
 # workspace 配置只认白名单键(不含 dangerouslyAllowAllBuilds),必须显式 allowBuilds
 # 才能让 .mastra/output 里的 pnpm install 放行其构建(否则 ERR_PNPM_IGNORED_BUILDS)
@@ -8,11 +7,14 @@ allowBuilds:
   agent-browser: true
   bufferutil: true
   edgedriver: true
+  electron-winstaller: true
+  esbuild: true
   geckodriver: true
+  node-pty: true
   onnxruntime-node: true
   protobufjs: true
-# 关闭供应链最小发布年龄保护（默认 1440s=1天）：刚发布的包立即可用
-minimumReleaseAge: 0
+# 依赖至少发布 1 天后才进入安装，降低刚发布包被污染的供应链风险
+minimumReleaseAge: 1440
 shamefullyHoist: true
 # 统一 shiki 到 v4：streamdown 类型解析走根目录 v4，@streamdown/code 依赖声明是 ^3.19，
 # 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
@@ -32,3 +34,5 @@ peerDependencyRules:
   ignoreMissing: []
   allowedVersions:
     typescript-paths>typescript: "7"
+patchedDependencies:
+  '@mastra/core@1.67.0': patches/@mastra__core@1.67.0.patch

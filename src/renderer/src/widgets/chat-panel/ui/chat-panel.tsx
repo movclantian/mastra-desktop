@@ -80,6 +80,7 @@ import {
   type MessageFileReference,
   type MessageReaction,
   mergeWorkflowRuntimeStates,
+  normalizeAgentTasks,
   parseSuspendedRuns,
   type QueuedRequest,
   toggleMessageReactions,
@@ -283,6 +284,8 @@ export function ChatPanel() {
     () => new Set(),
   );
   const displayStateRequestId = React.useRef(0);
+  const settledReconcileTimerRef = React.useRef<number | null>(null);
+  const pendingSettledThreadsRef = React.useRef(new Set<string>());
   const rewriteRefreshRef = React.useRef(false);
   // 分支来源(官方 isClone / getSourceThread):非分支线程为 undefined,分支线程
   // 在 effect 里取回 { id, title };来源已删除/查询失败为 null
@@ -349,6 +352,9 @@ export function ChatPanel() {
   const pendingWorkspacePathRef = React.useRef(pendingWorkspacePath);
   pendingWorkspacePathRef.current = pendingWorkspacePath;
   const workspaceLockedRef = React.useRef(false);
+  // useThreadChats 在本文件稍后才拿到 reloadMessages/reloadDisplayState；用 ref
+  // 连接流生命周期与面板的服务端真相对账，避免把后定义的回调放进 Hook 闭包。
+  const reconcileSettledThreadRef = React.useRef<(threadId: string) => void>(() => undefined);
 
   // 每次请求携带的公共字段(BYOK 模型 + 思考等级 + 检索开关 + memory 标识 + 附件预算)。
   // body 格式参考 docs/en/reference/ai-sdk/chat-route.mdx。
@@ -398,6 +404,7 @@ export function ChatPanel() {
     user.id,
     (threadId) => buildRequestBodyRef.current(threadId),
     setThreadBusy,
+    (threadId) => reconcileSettledThreadRef.current(threadId),
   );
   const placeholderChat = usePlaceholderChat();
   const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
@@ -547,7 +554,9 @@ export function ChatPanel() {
       if (!payload.displayState) return undefined;
       return {
         ...payload.displayState,
-        tasks: Array.isArray(payload.displayState.tasks) ? payload.displayState.tasks : [],
+        tasks: Array.isArray(payload.displayState.tasks)
+          ? normalizeAgentTasks(payload.displayState.tasks)
+          : [],
         suspendedRuns: parseSuspendedRuns(payload.displayState.suspendedRuns),
       } satisfies WorkDisplayState;
     },
@@ -573,14 +582,81 @@ export function ChatPanel() {
       setBackgroundTasks(displayState?.backgroundTasks ?? []);
       setWorkflowRuns(displayState?.workflowRuns ?? []);
       setTaskSnapshotLoaded(Boolean(displayState));
+      return displayState;
     } catch {
       if (requestId !== displayStateRequestId.current) return;
       setTasks((current) => (current.length === 0 ? current : []));
       setPersistedInteractions([]);
       setBackgroundTasks([]);
       setWorkflowRuns([]);
+      return undefined;
     }
   }, [activeThreadId, fetchDisplayState]);
+
+  // 流结束不等于服务端已经把最后一条 assistant/tool 消息写入消息表。
+  // 以 display-state 的 activeRunId 为门闩做最多 4 次短退避：既不会让每个
+  // token 触发请求，也不会把“服务端已完成但 UI 仍停在旧快照”留给用户。
+  const reconcileSettledThread = React.useCallback(
+    (threadId: string) => {
+      if (activeThreadIdRef.current !== threadId) {
+        // 后台线程结算时用户可能正在看另一条线程；切回时由线程切换
+        // effect 消费这个标记，不能把这次服务端状态变化静默丢掉。
+        pendingSettledThreadsRef.current.add(threadId);
+        return;
+      }
+      pendingSettledThreadsRef.current.delete(threadId);
+      if (settledReconcileTimerRef.current !== null) {
+        window.clearTimeout(settledReconcileTimerRef.current);
+      }
+      const schedule = (attempt: number) => {
+        if (activeThreadIdRef.current !== threadId) return;
+        const delay = attempt === 0 ? 120 : Math.min(250 * 2 ** (attempt - 1), 1000);
+        settledReconcileTimerRef.current = window.setTimeout(() => {
+          settledReconcileTimerRef.current = null;
+          if (activeThreadIdRef.current !== threadId) return;
+          void fetchDisplayState(threadId)
+            .then(async (displayState) => {
+              if (activeThreadIdRef.current !== threadId) return;
+              if (displayState?.activeRunId) {
+                if (attempt < 4) schedule(attempt + 1);
+                else {
+                  // Never reload message history while the server still owns
+                  // the run. The persisted history can legitimately lag the
+                  // live stream and would erase already-rendered output.
+                  await reloadDisplayState();
+                }
+                return;
+              }
+              // 结算回调与下一轮发送可能相邻到达；绝不能用上一轮服务端
+              // 快照覆盖正在增长的本地消息。下一轮结束时会再次对账。
+              const chat = getThreadChat(threadId);
+              if (chat.status === "submitted" || chat.status === "streaming") {
+                if (attempt < 4) schedule(attempt + 1);
+                return;
+              }
+              await reloadMessages();
+              await reloadDisplayState();
+            })
+            .catch(() => {
+              if (attempt < 4) schedule(attempt + 1);
+            });
+        }, delay);
+      };
+      schedule(0);
+    },
+    [fetchDisplayState, getThreadChat, reloadDisplayState, reloadMessages],
+  );
+
+  React.useEffect(() => {
+    reconcileSettledThreadRef.current = reconcileSettledThread;
+    return () => {
+      reconcileSettledThreadRef.current = () => undefined;
+      if (settledReconcileTimerRef.current !== null) {
+        window.clearTimeout(settledReconcileTimerRef.current);
+        settledReconcileTimerRef.current = null;
+      }
+    };
+  }, [reconcileSettledThread]);
 
   /**
    * 从持久化快照读取本线程仍在等待的工具交互(Agent.listSuspendedRuns)。
@@ -609,6 +685,13 @@ export function ChatPanel() {
     if (!isInitialSendThread && activeChat.messages.length === 0 && activeChat.status === "ready") {
       void reloadMessages();
     }
+    if (
+      activeThreadId &&
+      pendingSettledThreadsRef.current.delete(activeThreadId) &&
+      activeChat.status === "ready"
+    ) {
+      reconcileSettledThread(activeThreadId);
+    }
     setTasks([]);
     setTaskSnapshotLoaded(false);
     displayStateRequestId.current += 1;
@@ -619,7 +702,7 @@ export function ChatPanel() {
     setWorkflowRuns([]);
     setResolvedInteractionKeys(new Set());
     retainActive(activeThreadId);
-  }, [activeChat, activeThreadId, reloadMessages, retainActive]);
+  }, [activeChat, activeThreadId, reconcileSettledThread, reloadMessages, retainActive]);
 
   const interactionReloadVersion = React.useRef(0);
   // 任务和暂停交互都是服务端持久化状态;只在切线和一轮响应结束后读取,
@@ -712,17 +795,25 @@ export function ChatPanel() {
   }, [stop, user.id]);
 
   const isBusy = status === "submitted" || status === "streaming";
+  const hasLiveBackgroundWork = React.useMemo(
+    () =>
+      backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
+      (workflowRuns ?? []).some((run) =>
+        ["pending", "running", "waiting"].includes(run.status ?? ""),
+      ),
+    [backgroundTasks, workflowRuns],
+  );
   React.useEffect(() => {
     if (!activeThreadId) return;
-    setThreadBusy(activeThreadId, isBusy);
-  }, [activeThreadId, isBusy, setThreadBusy]);
+    setThreadBusy(activeThreadId, isBusy || hasLiveBackgroundWork);
+  }, [activeThreadId, hasLiveBackgroundWork, isBusy, setThreadBusy]);
   React.useEffect(() => {
-    if (!isBusy || !activeThreadId) return;
+    if ((!isBusy && !hasLiveBackgroundWork) || !activeThreadId) return;
     const timer = window.setInterval(() => {
       void reloadDisplayState();
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [activeThreadId, isBusy, reloadDisplayState]);
+  }, [activeThreadId, hasLiveBackgroundWork, isBusy, reloadDisplayState]);
 
   // Keep the queue current after the agent stream closes. The official
   // BackgroundTaskManager stream emits lifecycle events for tasks that finish
@@ -732,8 +823,12 @@ export function ChatPanel() {
     if (!activeThreadId) return;
     return subscribeBackgroundTaskStream(activeThreadId, user.id, (task) => {
       setBackgroundTasks((current) => [task, ...current.filter((entry) => entry.id !== task.id)]);
+      // A background task can update the persistent task list after the
+      // foreground chat stream has already settled. Pull that snapshot once
+      // per lifecycle event so the task card does not wait for navigation.
+      void reloadDisplayState();
     });
-  }, [activeThreadId, user.id]);
+  }, [activeThreadId, reloadDisplayState, user.id]);
   // 同步到 workbench:设置页(存储位置迁移会重启服务)据此判断是否需要二次确认
   React.useEffect(() => {
     setAgentBusy(isBusy);
@@ -988,6 +1083,7 @@ export function ChatPanel() {
         );
         const chat = getThreadChat(threadId);
         if (!stillPending) {
+          if (activeThreadIdRef.current !== threadId) return;
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
           setPersistedInteractions(pending);
           toast.error(t("chat:welcome.toastToolExpired"));
@@ -1000,28 +1096,60 @@ export function ChatPanel() {
             : undefined;
         if (interaction.requiresApproval && typeof decision?.approved !== "boolean")
           throw new Error("Missing approved field in tool approval response");
+        if (activeThreadIdRef.current !== threadId) return;
 
-        // 恢复期间由 visibleInteractions 隐藏面板;只有流成功完成后才标记解决,
-        // 失败时保留卡片供用户重试,避免竞态错误把审批项永久吞掉。
+        // 发送恢复请求后立即把交互标成“已接收”。AI SDK 的 sendMessage
+        // Promise 会等整条长流结束才 resolve；若把按钮 busy 绑定到这个
+        // Promise，长任务期间审批卡片会永久灰掉。失败时再从服务端挂起
+        // 列表恢复卡片，仍然保留重试能力。
         setQueueCanDispatch(false);
-        await chat.sendMessage(undefined, {
+        setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
+        const resumeRequest = chat.sendMessage(undefined, {
           body: {
             runId: interaction.runId,
             toolCallId: interaction.toolCallId,
             ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
           },
         });
-        setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
-        // 计划获批时服务端会按 transitionsTo 切模式,重新采纳线程设置让选择器跟上
-        if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId)
-          await refreshThreadSettings();
+        // Do not await the complete stream here. Keep the rejection attached so
+        // a failed HTTP/stream request can put a still-pending interaction back.
+        void resumeRequest
+          .then(async () => {
+            if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId) {
+              // The resume stream already succeeded; a settings refresh is
+              // auxiliary and must not turn that success into a failed resume.
+              void refreshThreadSettings().catch(() => undefined);
+            }
+          })
+          .catch(async () => {
+            const latest = await fetchSuspendedInteractions(threadId).catch(() => []);
+            if (activeThreadIdRef.current !== threadId) return;
+            const stillPendingAfterFailure = latest.some(
+              (item) =>
+                item.runId === interaction.runId && item.toolCallId === interaction.toolCallId,
+            );
+            if (stillPendingAfterFailure) {
+              setResolvedInteractionKeys((current) => {
+                const next = new Set(current);
+                next.delete(interaction.key);
+                return next;
+              });
+              setPersistedInteractions(latest);
+              toast.error(t("chat:welcome.toastToolFailed"));
+            } else {
+              toast.error(t("chat:welcome.toastToolExpired"));
+            }
+          });
       } catch (error) {
+        if (activeThreadIdRef.current !== threadId) return;
         const detail = error instanceof Error ? error.message : String(error ?? "");
         if (
           /expired|no longer pending|no suspended|no tool invocation|pending task/i.test(detail)
         ) {
+          const latest = await fetchSuspendedInteractions(threadId).catch(() => []);
+          if (activeThreadIdRef.current !== threadId) return;
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
-          setPersistedInteractions(await fetchSuspendedInteractions(threadId).catch(() => []));
+          setPersistedInteractions(latest);
           toast.error(t("chat:welcome.toastToolExpired"));
         } else {
           setResolvedInteractionKeys((current) => {
@@ -1032,6 +1160,8 @@ export function ChatPanel() {
           toast.error(t("chat:welcome.toastToolFailed"));
         }
       } finally {
+        // The request has been dispatched; the long-running stream owns its
+        // lifecycle now, not the approval button.
         resumingKeysRef.current.delete(resumeKey);
         setResumingKeys((current) => {
           const next = new Set(current);
@@ -1040,7 +1170,7 @@ export function ChatPanel() {
         });
       }
     },
-    [activeThreadId, fetchSuspendedInteractions, getThreadChat, refreshThreadSettings],
+    [activeThreadId, fetchSuspendedInteractions, getThreadChat, refreshThreadSettings, t],
   );
 
   /**
@@ -1059,13 +1189,25 @@ export function ChatPanel() {
   const lastMessage = messages.at(-1);
   // 优先读取本次响应的 metadata;刷新后则从线程元数据恢复最后一次真实用量
   // —— 两者都来自模型供应商 usage,不再用消息字符数推算。
-  const streamedUsage = (
-    [...messages].reverse().find((m) => m.role === "assistant")?.metadata as
-      | { usage?: LanguageModelUsage }
-      | undefined
-  )?.usage;
+  const streamedMetadata = [...messages].reverse().find((m) => m.role === "assistant")?.metadata as
+    | {
+        usage?: LanguageModelUsage;
+        contextUsage?: LanguageModelUsage | null;
+        contextUsageVersion?: number;
+      }
+    | undefined;
   const persistedUsage = activeThread?.metadata.contextUsage as LanguageModelUsage | undefined;
-  const latestUsage = streamedUsage ?? persistedUsage;
+  const latestUsage =
+    streamedMetadata?.contextUsageVersion === 2
+      ? (streamedMetadata.contextUsage ?? undefined)
+      : activeThread?.metadata.contextUsageVersion === 2
+        ? persistedUsage
+        : undefined;
+  const billingUsage =
+    streamedMetadata?.usage ??
+    (activeThread?.metadata.contextUsageVersion === 2
+      ? (activeThread.metadata.totalUsage as LanguageModelUsage | undefined)
+      : persistedUsage);
   const usedContextTokens = Math.max(0, latestUsage?.inputTokens ?? 0);
   const responseReserve = Math.min(8_192, Math.floor((selectedContextWindow ?? 32_000) * 0.1));
   const attachmentTokenBudget = Math.max(
@@ -1211,7 +1353,11 @@ export function ChatPanel() {
       : { threadId: null };
     if (initialSend) {
       initialSendRef.current = initialSend;
-      const thread = await createThreadMutation.mutateAsync().catch(() => null);
+      // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
+      // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
+      const thread = await createThreadMutation
+        .mutateAsync({ modeId: useWorkbenchStore.getState().modeId })
+        .catch(() => null);
       if (!thread) {
         if (initialSendRef.current === initialSend) initialSendRef.current = null;
         toast.error(t("chat:welcome.toastCreateSessionFailed"));
@@ -1489,6 +1635,7 @@ export function ChatPanel() {
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
               usage={latestUsage}
+              billingUsage={billingUsage}
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}

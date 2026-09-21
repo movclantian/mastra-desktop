@@ -988,7 +988,7 @@ function AgentContextMenuWrapper({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.isComposing || isEditableTarget(event.target)) return;
+    if (event.nativeEvent.isComposing || isEditableTarget(event.target)) return;
 
     if (!isDefault) {
       if (event.key === "F2") {

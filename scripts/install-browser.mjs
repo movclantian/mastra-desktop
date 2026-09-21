@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,8 +9,42 @@ const playwrightCli = join(projectRoot, "node_modules", "playwright-core", "cli.
 
 mkdirSync(browserPath, { recursive: true });
 
+const skipInstall = ["1", "true", "yes"].includes(
+  (process.env.INSTALL_BROWSER_SKIP ?? "").trim().toLowerCase(),
+);
+
+function expectedChromiumExecutable() {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(projectRoot, "node_modules", "playwright-core", "browsers.json"), "utf8"),
+    );
+    const revision = manifest.browsers?.find((browser) => browser.name === "chromium")?.revision;
+    if (!revision) return undefined;
+    const browserRoot = join(browserPath, `chromium-${revision}`);
+    if (process.platform === "win32") return join(browserRoot, "chrome-win64", "chrome.exe");
+    if (process.platform === "darwin") {
+      return join(browserRoot, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium");
+    }
+    return join(browserRoot, "chrome-linux", "chrome");
+  } catch {
+    return undefined;
+  }
+}
+
+if (skipInstall) {
+  console.log("[install-browser] 已通过 INSTALL_BROWSER_SKIP 跳过 Chromium 检查");
+  process.exit(0);
+}
+
+const chromiumExecutable = expectedChromiumExecutable();
+if (chromiumExecutable && existsSync(chromiumExecutable)) {
+  console.log(`[install-browser] 已找到 Chromium，跳过下载: ${chromiumExecutable}`);
+  process.exit(0);
+}
+
 // 淘宝镜像：国内直连快且稳定，避免官方源(cdn.playwright.dev→GCS)在代理下频繁 ECONNRESET。
-// 可用 INSTALL_BROWSER_MIRROR 覆盖镜像地址；设 INSTALL_BROWSER_NO_MIRROR=1 可跳过镜像直接用官方源。
+// 可用 INSTALL_BROWSER_MIRROR 覆盖镜像地址；设 INSTALL_BROWSER_NO_MIRROR=1 可跳过镜像直接用官方源；
+// 设 INSTALL_BROWSER_SKIP=1 可在不需要浏览器资源的检查场景跳过安装。
 const MIRROR_HOST =
   process.env.INSTALL_BROWSER_MIRROR ?? "https://cdn.npmmirror.com/binaries/playwright";
 const useMirror = process.env.INSTALL_BROWSER_NO_MIRROR !== "1";

@@ -72,6 +72,8 @@ import {
   asRecord,
   asString,
   getPlanDraft,
+  normalizeAgentTasks,
+  normalizeAgentTools,
   type WorkflowRuntimeRun,
   type WorkflowRuntimeState,
 } from "../model/types";
@@ -361,18 +363,23 @@ export function AgentQueuePanel({
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
-  if (tasks.length === 0 && activeTools.length === 0 && queuedFollowUps === 0) return null;
+  // This is the last rendering boundary. Do not assume upstream message or
+  // display-state projections were the only producers: reconnects and queued
+  // snapshots can still replay the same id directly into this component.
+  const visibleTasks = React.useMemo(() => normalizeAgentTasks(tasks), [tasks]);
+  const visibleTools = React.useMemo(() => normalizeAgentTools(activeTools), [activeTools]);
+  if (visibleTasks.length === 0 && visibleTools.length === 0 && queuedFollowUps === 0) return null;
   const completed =
-    tasks.length > 0 &&
-    tasks.every((task) => task.status === "completed") &&
-    activeTools.length === 0 &&
+    visibleTasks.length > 0 &&
+    visibleTasks.every((task) => task.status === "completed") &&
+    visibleTools.length === 0 &&
     queuedFollowUps === 0;
 
   return (
     <>
       {/* 只渲染 QueueSection,与 UserRequestQueuePanel 的排队请求 section 同住
           一张 Queue 卡片(由 chat/panel.tsx 统一包裹),保持两个队列的视觉一体。 */}
-      {tasks.length > 0 ? (
+      {visibleTasks.length > 0 ? (
         <QueueSection defaultOpen>
           <QueueSectionTrigger
             action={
@@ -393,17 +400,17 @@ export function AgentQueuePanel({
             className="px-2 py-1"
           >
             <QueueSectionLabel
-              count={tasks.length}
+              count={visibleTasks.length}
               label={t("chat:panels.task")}
               icon={<SparklesIcon className="size-4" />}
             />
           </QueueSectionTrigger>
           <QueueSectionContent>
             <QueueList className="mt-1">
-              {tasks.map((task) => {
+              {visibleTasks.map((task, index) => {
                 const completed = task.status === "completed";
                 return (
-                  <QueueItem className="px-2 py-1" key={task.id}>
+                  <QueueItem className="px-2 py-1" key={`${task.id}:${index}`}>
                     <div className="flex min-w-0 items-center gap-2">
                       <QueueItemIndicator
                         completed={completed}
@@ -429,19 +436,19 @@ export function AgentQueuePanel({
           </QueueSectionContent>
         </QueueSection>
       ) : null}
-      {activeTools.length > 0 ? (
+      {visibleTools.length > 0 ? (
         <QueueSection defaultOpen>
           <QueueSectionTrigger className="px-2 py-1">
             <QueueSectionLabel
-              count={activeTools.length}
+              count={visibleTools.length}
               label={t("chat:panels.tool")}
               icon={<SparklesIcon className="size-4" />}
             />
           </QueueSectionTrigger>
           <QueueSectionContent>
             <QueueList className="mt-1">
-              {activeTools.map((tool) => (
-                <QueueItem className="px-2 py-1" key={tool.toolCallId}>
+              {visibleTools.map((tool, index) => (
+                <QueueItem className="px-2 py-1" key={`${tool.toolCallId}:${index}`}>
                   <div className="flex min-w-0 items-center gap-2">
                     <QueueItemIndicator completed={tool.status === "completed"} />
                     <QueueItemContent className="line-clamp-2">{tool.name}</QueueItemContent>
@@ -633,7 +640,17 @@ export function AgentPlanPanel({
               <FileCheck2Icon className="size-4 shrink-0 text-primary" />
               <PlanTitle>{title}</PlanTitle>
             </div>
-            <PlanDescription>{t("chat:panels.planApprovedDesc")}</PlanDescription>
+            <PlanDescription>
+              {t(
+                interaction.planDecision === "approved"
+                  ? "chat:panels.planApprovedDesc"
+                  : interaction.planDecision === "rejected"
+                    ? "chat:panels.planRejectedDesc"
+                    : interaction.planDecision === "revision"
+                      ? "chat:panels.planRevisionDesc"
+                      : "chat:panels.planUnknownDesc",
+              )}
+            </PlanDescription>
           </div>
           <PlanTrigger />
         </PlanHeader>

@@ -13,7 +13,7 @@ import Busboy from "@fastify/busboy";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
-import { errorText, workError } from "../errors";
+import { errorText, WorkApiError, workError } from "../errors";
 import {
   cancelLibraryUploadSession,
   completeLibraryUploadSession,
@@ -35,7 +35,7 @@ import {
   renameFolder,
   saveLibrarySettings,
   saveLibraryUploadChunk,
-  uploadAsset,
+  uploadAssetFromFile,
 } from "../rag";
 
 interface ParsedUpload {
@@ -59,7 +59,11 @@ async function parseUploadChunk(
     transform(chunk: Buffer, _encoding, callback) {
       byteSize += chunk.byteLength;
       if (byteSize > LIBRARY_UPLOAD_CHUNK_BYTES) {
-        callback(new Error("上传分片超过 5 MB"));
+        callback(
+          new Error(
+            `上传分片超过 ${LIBRARY_UPLOAD_CHUNK_BYTES / (1024 * 1024)} MB`,
+          ),
+        );
         return;
       }
       hash.update(chunk);
@@ -185,6 +189,15 @@ function requireResourceId(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function throwUploadRouteError(error: unknown, fallback: string): never {
+  if (error instanceof WorkApiError) throw error;
+  const text = errorText(error, fallback);
+  const code = /(?:超过|不能超过|大小)/.test(text)
+    ? "LIBRARY_FILE_TOO_LARGE"
+    : "LIBRARY_UPLOAD_FAILED";
+  throw workError(code, { text, cause: error });
+}
+
 export const libraryAssetsRoute = registerApiRoute("/work/library/assets", {
   method: "GET",
   handler: async (c) => {
@@ -211,14 +224,15 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       const threadId = requireResourceId(parsed.fields.threadId) ?? undefined;
       const assets = [];
       for (const file of parsed.files) {
-        const bytes = await readFile(file.tempPath);
         assets.push(
-          await uploadAsset({
+          await uploadAssetFromFile({
             resourceId,
             folderId,
             threadId,
             filename: file.filename,
-            bytes,
+            filePath: file.tempPath,
+            byteSize: file.byteSize,
+            sha256: file.sha256,
             mediaType: file.mediaType,
           }),
         );
@@ -231,10 +245,7 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
           parsed.files.map((file) => rm(file.tempPath, { force: true }).catch(() => undefined)),
         );
       }
-      throw workError("LIBRARY_FILE_TOO_LARGE", {
-        text: errorText(error, "上传失败"),
-        cause: error,
-      });
+      throwUploadRouteError(error, "上传失败");
     }
   },
 });
@@ -267,10 +278,7 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
       });
       return c.json({ session }, 201);
     } catch (error) {
-      throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: errorText(error, "创建上传会话失败"),
-        cause: error,
-      });
+      throwUploadRouteError(error, "创建上传会话失败");
     }
   },
 });
@@ -313,10 +321,7 @@ export const libraryUploadChunkRoute = registerApiRoute(
         return c.json({ session });
       } catch (error) {
         if (chunk) await rm(chunk.tempPath, { force: true }).catch(() => undefined);
-        throw workError("LIBRARY_UPLOAD_FAILED", {
-          text: errorText(error, "上传分片失败"),
-          cause: error,
-        });
+        throwUploadRouteError(error, "上传分片失败");
       }
     },
   },
@@ -335,10 +340,7 @@ export const completeLibraryUploadRoute = registerApiRoute(
           asset: await completeLibraryUploadSession(resourceId, c.req.param("uploadId")),
         });
       } catch (error) {
-        throw workError("LIBRARY_UPLOAD_FAILED", {
-          text: errorText(error, "完成上传失败"),
-          cause: error,
-        });
+        throwUploadRouteError(error, "完成上传失败");
       }
     },
   },
@@ -411,10 +413,7 @@ export const reindexLibraryAssetRoute = registerApiRoute("/work/library/assets/:
       void reindexAsset(resourceId, c.req.param("assetId"), settings).catch(() => undefined);
       return c.json({ assetId: c.req.param("assetId"), status: "indexing" }, 202);
     } catch (error) {
-      throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: errorText(error, "重新索引失败"),
-        cause: error,
-      });
+      throwUploadRouteError(error, "重新索引失败");
     }
   },
 });
@@ -436,10 +435,7 @@ export const reindexFailedLibraryAssetsRoute = registerApiRoute("/work/library/r
       }
       return c.json({ assetIds: retryable.map((asset) => asset.id), status: "indexing" }, 202);
     } catch (error) {
-      throw workError("LIBRARY_UPLOAD_FAILED", {
-        text: errorText(error, "批量重新索引失败"),
-        cause: error,
-      });
+      throwUploadRouteError(error, "批量重新索引失败");
     }
   },
 });

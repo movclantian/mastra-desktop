@@ -52,7 +52,13 @@ export function ContextUnavailable({
   );
 }
 
-export function ChatContextUsage({ usage }: { usage: LanguageModelUsage | undefined }) {
+export function ChatContextUsage({
+  usage,
+  billingUsage,
+}: {
+  usage: LanguageModelUsage | undefined;
+  billingUsage?: LanguageModelUsage;
+}) {
   const providers = useProviderConfigQuery().data?.providers ?? [];
   const catalogQuery = useCatalogQuery();
   const catalog = catalogQuery.data ?? [];
@@ -72,7 +78,13 @@ export function ChatContextUsage({ usage }: { usage: LanguageModelUsage | undefi
     return <ContextUnavailable catalogStatus={catalogStatus} />;
   }
   return (
-    <Context maxTokens={maxTokens} usage={usage} modelId={modelSelection.modelId} catalog={catalog}>
+    <Context
+      maxTokens={maxTokens}
+      usage={usage}
+      billingUsage={billingUsage}
+      modelId={modelSelection.modelId}
+      catalog={catalog}
+    >
       <ContextTrigger />
       <ContextContent>
         <ContextContentHeader />

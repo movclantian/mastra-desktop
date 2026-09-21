@@ -5,7 +5,6 @@ import {
   HelpCircleIcon,
   KeyboardIcon,
   SearchIcon,
-  SparklesIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -44,7 +43,7 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-import type { WorkspaceApp } from "../../../../../shared/workspace-contract";
+import type { WorkspaceApp } from "../../../../shared/workspace-contract";
 import {
   buildShortcutMenuGroups,
   CORE_SHORTCUT_SPECS,
@@ -93,9 +92,11 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
 export function CommandPaletteDialog({
   open,
   onOpenChange,
+  toggleSidebar,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  toggleSidebar?: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -110,7 +111,6 @@ export function CommandPaletteDialog({
   const activeThread = threads.find((th) => th.id === activeThreadId) ?? null;
 
   const createThreadMutation = useCreateThreadMutation(userId);
-  const { toggleSidebar } = useSidebar();
   const { isDark, setMode } = useTheme();
 
   const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
@@ -414,6 +414,7 @@ export function ShortcutsHelpDialog({
  * 全局键盘事件监听 Hook
  */
 export function useGlobalShortcuts() {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
   const navigate = useNavigate();
@@ -639,7 +640,11 @@ export function useGlobalShortcuts() {
           closeTerminalDrawerSession(activeTerminalDrawerSessionId);
           return;
         }
-        if (workspacePanelOpen && activePanelTab.id && activePanelTab.kind !== "welcome") {
+        if (
+          workspacePanelOpen &&
+          activePanelTab.kind !== "browser" &&
+          activePanelTab.kind !== "welcome"
+        ) {
           event.preventDefault();
           closePanelTab(activePanelTab.id);
           return;
@@ -703,7 +708,11 @@ export function useGlobalShortcuts() {
 /**
  * 全局命令面板集成器 (挂载于应用主壳根节点)
  */
-export function GlobalCommandPalette() {
+export function GlobalCommandPalette({
+  toggleSidebar,
+}: {
+  toggleSidebar?: () => void;
+} = {}) {
   const commandPaletteOpen = useWorkbenchStore((state) => state.commandPaletteOpen);
   const setCommandPaletteOpen = useWorkbenchStore((state) => state.setCommandPaletteOpen);
   const threadSearchOpen = useWorkbenchStore((state) => state.threadSearchOpen);
@@ -715,7 +724,11 @@ export function GlobalCommandPalette() {
 
   return (
     <>
-      <CommandPaletteDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
+      <CommandPaletteDialog
+        open={commandPaletteOpen}
+        onOpenChange={setCommandPaletteOpen}
+        toggleSidebar={toggleSidebar}
+      />
       <ThreadSearchDialog open={threadSearchOpen} onOpenChange={setThreadSearchOpen} />
       <ShortcutsHelpDialog open={shortcutsHelpOpen} onOpenChange={setShortcutsHelpOpen} />
     </>

@@ -15,8 +15,10 @@ import type { ToolPart } from "@/shared/ui/ai-elements/tool";
  * 给 Chat / useChat 传这个泛型,读 usage 就不再需要类型断言。
  */
 export interface WorkMessageMetadata {
-  /** 助手消息:本轮真实 token 用量,上下文水位据此显示 */
+  /** 本轮各步累计用量，仅用于计费，不是当前上下文水位。 */
   usage?: LanguageModelUsage;
+  contextUsage?: LanguageModelUsage | null;
+  contextUsageVersion?: number;
   /** 用户消息:本条消息选中的 skills(发送时随 metadata 附带) */
   skillNames?: string[];
   /** 用户消息:通过 @ 显式引用的资料库文件,发送后恢复为附件卡片 */
@@ -170,6 +172,7 @@ export interface AgentInteraction {
   suspendPayload?: JsonRecord;
   plan?: PlanDraft;
   completed?: boolean;
+  planDecision?: "approved" | "rejected" | "revision" | "unknown";
   /**
    * 该工具的权限类别与生效策略,由服务端算好后随会话 display-state
    * 下发(类别映射只在 src/mastra/agents/permissions.ts 保留一份)。
@@ -672,6 +675,8 @@ export function getBackgroundTasksFromMessages(messages: UIMessage[]): Backgroun
     cancelled: "cancelled",
     suspended: "suspended",
     resumed: "running",
+    "timed-out": "timed_out",
+    timed_out: "timed_out",
   };
   for (const message of messages) {
     for (const part of message.parts) {
@@ -844,6 +849,44 @@ export function hasPendingInteraction(
   );
 }
 
+/**
+ * Task snapshots are replaceable state, not an append-only event log.  A
+ * reconnect or a duplicated data-task-update may therefore contain the same
+ * task id more than once.  Keep the first position (stable layout) and the
+ * latest value (current status), so renderers never receive duplicate React
+ * keys during a long tool run.
+ */
+export function normalizeAgentTasks(tasks: AgentTask[]): AgentTask[] {
+  const latest = new Map<string, AgentTask>();
+  const order: string[] = [];
+  for (const task of tasks) {
+    if (!latest.has(task.id)) order.push(task.id);
+    latest.set(task.id, task);
+  }
+  return order.flatMap((id) => {
+    const task = latest.get(id);
+    return task ? [task] : [];
+  });
+}
+
+/**
+ * Queue inputs are external snapshots too. A reconnect can replay the same
+ * toolCallId, so the queue owns a final normalization boundary as well as the
+ * message projection that feeds it.
+ */
+export function normalizeAgentTools(tools: AgentToolState[]): AgentToolState[] {
+  const latest = new Map<string, AgentToolState>();
+  const order: string[] = [];
+  for (const tool of tools) {
+    if (!latest.has(tool.toolCallId)) order.push(tool.toolCallId);
+    latest.set(tool.toolCallId, tool);
+  }
+  return order.flatMap((toolCallId) => {
+    const tool = latest.get(toolCallId);
+    return tool ? [tool] : [];
+  });
+}
+
 function parseTaskItems(value: unknown): AgentTask[] | undefined {
   let candidate = value;
   if (typeof candidate === "string") {
@@ -879,7 +922,7 @@ function parseTaskItems(value: unknown): AgentTask[] | undefined {
       } satisfies AgentTask,
     ];
   });
-  return tasks;
+  return normalizeAgentTasks(tasks);
 }
 
 function isTaskUpdatePart(raw: JsonRecord): boolean {
@@ -924,7 +967,12 @@ export function getTasksFromMessages(messages: UIMessage[]): AgentTask[] | undef
 
 export function getActiveToolsFromMessages(messages: UIMessage[]): AgentToolState[] {
   const tools = new Map<string, AgentToolState>();
-  for (const message of messages) {
+  // Interrupted historical turns can retain input-only tool parts. They are
+  // not evidence of work running in the current user turn.
+  let start = messages.length - 1;
+  while (start >= 0 && messages[start].role !== "user") start--;
+  for (let index = start + 1; index < messages.length; index++) {
+    const message = messages[index];
     for (const part of message.parts) {
       if (!isToolUIPart(part)) continue;
       const toolName = getToolName(part);
@@ -1056,12 +1104,23 @@ export function getCompletedInteraction(
   const inputRecord = asRecord(input);
   const output = "output" in part ? part.output : undefined;
   const outputRecord = asRecord(output);
+  const submittedPlan = asRecord(outputRecord?.submittedPlan);
+  const planContent = asString(outputRecord?.content) ?? "";
+  const planDecision =
+    planContent === "Plan approved. Proceed with implementation following the approved plan."
+      ? "approved"
+      : planContent.startsWith("Plan was not approved. The user wants revisions.")
+        ? "revision"
+        : planContent.startsWith("Plan was not approved.")
+          ? "rejected"
+          : "unknown";
   const suspendPayload =
     toolName === "ask_user"
       ? inputRecord
       : toolName === "submit_plan"
         ? {
             ...(inputRecord ?? {}),
+            ...(submittedPlan ?? {}),
             ...(asString(outputRecord?.title) ? { title: outputRecord?.title } : {}),
             ...(asString(outputRecord?.plan) ? { plan: outputRecord?.plan } : {}),
           }
@@ -1077,6 +1136,7 @@ export function getCompletedInteraction(
     requiresApproval: false,
     suspendPayload,
     completed: true,
+    ...(toolName === "submit_plan" ? { planDecision } : {}),
   };
 }
 

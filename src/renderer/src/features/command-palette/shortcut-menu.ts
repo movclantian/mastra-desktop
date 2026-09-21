@@ -6,9 +6,7 @@ import {
   KeyboardIcon,
   LaptopIcon,
   LibraryBigIcon,
-  MoonIcon,
   NotebookPenIcon,
-  PanelBottomOpenIcon,
   PanelRightOpenIcon,
   SearchIcon,
   Settings2Icon,
@@ -455,7 +453,7 @@ export interface CommandActionContext {
   activeView: string;
   activeThreadId: string | null;
   createNewThread: () => void | Promise<unknown>;
-  toggleSidebar: () => void;
+  toggleSidebar?: () => void;
   toggleWorkspacePanel: () => void;
   toggleTerminalPanel: () => void;
   openSearchMessages: () => void;
@@ -550,7 +548,7 @@ export function buildShortcutMenuGroups(ctx: CommandActionContext): ShortcutMenu
     "nav-agents": () => ctx.navigate({ to: "/agents" }),
     "nav-schedules": () => ctx.navigate({ to: "/schedules" }),
     "open-settings": () => ctx.navigate({ to: "/settings" }),
-    "toggle-sidebar": () => ctx.toggleSidebar(),
+    "toggle-sidebar": () => ctx.toggleSidebar?.(),
     "toggle-workspace": () => {
       if (activeView !== "chat") ctx.navigate({ to: "/chat" });
       ctx.toggleWorkspacePanel();
@@ -591,6 +589,7 @@ export function buildShortcutMenuGroups(ctx: CommandActionContext): ShortcutMenu
 
   for (const spec of CORE_SHORTCUT_SPECS) {
     if (spec.id === "command-palette") continue; // 已经在命令面板内部，无需自嵌套
+    if (spec.id === "toggle-sidebar" && !ctx.toggleSidebar) continue;
 
     const label = t(spec.titleKey);
     const description = t(spec.descKey);

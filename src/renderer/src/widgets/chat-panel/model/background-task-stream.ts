@@ -11,6 +11,7 @@ const BACKGROUND_TASK_EVENTS = [
   "background-task-output",
   "background-task-suspended",
   "background-task-resumed",
+  "background-task-timed-out",
 ] as const;
 
 const STATUS_BY_EVENT: Record<
@@ -25,6 +26,7 @@ const STATUS_BY_EVENT: Record<
   "background-task-cancelled": "cancelled",
   "background-task-suspended": "suspended",
   "background-task-resumed": "running",
+  "background-task-timed-out": "timed_out",
 };
 
 interface BackgroundTaskChunk {
@@ -95,8 +97,13 @@ export function subscribeBackgroundTaskStream(
   const tasks = new Map<string, BackgroundTaskState>();
   const controller = new AbortController();
   let stopped = false;
+  let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let retryTimer: number | undefined;
+  let finishRetry: (() => void) | undefined;
+  let retryDelay = 1000;
 
   const handleEvent = (data: string) => {
+    if (stopped) return;
     try {
       const chunk = JSON.parse(data) as BackgroundTaskChunk;
       const chunkType = typeof chunk.type === "string" ? chunk.type : "";
@@ -121,34 +128,62 @@ export function subscribeBackgroundTaskStream(
     while (!stopped) {
       try {
         const response = await apiFetch(url, { signal: controller.signal });
-        if (!response.ok || !response.body) return;
+        if (stopped) {
+          await response.body?.cancel().catch(() => undefined);
+          return;
+        }
+        if (!response.ok) {
+          await response.body?.cancel().catch(() => undefined);
+          if (response.status !== 408 && response.status !== 429 && response.status < 500) return;
+          throw new Error(`Background task stream HTTP ${response.status}`);
+        }
+        if (!response.body) return;
         const reader = response.body.getReader();
+        activeReader = reader;
         const decoder = new TextDecoder();
         let buffer = "";
-        while (!stopped) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const frames = buffer.split(/\r?\n\r?\n/);
-          buffer = frames.pop() ?? "";
-          for (const frame of frames) {
-            const data = frame
-              .split(/\r?\n/)
-              .filter((line) => line.startsWith("data:"))
-              .map((line) => line.slice(5).trimStart())
-              .join("\n");
-            if (data) handleEvent(data);
+        try {
+          while (!stopped) {
+            const { value, done } = await reader.read();
+            if (done || stopped) break;
+            retryDelay = 1000;
+            buffer += decoder.decode(value, { stream: true });
+            const frames = buffer.split(/\r?\n\r?\n/);
+            buffer = frames.pop() ?? "";
+            for (const frame of frames) {
+              const data = frame
+                .split(/\r?\n/)
+                .filter((line) => line.startsWith("data:"))
+                .map((line) => line.slice(5).trimStart())
+                .join("\n");
+              if (data) handleEvent(data);
+            }
           }
+        } finally {
+          reader.releaseLock();
+          activeReader = undefined;
         }
       } catch {
         if (stopped) return;
       }
-      if (!stopped) await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      if (!stopped) {
+        await new Promise<void>((resolve) => {
+          finishRetry = resolve;
+          retryTimer = window.setTimeout(resolve, retryDelay);
+        });
+        retryTimer = undefined;
+        finishRetry = undefined;
+        retryDelay = Math.min(retryDelay * 2, 30_000);
+      }
     }
   };
   void consume();
   return () => {
     stopped = true;
     controller.abort();
+    void activeReader?.cancel().catch(() => undefined);
+    if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    finishRetry?.();
+    tasks.clear();
   };
 }

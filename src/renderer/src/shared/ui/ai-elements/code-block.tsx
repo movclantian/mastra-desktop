@@ -435,7 +435,7 @@ export const CodeBlock = ({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.isComposing) return;
+    if (event.nativeEvent.isComposing) return;
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (mod && event.shiftKey && (event.key === "c" || event.key === "C")) {
       event.preventDefault();

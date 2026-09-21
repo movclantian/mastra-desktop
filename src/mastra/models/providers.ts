@@ -18,6 +18,7 @@ import { getAppConfig, setAppConfig } from "../storage";
 import {
   createGatewayModel,
   type GatewayProtocol,
+  getRegistryProviderBaseUrl,
   inferGatewayProtocol,
   WORKBENCH_GATEWAY_ID,
 } from "./create-model";
@@ -241,23 +242,29 @@ export async function resolveConfiguredModel(
   // but that router has no resourceId argument. BYOK settings are tenant-scoped,
   // so request-context routes must resolve the provider here before constructing
   // the SDK model. The construction itself stays in the shared factory below.
-  if (provider.baseUrl) {
+  const registryBaseUrl = provider.registryId
+    ? getRegistryProviderBaseUrl(provider.registryId)
+    : undefined;
+  const baseUrl = provider.baseUrl ?? registryBaseUrl;
+  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
+  if (baseUrl) {
     return createGatewayModel({
       modelId,
       modelRouterId: `${routerPrefix(provider)}/${modelId}`,
+      registryId: provider.registryId,
       apiKey,
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
+      baseUrl,
+      protocol,
       useResponses: provider.useResponses,
       providerName: provider.name,
     });
   }
 
-  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
   if (!protocol) return undefined;
   return createGatewayModel({
     modelId,
     modelRouterId: `${routerPrefix(provider)}/${modelId}`,
+    registryId: provider.registryId,
     apiKey,
     protocol,
     useResponses: provider.useResponses,

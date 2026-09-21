@@ -15,7 +15,7 @@ import { SettingsPage } from "@/pages/settings";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
-import { SidebarInset, SidebarProvider } from "@/shared/ui/sidebar";
+import { SidebarInset, SidebarProvider, useSidebar } from "@/shared/ui/sidebar";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
@@ -48,6 +48,11 @@ const DRAWER_TRANSITION =
 const PANEL_CLIP = { overflow: "hidden" } as const;
 const SHELL_PANEL_IDS = ["content", "workspace"];
 const CLOSED_SHELL_LAYOUT = { content: 100, workspace: 0 };
+
+function MainGlobalCommandPalette() {
+  const { toggleSidebar } = useSidebar();
+  return <GlobalCommandPalette toggleSidebar={toggleSidebar} />;
+}
 
 function useDrawerTransition() {
   const [ready, setReady] = React.useState(false);
@@ -151,6 +156,8 @@ export function RootShell() {
     return (
       <>
         <SettingsPage />
+        {/* SettingsPage has no collapsible main sidebar, so the palette omits
+            the main-sidebar toggle command on this route. */}
         <GlobalCommandPalette />
       </>
     );
@@ -205,7 +212,7 @@ export function RootShell() {
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>
-      <GlobalCommandPalette />
+      <MainGlobalCommandPalette />
     </SidebarProvider>
   );
 }

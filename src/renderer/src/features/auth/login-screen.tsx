@@ -329,14 +329,22 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
               <div className="relative flex h-full flex-col justify-between p-8 text-primary-foreground">
                 <div className="flex items-center justify-between text-sm font-medium tracking-[0.18em] uppercase">
                   {/* 品牌字解码:悬停时逐字符乱码收敛,呼应产品的"工程感" */}
-                  <HyperText
-                    as="span"
-                    className="p-0 text-sm font-medium tracking-[0.18em] uppercase"
-                    duration={700}
-                    startOnView
-                  >
-                    Mastrawork
-                  </HyperText>
+                  <div className="flex items-center gap-2">
+                    <img
+                      src="./icon.png"
+                      alt=""
+                      className="size-8 rounded-lg object-cover shadow-sm"
+                      draggable={false}
+                    />
+                    <HyperText
+                      as="span"
+                      className="p-0 text-sm font-medium tracking-[0.18em] uppercase"
+                      duration={700}
+                      startOnView
+                    >
+                      Mastrawork
+                    </HyperText>
+                  </div>
                   {activePreset ? (
                     <span className="text-xs font-normal tracking-normal opacity-75">
                       {activePreset.name}

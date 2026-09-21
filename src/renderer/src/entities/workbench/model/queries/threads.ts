@@ -20,6 +20,7 @@ import {
   updateThread,
 } from "../../api/workbench-api";
 import { qk } from "../query-keys";
+import type { WorkModeId } from "../session";
 import { ACTIVE_THREAD_KEY, userStorageKey } from "../storage";
 import type { WorkThread } from "../types";
 import { useWorkbenchStore } from "../workbench-store";
@@ -127,23 +128,35 @@ export function useGenerateThreadTitleMutation(userId: string) {
   });
 }
 
+export interface CreateThreadOptions {
+  /** 仅供有输入上下文的调用方覆盖标题；旧的 string 调用仍兼容。 */
+  title?: string;
+  /** 提交瞬间的模式快照，避免新线程创建与输入栏切换发生竞态。 */
+  modeId?: WorkModeId;
+}
+
 /** 新建线程:默认值取自 sessionDraft store(原 getThreadDefaults ref) */
 export function useCreateThreadMutation(userId: string) {
   const queryClient = useQueryClient();
   const selectThread = useSelectThread();
   return useMutation({
-    mutationFn: (title?: string) => {
+    mutationFn: (input?: string | CreateThreadOptions) => {
+      const title = typeof input === "string" ? input : input?.title;
+      const modeOverride = typeof input === "string" ? undefined : input?.modeId;
       const { agentSelection, modeId, permissionRules, modelSelection } =
         useWorkbenchStore.getState();
+      const currentModeId = modeOverride ?? modeId;
       return createThreadRequest(userId, {
         threadId: nanoid(),
         ...(title ? { title } : {}),
         metadata: {
           draft: !title || title === "New Chat",
           agentProfileId: agentSelection.id,
-          currentModeId: modeId,
+          currentModeId,
           permissionRules,
-          ...(modelSelection ? { modelSelectionByMode: { [modeId]: modelSelection } } : {}),
+          ...(modelSelection
+            ? { modelSelectionByMode: { [currentModeId]: modelSelection } }
+            : {}),
         },
       });
     },
