@@ -65,10 +65,8 @@ export async function uploadChatAttachments(
   const form = new FormData();
   form.set("resourceId", userId);
   form.set("threadId", threadId);
-  // Text-like/document uploads should remain attached to this thread while also
-  // becoming discoverable in the long-term library. The server promotes only
-  // formats it can actually extract and index; media keeps session-only semantics.
-  form.set("promoteToLibrary", "true");
+  // Chat attachments are session-scoped by default. Promotion to "My documents"
+  // is an explicit library action, never an implicit side effect of sending a chat.
   for (const file of pending) {
     const source =
       "file" in file && file.file instanceof File ? file.file : await fetchChatAssetBlob(file.url);

@@ -30,6 +30,35 @@ export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export const WORKBENCH_GATEWAY_ID = "mastra-work";
 
+/**
+ * Mastra's MessageList downloads URL file parts before processLLMRequest runs
+ * unless the model advertises that the URL is provider-supported. Library
+ * asset URLs are protected by the desktop request context, so that automatic
+ * downloader cannot authenticate and turns an otherwise valid attachment into
+ * a 401 stream failure. Keep the URL in the prompt until our processor expands
+ * it with the authenticated asset store.
+ */
+const LOCAL_LIBRARY_ASSET_URL =
+  /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?\/work\/library\/assets\/[^/]+\/content(?:\?.*)?$/i;
+
+function withLocalLibraryAssetUrls<T extends GatewayLanguageModel>(model: T): T {
+  const current = model.supportedUrls;
+  const merge = (supported: Record<string, RegExp[]>): Record<string, RegExp[]> => ({
+    ...supported,
+    "*/*": [...(supported["*/*"] ?? []), LOCAL_LIBRARY_ASSET_URL],
+  });
+  const value =
+    current && typeof (current as PromiseLike<Record<string, RegExp[]>>).then === "function"
+      ? Promise.resolve(current).then(merge)
+      : merge((current as Record<string, RegExp[]> | undefined) ?? {});
+  Object.defineProperty(model, "supportedUrls", {
+    configurable: true,
+    enumerable: true,
+    value,
+  });
+  return model;
+}
+
 /** One-shot Mastra Agent for isolated route work: no registry, memory, or tools. */
 export function createEphemeralAgent(
   model: GatewayLanguageModel,
@@ -185,5 +214,5 @@ export function createGatewayModel(options: {
   if (supportsStructuredOutputs !== undefined) {
     Object.assign(model, { supportsStructuredOutputs });
   }
-  return model;
+  return withLocalLibraryAssetUrls(model);
 }

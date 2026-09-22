@@ -34,6 +34,7 @@ import {
   reindexFailedLibraryAssets,
   reindexLibraryAsset,
   renameLibraryTarget,
+  saveLibraryAssetToDocuments,
   saveLibrarySettings,
   statusLabel,
 } from "@/entities/library";
@@ -84,6 +85,7 @@ import { DotmHex1 } from "@/shared/ui/dotm-hex-1";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -330,6 +332,16 @@ export function KnowledgeLibraryPage({
     }
   };
 
+  const saveToMyDocuments = async (asset: LibraryAsset) => {
+    try {
+      await saveLibraryAssetToDocuments(asset.id, user.id);
+      await refresh(true);
+      toast.success(t("library:savedToDocuments"));
+    } catch (error) {
+      toastError(error, t("library:saveToDocumentsFailed"));
+    }
+  };
+
   const openRename = (target: RenameTarget) => {
     setRenameTarget(target);
     setRenameValue(target.name);
@@ -414,6 +426,11 @@ export function KnowledgeLibraryPage({
   };
 
   const renderAssetRow = (asset: LibraryAsset, depth = 0, keyPrefix = "asset") => {
+    const isDocumentAsset =
+      asset.hasLibraryReference ||
+      asset.folderIds.some((id) => documentFolderIds.has(id)) ||
+      (asset.folderIds.length === 0 && asset.threadIds.length === 0);
+    const canSaveToDocuments = !isDocumentAsset && asset.status !== "unsupported";
     return (
       <SidebarMenuItem key={`${keyPrefix}-${asset.id}`}>
         <ContextMenu>
@@ -448,11 +465,17 @@ export function KnowledgeLibraryPage({
                     <DotmHex1 size={12} dotSize={1.4} colorPreset="solid-theme" />
                   ) : null}
                   <span className="truncate">
-                    {statusLabel(asset.status)}
-                    {(asset.status === "error" || asset.status === "indexing") && asset.indexStage
+                    {view === "documents"
+                      ? statusLabel(asset.status)
+                      : isDocumentAsset
+                        ? t("library:globalDocument")
+                        : t("library:sessionAttachment")}
+                    {view === "documents" &&
+                    (asset.status === "error" || asset.status === "indexing") &&
+                    asset.indexStage
                       ? ` · ${indexStageLabel(asset.indexStage)}`
                       : ""}
-                    {asset.status === "error" && asset.indexAttempt > 0
+                    {view === "documents" && asset.status === "error" && asset.indexAttempt > 0
                       ? t("library:attemptNumber", { attempt: asset.indexAttempt })
                       : ""}
                   </span>
@@ -475,6 +498,12 @@ export function KnowledgeLibraryPage({
                 <ExternalLinkIcon className="text-muted-foreground" />
                 <span>{t("library:referenceInNewChat")}</span>
               </ContextMenuItem>
+              {canSaveToDocuments ? (
+                <ContextMenuItem onClick={() => void saveToMyDocuments(asset)}>
+                  <FolderPlusIcon className="text-muted-foreground" />
+                  <span>{t("library:saveToDocuments")}</span>
+                </ContextMenuItem>
+              ) : null}
               {asset.status === "error" || asset.status === "unsupported" ? (
                 <ContextMenuItem
                   disabled={reindexingIds.has(asset.id)}
@@ -557,6 +586,12 @@ export function KnowledgeLibraryPage({
               <ExternalLinkIcon />
               <span>{t("library:referenceInNewChat")}</span>
             </DropdownMenuItem>
+            {canSaveToDocuments ? (
+              <DropdownMenuItem onClick={() => void saveToMyDocuments(asset)}>
+                <FolderPlusIcon />
+                <span>{t("library:saveToDocuments")}</span>
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               render={
                 <a
@@ -712,9 +747,11 @@ export function KnowledgeLibraryPage({
                     }
                   />
                   <DropdownMenuContent align="end">
-                    <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">
-                      {t("library:uploadCapabilities")}
-                    </DropdownMenuLabel>
+                    <DropdownMenuGroup>
+                      <DropdownMenuLabel className="max-w-64 whitespace-normal text-xs font-normal text-muted-foreground">
+                        {t("library:uploadCapabilities")}
+                      </DropdownMenuLabel>
+                    </DropdownMenuGroup>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem disabled={uploading} onClick={() => openUpload(uploadTarget)}>
                       {uploading ? (

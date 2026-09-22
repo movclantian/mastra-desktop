@@ -7,17 +7,29 @@ import vm from "node:vm";
 const root = new URL("../", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
 
-test("library attachment processor handles both Mastra message shapes", () => {
+test("library attachment processor keeps history lossless and expands only at provider boundary", () => {
   const processor = read("src/mastra/agents/processors.ts");
-  assert.match(processor, /const rawContent = message\.content as unknown/);
-  assert.match(processor, /message\.role !== "signal"/);
-  assert.match(processor, /Array\.isArray\(rawContent\)/);
-  assert.match(
-    processor,
-    /getLibraryAssetId\(record\.data\)[\s\S]*getLibraryAssetId\(record\.url\)[\s\S]*getLibraryAssetId\(record\.image\)/,
-  );
-  assert.match(processor, /content: Array\.isArray\(rawContent\)/);
+  const inputStep = processor.match(
+    /async processInputStep\(\)[\s\S]*?^ {2}\},\r?\n {2}async processLLMRequest/m,
+  )?.[0];
+  assert.ok(inputStep, "input step must remain explicit");
+  assert.match(inputStep, /return undefined/);
+  assert.doesNotMatch(inputStep, /getAssetContext|附件「/);
+  assert.match(processor, /getLibraryAssetId\(part\.data\)/);
+  assert.match(processor, /getLibraryAssetId\(record\.url\)/);
+  assert.match(processor, /getLibraryAssetId\(record\.image\)/);
+  assert.match(processor, /getAssetContext\(resourceId, assetId/);
+  assert.match(processor, /whose role union intentionally excludes Mastra's persisted `signal` role/);
   assert.match(processor, /processLLMRequest/);
+});
+
+test("models keep protected library URLs out of Mastra's unauthenticated downloader", () => {
+  const models = read("src/mastra/models/create-model.ts");
+  assert.match(models, /LOCAL_LIBRARY_ASSET_URL/);
+  assert.match(models, /withLocalLibraryAssetUrls/);
+  assert.match(models, /supportedUrls/);
+  assert.match(models, /work\\\/library\\\/assets/);
+  assert.match(models, /return withLocalLibraryAssetUrls\(model\)/);
 });
 
 test("first attachment send defers route selection until persistence succeeds", () => {
@@ -47,6 +59,9 @@ test("renderer CSP allows protected Mastra asset images", () => {
   const main = read("src/main/index.ts");
   assert.match(main, /const MASTRA_SERVER_URL = "http:\/\/localhost:4111"/);
   assert.match(main, /img-src[^\n]*\$\{MASTRA_SERVER_URL\}/);
+  assert.match(main, /connect-src 'self' blob:/);
+  assert.match(main, /media-src 'self' data: blob:/);
+  assert.match(main, /worker-src 'self' blob:/);
 });
 
 test("mixed chat attachments report rejected filenames instead of silently dropping them", () => {
@@ -72,7 +87,6 @@ test("attachment extraction boundary is explicit for unsupported binary formats"
 test("provider boundary does not forward unknown file media types", () => {
   const processor = read("src/mastra/agents/processors.ts");
   assert.match(processor, /UNKNOWN_ATTACHMENT_MEDIA_TYPE/);
-  assert.match(processor, /hasUnknownAttachmentMediaType\(record\.mediaType\)/);
   assert.match(processor, /hasUnknownAttachmentMediaType\(part\.mediaType\)/);
   assert.match(processor, /无法识别文件类型，请重新上传或选择支持的格式/);
 });
@@ -164,27 +178,43 @@ test("library upload menu explains storage, indexing, and model boundaries", () 
   const zh = read("src/renderer/src/shared/i18n/locales/zh.ts");
   const en = read("src/renderer/src/shared/i18n/locales/en.ts");
   assert.match(page, /DropdownMenuLabel[\s\S]{0,220}library:uploadCapabilities/);
+  assert.match(
+    page,
+    /<DropdownMenuGroup>\s*<DropdownMenuLabel[\s\S]{0,220}library:uploadCapabilities/,
+  );
   assert.match(zh, /statusNotIndexed: "已保存，未建立文本索引"/);
   assert.match(en, /statusNotIndexed: "Saved, not text-indexed"/);
 });
 
-test("chat document uploads retain the thread ref and promote extractable files", () => {
+test("library preview stays lazy without a duplicate static barrel export", () => {
+  const barrel = read("src/renderer/src/features/library-upload/index.ts");
+  const page = read("src/renderer/src/pages/library/ui/knowledge-library-page.tsx");
+  assert.doesNotMatch(barrel, /file-preview/);
+  assert.match(page, /React\.lazy\(\(\) => import\("@\/features\/library-upload\/file-preview"\)\)/);
+});
+
+test("chat document uploads retain only the thread ref by default", () => {
   const api = read("src/renderer/src/widgets/chat-panel/api/chat-api.ts");
   const route = read("src/mastra/routes/library.ts");
   const assets = read("src/mastra/rag/storage/assets.ts");
-  assert.match(api, /form\.set\("promoteToLibrary", "true"\)/);
-  assert.match(route, /parsed\.fields\.promoteToLibrary === "true"/);
-  assert.match(route, /promoteToLibrary,/);
-  assert.match(assets, /input\.promoteToLibrary && isExtractable\(asset\.filename, asset\.mediaType\)/);
-  assert.match(assets, /asset\.hasLibraryReference = true/);
-  assert.match(assets, /input\.promoteToLibrary && extractable && input\.threadId/);
+  assert.doesNotMatch(api, /promoteToLibrary/);
+  assert.doesNotMatch(route, /parsed\.fields\.promoteToLibrary/);
+  assert.doesNotMatch(assets, /promoteToLibrary/);
+  assert.match(route, /promoteLibraryAssetRoute/);
+  assert.match(route, /attachAssetReference/);
+  assert.match(route, /asset\.status === "unsupported"/);
   assert.match(assets, /asset\.hasLibraryReference = libraryAssetIds\.has\(asset\.id\)/);
 });
 
-test("promoted chat documents remain visible in the document directory", () => {
+test("promotion is an explicit library action and status is scoped to documents", () => {
   const page = read("src/renderer/src/pages/library/ui/knowledge-library-page.tsx");
+  const api = read("src/renderer/src/entities/library/api/library-api.ts");
   const types = read("src/renderer/src/entities/library/model/types.ts");
-  assert.match(page, /asset\.hasLibraryReference/);
+  assert.match(api, /\/promote/);
+  assert.match(page, /saveLibraryAssetToDocuments/);
+  assert.match(page, /!isDocumentAsset/);
+  assert.match(page, /asset\.status !== "unsupported"/);
+  assert.match(page, /view === "documents"/);
   assert.match(types, /hasLibraryReference: boolean/);
 });
 

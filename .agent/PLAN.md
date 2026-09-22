@@ -1,5 +1,43 @@
 # 工程问题修复计划
 
+## 当前批次：资料库引用语义纠偏（2026-09-22）
+
+状态：实现完成；定向/全量自动化验证通过；已停止 watcher 释放锁并完成生产构建；开发监听已重新启动，等待真实桌面回归。
+
+复杂度/风险/动作：`C2 + R-data + R-protocol + R-architecture + R-ui + A0`。
+
+目标：统一物理资产存储，但严格分开“会话文件”和“我的文档”引用。聊天上传只建立线程引用；资料库页面上传进入“我的文档”；已有会话文件只有用户显式点击“保存到我的文档”才增加全局引用。图片、音频、视频和不支持格式保持会话级，不进入文本索引。
+
+实施：
+
+1. 移除聊天上传默认 `promoteToLibrary`，并删除服务端 multipart 隐式提升分支。
+2. 增加受保护的显式提升路由 `POST /work/library/assets/:assetId/promote` 及 renderer API。
+3. 在资料库文件操作菜单增加“保存到我的文档”；unsupported 媒体不显示该动作，后端也拒绝提升。
+4. 非“我的文档”视图显示引用范围，不显示索引状态；索引状态仅在“我的文档”视图展示。
+5. 保留统一资产去重、线程/目录引用、鉴权读取、失败清理和现有媒体能力边界。
+
+验收：聊天上传文本/PDF 后仅有线程引用；资料库页面上传后进入“我的文档”；显式保存后刷新可见全局文档；图片/音频/视频/不支持格式仍为会话附件；重复显式保存幂等。
+
+证据：附件/体验全量回归 52/52、三套 TypeScript 类型检查、`git diff --check` 通过；`pnpm run build` 已成功，Mastra 与 Electron main/preload/renderer 均产出；`http://localhost:4111/health` 返回 200。构建仅保留已知 Node engine、package-lock fallback 和 Vite externalization 警告，未再出现 `INEFFECTIVE_DYNAMIC_IMPORT`。历史已自动提升的旧全局引用没有可靠来源标记，本批不自动删除，避免误删用户主动保存的资料。
+
+## 2026-09-22：第二轮附件对齐回归修复
+
+根因：`a425246` 让 `libraryAttachmentProcessor.processInputStep` 处理持久化 `signal` 消息，并把 `.md` 等文件 part 替换为提取出的纯文本；该变更污染了历史/UI 消息，导致用户气泡显示原始 Markdown。同期新增的 `DropdownMenuLabel` 未放入 `DropdownMenuGroup`，打开资料库菜单触发 `MenuGroupContext is missing`。
+
+修复：`processInputStep` 现在保持消息历史和 renderer 文件 part 不变；文本/媒体解析仅在 `processLLMRequest` 的 provider 边界临时展开，并兼容 `data/url/image` 资产载荷。资料库菜单标签已包进 `DropdownMenuGroup`；聊天上传默认只绑定当前线程，显式保存才进入“我的文档”。
+
+验收：新增回归断言覆盖“历史无损、provider 边界展开、菜单分组和显式晋升”；`pnpm run test:regression` 52/52、`pnpm run typecheck` 通过，生产构建成功。CUA 内置浏览器在本轮不可连接（`nodeRepl.fetch request failed`），因此资料库菜单和附件卡片仍需用户在当前 `http://localhost:5173/` 手工确认。
+
+## 2026-09-22：附件流中断的二次根因修复
+
+真实桌面回归再次复现 `DOWNLOAD_ASSETS_FAILED` / 401。原因是 Mastra 的 `MessageList.llmPrompt` 早于 `processLLMRequest` 执行；模型未声明本地资料库 URL 为受支持地址时，Mastra 会先用无浏览器会话的服务端 fetch 下载受保护资源，因此我们的 provider 处理器根本来不及接管。
+
+修复：`createGatewayModel` 为所有供应商模型合并严格限定的本地资料库 URL 正则到 `supportedUrls`，让 URL 原样到达 provider 边界；随后 `libraryAttachmentProcessor.processLLMRequest` 使用 `resourceId` 读取并临时转换文本/媒体。新增模型边界回归断言，避免只修后置处理器而漏掉前置下载器。
+
+验收：`pnpm run test:regression` 53/53、`pnpm run typecheck` 通过；停止 watcher 后 `pnpm run build` 成功，开发服务已重启，`/health` 返回 200。需用户用新会话重新上传同一文档确认不再出现 401/`network error`；若仍失败，保留新的 trace_id 与时间戳，重点检查是否还有模型未经过 `createGatewayModel`。
+
+后续独立项：同 SHA 并发上传 SQLite 竞态、Markdown 预览查看器失败、历史消息中已污染的旧记录，分别立项，不与本语义补丁混改。
+
 ## 2026-09-21：聊天文档与长期资料库语义对齐（当前批次）
 
 状态：代码实现完成；范围为附件归类、索引可见性和缓存刷新，真实桌面验收与发布由本轮门禁继续跟进。

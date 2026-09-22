@@ -35,6 +35,7 @@ import {
   renameFolder,
   saveLibrarySettings,
   saveLibraryUploadChunk,
+  attachAssetReference,
   uploadAssetFromFile,
 } from "../rag";
 
@@ -222,7 +223,6 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       if (!resourceId) throw new Error("resourceId is required");
       const folderId = requireResourceId(parsed.fields.folderId) ?? undefined;
       const threadId = requireResourceId(parsed.fields.threadId) ?? undefined;
-      const promoteToLibrary = parsed.fields.promoteToLibrary === "true";
       const assets = [];
       for (const file of parsed.files) {
         assets.push(
@@ -235,7 +235,6 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
             byteSize: file.byteSize,
             sha256: file.sha256,
             mediaType: file.mediaType,
-            promoteToLibrary,
           }),
         );
         await rm(file.tempPath, { force: true }).catch(() => undefined);
@@ -251,6 +250,37 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
     }
   },
 });
+
+/** Explicit user action: attach an existing session asset to the global document library. */
+export const promoteLibraryAssetRoute = registerApiRoute(
+  "/work/library/assets/:assetId/promote",
+  {
+    method: "POST",
+    handler: async (c) => {
+      try {
+        const body = (await c.req.json()) as { resourceId?: string; folderId?: string };
+        const resourceId = requireResourceId(body.resourceId);
+        if (!resourceId) throw workError("VALIDATION_RESOURCE_ID_REQUIRED");
+        const asset = (await listAssets(resourceId)).find(
+          (candidate) => candidate.id === c.req.param("assetId"),
+        );
+        if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
+        if (asset.status === "unsupported") {
+          throw new Error("图片、音频、视频和当前格式只能作为会话附件保存");
+        }
+        await attachAssetReference(
+          resourceId,
+          asset.id,
+          requireResourceId(body.folderId) ?? undefined,
+        );
+        const updated = (await listAssets(resourceId)).find((candidate) => candidate.id === asset.id);
+        return c.json({ asset: updated ?? asset });
+      } catch (error) {
+        throwUploadRouteError(error, "保存到我的文档失败");
+      }
+    },
+  },
+);
 
 export const libraryUploadSessionsRoute = registerApiRoute("/work/library/uploads", {
   method: "POST",

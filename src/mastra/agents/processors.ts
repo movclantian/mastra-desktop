@@ -54,105 +54,14 @@ function unsupportedAttachmentText(filename: unknown): string {
 
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
-  async processInputStep({ messages, requestContext }) {
-    const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
-    const capabilities = requestContext?.get(LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY) as
-      | { vision?: boolean; audio?: boolean }
-      | undefined;
-    let changed = false;
-    const resolvedMessages = await Promise.all(
-      messages.map(async (message) => {
-        // AgentController persists live chat turns as `role: "signal"`.
-        // Treat those the same as ordinary user/assistant messages; otherwise
-        // protected library URLs bypass this processor and Mastra's generic
-        // downloader retries them without the resource authorization context.
-        if (message.role !== "user" && message.role !== "assistant" && message.role !== "signal") {
-          return message;
-        }
-        // Mastra 1.67 can expose either raw content parts or the format-2
-        // wrapper. Normalize both before MessageList.llmPrompt downloads URLs.
-        const rawContent = message.content as unknown;
-        const parts = Array.isArray(rawContent)
-          ? rawContent
-          : (rawContent as { parts?: unknown[] } | undefined)?.parts;
-        if (!Array.isArray(parts)) return message;
-        const resolvedParts = await Promise.all(
-          parts.map(async (part) => {
-            if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "file") {
-              return part;
-            }
-            const record = part as {
-              data?: unknown;
-              url?: unknown;
-              image?: unknown;
-              filename?: string;
-              mediaType?: string;
-            };
-            const assetId =
-              getLibraryAssetId(record.data) ??
-              getLibraryAssetId(record.url) ??
-              getLibraryAssetId(record.image);
-            if (!assetId) {
-              if (!hasUnknownAttachmentMediaType(record.mediaType)) return part;
-              changed = true;
-              return { type: "text", text: unsupportedAttachmentText(record.filename) };
-            }
-            if (!resourceId) {
-              if (!hasUnknownAttachmentMediaType(record.mediaType)) return part;
-              changed = true;
-              return { type: "text", text: unsupportedAttachmentText(record.filename) };
-            }
-            changed = true;
-            const context = await getAssetContext(resourceId, assetId, {
-              maxMediaBytes: MAX_LIBRARY_INLINE_MEDIA_BYTES,
-            });
-            if (!context) {
-              return {
-                type: "text",
-                text: `[附件不可用: ${record.filename ?? "未命名附件"}]`,
-              };
-            }
-            if (context.text) {
-              return {
-                type: "text",
-                text: `附件「${context.asset.filename}」内容:\n\n${context.text}`,
-              };
-            }
-            if (context.dataUrl) {
-              const supported = context.asset.mediaType.startsWith("image/")
-                ? capabilities?.vision === true
-                : context.asset.mediaType.startsWith("audio/") && capabilities?.audio === true;
-              return supported
-                ? {
-                    type: "file",
-                    data: context.dataUrl,
-                    filename: context.asset.filename,
-                    mediaType: context.asset.mediaType,
-                  }
-                : {
-                    type: "text",
-                    text: `[附件「${context.asset.filename}」未注入: 当前模型不支持该原生媒体类型]`,
-                  };
-            }
-            return {
-              type: "text",
-              text:
-                context.skipped === "media-too-large"
-                  ? `[附件「${context.asset.filename}」未注入: 媒体文件超过 ${MAX_LIBRARY_INLINE_MEDIA_BYTES / (1024 * 1024)} MB 的上下文上限]`
-                  : `[已上传附件: ${context.asset.filename}; 当前格式不能直接发送给模型]`,
-            };
-          }),
-        );
-        if (!resolvedParts.some((part, index) => part !== parts[index])) return message;
-        return {
-          ...message,
-          content: Array.isArray(rawContent)
-            ? resolvedParts
-            : { ...message.content, parts: resolvedParts },
-        } as typeof message;
-      }),
-    );
-    return changed ? { messages: resolvedMessages } : undefined;
+  async processInputStep() {
+    // Keep persisted messages and the renderer's chat history lossless. The
+    // previous implementation resolved library URLs here and replaced file
+    // parts with extracted text, which made Markdown/JSON appear as raw text
+    // inside the user's message bubble. Provider-bound rewriting belongs in
+    // processLLMRequest, whose contract explicitly says the mutation is
+    // transient and is not persisted back to the message list.
+    return undefined;
   },
   async processLLMRequest({ prompt, requestContext }) {
     const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
@@ -168,8 +77,8 @@ export const libraryAttachmentProcessor: InputProcessor = {
       const message = prompt[messageIndex];
       // `processLLMRequest` receives the provider prompt (`LanguageModelV2Prompt`),
       // whose role union intentionally excludes Mastra's persisted `signal` role.
-      // Signal messages are normalized in `processInputStep` above; do not widen
-      // this provider-bound type check with an impossible role.
+      // At this boundary the prompt has already been converted by Mastra, so
+      // transient attachment expansion cannot leak back into persisted history.
       if (message.role !== "user" && message.role !== "assistant") {
         continue;
       }
@@ -179,7 +88,11 @@ export const libraryAttachmentProcessor: InputProcessor = {
           content.push(part);
           continue;
         }
-        const assetId = getLibraryAssetId(part.data);
+        const record = part as typeof part & { url?: unknown; image?: unknown };
+        const assetId =
+          getLibraryAssetId(part.data) ??
+          getLibraryAssetId(record.url) ??
+          getLibraryAssetId(record.image);
         if (!assetId) {
           if (hasUnknownAttachmentMediaType(part.mediaType)) {
             changed = true;

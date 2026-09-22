@@ -35,8 +35,6 @@ type AssetUploadMetadata = {
   mediaType?: string;
   folderId?: string;
   threadId?: string;
-  /** Chat uploads can retain the thread ref and also promote extractable docs to the library. */
-  promoteToLibrary?: boolean;
 };
 
 type AssetUploadSource = {
@@ -70,10 +68,6 @@ async function storeAsset(
 
   if (existingRow) {
     const asset = rowToAsset(existingRow);
-    if (input.promoteToLibrary && isExtractable(asset.filename, asset.mediaType)) {
-      await attachAssetReference(input.resourceId, asset.id);
-      asset.hasLibraryReference = true;
-    }
     await attachAssetReference(input.resourceId, asset.id, input.folderId, input.threadId);
     return asset;
   }
@@ -134,16 +128,6 @@ async function storeAsset(
           VALUES (?, ?, ?, ?, ?)`,
           args: [id, input.resourceId, input.folderId ?? "", input.threadId ?? "", timestamp],
         },
-        ...(input.promoteToLibrary && extractable && input.threadId
-          ? [
-              {
-                sql: `INSERT OR IGNORE INTO library_asset_refs
-                (asset_id, resource_id, folder_id, thread_id, created_at)
-                VALUES (?, ?, ?, ?, ?)`,
-                args: [id, input.resourceId, "", "", timestamp],
-              },
-            ]
-          : []),
       ];
       await client.batch(statements);
     });
@@ -153,7 +137,7 @@ async function storeAsset(
       resourceId: input.resourceId,
       folderIds: input.folderId ? [input.folderId] : [],
       threadIds: input.threadId ? [input.threadId] : [],
-      hasLibraryReference: Boolean(input.promoteToLibrary && extractable && input.threadId),
+      hasLibraryReference: !input.folderId && !input.threadId,
       filename: normalized,
       mediaType,
       byteSize: source.byteSize,

@@ -146,6 +146,25 @@ export async function deleteLibraryAsset(assetId: string, resourceId: string): P
   );
 }
 
+export async function saveLibraryAssetToDocuments(
+  assetId: string,
+  resourceId: string,
+  folderId?: string,
+): Promise<LibraryAsset> {
+  const payload = await readJson<{ asset?: LibraryAsset }>(
+    await apiFetch(
+      `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(assetId)}/promote`,
+      {
+        method: "POST",
+        body: { resourceId, ...(folderId ? { folderId } : {}) },
+      },
+    ),
+    i18n.t("library:saveToDocumentsFailed"),
+  );
+  if (!payload.asset) throw new Error(i18n.t("library:saveToDocumentsFailed"));
+  return payload.asset;
+}
+
 export async function renameLibraryTarget(
   target: RenameTarget,
   resourceId: string,

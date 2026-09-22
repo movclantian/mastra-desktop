@@ -300,10 +300,12 @@ function rendererContentSecurityPolicy(): string {
     : "'self' 'wasm-unsafe-eval'";
   return [
     "default-src 'self'",
-    `connect-src 'self' ${MASTRA_SERVER_URL}${devConnectSources} https://v2.xxapi.cn`,
+    `connect-src 'self' blob: ${MASTRA_SERVER_URL}${devConnectSources} https://v2.xxapi.cn`,
     `script-src ${scriptSources}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     `img-src 'self' data: blob: ${MASTRA_SERVER_URL} https://images.xxapi.cn https://models.dev`,
+    `media-src 'self' data: blob: ${MASTRA_SERVER_URL}`,
+    "worker-src 'self' blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "object-src 'none'",
     "base-uri 'self'",
