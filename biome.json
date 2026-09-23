@@ -13,6 +13,9 @@
       "!dist",
       "!resources",
       "!docs",
+      "!.agent/core-patch",
+      "!.agent/runtime-evidence",
+      "!dist-review-*",
       "!**/*.config.*",
       "!pnpm-lock.yaml"
     ]
@@ -21,7 +24,8 @@
     "enabled": true,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineWidth": 100,
+    "lineEnding": "auto"
   },
   "assist": {
     "actions": {
