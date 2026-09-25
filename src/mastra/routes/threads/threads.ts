@@ -28,6 +28,7 @@ import {
   type ThreadAssetTransferRecord,
   type ThreadAssetTransferItem,
   transferThreadAssetReferences,
+  withThreadAssetTransferLock,
 } from "../../rag/storage/assets";
 import { appStorage } from "../../storage";
 import { deleteThreadWorkspace } from "../../workspace";
@@ -418,7 +419,7 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
 });
 
 /** Complete the accepted request under the source account's memory scope. */
-async function executeThreadAssetTransfer(
+async function executeThreadAssetTransferUnlocked(
   c: ContextWithMastra,
   transfer: ThreadAssetTransferRecord,
 ): Promise<"committed" | "reconciliation_pending"> {
@@ -607,6 +608,15 @@ async function executeThreadAssetTransfer(
   }
   if (!updated) throw new Error("线程迁移未返回更新后的线程");
   return transferStatus;
+}
+
+async function executeThreadAssetTransfer(
+  c: ContextWithMastra,
+  transfer: ThreadAssetTransferRecord,
+): Promise<"committed" | "reconciliation_pending"> {
+  return withThreadAssetTransferLock(transfer.threadId, transfer.sourceResourceId, () =>
+    executeThreadAssetTransferUnlocked(c, transfer),
+  );
 }
 
 function collectLibraryAssetIds(value: unknown, ids = new Set<string>()): Set<string> {

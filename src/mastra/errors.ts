@@ -113,6 +113,12 @@ export const WORK_ERRORS = {
     status: 409,
     text: "该会话已有待处理的转交申请",
   },
+  THREAD_TRANSFER_IN_PROGRESS: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "会话正在转交，请稍后重试",
+  },
   MESSAGE_NOT_FOUND: {
     domain: ErrorDomain.MASTRA_MEMORY,
     category: ErrorCategory.USER,

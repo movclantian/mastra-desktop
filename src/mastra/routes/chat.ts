@@ -41,7 +41,9 @@ import {
   LIBRARY_RERANK_MODEL_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
+  isThreadAssetTransferWriteLocked,
   searchLibrary,
+  withThreadAssetTransferLock,
 } from "../rag";
 import { appStorage } from "../storage";
 import {
@@ -672,6 +674,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     ) {
       throw workError("THREAD_NOT_FOUND");
     }
+    if (await isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)) {
+      throw workError("THREAD_TRANSFER_IN_PROGRESS");
+    }
     const requestMemory = await getWorkMemoryForThread(
       requestContext,
       body.memory.thread,
@@ -964,7 +969,15 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
           );
         },
       });
-    const action = async () => {
+    const actionBody = async () => {
+      // Request preparation awaits model/profile/retrieval work. Recheck here
+      // after acquiring the same per-thread barrier used by transfer snapshotting.
+      if (await isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)) {
+        throw workError("THREAD_TRANSFER_IN_PROGRESS");
+      }
+      if (!(await getOwnedThread(requestMemory, threadId, authenticatedResourceId))) {
+        throw workError("THREAD_NOT_FOUND");
+      }
       if (explicitResumeTarget) {
         const { runs } = await profileAgent.listSuspendedRuns({
           threadId: threadId,
@@ -1059,6 +1072,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         { requestContext, requireDelivery: true, untilIdle: true },
       ).accepted;
     };
+    const action = () => withThreadAssetTransferLock(threadId, authenticatedResourceId, actionBody);
     const stream = await streamWorkbenchSession(
       c,
       controllerSession,

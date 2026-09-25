@@ -4,7 +4,16 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { copyFile, lstat, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  realpath,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { nanoid } from "nanoid";
@@ -56,6 +65,49 @@ export const THREAD_TRANSFER_WRITE_LOCK_STATUSES = [
 const THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS = THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(
   () => "?",
 ).join(", ");
+const threadAssetTransferLocks = new Map<string, Promise<void>>();
+
+/** Serialize chat-start and transfer work for one thread within the local Mastra process. */
+export async function withThreadAssetTransferLock<T>(
+  threadId: string,
+  resourceId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const key = JSON.stringify([resourceId, threadId]);
+  const previous = threadAssetTransferLocks.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  threadAssetTransferLocks.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (threadAssetTransferLocks.get(key) === queued) threadAssetTransferLocks.delete(key);
+  }
+}
+
+/** True while an accepted transfer is moving this thread's assets or history. */
+export async function isThreadAssetTransferWriteLocked(
+  threadId: string,
+  sourceResourceId: string,
+): Promise<boolean> {
+  if (!threadId || !sourceResourceId) return false;
+  await ensureLibrarySchema();
+  return withClient(async (client) => {
+    const result = await client.execute({
+      sql: `SELECT 1 FROM library_thread_transfers
+        WHERE thread_id = ? AND source_resource_id = ?
+          AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
+        LIMIT 1`,
+      args: [threadId, sourceResourceId, ...THREAD_TRANSFER_WRITE_LOCK_STATUSES],
+    });
+    return result.rows.length > 0;
+  });
+}
 
 async function storeAsset(
   input: AssetUploadMetadata,

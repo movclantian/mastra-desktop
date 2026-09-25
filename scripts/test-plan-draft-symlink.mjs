@@ -41,6 +41,7 @@ test("Plan writer writes under plans and refuses a dangling symlink", async (t) 
       new URL("../src/mastra/tools/plan-draft.ts", import.meta.url),
       "utf8",
     );
+    assert.match(source, /const target = resolve\(resolvedPlanRoot, filename\)/);
     assert.match(source, /temporaryTarget = resolve\(resolvedPlanRoot,/);
     assert.ok(
       source.indexOf("const currentPlanRoot = await realpath(planRoot)") <

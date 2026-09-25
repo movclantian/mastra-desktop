@@ -78,9 +78,14 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   const mastraIndex = read("src/mastra/index.ts");
   const routeIndex = read("src/mastra/routes/index.ts");
   const auth = read("src/mastra/routes/auth.ts");
+  const chat = read("src/mastra/routes/chat.ts");
+  const session = read("src/mastra/routes/session.ts");
+  const ragIndex = read("src/mastra/rag/index.ts");
   assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfers/);
   assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfer_events/);
   assert.match(assets, /beginThreadAssetTransfer/);
+  assert.match(assets, /export async function isThreadAssetTransferWriteLocked/);
+  assert.match(ragIndex, /isThreadAssetTransferWriteLocked/);
   assert.match(assets, /requestThreadAssetTransfer/);
   assert.match(assets, /status: "awaiting_confirmation"/);
   assert.match(assets, /status IN \(\$\{placeholders\}\)/);
@@ -114,6 +119,32 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   assert.match(routeIndex, /referenceLibraryAssetRoute/);
   assert.match(threads, /transferStatus = "reconciliation_pending"/);
   assert.match(threads, /const status = await executeThreadAssetTransfer/);
+  assert.match(
+    threads,
+    /withThreadAssetTransferLock\(transfer\.threadId, transfer\.sourceResourceId, \(\) =>\s+executeThreadAssetTransferUnlocked/,
+  );
+  assert.match(chat, /THREAD_TRANSFER_IN_PROGRESS/);
+  assert.match(
+    chat,
+    /withThreadAssetTransferLock\(threadId, authenticatedResourceId, actionBody\)/,
+  );
+  assert.match(session, /async function withWritableThreadSession/);
+  assert.match(session, /THREAD_TRANSFER_IN_PROGRESS/);
+  assert.equal(
+    session.match(/withWritableThreadSession\(result/g)?.length,
+    3,
+    "session message, steer, and follow-up writes must share the transfer barrier",
+  );
+  assert.ok(
+    chat.indexOf("isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)") <
+      chat.indexOf("normalizeIncrementalMessages"),
+    "chat requests must fail before history normalization when transfer is already active",
+  );
+  assert.match(
+    chat,
+    /const actionBody = async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId, authenticatedResourceId\)[\s\S]*?await controllerSession\.sendSignal\(/,
+    "a transfer accepted during request preparation must be rechecked before turn delivery",
+  );
   assert.match(auth, /currentUser\.role !== "admin"/);
   assert.match(threads, /currentUser\.role !== "admin"/);
   const requestRoute = threads.match(

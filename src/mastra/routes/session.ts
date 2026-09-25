@@ -41,7 +41,11 @@ import {
   resolveRequestModel,
   usesOpenAIResponses,
 } from "../models";
-import { LIBRARY_RESOURCE_CONTEXT_KEY } from "../rag";
+import {
+  isThreadAssetTransferWriteLocked,
+  LIBRARY_RESOURCE_CONTEXT_KEY,
+  withThreadAssetTransferLock,
+} from "../rag";
 import { appStorage } from "../storage";
 import {
   MODEL_FAMILY_CONTEXT_KEY,
@@ -84,6 +88,21 @@ interface SessionRouteResult {
   resourceId: string;
   threadId: string;
   thread: NonNullable<OwnedThread>;
+}
+
+async function withWritableThreadSession<T>(
+  result: SessionRouteResult,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withThreadAssetTransferLock(result.threadId, result.resourceId, async () => {
+    if (await isThreadAssetTransferWriteLocked(result.threadId, result.resourceId)) {
+      throw workError("THREAD_TRANSFER_IN_PROGRESS");
+    }
+    if (!(await getOwnedThread(result.memory, result.threadId, result.resourceId))) {
+      throw workError("THREAD_NOT_FOUND");
+    }
+    return operation();
+  });
 }
 
 interface SessionMessageBody {
@@ -690,10 +709,12 @@ export const sessionMessageRoute = registerApiRoute(
       const body = (await c.req.json()) as SessionMessageBody;
       if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
       const execution = await sessionExecutionOptions(c, result, body);
-      await result.controllerSession.sendMessage({
-        content: body.content.trim(),
-        requestContext: execution.requestContext,
-      });
+      await withWritableThreadSession(result, () =>
+        result.controllerSession.sendMessage({
+          content: body.content.trim(),
+          requestContext: execution.requestContext,
+        }),
+      );
       return c.json({ ok: true });
     },
   },
@@ -706,10 +727,12 @@ export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads
     const body = (await c.req.json()) as SessionMessageBody;
     if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
     const execution = await sessionExecutionOptions(c, result, body);
-    await result.controllerSession.steer({
-      content: body.content.trim(),
-      requestContext: execution.requestContext,
-    });
+    await withWritableThreadSession(result, () =>
+      result.controllerSession.steer({
+        content: body.content.trim(),
+        requestContext: execution.requestContext,
+      }),
+    );
     return c.json({ ok: true });
   },
 });
@@ -724,10 +747,12 @@ export const sessionFollowUpRoute = registerApiRoute(
       if (typeof body.content !== "string" || !body.content.trim())
         throw workError("SESSION_INPUT_REQUIRED");
       const execution = await sessionExecutionOptions(c, result, body);
-      await result.controllerSession.followUp({
-        content: body.content.trim(),
-        requestContext: execution.requestContext,
-      });
+      await withWritableThreadSession(result, () =>
+        result.controllerSession.followUp({
+          content: body.content.trim(),
+          requestContext: execution.requestContext,
+        }),
+      );
       return c.json({ queued: true });
     },
   },

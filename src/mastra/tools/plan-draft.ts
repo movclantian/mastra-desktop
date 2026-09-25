@@ -12,7 +12,7 @@ function workspacePathFromContext(requestContext: { get: (key: string) => unknow
   return typeof value === "string" && value.trim() ? resolve(value.trim()) : resolve(process.cwd());
 }
 
-function resolvePlanPath(workspacePath: string, requestedPath: string): string {
+function resolvePlanFilename(requestedPath: string): string {
   const trimmed = requestedPath.trim();
   if (!trimmed || isAbsolute(trimmed)) throw new Error("计划文件必须是 workspace 内的相对路径");
 
@@ -20,16 +20,10 @@ function resolvePlanPath(workspacePath: string, requestedPath: string): string {
   if (/[\\/:]/.test(filename)) {
     throw new Error("计划文件必须直接位于 workspace/plans/ 目录下");
   }
-  const planRoot = resolve(workspacePath, PLAN_DRAFT_ROOT);
-  const target = resolve(planRoot, filename);
-  const withinPlans = relative(planRoot, target);
-  if (!withinPlans || withinPlans.startsWith("..") || isAbsolute(withinPlans)) {
-    throw new Error("计划文件只能写入 workspace/plans/ 目录");
-  }
-  if (!target.toLowerCase().endsWith(".md")) {
+  if (!filename.toLowerCase().endsWith(".md")) {
     throw new Error("计划文件必须使用 .md 扩展名");
   }
-  return target;
+  return filename;
 }
 
 export const writePlanDraftTool = createTool({
@@ -46,7 +40,7 @@ export const writePlanDraftTool = createTool({
   }),
   execute: async ({ path, content }, { requestContext }) => {
     const workspaceRoot = await realpath(workspacePathFromContext(requestContext));
-    const target = resolvePlanPath(workspaceRoot, path);
+    const filename = resolvePlanFilename(path);
     const planRoot = resolve(workspaceRoot, PLAN_DRAFT_ROOT);
     await mkdir(planRoot).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== "EEXIST") throw error;
@@ -59,6 +53,9 @@ export const writePlanDraftTool = createTool({
     ) {
       throw new Error("计划目录不能通过符号链接重定向");
     }
+    // Build both paths from the verified canonical directory. Replacing the
+    // lexical workspace/plans entry after validation cannot redirect rename.
+    const target = resolve(resolvedPlanRoot, filename);
 
     // `realpath` alone misses dangling symlinks. Reject an existing link, then
     // write to a fresh sibling and atomically rename it into place. Rename

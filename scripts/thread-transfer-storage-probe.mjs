@@ -116,6 +116,11 @@ const [first, duplicate] = await Promise.all([
 ]);
 assert.equal(first.id, duplicate.id);
 assert.equal(first.status, "awaiting_confirmation");
+assert.equal(
+  await assets.isThreadAssetTransferWriteLocked(request.threadId, request.sourceResourceId),
+  false,
+  "a request awaiting recipient confirmation must not block source-side chats",
+);
 
 assert.equal(
   await assets.decideThreadAssetTransferRequest(first.id, "local-account-c", "accept"),
@@ -146,6 +151,47 @@ assert.equal(
   "a request can be decided only once",
 );
 assert.equal((await assets.getThreadAssetTransfer(first.id))?.status, "prepared");
+assert.equal(
+  await assets.isThreadAssetTransferWriteLocked(request.threadId, request.sourceResourceId),
+  true,
+  "an accepted transfer must block new source-side chats while assets/history move",
+);
+const lockOrder = [];
+let releaseFirstLock;
+let firstLockStarted;
+const firstLockReady = new Promise((resolve) => {
+  firstLockStarted = resolve;
+});
+const firstLockGate = new Promise((resolve) => {
+  releaseFirstLock = resolve;
+});
+const firstLockRun = assets.withThreadAssetTransferLock(
+  "thread-lock-probe",
+  "local-account-a",
+  async () => {
+    lockOrder.push("first-start");
+    firstLockStarted();
+    await firstLockGate;
+    lockOrder.push("first-end");
+  },
+);
+await firstLockReady;
+const secondLockRun = assets.withThreadAssetTransferLock(
+  "thread-lock-probe",
+  "local-account-a",
+  async () => lockOrder.push("second"),
+);
+await assets.withThreadAssetTransferLock("different-thread", "local-account-a", async () => {
+  lockOrder.push("independent");
+});
+assert.deepEqual(
+  lockOrder,
+  ["first-start", "independent"],
+  "same-thread operations must wait without blocking unrelated threads",
+);
+releaseFirstLock();
+await Promise.all([firstLockRun, secondLockRun]);
+assert.deepEqual(lockOrder, ["first-start", "independent", "first-end", "second"]);
 await assert.rejects(
   upload.createLibraryUploadSession({
     resourceId: "local-account-a",
