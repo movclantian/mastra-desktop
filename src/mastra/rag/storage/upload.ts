@@ -22,6 +22,7 @@ import {
   ensureLibrarySchema,
   now,
   rowToUploadSession,
+  withLibraryUploadSessionLock,
   withClient,
 } from "./db";
 
@@ -153,13 +154,25 @@ export async function getLibraryUploadSession(
   return rowToUploadSession(sessionRow, completed);
 }
 
-export async function saveLibraryUploadChunk(input: {
+type SaveLibraryUploadChunkInput = {
   resourceId: string;
   sessionId: string;
   chunkIndex: number;
   bytes: Uint8Array;
   expectedSha256?: string;
-}): Promise<LibraryUploadSession> {
+};
+
+export async function saveLibraryUploadChunk(
+  input: SaveLibraryUploadChunkInput,
+): Promise<LibraryUploadSession> {
+  return withLibraryUploadSessionLock(input.sessionId, () =>
+    saveLibraryUploadChunkUnlocked(input),
+  );
+}
+
+async function saveLibraryUploadChunkUnlocked(
+  input: SaveLibraryUploadChunkInput,
+): Promise<LibraryUploadSession> {
   const session = await getLibraryUploadSession(input.resourceId, input.sessionId);
   if (!session) throw new Error("上传会话不存在或已过期");
   if (input.chunkIndex < 0 || input.chunkIndex >= session.totalChunks) {
@@ -201,6 +214,15 @@ export async function saveLibraryUploadChunk(input: {
 }
 
 export async function completeLibraryUploadSession(
+  resourceId: string,
+  sessionId: string,
+): Promise<LibraryAsset> {
+  return withLibraryUploadSessionLock(sessionId, () =>
+    completeLibraryUploadSessionUnlocked(resourceId, sessionId),
+  );
+}
+
+async function completeLibraryUploadSessionUnlocked(
   resourceId: string,
   sessionId: string,
 ): Promise<LibraryAsset> {
@@ -280,6 +302,15 @@ export async function completeLibraryUploadSession(
 }
 
 export async function cancelLibraryUploadSession(
+  resourceId: string,
+  sessionId: string,
+): Promise<boolean> {
+  return withLibraryUploadSessionLock(sessionId, () =>
+    cancelLibraryUploadSessionUnlocked(resourceId, sessionId),
+  );
+}
+
+async function cancelLibraryUploadSessionUnlocked(
   resourceId: string,
   sessionId: string,
 ): Promise<boolean> {

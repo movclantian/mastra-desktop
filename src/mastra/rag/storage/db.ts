@@ -23,6 +23,37 @@ export async function withClient<T>(run: (client: Client) => Promise<T>): Promis
   return run(await getLibsqlClient());
 }
 
+const libraryStorageLocks = new Map<string, Promise<void>>();
+
+/** Serialize one library-storage resource within this Mastra process. */
+export async function withLibraryStorageLock<T>(
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = libraryStorageLocks.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  libraryStorageLocks.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (libraryStorageLocks.get(key) === queued) libraryStorageLocks.delete(key);
+  }
+}
+
+/** Serialize chunk writes, completion, cancellation, and expiry cleanup per upload session. */
+export function withLibraryUploadSessionLock<T>(
+  sessionId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withLibraryStorageLock(`upload:${sessionId}`, operation);
+}
+
 const uploadChunksDirectory = () => join(getStorageDirectory(), "library", "_chunks");
 
 const UPLOAD_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -61,15 +92,22 @@ async function cleanupExpiredUploadSessions(client: Client): Promise<void> {
   if (sessionIds.length > 0) {
     const removedIds = (
       await Promise.all(
-        sessionIds.map(async (sessionId) => {
-          try {
-            await rm(join(uploadChunksDirectory(), sessionId), { recursive: true, force: true });
-            return sessionId;
-          } catch {
-            // Keep the database row so a later startup/request can retry the disk cleanup.
-            return undefined;
-          }
-        }),
+        sessionIds.map((sessionId) =>
+          withLibraryUploadSessionLock(sessionId, async () => {
+            const stillExpired = await client.execute({
+              sql: "SELECT 1 FROM library_upload_sessions WHERE id = ? AND expires_at <= ? LIMIT 1",
+              args: [sessionId, now()],
+            });
+            if (stillExpired.rows.length === 0) return undefined;
+            try {
+              await rm(join(uploadChunksDirectory(), sessionId), { recursive: true, force: true });
+              return sessionId;
+            } catch {
+              // Keep the database row so a later startup/request can retry the disk cleanup.
+              return undefined;
+            }
+          }),
+        ),
       )
     ).filter((sessionId): sessionId is string => Boolean(sessionId));
     if (removedIds.length > 0) {

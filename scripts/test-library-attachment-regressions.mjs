@@ -184,12 +184,13 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
 test("thread transfer fencing follows thread identity and protects upload completion", () => {
   const assets = read("src/mastra/rag/storage/assets.ts");
   const upload = read("src/mastra/rag/storage/upload.ts");
+  const db = read("src/mastra/rag/storage/db.ts");
   const routes = read("src/mastra/routes/library.ts");
   const lock = assets.match(
     /export async function isThreadAssetTransferWriteLocked\([\s\S]*?^}/m,
   )?.[0];
   assert.ok(lock, "transfer fence must remain an auditable helper");
-  assert.match(assets, /const key = threadId;/);
+  assert.match(assets, /withLibraryStorageLock\(`thread:\$\{threadId\}`, operation\)/);
   assert.match(lock, /WHERE thread_id = \?/);
   assert.doesNotMatch(lock, /source_resource_id|target_resource_id/);
   assert.match(routes, /async function withOwnedThreadAssetWrite/);
@@ -209,6 +210,22 @@ test("thread transfer fencing follows thread identity and protects upload comple
     /const session = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?completeLibraryUploadSession\(resourceId, uploadId\)/,
   );
   assert.match(upload, /WHERE thread_id = \?[\s\S]*?status IN/);
+  assert.match(db, /export async function withLibraryStorageLock/);
+  assert.match(db, /withLibraryStorageLock\(`upload:\$\{sessionId\}`, operation\)/);
+  assert.match(db, /export function withLibraryUploadSessionLock/);
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(input\.sessionId, \(\) => saveLibraryUploadChunkUnlocked\(input\)\)/,
+  );
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(sessionId, \(\) =>\s+completeLibraryUploadSessionUnlocked\(resourceId, sessionId\)/,
+  );
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(sessionId, \(\) =>\s+cancelLibraryUploadSessionUnlocked\(resourceId, sessionId\)/,
+  );
+  assert.match(db, /sessionIds\.map\(\(sessionId\) =>\s+withLibraryUploadSessionLock\(sessionId/);
 });
 
 test("model library search is bound to the active thread and never accepts a thread override", () => {

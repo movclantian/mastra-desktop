@@ -32,7 +32,14 @@ import {
   MAX_LIBRARY_FILE_BYTES,
   MAX_LIBRARY_INLINE_MEDIA_BYTES,
 } from "../types";
-import { ensureLibrarySchema, getLatestLibraryIndexRuns, now, rowToAsset, withClient } from "./db";
+import {
+  ensureLibrarySchema,
+  getLatestLibraryIndexRuns,
+  now,
+  rowToAsset,
+  withClient,
+  withLibraryStorageLock,
+} from "./db";
 
 /**
  * 资产管理层:
@@ -65,8 +72,6 @@ export const THREAD_TRANSFER_WRITE_LOCK_STATUSES = [
 const THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS = THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(
   () => "?",
 ).join(", ");
-const threadAssetTransferLocks = new Map<string, Promise<void>>();
-
 /** Serialize thread mutations across resource ownership changes in the local Mastra process. */
 export async function withThreadAssetTransferLock<T>(
   threadId: string,
@@ -74,21 +79,7 @@ export async function withThreadAssetTransferLock<T>(
 ): Promise<T> {
   // A transfer changes resourceId while it is still rewriting the thread. The
   // barrier must therefore be keyed by the stable thread identity, not owner.
-  const key = threadId;
-  const previous = threadAssetTransferLocks.get(key) ?? Promise.resolve();
-  let releaseCurrent!: () => void;
-  const current = new Promise<void>((resolveCurrent) => {
-    releaseCurrent = resolveCurrent;
-  });
-  const queued = previous.then(() => current);
-  threadAssetTransferLocks.set(key, queued);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    releaseCurrent();
-    if (threadAssetTransferLocks.get(key) === queued) threadAssetTransferLocks.delete(key);
-  }
+  return withLibraryStorageLock(`thread:${threadId}`, operation);
 }
 
 /** True while an accepted transfer is moving this thread's assets or history. */
