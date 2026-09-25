@@ -461,9 +461,9 @@ export async function attachAssetReference(
         threadId ?? "",
         threadId ?? "",
         resourceId,
-        options?.transferId ?? "",
-        options?.transferId ?? "",
         ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
+        options?.transferId ?? "",
+        options?.transferId ?? "",
       ],
     });
     if ((inserted.rowsAffected ?? 0) === 1 || !threadId) return;
