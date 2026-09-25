@@ -5,8 +5,103 @@ import { dirname, join } from "node:path";
 const assets = (await import("../src/mastra/rag/storage/assets.ts")).default;
 const storage = (await import("../src/mastra/storage/index.ts")).default;
 const libraryDb = (await import("../src/mastra/rag/storage/db.ts")).default;
+const upload = (await import("../src/mastra/rag/storage/upload.ts")).default;
+const folders = (await import("../src/mastra/rag/storage/folders.ts")).default;
 
 await libraryDb.ensureLibrarySchema();
+
+const storageDirectory = storage.getStorageDirectory();
+const globalFolder = await folders.createFolder({
+  resourceId: "local-account-a",
+  name: "Global",
+});
+const sessionFolder = await folders.createFolder({
+  resourceId: "local-account-a",
+  name: "Session",
+  threadId: "thread-folder-owner",
+});
+const scopedAsset = await assets.uploadAsset(
+  {
+    resourceId: "local-account-a",
+    filename: "session-note.txt",
+    folderId: sessionFolder.id,
+    threadId: "thread-folder-owner",
+    bytes: Buffer.from("only this thread can retrieve this file"),
+  },
+  true,
+);
+for (const input of [
+  { folderId: sessionFolder.id },
+  { folderId: sessionFolder.id, threadId: "another-thread" },
+  { folderId: globalFolder.id, threadId: "thread-folder-owner" },
+]) {
+  await assert.rejects(
+    assets.uploadAsset(
+      {
+        resourceId: "local-account-a",
+        filename: "wrong-scope.txt",
+        bytes: Buffer.from(JSON.stringify(input)),
+        ...input,
+      },
+      true,
+    ),
+    /目录作用域与文件所属会话不一致/,
+    "folder upload must use the same global/thread scope as its folder",
+  );
+}
+await assert.rejects(
+  upload.createLibraryUploadSession({
+    resourceId: "local-account-a",
+    filename: "wrong-folder.txt",
+    byteSize: 10,
+    folderId: sessionFolder.id,
+  }),
+  /目录作用域与文件所属会话不一致/,
+);
+const scopedRefs = await libraryDb.withClient((client) =>
+  client.execute({
+    sql: "SELECT folder_id, thread_id FROM library_asset_refs WHERE asset_id = ?",
+    args: [scopedAsset.id],
+  }),
+);
+assert.equal(scopedRefs.rows.length, 1);
+assert.equal(String(scopedRefs.rows[0].thread_id), "thread-folder-owner");
+assert.equal(
+  (await assets.listAssets("local-account-a", "another-thread")).some(
+    (asset) => asset.id === scopedAsset.id,
+  ),
+  false,
+);
+
+const sourceAssetId = "source-global-asset";
+const sourceStoragePath = join("library", "local-account-a", "so", "global.md");
+const sourcePath = join(storageDirectory, sourceStoragePath);
+await mkdir(dirname(sourcePath), { recursive: true });
+await writeFile(sourcePath, "global attachment content\n");
+const timestamp = new Date().toISOString();
+await libraryDb.withClient((client) =>
+  client.execute({
+    sql: `INSERT INTO library_assets
+      (id, resource_id, filename, media_type, byte_size, sha256, storage_path,
+       status, extracted_text, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
+      sourceAssetId,
+      "local-account-a",
+      "global.md",
+      "text/markdown",
+      26,
+      "a".repeat(64),
+      sourceStoragePath,
+      "indexed",
+      "global attachment content",
+      timestamp,
+      timestamp,
+    ],
+  }),
+);
+await assets.attachAssetReference("local-account-a", sourceAssetId);
+await assets.attachAssetReference("local-account-a", sourceAssetId, undefined, "thread-accepted");
 
 const request = {
   threadId: "thread-accepted",
@@ -28,6 +123,19 @@ assert.equal(
   "an unrelated local account cannot accept the request",
 );
 assert.equal((await assets.getThreadAssetTransfer(first.id))?.status, "awaiting_confirmation");
+const pendingUpload = await upload.createLibraryUploadSession({
+  resourceId: "local-account-a",
+  filename: "in-flight.txt",
+  byteSize: 10,
+  threadId: request.threadId,
+});
+assert.equal(
+  await assets.decideThreadAssetTransferRequest(first.id, "local-account-b", "accept"),
+  false,
+  "recipient acceptance must wait for an active upload session",
+);
+assert.equal((await assets.getThreadAssetTransfer(first.id))?.status, "awaiting_confirmation");
+assert.equal(await upload.cancelLibraryUploadSession("local-account-a", pendingUpload.id), true);
 assert.equal(
   await assets.decideThreadAssetTransferRequest(first.id, "local-account-b", "accept"),
   true,
@@ -38,6 +146,56 @@ assert.equal(
   "a request can be decided only once",
 );
 assert.equal((await assets.getThreadAssetTransfer(first.id))?.status, "prepared");
+await assert.rejects(
+  upload.createLibraryUploadSession({
+    resourceId: "local-account-a",
+    filename: "too-late.txt",
+    byteSize: 10,
+    threadId: request.threadId,
+  }),
+  /会话正在转交，无法开始上传附件/,
+);
+await assert.rejects(
+  assets.attachAssetReference("local-account-a", "late-asset", undefined, request.threadId),
+  /会话正在转交，无法添加附件/,
+);
+const recoveryOnlyAssetId = "transfer-reconciliation-reference";
+await assets.attachAssetReference(
+  "local-account-a",
+  recoveryOnlyAssetId,
+  undefined,
+  request.threadId,
+  { transferId: first.id },
+);
+const recoveryOnlyRef = await libraryDb.withClient((client) =>
+  client.execute({
+    sql: "SELECT 1 FROM library_asset_refs WHERE asset_id = ? AND thread_id = ?",
+    args: [recoveryOnlyAssetId, request.threadId],
+  }),
+);
+assert.equal(
+  recoveryOnlyRef.rows.length,
+  1,
+  "the matching transfer may repair its own legacy thread references",
+);
+await libraryDb.withClient((client) =>
+  client.execute({
+    sql: "DELETE FROM library_asset_refs WHERE asset_id = ?",
+    args: [recoveryOnlyAssetId],
+  }),
+);
+await assert.rejects(
+  assets.uploadAsset(
+    {
+      resourceId: "local-account-a",
+      filename: "late-upload.txt",
+      bytes: Buffer.from("must not be attached after acceptance"),
+      threadId: request.threadId,
+    },
+    true,
+  ),
+  /会话正在转交，无法添加附件/,
+);
 const pendingAfterAcceptance = await assets.listPendingThreadAssetTransfers();
 assert.ok(
   pendingAfterAcceptance.some((transfer) => transfer.id === first.id),
@@ -78,36 +236,6 @@ assert.equal(sourceHistory.length, 2);
 assert.equal(targetHistory.length, 2);
 assert.equal((await assets.listThreadAssetTransfersForResource("local-account-c")).length, 0);
 
-const storageDirectory = storage.getStorageDirectory();
-const sourceAssetId = "source-global-asset";
-const sourceStoragePath = join("library", "local-account-a", "so", "global.md");
-const sourcePath = join(storageDirectory, sourceStoragePath);
-await mkdir(dirname(sourcePath), { recursive: true });
-await writeFile(sourcePath, "global attachment content\n");
-const timestamp = new Date().toISOString();
-await libraryDb.withClient((client) =>
-  client.execute({
-    sql: `INSERT INTO library_assets
-      (id, resource_id, filename, media_type, byte_size, sha256, storage_path,
-       status, extracted_text, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [
-      sourceAssetId,
-      "local-account-a",
-      "global.md",
-      "text/markdown",
-      26,
-      "a".repeat(64),
-      sourceStoragePath,
-      "indexed",
-      "global attachment content",
-      timestamp,
-      timestamp,
-    ],
-  }),
-);
-await assets.attachAssetReference("local-account-a", sourceAssetId);
-await assets.attachAssetReference("local-account-a", sourceAssetId, undefined, "thread-accepted");
 const copied = await assets.transferThreadAssetReferences(
   "local-account-a",
   "local-account-b",

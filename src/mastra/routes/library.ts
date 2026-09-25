@@ -220,9 +220,12 @@ async function ownedThreadId(
 function throwUploadRouteError(error: unknown, fallback: string): never {
   if (error instanceof WorkApiError) throw error;
   const text = errorText(error, fallback);
-  const code = /(?:超过|不能超过|大小)/.test(text)
-    ? "LIBRARY_FILE_TOO_LARGE"
-    : "LIBRARY_UPLOAD_FAILED";
+  let code = "LIBRARY_UPLOAD_FAILED";
+  if (text.includes("资料库目录作用域与文件所属会话不一致")) {
+    code = "VALIDATION_FAILED";
+  } else if (/(?:超过|不能超过|大小)/.test(text)) {
+    code = "LIBRARY_FILE_TOO_LARGE";
+  }
   throw workError(code, { text, cause: error });
 }
 
@@ -251,11 +254,6 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       const resourceId = authenticatedResourceId(c);
       const folderId = requireResourceId(parsed.fields.folderId) ?? undefined;
       const threadId = await ownedThreadId(c, resourceId, parsed.fields.threadId);
-      if (folderId && threadId) {
-        throw workError("VALIDATION_FAILED", {
-          text: "上传文件只能选择全局资料库目录或当前会话其中一个归属位置",
-        });
-      }
       const assets = [];
       for (const file of parsed.files) {
         assets.push(
@@ -356,11 +354,6 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
       }
       const folderId = requireResourceId(body.folderId) ?? undefined;
       const threadId = await ownedThreadId(c, resourceId, body.threadId);
-      if (folderId && threadId) {
-        throw workError("VALIDATION_FAILED", {
-          text: "上传文件只能选择全局资料库目录或当前会话其中一个归属位置",
-        });
-      }
       const session = await createLibraryUploadSession({
         resourceId,
         filename: body.filename,

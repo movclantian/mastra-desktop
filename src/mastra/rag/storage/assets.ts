@@ -17,6 +17,7 @@ import {
 } from "../document/extract";
 import { queueAssetIndex, waitForAssetIndexing } from "../document/indexing";
 import { getLibrarySettings } from "../settings";
+import { ensureFolderReference } from "./folders";
 import {
   type LibraryAsset,
   MAX_LIBRARY_FILE_BYTES,
@@ -44,24 +45,29 @@ type AssetUploadSource = {
   readBytes: () => Promise<Uint8Array>;
 };
 
-function assertAssetReferenceScope(folderId?: string, threadId?: string): void {
-  if (folderId && threadId) {
-    throw new Error("文件不能同时归属全局资料库目录和会话");
-  }
-}
+export const THREAD_TRANSFER_WRITE_LOCK_STATUSES = [
+  "prepared",
+  "assets_preparing",
+  "assets_moved",
+  "memory_moved",
+  "messages_rewritten",
+  "needs_reconciliation",
+] as const;
+const THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS = THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(
+  () => "?",
+).join(", ");
 
 async function storeAsset(
   input: AssetUploadMetadata,
   source: AssetUploadSource,
   skipIndexing: boolean,
 ): Promise<LibraryAsset> {
-  assertAssetReferenceScope(input.folderId, input.threadId);
   if (source.byteSize === 0) throw new Error("文件内容不能为空");
   if (source.byteSize > MAX_LIBRARY_FILE_BYTES) {
     throw new Error(`单个文件不能超过 ${MAX_LIBRARY_FILE_BYTES / (1024 * 1024)} MB`);
   }
   await ensureLibrarySchema();
-  await ensureFolderReference(input.resourceId, input.folderId);
+  await ensureFolderReference(input.resourceId, input.folderId, input.threadId);
   const normalized = normalizeFilename(input.filename);
   const mediaType = resolveMediaType(normalized, input.mediaType || "");
   const baseDir = getStorageDirectory();
@@ -115,7 +121,12 @@ async function storeAsset(
         {
           sql: `INSERT INTO library_assets
           (id, resource_id, filename, media_type, byte_size, sha256, storage_path, status, extracted_text, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE ? = '' OR NOT EXISTS (
+            SELECT 1 FROM library_thread_transfers
+            WHERE thread_id = ? AND source_resource_id = ?
+              AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
+          )`,
           args: [
             id,
             input.resourceId,
@@ -128,16 +139,33 @@ async function storeAsset(
             extracted,
             timestamp,
             timestamp,
+            input.threadId ?? "",
+            input.threadId ?? "",
+            input.resourceId,
+            ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
           ],
         },
         {
           sql: `INSERT INTO library_asset_refs
           (asset_id, resource_id, folder_id, thread_id, created_at)
-          VALUES (?, ?, ?, ?, ?)`,
-          args: [id, input.resourceId, input.folderId ?? "", input.threadId ?? "", timestamp],
+          SELECT ?, ?, ?, ?, ? WHERE EXISTS (
+            SELECT 1 FROM library_assets WHERE id = ? AND resource_id = ?
+          )`,
+          args: [
+            id,
+            input.resourceId,
+            input.folderId ?? "",
+            input.threadId ?? "",
+            timestamp,
+            id,
+            input.resourceId,
+          ],
         },
       ];
-      await client.batch(statements);
+      const results = await client.batch(statements);
+      if ((results[0]?.rowsAffected ?? 0) !== 1) {
+        throw new Error("会话正在转交，无法添加附件");
+      }
     });
 
     createdAsset = {
@@ -409,29 +437,43 @@ export async function attachAssetReference(
   assetId: string,
   folderId?: string,
   threadId?: string,
+  options?: { transferId?: string },
 ): Promise<void> {
-  assertAssetReferenceScope(folderId, threadId);
   await ensureLibrarySchema();
-  await ensureFolderReference(resourceId, folderId);
-  await withClient((client) =>
-    client.execute({
-      sql: `INSERT OR IGNORE INTO library_asset_refs (asset_id, resource_id, folder_id, thread_id, created_at)
-        VALUES (?, ?, ?, ?, ?)`,
-      args: [assetId, resourceId, folderId ?? "", threadId ?? "", now()],
-    }),
-  );
-}
-
-async function ensureFolderReference(resourceId: string, folderId?: string): Promise<void> {
-  if (!folderId) return;
-  const exists = await withClient(async (client) => {
-    const result = await client.execute({
-      sql: "SELECT 1 FROM library_folders WHERE id = ? AND resource_id = ? LIMIT 1",
-      args: [folderId, resourceId],
+  await ensureFolderReference(resourceId, folderId, threadId);
+  await withClient(async (client) => {
+    const inserted = await client.execute({
+      sql: `INSERT OR IGNORE INTO library_asset_refs
+        (asset_id, resource_id, folder_id, thread_id, created_at)
+        SELECT ?, ?, ?, ?, ?
+        WHERE ? = '' OR NOT EXISTS (
+          SELECT 1 FROM library_thread_transfers
+          WHERE thread_id = ? AND source_resource_id = ?
+            AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
+            AND (? = '' OR id != ?)
+        )`,
+      args: [
+        assetId,
+        resourceId,
+        folderId ?? "",
+        threadId ?? "",
+        now(),
+        threadId ?? "",
+        threadId ?? "",
+        resourceId,
+        options?.transferId ?? "",
+        options?.transferId ?? "",
+        ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
+      ],
     });
-    return result.rows.length > 0;
+    if ((inserted.rowsAffected ?? 0) === 1 || !threadId) return;
+    const existing = await client.execute({
+      sql: `SELECT 1 FROM library_asset_refs
+        WHERE asset_id = ? AND resource_id = ? AND folder_id = ? AND thread_id = ? LIMIT 1`,
+      args: [assetId, resourceId, folderId ?? "", threadId],
+    });
+    if (existing.rows.length === 0) throw new Error("会话正在转交，无法添加附件");
   });
-  if (!exists) throw new Error("资料库目录不存在或不属于当前账户");
 }
 
 export type ThreadAssetTransferStatus =
@@ -494,12 +536,7 @@ export class ThreadAssetTransferRequestConflict extends Error {
 }
 
 const PENDING_THREAD_TRANSFER_STATUSES: ThreadAssetTransferStatus[] = [
-  "prepared",
-  "assets_preparing",
-  "assets_moved",
-  "memory_moved",
-  "messages_rewritten",
-  "needs_reconciliation",
+  ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
 ];
 
 function rowToThreadAssetTransfer(row: Record<string, unknown>): ThreadAssetTransferRecord {
@@ -692,13 +729,21 @@ export async function decideThreadAssetTransferRequest(
       {
         sql: `UPDATE library_thread_transfers SET status = ?, error_message = NULL,
           updated_at = ?, completed_at = ?
-          WHERE id = ? AND target_resource_id = ? AND status = 'awaiting_confirmation'`,
+          WHERE id = ? AND target_resource_id = ? AND status = 'awaiting_confirmation'
+            AND (? = 'rejected' OR NOT EXISTS (
+              SELECT 1 FROM library_upload_sessions
+              WHERE resource_id = library_thread_transfers.source_resource_id
+                AND thread_id = library_thread_transfers.thread_id
+                AND expires_at > ?
+            ))`,
         args: [
           nextStatus,
           timestamp,
           decision === "reject" ? timestamp : null,
           transferId,
           targetResourceId,
+          nextStatus,
+          timestamp,
         ],
       },
       {

@@ -15,7 +15,8 @@ import {
   MAX_LIBRARY_UPLOAD_CHUNK_BYTES,
   MIN_LIBRARY_UPLOAD_CHUNK_BYTES,
 } from "../types";
-import { uploadAssetFromFile } from "./assets";
+import { THREAD_TRANSFER_WRITE_LOCK_STATUSES, uploadAssetFromFile } from "./assets";
+import { ensureFolderReference } from "./folders";
 import {
   cleanupExpiredLibraryUploadSessions,
   ensureLibrarySchema,
@@ -63,15 +64,13 @@ export async function createLibraryUploadSession(input: {
   folderId?: string;
   threadId?: string;
 }): Promise<LibraryUploadSession> {
-  if (input.folderId && input.threadId) {
-    throw new Error("文件不能同时归属全局资料库目录和会话");
-  }
   if (!input.byteSize || input.byteSize <= 0) throw new Error("文件大小必须大于 0 字节");
   if (input.byteSize > MAX_LIBRARY_FILE_BYTES) {
     throw new Error(`单个文件大小不能超过 ${MAX_LIBRARY_FILE_BYTES / (1024 * 1024)} MB`);
   }
 
   await ensureLibrarySchema();
+  await ensureFolderReference(input.resourceId, input.folderId, input.threadId);
   void cleanupExpiredLibraryUploadSessions().catch((error) => {
     console.warn("[library-upload] cleanup deferred", error);
   });
@@ -83,11 +82,16 @@ export async function createLibraryUploadSession(input: {
   const createdAt = now();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  await withClient((client) =>
+  const inserted = await withClient((client) =>
     client.execute({
       sql: `INSERT INTO library_upload_sessions
         (id, resource_id, filename, media_type, byte_size, chunk_size, total_chunks, folder_id, thread_id, created_at, updated_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE ? = '' OR NOT EXISTS (
+          SELECT 1 FROM library_thread_transfers
+          WHERE thread_id = ? AND source_resource_id = ?
+            AND status IN (${THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(() => "?").join(", ")})
+        )`,
       args: [
         id,
         input.resourceId,
@@ -101,9 +105,16 @@ export async function createLibraryUploadSession(input: {
         createdAt,
         createdAt,
         expiresAt,
+        input.threadId ?? "",
+        input.threadId ?? "",
+        input.resourceId,
+        ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
       ],
     }),
   );
+  if ((inserted.rowsAffected ?? 0) !== 1) {
+    throw new Error("会话正在转交，无法开始上传附件");
+  }
 
   await mkdir(uploadSessionDirectory(id), { recursive: true });
   return {

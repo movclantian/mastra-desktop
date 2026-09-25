@@ -153,6 +153,7 @@ test("model library search is bound to the active thread and never accepts a thr
   const search = read("src/mastra/rag/retrieval/search.ts");
   const routes = read("src/mastra/routes/library.ts");
   const assets = read("src/mastra/rag/storage/assets.ts");
+  const folders = read("src/mastra/rag/storage/folders.ts");
   const upload = read("src/mastra/rag/storage/upload.ts");
   assert.match(tools, /LIBRARY_THREAD_CONTEXT_KEY/);
   assert.match(tools, /execute: async \(\{ query \}, context\)/);
@@ -161,10 +162,12 @@ test("model library search is bound to the active thread and never accepts a thr
   assert.match(search, /r\.thread_id = '' OR r\.thread_id = \?/);
   assert.match(search, /args: \[resourceId, threadId \?\? ""\]/);
   assert.doesNotMatch(search, /\? IS NULL OR r\.thread_id/);
-  assert.match(routes, /if \(folderId && threadId\)/);
-  assert.match(assets, /assertAssetReferenceScope\(input\.folderId, input\.threadId\)/);
-  assert.match(assets, /assertAssetReferenceScope\(folderId, threadId\)/);
-  assert.match(upload, /if \(input\.folderId && input\.threadId\)/);
+  assert.doesNotMatch(routes, /if \(folderId && threadId\)/);
+  assert.match(folders, /SELECT thread_id FROM library_folders/);
+  assert.match(folders, /folderThreadId !== \(threadId \|\| undefined\)/);
+  assert.match(assets, /ensureFolderReference\(input\.resourceId, input\.folderId, input\.threadId\)/);
+  assert.match(assets, /ensureFolderReference\(resourceId, folderId, threadId\)/);
+  assert.match(upload, /ensureFolderReference\(input\.resourceId, input\.folderId, input\.threadId\)/);
 });
 
 test("library assets referenced in a new chat are registered on the thread", () => {

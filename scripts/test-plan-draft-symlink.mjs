@@ -29,6 +29,13 @@ test("Plan writer writes under plans and refuses a dangling symlink", async (t) 
       "# Revised plan\n",
       "atomic replacement must still allow revising an existing draft",
     );
+    await assert.rejects(
+      writePlanDraftTool.execute(
+        { path: "nested/escape.md", content: "# Nested draft\n" },
+        { requestContext: { get: () => workspace } },
+      ),
+      /计划文件必须直接位于 workspace\/plans\/ 目录下/,
+    );
 
     const source = await readFile(
       new URL("../src/mastra/tools/plan-draft.ts", import.meta.url),
@@ -36,9 +43,9 @@ test("Plan writer writes under plans and refuses a dangling symlink", async (t) 
     );
     assert.match(source, /temporaryTarget = resolve\(resolvedPlanRoot,/);
     assert.ok(
-      source.indexOf("const currentParent = await realpath(parentDirectory)") <
+      source.indexOf("const currentPlanRoot = await realpath(planRoot)") <
         source.indexOf("await rename(temporaryTarget, target)"),
-      "destination parent must be revalidated immediately before the atomic rename",
+      "plans root must be revalidated immediately before the atomic rename",
     );
 
     try {

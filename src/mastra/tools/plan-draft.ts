@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
@@ -16,11 +16,12 @@ function resolvePlanPath(workspacePath: string, requestedPath: string): string {
   const trimmed = requestedPath.trim();
   if (!trimmed || isAbsolute(trimmed)) throw new Error("计划文件必须是 workspace 内的相对路径");
 
+  const filename = trimmed.replace(/^plans[\\/]/i, "");
+  if (/[\\/:]/.test(filename)) {
+    throw new Error("计划文件必须直接位于 workspace/plans/ 目录下");
+  }
   const planRoot = resolve(workspacePath, PLAN_DRAFT_ROOT);
-  const target = trimmed.toLowerCase().startsWith(`${PLAN_DRAFT_ROOT.toLowerCase()}\\`)
-    || trimmed.toLowerCase().startsWith(`${PLAN_DRAFT_ROOT.toLowerCase()}/`)
-    ? resolve(workspacePath, trimmed)
-    : resolve(planRoot, trimmed);
+  const target = resolve(planRoot, filename);
   const withinPlans = relative(planRoot, target);
   if (!withinPlans || withinPlans.startsWith("..") || isAbsolute(withinPlans)) {
     throw new Error("计划文件只能写入 workspace/plans/ 目录");
@@ -34,9 +35,9 @@ function resolvePlanPath(workspacePath: string, requestedPath: string): string {
 export const writePlanDraftTool = createTool({
   id: "write-plan-draft",
   description:
-    "把完整的 Markdown 计划写入当前 workspace 的 plans/ 目录。Plan 模式唯一允许的写入能力;不能写入其他路径。",
+    "把完整的 Markdown 计划写入当前 workspace 的 plans/ 根目录。Plan 模式唯一允许的写入能力;不能写入其他路径。",
   inputSchema: z.object({
-    path: z.string().min(1).describe("workspace/plans/ 下的 Markdown 相对路径"),
+    path: z.string().min(1).describe("workspace/plans/ 根目录下的 Markdown 文件名"),
     content: z.string().min(1).describe("完整的 Markdown 计划内容"),
   }),
   outputSchema: z.object({
@@ -59,24 +60,6 @@ export const writePlanDraftTool = createTool({
       throw new Error("计划目录不能通过符号链接重定向");
     }
 
-    // Create each parent only after validating the path it resolves to. A
-    // recursive mkdir before checking a symlink could otherwise create
-    // directories outside the workspace before rejecting the draft.
-    const parentRelativeToPlans = relative(planRoot, dirname(target));
-    let parentDirectory = resolvedPlanRoot;
-    for (const segment of parentRelativeToPlans.split(/[\\/]/).filter(Boolean)) {
-      const nextDirectory = resolve(parentDirectory, segment);
-      await mkdir(nextDirectory).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "EEXIST") throw error;
-      });
-      const resolvedDirectory = await realpath(nextDirectory);
-      const relativeToPlans = relative(resolvedPlanRoot, resolvedDirectory);
-      if (relativeToPlans.startsWith("..") || isAbsolute(relativeToPlans)) {
-        throw new Error("计划文件不能通过符号链接指向 plans/ 目录之外");
-      }
-      parentDirectory = resolvedDirectory;
-    }
-
     // `realpath` alone misses dangling symlinks. Reject an existing link, then
     // write to a fresh sibling and atomically rename it into place. Rename
     // replaces a raced-in leaf symlink itself instead of following its target.
@@ -89,9 +72,8 @@ export const writePlanDraftTool = createTool({
     }
 
     const bytes = Buffer.byteLength(content, "utf8");
-    // Keep temporary content in the validated plans root, not beside the
-    // destination: replacing a nested parent with a junction must not redirect
-    // draft bytes before the final destination-path check.
+    // Drafts stay at the plans root so a replaceable nested parent cannot
+    // redirect the final rename outside the approved directory.
     const temporaryTarget = resolve(resolvedPlanRoot, `.${randomUUID()}.tmp`);
     const temporaryFile = await open(temporaryTarget, "wx");
     try {
@@ -101,13 +83,8 @@ export const writePlanDraftTool = createTool({
       await temporaryFile.close();
     }
     try {
-      const currentParent = await realpath(parentDirectory);
-      const relativeParent = relative(resolvedPlanRoot, currentParent);
-      if (
-        currentParent !== parentDirectory ||
-        relativeParent.startsWith("..") ||
-        isAbsolute(relativeParent)
-      ) {
+      const currentPlanRoot = await realpath(planRoot);
+      if (currentPlanRoot !== resolvedPlanRoot) {
         throw new Error("计划目录在写入期间发生变化，已拒绝保存");
       }
       const currentTarget = await lstat(target).catch((error: NodeJS.ErrnoException) => {

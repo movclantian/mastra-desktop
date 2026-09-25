@@ -85,6 +85,27 @@ export async function createFolder(input: {
   };
 }
 
+/** A folder and its asset references must belong to the same library/thread scope. */
+export async function ensureFolderReference(
+  resourceId: string,
+  folderId?: string,
+  threadId?: string,
+): Promise<void> {
+  if (!folderId) return;
+  const result = await withClient((client) =>
+    client.execute({
+      sql: "SELECT thread_id FROM library_folders WHERE id = ? AND resource_id = ? LIMIT 1",
+      args: [folderId, resourceId],
+    }),
+  );
+  const row = result.rows[0];
+  if (!row) throw new Error("资料库目录不存在或不属于当前账户");
+  const folderThreadId = row.thread_id ? String(row.thread_id) : undefined;
+  if (folderThreadId !== (threadId || undefined)) {
+    throw new Error("资料库目录作用域与文件所属会话不一致");
+  }
+}
+
 export async function renameFolder(
   resourceId: string,
   id: string,

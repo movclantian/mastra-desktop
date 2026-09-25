@@ -462,7 +462,7 @@ async function executeThreadAssetTransfer(
   try {
     // Older chats can contain a global-library URL without a thread-scoped
     // reference row. Materialize that ownership edge before transfer mapping.
-    await ensureThreadAssetReferences(threadId, sourceResourceId);
+    await ensureThreadAssetReferences(threadId, sourceResourceId, transfer.id);
     transferredAssets = await transferThreadAssetReferences(
       sourceResourceId,
       targetResourceId,
@@ -630,6 +630,7 @@ function collectLibraryAssetIds(value: unknown, ids = new Set<string>()): Set<st
 async function ensureThreadAssetReferences(
   threadId: string,
   resourceId: string,
+  transferId: string,
 ): Promise<void> {
   const store = await appStorage.getStore("memory");
   if (!store) throw new Error("Memory storage is not configured");
@@ -639,7 +640,7 @@ async function ensureThreadAssetReferences(
   const ownedAssetIds = new Set((await listAssets(resourceId)).map((asset) => asset.id));
   for (const assetId of referencedIds) {
     if (ownedAssetIds.has(assetId)) {
-      await attachAssetReference(resourceId, assetId, undefined, threadId);
+      await attachAssetReference(resourceId, assetId, undefined, threadId, { transferId });
     }
   }
 }
