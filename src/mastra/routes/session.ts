@@ -94,8 +94,8 @@ async function withWritableThreadSession<T>(
   result: SessionRouteResult,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return withThreadAssetTransferLock(result.threadId, result.resourceId, async () => {
-    if (await isThreadAssetTransferWriteLocked(result.threadId, result.resourceId)) {
+  return withThreadAssetTransferLock(result.threadId, async () => {
+    if (await isThreadAssetTransferWriteLocked(result.threadId)) {
       throw workError("THREAD_TRANSFER_IN_PROGRESS");
     }
     if (!(await getOwnedThread(result.memory, result.threadId, result.resourceId))) {

@@ -674,7 +674,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     ) {
       throw workError("THREAD_NOT_FOUND");
     }
-    if (await isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)) {
+    if (await isThreadAssetTransferWriteLocked(threadId)) {
       throw workError("THREAD_TRANSFER_IN_PROGRESS");
     }
     const requestMemory = await getWorkMemoryForThread(
@@ -972,7 +972,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const actionBody = async () => {
       // Request preparation awaits model/profile/retrieval work. Recheck here
       // after acquiring the same per-thread barrier used by transfer snapshotting.
-      if (await isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)) {
+      if (await isThreadAssetTransferWriteLocked(threadId)) {
         throw workError("THREAD_TRANSFER_IN_PROGRESS");
       }
       if (!(await getOwnedThread(requestMemory, threadId, authenticatedResourceId))) {
@@ -1072,7 +1072,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         { requestContext, requireDelivery: true, untilIdle: true },
       ).accepted;
     };
-    const action = () => withThreadAssetTransferLock(threadId, authenticatedResourceId, actionBody);
+    const action = () => withThreadAssetTransferLock(threadId, actionBody);
     const stream = await streamWorkbenchSession(
       c,
       controllerSession,

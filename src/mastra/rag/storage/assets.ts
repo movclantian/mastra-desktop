@@ -67,13 +67,14 @@ const THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS = THREAD_TRANSFER_WRITE_LOCK_STATU
 ).join(", ");
 const threadAssetTransferLocks = new Map<string, Promise<void>>();
 
-/** Serialize chat-start and transfer work for one thread within the local Mastra process. */
+/** Serialize thread mutations across resource ownership changes in the local Mastra process. */
 export async function withThreadAssetTransferLock<T>(
   threadId: string,
-  resourceId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const key = JSON.stringify([resourceId, threadId]);
+  // A transfer changes resourceId while it is still rewriting the thread. The
+  // barrier must therefore be keyed by the stable thread identity, not owner.
+  const key = threadId;
   const previous = threadAssetTransferLocks.get(key) ?? Promise.resolve();
   let releaseCurrent!: () => void;
   const current = new Promise<void>((resolveCurrent) => {
@@ -93,17 +94,16 @@ export async function withThreadAssetTransferLock<T>(
 /** True while an accepted transfer is moving this thread's assets or history. */
 export async function isThreadAssetTransferWriteLocked(
   threadId: string,
-  sourceResourceId: string,
 ): Promise<boolean> {
-  if (!threadId || !sourceResourceId) return false;
+  if (!threadId) return false;
   await ensureLibrarySchema();
   return withClient(async (client) => {
     const result = await client.execute({
       sql: `SELECT 1 FROM library_thread_transfers
-        WHERE thread_id = ? AND source_resource_id = ?
+        WHERE thread_id = ?
           AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
         LIMIT 1`,
-      args: [threadId, sourceResourceId, ...THREAD_TRANSFER_WRITE_LOCK_STATUSES],
+      args: [threadId, ...THREAD_TRANSFER_WRITE_LOCK_STATUSES],
     });
     return result.rows.length > 0;
   });
@@ -176,7 +176,7 @@ async function storeAsset(
           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE ? = '' OR NOT EXISTS (
             SELECT 1 FROM library_thread_transfers
-            WHERE thread_id = ? AND source_resource_id = ?
+            WHERE thread_id = ?
               AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
           )`,
           args: [
@@ -193,7 +193,6 @@ async function storeAsset(
             timestamp,
             input.threadId ?? "",
             input.threadId ?? "",
-            input.resourceId,
             ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
           ],
         },
@@ -500,7 +499,7 @@ export async function attachAssetReference(
         SELECT ?, ?, ?, ?, ?
         WHERE ? = '' OR NOT EXISTS (
           SELECT 1 FROM library_thread_transfers
-          WHERE thread_id = ? AND source_resource_id = ?
+          WHERE thread_id = ?
             AND status IN (${THREAD_TRANSFER_WRITE_LOCK_PLACEHOLDERS})
             AND (? = '' OR id != ?)
         )`,
@@ -512,7 +511,6 @@ export async function attachAssetReference(
         now(),
         threadId ?? "",
         threadId ?? "",
-        resourceId,
         ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
         options?.transferId ?? "",
         options?.transferId ?? "",

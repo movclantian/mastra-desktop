@@ -614,7 +614,7 @@ async function executeThreadAssetTransfer(
   c: ContextWithMastra,
   transfer: ThreadAssetTransferRecord,
 ): Promise<"committed" | "reconciliation_pending"> {
-  return withThreadAssetTransferLock(transfer.threadId, transfer.sourceResourceId, () =>
+  return withThreadAssetTransferLock(transfer.threadId, () =>
     executeThreadAssetTransferUnlocked(c, transfer),
   );
 }

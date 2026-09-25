@@ -89,7 +89,7 @@ export async function createLibraryUploadSession(input: {
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? = '' OR NOT EXISTS (
           SELECT 1 FROM library_thread_transfers
-          WHERE thread_id = ? AND source_resource_id = ?
+          WHERE thread_id = ?
             AND status IN (${THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(() => "?").join(", ")})
         )`,
       args: [
@@ -107,7 +107,6 @@ export async function createLibraryUploadSession(input: {
         expiresAt,
         input.threadId ?? "",
         input.threadId ?? "",
-        input.resourceId,
         ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
       ],
     }),

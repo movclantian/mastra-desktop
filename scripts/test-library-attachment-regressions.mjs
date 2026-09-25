@@ -84,7 +84,7 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfers/);
   assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfer_events/);
   assert.match(assets, /beginThreadAssetTransfer/);
-  assert.match(assets, /export async function isThreadAssetTransferWriteLocked/);
+  assert.match(assets, /export async function isThreadAssetTransferWriteLocked\(\s*threadId: string,/);
   assert.match(ragIndex, /isThreadAssetTransferWriteLocked/);
   assert.match(assets, /requestThreadAssetTransfer/);
   assert.match(assets, /status: "awaiting_confirmation"/);
@@ -121,12 +121,12 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   assert.match(threads, /const status = await executeThreadAssetTransfer/);
   assert.match(
     threads,
-    /withThreadAssetTransferLock\(transfer\.threadId, transfer\.sourceResourceId, \(\) =>\s+executeThreadAssetTransferUnlocked/,
+    /withThreadAssetTransferLock\(transfer\.threadId, \(\) =>\s+executeThreadAssetTransferUnlocked/,
   );
   assert.match(chat, /THREAD_TRANSFER_IN_PROGRESS/);
   assert.match(
     chat,
-    /withThreadAssetTransferLock\(threadId, authenticatedResourceId, actionBody\)/,
+    /withThreadAssetTransferLock\(threadId, actionBody\)/,
   );
   assert.match(session, /async function withWritableThreadSession/);
   assert.match(session, /THREAD_TRANSFER_IN_PROGRESS/);
@@ -136,13 +136,13 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
     "session message, steer, and follow-up writes must share the transfer barrier",
   );
   assert.ok(
-    chat.indexOf("isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)") <
+    chat.indexOf("isThreadAssetTransferWriteLocked(threadId)") <
       chat.indexOf("body.messages = await normalizeIncrementalMessages"),
     "chat requests must fail before history normalization when transfer is already active",
   );
   assert.match(
     chat,
-    /const actionBody = async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId, authenticatedResourceId\)[\s\S]*?await controllerSession\.sendSignal\(/,
+    /const actionBody = async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId\)[\s\S]*?await controllerSession\.sendSignal\(/,
     "a transfer accepted during request preparation must be rechecked before turn delivery",
   );
   assert.match(auth, /currentUser\.role !== "admin"/);
@@ -179,6 +179,36 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   assert.match(transferRecovery, /item\.mode === "linked" \|\| item\.asset\.status === "unsupported"/);
   assert.match(transferRecovery, /const indexableItems = items\.filter/);
   assert.match(transferRecovery, /items\.map\(\(item\) => \[item\.sourceAssetId, item\.targetAssetId\]\)/);
+});
+
+test("thread transfer fencing follows thread identity and protects upload completion", () => {
+  const assets = read("src/mastra/rag/storage/assets.ts");
+  const upload = read("src/mastra/rag/storage/upload.ts");
+  const routes = read("src/mastra/routes/library.ts");
+  const lock = assets.match(
+    /export async function isThreadAssetTransferWriteLocked\([\s\S]*?^}/m,
+  )?.[0];
+  assert.ok(lock, "transfer fence must remain an auditable helper");
+  assert.match(assets, /const key = threadId;/);
+  assert.match(lock, /WHERE thread_id = \?/);
+  assert.doesNotMatch(lock, /source_resource_id|target_resource_id/);
+  assert.match(routes, /async function withOwnedThreadAssetWrite/);
+  assert.equal(
+    routes.match(/withOwnedThreadAssetWrite\(/g)?.length,
+    4,
+    "direct upload, reference, session creation, and completion must all share owner revalidation",
+  );
+  assert.match(
+    routes,
+    /withThreadAssetTransferLock\(threadId, async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId\)[\s\S]*?ownedThreadId\(c, resourceId, threadId\)/,
+  );
+  assert.match(routes, /withOwnedThreadAssetWrite\([\s\S]{0,120}multipart\.fields\.threadId/);
+  assert.match(routes, /withOwnedThreadAssetWrite\([\s\S]{0,120}body\.threadId/);
+  assert.match(
+    routes,
+    /const session = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?completeLibraryUploadSession\(resourceId, uploadId\)/,
+  );
+  assert.match(upload, /WHERE thread_id = \?[\s\S]*?status IN/);
 });
 
 test("model library search is bound to the active thread and never accepts a thread override", () => {

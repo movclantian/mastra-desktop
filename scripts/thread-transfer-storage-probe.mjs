@@ -117,7 +117,7 @@ const [first, duplicate] = await Promise.all([
 assert.equal(first.id, duplicate.id);
 assert.equal(first.status, "awaiting_confirmation");
 assert.equal(
-  await assets.isThreadAssetTransferWriteLocked(request.threadId, request.sourceResourceId),
+  await assets.isThreadAssetTransferWriteLocked(request.threadId),
   false,
   "a request awaiting recipient confirmation must not block source-side chats",
 );
@@ -152,9 +152,19 @@ assert.equal(
 );
 assert.equal((await assets.getThreadAssetTransfer(first.id))?.status, "prepared");
 assert.equal(
-  await assets.isThreadAssetTransferWriteLocked(request.threadId, request.sourceResourceId),
+  await assets.isThreadAssetTransferWriteLocked(request.threadId),
   true,
-  "an accepted transfer must block new source-side chats while assets/history move",
+  "an accepted transfer must block writes regardless of the current thread owner",
+);
+await assert.rejects(
+  upload.createLibraryUploadSession({
+    resourceId: "local-account-b",
+    filename: "recipient-too-late.txt",
+    byteSize: 10,
+    threadId: request.threadId,
+  }),
+  /会话正在转交，无法开始上传附件/,
+  "the durable upload-session fence must cover the recipient resource too",
 );
 const lockOrder = [];
 let releaseFirstLock;
@@ -167,7 +177,6 @@ const firstLockGate = new Promise((resolve) => {
 });
 const firstLockRun = assets.withThreadAssetTransferLock(
   "thread-lock-probe",
-  "local-account-a",
   async () => {
     lockOrder.push("first-start");
     firstLockStarted();
@@ -178,10 +187,9 @@ const firstLockRun = assets.withThreadAssetTransferLock(
 await firstLockReady;
 const secondLockRun = assets.withThreadAssetTransferLock(
   "thread-lock-probe",
-  "local-account-a",
   async () => lockOrder.push("second"),
 );
-await assets.withThreadAssetTransferLock("different-thread", "local-account-a", async () => {
+await assets.withThreadAssetTransferLock("different-thread", async () => {
   lockOrder.push("independent");
 });
 assert.deepEqual(
@@ -194,7 +202,7 @@ await Promise.all([firstLockRun, secondLockRun]);
 assert.deepEqual(lockOrder, ["first-start", "independent", "first-end", "second"]);
 await assert.rejects(
   upload.createLibraryUploadSession({
-    resourceId: "local-account-a",
+    resourceId: "local-account-b",
     filename: "too-late.txt",
     byteSize: 10,
     threadId: request.threadId,
@@ -202,8 +210,9 @@ await assert.rejects(
   /会话正在转交，无法开始上传附件/,
 );
 await assert.rejects(
-  assets.attachAssetReference("local-account-a", "late-asset", undefined, request.threadId),
+  assets.attachAssetReference("local-account-b", "late-asset", undefined, request.threadId),
   /会话正在转交，无法添加附件/,
+  "the durable attachment fence must cover the recipient resource too",
 );
 const recoveryOnlyAssetId = "transfer-reconciliation-reference";
 await assets.attachAssetReference(
