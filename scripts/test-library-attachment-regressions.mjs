@@ -137,7 +137,7 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   );
   assert.ok(
     chat.indexOf("isThreadAssetTransferWriteLocked(threadId, authenticatedResourceId)") <
-      chat.indexOf("normalizeIncrementalMessages"),
+      chat.indexOf("body.messages = await normalizeIncrementalMessages"),
     "chat requests must fail before history normalization when transfer is already active",
   );
   assert.match(
