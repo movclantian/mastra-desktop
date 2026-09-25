@@ -196,8 +196,8 @@ test("thread transfer fencing follows thread identity and protects upload comple
   assert.match(routes, /async function withOwnedThreadAssetWrite/);
   assert.equal(
     routes.match(/withOwnedThreadAssetWrite\(/g)?.length,
-    4,
-    "direct upload, reference, session creation, and completion must all share owner revalidation",
+    5,
+    "all thread-scoped library mutations must share owner revalidation",
   );
   assert.match(
     routes,
@@ -207,9 +207,16 @@ test("thread transfer fencing follows thread identity and protects upload comple
   assert.match(routes, /withOwnedThreadAssetWrite\([\s\S]{0,120}body\.threadId/);
   assert.match(
     routes,
+    /const initialSession = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?saveLibraryUploadChunk\(/,
+  );
+  assert.match(
+    routes,
     /const session = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?completeLibraryUploadSession\(resourceId, uploadId\)/,
   );
   assert.match(upload, /WHERE thread_id = \?[\s\S]*?status IN/);
+  assert.match(upload, /newUploadChunkPath/);
+  assert.match(upload, /chunkHash\.digest\("hex"\) !== String\(chunkRow\.sha256/);
+  assert.match(upload, /SELECT chunk_index, byte_size, sha256, storage_path/);
   assert.match(db, /export async function withLibraryStorageLock/);
   assert.match(db, /withLibraryStorageLock\(`upload:\$\{sessionId\}`, operation\)/);
   assert.match(db, /export function withLibraryUploadSessionLock/);

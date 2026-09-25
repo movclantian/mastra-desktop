@@ -73,6 +73,46 @@ assert.equal(
   false,
 );
 
+const retrySession = await upload.createLibraryUploadSession({
+  resourceId: "local-account-a",
+  filename: "retry.bin",
+  byteSize: 10,
+  chunkSize: 10,
+});
+const firstChunkBytes = Buffer.from("0123456789");
+await upload.saveLibraryUploadChunk({
+  resourceId: "local-account-a",
+  sessionId: retrySession.id,
+  chunkIndex: 0,
+  bytes: firstChunkBytes,
+});
+const firstChunkRow = await libraryDb.withClient((client) =>
+  client.execute({
+    sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = 0",
+    args: [retrySession.id],
+  }),
+);
+const firstChunkPath = String(firstChunkRow.rows[0]?.storage_path ?? "");
+assert.equal(await readFile(firstChunkPath, "utf8"), firstChunkBytes.toString());
+const retryChunkBytes = Buffer.from("abcdefghij");
+await upload.saveLibraryUploadChunk({
+  resourceId: "local-account-a",
+  sessionId: retrySession.id,
+  chunkIndex: 0,
+  bytes: retryChunkBytes,
+});
+const retriedChunkRow = await libraryDb.withClient((client) =>
+  client.execute({
+    sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = 0",
+    args: [retrySession.id],
+  }),
+);
+const retriedChunkPath = String(retriedChunkRow.rows[0]?.storage_path ?? "");
+assert.notEqual(retriedChunkPath, firstChunkPath);
+assert.equal(await readFile(retriedChunkPath, "utf8"), retryChunkBytes.toString());
+await assert.rejects(readFile(firstChunkPath), { code: "ENOENT" });
+assert.equal(await upload.cancelLibraryUploadSession("local-account-a", retrySession.id), true);
+
 const sourceAssetId = "source-global-asset";
 const sourceStoragePath = join("library", "local-account-a", "so", "global.md");
 const sourcePath = join(storageDirectory, sourceStoragePath);

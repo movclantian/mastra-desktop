@@ -3,8 +3,8 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, rm, stat, type FileHandle, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, open, rm, stat, type FileHandle } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { getStorageDirectory } from "../../storage";
 import { normalizeFilename, resolveMediaType } from "../document/extract";
@@ -52,8 +52,15 @@ function uploadSessionDirectory(sessionId: string): string {
   return join(getStorageDirectory(), "library", "_chunks", sessionId);
 }
 
-function uploadChunkPath(sessionId: string, chunkIndex: number): string {
-  return join(uploadSessionDirectory(sessionId), `${chunkIndex}.part`);
+function newUploadChunkPath(sessionId: string, chunkIndex: number): string {
+  return join(uploadSessionDirectory(sessionId), `${chunkIndex}-${nanoid()}.part`);
+}
+
+function resolveUploadChunkPath(sessionId: string, storagePath: string): string {
+  const sessionDirectory = resolve(uploadSessionDirectory(sessionId));
+  const chunkPath = resolve(storagePath);
+  if (dirname(chunkPath) !== sessionDirectory) throw new Error("上传分片存储路径无效");
+  return chunkPath;
 }
 
 export async function createLibraryUploadSession(input: {
@@ -184,29 +191,79 @@ async function saveLibraryUploadChunkUnlocked(
     throw new Error("分片校验和不匹配");
   }
 
-  const chunkPath = uploadChunkPath(session.id, input.chunkIndex);
+  const chunkPath = newUploadChunkPath(session.id, input.chunkIndex);
+  const previousRow = await withClient((client) =>
+    client.execute({
+      sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = ? LIMIT 1",
+      args: [session.id, input.chunkIndex],
+    }),
+  );
+  const previousStoragePath = previousRow.rows[0]?.storage_path;
+  const previousPath =
+    typeof previousStoragePath === "string"
+      ? resolveUploadChunkPath(session.id, previousStoragePath)
+      : undefined;
   await mkdir(uploadSessionDirectory(session.id), { recursive: true });
-  await writeFile(chunkPath, input.bytes);
+  const chunkFile = await open(chunkPath, "wx");
+  try {
+    await chunkFile.writeFile(input.bytes);
+    await chunkFile.sync();
+  } catch (error) {
+    await chunkFile.close().catch(() => undefined);
+    await rm(chunkPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await chunkFile.close();
 
   const timestamp = now();
-  await withClient((client) =>
-    client.batch([
-      {
-        sql: `INSERT INTO library_upload_chunks (session_id, chunk_index, byte_size, sha256, storage_path, created_at)
+  try {
+    await withClient((client) =>
+      client.batch([
+        {
+          sql: `INSERT INTO library_upload_chunks (session_id, chunk_index, byte_size, sha256, storage_path, created_at)
           VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id, chunk_index) DO UPDATE SET
             byte_size = excluded.byte_size,
             sha256 = excluded.sha256,
             storage_path = excluded.storage_path,
             created_at = excluded.created_at`,
-        args: [session.id, input.chunkIndex, input.bytes.byteLength, sha256, chunkPath, timestamp],
-      },
-      {
-        sql: "UPDATE library_upload_sessions SET updated_at = ? WHERE id = ?",
-        args: [timestamp, session.id],
-      },
-    ]),
-  );
+          args: [session.id, input.chunkIndex, input.bytes.byteLength, sha256, chunkPath, timestamp],
+        },
+        {
+          sql: "UPDATE library_upload_sessions SET updated_at = ? WHERE id = ?",
+          args: [timestamp, session.id],
+        },
+      ]),
+    );
+  } catch (error) {
+    let inspected = false;
+    let committedPath: unknown;
+    try {
+      const result = await withClient((client) =>
+        client.execute({
+          sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = ? LIMIT 1",
+          args: [session.id, input.chunkIndex],
+        }),
+      );
+      inspected = true;
+      committedPath = result.rows[0]?.storage_path;
+    } catch {
+      // A failed confirmation is ambiguous; keep the new file so a committed DB pointer stays valid.
+    }
+    if (inspected && committedPath !== chunkPath) {
+      await rm(chunkPath, { force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
+  if (previousPath && previousPath !== chunkPath) {
+    await rm(previousPath, { force: true }).catch((error) => {
+      console.warn(
+        `[library-upload] previous chunk cleanup deferred (${session.id}/${input.chunkIndex}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
 
   const updated = await getLibraryUploadSession(input.resourceId, input.sessionId);
   if (!updated) throw new Error("更新上传会话失败");
@@ -234,21 +291,46 @@ async function completeLibraryUploadSessionUnlocked(
     );
   }
 
+  const chunkRows = await withClient((client) =>
+    client.execute({
+      sql: `SELECT chunk_index, byte_size, sha256, storage_path
+        FROM library_upload_chunks WHERE session_id = ? ORDER BY chunk_index ASC`,
+      args: [session.id],
+    }),
+  );
+  if (chunkRows.rows.length !== session.totalChunks) {
+    throw new Error(`分片尚未全部上传: 已完成 ${chunkRows.rows.length}/${session.totalChunks}`);
+  }
+
   const mergedPath = join(uploadSessionDirectory(session.id), `.merged-${nanoid()}.tmp`);
   let mergedFile: FileHandle | undefined;
   try {
     mergedFile = await open(mergedPath, "wx");
     let totalBytes = 0;
     for (let index = 0; index < session.totalChunks; index++) {
-      const chunkPath = uploadChunkPath(session.id, index);
+      const chunkRow = chunkRows.rows[index];
+      if (!chunkRow || Number(chunkRow.chunk_index) !== index) {
+        throw new Error(`分片 ${index} 缺失或索引无效`);
+      }
+      const chunkPath = resolveUploadChunkPath(session.id, String(chunkRow.storage_path ?? ""));
       const chunkFile = await stat(chunkPath).catch(() => null);
       if (!chunkFile) throw new Error(`分片 ${index} 读取失败，请重试`);
+      const chunkHash = createHash("sha256");
+      let chunkBytes = 0;
       for await (const chunk of createReadStream(chunkPath)) {
+        chunkBytes += chunk.byteLength;
+        chunkHash.update(chunk);
         totalBytes += chunk.byteLength;
         if (totalBytes > session.byteSize) {
           throw new Error("上传分片总大小超过会话声明的文件大小");
         }
         await writeFullChunk(mergedFile, chunk);
+      }
+      if (
+        chunkBytes !== Number(chunkRow.byte_size) ||
+        chunkHash.digest("hex") !== String(chunkRow.sha256 ?? "")
+      ) {
+        throw new Error(`分片 ${index} 校验失败，请重新上传`);
       }
     }
     await mergedFile.close();

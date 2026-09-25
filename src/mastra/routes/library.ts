@@ -436,15 +436,30 @@ export const libraryUploadChunkRoute = registerApiRoute(
             text: "valid chunkIndex is required",
           });
         }
-        chunk = await parseUploadChunk(c.req.raw);
-        const bytes = await readFile(chunk.tempPath);
-        const session = await saveLibraryUploadChunk({
+        const parsedChunk = await parseUploadChunk(c.req.raw);
+        chunk = parsedChunk;
+        const bytes = await readFile(parsedChunk.tempPath);
+        const uploadId = c.req.param("uploadId");
+        const initialSession = await getLibraryUploadSession(resourceId, uploadId);
+        if (!initialSession) throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
+        const session = await withOwnedThreadAssetWrite(
+          c,
           resourceId,
-          sessionId: c.req.param("uploadId"),
-          chunkIndex,
-          bytes,
-          expectedSha256: chunk.sha256,
-        });
+          initialSession.threadId,
+          async (threadId) => {
+            const current = await getLibraryUploadSession(resourceId, uploadId);
+            if (!current || current.threadId !== threadId) {
+              throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
+            }
+            return saveLibraryUploadChunk({
+              resourceId,
+              sessionId: uploadId,
+              chunkIndex,
+              bytes,
+              expectedSha256: parsedChunk.sha256,
+            });
+          },
+        );
         await rm(chunk.tempPath, { force: true }).catch(() => undefined);
         return c.json({ session });
       } catch (error) {
