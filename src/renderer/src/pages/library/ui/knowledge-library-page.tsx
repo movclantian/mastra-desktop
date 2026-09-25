@@ -30,6 +30,7 @@ import {
   type LibraryFolder,
   type LibrarySettings,
   libraryAssetContentUrl,
+  referenceLibraryAssetInThread,
   type RenameTarget,
   reindexFailedLibraryAssets,
   reindexLibraryAsset,
@@ -297,13 +298,17 @@ export function KnowledgeLibraryPage({
 
   const uploadTarget = {
     folderId: view === "documents" ? folderId : null,
-    threadId: null,
+    threadId: view === "session" ? activeThreadId : null,
   };
 
   const uploadTargetRef = React.useRef<LibraryUploadTarget>(uploadTarget);
   uploadTargetRef.current = uploadTarget;
 
   const openUpload = (target: LibraryUploadTarget) => {
+    if (view === "session" && !target.threadId) {
+      toast.error(t("library:sessionUploadRequiresThread"));
+      return;
+    }
     uploadTargetRef.current = target;
     inputRef.current?.click();
   };
@@ -312,6 +317,10 @@ export function KnowledgeLibraryPage({
     kind: "document" | "spreadsheet",
     target: LibraryUploadTarget = uploadTarget,
   ) => {
+    if (view === "session" && !target.threadId) {
+      toast.error(t("library:sessionUploadRequiresThread"));
+      return;
+    }
     const docName = t("library:unnamedDoc");
     const tableName = t("library:unnamedTable");
     const file =
@@ -379,18 +388,23 @@ export function KnowledgeLibraryPage({
   };
 
   const referenceInNewThread = async (asset: LibraryAsset) => {
-    const thread = await createThreadMutation.mutateAsync();
-    queueLibraryFiles([
-      {
-        type: "file",
-        byteSize: asset.byteSize,
-        filename: asset.filename,
-        mediaType: asset.mediaType,
-        url: libraryAssetContentUrl(asset.id, user.id),
-      },
-    ]);
-    void navigate({ to: "/chat", search: { thread: thread.id } });
-    toast.success(t("library:referenceInNewChatSuccess"));
+    try {
+      const thread = await createThreadMutation.mutateAsync();
+      await referenceLibraryAssetInThread(asset.id, user.id, thread.id);
+      queueLibraryFiles([
+        {
+          type: "file",
+          byteSize: asset.byteSize,
+          filename: asset.filename,
+          mediaType: asset.mediaType,
+          url: libraryAssetContentUrl(asset.id, user.id),
+        },
+      ]);
+      void navigate({ to: "/chat", search: { thread: thread.id } });
+      toast.success(t("library:referenceInNewChatSuccess"));
+    } catch (error) {
+      toastError(error, t("library:referenceInNewChatFailed"));
+    }
   };
 
   const reindexOne = async (asset: LibraryAsset) => {

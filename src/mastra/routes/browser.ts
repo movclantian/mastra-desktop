@@ -26,8 +26,8 @@ import { getOwnedThread, getWorkMemoryForThread, isTrustedLocalRequest } from ".
 async function ownedBrowserThread(c: ContextWithMastra) {
   if (!isTrustedLocalRequest(c)) return null;
   const threadId = c.req.param("threadId");
-  const resourceId = c.req.query("resourceId");
-  if (!threadId || !resourceId) return null;
+  const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY);
+  if (!threadId || typeof resourceId !== "string" || !resourceId.trim()) return null;
   const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
   if (!(await getOwnedThread(memory, threadId, resourceId))) return null;
   return { threadId, resourceId, browser: await getBrowserForResource(resourceId) };
@@ -40,13 +40,14 @@ function browserState(
   return Promise.all([browser.getBrowserState(threadId), browser.getCurrentUrl(threadId)]).then(
     ([state, currentUrl]) => {
       const rawTabs = state?.tabs ?? [];
-      const realTabs = rawTabs.filter((tab) => tab.url && tab.url !== "about:blank");
+      const tabs = rawTabs.filter((tab) => typeof tab.url === "string");
       const hasSession = browser.hasThreadSession(threadId);
       return BrowserStateSchema.parse({
-        active: hasSession && realTabs.length > 0,
+        // about:blank 是用户可见的初始标签,不是“浏览器坏了/没有页面”。
+        active: hasSession && tabs.length > 0,
         status: browser.status,
         currentUrl: currentUrl === "about:blank" ? null : currentUrl,
-        tabs: realTabs,
+        tabs,
         activeTabIndex: state?.activeTabIndex ?? 0,
         closeReason: state?.closeReason,
         activeUrlChangeSource: state?.activeUrlChangeSource,
@@ -55,11 +56,17 @@ function browserState(
   );
 }
 
-/** 线程浏览器的首页:首次就绪与新开标签都落在这里 */
-const BROWSER_HOME_URL = "https://www.bing.com";
+/** 线程浏览器的初始页:由用户或 Agent 显式导航,不主动访问第三方站点。 */
+const BROWSER_HOME_URL = "about:blank";
 
 function isAgentBrowser(browser: WorkBrowser): browser is Extract<WorkBrowser, { goto: unknown }> {
   return "goto" in browser;
+}
+
+function isScreenshotBrowser(
+  browser: WorkBrowser,
+): browser is Extract<WorkBrowser, { screenshot: unknown }> {
+  return "screenshot" in browser && typeof browser.screenshot === "function";
 }
 
 function browserGoto(browser: WorkBrowser, url: string, threadId: string) {
@@ -79,13 +86,11 @@ const browserInitPromises = new Map<string, Promise<boolean>>();
 const browserClosingPromises = new Map<string, Promise<void>>();
 
 /**
- * 确保线程浏览器就绪,且有一个**已导航**的标签。返回 true 表示本次刚完成首次导航
+ * 确保线程浏览器就绪,且有一个标签。返回 true 表示本次刚完成首次导航
  * (调用方据此判断还要不要再开标签 / 再导航一次)。
  *
- * 不能只数标签个数:ensureReady() 会为线程建好 Playwright context 和它的初始页,
- * 而那个初始页是 about:blank —— 个数因此永远不为 0,首页导航被整个跳过,面板里
- * 就留下一个空白页。空白页不算"已有标签",直接复用它完成导航(goto 作用于当前
- * 活动页,所以不会多出一个标签)。
+ * about:blank 不是业务页面,但它是有意展示的初始标签。首次导航时直接复用它,
+ * 避免打开浏览器面板就把用户带到固定搜索引擎。
  */
 async function ensureBrowserTabOnce(
   browser: Awaited<ReturnType<typeof getBrowserForResource>>,
@@ -159,6 +164,11 @@ export const browserScreencastRoute = registerApiRoute(
       const owned = await ownedBrowserThread(c);
       if (!owned) throw workError("THREAD_NOT_FOUND");
       const { browser, threadId, resourceId } = owned;
+      const browserConfig = await getBrowserConfig(resourceId);
+      const frameViewport =
+        browserConfig.viewport === "window"
+          ? { width: 1280, height: 720 }
+          : browserConfig.viewport;
       let screencast: Awaited<ReturnType<typeof browser.startScreencast>>;
       try {
         await ensureBrowserTab(browser, resourceId, threadId);
@@ -172,7 +182,7 @@ export const browserScreencastRoute = registerApiRoute(
       } catch (error) {
         return c.json(
           {
-            error: "browser_unavailable",
+            error: "browser_start_failed",
             message: errorText(error, "浏览器不可用"),
           },
           503,
@@ -181,29 +191,120 @@ export const browserScreencastRoute = registerApiRoute(
 
       const encoder = new TextEncoder();
       let disposed = false;
+      let stopped = false;
+      let closed = false;
+      let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
+      let pendingFrame: Uint8Array | undefined;
+      const pendingControls: Array<{ event: string; chunk: Uint8Array }> = [];
+
+      const closeIfDrained = () => {
+        if (
+          !stopped ||
+          closed ||
+          !controllerRef ||
+          pendingFrame ||
+          pendingControls.length > 0
+        ) {
+          return;
+        }
+        closed = true;
+        controllerRef.close();
+      };
+
+      const flush = () => {
+        if (disposed || closed || !controllerRef) return;
+        while ((controllerRef.desiredSize ?? 0) > 0) {
+          const nextControl = pendingControls.shift();
+          if (nextControl) {
+            controllerRef.enqueue(nextControl.chunk);
+            continue;
+          }
+          if (!pendingFrame) break;
+          const frame = pendingFrame;
+          pendingFrame = undefined;
+          controllerRef.enqueue(frame);
+        }
+        closeIfDrained();
+      };
+
+      const queueControl = (event: string, value: unknown) => {
+        const chunk = encoder.encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`);
+        const existing = pendingControls.findIndex((item) => item.event === event);
+        if (existing >= 0 && event !== "stop") {
+          pendingControls[existing] = { event, chunk };
+          return;
+        }
+        // Only state/url/error/stop exist today; coalescing by event keeps the
+        // control queue bounded even if the browser emits noisy URL/error events.
+        if (pendingControls.length >= 4 && event !== "stop") {
+          const replaceable = pendingControls.findIndex(
+            (item) => item.event === "url" || item.event === "error",
+          );
+          if (replaceable >= 0) pendingControls.splice(replaceable, 1);
+          else return;
+        }
+        pendingControls.push({ event, chunk });
+      };
+
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
+          controllerRef = controller;
           const send = (event: string, value: unknown) => {
-            if (disposed) return;
-            controller.enqueue(
-              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`),
-            );
+            if (disposed || stopped) return;
+            if (event === "frame") {
+              // A frame is a replaceable preview, not a durable event. Keep
+              // only the newest one while a slow client drains the stream.
+              pendingFrame = encoder.encode(
+                `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`,
+              );
+            } else {
+              queueControl(event, value);
+            }
+            flush();
           };
           send("state", { active: true });
           screencast.on("frame", (frame: unknown) => send("frame", frame));
           screencast.on("url", (url: unknown) => send("url", { url }));
           screencast.on("error", (error: { message?: string }) =>
-            send("error", { error: error.message }),
+            send("error", { error: "browser_stream_failed", message: error.message }),
           );
           screencast.on("stop", (reason: unknown) => {
-            if (disposed) return;
-            send("stop", { reason });
-            disposed = true;
-            controller.close();
+            if (disposed || stopped) return;
+            stopped = true;
+            pendingFrame = undefined;
+            queueControl("stop", { reason });
+            flush();
+            closeIfDrained();
           });
+
+          // startScreencast() starts CDP before returning the stream. For a
+          // static page such as about:blank, its only frame can arrive before
+          // the route attaches listeners. Take one explicit snapshot so the
+          // UI cannot remain in a permanent white "waiting" state.
+          if (isScreenshotBrowser(browser)) {
+            void browser
+              .screenshot({ fullPage: false }, threadId)
+              .then((snapshot) => {
+                if (disposed || stopped || !("base64" in snapshot)) return;
+                send("frame", {
+                  data: snapshot.base64,
+                  timestamp: Date.now(),
+                  viewport: frameViewport,
+                });
+              })
+              .catch(() => {
+                // The live screencast remains the primary source; a snapshot
+                // failure must not terminate an otherwise healthy stream.
+              });
+          }
+        },
+        pull() {
+          flush();
         },
         async cancel() {
           disposed = true;
+          pendingFrame = undefined;
+          pendingControls.length = 0;
           await screencast.stop();
         },
       });
@@ -238,7 +339,7 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     } catch (error) {
       return c.json(
         {
-          error: "browser_unavailable",
+          error: "browser_navigation_failed",
           message: errorText(error, "浏览器不可用"),
         },
         503,
@@ -294,9 +395,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
           const currentState = await browser.getBrowserState(threadId);
           const tabs = currentState?.tabs ?? [];
           if (tabs.length <= 1) {
-            // 关掉的是唯一的标签:不要冷销毁整个 Chromium 进程,而是导航到 about:blank。
-            // about:blank 会被 browserState 过滤掉(视为无标签),同时保留 Chromium 温暖就绪。
-            // 下次用户再开标签时是 ~50ms 热加载,而不是 3 秒冷启动!
+            // 关掉唯一标签时保留一个可见的空白页,避免把浏览器工具误显示成失效。
             result = await browserGoto(browser, "about:blank", threadId);
           } else {
             result = await browserTabs(browser, { action: "close", index: body.index }, threadId);
@@ -324,7 +423,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
     } catch (error) {
       return c.json(
         {
-          error: "browser_unavailable",
+          error: "browser_action_failed",
           message: errorText(error, "浏览器不可用"),
         },
         503,

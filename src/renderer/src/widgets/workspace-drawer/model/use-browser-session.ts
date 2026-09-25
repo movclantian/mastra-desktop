@@ -17,8 +17,6 @@ import {
   sendBrowserMouse,
 } from "../api/browser-api";
 
-const NEW_BROWSER_TAB_URL = "https://www.bing.com";
-
 const EMPTY_BROWSER_STATE: BrowserState = {
   active: false,
   status: "closed",
@@ -70,6 +68,12 @@ export function useBrowserSession() {
   }, [activeThreadId, userId]);
 
   React.useEffect(() => {
+    // 浏览器状态属于当前线程;切换线程时先清空旧线程的乐观状态,
+    // 再等待新线程的服务端快照,避免侧边栏短暂显示上一个线程的标签页。
+    sessionEpochRef.current += 1;
+    busyRef.current = false;
+    setBusy(false);
+    setState(EMPTY_BROWSER_STATE);
     setFrame(undefined);
     setFrameState("idle");
     void refreshState();
@@ -122,13 +126,34 @@ export function useBrowserSession() {
                 setState((current) => ({ ...current, currentUrl: payload.url ?? null }));
               }
             } else if (eventName === "stop") {
+              const payload = JSON.parse(data) as { reason?: unknown };
+              const reason = payload.reason;
+              const normalStop =
+                reason == null ||
+                reason === "closed" ||
+                reason === "stopped" ||
+                reason === "stop";
+              if (!normalStop) {
+                setFrame(undefined);
+                setFrameState("error");
+              } else {
+                setFrameState("idle");
+              }
+              void refreshState();
               return;
             } else if (eventName === "error") {
               throw new Error(i18n.t("workspace:streamError"));
             }
             boundary = buffer.indexOf("\n\n");
           }
-          if (done) return;
+          if (done) {
+            // A normal close is announced by the explicit `stop` event. An
+            // EOF without it means the browser process or SSE bridge died;
+            // surface an error so the view offers a retry instead of staying
+            // on a permanent blank/connected state.
+            if (!disposed) throw new Error(i18n.t("workspace:streamError"));
+            return;
+          }
         }
       } finally {
         reader.releaseLock();
@@ -145,7 +170,7 @@ export function useBrowserSession() {
       }
       pendingFrameRef.current = undefined;
     };
-  }, [activeThreadId, screencastAttempt, state.active, stateUrl, userId, viewActive]);
+  }, [activeThreadId, refreshState, screencastAttempt, state.active, stateUrl, userId, viewActive]);
 
   const retryFrame = React.useCallback(() => {
     setFrame(undefined);
@@ -158,17 +183,23 @@ export function useBrowserSession() {
     async (url: string) => {
       if (!stateUrl || !url.trim() || !activeThreadId) return;
       const threadId = activeThreadId;
+      const epoch = sessionEpochRef.current;
       busyRef.current = true;
       setBusy(true);
       try {
         const payload = await navigateBrowser(threadId, userId, url);
+        if (sessionEpochRef.current !== epoch) return;
         if (payload.state) setState(payload.state);
         await refreshState();
       } catch (error) {
-        toastError(error, i18n.t("workspace:navigateFailed"));
+        if (sessionEpochRef.current === epoch) {
+          toastError(error, i18n.t("workspace:navigateFailed"));
+        }
       } finally {
-        busyRef.current = false;
-        setBusy(false);
+        if (sessionEpochRef.current === epoch) {
+          busyRef.current = false;
+          setBusy(false);
+        }
       }
     },
     [activeThreadId, refreshState, stateUrl, userId],
@@ -178,10 +209,12 @@ export function useBrowserSession() {
     async (name: BrowserAction, index?: number, url?: string) => {
       if (!stateUrl || !activeThreadId) return;
       const threadId = activeThreadId;
+      const epoch = sessionEpochRef.current;
       busyRef.current = true;
       setBusy(true);
+      const requestUrl = name === "new-tab" && url !== "about:blank" ? url : undefined;
       if (name === "new-tab") {
-        const newUrl = url || NEW_BROWSER_TAB_URL;
+        const newUrl = requestUrl ?? "about:blank";
         setState((current) => {
           const nextTabs = [...current.tabs, { url: newUrl, title: i18n.t("workspace:newTab") }];
           return {
@@ -212,24 +245,28 @@ export function useBrowserSession() {
         });
       }
       try {
-        const payload = await browserAction(threadId, userId, name, index, url);
-        if (payload.state) setState(payload.state);
+        const payload = await browserAction(threadId, userId, name, index, requestUrl);
+        if (sessionEpochRef.current === epoch && payload.state) setState(payload.state);
       } catch (error) {
-        toastError(error, i18n.t("workspace:browserOpFailed"));
-        void refreshState();
+        if (sessionEpochRef.current === epoch) {
+          toastError(error, i18n.t("workspace:browserOpFailed"));
+          void refreshState();
+        }
       } finally {
-        busyRef.current = false;
-        setBusy(false);
+        if (sessionEpochRef.current === epoch) {
+          busyRef.current = false;
+          setBusy(false);
+        }
       }
     },
     [activeThreadId, refreshState, stateUrl, userId],
   );
 
-  // 当处于浏览器面板且无标签时，自动拉起首个标签页（0ms 乐观上屏）
+  // 当处于浏览器面板且无标签时，自动拉起首个空白标签页（0ms 乐观上屏）。
   React.useEffect(() => {
     if (!viewActive || !activeThreadId || busyRef.current) return;
     if (state.tabs.length === 0 && state.status !== "closing") {
-      void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+      void action("new-tab");
     }
   }, [action, activeThreadId, state.status, state.tabs.length, viewActive]);
 
@@ -334,17 +371,19 @@ export function useBrowserSession() {
 
   /**
    * 关闭唯一/最后一个标签页：
-   * 立即从前端清空标签状态（0ms 响应，平滑回退），
-   * 向后端发送关标签请求让其保持在 about:blank，保留 Chromium 进程常驻预热。
+   * 立即从前端清空标签状态（0ms 响应，平滑回退），并结束当前浏览器会话。
    */
   const closeLastBrowserTab = React.useCallback(() => {
+    const epoch = ++sessionEpochRef.current;
     setState(EMPTY_BROWSER_STATE);
     setFrame(undefined);
     setFrameState("idle");
     if (activeThreadId && stateUrl) {
-      void browserAction(activeThreadId, userId, "close-tab", 0).catch(() => {});
+      void closeBrowserRequest(activeThreadId, userId).then(() => {
+        if (sessionEpochRef.current === epoch) void refreshState();
+      }).catch(() => {});
     }
-  }, [activeThreadId, stateUrl, userId]);
+  }, [activeThreadId, refreshState, stateUrl, userId]);
 
   /** 显式终止浏览器进程（通过工具栏终止按钮或会话结束调用） */
   const closeBrowser = React.useCallback(() => {
@@ -358,7 +397,7 @@ export function useBrowserSession() {
       if (sessionEpochRef.current === epoch) {
         void refreshState();
       }
-    });
+    }).catch(() => {});
   }, [activeThreadId, refreshState, stateUrl, userId]);
 
   return {

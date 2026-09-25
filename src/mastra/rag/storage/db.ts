@@ -23,6 +23,37 @@ export async function withClient<T>(run: (client: Client) => Promise<T>): Promis
   return run(await getLibsqlClient());
 }
 
+const libraryStorageLocks = new Map<string, Promise<void>>();
+
+/** Serialize one library-storage resource within this Mastra process. */
+export async function withLibraryStorageLock<T>(
+  key: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = libraryStorageLocks.get(key) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const current = new Promise<void>((resolveCurrent) => {
+    releaseCurrent = resolveCurrent;
+  });
+  const queued = previous.then(() => current);
+  libraryStorageLocks.set(key, queued);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    releaseCurrent();
+    if (libraryStorageLocks.get(key) === queued) libraryStorageLocks.delete(key);
+  }
+}
+
+/** Serialize chunk writes, completion, cancellation, and expiry cleanup per upload session. */
+export function withLibraryUploadSessionLock<T>(
+  sessionId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  return withLibraryStorageLock(`upload:${sessionId}`, operation);
+}
+
 const uploadChunksDirectory = () => join(getStorageDirectory(), "library", "_chunks");
 
 const UPLOAD_ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
@@ -61,15 +92,22 @@ async function cleanupExpiredUploadSessions(client: Client): Promise<void> {
   if (sessionIds.length > 0) {
     const removedIds = (
       await Promise.all(
-        sessionIds.map(async (sessionId) => {
-          try {
-            await rm(join(uploadChunksDirectory(), sessionId), { recursive: true, force: true });
-            return sessionId;
-          } catch {
-            // Keep the database row so a later startup/request can retry the disk cleanup.
-            return undefined;
-          }
-        }),
+        sessionIds.map((sessionId) =>
+          withLibraryUploadSessionLock(sessionId, async () => {
+            const stillExpired = await client.execute({
+              sql: "SELECT 1 FROM library_upload_sessions WHERE id = ? AND expires_at <= ? LIMIT 1",
+              args: [sessionId, now()],
+            });
+            if (stillExpired.rows.length === 0) return undefined;
+            try {
+              await rm(join(uploadChunksDirectory(), sessionId), { recursive: true, force: true });
+              return sessionId;
+            } catch {
+              // Keep the database row so a later startup/request can retry the disk cleanup.
+              return undefined;
+            }
+          }),
+        ),
       )
     ).filter((sessionId): sessionId is string => Boolean(sessionId));
     if (removedIds.length > 0) {
@@ -208,6 +246,34 @@ export async function ensureLibrarySchema(): Promise<void> {
           args: [],
         },
         {
+          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfers (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            source_resource_id TEXT NOT NULL,
+            target_resource_id TEXT NOT NULL,
+            initiated_by TEXT NOT NULL,
+            asset_ids TEXT NOT NULL DEFAULT '[]',
+            asset_mappings TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+          )`,
+          args: [],
+        },
+        {
+          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfer_events (
+            id TEXT PRIMARY KEY,
+            transfer_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            actor_resource_id TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+          )`,
+          args: [],
+        },
+        {
           sql: "CREATE INDEX IF NOT EXISTS library_assets_resource_idx ON library_assets(resource_id, updated_at)",
           args: [],
         },
@@ -231,7 +297,32 @@ export async function ensureLibrarySchema(): Promise<void> {
           sql: "CREATE INDEX IF NOT EXISTS library_upload_sessions_expires_idx ON library_upload_sessions(expires_at)",
           args: [],
         },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_pending_idx ON library_thread_transfers(status, updated_at)",
+          args: [],
+        },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_thread_idx ON library_thread_transfers(thread_id, updated_at)",
+          args: [],
+        },
+        {
+          sql: "CREATE UNIQUE INDEX IF NOT EXISTS library_thread_transfers_open_request_idx ON library_thread_transfers(thread_id, source_resource_id) WHERE status = 'awaiting_confirmation'",
+          args: [],
+        },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfer_events_transfer_idx ON library_thread_transfer_events(transfer_id, created_at)",
+          args: [],
+        },
       ]);
+      // Existing local databases were created before asset copy-on-transfer.
+      // SQLite has no IF NOT EXISTS form for ADD COLUMN, so make the migration
+      // idempotent and tolerate the already-migrated case.
+      await client
+        .execute({
+          sql: "ALTER TABLE library_thread_transfers ADD COLUMN asset_mappings TEXT NOT NULL DEFAULT '{}'",
+          args: [],
+        })
+        .catch(() => undefined);
       void cleanupExpiredLibraryUploadSessions().catch((error) => {
         console.warn("[library-upload] startup cleanup deferred", error);
       });

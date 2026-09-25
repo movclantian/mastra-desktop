@@ -12,10 +12,12 @@ import type { BrowserProvider } from "@mastra/core/editor";
 import { EventEmitterPubSub, withCaching } from "@mastra/core/events";
 import { Mastra } from "@mastra/core/mastra";
 import type { Processor } from "@mastra/core/processors";
+import type { RequestContext } from "@mastra/core/request-context";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { MastraEditor } from "@mastra/editor";
 import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
+import type { Memory } from "@mastra/memory";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
 import { getBrowserForRequest, getBrowserForResource } from "./agents/browser";
@@ -32,11 +34,13 @@ import {
 import { workSubagents } from "./agents/subagents";
 import { workAuth, workRequestContextMiddleware } from "./auth";
 import { handleWorkError } from "./errors";
+import { failInterruptedBackgroundTasksOnStartup } from "./routes/background-tasks";
 import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
 
 import { workChatRoute, workRoutes } from "./routes";
 import { registerShutdownHandlers } from "./routes/shutdown";
 import { memoryThreadMiddleware } from "./routes/threads/threads";
+import { recoverPendingThreadTransfers } from "./routes/threads/transfer-recovery";
 import { appStorage } from "./storage";
 import { getThreadsRoot, getThreadWorkspace } from "./workspace";
 
@@ -136,6 +140,10 @@ export const mastra = new Mastra({
   },
   backgroundTasks: {
     enabled: true,
+    // The original task executor captures request-scoped model, workspace,
+    // tools, and result callbacks. Mastra only persists args, so a static
+    // executor cannot safely replace that closure after restart.
+    recoverStaleTasksOnStart: false,
     globalConcurrency: 10,
     perAgentConcurrency: 5,
     backpressure: "queue",
@@ -203,5 +211,30 @@ export const mastra = new Mastra({
     },
   }),
 });
+
+// Reconcile the durable cross-store transfer journal before the service begins
+// accepting requests. Otherwise startup recovery can mistake a transfer that
+// was just accepted by a live request for an abandoned operation and roll its
+// library assets back while Memory is being moved.
+await recoverPendingThreadTransfers({
+  getMemory: async (requestContext: RequestContext) => {
+    const memory = await mastra
+      .getAgentById("mastra-work-agent")
+      .getMemory({ requestContext });
+    if (!memory) throw new Error("Agent memory is not configured");
+    return memory as Memory;
+  },
+});
+
+const backgroundTaskManager = mastra.backgroundTaskManager;
+if (backgroundTaskManager) {
+  try {
+    const count = await failInterruptedBackgroundTasksOnStartup(backgroundTaskManager);
+    if (count > 0) logger.warn("Interrupted background tasks marked failed", { count });
+  } catch (error) {
+    logger.error("Interrupted background task reconciliation failed; refusing to start", { error });
+    throw error;
+  }
+}
 
 registerShutdownHandlers();

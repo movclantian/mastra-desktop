@@ -13,6 +13,7 @@ import {
   libraryGraphSearchTool,
   libraryVectorSearchTool,
 } from "../rag";
+import { writePlanDraftTool } from "../tools/plan-draft";
 import {
   CODE_MODE_EXTERNAL_TOOL_NAMES,
   codeMode,
@@ -22,6 +23,7 @@ import {
   resolveWebSearchTools,
   WEB_SEARCH_CONTEXT_KEY,
 } from "../tools";
+import { MODE_ID_CONTEXT_KEY } from "./modes";
 import {
   getThreadWorkspace,
   WORKSPACE_PATH_CONTEXT_KEY,
@@ -150,9 +152,11 @@ export function isCodeModeAvailable(requestContext?: RequestContextLike): boolea
 
 /** Tools available to both the primary agent and its built-in subagents. */
 export async function resolveSharedTools(requestContext?: RequestContextLike): Promise<ToolsInput> {
+  const planDraft = requestContext?.get(MODE_ID_CONTEXT_KEY) === "plan";
   return {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
+    ...(planDraft ? { write_plan_draft: writePlanDraftTool } : {}),
     ...(isCodeModeAvailable(requestContext) ? { execute_typescript: codeMode.tool } : {}),
     library_vector_search: libraryVectorSearchTool,
     library_graph_search: libraryGraphSearchTool,

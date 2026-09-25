@@ -68,6 +68,9 @@ export const authMeRoute = registerApiRoute("/work/auth/me", {
 export const workUsersRoute = registerApiRoute("/work/users", {
   method: "GET",
   handler: async (c) => {
+    const currentUser = authUserFromContext(c.get("requestContext")?.get("user"));
+    if (!currentUser) throw workError("AUTH_REQUIRED");
+    if (currentUser.role !== "admin") throw workError("AUTH_FORBIDDEN");
     const users = await listAuthUsers();
     return c.json({
       users: users.map((user) => ({

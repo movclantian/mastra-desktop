@@ -19,7 +19,10 @@ test("library attachment processor keeps history lossless and expands only at pr
   assert.match(processor, /getLibraryAssetId\(record\.url\)/);
   assert.match(processor, /getLibraryAssetId\(record\.image\)/);
   assert.match(processor, /getAssetContext\(resourceId, assetId/);
-  assert.match(processor, /whose role union intentionally excludes Mastra's persisted `signal` role/);
+  assert.match(
+    processor,
+    /whose role union intentionally excludes Mastra's persisted `signal` role/,
+  );
   assert.match(processor, /processLLMRequest/);
 });
 
@@ -52,7 +55,282 @@ test("protected library content remains a renderer-only URL contract", () => {
   const route = read("src/mastra/routes/library.ts");
   assert.match(api, /\/work\/library\/assets\//);
   assert.match(route, /libraryAssetContentRoute/);
-  assert.match(route, /requireResourceId\(c\.req\.query\("resourceId"\)\)/);
+  assert.match(route, /authenticatedResourceId\(c\)/);
+  assert.doesNotMatch(route, /requireResourceId\(c\.req\.query\("resourceId"\)\)/);
+});
+
+test("library routes never trust client resourceId as the tenant boundary", () => {
+  const route = read("src/mastra/routes/library.ts");
+  assert.match(route, /Never trust resourceId from query\/form\/json/);
+  assert.match(route, /c\.get\("requestContext"\)\.get\(MASTRA_RESOURCE_ID_KEY\)/);
+  assert.doesNotMatch(route, /const resourceId = requireResourceId\(body\.resourceId\)/);
+  assert.doesNotMatch(
+    route,
+    /const resourceId = requireResourceId\(c\.req\.query\("resourceId"\)\)/,
+  );
+});
+
+test("thread transfer has a durable intent and startup reconciliation path", () => {
+  const db = read("src/mastra/rag/storage/db.ts");
+  const assets = read("src/mastra/rag/storage/assets.ts");
+  const threads = read("src/mastra/routes/threads/threads.ts");
+  const transferRecovery = read("src/mastra/routes/threads/transfer-recovery.ts");
+  const mastraIndex = read("src/mastra/index.ts");
+  const routeIndex = read("src/mastra/routes/index.ts");
+  const auth = read("src/mastra/routes/auth.ts");
+  const chat = read("src/mastra/routes/chat.ts");
+  const session = read("src/mastra/routes/session.ts");
+  const ragIndex = read("src/mastra/rag/index.ts");
+  assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfers/);
+  assert.match(db, /CREATE TABLE IF NOT EXISTS library_thread_transfer_events/);
+  assert.match(assets, /beginThreadAssetTransfer/);
+  assert.match(assets, /export async function isThreadAssetTransferWriteLocked\(\s*threadId: string,/);
+  assert.match(ragIndex, /isThreadAssetTransferWriteLocked/);
+  assert.match(assets, /requestThreadAssetTransfer/);
+  assert.match(assets, /status: "awaiting_confirmation"/);
+  assert.match(assets, /status IN \(\$\{placeholders\}\)/);
+  assert.match(assets, /target_resource_id = \? AND status = 'awaiting_confirmation'/);
+  assert.match(assets, /listThreadAssetTransfersForResource/);
+  assert.match(assets, /markThreadAssetTransferAssetsMoved/);
+  assert.match(assets, /markThreadAssetTransferAssetsPreparing/);
+  assert.match(assets, /cleanupUnregisteredThreadAssetTransferCopies/);
+  assert.match(assets, /asset_mappings/);
+  assert.match(assets, /mode: "cloned"/);
+  assert.match(assets, /storagePath: item\.storagePath/);
+  assert.match(assets, /copyFile\(sourcePath, targetPath\)/);
+  assert.match(assets, /ThreadAssetTransferCleanupPending/);
+  assert.match(assets, /listPendingThreadAssetTransfers/);
+  assert.match(threads, /recoverPendingThreadTransfers/);
+  assert.match(mastraIndex, /await recoverPendingThreadTransfers\(\{\s+getMemory:/);
+  assert.match(
+    threads,
+    /await recoverPendingThreadTransfers\(\{\s+transferId: transfer\.id,\s+getMemory: getWorkMemory/,
+  );
+  assert.match(threads, /decideThreadTransferRoute/);
+  assert.match(threads, /threadTransferHistoryRoute/);
+  assert.match(threads, /transfer\.targetResourceId !== currentUser\.id/);
+  assert.match(transferRecovery, /owner === transfer\.targetResourceId/);
+  assert.match(threads, /rewriteTransferredThreadMessages/);
+  assert.match(threads, /markThreadAssetTransferMessagesRewritten/);
+  assert.match(threads, /rollbackThreadAssetReferences/);
+  assert.match(threads, /ensureThreadAssetReferences/);
+  assert.match(threads, /getLibraryAssetId/);
+  assert.match(threads, /clearTransferredWorkspaceBinding/);
+  assert.match(routeIndex, /referenceLibraryAssetRoute/);
+  assert.match(threads, /transferStatus = "reconciliation_pending"/);
+  assert.match(threads, /const status = await executeThreadAssetTransfer/);
+  assert.match(
+    threads,
+    /withThreadAssetTransferLock\(transfer\.threadId, \(\) =>\s+executeThreadAssetTransferUnlocked/,
+  );
+  assert.match(chat, /THREAD_TRANSFER_IN_PROGRESS/);
+  assert.match(
+    chat,
+    /withThreadAssetTransferLock\(threadId, actionBody\)/,
+  );
+  assert.match(session, /async function withWritableThreadSession/);
+  assert.match(session, /THREAD_TRANSFER_IN_PROGRESS/);
+  assert.equal(
+    session.match(/withWritableThreadSession\(result/g)?.length,
+    3,
+    "session message, steer, and follow-up writes must share the transfer barrier",
+  );
+  assert.ok(
+    chat.indexOf("isThreadAssetTransferWriteLocked(threadId)") <
+      chat.indexOf("body.messages = await normalizeIncrementalMessages"),
+    "chat requests must fail before history normalization when transfer is already active",
+  );
+  assert.match(
+    chat,
+    /const actionBody = async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId\)[\s\S]*?await controllerSession\.sendSignal\(/,
+    "a transfer accepted during request preparation must be rechecked before turn delivery",
+  );
+  assert.match(auth, /currentUser\.role !== "admin"/);
+  assert.match(threads, /currentUser\.role !== "admin"/);
+  const requestRoute = threads.match(
+    /export const transferThreadRoute = registerApiRoute\([\s\S]*?^\}\);/m,
+  )?.[0];
+  assert.ok(requestRoute, "request endpoint must be independently auditable");
+  assert.match(requestRoute, /requestThreadAssetTransfer/);
+  assert.doesNotMatch(requestRoute, /transferThreadAssetReferences|updateThreadResourceId/);
+
+  const rollbackBlock = threads.match(
+    /if \(actualThread\?\.resourceId === targetResourceId\) \{[\s\S]*?\n {4}\}/,
+  )?.[0];
+  assert.ok(rollbackBlock, "an ambiguous Memory result must be reconciled before rollback");
+  assert.match(rollbackBlock, /recoverPendingThreadTransfers/);
+  assert.doesNotMatch(rollbackBlock, /rollbackThreadAssetReferences/);
+  const sourceRecoveryBlock = transferRecovery.match(
+    /if \(owner === transfer\.sourceResourceId \|\| !owner\) \{([\s\S]*?)\n\s+continue;/,
+  )?.[0];
+  assert.ok(sourceRecoveryBlock, "source-owned recovery branch must be explicit");
+  assert.ok(
+    sourceRecoveryBlock.indexOf("rewriteTransferredThreadMessages") <
+      sourceRecoveryBlock.indexOf("rollbackThreadAssetReferences"),
+    "message URLs must be restored before target assets are removed",
+  );
+  assert.match(
+    transferRecovery,
+    /if \(items\.length > 0\)[\s\S]*?rewriteTransferredThreadMessages\([\s\S]*?cleanupUnregisteredThreadAssetTransferCopies\(transfer\)/,
+    "source-owned recovery must restore history and retry cleanup regardless of the pending phase",
+  );
+  assert.match(transferRecovery, /missingMappings\.every\(\(\[, mapping\]\) => mapping\.mode === "cloned"\)/);
+  assert.match(transferRecovery, /enqueueTransferredAssetIndexing/);
+  assert.match(transferRecovery, /item\.mode === "linked" \|\| item\.asset\.status === "unsupported"/);
+  assert.match(transferRecovery, /const indexableItems = items\.filter/);
+  assert.match(transferRecovery, /items\.map\(\(item\) => \[item\.sourceAssetId, item\.targetAssetId\]\)/);
+});
+
+test("thread transfer fencing follows thread identity and protects upload completion", () => {
+  const assets = read("src/mastra/rag/storage/assets.ts");
+  const upload = read("src/mastra/rag/storage/upload.ts");
+  const db = read("src/mastra/rag/storage/db.ts");
+  const routes = read("src/mastra/routes/library.ts");
+  const lock = assets.match(
+    /export async function isThreadAssetTransferWriteLocked\([\s\S]*?^}/m,
+  )?.[0];
+  assert.ok(lock, "transfer fence must remain an auditable helper");
+  assert.match(assets, /withLibraryStorageLock\(`thread:\$\{threadId\}`, operation\)/);
+  assert.match(lock, /WHERE thread_id = \?/);
+  assert.doesNotMatch(lock, /source_resource_id|target_resource_id/);
+  assert.match(routes, /async function withOwnedThreadAssetWrite/);
+  assert.equal(
+    routes.match(/withOwnedThreadAssetWrite\(/g)?.length,
+    5,
+    "all thread-scoped library mutations must share owner revalidation",
+  );
+  assert.match(
+    routes,
+    /withThreadAssetTransferLock\(threadId, async \(\) => \{[\s\S]*?isThreadAssetTransferWriteLocked\(threadId\)[\s\S]*?ownedThreadId\(c, resourceId, threadId\)/,
+  );
+  assert.match(routes, /withOwnedThreadAssetWrite\([\s\S]{0,120}multipart\.fields\.threadId/);
+  assert.match(routes, /withOwnedThreadAssetWrite\([\s\S]{0,120}body\.threadId/);
+  assert.match(
+    routes,
+    /const initialSession = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?saveLibraryUploadChunk\(/,
+  );
+  assert.match(
+    routes,
+    /const session = await getLibraryUploadSession\(resourceId, uploadId\);[\s\S]*?withOwnedThreadAssetWrite\([\s\S]*?current\.threadId !== threadId[\s\S]*?completeLibraryUploadSession\(resourceId, uploadId\)/,
+  );
+  assert.match(upload, /WHERE thread_id = \?[\s\S]*?status IN/);
+  assert.match(upload, /newUploadChunkPath/);
+  assert.match(upload, /chunkHash\.digest\("hex"\) !== String\(chunkRow\.sha256/);
+  assert.match(upload, /SELECT chunk_index, byte_size, sha256, storage_path/);
+  assert.match(db, /export async function withLibraryStorageLock/);
+  assert.match(db, /withLibraryStorageLock\(`upload:\$\{sessionId\}`, operation\)/);
+  assert.match(db, /export function withLibraryUploadSessionLock/);
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(input\.sessionId, \(\) =>\s+saveLibraryUploadChunkUnlocked\(input\)/,
+  );
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(sessionId, \(\) =>\s+completeLibraryUploadSessionUnlocked\(resourceId, sessionId\)/,
+  );
+  assert.match(
+    upload,
+    /withLibraryUploadSessionLock\(sessionId, \(\) =>\s+cancelLibraryUploadSessionUnlocked\(resourceId, sessionId\)/,
+  );
+  assert.match(db, /sessionIds\.map\(\(sessionId\) =>\s+withLibraryUploadSessionLock\(sessionId/);
+});
+
+test("model library search is bound to the active thread and never accepts a thread override", () => {
+  const tools = read("src/mastra/rag/tools.ts");
+  const search = read("src/mastra/rag/retrieval/search.ts");
+  const routes = read("src/mastra/routes/library.ts");
+  const assets = read("src/mastra/rag/storage/assets.ts");
+  const folders = read("src/mastra/rag/storage/folders.ts");
+  const upload = read("src/mastra/rag/storage/upload.ts");
+  assert.match(tools, /LIBRARY_THREAD_CONTEXT_KEY/);
+  assert.match(tools, /execute: async \(\{ query \}, context\)/);
+  assert.match(tools, /typeof threadIdValue === "string"/);
+  assert.doesNotMatch(tools, /threadId: z\.string\(\)\.optional\(\)/);
+  assert.match(search, /r\.thread_id = '' OR r\.thread_id = \?/);
+  assert.match(search, /args: \[resourceId, threadId \?\? ""\]/);
+  assert.doesNotMatch(search, /\? IS NULL OR r\.thread_id/);
+  assert.doesNotMatch(routes, /if \(folderId && threadId\)/);
+  assert.match(folders, /SELECT thread_id FROM library_folders/);
+  assert.match(folders, /folderThreadId !== \(threadId \|\| undefined\)/);
+  assert.match(assets, /ensureFolderReference\(input\.resourceId, input\.folderId, input\.threadId\)/);
+  assert.match(assets, /ensureFolderReference\(resourceId, folderId, threadId\)/);
+  assert.match(upload, /ensureFolderReference\(input\.resourceId, input\.folderId, input\.threadId\)/);
+});
+
+test("library assets referenced in a new chat are registered on the thread", () => {
+  const libraryApi = read("src/renderer/src/entities/library/api/library-api.ts");
+  const libraryPage = read("src/renderer/src/pages/library/ui/knowledge-library-page.tsx");
+  const routes = read("src/mastra/routes/library.ts");
+  const routeIndex = read("src/mastra/routes/index.ts");
+  assert.match(libraryApi, /referenceLibraryAssetInThread/);
+  assert.match(libraryPage, /await referenceLibraryAssetInThread\(asset\.id, user\.id, thread\.id\)/);
+  assert.match(routes, /export const referenceLibraryAssetRoute/);
+  assert.match(routeIndex, /referenceLibraryAssetRoute,/);
+});
+
+test("Plan draft writer rejects a symlink target, including dangling links", () => {
+  const writer = read("src/mastra/tools/plan-draft.ts");
+  assert.match(writer, /import \{ lstat, mkdir, open, realpath, rename, unlink \}/);
+  assert.match(writer, /const targetEntry = await lstat\(target\)/);
+  assert.match(writer, /targetEntry\?\.isSymbolicLink\(\)/);
+  assert.match(writer, /计划文件不能是符号链接/);
+  assert.match(writer, /await temporaryFile\.sync\(\)/);
+  assert.match(writer, /await rename\(temporaryTarget, target\)/);
+  assert.doesNotMatch(writer, /writeFile\(target,/);
+});
+
+test("Plan permission set does not treat notification dismissal as read-only", () => {
+  const permissions = read("src/mastra/agents/permissions.ts");
+  assert.match(permissions, /notification_inbox: "edit"/);
+  assert.match(permissions, /"notification-inbox": "edit"/);
+  assert.doesNotMatch(permissions, /notification_inbox: "read"/);
+  assert.doesNotMatch(permissions, /"notification-inbox": "read"/);
+});
+
+test("Electron build uses app-level locked dependencies for the Mastra bundle", () => {
+  const packageJson = JSON.parse(read("package.json"));
+  const builder = read("electron-builder.yml");
+  const buildMastra = read("scripts/build-mastra.mjs");
+  assert.match(packageJson.scripts.build, /node scripts\/build-mastra\.mjs/);
+  assert.match(buildMastra, /MASTRA_BUILD_SKIP_INSTALL: "1"/);
+  assert.match(builder, /!\.mastra\/output\/node_modules\/\*\*/);
+  assert.match(builder, /production dependencies/);
+});
+
+test("recipient transfer inbox exposes decisions and audit history", () => {
+  const api = read("src/renderer/src/entities/workbench/api/workbench-api.ts");
+  const inbox = read("src/renderer/src/widgets/app-sidebar/ui/thread-transfer-inbox.tsx");
+  const sidebar = read("src/renderer/src/widgets/app-sidebar/ui/app-sidebar.tsx");
+  assert.match(api, /fetchThreadTransferHistory/);
+  assert.match(api, /decideThreadTransferRequest/);
+  assert.match(inbox, /transfer\.targetResourceId === userId/);
+  assert.match(inbox, /decisionMutation\.mutateAsync/);
+  assert.match(inbox, /transfer\.events\.map/);
+  assert.match(sidebar, /ThreadTransferInboxDialog/);
+});
+
+test("browser routes use the authenticated resource, not the query string", () => {
+  const browser = read("src/mastra/routes/browser.ts");
+  assert.match(browser, /c\.get\("requestContext"\)\.get\(MASTRA_RESOURCE_ID_KEY\)/);
+  assert.doesNotMatch(browser, /const resourceId = c\.req\.query\("resourceId"\)/);
+});
+
+test("browser stop events distinguish normal shutdown from an abnormal stream end", () => {
+  const session = read("src/renderer/src/widgets/workspace-drawer/model/use-browser-session.ts");
+  assert.match(session, /eventName === "stop"/);
+  assert.match(session, /reason === "closed"/);
+  assert.match(session, /reason === "stopped"/);
+  assert.match(session, /setFrameState\("error"\)/);
+  assert.match(session, /void refreshState\(\)/);
+});
+
+test("workspace folder context-menu labels always have a Menu.Group context", () => {
+  const threadList = read("src/renderer/src/widgets/app-sidebar/ui/thread-list.tsx");
+  const menu = threadList.match(
+    /<ContextMenuContent className="w-44">[\s\S]*?<\/ContextMenuContent>/,
+  )?.[0];
+  assert.ok(menu, "folder context menu must remain present");
+  assert.match(menu, /<ContextMenuGroup>[\s\S]*?<ContextMenuLabel[\s\S]*?<\/ContextMenuGroup>/);
 });
 
 test("renderer CSP allows protected Mastra asset images", () => {
@@ -190,7 +468,10 @@ test("library preview stays lazy without a duplicate static barrel export", () =
   const barrel = read("src/renderer/src/features/library-upload/index.ts");
   const page = read("src/renderer/src/pages/library/ui/knowledge-library-page.tsx");
   assert.doesNotMatch(barrel, /file-preview/);
-  assert.match(page, /React\.lazy\(\(\) => import\("@\/features\/library-upload\/file-preview"\)\)/);
+  assert.match(
+    page,
+    /React\.lazy\(\(\) => import\("@\/features\/library-upload\/file-preview"\)\)/,
+  );
 });
 
 test("chat document uploads retain only the thread ref by default", () => {
@@ -221,5 +502,8 @@ test("promotion is an explicit library action and status is scoped to documents"
 test("chat upload invalidates the shared library query", () => {
   const panel = read("src/renderer/src/widgets/chat-panel/ui/chat-panel.tsx");
   assert.match(panel, /useQueryClient/);
-  assert.match(panel, /queryClient\.invalidateQueries\(\{ queryKey: qk\.libraryContents\(user\.id\) \}\)/);
+  assert.match(
+    panel,
+    /queryClient\.invalidateQueries\(\{ queryKey: qk\.libraryContents\(user\.id\) \}\)/,
+  );
 });

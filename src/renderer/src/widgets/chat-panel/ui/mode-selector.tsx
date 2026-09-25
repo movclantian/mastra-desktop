@@ -106,6 +106,7 @@ export function ChatModeSelector() {
                     <DropdownMenuSeparator />
                     <ApprovalMenuItems
                       activePreset={matchApprovalPreset(permissionRules)}
+                      modeId={id}
                       setPermissionRules={setPermissionRules}
                     />
                   </DropdownMenuGroup>

@@ -124,7 +124,8 @@ function LibraryRoute() {
 const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/library",
-  validateSearch: (search: Record<string, unknown>): { settings?: boolean } => ({
+  validateSearch: (search: Record<string, unknown>): { thread?: string; settings?: boolean } => ({
+    ...(typeof search.thread === "string" && search.thread ? { thread: search.thread } : {}),
     ...(search.settings === true ? { settings: true } : {}),
   }),
   component: LibraryRoute,

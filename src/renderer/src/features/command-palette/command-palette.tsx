@@ -530,7 +530,7 @@ export function useGlobalShortcuts() {
       }
       if (matchesShortcut(event, ["Mod", "3"], isMac)) {
         event.preventDefault();
-        void navigate({ to: "/library" });
+        void navigate({ to: "/library", search: { thread: activeThreadId ?? undefined } });
         return;
       }
       if (matchesShortcut(event, ["Mod", "4"], isMac)) {
@@ -586,7 +586,7 @@ export function useGlobalShortcuts() {
       // 11. 在外部 IDE 打开当前工作区 (Mod+Shift+O)
       if (matchesShortcut(event, ["Mod", "Shift", "O"], isMac)) {
         event.preventDefault();
-        let targetDir = activeThread?.metadata?.workspacePath;
+        const targetDir = activeThread?.metadata?.workspacePath;
         if (!targetDir && activeThreadId) {
           void apiFetch(`${MASTRA_SERVER_URL}/work/workspace`)
             .then((r) => r.json())

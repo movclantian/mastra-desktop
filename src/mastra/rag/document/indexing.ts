@@ -112,6 +112,7 @@ async function ensureVectorIndex(vector: LibSQLVector, dimension: number): Promi
 }
 
 export async function chunkDocument(doc: MDocument, settings: LibrarySettings) {
+  const chunkOverlap = Math.min(settings.chunkOverlap, Math.max(0, settings.chunkSize - 1));
   if (settings.chunkStrategy === "markdown") {
     // The default Markdown splitter can reinsert its heading regex as text.
     // Split literal headings first, retaining their text and hierarchy metadata.
@@ -131,13 +132,13 @@ export async function chunkDocument(doc: MDocument, settings: LibrarySettings) {
     return doc.chunk({
       strategy: "recursive",
       maxSize: settings.chunkSize,
-      overlap: settings.chunkOverlap,
+      overlap: chunkOverlap,
     });
   }
   const params = {
     strategy: settings.chunkStrategy,
     maxSize: settings.chunkSize,
-    overlap: settings.chunkOverlap,
+    overlap: chunkOverlap,
     ...(settings.chunkStrategy === "html"
       ? {
           headers: [

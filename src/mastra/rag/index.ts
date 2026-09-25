@@ -21,12 +21,14 @@ export {
   deleteAsset,
   getAssetContext,
   getLibraryAssetId,
+  isThreadAssetTransferWriteLocked,
   type LibraryAttachmentContext,
   listAssets,
   readAssetBytes,
   renameAsset,
   uploadAsset,
   uploadAssetFromFile,
+  withThreadAssetTransferLock,
 } from "./storage/assets";
 export {
   ensureLibrarySchema,

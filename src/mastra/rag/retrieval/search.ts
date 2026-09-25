@@ -48,8 +48,8 @@ export async function searchLibrary(options: {
         JOIN library_assets a ON a.id = r.asset_id AND a.resource_id = r.resource_id
         WHERE r.resource_id = ?
           AND a.status = 'ready'
-          AND (? IS NULL OR r.thread_id = '' OR r.thread_id = ?)`,
-      args: [resourceId, threadId ?? null, threadId ?? ""],
+          AND (r.thread_id = '' OR r.thread_id = ?)`,
+      args: [resourceId, threadId ?? ""],
     }),
   );
   const allowedAssetIds = new Set(refs.rows.map((row) => String(row.asset_id)));

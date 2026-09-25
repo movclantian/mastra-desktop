@@ -31,6 +31,89 @@ function taskStatus(value: string | undefined): BackgroundTask["status"] | undef
     : undefined;
 }
 
+const INTERRUPTED_TASK_MESSAGE =
+  "服务已重启，原任务的请求上下文不能安全恢复。为避免使用错误账户、模型或工作区执行，任务已停止；请重新提交。";
+
+async function markInterruptedTaskFailed(
+  manager: BackgroundTaskManager,
+  task: BackgroundTask,
+): Promise<void> {
+  if (!["pending", "running", "suspended"].includes(task.status)) return;
+  const now = new Date();
+  const storage = await manager.getStorage();
+  const changed = await storage.updateTask(
+    task.id,
+    {
+      status: "failed",
+      error: { message: INTERRUPTED_TASK_MESSAGE },
+      completedAt: now,
+    },
+    { expectedStatus: task.status },
+  );
+  if (!changed) return;
+
+  manager.deregisterTaskContext(task.id);
+  await manager
+    .publishLifecycleEvent("task.failed", {
+      ...task,
+      status: "failed",
+      error: { message: INTERRUPTED_TASK_MESSAGE },
+      completedAt: now,
+    })
+    .catch((error) => {
+      console.warn("[background-tasks] failed to publish interrupted-task state", {
+        taskId: task.id,
+        error,
+      });
+    });
+}
+
+/**
+ * Mastra persists task payloads, but not the original per-request executor,
+ * model selection, workspace, or result-injection callbacks. A registered
+ * static executor is not an equivalent replacement for those closures.
+ */
+export async function ensureTaskExecutorAvailable(
+  manager: BackgroundTaskManager,
+  task: BackgroundTask,
+): Promise<void> {
+  if (!["pending", "running", "suspended"].includes(task.status)) return;
+  if (manager.taskContexts.has(task.id)) return;
+  await markInterruptedTaskFailed(manager, task);
+  throw workError("BACKGROUND_TASK_EXECUTOR_UNAVAILABLE", {
+    details: { taskId: task.id, toolName: task.toolName, agentId: task.agentId },
+  });
+}
+
+/** Mark tasks left by a previous process as failed instead of auto-dispatching
+ * them through Mastra's context-free static executor registry. */
+export async function failInterruptedBackgroundTasksOnStartup(
+  manager: BackgroundTaskManager,
+): Promise<number> {
+  const tasks: BackgroundTask[] = [];
+  let page = 0;
+  let total = 0;
+  do {
+    const result = await manager.listTasks({
+      status: ["pending", "running", "suspended"],
+      page,
+      perPage: 100,
+    });
+    tasks.push(...result.tasks);
+    total = result.total;
+    page += 1;
+  } while (tasks.length < total);
+
+  let failedCount = 0;
+  for (const task of tasks) {
+    const before = await manager.getTask(task.id);
+    if (!before || !["pending", "running", "suspended"].includes(before.status)) continue;
+    await markInterruptedTaskFailed(manager, before);
+    if ((await manager.getTask(task.id))?.status === "failed") failedCount += 1;
+  }
+  return failedCount;
+}
+
 async function ownedTask(
   c: ContextWithMastra,
   manager: BackgroundTaskManager,
@@ -99,6 +182,7 @@ export const backgroundTaskResumeRoute = registerApiRoute("/work/background-task
   handler: async (c) => {
     const manager = managerFor(c);
     const task = await ownedTask(c, manager);
+    await ensureTaskExecutorAvailable(manager, task);
     const body = (await c.req.json().catch(() => ({}))) as { resumeData?: unknown };
     return c.json(await manager.resume(task.id, body.resumeData));
   },
@@ -111,6 +195,7 @@ export const backgroundTaskRestartRoute = registerApiRoute(
     handler: async (c) => {
       const manager = managerFor(c);
       const task = await ownedTask(c, manager);
+      await ensureTaskExecutorAvailable(manager, task);
       return c.json(await manager.restart(task.id));
     },
   },

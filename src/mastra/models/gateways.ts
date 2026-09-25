@@ -1,8 +1,8 @@
 /**
  * 自定义模型网关(docs/en/models/gateways/custom-gateways.mdx):
- * WorkbenchGateway 让 Studio 与 model router 直接使用存在数据库里的
- * 供应商与 Key —— fetchProviders 决定模型选择器内容,resolveAuth 在
- * getApiKey / env 回退之前被调用,凭据由网关自己从数据库取。
+ * WorkbenchGateway 只服务 Mastra Studio / model router 的系统作用域。
+ * MastraModelGateway.fetchProviders() 没有 resourceId 参数，因此不能假装
+ * 它能提供用户级 BYOK 隔离；聊天与工作台请求仍走 resolveConfiguredModel(resourceId)。
  */
 import {
   type GatewayAuthRequest,
@@ -33,6 +33,7 @@ export class WorkbenchGateway extends MastraModelGateway {
   readonly name = "MastraWork 供应商";
 
   private async findProvider(providerId: string): Promise<UserProviderConfig | undefined> {
+    // fetchProviders() 无 requestContext,这里的无参调用就是系统配置作用域。
     const providers = usableProviders(await getProvidersConfig());
     return (
       providers.find((provider) => routerPrefix(provider) === providerId) ??
@@ -45,6 +46,7 @@ export class WorkbenchGateway extends MastraModelGateway {
   }
 
   async fetchProviders(): Promise<Record<string, GatewayProviderConfig>> {
+    // Mastra Gateway API 没有 resourceId,不能在这里宣称用户级 BYOK 隔离。
     const providers = usableProviders(await getProvidersConfig());
     return Object.fromEntries(
       providers.map((provider) => [

@@ -50,7 +50,16 @@ const librarySettingsSchema = z.object({
 });
 
 function normalizeSettings(parsed: unknown): LibrarySettings {
-  return librarySettingsSchema.parse({ ...DEFAULT_LIBRARY_SETTINGS, ...(parsed as object) });
+  const normalized = librarySettingsSchema.parse({
+    ...DEFAULT_LIBRARY_SETTINGS,
+    ...(parsed as object),
+  });
+  return {
+    ...normalized,
+    // MDocument.chunk requires overlap < chunk size. Keep persisted settings
+    // usable even when an older client saved an invalid combination.
+    chunkOverlap: Math.min(normalized.chunkOverlap, Math.max(0, normalized.chunkSize - 1)),
+  };
 }
 
 export async function getLibrarySettings(resourceId?: string): Promise<LibrarySettings> {

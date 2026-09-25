@@ -3,8 +3,8 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, rm, stat, type FileHandle, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, open, rm, stat, type FileHandle } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { getStorageDirectory } from "../../storage";
 import { normalizeFilename, resolveMediaType } from "../document/extract";
@@ -15,12 +15,14 @@ import {
   MAX_LIBRARY_UPLOAD_CHUNK_BYTES,
   MIN_LIBRARY_UPLOAD_CHUNK_BYTES,
 } from "../types";
-import { uploadAssetFromFile } from "./assets";
+import { THREAD_TRANSFER_WRITE_LOCK_STATUSES, uploadAssetFromFile } from "./assets";
+import { ensureFolderReference } from "./folders";
 import {
   cleanupExpiredLibraryUploadSessions,
   ensureLibrarySchema,
   now,
   rowToUploadSession,
+  withLibraryUploadSessionLock,
   withClient,
 } from "./db";
 
@@ -50,8 +52,15 @@ function uploadSessionDirectory(sessionId: string): string {
   return join(getStorageDirectory(), "library", "_chunks", sessionId);
 }
 
-function uploadChunkPath(sessionId: string, chunkIndex: number): string {
-  return join(uploadSessionDirectory(sessionId), `${chunkIndex}.part`);
+function newUploadChunkPath(sessionId: string, chunkIndex: number): string {
+  return join(uploadSessionDirectory(sessionId), `${chunkIndex}-${nanoid()}.part`);
+}
+
+function resolveUploadChunkPath(sessionId: string, storagePath: string): string {
+  const sessionDirectory = resolve(uploadSessionDirectory(sessionId));
+  const chunkPath = resolve(storagePath);
+  if (dirname(chunkPath) !== sessionDirectory) throw new Error("上传分片存储路径无效");
+  return chunkPath;
 }
 
 export async function createLibraryUploadSession(input: {
@@ -69,6 +78,7 @@ export async function createLibraryUploadSession(input: {
   }
 
   await ensureLibrarySchema();
+  await ensureFolderReference(input.resourceId, input.folderId, input.threadId);
   void cleanupExpiredLibraryUploadSessions().catch((error) => {
     console.warn("[library-upload] cleanup deferred", error);
   });
@@ -80,11 +90,16 @@ export async function createLibraryUploadSession(input: {
   const createdAt = now();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  await withClient((client) =>
+  const inserted = await withClient((client) =>
     client.execute({
       sql: `INSERT INTO library_upload_sessions
         (id, resource_id, filename, media_type, byte_size, chunk_size, total_chunks, folder_id, thread_id, created_at, updated_at, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE ? = '' OR NOT EXISTS (
+          SELECT 1 FROM library_thread_transfers
+          WHERE thread_id = ?
+            AND status IN (${THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(() => "?").join(", ")})
+        )`,
       args: [
         id,
         input.resourceId,
@@ -98,9 +113,15 @@ export async function createLibraryUploadSession(input: {
         createdAt,
         createdAt,
         expiresAt,
+        input.threadId ?? "",
+        input.threadId ?? "",
+        ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
       ],
     }),
   );
+  if ((inserted.rowsAffected ?? 0) !== 1) {
+    throw new Error("会话正在转交，无法开始上传附件");
+  }
 
   await mkdir(uploadSessionDirectory(id), { recursive: true });
   return {
@@ -140,13 +161,25 @@ export async function getLibraryUploadSession(
   return rowToUploadSession(sessionRow, completed);
 }
 
-export async function saveLibraryUploadChunk(input: {
+type SaveLibraryUploadChunkInput = {
   resourceId: string;
   sessionId: string;
   chunkIndex: number;
   bytes: Uint8Array;
   expectedSha256?: string;
-}): Promise<LibraryUploadSession> {
+};
+
+export async function saveLibraryUploadChunk(
+  input: SaveLibraryUploadChunkInput,
+): Promise<LibraryUploadSession> {
+  return withLibraryUploadSessionLock(input.sessionId, () =>
+    saveLibraryUploadChunkUnlocked(input),
+  );
+}
+
+async function saveLibraryUploadChunkUnlocked(
+  input: SaveLibraryUploadChunkInput,
+): Promise<LibraryUploadSession> {
   const session = await getLibraryUploadSession(input.resourceId, input.sessionId);
   if (!session) throw new Error("上传会话不存在或已过期");
   if (input.chunkIndex < 0 || input.chunkIndex >= session.totalChunks) {
@@ -158,29 +191,79 @@ export async function saveLibraryUploadChunk(input: {
     throw new Error("分片校验和不匹配");
   }
 
-  const chunkPath = uploadChunkPath(session.id, input.chunkIndex);
+  const chunkPath = newUploadChunkPath(session.id, input.chunkIndex);
+  const previousRow = await withClient((client) =>
+    client.execute({
+      sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = ? LIMIT 1",
+      args: [session.id, input.chunkIndex],
+    }),
+  );
+  const previousStoragePath = previousRow.rows[0]?.storage_path;
+  const previousPath =
+    typeof previousStoragePath === "string"
+      ? resolveUploadChunkPath(session.id, previousStoragePath)
+      : undefined;
   await mkdir(uploadSessionDirectory(session.id), { recursive: true });
-  await writeFile(chunkPath, input.bytes);
+  const chunkFile = await open(chunkPath, "wx");
+  try {
+    await chunkFile.writeFile(input.bytes);
+    await chunkFile.sync();
+  } catch (error) {
+    await chunkFile.close().catch(() => undefined);
+    await rm(chunkPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  await chunkFile.close();
 
   const timestamp = now();
-  await withClient((client) =>
-    client.batch([
-      {
-        sql: `INSERT INTO library_upload_chunks (session_id, chunk_index, byte_size, sha256, storage_path, created_at)
+  try {
+    await withClient((client) =>
+      client.batch([
+        {
+          sql: `INSERT INTO library_upload_chunks (session_id, chunk_index, byte_size, sha256, storage_path, created_at)
           VALUES (?, ?, ?, ?, ?, ?)
           ON CONFLICT(session_id, chunk_index) DO UPDATE SET
             byte_size = excluded.byte_size,
             sha256 = excluded.sha256,
             storage_path = excluded.storage_path,
             created_at = excluded.created_at`,
-        args: [session.id, input.chunkIndex, input.bytes.byteLength, sha256, chunkPath, timestamp],
-      },
-      {
-        sql: "UPDATE library_upload_sessions SET updated_at = ? WHERE id = ?",
-        args: [timestamp, session.id],
-      },
-    ]),
-  );
+          args: [session.id, input.chunkIndex, input.bytes.byteLength, sha256, chunkPath, timestamp],
+        },
+        {
+          sql: "UPDATE library_upload_sessions SET updated_at = ? WHERE id = ?",
+          args: [timestamp, session.id],
+        },
+      ]),
+    );
+  } catch (error) {
+    let inspected = false;
+    let committedPath: unknown;
+    try {
+      const result = await withClient((client) =>
+        client.execute({
+          sql: "SELECT storage_path FROM library_upload_chunks WHERE session_id = ? AND chunk_index = ? LIMIT 1",
+          args: [session.id, input.chunkIndex],
+        }),
+      );
+      inspected = true;
+      committedPath = result.rows[0]?.storage_path;
+    } catch {
+      // A failed confirmation is ambiguous; keep the new file so a committed DB pointer stays valid.
+    }
+    if (inspected && committedPath !== chunkPath) {
+      await rm(chunkPath, { force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
+  if (previousPath && previousPath !== chunkPath) {
+    await rm(previousPath, { force: true }).catch((error) => {
+      console.warn(
+        `[library-upload] previous chunk cleanup deferred (${session.id}/${input.chunkIndex}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }
 
   const updated = await getLibraryUploadSession(input.resourceId, input.sessionId);
   if (!updated) throw new Error("更新上传会话失败");
@@ -188,6 +271,15 @@ export async function saveLibraryUploadChunk(input: {
 }
 
 export async function completeLibraryUploadSession(
+  resourceId: string,
+  sessionId: string,
+): Promise<LibraryAsset> {
+  return withLibraryUploadSessionLock(sessionId, () =>
+    completeLibraryUploadSessionUnlocked(resourceId, sessionId),
+  );
+}
+
+async function completeLibraryUploadSessionUnlocked(
   resourceId: string,
   sessionId: string,
 ): Promise<LibraryAsset> {
@@ -199,21 +291,46 @@ export async function completeLibraryUploadSession(
     );
   }
 
+  const chunkRows = await withClient((client) =>
+    client.execute({
+      sql: `SELECT chunk_index, byte_size, sha256, storage_path
+        FROM library_upload_chunks WHERE session_id = ? ORDER BY chunk_index ASC`,
+      args: [session.id],
+    }),
+  );
+  if (chunkRows.rows.length !== session.totalChunks) {
+    throw new Error(`分片尚未全部上传: 已完成 ${chunkRows.rows.length}/${session.totalChunks}`);
+  }
+
   const mergedPath = join(uploadSessionDirectory(session.id), `.merged-${nanoid()}.tmp`);
   let mergedFile: FileHandle | undefined;
   try {
     mergedFile = await open(mergedPath, "wx");
     let totalBytes = 0;
     for (let index = 0; index < session.totalChunks; index++) {
-      const chunkPath = uploadChunkPath(session.id, index);
+      const chunkRow = chunkRows.rows[index];
+      if (!chunkRow || Number(chunkRow.chunk_index) !== index) {
+        throw new Error(`分片 ${index} 缺失或索引无效`);
+      }
+      const chunkPath = resolveUploadChunkPath(session.id, String(chunkRow.storage_path ?? ""));
       const chunkFile = await stat(chunkPath).catch(() => null);
       if (!chunkFile) throw new Error(`分片 ${index} 读取失败，请重试`);
+      const chunkHash = createHash("sha256");
+      let chunkBytes = 0;
       for await (const chunk of createReadStream(chunkPath)) {
+        chunkBytes += chunk.byteLength;
+        chunkHash.update(chunk);
         totalBytes += chunk.byteLength;
         if (totalBytes > session.byteSize) {
           throw new Error("上传分片总大小超过会话声明的文件大小");
         }
         await writeFullChunk(mergedFile, chunk);
+      }
+      if (
+        chunkBytes !== Number(chunkRow.byte_size) ||
+        chunkHash.digest("hex") !== String(chunkRow.sha256 ?? "")
+      ) {
+        throw new Error(`分片 ${index} 校验失败，请重新上传`);
       }
     }
     await mergedFile.close();
@@ -267,6 +384,15 @@ export async function completeLibraryUploadSession(
 }
 
 export async function cancelLibraryUploadSession(
+  resourceId: string,
+  sessionId: string,
+): Promise<boolean> {
+  return withLibraryUploadSessionLock(sessionId, () =>
+    cancelLibraryUploadSessionUnlocked(resourceId, sessionId),
+  );
+}
+
+async function cancelLibraryUploadSessionUnlocked(
   resourceId: string,
   sessionId: string,
 ): Promise<boolean> {

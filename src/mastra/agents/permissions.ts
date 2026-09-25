@@ -109,16 +109,14 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   browser_drag: "execute",
   browser_evaluate: "execute",
   browser_close: "execute",
-  // TaskSignalProvider 的 TODO 工具:改的是线程状态(threadState)而非用户机器,
-  // 结果只体现在输入区上方的任务队列里,因此与只读同级、不打断执行
-  task_write: "read",
-  task_update: "read",
-  task_complete: "read",
+  // TaskSignalProvider 的 TODO 状态会持久修改当前线程，不能进入 Plan/Review 只读 allow-list。
+  task_write: "edit",
+  task_update: "edit",
+  task_complete: "edit",
   task_check: "read",
-  // 通知收件箱:读写的同样是线程级记录(mastra_notifications),与 task_* 同级。
-  // 注册名与工具内建 id 都登记 —— 审批门按哪个匹配都不会漏进兜底的 "other"。
-  notification_inbox: "read",
-  "notification-inbox": "read",
+  // 通知收件箱的 dismiss/archive 会改写持久状态,不能作为 Plan/Review 只读工具。
+  notification_inbox: "edit",
+  "notification-inbox": "edit",
 };
 
 /**
@@ -131,6 +129,10 @@ export const READ_ONLY_TOOL_NAMES = [
   ...Object.keys(CATEGORY_BY_TOOL).filter((name) => CATEGORY_BY_TOOL[name] === "read"),
   "ask_user",
 ];
+
+/** Plan 模式允许的唯一写入能力:只能生成 plans/ 下的计划草稿。 */
+export const PLAN_DRAFT_TOOL_NAME = "write_plan_draft";
+export const PLAN_TOOL_NAMES = [...READ_ONLY_TOOL_NAMES, "submit_plan", PLAN_DRAFT_TOOL_NAME];
 
 export function toolCategoryOf(toolName: string): ToolCategory {
   const explicit = CATEGORY_BY_TOOL[toolName];

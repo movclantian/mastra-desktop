@@ -1,6 +1,11 @@
 import { useRouterState } from "@tanstack/react-router";
 import { CheckIcon, ShieldCheckIcon, ShieldIcon, ZapIcon } from "lucide-react";
-import { APPROVAL_PRESETS, matchApprovalPreset, type PermissionRules } from "@/entities/workbench";
+import {
+  APPROVAL_PRESETS,
+  matchApprovalPreset,
+  type PermissionRules,
+  type WorkModeId,
+} from "@/entities/workbench";
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
@@ -32,7 +37,7 @@ export function ChatApprovalSelector() {
   const activeThreadId = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
-  const { permissionRules, setPermissionRules } = useSessionSettings(
+  const { modeId, permissionRules, setPermissionRules } = useSessionSettings(
     user?.id ?? "anonymous",
     activeThreadId,
   );
@@ -76,7 +81,11 @@ export function ChatApprovalSelector() {
             {t("chat:approvals.title")}
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <ApprovalMenuItems activePreset={activePreset} setPermissionRules={setPermissionRules} />
+          <ApprovalMenuItems
+            activePreset={activePreset}
+            modeId={modeId}
+            setPermissionRules={setPermissionRules}
+          />
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -85,9 +94,11 @@ export function ChatApprovalSelector() {
 
 export function ApprovalMenuItems({
   activePreset,
+  modeId,
   setPermissionRules,
 }: {
   activePreset: ReturnType<typeof matchApprovalPreset>;
+  modeId?: WorkModeId;
   setPermissionRules: (rules: PermissionRules) => Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -101,7 +112,9 @@ export function ApprovalMenuItems({
         const desc =
           preset.id === "standard"
             ? t("chat:approvals.standard.desc")
-            : t("chat:approvals.allowAll.desc");
+            : t(
+                modeId === "plan" ? "chat:approvals.allowAll.planDesc" : "chat:approvals.allowAll.desc",
+              );
         return (
           <DropdownMenuItem
             className="items-start gap-2"

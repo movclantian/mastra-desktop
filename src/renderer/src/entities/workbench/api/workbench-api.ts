@@ -11,6 +11,8 @@ import type {
   RecentWorkspace,
   ToolsConfig,
   TreeEntry,
+  ThreadTransferHistoryItem,
+  ThreadTransferStatus,
   WorkspaceChangeSnapshot,
   WorkspaceFileChange,
   WorkThread,
@@ -213,14 +215,16 @@ export async function summarizeThreadRequest(
 /** 会话所有权迁移(官方 memory.updateThreadResourceId):线程及全部消息转移给目标账户 */
 export async function transferThreadRequest(
   threadId: string,
-  resourceId: string,
   targetResourceId: string,
-): Promise<void> {
-  await requestJson(
+): Promise<{ id: string; status: ThreadTransferStatus }> {
+  const payload = await requestJson<{
+    transfer: { id: string; status: ThreadTransferStatus };
+  }>(
     `/work/threads/${encodeURIComponent(threadId)}/transfer`,
-    { method: "POST", body: { resourceId, targetResourceId } },
+    { method: "POST", body: { targetResourceId } },
     i18n.t("sidebar:transferThreadFailed"),
   );
+  return payload.transfer;
 }
 
 /** 注册账户列表(会话迁移目标候选) */
@@ -231,6 +235,26 @@ export async function fetchWorkUsers(): Promise<WorkUserOption[]> {
     i18n.t("sidebar:loadAccountsFailed"),
   );
   return Array.isArray(payload.users) ? payload.users : [];
+}
+
+export async function fetchThreadTransferHistory(): Promise<ThreadTransferHistoryItem[]> {
+  const payload = await requestJson<{ transfers?: ThreadTransferHistoryItem[] }>(
+    "/work/thread-transfers",
+    {},
+    i18n.t("sidebar:transferHistoryFailed"),
+  );
+  return Array.isArray(payload.transfers) ? payload.transfers : [];
+}
+
+export async function decideThreadTransferRequest(
+  transferId: string,
+  decision: "accept" | "reject",
+): Promise<{ status: string; threadId?: string }> {
+  return requestJson(
+    `/work/thread-transfers/${encodeURIComponent(transferId)}/decision`,
+    { method: "POST", body: { decision } },
+    i18n.t("sidebar:transferDecisionFailed"),
+  );
 }
 
 export async function searchMemory(resourceId: string, query: string): Promise<MessageSearchHit[]> {

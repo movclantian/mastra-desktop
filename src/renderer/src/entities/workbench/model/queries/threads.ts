@@ -13,8 +13,10 @@ import { confirmWorkspaceDraftSwitch } from "@/shared/lib/workspace-drafts";
 import {
   cloneThreadRequest,
   createThreadRequest,
+  decideThreadTransferRequest,
   deleteThreadRequest,
   fetchThreads,
+  fetchThreadTransferHistory,
   generateThreadTitle as generateThreadTitleRequest,
   transferThreadRequest,
   updateThread,
@@ -203,14 +205,31 @@ export function useCloneThreadMutation(userId: string) {
 /** 所有权迁移(官方 updateThreadResourceId):移出列表,当前线程被迁走则清空选中 */
 export function useTransferThreadMutation(userId: string) {
   const queryClient = useQueryClient();
-  const selectThread = useSelectThread();
   return useMutation({
     mutationFn: (options: { threadId: string; targetResourceId: string }) =>
-      transferThreadRequest(options.threadId, userId, options.targetResourceId),
-    onSuccess: (_data, variables) => {
-      if (useWorkbenchStore.getState().lastKnownThreadId === variables.threadId) {
-        selectThread(null);
-      }
+      transferThreadRequest(options.threadId, options.targetResourceId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.threadTransfers(userId) });
+    },
+  });
+}
+
+export function useThreadTransferHistoryQuery(userId: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.threadTransfers(userId),
+    queryFn: fetchThreadTransferHistory,
+    enabled,
+    staleTime: 5_000,
+  });
+}
+
+export function useDecideThreadTransferMutation(userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (options: { transferId: string; decision: "accept" | "reject" }) =>
+      decideThreadTransferRequest(options.transferId, options.decision),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.threadTransfers(userId) });
       void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
     },
   });

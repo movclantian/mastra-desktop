@@ -57,6 +57,39 @@ export interface WorkUserOption {
   role: "admin" | "user";
 }
 
+export type ThreadTransferStatus =
+  | "awaiting_confirmation"
+  | "prepared"
+  | "assets_moved"
+  | "memory_moved"
+  | "messages_rewritten"
+  | "committed"
+  | "failed"
+  | "rejected"
+  | "needs_reconciliation";
+
+export interface ThreadTransferAuditEvent {
+  action: string;
+  actorResourceId: string;
+  createdAt: string;
+  threadTitle?: string;
+}
+
+export interface ThreadTransferHistoryItem {
+  id: string;
+  threadId: string;
+  threadTitle: string;
+  sourceResourceId: string;
+  sourceName: string;
+  targetResourceId: string;
+  targetName: string;
+  status: ThreadTransferStatus;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  events: ThreadTransferAuditEvent[];
+}
+
 export interface WorkThread {
   id: string;
   title: string;
