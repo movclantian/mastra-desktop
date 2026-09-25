@@ -220,13 +220,13 @@ async function ownedThreadId(
 function throwUploadRouteError(error: unknown, fallback: string): never {
   if (error instanceof WorkApiError) throw error;
   const text = errorText(error, fallback);
-  let code = "LIBRARY_UPLOAD_FAILED";
   if (text.includes("资料库目录作用域与文件所属会话不一致")) {
-    code = "VALIDATION_FAILED";
-  } else if (/(?:超过|不能超过|大小)/.test(text)) {
-    code = "LIBRARY_FILE_TOO_LARGE";
+    throw workError("VALIDATION_FAILED", { text, cause: error });
   }
-  throw workError(code, { text, cause: error });
+  if (/(?:超过|不能超过|大小)/.test(text)) {
+    throw workError("LIBRARY_FILE_TOO_LARGE", { text, cause: error });
+  }
+  throw workError("LIBRARY_UPLOAD_FAILED", { text, cause: error });
 }
 
 export const libraryAssetsRoute = registerApiRoute("/work/library/assets", {
