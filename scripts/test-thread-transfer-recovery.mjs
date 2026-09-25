@@ -14,9 +14,14 @@ test("startup refuses to serve while a thread transfer cannot be reconciled", as
     new URL("../src/mastra/routes/threads/transfer-recovery.ts", import.meta.url),
     "utf8",
   );
-  const declaration = source.match(
-    /^(?:export )?((?:async )?function recoverPendingThreadTransfers\b[\s\S]*?^})/m,
-  )?.[1];
+  const declarationStart = source.indexOf(
+    "export async function recoverPendingThreadTransfers(",
+  );
+  const declarationEnd = source.lastIndexOf("\n}");
+  const declaration =
+    declarationStart >= 0 && declarationEnd > declarationStart
+      ? source.slice(declarationStart, declarationEnd + 2)
+      : undefined;
   assert.ok(declaration, "transfer reconciliation must remain a named domain operation");
   const calls = [];
   const recover = vm.runInNewContext(
