@@ -101,7 +101,8 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   assert.match(assets, /ThreadAssetTransferCleanupPending/);
   assert.match(assets, /listPendingThreadAssetTransfers/);
   assert.match(threads, /recoverPendingThreadTransfers/);
-  assert.match(mastraIndex, /await recoverPendingThreadTransfers\(\{\s+getMemory:/);
+  assert.match(mastraIndex, /await recoverPendingThreadTransfers\(\{\s+throwOnError: true,\s+getMemory:/);
+  assert.match(transferRecovery, /if \(options\.throwOnError\) \{\s+throw new Error\(/);
   assert.match(
     threads,
     /await recoverPendingThreadTransfers\(\{\s+transferId: transfer\.id,\s+getMemory: getWorkMemory/,

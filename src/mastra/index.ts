@@ -217,6 +217,7 @@ export const mastra = new Mastra({
 // was just accepted by a live request for an abandoned operation and roll its
 // library assets back while Memory is being moved.
 await recoverPendingThreadTransfers({
+  throwOnError: true,
   getMemory: async (requestContext: RequestContext) => {
     const memory = await mastra
       .getAgentById("mastra-work-agent")

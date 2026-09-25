@@ -39,7 +39,8 @@ export const writePlanDraftTool = createTool({
     byteSize: z.number().int().nonnegative(),
   }),
   execute: async ({ path, content }, { requestContext }) => {
-    const workspaceRoot = await realpath(workspacePathFromContext(requestContext));
+    const workspacePath = workspacePathFromContext(requestContext);
+    const workspaceRoot = await realpath(workspacePath);
     const filename = resolvePlanFilename(path);
     const planRoot = resolve(workspaceRoot, PLAN_DRAFT_ROOT);
     await mkdir(planRoot).catch((error: NodeJS.ErrnoException) => {
@@ -74,12 +75,16 @@ export const writePlanDraftTool = createTool({
     const temporaryTarget = resolve(resolvedPlanRoot, `.${randomUUID()}.tmp`);
     const temporaryFile = await open(temporaryTarget, "wx");
     try {
-      await temporaryFile.writeFile(content, "utf8");
-      await temporaryFile.sync();
-    } finally {
-      await temporaryFile.close();
-    }
-    try {
+      try {
+        await temporaryFile.writeFile(content, "utf8");
+        await temporaryFile.sync();
+      } finally {
+        await temporaryFile.close();
+      }
+      const currentWorkspaceRoot = await realpath(workspacePathFromContext(requestContext));
+      if (currentWorkspaceRoot !== workspaceRoot) {
+        throw new Error("工作区目录在写入期间发生变化，已拒绝保存");
+      }
       const currentPlanRoot = await realpath(planRoot);
       if (currentPlanRoot !== resolvedPlanRoot) {
         throw new Error("计划目录在写入期间发生变化，已拒绝保存");

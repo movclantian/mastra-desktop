@@ -1,6 +1,6 @@
 {
   "name": "mastra-desktop",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Local-first multi-agent coding workbench built on Electron, React and the Mastra framework",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
