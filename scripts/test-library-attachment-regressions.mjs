@@ -215,7 +215,7 @@ test("thread transfer fencing follows thread identity and protects upload comple
   assert.match(db, /export function withLibraryUploadSessionLock/);
   assert.match(
     upload,
-    /withLibraryUploadSessionLock\(input\.sessionId, \(\) => saveLibraryUploadChunkUnlocked\(input\)\)/,
+    /withLibraryUploadSessionLock\(input\.sessionId, \(\) =>\s+saveLibraryUploadChunkUnlocked\(input\)/,
   );
   assert.match(
     upload,
