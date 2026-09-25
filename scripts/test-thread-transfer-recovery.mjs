@@ -20,7 +20,7 @@ test("startup refuses to serve while a thread transfer cannot be reconciled", as
   const declarationEnd = source.lastIndexOf("\n}");
   const declaration =
     declarationStart >= 0 && declarationEnd > declarationStart
-      ? source.slice(declarationStart, declarationEnd + 2)
+      ? source.slice(declarationStart, declarationEnd + 2).replace(/^export\s+/, "")
       : undefined;
   assert.ok(declaration, "transfer reconciliation must remain a named domain operation");
   const calls = [];
