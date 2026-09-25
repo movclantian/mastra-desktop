@@ -208,6 +208,34 @@ export async function ensureLibrarySchema(): Promise<void> {
           args: [],
         },
         {
+          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfers (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            source_resource_id TEXT NOT NULL,
+            target_resource_id TEXT NOT NULL,
+            initiated_by TEXT NOT NULL,
+            asset_ids TEXT NOT NULL DEFAULT '[]',
+            asset_mappings TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+          )`,
+          args: [],
+        },
+        {
+          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfer_events (
+            id TEXT PRIMARY KEY,
+            transfer_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            actor_resource_id TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+          )`,
+          args: [],
+        },
+        {
           sql: "CREATE INDEX IF NOT EXISTS library_assets_resource_idx ON library_assets(resource_id, updated_at)",
           args: [],
         },
@@ -231,7 +259,32 @@ export async function ensureLibrarySchema(): Promise<void> {
           sql: "CREATE INDEX IF NOT EXISTS library_upload_sessions_expires_idx ON library_upload_sessions(expires_at)",
           args: [],
         },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_pending_idx ON library_thread_transfers(status, updated_at)",
+          args: [],
+        },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_thread_idx ON library_thread_transfers(thread_id, updated_at)",
+          args: [],
+        },
+        {
+          sql: "CREATE UNIQUE INDEX IF NOT EXISTS library_thread_transfers_open_request_idx ON library_thread_transfers(thread_id, source_resource_id) WHERE status = 'awaiting_confirmation'",
+          args: [],
+        },
+        {
+          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfer_events_transfer_idx ON library_thread_transfer_events(transfer_id, created_at)",
+          args: [],
+        },
       ]);
+      // Existing local databases were created before asset copy-on-transfer.
+      // SQLite has no IF NOT EXISTS form for ADD COLUMN, so make the migration
+      // idempotent and tolerate the already-migrated case.
+      await client
+        .execute({
+          sql: "ALTER TABLE library_thread_transfers ADD COLUMN asset_mappings TEXT NOT NULL DEFAULT '{}'",
+          args: [],
+        })
+        .catch(() => undefined);
       void cleanupExpiredLibraryUploadSessions().catch((error) => {
         console.warn("[library-upload] startup cleanup deferred", error);
       });

@@ -452,7 +452,7 @@ export interface CommandActionContext {
   navigate: (params: { to: string; search?: Record<string, unknown> }) => void;
   activeView: string;
   activeThreadId: string | null;
-  createNewThread: () => void | Promise<unknown>;
+  createNewThread: () => unknown;
   toggleSidebar?: () => void;
   toggleWorkspacePanel: () => void;
   toggleTerminalPanel: () => void;
@@ -544,7 +544,8 @@ export function buildShortcutMenuGroups(ctx: CommandActionContext): ShortcutMenu
     },
     "nav-chat": () => ctx.navigate({ to: "/chat" }),
     "nav-skills": () => ctx.navigate({ to: "/skills" }),
-    "nav-library": () => ctx.navigate({ to: "/library" }),
+    "nav-library": () =>
+      ctx.navigate({ to: "/library", search: { thread: activeThreadId ?? undefined } }),
     "nav-agents": () => ctx.navigate({ to: "/agents" }),
     "nav-schedules": () => ctx.navigate({ to: "/schedules" }),
     "open-settings": () => ctx.navigate({ to: "/settings" }),

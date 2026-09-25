@@ -43,6 +43,22 @@ export async function createFolder(input: {
   await ensureLibrarySchema();
   const id = nanoid();
   const timestamp = now();
+  const parentId = input.parentId;
+  if (parentId) {
+    const parent = await withClient((client) =>
+      client.execute({
+        sql: "SELECT thread_id FROM library_folders WHERE id = ? AND resource_id = ? LIMIT 1",
+        args: [parentId, input.resourceId],
+      }),
+    );
+    const parentThreadId = parent.rows[0]?.thread_id
+      ? String(parent.rows[0].thread_id)
+      : undefined;
+    if (!parent.rows[0]) throw new Error("父目录不存在或不属于当前账户");
+    if ((parentThreadId ?? "") !== (input.threadId ?? "")) {
+      throw new Error("不能把会话目录挂到其他作用域下");
+    }
+  }
   await withClient((client) =>
     client.execute({
       sql: `INSERT INTO library_folders (id, resource_id, parent_id, thread_id, name, created_at, updated_at)

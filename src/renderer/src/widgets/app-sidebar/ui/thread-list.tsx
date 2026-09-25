@@ -157,7 +157,7 @@ function TransferThreadDialog({
     setTransferring(true);
     try {
       await transferThread(thread.id, selectedId);
-      toast.success(t("sidebar:transferSuccess"));
+      toast.success(t("sidebar:transferRequestSent"));
       onOpenChange(false);
     } catch {
       toast.error(t("sidebar:transferError"));
@@ -393,10 +393,12 @@ function ThreadContextMenuItems({
             {thread.metadata.archivedAt ? t("sidebar:unarchiveThread") : t("sidebar:archiveThread")}
           </span>
         </ContextMenuItem>
-        <ContextMenuItem onClick={onTransfer}>
-          <ArrowLeftRightIcon className="text-muted-foreground" />
-          <span>{t("sidebar:transferThread")}</span>
-        </ContextMenuItem>
+        {user?.role === "admin" ? (
+          <ContextMenuItem onClick={onTransfer}>
+            <ArrowLeftRightIcon className="text-muted-foreground" />
+            <span>{t("sidebar:transferThread")}</span>
+          </ContextMenuItem>
+        ) : null}
       </ContextMenuGroup>
 
       <ContextMenuSeparator />
@@ -546,10 +548,12 @@ function ThreadActionMenu({
           )}
           <span>{thread.metadata.archivedAt ? t("sidebar:unarchive") : t("sidebar:archive")}</span>
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={onTransfer}>
-          <ArrowLeftRightIcon className="text-muted-foreground" />
-          <span>{t("sidebar:transferThread")}</span>
-        </DropdownMenuItem>
+        {user?.role === "admin" ? (
+          <DropdownMenuItem onClick={onTransfer}>
+            <ArrowLeftRightIcon className="text-muted-foreground" />
+            <span>{t("sidebar:transferThread")}</span>
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={() => void deleteThread(thread.id)}>
           <Trash2Icon className="text-muted-foreground" />
@@ -1107,29 +1111,31 @@ export function ThreadWorkspaceTree({
             </FileTreeFolder>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-44">
-            <ContextMenuLabel className="truncate max-w-40">{entry.name}</ContextMenuLabel>
-            <ContextMenuItem
-              onClick={() => {
-                setCreating({ parent: entry.path, kind: "file" });
-                setCreateName("");
-                setExpanded((current) => new Set(current).add(entry.path));
-                void loadDirectory(entry.path);
-              }}
-            >
-              <FilePlus2Icon className="text-muted-foreground" />
-              {t("sidebar:addFile")}
-            </ContextMenuItem>
-            <ContextMenuItem
-              onClick={() => {
-                setCreating({ parent: entry.path, kind: "dir" });
-                setCreateName("");
-                setExpanded((current) => new Set(current).add(entry.path));
-                void loadDirectory(entry.path);
-              }}
-            >
-              <FolderPlusIcon className="text-muted-foreground" />
-              {t("sidebar:newSubFolder")}
-            </ContextMenuItem>
+            <ContextMenuGroup>
+              <ContextMenuLabel className="truncate max-w-40">{entry.name}</ContextMenuLabel>
+              <ContextMenuItem
+                onClick={() => {
+                  setCreating({ parent: entry.path, kind: "file" });
+                  setCreateName("");
+                  setExpanded((current) => new Set(current).add(entry.path));
+                  void loadDirectory(entry.path);
+                }}
+              >
+                <FilePlus2Icon className="text-muted-foreground" />
+                {t("sidebar:addFile")}
+              </ContextMenuItem>
+              <ContextMenuItem
+                onClick={() => {
+                  setCreating({ parent: entry.path, kind: "dir" });
+                  setCreateName("");
+                  setExpanded((current) => new Set(current).add(entry.path));
+                  void loadDirectory(entry.path);
+                }}
+              >
+                <FolderPlusIcon className="text-muted-foreground" />
+                {t("sidebar:newSubFolder")}
+              </ContextMenuItem>
+            </ContextMenuGroup>
           </ContextMenuContent>
         </ContextMenu>
       ) : (

@@ -12,6 +12,7 @@ import { getLibrarySettings } from "./settings";
 import {
   LIBRARY_GRAPH_SEARCH_TOOL_ID,
   LIBRARY_RESOURCE_CONTEXT_KEY,
+  LIBRARY_THREAD_CONTEXT_KEY,
   LIBRARY_VECTOR_SEARCH_TOOL_ID,
   type LibrarySettings,
   VALID_CHUNK_STRATEGIES,
@@ -44,10 +45,9 @@ export function resolveChunkerSettings(
 export const libraryVectorSearchTool = createTool({
   id: LIBRARY_VECTOR_SEARCH_TOOL_ID,
   description:
-    "在当前工作区与当前会话的知识库附件中进行向量语义检索。适用于检索用户上传的文档、代码、说明书或历史材料。",
+    "在当前会话与全局资料库附件中进行向量语义检索。适用于检索用户上传的文档、代码、说明书或历史材料。",
   inputSchema: z.object({
     query: z.string().min(1).describe("检索查询词或自然语言问题"),
-    threadId: z.string().optional().describe("限定会话 ID (可选,默认包含当前会话和全局附件)"),
   }),
   outputSchema: z.object({
     results: z.array(
@@ -60,9 +60,11 @@ export const libraryVectorSearchTool = createTool({
       }),
     ),
   }),
-  execute: async ({ query, threadId }, context) => {
+  execute: async ({ query }, context) => {
     const resourceId =
       (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
+    const threadIdValue = context?.requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY);
+    const threadId = typeof threadIdValue === "string" && threadIdValue ? threadIdValue : undefined;
     const results = await searchLibrary({ resourceId, query, threadId, graphRag: false });
     return { results };
   },
@@ -71,10 +73,9 @@ export const libraryVectorSearchTool = createTool({
 export const libraryGraphSearchTool = createTool({
   id: LIBRARY_GRAPH_SEARCH_TOOL_ID,
   description:
-    "在知识库中使用 GraphRAG 图谱随机游走检索。适用于复杂跨文档关联分析、实体跳转和全局拓扑理解。",
+    "在当前会话与全局资料库中使用 GraphRAG 图谱随机游走检索。适用于复杂跨文档关联分析和实体跳转。",
   inputSchema: z.object({
     query: z.string().min(1).describe("关系检索或实体分析问题"),
-    threadId: z.string().optional().describe("限定会话 ID (可选)"),
   }),
   outputSchema: z.object({
     results: z.array(
@@ -87,9 +88,11 @@ export const libraryGraphSearchTool = createTool({
       }),
     ),
   }),
-  execute: async ({ query, threadId }, context) => {
+  execute: async ({ query }, context) => {
     const resourceId =
       (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
+    const threadIdValue = context?.requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY);
+    const threadId = typeof threadIdValue === "string" && threadIdValue ? threadIdValue : undefined;
     const results = await searchLibrary({ resourceId, query, threadId, graphRag: true });
     return { results };
   },

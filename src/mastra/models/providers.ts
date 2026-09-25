@@ -63,6 +63,8 @@ interface ProvidersUserConfig {
 }
 
 const PROVIDERS_CONFIG_KEY = "providers";
+/** Mastra Gateway 的 fetchProviders() 没有 requestContext/resourceId 参数，明确使用系统作用域。 */
+export const SYSTEM_PROVIDER_SCOPE = "__system__";
 
 const enabledModelSchema = z.object({ id: z.string().min(1), name: z.string() }).strict();
 const providerSchema = z
@@ -102,7 +104,7 @@ const DEFAULT_PROVIDERS_CONFIG: ProvidersUserConfig = { providers: [], modelSele
 const providersConfigCache = new Map<string, ProvidersUserConfig>();
 
 function providerScopeKey(resourceId?: string): string {
-  return resourceId?.trim() || "__system__";
+  return resourceId?.trim() || SYSTEM_PROVIDER_SCOPE;
 }
 
 export async function getProvidersConfig(resourceId?: string): Promise<ProvidersUserConfig> {

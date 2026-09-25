@@ -393,6 +393,7 @@ function durableClientStream<C>(
   options: {
     librarySources: LibraryCitationSource[];
     onFinish: (metadata: WorkMessageMetadata | undefined) => Promise<void>;
+    onClientAbort?: () => void | Promise<void>;
   },
 ): ReadableStream<C> {
   const persistingStream = streamLibrarySources(
@@ -418,8 +419,9 @@ function durableClientStream<C>(
     }),
   );
 
-  // Keep consuming if the browser disconnects. An explicit session abort is
-  // the only operation that stops the underlying Agent run.
+  // Keep a monitor branch for durable finish metadata, but cancel the Agent
+  // session when the client abandons the response instead of letting the run
+  // consume model/tool resources after the UI has disconnected.
   const [clientStream, monitorStream] = persistingStream.tee();
   void (async () => {
     const reader = monitorStream.getReader();
@@ -431,7 +433,33 @@ function durableClientStream<C>(
       reader.releaseLock();
     }
   })().catch(() => undefined);
-  return clientStream;
+  let cancelled = false;
+  let clientReader: ReadableStreamDefaultReader<C> | undefined;
+  return new ReadableStream<C>({
+    start(controller) {
+      clientReader = clientStream.getReader();
+      const pump = async (): Promise<void> => {
+        const result = await clientReader?.read();
+        if (!result || cancelled) return;
+        if (result.done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(result.value);
+        await pump();
+      };
+      void pump().catch((error) => {
+        if (!cancelled) controller.error(error);
+      });
+    },
+    cancel(reason) {
+      cancelled = true;
+      return Promise.all([
+        clientReader?.cancel(reason).catch(() => undefined),
+        Promise.resolve(options.onClientAbort?.()).catch(() => undefined),
+      ]).then(() => undefined);
+    },
+  });
 }
 
 async function persistLatestUsage(
@@ -924,6 +952,9 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
     const prepareClientStream = <C>(stream: ReadableStream<C>) =>
       durableClientStream(stream, {
         librarySources: librarySources ?? [],
+        onClientAbort: () => {
+          void abortWorkbenchSession(controllerSession).catch(() => undefined);
+        },
         onFinish: async (metadata) => {
           await persistLatestUsage(
             body.memory?.thread,

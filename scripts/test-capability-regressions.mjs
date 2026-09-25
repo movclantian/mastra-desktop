@@ -7,6 +7,9 @@ import { toAISdkStream } from "@mastra/ai-sdk";
 import { MDocument } from "@mastra/rag";
 
 const { transformDeepSeekRequestBody } = await import("../src/mastra/models/create-model.ts");
+const { PLAN_TOOL_NAMES, READ_ONLY_TOOL_NAMES, toolCategoryOf } = await import(
+  "../src/mastra/agents/permissions.ts"
+);
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 test("Upload cleanup is single-flight and throttles both success and failure", async () => {
@@ -19,7 +22,7 @@ test("Upload cleanup is single-flight and throttles both success and failure", a
     .match(/export function cleanupExpiredLibraryUploadSessions[\s\S]*?^}/m)[0]
     .replace("export ", "");
   const cleanup = vm.runInNewContext(
-    `${stripTypeScriptTypes("let uploadCleanupPromise: Promise<void> | undefined; let nextUploadCleanupAt = 0;" + declaration)}; cleanupExpiredLibraryUploadSessions`,
+    `${stripTypeScriptTypes(`let uploadCleanupPromise: Promise<void> | undefined; let nextUploadCleanupAt = 0;${declaration}`)}; cleanupExpiredLibraryUploadSessions`,
     {
       Date: { now: () => clock },
       withClient: () => {
@@ -60,6 +63,20 @@ function load(path, name, globals = {}) {
 }
 
 const settings = { chunkStrategy: "recursive", chunkSize: 1200, chunkOverlap: 160 };
+test("Plan mode excludes notification dismissal tools with persistent side effects", () => {
+  assert.equal(toolCategoryOf("notification_inbox"), "edit");
+  assert.equal(toolCategoryOf("notification-inbox"), "edit");
+  assert.equal(PLAN_TOOL_NAMES.includes("notification_inbox"), false);
+  assert.equal(PLAN_TOOL_NAMES.includes("notification-inbox"), false);
+});
+test("Plan and Review never receive tools that mutate the task queue", () => {
+  for (const name of ["task_write", "task_update", "task_complete"]) {
+    assert.equal(toolCategoryOf(name), "edit");
+    assert.equal(READ_ONLY_TOOL_NAMES.includes(name), false);
+    assert.equal(PLAN_TOOL_NAMES.includes(name), false);
+  }
+  assert.equal(READ_ONLY_TOOL_NAMES.includes("task_check"), true);
+});
 test("Empty delegation summary reports incomplete evidence rather than no findings", () => {
   const describe = load("src/mastra/agents/index.ts", "describeIncompleteDelegation");
   const input = {
@@ -156,6 +173,116 @@ test("Reconnect route keeps the background-task lifecycle enabled", () => {
     /streamWorkbenchSession\(\s*c,\s*result\.controllerSession[\s\S]*?true,\s*\n?\s*\)/,
   );
 });
+test("Background task recovery never substitutes a context-free static executor", () => {
+  const source = read("src/mastra/routes/background-tasks.ts");
+  const startup = read("src/mastra/index.ts");
+  const reconciliationStart = startup.indexOf("if (backgroundTaskManager)");
+  const reconciliationEnd = startup.indexOf("registerShutdownHandlers()", reconciliationStart);
+  const reconciliation = startup.slice(reconciliationStart, reconciliationEnd);
+  assert.match(source, /manager\.taskContexts\.has\(task\.id\)/);
+  assert.match(source, /markInterruptedTaskFailed\(manager, task\)/);
+  assert.doesNotMatch(source, /manager\.getStaticExecutor\(/);
+  assert.match(source, /recoverStaleTasksOnStart: false|failInterruptedBackgroundTasksOnStartup/);
+  assert.match(source, /await ensureTaskExecutorAvailable\(manager, task\)/);
+  assert.match(
+    reconciliation,
+    /catch \(error\) \{\s*logger\.error\("Interrupted background task reconciliation failed; refusing to start", \{ error \}\);\s*throw error;/,
+  );
+});
+test("A task without its request-scoped executor is persisted as failed", async () => {
+  const markFailed = load(
+    "src/mastra/routes/background-tasks.ts",
+    "markInterruptedTaskFailed",
+    {
+      INTERRUPTED_TASK_MESSAGE:
+        "服务已重启，原任务的请求上下文不能安全恢复。为避免使用错误账户、模型或工作区执行，任务已停止；请重新提交。",
+    },
+  );
+  const ensure = load("src/mastra/routes/background-tasks.ts", "ensureTaskExecutorAvailable", {
+    workError: (code) => new Error(code),
+    markInterruptedTaskFailed: markFailed,
+  });
+  const events = [];
+  const updates = [];
+  const task = {
+    id: "task-restart-1",
+    agentId: "mastra-work-agent",
+    toolName: "explorer",
+    status: "suspended",
+    createdAt: new Date(0),
+  };
+  const manager = {
+    taskContexts: new Map(),
+    getStorage: async () => ({
+      updateTask: async (...args) => {
+        updates.push(args);
+        return true;
+      },
+    }),
+    deregisterTaskContext: (id) => events.push(["deregister", id]),
+    publishLifecycleEvent: async (...args) => events.push(args),
+  };
+  await assert.rejects(ensure(manager, task), /BACKGROUND_TASK_EXECUTOR_UNAVAILABLE/);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0][0], task.id);
+  assert.equal(updates[0][1].status, "failed");
+  assert.equal(updates[0][2].expectedStatus, "suspended");
+  assert.match(updates[0][1].error.message, /请求上下文不能安全恢复/);
+  assert.deepEqual(events[0], ["deregister", task.id]);
+  assert.equal(events[1][0], "task.failed");
+
+  const completedUpdates = [];
+  const completedEvents = [];
+  const completedTask = { ...task, id: "task-completed", status: "completed" };
+  const completedManager = {
+    taskContexts: new Map(),
+    getStorage: async () => ({ updateTask: async (...args) => completedUpdates.push(args) }),
+    deregisterTaskContext: (id) => completedEvents.push(["deregister", id]),
+    publishLifecycleEvent: async (...args) => completedEvents.push(args),
+  };
+  await ensure(completedManager, completedTask);
+  assert.deepEqual(completedUpdates, []);
+  assert.deepEqual(completedEvents, []);
+});
+test("Startup marks persisted pending, running, and suspended tasks failed", async () => {
+  const reconcile = load(
+    "src/mastra/routes/background-tasks.ts",
+    "failInterruptedBackgroundTasksOnStartup",
+    {
+      markInterruptedTaskFailed: load(
+        "src/mastra/routes/background-tasks.ts",
+        "markInterruptedTaskFailed",
+        {
+          INTERRUPTED_TASK_MESSAGE:
+            "服务已重启，原任务的请求上下文不能安全恢复。为避免使用错误账户、模型或工作区执行，任务已停止；请重新提交。",
+        },
+      ),
+    },
+  );
+  const records = new Map([
+    ["pending", { id: "pending", status: "pending", createdAt: new Date(0) }],
+    ["running", { id: "running", status: "running", createdAt: new Date(0) }],
+    ["suspended", { id: "suspended", status: "suspended", createdAt: new Date(0) }],
+  ]);
+  const events = [];
+  const manager = {
+    listTasks: async () => ({ tasks: [...records.values()], total: records.size }),
+    getTask: async (id) => records.get(id),
+    getStorage: async () => ({
+      updateTask: async (id, update, { expectedStatus }) => {
+        const current = records.get(id);
+        if (current.status !== expectedStatus) return false;
+        records.set(id, { ...current, ...update });
+        return true;
+      },
+    }),
+    deregisterTaskContext: () => undefined,
+    publishLifecycleEvent: async (...args) => events.push(args),
+  };
+  assert.equal(await reconcile(manager), 3);
+  assert.deepEqual([...records.values()].map((task) => task.status), ["failed", "failed", "failed"]);
+  assert.equal(events.length, 3);
+});
 test("Real AI SDK adapter separates the final request from cumulative run usage", async () => {
   const step = (inputTokens) => ({
     type: "step-finish",
@@ -192,6 +319,78 @@ test("Real AI SDK adapter separates the final request from cumulative run usage"
   assert.equal(finish.contextUsage.inputTokens, 1200);
   assert.equal(finish.usage.inputTokens, 2000);
   assert.equal(finish.usage.outputTokens, 20);
+});
+
+test("Windows terminal toolchain preserves PATH order and reads environment keys case-insensitively", () => {
+  const source = read("src/main/terminal.ts");
+  const start = source.indexOf("const VOLTA_HOME_DIRECTORY_NAMES");
+  const end = source.indexOf("\nfunction loadPty", start);
+  assert.ok(start >= 0 && end > start, "Volta environment helpers must remain a cohesive block");
+  const code = stripTypeScriptTypes(source.slice(start, end));
+  const joinWindows = (...parts) => parts.filter(Boolean).join("\\").replace(/\\+/g, "\\");
+  const basenameWindows = (value) => value.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  const dirnameWindows = (value) => value.split(/[\\/]/).slice(0, -1).join("\\");
+  const normalize = (existingPaths) =>
+    vm.runInNewContext(`${code}; normalizeWindowsToolchain`, {
+      Set,
+      delimiter: ";",
+      join: joinWindows,
+      basename: basenameWindows,
+      dirname: dirnameWindows,
+      existsSync: (value) => existingPaths.has(value.replace(/[\\/]+$/, "").toLowerCase()),
+    });
+
+  const explicitHome = "D:\\Toolchain\\Volta";
+  const explicitExists = new Set([
+    `${explicitHome}\\bin`.toLowerCase(),
+    `${explicitHome}\\bin\\volta.exe`.toLowerCase(),
+  ]);
+  const explicitEnvironment = {
+    path: "C:\\Windows;C:\\Tools",
+    volta_home: explicitHome,
+  };
+  normalize(explicitExists)(explicitEnvironment);
+  assert.equal(
+    explicitEnvironment.path,
+    `${explicitHome}\\bin;C:\\Windows;C:\\Tools`,
+  );
+
+  const userHome = "C:\\Users\\Chen\\AppData\\Local\\Volta";
+  const inferredEnvironment = {
+    path: "C:\\Windows",
+    localappdata: "C:\\Users\\Chen\\AppData\\Local",
+  };
+  normalize(
+    new Set([
+      `${userHome}\\bin`.toLowerCase(),
+      `${userHome}\\bin\\volta.exe`.toLowerCase(),
+    ]),
+  )(inferredEnvironment);
+  assert.equal(inferredEnvironment.path, `${userHome}\\bin;C:\\Windows`);
+  assert.equal(inferredEnvironment.VOLTA_HOME, userHome);
+
+  const customCli = "C:\\Custom\\VoltaCli";
+  const defaultHome = "C:\\Users\\Chen\\AppData\\Local\\Volta";
+  const customEnvironment = {
+    path: `${customCli};C:\\Windows`,
+    localappdata: "C:\\Users\\Chen\\AppData\\Local",
+  };
+  normalize(
+    new Set([
+      `${customCli}\\volta.exe`.toLowerCase(),
+      `${defaultHome}\\bin`.toLowerCase(),
+      `${defaultHome}\\bin\\volta.exe`.toLowerCase(),
+    ]),
+  )(customEnvironment);
+  assert.equal(customEnvironment.path, `${customCli};C:\\Windows`);
+  assert.equal(
+    Object.keys(customEnvironment).some((key) => key.toLowerCase() === "volta_home"),
+    false,
+  );
+
+  const msiEnvironment = { path: "C:\\Windows", "programfiles(x86)": "C:\\Program Files" };
+  normalize(new Set(["c:\\program files\\volta\\volta.exe"]))(msiEnvironment);
+  assert.equal(msiEnvironment.path, "C:\\Program Files\\Volta;C:\\Windows");
 });
 test("Usage snapshots reset on new runs and never substitute totals for missing steps", () => {
   const metadata = usageMetadata();

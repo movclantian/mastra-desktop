@@ -165,6 +165,20 @@ export async function saveLibraryAssetToDocuments(
   return payload.asset;
 }
 
+export async function referenceLibraryAssetInThread(
+  assetId: string,
+  resourceId: string,
+  threadId: string,
+): Promise<void> {
+  await readJson(
+    await apiFetch(
+      `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(assetId)}/reference`,
+      { method: "POST", body: { resourceId, threadId } },
+    ),
+    i18n.t("library:referenceInNewChatFailed"),
+  );
+}
+
 export async function renameLibraryTarget(
   target: RenameTarget,
   resourceId: string,

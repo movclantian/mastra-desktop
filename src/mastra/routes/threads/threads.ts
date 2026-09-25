@@ -1,23 +1,52 @@
 /** Desktop thread lifecycle hooks around the built-in Memory API. */
 import type { MastraDBMessage } from "@mastra/core/agent";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import { MASTRA_RESOURCE_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { getBrowserForResource } from "../../agents/browser";
-import { findUserById } from "../../auth";
+import { authUserFromContext, findUserById, listAuthUsers } from "../../auth";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness";
 import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models";
+import { attachAssetReference, getLibraryAssetId, listAssets } from "../../rag";
+import { queueAssetIndex } from "../../rag/document/indexing";
+import { getLibrarySettings } from "../../rag/settings";
+import {
+  commitThreadAssetTransfer,
+  cleanupUnregisteredThreadAssetTransferCopies,
+  decideThreadAssetTransferRequest,
+  failThreadAssetTransfer,
+  getThreadAssetTransfer,
+  listThreadAssetTransfersForResource,
+  markThreadAssetTransferMemoryMoved,
+  markThreadAssetTransferMessagesRewritten,
+  requestThreadAssetTransfer,
+  rollbackThreadAssetReferences,
+  ThreadAssetTransferRequestConflict,
+  ThreadAssetTransferCleanupPending,
+  type ThreadAssetTransferRecord,
+  type ThreadAssetTransferItem,
+  transferThreadAssetReferences,
+} from "../../rag/storage/assets";
 import { appStorage } from "../../storage";
 import { deleteThreadWorkspace } from "../../workspace";
 import { workbenchMessages } from "./messages";
+import {
+  clearTransferredWorkspaceBinding,
+  recoverPendingThreadTransfers,
+  rewriteTransferredThreadMessages,
+} from "./transfer-recovery";
 import {
   getOwnedThread,
   getWorkMemory,
   getWorkMemoryForThread,
   normalizeChatHistoryMessages,
 } from "./shared";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 export const searchThreadsRoute = registerApiRoute("/work/threads/search", {
   method: "GET",
@@ -388,17 +417,247 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
   },
 });
 
-/**
- * 会话所有权迁移(官方 updateThreadResourceId):把线程及其全部消息平滑转移到
- * 目标账户,保留 createdAt。迁移前终止该线程的活跃运行并清掉旧账户的 workbench
- * 会话快照 —— 新账户下次请求时从 thread.metadata 重建会话状态。
- */
+/** Complete the accepted request under the source account's memory scope. */
+async function executeThreadAssetTransfer(
+  c: ContextWithMastra,
+  transfer: ThreadAssetTransferRecord,
+): Promise<"committed" | "reconciliation_pending"> {
+  const { threadId, sourceResourceId, targetResourceId } = transfer;
+  const sourceContext = new RequestContext();
+  sourceContext.setRaw(MASTRA_RESOURCE_ID_KEY, sourceResourceId);
+  sourceContext.setRaw("userId", sourceResourceId);
+  let memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>;
+  let sourceThreadTitle = "New Chat";
+  let sourceThreadMetadata: Record<string, unknown> = {};
+  try {
+    memory = await getWorkMemoryForThread(sourceContext, threadId, sourceResourceId);
+    await memory.settled();
+    const thread = await getOwnedThread(memory, threadId, sourceResourceId);
+    if (!thread) throw workError("THREAD_NOT_FOUND");
+    sourceThreadTitle = thread.title?.trim() || "New Chat";
+    sourceThreadMetadata =
+      thread.metadata && typeof thread.metadata === "object"
+        ? { ...thread.metadata }
+        : {};
+
+    for (const agent of Object.values(c.get("mastra").listAgents())) {
+      await agent.abortThreadStream({ resourceId: sourceResourceId, threadId });
+    }
+    await c
+      .get("mastra")
+      .getAgentController("workbench")
+      ?.deleteSession({
+        resourceId: sourceResourceId,
+        scope: JSON.stringify(["workbench", threadId]),
+      });
+    await memory.settled();
+  } catch (error) {
+    await failThreadAssetTransfer(transfer.id, targetResourceId, errorMessage(error)).catch(
+      () => undefined,
+    );
+    throw error;
+  }
+
+  let transferredAssets: Awaited<ReturnType<typeof transferThreadAssetReferences>> = [];
+  try {
+    // Older chats can contain a global-library URL without a thread-scoped
+    // reference row. Materialize that ownership edge before transfer mapping.
+    await ensureThreadAssetReferences(threadId, sourceResourceId);
+    transferredAssets = await transferThreadAssetReferences(
+      sourceResourceId,
+      targetResourceId,
+      threadId,
+      { transferId: transfer.id },
+    );
+  } catch (error) {
+    await failThreadAssetTransfer(
+      transfer.id,
+      targetResourceId,
+      errorMessage(error),
+      error instanceof ThreadAssetTransferCleanupPending,
+    ).catch(() => undefined);
+    throw error;
+  }
+
+  let updated: Awaited<ReturnType<typeof memory.updateThreadResourceId>> | undefined;
+  try {
+    updated = await memory.updateThreadResourceId({ threadId, resourceId: targetResourceId });
+    await memory.settled();
+    await clearTransferredWorkspaceBinding(
+      memory,
+      { id: threadId, title: sourceThreadTitle, metadata: sourceThreadMetadata },
+      threadId,
+    );
+    await rewriteTransferredThreadMessages(threadId, targetResourceId, transferredAssets);
+    await markThreadAssetTransferMemoryMoved(transfer.id, targetResourceId);
+    await markThreadAssetTransferMessagesRewritten(transfer.id, targetResourceId);
+  } catch (error) {
+    let actualThread: Awaited<ReturnType<typeof memory.getThreadById>> | null;
+    try {
+      await memory.settled();
+      actualThread = await memory.getThreadById({ threadId });
+    } catch (inspectionError) {
+      await failThreadAssetTransfer(
+        transfer.id,
+        targetResourceId,
+        `${errorMessage(error)}; owner inspection failed: ${errorMessage(inspectionError)}`,
+        true,
+      ).catch(() => undefined);
+      throw error;
+    }
+
+    if (actualThread?.resourceId === targetResourceId) {
+      // Memory may commit the owner change and then reject while flushing its
+      // internal queue. Never roll library assets back until ownership itself
+      // is authoritatively back at the source.
+      await recoverPendingThreadTransfers({
+        transferId: transfer.id,
+        getMemory: async () => memory,
+      });
+      const reconciled = await getThreadAssetTransfer(transfer.id);
+      return reconciled?.status === "committed" ? "committed" : "reconciliation_pending";
+    }
+
+    if (actualThread && actualThread.resourceId !== sourceResourceId) {
+      await failThreadAssetTransfer(
+        transfer.id,
+        targetResourceId,
+        `Thread owner ${actualThread.resourceId} does not match either transfer participant`,
+        true,
+      ).catch(() => undefined);
+      throw error;
+    }
+
+    try {
+      if (actualThread) {
+        await memory.updateThread({
+          id: threadId,
+          title: sourceThreadTitle,
+          metadata: sourceThreadMetadata,
+        });
+        await memory.settled();
+      }
+      // Restore source URLs before deleting cloned/linked target references.
+      await rewriteTransferredThreadMessages(
+        threadId,
+        sourceResourceId,
+        transferredAssets.map((item) => ({
+          ...item,
+          sourceAssetId: item.targetAssetId,
+          targetAssetId: item.sourceAssetId,
+        })),
+      );
+      await rollbackThreadAssetReferences(
+        sourceResourceId,
+        targetResourceId,
+        threadId,
+        transferredAssets,
+      );
+      await cleanupUnregisteredThreadAssetTransferCopies(transfer);
+      await failThreadAssetTransfer(transfer.id, targetResourceId, errorMessage(error));
+    } catch (rollbackError) {
+      await failThreadAssetTransfer(
+        transfer.id,
+        targetResourceId,
+        `${errorMessage(error)}; rollback failed: ${errorMessage(rollbackError)}`,
+        true,
+      ).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  // If the process exits between stores, startup reconciliation uses the
+  // persisted source→target asset map and Memory's authoritative owner.
+  let transferStatus: "committed" | "reconciliation_pending" = "committed";
+  try {
+    await commitThreadAssetTransfer(transfer.id, targetResourceId);
+  } catch (error) {
+    try {
+      // This request has already moved this thread in Memory and rewritten its
+      // messages. Reconcile only this transfer; a global scan could roll back
+      // a different transfer that is currently executing in another request.
+      await recoverPendingThreadTransfers({
+        transferId: transfer.id,
+        getMemory: getWorkMemory,
+      });
+      if ((await getThreadAssetTransfer(transfer.id))?.status !== "committed") {
+        transferStatus = "reconciliation_pending";
+      }
+    } catch (reconciliationError) {
+      transferStatus = "reconciliation_pending";
+      console.warn("[thread-transfer] durable commit marker deferred", {
+        transferId: transfer.id,
+        error,
+        reconciliationError,
+      });
+    }
+  }
+  if (transferredAssets.length > 0) {
+    try {
+      const settings = await getLibrarySettings(targetResourceId);
+      for (const item of transferredAssets) {
+        if (item.asset.status === "unsupported") continue;
+        void queueAssetIndex(item.asset, item.asset.extractedText ?? "", settings).catch(
+          () => undefined,
+        );
+      }
+    } catch {
+      // The transferred binary remains readable; indexing can be retried later.
+    }
+  }
+  if (!updated) throw new Error("线程迁移未返回更新后的线程");
+  return transferStatus;
+}
+
+function collectLibraryAssetIds(value: unknown, ids = new Set<string>()): Set<string> {
+  if (typeof value === "string") {
+    if (value.includes("/work/library/assets/")) {
+      const assetId = getLibraryAssetId(value);
+      if (assetId) ids.add(assetId);
+    }
+    return ids;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectLibraryAssetIds(item, ids);
+    return ids;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectLibraryAssetIds(item, ids);
+  }
+  return ids;
+}
+
+async function ensureThreadAssetReferences(
+  threadId: string,
+  resourceId: string,
+): Promise<void> {
+  const store = await appStorage.getStore("memory");
+  if (!store) throw new Error("Memory storage is not configured");
+  const { messages } = await store.listMessages({ threadId, resourceId, perPage: false });
+  const referencedIds = collectLibraryAssetIds(messages);
+  if (referencedIds.size === 0) return;
+  const ownedAssetIds = new Set((await listAssets(resourceId)).map((asset) => asset.id));
+  for (const assetId of referencedIds) {
+    if (ownedAssetIds.has(assetId)) {
+      await attachAssetReference(resourceId, assetId, undefined, threadId);
+    }
+  }
+}
+
+/** Admin requests ownership transfer; assets and Memory remain unchanged until recipient accepts. */
 export const transferThreadRoute = registerApiRoute("/work/threads/:threadId/transfer", {
   method: "POST",
   handler: async (c) => {
-    const { resourceId, targetResourceId } = z
-      .object({ resourceId: z.string().min(1), targetResourceId: z.string().min(1) })
+    const currentUser = authUserFromContext(c.get("requestContext")?.get("user"));
+    if (!currentUser) throw workError("AUTH_REQUIRED");
+    if (currentUser.role !== "admin") throw workError("AUTH_FORBIDDEN");
+    const { targetResourceId } = z
+      .object({ targetResourceId: z.string().min(1) })
       .parse(await c.req.json());
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY);
+    if (typeof resourceId !== "string" || resourceId !== currentUser.id) {
+      throw workError("AUTH_REQUIRED");
+    }
     const threadId = c.req.param("threadId");
     if (targetResourceId === resourceId) {
       throw workError("VALIDATION_FAILED", { text: "目标账户不能是当前账户" });
@@ -409,23 +668,86 @@ export const transferThreadRoute = registerApiRoute("/work/threads/:threadId/tra
     await memory.settled();
     const thread = await getOwnedThread(memory, threadId, resourceId);
     if (!thread) throw workError("THREAD_NOT_FOUND");
-    for (const agent of Object.values(c.get("mastra").listAgents())) {
-      await agent.abortThreadStream({ resourceId, threadId });
-    }
-    await c
-      .get("mastra")
-      .getAgentController("workbench")
-      ?.deleteSession({
-        resourceId,
-        scope: JSON.stringify(["workbench", threadId]),
+    try {
+      const transfer = await requestThreadAssetTransfer({
+        threadId,
+        sourceResourceId: resourceId,
+        targetResourceId,
+        initiatedBy: currentUser.id,
+        threadTitle: thread.title?.trim() || "New Chat",
       });
-    await memory.settled();
-    const updated = await memory.updateThreadResourceId({
-      threadId,
-      resourceId: targetResourceId,
+      return c.json({ transfer: { id: transfer.id, status: transfer.status } }, 202);
+    } catch (error) {
+      if (error instanceof ThreadAssetTransferRequestConflict) {
+        throw workError("THREAD_TRANSFER_REQUEST_PENDING");
+      }
+      throw error;
+    }
+  },
+});
+
+/** Only the addressed recipient may accept or reject the transfer request. */
+export const decideThreadTransferRoute = registerApiRoute(
+  "/work/thread-transfers/:transferId/decision",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const currentUser = authUserFromContext(c.get("requestContext")?.get("user"));
+      if (!currentUser) throw workError("AUTH_REQUIRED");
+      const transferId = c.req.param("transferId");
+      const transfer = await getThreadAssetTransfer(transferId);
+      if (!transfer || transfer.targetResourceId !== currentUser.id) {
+        throw workError("THREAD_TRANSFER_NOT_FOUND");
+      }
+      const { decision } = z
+        .object({ decision: z.enum(["accept", "reject"]) })
+        .parse(await c.req.json());
+      const changed = await decideThreadAssetTransferRequest(
+        transferId,
+        currentUser.id,
+        decision,
+      );
+      if (!changed) throw workError("THREAD_TRANSFER_DECISION_CONFLICT");
+      if (decision === "reject") return c.json({ status: "rejected" });
+
+      const acceptedTransfer = await getThreadAssetTransfer(transferId);
+      if (!acceptedTransfer) throw workError("THREAD_TRANSFER_NOT_FOUND");
+      const status = await executeThreadAssetTransfer(c, acceptedTransfer);
+      return c.json({ status, threadId: transfer.threadId });
+    },
+  },
+);
+
+/** Incoming requests and audit history are scoped to the authenticated local account. */
+export const threadTransferHistoryRoute = registerApiRoute("/work/thread-transfers", {
+  method: "GET",
+  handler: async (c) => {
+    const currentUser = authUserFromContext(c.get("requestContext")?.get("user"));
+    if (!currentUser) throw workError("AUTH_REQUIRED");
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY);
+    if (resourceId !== currentUser.id) throw workError("AUTH_REQUIRED");
+    const transfers = await listThreadAssetTransfersForResource(currentUser.id);
+    const userIds = new Set(
+      transfers.flatMap((transfer) => [transfer.sourceResourceId, transfer.targetResourceId]),
+    );
+    const users = await Promise.all([...userIds].map((id) => findUserById(id)));
+    const names = new Map(users.flatMap((user) => (user ? [[user.id, user.name] as const] : [])));
+    return c.json({
+      transfers: transfers.map((transfer) => ({
+        id: transfer.id,
+        threadId: transfer.threadId,
+        threadTitle: transfer.threadTitle,
+        sourceResourceId: transfer.sourceResourceId,
+        sourceName: names.get(transfer.sourceResourceId) ?? transfer.sourceResourceId,
+        targetResourceId: transfer.targetResourceId,
+        targetName: names.get(transfer.targetResourceId) ?? transfer.targetResourceId,
+        status: transfer.status,
+        createdAt: transfer.createdAt,
+        updatedAt: transfer.updatedAt,
+        completedAt: transfer.completedAt,
+        events: transfer.events,
+      })),
     });
-    await memory.settled();
-    return c.json({ thread: { id: updated.id, resourceId: updated.resourceId } });
   },
 });
 

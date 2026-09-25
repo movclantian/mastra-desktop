@@ -5,6 +5,7 @@
  */
 export const qk = {
   threads: (userId: string) => ["threads", userId] as const,
+  threadTransfers: (userId: string) => ["thread-transfers", userId] as const,
   providerConfig: () => ["provider-config"] as const,
   catalog: () => ["catalog"] as const,
   agents: () => ["agents"] as const,

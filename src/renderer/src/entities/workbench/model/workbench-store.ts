@@ -74,6 +74,50 @@ function confirmTerminalSessionClose(session: TerminalSessionInfo | undefined): 
   );
 }
 
+interface ThreadWorkspaceState {
+  workspacePanelOpen: boolean;
+  panelTabs: LocalPanelTab[];
+  panelTabCounts: Record<"files" | "terminal" | "changes", number>;
+  activePanelTab: ActivePanelTab;
+  terminalPanelOpen: boolean;
+  terminalDrawerSessionIds: string[];
+  activeTerminalDrawerSessionId: string;
+  terminalSessions: Map<string, TerminalSessionInfo>;
+}
+
+const NO_THREAD_WORKSPACE_KEY = "__no_thread__";
+
+function threadWorkspaceKey(threadId: string | null): string {
+  return threadId ?? NO_THREAD_WORKSPACE_KEY;
+}
+
+function createThreadWorkspaceState(): ThreadWorkspaceState {
+  const terminalId = `term-${nanoid(6)}`;
+  return {
+    workspacePanelOpen: false,
+    panelTabs: [],
+    panelTabCounts: { files: 0, terminal: 0, changes: 0 },
+    activePanelTab: { kind: "welcome", id: "welcome" },
+    terminalPanelOpen: false,
+    terminalDrawerSessionIds: [terminalId],
+    activeTerminalDrawerSessionId: terminalId,
+    terminalSessions: new Map(),
+  };
+}
+
+function snapshotThreadWorkspace(state: WorkbenchStore): ThreadWorkspaceState {
+  return {
+    workspacePanelOpen: state.workspacePanelOpen,
+    panelTabs: [...state.panelTabs],
+    panelTabCounts: { ...state.panelTabCounts },
+    activePanelTab: state.activePanelTab,
+    terminalPanelOpen: state.terminalPanelOpen,
+    terminalDrawerSessionIds: [...state.terminalDrawerSessionIds],
+    activeTerminalDrawerSessionId: state.activeTerminalDrawerSessionId,
+    terminalSessions: new Map(state.terminalSessions),
+  };
+}
+
 export interface WorkbenchStore {
   // ---- user(登录后 hydrate)-----------------------------------------------
   userId: string | null;
@@ -82,6 +126,8 @@ export interface WorkbenchStore {
   /** URL ?thread= 的镜像:非 React 场景(openBrowserUrl 等)读取当前线程 */
   lastKnownThreadId: string | null;
   setLastKnownThreadId: (id: string | null) => void;
+  /** 工作台瞬态按 thread 隔离;切换时保存/恢复面板和终端 tab */
+  workspaceByThread: Record<string, ThreadWorkspaceState>;
   pendingJump: PendingJump | null;
   setPendingJump: (jump: PendingJump | null) => void;
   pendingPrompt: string | null;
@@ -168,7 +214,34 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
   userId: null,
 
   lastKnownThreadId: null,
-  setLastKnownThreadId: (id) => set({ lastKnownThreadId: id }),
+  workspaceByThread: {},
+  setLastKnownThreadId: (id) =>
+    set((state) => {
+      if (state.lastKnownThreadId === id) return state;
+      const currentKey = threadWorkspaceKey(state.lastKnownThreadId);
+      const nextKey = threadWorkspaceKey(id);
+      const nextWorkspace = state.workspaceByThread[nextKey] ?? createThreadWorkspaceState();
+      return {
+        lastKnownThreadId: id,
+        workspaceByThread: {
+          ...state.workspaceByThread,
+          [currentKey]: snapshotThreadWorkspace(state),
+          [nextKey]: nextWorkspace,
+        },
+        workspacePanelOpen: nextWorkspace.workspacePanelOpen,
+        panelTabs: [...nextWorkspace.panelTabs],
+        panelTabCounts: { ...nextWorkspace.panelTabCounts },
+        activePanelTab: nextWorkspace.activePanelTab,
+        terminalPanelOpen: nextWorkspace.terminalPanelOpen,
+        terminalDrawerSessionIds: [...nextWorkspace.terminalDrawerSessionIds],
+        activeTerminalDrawerSessionId: nextWorkspace.activeTerminalDrawerSessionId,
+        terminalSessions: new Map(nextWorkspace.terminalSessions),
+        terminalSessionsVersion: state.terminalSessionsVersion + 1,
+        // A command queued for one thread must never execute in another.
+        terminalRequest: null,
+        browserRequest: state.browserRequest?.threadId === id ? state.browserRequest : null,
+      };
+    }),
   pendingJump: null,
   setPendingJump: (jump) => set({ pendingJump: jump }),
   pendingPrompt: null,
@@ -542,11 +615,24 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
 export function hydrateWorkbenchStore(userId: string): void {
   const store = useWorkbenchStore.getState();
   if (store.userId === userId) return;
+  const freshWorkspace = createThreadWorkspaceState();
   useWorkbenchStore.setState({
     userId,
+    workspaceByThread: {},
     lastKnownThreadId:
       readThreadFromHash() ??
       readJson<string | null>(userStorageKey(ACTIVE_THREAD_KEY, userId), null),
+    workspacePanelOpen: freshWorkspace.workspacePanelOpen,
+    panelTabs: freshWorkspace.panelTabs,
+    panelTabCounts: freshWorkspace.panelTabCounts,
+    activePanelTab: freshWorkspace.activePanelTab,
+    terminalPanelOpen: freshWorkspace.terminalPanelOpen,
+    terminalDrawerSessionIds: freshWorkspace.terminalDrawerSessionIds,
+    activeTerminalDrawerSessionId: freshWorkspace.activeTerminalDrawerSessionId,
+    terminalSessions: freshWorkspace.terminalSessions,
+    terminalSessionsVersion: 0,
+    terminalRequest: null,
+    browserRequest: null,
     workspacePanelMode: (() => {
       const stored = localStorage.getItem(`mastra-workspace-panel-mode:${userId}`);
       return stored === "floating" || stored === "fullscreen" ? stored : "docked";
@@ -576,22 +662,26 @@ function readThreadFromHash(): string | null {
 
 /** 登出清理:回到初始 UI 态(会话草稿随下次登录重新 hydrate) */
 export function resetWorkbenchStore(): void {
+  const freshWorkspace = createThreadWorkspaceState();
   useWorkbenchStore.setState({
     userId: null,
     lastKnownThreadId: null,
+    workspaceByThread: {},
     pendingJump: null,
     pendingPrompt: null,
     pendingLibraryFiles: [],
     busyThreadIds: {},
     agentBusyFlag: false,
-    workspacePanelOpen: false,
+    workspacePanelOpen: freshWorkspace.workspacePanelOpen,
     workspacePanelMode: "docked",
-    panelTabs: [],
-    panelTabCounts: { files: 0, terminal: 0, changes: 0 },
-    activePanelTab: { kind: "welcome", id: "welcome" },
-    terminalPanelOpen: false,
+    panelTabs: freshWorkspace.panelTabs,
+    panelTabCounts: freshWorkspace.panelTabCounts,
+    activePanelTab: freshWorkspace.activePanelTab,
+    terminalPanelOpen: freshWorkspace.terminalPanelOpen,
+    terminalDrawerSessionIds: freshWorkspace.terminalDrawerSessionIds,
+    activeTerminalDrawerSessionId: freshWorkspace.activeTerminalDrawerSessionId,
     promptMinWidth: 0,
-    terminalSessions: new Map(),
+    terminalSessions: freshWorkspace.terminalSessions,
     terminalSessionsVersion: 0,
     terminalRequest: null,
     terminalRequestId: 0,

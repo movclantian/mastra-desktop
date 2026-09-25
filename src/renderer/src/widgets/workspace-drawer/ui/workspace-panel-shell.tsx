@@ -54,7 +54,6 @@ import { BrowserView } from "./browser-view";
 import { ChangesWorkspace } from "./changes-workspace";
 import { FilesWorkspace } from "./files-workspace";
 
-const NEW_BROWSER_TAB_URL = "https://www.bing.com";
 const TAB_DND_TYPE = "application/x-mastra-tab";
 const STORAGE_KEY_FLOATING_BOUNDS = "mastra-workspace:floating-bounds";
 const MIN_FLOATING_WIDTH = 440;
@@ -110,6 +109,7 @@ export function WorkspacePanelShell() {
   const addPanelTab = useWorkbenchStore((store) => store.addPanelTab);
   const closePanelTab = useWorkbenchStore((store) => store.closePanelTab);
   const panelTabs = useWorkbenchStore((store) => store.panelTabs);
+  const activeThreadId = useWorkbenchStore((store) => store.lastKnownThreadId);
   const reorderPanelTab = useWorkbenchStore((store) => store.reorderPanelTab);
   const moveTerminalTab = useWorkbenchStore((store) => store.moveTerminalTab);
   const workspacePanelMode = useWorkbenchStore((store) => store.workspacePanelMode);
@@ -295,7 +295,7 @@ export function WorkspacePanelShell() {
   /**
    * 关闭一个页面标签:
    * 1. 优先平滑回退到左侧前一个标签;
-   * 2. 若关掉的是唯一一个浏览器标签,回落到最后一个本地标签或起始页,并保持 Chromium 进程常驻预热。
+   * 2. 若关掉的是唯一一个浏览器标签,回落到最后一个本地标签或起始页,并结束当前浏览器会话。
    */
   const closeBrowserTab = (index: number) => {
     if (state.tabs.length <= 1) {
@@ -569,7 +569,7 @@ export function WorkspacePanelShell() {
                                   kind: "browser",
                                   index: state.tabs.length,
                                 });
-                                void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                                void action("new-tab");
                               }}
                             >
                               <Globe2Icon className="text-muted-foreground" />
@@ -648,7 +648,7 @@ export function WorkspacePanelShell() {
                       kind: "browser",
                       index: state.tabs.length,
                     });
-                    void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                    void action("new-tab");
                   }}
                 >
                   <Globe2Icon />
@@ -744,7 +744,10 @@ export function WorkspacePanelShell() {
             const selected =
               !isWelcomeActive && activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
             return (
-              <div className={cn("size-full", selected ? "block" : "hidden")} key={tab.id}>
+              <div
+                className={cn("size-full", selected ? "block" : "hidden")}
+                key={`${tab.id}:${activeThreadId ?? "none"}`}
+              >
                 {tab.kind === "files" ? (
                   <FilesWorkspace active={selected} tabId={tab.id} />
                 ) : tab.kind === "changes" ? (
@@ -807,7 +810,7 @@ export function WorkspacePanelShell() {
                               kind: "browser",
                               index: state.tabs.length,
                             });
-                            void action("new-tab", undefined, NEW_BROWSER_TAB_URL);
+                            void action("new-tab");
                           }}
                         />
                       }

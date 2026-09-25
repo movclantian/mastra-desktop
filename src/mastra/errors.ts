@@ -57,6 +57,12 @@ export const WORK_ERRORS = {
     status: 401,
     text: "需要登录",
   },
+  AUTH_FORBIDDEN: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 403,
+    text: "当前账户没有执行此操作的权限",
+  },
   AUTH_INVALID_CREDENTIALS: {
     domain: ErrorDomain.MASTRA_SERVER,
     category: ErrorCategory.USER,
@@ -82,6 +88,30 @@ export const WORK_ERRORS = {
     category: ErrorCategory.USER,
     status: 404,
     text: "Thread not found",
+  },
+  THREAD_TRANSFER_ASSET_CONFLICT: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "线程包含共享资料库附件，无法安全转交；请先将附件复制或解除共享引用",
+  },
+  THREAD_TRANSFER_NOT_FOUND: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "会话转交申请不存在",
+  },
+  THREAD_TRANSFER_DECISION_CONFLICT: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "该转交申请已处理或状态已变化，请刷新后查看",
+  },
+  THREAD_TRANSFER_REQUEST_PENDING: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "该会话已有待处理的转交申请",
   },
   MESSAGE_NOT_FOUND: {
     domain: ErrorDomain.MASTRA_MEMORY,
@@ -132,6 +162,12 @@ export const WORK_ERRORS = {
     category: ErrorCategory.USER,
     status: 404,
     text: "Background task not found",
+  },
+  BACKGROUND_TASK_EXECUTOR_UNAVAILABLE: {
+    domain: ErrorDomain.AGENT,
+    category: ErrorCategory.SYSTEM,
+    status: 409,
+    text: "后台任务执行器不可用，请重新提交任务",
   },
   WORKFLOW_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,

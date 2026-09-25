@@ -249,7 +249,10 @@ export function TerminalPanel() {
       </PanelHeader>
       <div className="relative min-h-0 flex-1">
         {sessionIds.map((id) => (
-          <div key={id} className={`size-full ${id === activeSessionId ? "block" : "hidden"}`}>
+          <div
+            key={`${id}:${activeThreadId ?? "none"}`}
+            className={`size-full ${id === activeSessionId ? "block" : "hidden"}`}
+          >
             <TerminalSession
               sessionId={id}
               active={id === activeSessionId && terminalPanelOpen}

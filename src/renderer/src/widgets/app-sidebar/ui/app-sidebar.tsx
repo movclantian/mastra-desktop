@@ -2,6 +2,7 @@ import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router
 import {
   ArchiveIcon,
   ArrowLeftIcon,
+  ArrowLeftRightIcon,
   BotIcon,
   CalendarClockIcon,
   ChevronsUpDown,
@@ -97,6 +98,7 @@ import {
   ThreadWorkspaceTree,
   WorkspaceGroup,
 } from "./thread-list";
+import { ThreadTransferInboxDialog } from "./thread-transfer-inbox";
 
 // 结构参考:
 // - 第一组(无 label)直接操作:新建任务 / 技能套件 / 资料库 / 主题风格(可折叠二级子菜单)
@@ -132,6 +134,7 @@ function NavUser() {
   const { isMobile } = useSidebar();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [transferCenterOpen, setTransferCenterOpen] = React.useState(false);
   const openSettings = (section?: string) => {
     void navigate({
       to: "/settings",
@@ -254,10 +257,19 @@ function NavUser() {
                 <Settings2Icon />
                 {t("sidebar:settings")}
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setTransferCenterOpen(true)}>
+                <ArrowLeftRightIcon />
+                {t("sidebar:transferCenter")}
+              </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
+      <ThreadTransferInboxDialog
+        onOpenChange={setTransferCenterOpen}
+        open={transferCenterOpen}
+        userId={user.id}
+      />
     </SidebarMenu>
   );
 }
@@ -277,6 +289,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   useActiveThreadResolver(threads);
   const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
 
+  const activeThreadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+
   const createThread = (title?: string) =>
     createThreadMutation.isPending
       ? Promise.resolve(null)
@@ -284,7 +300,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const renameThread = (threadId: string, title: string) =>
     renameThreadMutation.mutateAsync({ threadId, title }).catch(() => undefined);
   const setActiveView = (view: MainView) => {
-    void navigate({ to: `/${view}` });
+    void navigate({
+      to: `/${view}`,
+      ...(view === "library" ? { search: { thread: activeThreadId ?? undefined } } : {}),
+    });
   };
   const openSettings = (section?: string) => {
     void navigate({
@@ -308,10 +327,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       setRenameValue(renaming.title);
     }
   }, [renaming]);
-
-  const activeThreadId = useRouterState({
-    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
-  });
 
   // metadata 经后端归一化为对象,这里仍用可选链兜底:null 会炸掉整个 UI
   const activeThreads = threads.filter((t) => !t.metadata?.archivedAt);
