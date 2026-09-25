@@ -133,6 +133,8 @@ async function enqueueTransferredAssetIndexing(
 
 export async function recoverPendingThreadTransfers(options: {
   transferId?: string;
+  /** Startup must not accept requests while any durable transfer remains unresolved. */
+  throwOnError?: boolean;
   getMemory: (context: RequestContext) => Promise<Memory>;
   enqueueAssetIndex?: (resourceId: string, items: ThreadAssetTransferItem[]) => Promise<void>;
 }): Promise<void> {
@@ -250,12 +252,7 @@ export async function recoverPendingThreadTransfers(options: {
         );
         continue;
       }
-      await failThreadAssetTransfer(
-        transfer.id,
-        transfer.sourceResourceId,
-        `Thread owner ${owner} does not match transfer target`,
-        true,
-      );
+      throw new Error(`Thread owner ${owner} does not match transfer participants`);
     } catch (error) {
       await failThreadAssetTransfer(
         transfer.id,
@@ -263,10 +260,18 @@ export async function recoverPendingThreadTransfers(options: {
         errorMessage(error),
         true,
       ).catch(() => undefined);
-      console.warn("[thread-transfer] startup reconciliation deferred", {
-        transferId: transfer.id,
-        error,
-      });
+      console.warn(
+        options.throwOnError
+          ? "[thread-transfer] startup reconciliation failed"
+          : "[thread-transfer] reconciliation deferred",
+        {
+          transferId: transfer.id,
+          error,
+        },
+      );
+      if (options.throwOnError) {
+        throw new Error(`Thread transfer ${transfer.id} could not be reconciled`, { cause: error });
+      }
     }
   }
 }

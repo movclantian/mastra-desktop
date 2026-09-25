@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { rmSync, symlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,6 +49,38 @@ test("Plan writer writes under plans and refuses a dangling symlink", async (t) 
         source.indexOf("await rename(temporaryTarget, target)"),
       "plans root must be revalidated immediately before the atomic rename",
     );
+    const workspaceRevalidation = source.indexOf(
+      "const currentWorkspaceRoot = await realpath(workspacePathFromContext(requestContext))",
+    );
+    assert.ok(
+      workspaceRevalidation < source.indexOf("await rename(temporaryTarget, target)"),
+      "workspace identity must be revalidated immediately before the atomic rename",
+    );
+
+    const workspaceAlias = join(temporaryRoot, "workspace-alias");
+    const outsideWorkspace = join(temporaryRoot, "outside-workspace");
+    await mkdir(outsideWorkspace, { recursive: true });
+    await symlink(workspace, workspaceAlias, "junction");
+    let workspaceReads = 0;
+    await assert.rejects(
+      writePlanDraftTool.execute(
+        { path: "junction-race.md", content: "# Must not escape\n" },
+        {
+          requestContext: {
+            get: () => {
+              workspaceReads += 1;
+              if (workspaceReads === 2) {
+                rmSync(workspaceAlias, { force: true, recursive: false });
+                symlinkSync(outsideWorkspace, workspaceAlias, "junction");
+              }
+              return workspaceAlias;
+            },
+          },
+        },
+      ),
+      /工作区目录在写入期间发生变化/,
+    );
+    await assert.rejects(readFile(join(outsideWorkspace, "plans", "junction-race.md")));
 
     try {
       await symlink(missingTarget, danglingLink, "file");

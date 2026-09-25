@@ -75,7 +75,9 @@ test("Plan and Review never receive tools that mutate the task queue", () => {
     assert.equal(READ_ONLY_TOOL_NAMES.includes(name), false);
     assert.equal(PLAN_TOOL_NAMES.includes(name), false);
   }
+  assert.equal(toolCategoryOf("task_check"), "read");
   assert.equal(READ_ONLY_TOOL_NAMES.includes("task_check"), true);
+  assert.equal(PLAN_TOOL_NAMES.includes("task_check"), true);
 });
 test("Empty delegation summary reports incomplete evidence rather than no findings", () => {
   const describe = load("src/mastra/agents/index.ts", "describeIncompleteDelegation");
@@ -231,18 +233,40 @@ test("A task without its request-scoped executor is persisted as failed", async 
   assert.deepEqual(events[0], ["deregister", task.id]);
   assert.equal(events[1][0], "task.failed");
 
-  const completedUpdates = [];
-  const completedEvents = [];
-  const completedTask = { ...task, id: "task-completed", status: "completed" };
-  const completedManager = {
+  for (const status of ["completed", "cancelled", "timed_out"]) {
+    const terminalUpdates = [];
+    const terminalEvents = [];
+    const terminalTask = { ...task, id: `task-${status}`, status };
+    const terminalManager = {
+      taskContexts: new Map(),
+      getStorage: async () => ({ updateTask: async (...args) => terminalUpdates.push(args) }),
+      deregisterTaskContext: (id) => terminalEvents.push(["deregister", id]),
+      publishLifecycleEvent: async (...args) => terminalEvents.push(args),
+    };
+    await ensure(terminalManager, terminalTask);
+    assert.deepEqual(terminalUpdates, []);
+    assert.deepEqual(terminalEvents, []);
+  }
+
+  let racedStatus = "pending";
+  const raceEvents = [];
+  const racedTask = { ...task, id: "task-completed-during-resume", status: "pending" };
+  const racedManager = {
     taskContexts: new Map(),
-    getStorage: async () => ({ updateTask: async (...args) => completedUpdates.push(args) }),
-    deregisterTaskContext: (id) => completedEvents.push(["deregister", id]),
-    publishLifecycleEvent: async (...args) => completedEvents.push(args),
+    getStorage: async () => ({
+      updateTask: async (_id, update, { expectedStatus }) => {
+        racedStatus = "completed";
+        if (expectedStatus !== racedStatus) return false;
+        racedStatus = update.status;
+        return true;
+      },
+    }),
+    deregisterTaskContext: (id) => raceEvents.push(["deregister", id]),
+    publishLifecycleEvent: async (...args) => raceEvents.push(args),
   };
-  await ensure(completedManager, completedTask);
-  assert.deepEqual(completedUpdates, []);
-  assert.deepEqual(completedEvents, []);
+  await assert.rejects(ensure(racedManager, racedTask), /BACKGROUND_TASK_EXECUTOR_UNAVAILABLE/);
+  assert.equal(racedStatus, "completed");
+  assert.deepEqual(raceEvents, []);
 });
 test("Startup marks persisted pending, running, and suspended tasks failed", async () => {
   const reconcile = load(
