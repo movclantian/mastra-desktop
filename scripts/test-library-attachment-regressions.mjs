@@ -176,6 +176,8 @@ test("thread transfer has a durable intent and startup reconciliation path", () 
   );
   assert.match(transferRecovery, /missingMappings\.every\(\(\[, mapping\]\) => mapping\.mode === "cloned"\)/);
   assert.match(transferRecovery, /enqueueTransferredAssetIndexing/);
+  assert.match(transferRecovery, /item\.mode === "linked" \|\| item\.asset\.status === "unsupported"/);
+  assert.match(transferRecovery, /const indexableItems = items\.filter/);
   assert.match(transferRecovery, /items\.map\(\(item\) => \[item\.sourceAssetId, item\.targetAssetId\]\)/);
 });
 

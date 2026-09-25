@@ -126,7 +126,7 @@ async function enqueueTransferredAssetIndexing(
 ): Promise<void> {
   const settings = await getLibrarySettings(resourceId);
   for (const item of items) {
-    if (item.mode !== "cloned" || item.asset.status === "unsupported") continue;
+    if (item.mode === "linked" || item.asset.status === "unsupported") continue;
     void queueAssetIndex(item.asset, item.asset.extractedText ?? "", settings).catch(() => undefined);
   }
 }
@@ -212,9 +212,13 @@ export async function recoverPendingThreadTransfers(options: {
           await markThreadAssetTransferMessagesRewritten(transfer.id, transfer.targetResourceId);
         }
         await commitThreadAssetTransfer(transfer.id, transfer.targetResourceId);
+        const indexableItems = items.filter(
+          (item) => item.mode !== "linked" && item.asset.status !== "unsupported",
+        );
+        if (indexableItems.length === 0) continue;
         await (options.enqueueAssetIndex ?? enqueueTransferredAssetIndexing)(
           transfer.targetResourceId,
-          items,
+          indexableItems,
         );
         continue;
       }

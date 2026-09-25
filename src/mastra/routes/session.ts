@@ -708,10 +708,11 @@ export const sessionMessageRoute = registerApiRoute(
       const result = await sessionFor(c);
       const body = (await c.req.json()) as SessionMessageBody;
       if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
+      const content = body.content.trim();
       const execution = await sessionExecutionOptions(c, result, body);
       await withWritableThreadSession(result, () =>
         result.controllerSession.sendMessage({
-          content: body.content.trim(),
+          content,
           requestContext: execution.requestContext,
         }),
       );
@@ -726,10 +727,11 @@ export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads
     const result = await sessionFor(c);
     const body = (await c.req.json()) as SessionMessageBody;
     if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
+    const content = body.content.trim();
     const execution = await sessionExecutionOptions(c, result, body);
     await withWritableThreadSession(result, () =>
       result.controllerSession.steer({
-        content: body.content.trim(),
+        content,
         requestContext: execution.requestContext,
       }),
     );
@@ -746,10 +748,11 @@ export const sessionFollowUpRoute = registerApiRoute(
       const body = await c.req.json<SessionMessageBody>();
       if (typeof body.content !== "string" || !body.content.trim())
         throw workError("SESSION_INPUT_REQUIRED");
+      const content = body.content.trim();
       const execution = await sessionExecutionOptions(c, result, body);
       await withWritableThreadSession(result, () =>
         result.controllerSession.followUp({
-          content: body.content.trim(),
+          content,
           requestContext: execution.requestContext,
         }),
       );

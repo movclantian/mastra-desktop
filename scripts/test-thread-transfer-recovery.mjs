@@ -43,6 +43,8 @@ test("thread transfer recovery reconciles real Memory ownership after process re
     runPhase("recover-partial-clone");
     runPhase("prepare-target-owner");
     runPhase("recover-target-owner");
+    runPhase("prepare-target-owner-moved");
+    runPhase("recover-target-owner-moved");
   } finally {
     await rm(storageDirectory, { recursive: true, force: true });
   }

@@ -39,7 +39,7 @@ async function closeStorage(memory) {
   await (await storage.getLibsqlClient()).close();
 }
 
-async function prepareTransfer(owner) {
+async function prepareTransfer(owner, assetMode = "cloned") {
   const fixture = threadFixture(owner);
   const memory = await getMemory(sourceResourceId);
   await memory.createThread({
@@ -76,7 +76,9 @@ async function prepareTransfer(owner) {
       ],
     }),
   );
-  await assets.attachAssetReference(sourceResourceId, fixture.assetId);
+  if (assetMode === "cloned") {
+    await assets.attachAssetReference(sourceResourceId, fixture.assetId);
+  }
   await assets.attachAssetReference(
     sourceResourceId,
     fixture.assetId,
@@ -102,10 +104,10 @@ async function prepareTransfer(owner) {
     { transferId: transfer.id },
   );
   assert.equal(copied.length, 1);
-  assert.equal(copied[0].mode, "cloned");
+  assert.equal(copied[0].mode, assetMode);
   assert.equal((await assets.getThreadAssetTransfer(transfer.id))?.status, "assets_moved");
 
-  if (owner === "target-owner") {
+  if (owner.startsWith("target-owner")) {
     await memory.updateThreadResourceId({
       threadId: fixture.threadId,
       resourceId: targetResourceId,
@@ -133,18 +135,20 @@ async function recoverTransfer(owner) {
   assert.equal(pending.status, "assets_moved");
 
   const { recoverPendingThreadTransfers } = recoveryModule;
-  let reindexed = 0;
+  const reindexedModes = [];
   await recoverPendingThreadTransfers({
     transferId: pending.id,
     getMemory: (context) => Promise.resolve(memoryModule.getMemory({ requestContext: context })),
     enqueueAssetIndex: async (_resourceId, items) => {
-      reindexed += items.filter((item) => item.mode === "cloned").length;
+      reindexedModes.push(...items.map((item) => item.mode));
     },
   });
 
   const record = await assets.getThreadAssetTransfer(pending.id);
-  assert.equal(record?.status, owner === "target-owner" ? "committed" : "failed");
-  assert.equal(reindexed, owner === "target-owner" ? 1 : 0);
+  const targetOwnsThread = owner.startsWith("target-owner");
+  const expectedMode = owner.endsWith("-moved") ? "moved" : "cloned";
+  assert.equal(record?.status, targetOwnsThread ? "committed" : "failed");
+  assert.deepEqual(reindexedModes, targetOwnsThread ? [expectedMode] : []);
 
   const memory = await getMemory(sourceResourceId);
   const thread = await memory.getThreadById({ threadId: fixture.threadId });
@@ -164,7 +168,7 @@ async function recoverTransfer(owner) {
   const targetAssetId = record.assetMappings[fixture.assetId]?.targetAssetId;
   assert.ok(targetAssetId, "transfer journal must preserve the asset mapping across processes");
   const targetAsset = await assets.getLibraryAssetTransferDetails(targetResourceId, targetAssetId);
-  assert.equal(Boolean(targetAsset), owner === "target-owner");
+  assert.equal(Boolean(targetAsset), targetOwnsThread);
   if (targetAsset) {
     assert.equal(
       await readFile(join(storage.getStorageDirectory(), targetAsset.storagePath), "utf8"),
@@ -243,6 +247,8 @@ async function recoverPartialClone() {
 
 if (phase === "prepare-source-owner") await prepareTransfer("source-owner");
 else if (phase === "recover-source-owner") await recoverTransfer("source-owner");
+else if (phase === "prepare-target-owner-moved") await prepareTransfer("target-owner-moved", "moved");
+else if (phase === "recover-target-owner-moved") await recoverTransfer("target-owner-moved");
 else if (phase === "prepare-partial-clone") await preparePartialClone();
 else if (phase === "recover-partial-clone") await recoverPartialClone();
 else if (phase === "prepare-target-owner") await prepareTransfer("target-owner");
