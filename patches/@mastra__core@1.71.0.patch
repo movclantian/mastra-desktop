@@ -1,0 +1,325 @@
+diff --git a/dist/workspace/sandbox/types.d.ts b/dist/workspace/sandbox/types.d.ts
+index 587415c11dda0cb73e0b5324f4b397ebd402e9a7..f206010ec17701217560ba45b296b8e9e6544ead 100644
+--- a/dist/workspace/sandbox/types.d.ts
++++ b/dist/workspace/sandbox/types.d.ts
+@@ -60,6 +60,8 @@ export interface CommandResult extends ExecutionResult {
+  * Base type for both executeCommand and spawn.
+  */
+ export interface CommandOptions {
++    /** Raw process stdout/stderr encoding; defaults to UTF-8. LocalSandbox supports GBK and UTF-16LE. */
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     /** Timeout in milliseconds. Kills the process if exceeded. */
+     timeout?: number;
+     /** Environment variables */
+diff --git a/dist/workspace/tools/execute-command.d.ts b/dist/workspace/tools/execute-command.d.ts
+index 0ace37c4bbc46cf68f1f76d0781595464d0ee1eb..28807728245c6cbaa36f6e5cbd5c5218ed0289b8 100644
+--- a/dist/workspace/tools/execute-command.d.ts
++++ b/dist/workspace/tools/execute-command.d.ts
+@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
+  * Extended with `background` in tools.ts when sandbox.processes exists.
+  */
+ export declare const executeCommandInputSchema: z.ZodObject<{
++    outputEncoding: z.ZodOptional<z.ZodEnum<{ "utf-8": "utf-8"; gbk: "gbk"; "utf-16le": "utf-16le" }>>;
+     command: z.ZodString;
+     timeout: z.ZodOptional<z.ZodNullable<z.ZodPreprocess<z.ZodNumber, unknown>>>;
+     cwd: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+@@ -11,6 +12,7 @@ export declare const executeCommandInputSchema: z.ZodObject<{
+ }, z.core.$strip>;
+ /** Schema with background param included. */
+ export declare const executeCommandWithBackgroundSchema: z.ZodObject<{
++    outputEncoding: z.ZodOptional<z.ZodEnum<{ "utf-8": "utf-8"; gbk: "gbk"; "utf-16le": "utf-16le" }>>;
+     command: z.ZodString;
+     timeout: z.ZodOptional<z.ZodNullable<z.ZodPreprocess<z.ZodNumber, unknown>>>;
+     cwd: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+@@ -19,6 +21,7 @@ export declare const executeCommandWithBackgroundSchema: z.ZodObject<{
+ }, z.core.$strip>;
+ /** Foreground-only tool (no background param in schema). */
+ export declare const executeCommandTool: import("../../tools").Tool<{
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     command: string;
+     timeout?: number | null | undefined;
+     cwd?: string | null | undefined;
+@@ -26,6 +29,7 @@ export declare const executeCommandTool: import("../../tools").Tool<{
+ }, string, unknown, unknown, import("../../tools").ToolExecutionContext<unknown, unknown, unknown>, "mastra_workspace_execute_command", unknown>;
+ /** Tool with background param in schema (used when sandbox.processes exists). */
+ export declare const executeCommandWithBackgroundTool: import("../../tools").Tool<{
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     command: string;
+     timeout?: number | null | undefined;
+     cwd?: string | null | undefined;
+diff --git a/dist/workspace/tools/grep.d.ts b/dist/workspace/tools/grep.d.ts
+index 8ea739790770ebee38266bc71b662a2fa2ee17ff..da46f63921423a64f3e6013b50186b0abbf8a8fd 100644
+--- a/dist/workspace/tools/grep.d.ts
++++ b/dist/workspace/tools/grep.d.ts
+@@ -33,6 +33,7 @@ export declare function createGrepTool(options?: GrepToolOptions): import("../..
+  * rather than thrown). Use {@link createGrepTool} to opt into strict mode.
+  */
+ export declare const grepTool: import("../../tools").Tool<{
++    maxFileBytes?: number;
+     pattern: string;
+     path: string;
+     contextLines: number;
+diff --git a/dist/workspace-BZ1GpMVZ.cjs b/dist/workspace-BZ1GpMVZ.cjs
+index 777a37b5c7b298188c65d75e433bb50f87787635..8cb1dac2a4b0459a7c9728d6d1a855372c8a82bf 100644
+--- a/dist/workspace-BZ1GpMVZ.cjs
++++ b/dist/workspace-BZ1GpMVZ.cjs
+@@ -3048,8 +3048,12 @@ var LocalProcessHandle = class extends ProcessHandle {
+ 			timedOut = true;
+ 			killProcessTree(this._numericPid, subprocess, "SIGTERM");
+ 		}, options.timeout) : void 0;
+-		const stdoutDecoder = new string_decoder.StringDecoder();
+-		const stderrDecoder = new string_decoder.StringDecoder();
++		const createDecoder = () => {
++			const decoder = new TextDecoder(options?.outputEncoding ?? "utf-8", { ignoreBOM: true });
++			return { write: (data) => decoder.decode(data, { stream: true }), end: () => decoder.decode() };
++		};
++		const stdoutDecoder = createDecoder();
++		const stderrDecoder = createDecoder();
+ 		let stdoutDecoderEnded = false;
+ 		let stderrDecoderEnded = false;
+ 		const flushStdoutDecoder = () => {
+@@ -8654,6 +8658,7 @@ async function truncateOutput(output, tail, tokenLimit, tokenFrom) {
+ * Extended with `background` in tools.ts when sandbox.processes exists.
+ */
+ const executeCommandInputSchema = zod_v4.z.object({
++	outputEncoding: zod_v4.z.enum(["utf-8", "gbk", "utf-16le"]).optional().describe("Encoding emitted by this command, applied to raw stdout/stderr for foreground and background processes. Default utf-8 (Node/Python configured for UTF-8). On Chinese Windows, cmd and Windows PowerShell commonly emit gbk (code page 936): select gbk after checking chcp. Do not mix different encodings in one command."),
+ 	command: zod_v4.z.string().describe("The shell command to execute (e.g., \"npm install\", \"ls -la src/\", \"cat file.txt | grep error\")"),
+ 	timeout: zod_v4.z.preprocess(coerceNumericString, zod_v4.z.number()).nullish().describe("Maximum execution time in seconds. Example: 60 for 1 minute."),
+ 	cwd: zod_v4.z.string().nullish().describe("Working directory for the command"),
+@@ -8754,6 +8759,7 @@ async function executeCommand(input, context) {
+ 		const bgAbortSignal = bgConfig?.abortSignal === void 0 ? context?.abortSignal : bgConfig.abortSignal || void 0;
+ 		let handle;
+ 		handle = await sandbox.processes.spawn(command, {
++			outputEncoding: input.outputEncoding,
+ 			cwd: cwd ?? void 0,
+ 			timeout: timeout ?? void 0,
+ 			abortSignal: bgAbortSignal,
+@@ -8807,6 +8813,7 @@ async function executeCommand(input, context) {
+ 	const stderr = new RetainedOutputBuffer(DEFAULT_MAX_RETAINED_PROCESS_OUTPUT_BYTES);
+ 	try {
+ 		const result = await sandbox.executeCommand(command, [], {
++			outputEncoding: input.outputEncoding,
+ 			timeout: timeout ?? void 0,
+ 			cwd: cwd ?? void 0,
+ 			abortSignal: context?.abortSignal,
+@@ -9097,17 +9104,18 @@ Usage:
+ 		outputSchema: zod_v4.z.string(),
+ 		inputSchema: zod_v4.z.object({
+ 			pattern: zod_v4.z.string().describe("Regex pattern to search for"),
++			maxFileBytes: zod_v4.z.number().int().positive().optional().describe("Host-side per-file read budget in bytes, default 8388608 (8 MiB). Larger files are reported as skipped, not no-match. Raise explicitly for a known large text file; do not load large archives/media unnecessarily. Native streaming providers may not need this budget."),
+ 			path: zod_v4.z.string().optional().default(".").describe("File, directory, or glob pattern to search within (default: \".\"). A plain path searches that file or directory. A glob pattern (e.g., \"**/*.ts\", \"src/**/*.test.ts\") filters which files to search."),
+ 			contextLines: zod_v4.z.number().optional().default(0).describe("Number of lines of context to include before and after each match (default: 0)"),
+ 			maxCount: zod_v4.z.number().optional().describe("Maximum matches per file. Moves on to the next file after this many matches. Similar to grep -m flag."),
+ 			caseSensitive: zod_v4.z.boolean().optional().default(true).describe("Whether the search is case-sensitive (default: true)"),
+ 			includeHidden: zod_v4.z.boolean().optional().default(false).describe("Include hidden files and directories (names starting with \".\") in the search (default: false)")
+ 		}),
+-		execute: async ({ pattern, path: inputPath = ".", contextLines = 0, maxCount, caseSensitive = true, includeHidden = false }, context) => {
++		execute: async ({ pattern, path: inputPath = ".", contextLines = 0, maxCount, caseSensitive = true, includeHidden = false, maxFileBytes = 8388608 }, context) => {
+ 			const { workspace, filesystem } = requireFilesystem(context);
+ 			await emitWorkspaceMetadata(context, WORKSPACE_TOOLS.FILESYSTEM.GREP);
+ 			const isText = (filename) => filesystem.isTextFile ? filesystem.isTextFile(filename) : require_workspace_skills.isTextFile(filename);
+-			let skippedExtensionCount = 0;
++			let skippedFiles = 0;
+ 			let skippedReadErrorCount = 0;
+ 			let targetNotFound = false;
+ 			const span = startWorkspaceSpan(context, workspace, {
+@@ -9152,11 +9160,7 @@ Usage:
+ 				if (normalizedSearch === ".git" || normalizedSearch.endsWith("/.git")) filePaths = [];
+ 				else try {
+ 					const stat = await filesystem.stat(searchPath);
+-					if (stat.type === "file") if (isText(searchPath)) filePaths = [searchPath];
+-					else {
+-						filePaths = [];
+-						skippedExtensionCount++;
+-					}
++					if (stat.type === "file") filePaths = [searchPath];
+ 					else if (typeof filesystem.grep === "function") try {
+ 						nativeResults = await filesystem.grep({
+ 							pattern,
+@@ -9217,7 +9221,6 @@ Usage:
+ 								}
+ 								if (entry.type === "file") {
+ 									if (globMatcher && !globMatcher(fullPath)) continue;
+-									if (!isText(entry.name)) continue;
+ 									files.push(fullPath);
+ 								} else if (entry.type === "directory" && !entry.isSymlink) files.push(...collectFiles(fullPath));
+ 							}
+@@ -9284,7 +9287,6 @@ Usage:
+ 					const segments = rel.split("/");
+ 					if (segments.includes(".git")) continue;
+ 					if (!includeHidden && segments.some((segment) => segment.startsWith("."))) continue;
+-					if (!isText(segments[segments.length - 1])) continue;
+ 					const fullPath = searchPath.endsWith("/") ? `${searchPath}${rel}` : `${searchPath}/${rel}`;
+ 					if (ignoreFilter) {
+ 						if (ignoreFilter(fullPath.replace(/^\.\//, ""))) continue;
+@@ -9318,11 +9320,26 @@ Usage:
+ 					const batchPaths = filePaths.slice(batchStart, batchStart + GREP_FILESYSTEM_CONCURRENCY);
+ 					const batchContents = await pMap(batchPaths, async (filePath) => {
+ 						try {
+-							const raw = await filesystem.readFile(filePath, { encoding: "utf-8" });
+-							return typeof raw === "string" ? raw : void 0;
++							if ((await filesystem.stat(filePath)).size > maxFileBytes) {
++								skippedFiles++;
++								return;
++							}
++							const raw = await filesystem.readFile(filePath);
++							if (typeof raw === "string") {
++								if (raw.includes("\0")) {
++									skippedFiles++;
++									return;
++								}
++								return raw;
++							}
++							if (raw.includes(0)) {
++								skippedFiles++;
++								return;
++							}
++							return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+ 						} catch (err) {
+ 							if (strict) throw err;
+-							skippedReadErrorCount++;
++							skippedFiles++;
+ 							return;
+ 						}
+ 					}, { concurrency: GREP_FILESYSTEM_CONCURRENCY });
+@@ -9357,7 +9374,7 @@ Usage:
+ 				const summaryParts = [`${totalMatchCount} match${totalMatchCount !== 1 ? "es" : ""}`];
+ 				summaryParts.push(`across ${filesWithMatches.size} file${filesWithMatches.size !== 1 ? "s" : ""}`);
+ 				if (truncated) summaryParts.push(`(truncated at ${GLOBAL_CAP})`);
+-				if (skippedExtensionCount > 0) summaryParts.push(`(${skippedExtensionCount} file${skippedExtensionCount !== 1 ? "s" : ""} skipped: unsupported extension)`);
++				if (skippedFiles > 0) summaryParts.push(`(${skippedFiles} files skipped: binary, non-UTF-8, unreadable or above maxFileBytes=${maxFileBytes}; results are incomplete. Raise maxFileBytes for known large text files.)`);
+ 				if (targetNotFound) summaryParts.push("(target path not found: nothing searched)");
+ 				if (skippedReadErrorCount > 0) summaryParts.push(`(${skippedReadErrorCount} path${skippedReadErrorCount !== 1 ? "s" : ""} skipped: read error)`);
+ 				const summary = summaryParts.join(" ");
+diff --git a/dist/workspace-CfX5EIVK.js b/dist/workspace-CfX5EIVK.js
+index 041e43730e4a317f0df884ceb8e73636ba2961d4..78c046122a18a5badbc0ad8349f1bf7b15c3d82f 100644
+--- a/dist/workspace-CfX5EIVK.js
++++ b/dist/workspace-CfX5EIVK.js
+@@ -3044,8 +3044,12 @@ var LocalProcessHandle = class extends ProcessHandle {
+ 			timedOut = true;
+ 			killProcessTree(this._numericPid, subprocess, "SIGTERM");
+ 		}, options.timeout) : void 0;
+-		const stdoutDecoder = new StringDecoder();
+-		const stderrDecoder = new StringDecoder();
++		const createDecoder = () => {
++			const decoder = new TextDecoder(options?.outputEncoding ?? "utf-8", { ignoreBOM: true });
++			return { write: (data) => decoder.decode(data, { stream: true }), end: () => decoder.decode() };
++		};
++		const stdoutDecoder = createDecoder();
++		const stderrDecoder = createDecoder();
+ 		let stdoutDecoderEnded = false;
+ 		let stderrDecoderEnded = false;
+ 		const flushStdoutDecoder = () => {
+@@ -8650,6 +8654,7 @@ async function truncateOutput(output, tail, tokenLimit, tokenFrom) {
+ * Extended with `background` in tools.ts when sandbox.processes exists.
+ */
+ const executeCommandInputSchema = z.object({
++	outputEncoding: z.enum(["utf-8", "gbk", "utf-16le"]).optional().describe("Encoding emitted by this command, applied to raw stdout/stderr for foreground and background processes. Default utf-8 (Node/Python configured for UTF-8). On Chinese Windows, cmd and Windows PowerShell commonly emit gbk (code page 936): select gbk after checking chcp. Do not mix different encodings in one command."),
+ 	command: z.string().describe("The shell command to execute (e.g., \"npm install\", \"ls -la src/\", \"cat file.txt | grep error\")"),
+ 	timeout: z.preprocess(coerceNumericString, z.number()).nullish().describe("Maximum execution time in seconds. Example: 60 for 1 minute."),
+ 	cwd: z.string().nullish().describe("Working directory for the command"),
+@@ -8750,6 +8755,7 @@ async function executeCommand(input, context) {
+ 		const bgAbortSignal = bgConfig?.abortSignal === void 0 ? context?.abortSignal : bgConfig.abortSignal || void 0;
+ 		let handle;
+ 		handle = await sandbox.processes.spawn(command, {
++			outputEncoding: input.outputEncoding,
+ 			cwd: cwd ?? void 0,
+ 			timeout: timeout ?? void 0,
+ 			abortSignal: bgAbortSignal,
+@@ -8803,6 +8809,7 @@ async function executeCommand(input, context) {
+ 	const stderr = new RetainedOutputBuffer(DEFAULT_MAX_RETAINED_PROCESS_OUTPUT_BYTES);
+ 	try {
+ 		const result = await sandbox.executeCommand(command, [], {
++			outputEncoding: input.outputEncoding,
+ 			timeout: timeout ?? void 0,
+ 			cwd: cwd ?? void 0,
+ 			abortSignal: context?.abortSignal,
+@@ -9093,17 +9100,18 @@ Usage:
+ 		outputSchema: z.string(),
+ 		inputSchema: z.object({
+ 			pattern: z.string().describe("Regex pattern to search for"),
++			maxFileBytes: z.number().int().positive().optional().describe("Host-side per-file read budget in bytes, default 8388608 (8 MiB). Larger files are reported as skipped, not no-match. Raise explicitly for a known large text file; do not load large archives/media unnecessarily. Native streaming providers may not need this budget."),
+ 			path: z.string().optional().default(".").describe("File, directory, or glob pattern to search within (default: \".\"). A plain path searches that file or directory. A glob pattern (e.g., \"**/*.ts\", \"src/**/*.test.ts\") filters which files to search."),
+ 			contextLines: z.number().optional().default(0).describe("Number of lines of context to include before and after each match (default: 0)"),
+ 			maxCount: z.number().optional().describe("Maximum matches per file. Moves on to the next file after this many matches. Similar to grep -m flag."),
+ 			caseSensitive: z.boolean().optional().default(true).describe("Whether the search is case-sensitive (default: true)"),
+ 			includeHidden: z.boolean().optional().default(false).describe("Include hidden files and directories (names starting with \".\") in the search (default: false)")
+ 		}),
+-		execute: async ({ pattern, path: inputPath = ".", contextLines = 0, maxCount, caseSensitive = true, includeHidden = false }, context) => {
++		execute: async ({ pattern, path: inputPath = ".", contextLines = 0, maxCount, caseSensitive = true, includeHidden = false, maxFileBytes = 8388608 }, context) => {
+ 			const { workspace, filesystem } = requireFilesystem(context);
+ 			await emitWorkspaceMetadata(context, WORKSPACE_TOOLS.FILESYSTEM.GREP);
+ 			const isText = (filename) => filesystem.isTextFile ? filesystem.isTextFile(filename) : isTextFile(filename);
+-			let skippedExtensionCount = 0;
++			let skippedFiles = 0;
+ 			let skippedReadErrorCount = 0;
+ 			let targetNotFound = false;
+ 			const span = startWorkspaceSpan(context, workspace, {
+@@ -9148,11 +9156,7 @@ Usage:
+ 				if (normalizedSearch === ".git" || normalizedSearch.endsWith("/.git")) filePaths = [];
+ 				else try {
+ 					const stat = await filesystem.stat(searchPath);
+-					if (stat.type === "file") if (isText(searchPath)) filePaths = [searchPath];
+-					else {
+-						filePaths = [];
+-						skippedExtensionCount++;
+-					}
++					if (stat.type === "file") filePaths = [searchPath];
+ 					else if (typeof filesystem.grep === "function") try {
+ 						nativeResults = await filesystem.grep({
+ 							pattern,
+@@ -9213,7 +9217,6 @@ Usage:
+ 								}
+ 								if (entry.type === "file") {
+ 									if (globMatcher && !globMatcher(fullPath)) continue;
+-									if (!isText(entry.name)) continue;
+ 									files.push(fullPath);
+ 								} else if (entry.type === "directory" && !entry.isSymlink) files.push(...collectFiles(fullPath));
+ 							}
+@@ -9280,7 +9283,6 @@ Usage:
+ 					const segments = rel.split("/");
+ 					if (segments.includes(".git")) continue;
+ 					if (!includeHidden && segments.some((segment) => segment.startsWith("."))) continue;
+-					if (!isText(segments[segments.length - 1])) continue;
+ 					const fullPath = searchPath.endsWith("/") ? `${searchPath}${rel}` : `${searchPath}/${rel}`;
+ 					if (ignoreFilter) {
+ 						if (ignoreFilter(fullPath.replace(/^\.\//, ""))) continue;
+@@ -9314,11 +9316,26 @@ Usage:
+ 					const batchPaths = filePaths.slice(batchStart, batchStart + GREP_FILESYSTEM_CONCURRENCY);
+ 					const batchContents = await pMap(batchPaths, async (filePath) => {
+ 						try {
+-							const raw = await filesystem.readFile(filePath, { encoding: "utf-8" });
+-							return typeof raw === "string" ? raw : void 0;
++							if ((await filesystem.stat(filePath)).size > maxFileBytes) {
++								skippedFiles++;
++								return;
++							}
++							const raw = await filesystem.readFile(filePath);
++							if (typeof raw === "string") {
++								if (raw.includes("\0")) {
++									skippedFiles++;
++									return;
++								}
++								return raw;
++							}
++							if (raw.includes(0)) {
++								skippedFiles++;
++								return;
++							}
++							return new TextDecoder("utf-8", { fatal: true }).decode(raw);
+ 						} catch (err) {
+ 							if (strict) throw err;
+-							skippedReadErrorCount++;
++							skippedFiles++;
+ 							return;
+ 						}
+ 					}, { concurrency: GREP_FILESYSTEM_CONCURRENCY });
+@@ -9353,7 +9370,7 @@ Usage:
+ 				const summaryParts = [`${totalMatchCount} match${totalMatchCount !== 1 ? "es" : ""}`];
+ 				summaryParts.push(`across ${filesWithMatches.size} file${filesWithMatches.size !== 1 ? "s" : ""}`);
+ 				if (truncated) summaryParts.push(`(truncated at ${GLOBAL_CAP})`);
+-				if (skippedExtensionCount > 0) summaryParts.push(`(${skippedExtensionCount} file${skippedExtensionCount !== 1 ? "s" : ""} skipped: unsupported extension)`);
++				if (skippedFiles > 0) summaryParts.push(`(${skippedFiles} files skipped: binary, non-UTF-8, unreadable or above maxFileBytes=${maxFileBytes}; results are incomplete. Raise maxFileBytes for known large text files.)`);
+ 				if (targetNotFound) summaryParts.push("(target path not found: nothing searched)");
+ 				if (skippedReadErrorCount > 0) summaryParts.push(`(${skippedReadErrorCount} path${skippedReadErrorCount !== 1 ? "s" : ""} skipped: read error)`);
+ 				const summary = summaryParts.join(" ");

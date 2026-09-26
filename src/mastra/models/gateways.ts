@@ -7,12 +7,12 @@
 import {
   type GatewayAuthRequest,
   type GatewayAuthResult,
-  type GatewayLanguageModel,
   type ProviderConfig as GatewayProviderConfig,
   MastraModelGateway,
 } from "@mastra/core/llm";
 import {
   createGatewayModel,
+  type GatewayLanguageModel,
   getRegistryProviderBaseUrl,
   inferGatewayProtocol,
   WORKBENCH_GATEWAY_ID,
@@ -97,30 +97,15 @@ export class WorkbenchGateway extends MastraModelGateway {
     apiKey: string;
   }): Promise<GatewayLanguageModel> {
     const provider = await this.findProvider(args.providerId);
-    const baseUrl =
-      provider?.baseUrl ??
-      (provider?.registryId ? getRegistryProviderBaseUrl(provider.registryId) : undefined);
-    const protocol =
-      provider?.protocol ?? inferGatewayProtocol(provider?.registryId ?? args.providerId);
-    if (!baseUrl) {
-      // 未知 registry 的宿主回退仍按 OpenAI 处理;具体映射集中在 create-model.ts。
-      return createGatewayModel({
-        modelId: args.modelId,
-        modelRouterId: `${args.providerId}/${args.modelId}`,
-        registryId: provider?.registryId,
-        apiKey: args.apiKey,
-        protocol: protocol ?? "openai",
-        useResponses: provider?.useResponses,
-        providerName: provider?.name,
-      });
-    }
+    // 端点解析与 fail-closed 集中在 create-model.ts:没有自定义 baseUrl 的 registry
+    // provider 由 Mastra 官方 router 接管。
     return createGatewayModel({
       modelId: args.modelId,
       modelRouterId: `${args.providerId}/${args.modelId}`,
       registryId: provider?.registryId,
       apiKey: args.apiKey,
-      baseUrl,
-      protocol,
+      ...(provider?.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      protocol: provider?.protocol ?? inferGatewayProtocol(provider?.registryId ?? args.providerId),
       useResponses: provider?.useResponses,
       providerName: provider?.name,
     });
