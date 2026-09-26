@@ -51,46 +51,6 @@ export {
 import "vscode-jsonrpc/node";
 import "vscode-languageserver-protocol";
 
-// LocalFilesystem 的 textExtensions 扩展(不替换)内置文本扩展名集合,决定 grep 会
-// 搜索哪些文件(docs/en/reference/workspace/local-filesystem.mdx)。内置集合缺少这些
-// 常见代码/配置扩展名,桌面端用户的本地项目里很常见,不补齐会被 grep 静默跳过。
-const WORKSPACE_TEXT_EXTENSIONS = [
-  ".cjs",
-  ".cts",
-  ".mts",
-  ".cs",
-  ".ps1",
-  ".psm1",
-  ".bat",
-  ".cmd",
-  ".m",
-  ".mm",
-  ".scala",
-  ".sbt",
-  ".groovy",
-  ".gradle",
-  ".cmake",
-  ".hs",
-  ".ex",
-  ".exs",
-  ".erl",
-  ".clj",
-  ".pl",
-  ".zig",
-  ".nix",
-  ".proto",
-  ".conf",
-  ".cfg",
-  ".properties",
-  ".plist",
-  ".patch",
-  ".diff",
-  ".rst",
-  ".tex",
-  ".adoc",
-  ".ipynb",
-];
-
 const WORKSPACE_CONFIG_KEY = "workspace";
 const RECENT_WORKSPACES_KEY = "recent-workspaces";
 const RECENT_WORKSPACES_LIMIT = 12;
@@ -536,7 +496,6 @@ export function getThreadWorkspace(
   ];
   const filesystem = new LocalFilesystem({
     basePath: workspacePath,
-    textExtensions: WORKSPACE_TEXT_EXTENSIONS,
     ...(allowedPaths.length ? { allowedPaths } : {}),
     ...(config.readOnly ? { readOnly: true } : {}),
   });
