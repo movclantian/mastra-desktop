@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, symlinkSync } from "node:fs";
+import { symlinkSync, unlinkSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,7 +70,10 @@ test("Plan writer writes under plans and refuses a dangling symlink", async (t) 
             get: () => {
               workspaceReads += 1;
               if (workspaceReads === 2) {
-                rmSync(workspaceAlias, { force: true, recursive: false });
+                // A junction is a directory link on Windows. Node 24 rejects
+                // rmSync(..., { recursive: false }) with "Path is a directory",
+                // so unlink the link itself without touching its target.
+                unlinkSync(workspaceAlias);
                 symlinkSync(outsideWorkspace, workspaceAlias, "junction");
               }
               return workspaceAlias;

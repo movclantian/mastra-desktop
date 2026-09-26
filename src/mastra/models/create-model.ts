@@ -173,7 +173,19 @@ export async function createGatewayModel(options: {
   providerName?: string;
 }): Promise<GatewayLanguageModel> {
   const { modelId, apiKey, protocol, useResponses, providerName } = options;
-  const normalizedBaseUrl = normalizeGatewayBaseUrl(options.baseUrl, protocol);
+  // Anthropic/Gemini-compatible registry providers are intentionally built
+  // with their native SDKs below, so they must inherit the endpoint shipped
+  // in Mastra's registry when the user has not supplied an override. Keep
+  // OpenAI/DeepSeek registry providers on models.dev: that gateway selects
+  // provider-specific implementations such as Responses and reasoning fields.
+  const nativeRegistryBaseUrl =
+    !options.baseUrl && (protocol === "anthropic" || protocol === "gemini") && options.registryId
+      ? getRegistryProviderBaseUrl(options.registryId)
+      : undefined;
+  const normalizedBaseUrl = normalizeGatewayBaseUrl(
+    options.baseUrl ?? nativeRegistryBaseUrl,
+    protocol,
+  );
   // anthropic / gemini 官方 SDK 自带正确默认端点,继续直接构造(anthropic 还要保留
   // cacheControl 中间件);其余已在 registry 中的 provider 没有自定义端点时交给
   // 官方网关,由它提供端点与 provider 专用实现(openai 固定走 responses(),

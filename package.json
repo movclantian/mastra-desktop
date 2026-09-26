@@ -22,7 +22,7 @@
     "lint": "biome check --formatter-enabled=false --assist-enabled=false .",
     "lint:fix": "biome check --write .",
     "clean:package": "node scripts/clean-package-output.mjs",
-    "test:regression": "node --test scripts/test-experience-regressions.mjs scripts/test-background-task-stream.mjs scripts/test-capability-regressions.mjs scripts/test-workspace-tool-regressions.mjs scripts/test-library-attachment-regressions.mjs && node --import jiti/register --test scripts/test-thread-transfer-storage.mjs scripts/test-thread-transfer-recovery.mjs scripts/test-plan-draft-symlink.mjs",
+    "test:regression": "node --test scripts/test-experience-regressions.mjs scripts/test-background-task-stream.mjs scripts/test-capability-regressions.mjs scripts/test-workspace-tool-regressions.mjs scripts/test-library-attachment-regressions.mjs && node --import jiti/register --test scripts/test-provider-routing.mjs scripts/test-thread-transfer-storage.mjs scripts/test-thread-transfer-recovery.mjs scripts/test-plan-draft-symlink.mjs",
     "verify:release": "node scripts/verify-release-source.mjs",
     "verify:package": "node scripts/verify-package-artifacts.mjs",
     "verify:package:dir": "node scripts/verify-package-artifacts.mjs --dir",
