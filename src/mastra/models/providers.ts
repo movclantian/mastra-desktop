@@ -18,7 +18,6 @@ import { getAppConfig, setAppConfig } from "../storage";
 import {
   createGatewayModel,
   type GatewayProtocol,
-  getRegistryProviderBaseUrl,
   inferGatewayProtocol,
   WORKBENCH_GATEWAY_ID,
 } from "./create-model";
@@ -244,31 +243,13 @@ export async function resolveConfiguredModel(
   // but that router has no resourceId argument. BYOK settings are tenant-scoped,
   // so request-context routes must resolve the provider here before constructing
   // the SDK model. The construction itself stays in the shared factory below.
-  const registryBaseUrl = provider.registryId
-    ? getRegistryProviderBaseUrl(provider.registryId)
-    : undefined;
-  const baseUrl = provider.baseUrl ?? registryBaseUrl;
-  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
-  if (baseUrl) {
-    return createGatewayModel({
-      modelId,
-      modelRouterId: `${routerPrefix(provider)}/${modelId}`,
-      registryId: provider.registryId,
-      apiKey,
-      baseUrl,
-      protocol,
-      useResponses: provider.useResponses,
-      providerName: provider.name,
-    });
-  }
-
-  if (!protocol) return undefined;
   return createGatewayModel({
     modelId,
     modelRouterId: `${routerPrefix(provider)}/${modelId}`,
     registryId: provider.registryId,
     apiKey,
-    protocol,
+    ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+    protocol: provider.protocol ?? inferGatewayProtocol(provider.registryId ?? ""),
     useResponses: provider.useResponses,
     providerName: provider.name,
   });
@@ -280,34 +261,34 @@ export function requestModelFamily(value: unknown): string | undefined {
   return splitRouterId(value.id).providerId || undefined;
 }
 
-/** 当前生效模型是否为「OpenAI 协议 + Responses 端点」的自定义网关 */
+/**
+ * 当前生效模型是否请求 OpenAI Responses 端点。
+ * 内置 openai provider 由 Mastra 官方 registry 网关构造,它固定用 responses();
+ * 自定义网关则看用户勾选的 useResponses。
+ */
+function providerUsesResponses(provider: UserProviderConfig | undefined): boolean {
+  if (!provider) return false;
+  if (provider.registryId === "openai" && !provider.baseUrl) return true;
+  return Boolean(provider.baseUrl && provider.protocol === "openai" && provider.useResponses);
+}
+
 export async function usesOpenAIResponses(
   rawModel: unknown,
   resourceId?: string,
 ): Promise<boolean> {
+  const config = await getProvidersConfig(resourceId);
   if (isRequestModel(rawModel)) {
-    const config = await getProvidersConfig(resourceId);
     const { providerId } = splitRouterId(rawModel.id);
-    const provider =
+    return providerUsesResponses(
       config.providers.find((candidate) => routerPrefix(candidate) === providerId) ??
-      config.providers.find((candidate) => candidate.id === providerId);
-    return Boolean(
-      provider?.baseUrl && provider.protocol === "openai" && provider.useResponses === true,
+        config.providers.find((candidate) => candidate.id === providerId),
     );
   }
-  const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   if (!selection) return false;
   const provider = config.providers.find((candidate) => candidate.id === selection.providerId);
-  return Boolean(
-    provider &&
-      !provider.disabled &&
-      provider.hasCredential &&
-      !provider.registryId &&
-      provider.baseUrl &&
-      provider.protocol === "openai" &&
-      provider.useResponses === true,
-  );
+  if (!provider || provider.disabled || !provider.hasCredential) return false;
+  return providerUsesResponses(provider);
 }
 
 /** 未显式指定模型时的家族名 (取自存储的默认选定模型) */

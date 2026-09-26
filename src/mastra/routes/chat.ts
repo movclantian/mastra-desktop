@@ -1025,6 +1025,8 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         controllerSession.suspensions.register({
           ...explicitResumeTarget,
           toolName: tool.toolName ?? "",
+          threadId,
+          resourceId: authenticatedResourceId,
         });
         // ControllerSession owns submit_plan's transition to the default mode;
         // keep the route as a thin resume boundary so it cannot drift from the

@@ -1,0 +1,135 @@
+diff --git a/dist/workspace/sandbox/types.d.ts b/dist/workspace/sandbox/types.d.ts
+index 587415c11dda0cb73e0b5324f4b397ebd402e9a7..f206010ec17701217560ba45b296b8e9e6544ead 100644
+--- a/dist/workspace/sandbox/types.d.ts
++++ b/dist/workspace/sandbox/types.d.ts
+@@ -60,6 +60,8 @@ export interface CommandResult extends ExecutionResult {
+  * Base type for both executeCommand and spawn.
+  */
+ export interface CommandOptions {
++    /** Raw process stdout/stderr encoding; defaults to UTF-8. LocalSandbox supports GBK and UTF-16LE. */
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     /** Timeout in milliseconds. Kills the process if exceeded. */
+     timeout?: number;
+     /** Environment variables */
+diff --git a/dist/workspace/tools/execute-command.d.ts b/dist/workspace/tools/execute-command.d.ts
+index 0ace37c4bbc46cf68f1f76d0781595464d0ee1eb..28807728245c6cbaa36f6e5cbd5c5218ed0289b8 100644
+--- a/dist/workspace/tools/execute-command.d.ts
++++ b/dist/workspace/tools/execute-command.d.ts
+@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
+  * Extended with `background` in tools.ts when sandbox.processes exists.
+  */
+ export declare const executeCommandInputSchema: z.ZodObject<{
++    outputEncoding: z.ZodOptional<z.ZodEnum<{ "utf-8": "utf-8"; gbk: "gbk"; "utf-16le": "utf-16le" }>>;
+     command: z.ZodString;
+     timeout: z.ZodOptional<z.ZodNullable<z.ZodPreprocess<z.ZodNumber, unknown>>>;
+     cwd: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+@@ -11,6 +12,7 @@ export declare const executeCommandInputSchema: z.ZodObject<{
+ }, z.core.$strip>;
+ /** Schema with background param included. */
+ export declare const executeCommandWithBackgroundSchema: z.ZodObject<{
++    outputEncoding: z.ZodOptional<z.ZodEnum<{ "utf-8": "utf-8"; gbk: "gbk"; "utf-16le": "utf-16le" }>>;
+     command: z.ZodString;
+     timeout: z.ZodOptional<z.ZodNullable<z.ZodPreprocess<z.ZodNumber, unknown>>>;
+     cwd: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+@@ -19,6 +21,7 @@ export declare const executeCommandWithBackgroundSchema: z.ZodObject<{
+ }, z.core.$strip>;
+ /** Foreground-only tool (no background param in schema). */
+ export declare const executeCommandTool: import("../../tools").Tool<{
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     command: string;
+     timeout?: number | null | undefined;
+     cwd?: string | null | undefined;
+@@ -26,6 +29,7 @@ export declare const executeCommandTool: import("../../tools").Tool<{
+ }, string, unknown, unknown, import("../../tools").ToolExecutionContext<unknown, unknown, unknown>, "mastra_workspace_execute_command", unknown>;
+ /** Tool with background param in schema (used when sandbox.processes exists). */
+ export declare const executeCommandWithBackgroundTool: import("../../tools").Tool<{
++    outputEncoding?: "utf-8" | "gbk" | "utf-16le";
+     command: string;
+     timeout?: number | null | undefined;
+     cwd?: string | null | undefined;
+diff --git a/dist/workspace-BZ1GpMVZ.cjs b/dist/workspace-BZ1GpMVZ.cjs
+index 777a37b5c7b298188c65d75e433bb50f87787635..d29a1368907680446cf64128236d464bd6c461be 100644
+--- a/dist/workspace-BZ1GpMVZ.cjs
++++ b/dist/workspace-BZ1GpMVZ.cjs
+@@ -3048,8 +3048,12 @@ var LocalProcessHandle = class extends ProcessHandle {
+ 			timedOut = true;
+ 			killProcessTree(this._numericPid, subprocess, "SIGTERM");
+ 		}, options.timeout) : void 0;
+-		const stdoutDecoder = new string_decoder.StringDecoder();
+-		const stderrDecoder = new string_decoder.StringDecoder();
++		const createDecoder = () => {
++			const decoder = new TextDecoder(options?.outputEncoding ?? "utf-8", { ignoreBOM: true });
++			return { write: (data) => decoder.decode(data, { stream: true }), end: () => decoder.decode() };
++		};
++		const stdoutDecoder = createDecoder();
++		const stderrDecoder = createDecoder();
+ 		let stdoutDecoderEnded = false;
+ 		let stderrDecoderEnded = false;
+ 		const flushStdoutDecoder = () => {
+@@ -8654,6 +8658,7 @@ async function truncateOutput(output, tail, tokenLimit, tokenFrom) {
+ * Extended with `background` in tools.ts when sandbox.processes exists.
+ */
+ const executeCommandInputSchema = zod_v4.z.object({
++	outputEncoding: zod_v4.z.enum(["utf-8", "gbk", "utf-16le"]).optional().describe("Encoding emitted by this command, applied to raw stdout/stderr for foreground and background processes. Default utf-8 (Node/Python configured for UTF-8). On Chinese Windows, cmd and Windows PowerShell commonly emit gbk (code page 936): select gbk after checking chcp. Do not mix different encodings in one command."),
+ 	command: zod_v4.z.string().describe("The shell command to execute (e.g., \"npm install\", \"ls -la src/\", \"cat file.txt | grep error\")"),
+ 	timeout: zod_v4.z.preprocess(coerceNumericString, zod_v4.z.number()).nullish().describe("Maximum execution time in seconds. Example: 60 for 1 minute."),
+ 	cwd: zod_v4.z.string().nullish().describe("Working directory for the command"),
+@@ -8754,6 +8759,7 @@ async function executeCommand(input, context) {
+ 		const bgAbortSignal = bgConfig?.abortSignal === void 0 ? context?.abortSignal : bgConfig.abortSignal || void 0;
+ 		let handle;
+ 		handle = await sandbox.processes.spawn(command, {
++			outputEncoding: input.outputEncoding,
+ 			cwd: cwd ?? void 0,
+ 			timeout: timeout ?? void 0,
+ 			abortSignal: bgAbortSignal,
+@@ -8807,6 +8813,7 @@ async function executeCommand(input, context) {
+ 	const stderr = new RetainedOutputBuffer(DEFAULT_MAX_RETAINED_PROCESS_OUTPUT_BYTES);
+ 	try {
+ 		const result = await sandbox.executeCommand(command, [], {
++			outputEncoding: input.outputEncoding,
+ 			timeout: timeout ?? void 0,
+ 			cwd: cwd ?? void 0,
+ 			abortSignal: context?.abortSignal,
+diff --git a/dist/workspace-CfX5EIVK.js b/dist/workspace-CfX5EIVK.js
+index 041e43730e4a317f0df884ceb8e73636ba2961d4..92b10ef9163f44a96bfe52e6ac1dfe8ce28a34ec 100644
+--- a/dist/workspace-CfX5EIVK.js
++++ b/dist/workspace-CfX5EIVK.js
+@@ -3044,8 +3044,12 @@ var LocalProcessHandle = class extends ProcessHandle {
+ 			timedOut = true;
+ 			killProcessTree(this._numericPid, subprocess, "SIGTERM");
+ 		}, options.timeout) : void 0;
+-		const stdoutDecoder = new StringDecoder();
+-		const stderrDecoder = new StringDecoder();
++		const createDecoder = () => {
++			const decoder = new TextDecoder(options?.outputEncoding ?? "utf-8", { ignoreBOM: true });
++			return { write: (data) => decoder.decode(data, { stream: true }), end: () => decoder.decode() };
++		};
++		const stdoutDecoder = createDecoder();
++		const stderrDecoder = createDecoder();
+ 		let stdoutDecoderEnded = false;
+ 		let stderrDecoderEnded = false;
+ 		const flushStdoutDecoder = () => {
+@@ -8650,6 +8654,7 @@ async function truncateOutput(output, tail, tokenLimit, tokenFrom) {
+ * Extended with `background` in tools.ts when sandbox.processes exists.
+ */
+ const executeCommandInputSchema = z.object({
++	outputEncoding: z.enum(["utf-8", "gbk", "utf-16le"]).optional().describe("Encoding emitted by this command, applied to raw stdout/stderr for foreground and background processes. Default utf-8 (Node/Python configured for UTF-8). On Chinese Windows, cmd and Windows PowerShell commonly emit gbk (code page 936): select gbk after checking chcp. Do not mix different encodings in one command."),
+ 	command: z.string().describe("The shell command to execute (e.g., \"npm install\", \"ls -la src/\", \"cat file.txt | grep error\")"),
+ 	timeout: z.preprocess(coerceNumericString, z.number()).nullish().describe("Maximum execution time in seconds. Example: 60 for 1 minute."),
+ 	cwd: z.string().nullish().describe("Working directory for the command"),
+@@ -8750,6 +8755,7 @@ async function executeCommand(input, context) {
+ 		const bgAbortSignal = bgConfig?.abortSignal === void 0 ? context?.abortSignal : bgConfig.abortSignal || void 0;
+ 		let handle;
+ 		handle = await sandbox.processes.spawn(command, {
++			outputEncoding: input.outputEncoding,
+ 			cwd: cwd ?? void 0,
+ 			timeout: timeout ?? void 0,
+ 			abortSignal: bgAbortSignal,
+@@ -8803,6 +8809,7 @@ async function executeCommand(input, context) {
+ 	const stderr = new RetainedOutputBuffer(DEFAULT_MAX_RETAINED_PROCESS_OUTPUT_BYTES);
+ 	try {
+ 		const result = await sandbox.executeCommand(command, [], {
++			outputEncoding: input.outputEncoding,
+ 			timeout: timeout ?? void 0,
+ 			cwd: cwd ?? void 0,
+ 			abortSignal: context?.abortSignal,
