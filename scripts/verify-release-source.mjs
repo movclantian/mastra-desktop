@@ -77,9 +77,9 @@ const packageJson = JSON.parse(readText("package.json"));
 assert(packageJson.engines?.node === ">=22.0.0 <23", "Node 版本门禁不是 22.x");
 assert(packageJson.scripts?.["verify:package:dir"], "缺少目录包 verify:package:dir 命令");
 const pnpmConfig = readText("pnpm-workspace.yaml");
-const corePatchPath = "patches/@mastra__core@1.67.0.patch";
+const corePatchPath = pnpmConfig.match(/patches\/@mastra__core@[^\s'"]+\.patch/)?.[0];
+assert(corePatchPath, "缺少 core 工具修复补丁配置");
 const corePatch = readFileSync(join(projectRoot, corePatchPath));
-assert(pnpmConfig.includes(corePatchPath), "缺少 core 工具修复补丁配置");
 assert(!corePatch.includes(13), "core 补丁必须使用 LF 换行");
 assert(
   readText("pnpm-lock.yaml").includes(createHash("sha256").update(corePatch).digest("hex")),

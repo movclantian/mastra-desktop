@@ -11,6 +11,11 @@
  * OpenAI-compatible 网关直接复用 createOpenAI 的官方 compatibility: "compatible"
  * 模式(AI SDK 内置的兼容端点处理),原生支持 reasoning_content / reasoning、
  * tool call 与标准 v4 stream,无需另起 createOpenAICompatible 实例。
+ *
+ * 内置 registry provider(只存 registryId、没有自定义端点)不再自己拼端点,
+ * 交给 Mastra 官方 models.dev 网关(docs/en/models/overview.mdx):端点来自 provider
+ * registry,并按 provider 选用官方实现(deepseek 的 reasoning_content、openai 的
+ * Responses 等);registry 里没有端点时它自己报错,不会回退到 SDK 默认端点。
  */
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -18,6 +23,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Agent } from "@mastra/core/agent";
 import {
+  defaultGateways,
   type GatewayLanguageModel,
   getProviderConfig,
   modelSupportsStructuredOutput,
@@ -25,6 +31,9 @@ import {
 import { defaultSettingsMiddleware, wrapLanguageModel } from "ai";
 
 export type { GatewayLanguageModel };
+
+/** Mastra 官方 provider registry 网关(静态 registry,无需联网即可解析端点)。 */
+const REGISTRY_GATEWAY = defaultGateways.find((gateway) => gateway.id === "models.dev");
 
 export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
@@ -81,10 +90,9 @@ export function inferGatewayProtocol(registryId: string): GatewayProtocol | unde
 /**
  * Resolve the endpoint shipped in Mastra's provider registry.
  *
- * Built-in BYOK providers persist only their registry id and credential. The
- * registry URL is therefore the only safe endpoint for providers such as
- * DeepSeek, Groq, and other OpenAI-compatible gateways; falling back to the
- * OpenAI SDK default would send their keys to api.openai.com.
+ * Only gateway metadata needs this: `WorkbenchGateway.fetchProviders/buildUrl`
+ * must report an endpoint for providers that persist just a registry id. Model
+ * construction goes through the official registry gateway instead.
  */
 export function getRegistryProviderBaseUrl(registryId: string): string | undefined {
   const provider = getProviderConfig(registryId.trim());
@@ -97,6 +105,13 @@ export function getRegistryProviderBaseUrl(registryId: string): string | undefin
  * DeepSeek thinking requests must replay reasoning_content on every assistant
  * message that precedes a tool call. Keep this transform pure so the provider
  * boundary can be regression-tested without making a network request.
+ *
+ * ponytail: only custom DeepSeek endpoints reach this. Registry DeepSeek goes
+ * through Mastra's registry gateway, which uses the official provider and fills
+ * reasoning_content itself, scoped to the models that require it. A custom
+ * baseUrl forces the generic OpenAI-compatible shape, where that conversion is
+ * unreachable without depending on @ai-sdk/deepseek directly; drop this once
+ * Mastra resolves provider implementations for user-supplied endpoints too.
  */
 export function transformDeepSeekRequestBody(
   body: Record<string, unknown>,
@@ -146,7 +161,7 @@ export function normalizeGatewayBaseUrl(
   return trimmed;
 }
 
-export function createGatewayModel(options: {
+export async function createGatewayModel(options: {
   modelId: string;
   modelRouterId?: string;
   registryId?: string;
@@ -156,9 +171,41 @@ export function createGatewayModel(options: {
   useResponses?: boolean;
   /** Display name used by AI SDK observability for custom gateways. */
   providerName?: string;
-}): GatewayLanguageModel {
+}): Promise<GatewayLanguageModel> {
   const { modelId, apiKey, protocol, useResponses, providerName } = options;
-  const normalizedBaseUrl = normalizeGatewayBaseUrl(options.baseUrl, protocol);
+  // Anthropic/Gemini-compatible registry providers are intentionally built
+  // with their native SDKs below, so they must inherit the endpoint shipped
+  // in Mastra's registry when the user has not supplied an override. Keep
+  // OpenAI/DeepSeek registry providers on models.dev: that gateway selects
+  // provider-specific implementations such as Responses and reasoning fields.
+  const nativeRegistryBaseUrl =
+    !options.baseUrl && (protocol === "anthropic" || protocol === "gemini") && options.registryId
+      ? getRegistryProviderBaseUrl(options.registryId)
+      : undefined;
+  const normalizedBaseUrl = normalizeGatewayBaseUrl(
+    options.baseUrl ?? nativeRegistryBaseUrl,
+    protocol,
+  );
+  // anthropic / gemini 官方 SDK 自带正确默认端点,继续直接构造(anthropic 还要保留
+  // cacheControl 中间件);其余已在 registry 中的 provider 没有自定义端点时交给
+  // 官方网关,由它提供端点与 provider 专用实现(openai 固定走 responses(),
+  // useResponses 只对自定义网关生效);registry 认不出的 provider 落到下方报错。
+  if (
+    REGISTRY_GATEWAY &&
+    !normalizedBaseUrl &&
+    options.registryId &&
+    getRegistryProviderBaseUrl(options.registryId) &&
+    protocol !== "anthropic" &&
+    protocol !== "gemini"
+  ) {
+    return withLocalLibraryAssetUrls(
+      await REGISTRY_GATEWAY.resolveLanguageModel({
+        modelId,
+        providerId: options.registryId,
+        apiKey,
+      }),
+    );
+  }
   const common = {
     apiKey,
     ...(providerName?.trim() ? { name: providerName.trim() } : {}),
@@ -206,8 +253,9 @@ export function createGatewayModel(options: {
         }).chatModel(modelId);
         break;
       }
-      model = createOpenAI({ ...common }).chat(modelId);
-      break;
+      // registry provider 已在上面交给官方 router;走到这里说明既没有 registry
+      // 端点也没有自定义端点,fail-closed,不把用户的 Key 发往 SDK 默认端点。
+      throw new Error(`供应商 ${providerName || modelId} 缺少 API 端点,请在设置中填写 Base URL`);
     }
   }
 

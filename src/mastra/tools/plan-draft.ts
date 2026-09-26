@@ -26,6 +26,15 @@ function resolvePlanFilename(requestedPath: string): string {
   return filename;
 }
 
+/**
+ * Plan 模式是只读模式,官方 mastra_workspace_write_file 不在它的工具表里
+ * (permissions.ts:PLAN_TOOL_NAMES),所以计划草稿需要自己的写入边界。
+ *
+ * 这里没有复用 LocalFilesystem.writeFile:它的 assertPathContained 在 realpath
+ * 抛 ENOENT 时直接放行(workspace/filesystem 的包含性校验只认已存在的目标),
+ * 因此 plans/ 下一个指向工作区外的悬空符号链接会被 fs.writeFile 跟随。下面的
+ * 独占临时文件 + 原子 rename 正是替换掉该叶子链接而不是跟随它。
+ */
 export const writePlanDraftTool = createTool({
   id: "write-plan-draft",
   description:
