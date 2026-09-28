@@ -1,5 +1,6 @@
 import { motion, useMotionValue, useSpring } from "motion/react";
-import { type FC, useEffect, useRef, useState } from "react";
+import { type FC, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 
 interface Position {
   x: number;
@@ -81,10 +82,10 @@ const DefaultCursorSVG: FC = () => {
   );
 };
 
-function isTextTarget(target: HTMLElement | null): boolean {
+function isTextTarget(target: Element | null): boolean {
   if (!target) return false;
   return !!target.closest(
-    'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea, [contenteditable="true"], .monaco-editor, .cm-content, .cm-editor, code, pre',
+    'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea, [contenteditable="true"], .monaco-editor, .cm-content',
   );
 }
 
@@ -97,7 +98,11 @@ export function SmoothCursor({
     restDelta: 0.001,
   },
 }: SmoothCursorProps) {
+  const hasRunningTask = useWorkbenchStore(
+    (state) => state.agentBusyFlag || Object.values(state.busyThreadIds).some(Boolean),
+  );
   const lastMousePos = useRef<Position>({ x: 0, y: 0 });
+  const hasPointerPosition = useRef(false);
   const velocity = useRef<Position>({ x: 0, y: 0 });
   const lastUpdateTime = useRef(Date.now());
   const previousAngle = useRef(0);
@@ -106,6 +111,7 @@ export function SmoothCursor({
   const [isEnabled, setIsEnabled] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [isOverText, setIsOverText] = useState(false);
+  const useCustomCursor = isEnabled && !hasRunningTask;
 
   // ⚡ 0 延迟核心：坐标使用 useMotionValue 直接映射，彻底剔除物理弹簧的滞后计算
   const cursorX = useMotionValue(0);
@@ -129,15 +135,9 @@ export function SmoothCursor({
     const mediaQuery = window.matchMedia(DESKTOP_POINTER_QUERY);
 
     const updateEnabled = () => {
-      const nextIsEnabled = mediaQuery.matches;
-      setIsEnabled(nextIsEnabled);
-
-      if (nextIsEnabled) {
-        document.documentElement.classList.add("smooth-cursor-mode");
-      } else {
-        document.documentElement.classList.remove("smooth-cursor-mode");
-        setIsVisible(false);
-      }
+      const enabled = mediaQuery.matches;
+      setIsEnabled(enabled);
+      if (!enabled) setIsVisible(false);
     };
 
     updateEnabled();
@@ -148,6 +148,24 @@ export function SmoothCursor({
       document.documentElement.classList.remove("smooth-cursor-mode");
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    if (!useCustomCursor || !isVisible) {
+      root.classList.remove("smooth-cursor-mode");
+      return;
+    }
+
+    if (hasPointerPosition.current) {
+      const { x, y } = lastMousePos.current;
+      cursorX.set(x);
+      cursorY.set(y);
+      const overText = isTextTarget(document.elementFromPoint(x, y));
+      setIsOverText((current) => (current === overText ? current : overText));
+    }
+    root.classList.add("smooth-cursor-mode");
+    return () => root.classList.remove("smooth-cursor-mode");
+  }, [cursorX, cursorY, isVisible, useCustomCursor]);
 
   useEffect(() => {
     if (!isEnabled) return;
@@ -172,16 +190,22 @@ export function SmoothCursor({
     const handlePointerMove = (e: PointerEvent) => {
       if (!isTrackablePointer(e.pointerType)) return;
 
-      setIsVisible(true);
-
       const currentPos = { x: e.clientX, y: e.clientY };
+      hasPointerPosition.current = true;
+      if (hasRunningTask) {
+        lastMousePos.current = currentPos;
+        lastUpdateTime.current = Date.now();
+        return;
+      }
+
+      setIsVisible(true);
 
       // ⚡ 立即无延迟更新光标绝对坐标 (0ms lag)
       cursorX.set(currentPos.x);
       cursorY.set(currentPos.y);
 
       // 检测是否位于文本输入区域
-      const target = e.target as HTMLElement | null;
+      const target = e.target as Element | null;
       setIsOverText(isTextTarget(target));
 
       // 计算速度与动态倾斜角
@@ -209,10 +233,12 @@ export function SmoothCursor({
     };
 
     const handleMouseDown = () => {
+      if (hasRunningTask) return;
       scale.set(0.88);
     };
 
     const handleMouseUp = () => {
+      if (hasRunningTask) return;
       scale.set(1);
     };
 
@@ -221,7 +247,7 @@ export function SmoothCursor({
     };
 
     const handleMouseEnter = () => {
-      setIsVisible(true);
+      if (!hasRunningTask && hasPointerPosition.current) setIsVisible(true);
     };
 
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
@@ -238,14 +264,14 @@ export function SmoothCursor({
       document.removeEventListener("mouseenter", handleMouseEnter);
       if (timeout !== null) clearTimeout(timeout);
     };
-  }, [cursorX, cursorY, rotation, scale, isEnabled]);
+  }, [cursorX, cursorY, hasRunningTask, rotation, scale, isEnabled]);
 
   if (!isEnabled) {
     return null;
   }
 
   // 文本编辑区淡出，让原生 I-beam 光标接管；其他区域完全由 Magic UI 光标接管（0 系统光标泄漏）
-  const shouldShow = isVisible && !isOverText;
+  const shouldShow = useCustomCursor && isVisible && !isOverText;
 
   return (
     <motion.div
@@ -265,7 +291,7 @@ export function SmoothCursor({
       }}
       initial={false}
       animate={{ opacity: shouldShow ? 1 : 0 }}
-      transition={{ duration: 0.1 }}
+      transition={{ duration: 0 }}
     >
       {cursor}
     </motion.div>

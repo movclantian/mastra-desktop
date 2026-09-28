@@ -2093,6 +2093,7 @@ input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="c
 ):not([type="range"]):not([type="file"]),
 html.smooth-cursor-mode textarea,
 html.smooth-cursor-mode [contenteditable="true"],
+html.smooth-cursor-mode [contenteditable="true"] *,
 html.smooth-cursor-mode .monaco-editor,
 html.smooth-cursor-mode .monaco-editor *,
 html.smooth-cursor-mode .cm-content,

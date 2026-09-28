@@ -45,6 +45,72 @@ const { buildDisplayMessages } = loadFunctions(
   "../src/renderer/src/widgets/chat-panel/lib/display.ts", ["buildDisplayMessages"],
   { isToolUIPart },
 );
+const smoothCursorSource = readFileSync(
+  new URL("../src/renderer/src/shared/ui/smooth-cursor.tsx", import.meta.url),
+  "utf8",
+);
+const globalStylesSource = readFileSync(
+  new URL("../src/renderer/src/styles/globals.css", import.meta.url),
+  "utf8",
+);
+const filesWorkspaceSource = readFileSync(
+  new URL("../src/renderer/src/widgets/workspace-drawer/ui/files-workspace.tsx", import.meta.url),
+  "utf8",
+);
+const { collapseExpandedDescendants } = loadFunctions(
+  "../src/renderer/src/widgets/workspace-drawer/ui/files-workspace.tsx",
+  ["collapseExpandedDescendants"],
+);
+
+test("Smooth cursor source contract yields to native pointer during work and in text targets", () => {
+  assert.match(smoothCursorSource, /const useCustomCursor = isEnabled && !hasRunningTask/);
+  assert.match(
+    smoothCursorSource,
+    /if \(hasRunningTask\) \{[\s\S]*?lastMousePos\.current = currentPos;[\s\S]*?return;/,
+  );
+  assert.match(
+    smoothCursorSource,
+    /if \(!useCustomCursor \|\| !isVisible\) \{\s*root\.classList\.remove\("smooth-cursor-mode"\)/,
+  );
+  assert.match(
+    smoothCursorSource,
+    /shouldShow = useCustomCursor && isVisible && !isOverText/,
+  );
+  assert.match(
+    smoothCursorSource,
+    /animate=\{\{ opacity: shouldShow \? 1 : 0 \}\}\s*transition=\{\{ duration: 0 \}\}/,
+  );
+  assert.match(globalStylesSource, /html\.smooth-cursor-mode\s+input[\s\S]*?cursor: text;/);
+  assert.match(
+    globalStylesSource,
+    /html\.smooth-cursor-mode\s+\[contenteditable="true"\]\s+\*[\s\S]*?cursor: text;/,
+  );
+});
+
+test("Workspace tree source contract invalidates directory cache on every collapse path", () => {
+  assert.match(
+    filesWorkspaceSource,
+    /const nextExpanded = collapseExpandedDescendants\(expanded, next\);[\s\S]*?for \(const path of loadedPathsRef\.current\) \{\s*if \(!nextExpanded\.has\(path\)\) loadedPathsRef\.current\.delete\(path\);\s*\}/,
+  );
+  assert.match(
+    filesWorkspaceSource,
+    /const collapseAll = React\.useCallback\(\(\) => \{\s*loadedPathsRef\.current\.clear\(\);\s*setExpanded\(new Set\(\)\)/,
+  );
+});
+
+test("Collapsing a workspace folder also collapses expanded descendants", () => {
+  const next = collapseExpandedDescendants(
+    new Set(["C:\\workspace\\data", "C:\\workspace\\data\\nested"]),
+    new Set(["C:\\workspace\\data\\nested", "C:\\workspace\\database"]),
+  );
+  assert.deepEqual(Array.from(next), ["C:\\workspace\\database"]);
+
+  const posixNext = collapseExpandedDescendants(
+    new Set(["/workspace/data", "/workspace/data/nested"]),
+    new Set(["/workspace/data/nested"]),
+  );
+  assert.deepEqual(Array.from(posixNext), []);
+});
 
 test("Merged assistant rows show one tool call with its latest result", () => {
   const input = tool("shared-call", "input-available");

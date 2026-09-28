@@ -797,6 +797,24 @@ function areTreeEntriesEqual(a: TreeEntry[] | undefined, b: TreeEntry[] | undefi
   return true;
 }
 
+function collapseExpandedDescendants(current: Set<string>, next: Set<string>): Set<string> {
+  const collapsedDirectories = [...current].filter((path) => !next.has(path));
+  if (collapsedDirectories.length === 0) return next;
+
+  return new Set(
+    [...next].filter(
+      (path) =>
+        !collapsedDirectories.some((directory) => {
+          const normalizedDirectory = directory.replace(/[\\/]+$/, "");
+          return (
+            path.startsWith(`${normalizedDirectory}/`) ||
+            path.startsWith(`${normalizedDirectory}\\`)
+          );
+        }),
+    ),
+  );
+}
+
 /**
  * 文件树 + 编辑器。可多开 —— 每个标签一个独立实例,各自持有展开态与打开的文件。
  *
@@ -942,13 +960,18 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
 
   const handleExpandedChange = React.useCallback(
     (next: Set<string>) => {
-      setExpanded(next);
-      for (const path of next) loadDirectory(path);
+      const nextExpanded = collapseExpandedDescendants(expanded, next);
+      for (const path of loadedPathsRef.current) {
+        if (!nextExpanded.has(path)) loadedPathsRef.current.delete(path);
+      }
+      setExpanded(nextExpanded);
+      for (const path of nextExpanded) loadDirectory(path);
     },
-    [loadDirectory],
+    [expanded, loadDirectory],
   );
 
   const collapseAll = React.useCallback(() => {
+    loadedPathsRef.current.clear();
     setExpanded(new Set());
   }, []);
 
