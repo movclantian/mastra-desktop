@@ -820,7 +820,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
       queryClient.fetchQuery({
         queryKey: qk.treeEntries(threadId, path ?? ""),
         queryFn: () => fetchTree(threadId, userId, path),
-        staleTime: 10_000,
+        staleTime: 0,
       }),
     [queryClient, userId],
   );
@@ -833,6 +833,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   const [activeFilePath, setActiveFilePath] = React.useState<string>();
   const [loadingPaths, setLoadingPaths] = React.useState<Set<string>>(new Set());
   const [treeLoading, setTreeLoading] = React.useState(false);
+  const [treeError, setTreeError] = React.useState(false);
   const [savingPaths, setSavingPaths] = React.useState<Set<string>>(new Set());
   const [createKind, setCreateKind] = React.useState<"file" | "dir">();
   const [createName, setCreateName] = React.useState("");
@@ -883,9 +884,15 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     setChildrenByPath({});
     setExpanded(new Set());
     setSelectedPath(undefined);
+    setTreeError(false);
     try {
       const nextEntries = await fetchTreeEntries(activeThreadId);
-      if (requestId === treeRefreshRequestRef.current) setEntries(nextEntries);
+      if (requestId === treeRefreshRequestRef.current) {
+        setEntries(nextEntries);
+        setTreeError(false);
+      }
+    } catch {
+      if (requestId === treeRefreshRequestRef.current) setTreeError(true);
     } finally {
       if (requestId === treeRefreshRequestRef.current) setTreeLoading(false);
     }
@@ -982,6 +989,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
           areTreeEntriesEqual(current, rootEntries) ? current : rootEntries,
         );
       }
+      setTreeError(false);
       setChildrenByPath((current) => {
         let changed = false;
         const next = { ...current };
@@ -996,7 +1004,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
         return changed ? next : current;
       });
     } catch {
-      // Keep the last known tree when a transient filesystem request fails.
+      // Keep the last known tree, but do not let a failed initial read look empty.
+      if (requestId === treeRefreshRequestRef.current) setTreeError(true);
     }
   }, [active, activeThreadId, expanded, fetchTreeEntries]);
 
@@ -1522,6 +1531,27 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
               onSelect={selectFile}
               selectedPath={selectedPath}
             >
+              {treeError && !treeLoading ? (
+                <div
+                  className="mx-2 my-2 flex min-w-0 items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-xs"
+                  role="alert"
+                >
+                  <span className="min-w-0 flex-1 text-destructive">
+                    {t("workspace:fetchTreeFailed")}
+                  </span>
+                  <Button
+                    className="shrink-0"
+                    onClick={() => {
+                      if (entries.length > 0) void refreshVisibleTree();
+                      else void refreshTree();
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {t("common:retry")}
+                  </Button>
+                </div>
+              ) : null}
               {createKind ? (
                 createDirectory === "" ? (
                   <InlineCreateRow
@@ -1537,7 +1567,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
                 <p className="px-2 py-2 text-xs text-muted-foreground">
                   {t("workspace:readingDir")}
                 </p>
-              ) : entries.length === 0 && !createKind ? (
+              ) : treeError && entries.length === 0 ? null : entries.length === 0 && !createKind ? (
                 <p className="px-2 py-2 text-xs text-muted-foreground">{t("workspace:emptyDir")}</p>
               ) : (
                 <TreeRows

@@ -193,7 +193,8 @@ export class NativeBrowserViewManager {
   getState(rawSession: unknown): BrowserState | null {
     const session = NativeBrowserSessionSchema.parse(rawSession);
     const current = this.sessions.get(sessionKey(session));
-    return current ? this.state(current) : null;
+    if (!current || !current.tabs[current.activeTabIndex]) return null;
+    return this.state(current);
   }
 
   getActiveTargetId(rawSession: unknown): string | null {
