@@ -70,6 +70,15 @@ import {
   OpenInAppResultSchema,
   WORKSPACE_CHANNELS,
 } from "../shared/workspace-contract";
+import {
+  NATIVE_BROWSER_VIEW_CHANNELS,
+  NativeBrowserActionSchema,
+  NativeBrowserBoundsSchema,
+  NativeBrowserNavigateSchema,
+  NativeBrowserSessionSchema,
+} from "../shared/browser-contract";
+import { NativeBrowserViewManager } from "./browser-view";
+import { NativeBrowserTargetBroker } from "./browser-target-broker";
 import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
@@ -97,6 +106,16 @@ const GRACEFUL_EXIT_WAIT_MS = 1_500;
  * 打包态主进程 spawn 的就是服务 ESM 入口,IPC 直达(兜底通路)。
  */
 const MASTRA_SHUTDOWN_MESSAGE = "mastra-work:shutdown";
+
+// Native WebContentsView is intentionally the user-visible surface. Mastra
+// attaches to the same Electron target for Agent inspection instead of
+// launching a second browser. The endpoint is loopback-only; the environment
+// variable remains an override for development/test port conflicts.
+const ELECTRON_CDP_PORT = process.env.MASTRA_ELECTRON_CDP_PORT?.trim() || "9229";
+if (ELECTRON_CDP_PORT) {
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  app.commandLine.appendSwitch("remote-debugging-port", ELECTRON_CDP_PORT);
+}
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -261,8 +280,10 @@ let mastraProcess: ChildProcess | null = null;
 let mastraStartPromise: Promise<void> | null = null;
 let isMastraStopping = false;
 let mainWindow: BrowserWindow | null = null;
+let nativeBrowserViews: NativeBrowserViewManager | null = null;
 let credentialVault: CredentialVault | null = null;
 let credentialBroker: CredentialBroker | null = null;
+let nativeBrowserTargetBroker: NativeBrowserTargetBroker | null = null;
 let appShutdownPromise: Promise<void> | null = null;
 
 function isTrustedRendererUrl(value: string): boolean {
@@ -637,6 +658,15 @@ function ensureMastraRunning(): Promise<void> {
         MASTRA_SHUTDOWN_TOKEN,
         MASTRA_CREDENTIAL_BROKER_PATH: broker.endpoint,
         MASTRA_CREDENTIAL_BROKER_TOKEN: broker.token,
+        ...(nativeBrowserTargetBroker
+          ? {
+              MASTRA_NATIVE_BROWSER_TARGET_BROKER_PATH: nativeBrowserTargetBroker.endpoint,
+              MASTRA_NATIVE_BROWSER_TARGET_BROKER_TOKEN: nativeBrowserTargetBroker.token,
+            }
+          : {}),
+        ...(ELECTRON_CDP_PORT
+          ? { MASTRA_ELECTRON_CDP_URL: `http://127.0.0.1:${ELECTRON_CDP_PORT}` }
+          : {}),
       };
 
       // 服务进程是纯 Node,原生 fetch 不读系统代理;把解析出的代理以环境变量注入,
@@ -773,6 +803,45 @@ function createWindow(): void {
     },
   });
 
+  const nativeBrowser = new NativeBrowserViewManager(mainWindow);
+  nativeBrowserViews = nativeBrowser;
+  const handleNativeBrowserEnsure = async (event: Electron.IpcMainInvokeEvent, value: unknown) => {
+    assertTrustedIpcSender(event);
+    return nativeBrowser.ensure(NativeBrowserSessionSchema.parse(value));
+  };
+  const handleNativeBrowserBounds = async (event: Electron.IpcMainEvent, value: unknown) => {
+    if (!isTrustedIpcSender(event)) return;
+    await nativeBrowser.setBounds(NativeBrowserBoundsSchema.parse(value));
+  };
+  const handleNativeBrowserNavigate = async (
+    event: Electron.IpcMainInvokeEvent,
+    value: unknown,
+  ) => {
+    assertTrustedIpcSender(event);
+    return nativeBrowser.navigate(NativeBrowserNavigateSchema.parse(value));
+  };
+  const handleNativeBrowserAction = async (
+    event: Electron.IpcMainInvokeEvent,
+    value: unknown,
+  ) => {
+    assertTrustedIpcSender(event);
+    return nativeBrowser.action(NativeBrowserActionSchema.parse(value));
+  };
+  const handleNativeBrowserState = (event: Electron.IpcMainInvokeEvent, value: unknown) => {
+    assertTrustedIpcSender(event);
+    return nativeBrowser.getState(NativeBrowserSessionSchema.parse(value));
+  };
+  const handleNativeBrowserClose = async (event: Electron.IpcMainInvokeEvent, value: unknown) => {
+    assertTrustedIpcSender(event);
+    await nativeBrowser.close(NativeBrowserSessionSchema.parse(value));
+  };
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.ensure, handleNativeBrowserEnsure);
+  ipcMain.on(NATIVE_BROWSER_VIEW_CHANNELS.setBounds, handleNativeBrowserBounds);
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.navigate, handleNativeBrowserNavigate);
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.action, handleNativeBrowserAction);
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.getState, handleNativeBrowserState);
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.close, handleNativeBrowserClose);
+
   const rendererSession = mainWindow.webContents.session;
   const handleRendererHeaders = (
     details: Electron.OnHeadersReceivedListenerDetails,
@@ -854,6 +923,14 @@ function createWindow(): void {
   ipcMain.on(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
 
   mainWindow.on("closed", () => {
+    nativeBrowser.dispose();
+    if (nativeBrowserViews === nativeBrowser) nativeBrowserViews = null;
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.ensure);
+    ipcMain.removeListener(NATIVE_BROWSER_VIEW_CHANNELS.setBounds, handleNativeBrowserBounds);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.navigate);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.action);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.getState);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.close);
     rendererSession.webRequest.onHeadersReceived(null);
     displayMediaSession.setDisplayMediaRequestHandler(null);
     ipcMain.removeHandler(TERMINAL_CREATE_CHANNEL);
@@ -888,12 +965,13 @@ function createWindow(): void {
   mainWindow.on("responsive", () => {
     console.info("[Renderer] window became responsive");
   });
-  mainWindow.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+  mainWindow.webContents.on("console-message", (event) => {
+    const { level, message, lineNumber, sourceId } = event;
     if (
-      level >= 2 ||
+      level === "error" ||
       /maximum update depth|network error|uncaught error/i.test(message)
     ) {
-      console.error(`[Renderer] console level=${level} ${sourceId}:${line}: ${message}`);
+      console.error(`[Renderer] console level=${level} ${sourceId}:${lineNumber}: ${message}`);
     }
   });
 
@@ -1040,6 +1118,18 @@ function bootstrap(): void {
       await credentialVault.initialize();
       credentialBroker = new CredentialBroker(credentialVault, vaultDirectory);
       await credentialBroker.start();
+      nativeBrowserTargetBroker = new NativeBrowserTargetBroker(
+        (browserSession) => nativeBrowserViews?.getActiveTargetId(browserSession) ?? null,
+        vaultDirectory,
+      );
+      try {
+        await nativeBrowserTargetBroker.start();
+      } catch (error) {
+        console.warn(
+          `[native-browser] target bridge unavailable; Agent browser will fail closed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        nativeBrowserTargetBroker = null;
+      }
     } catch (error) {
       await dialog.showMessageBox({
         type: "error",
@@ -1372,6 +1462,8 @@ function bootstrap(): void {
   // quit 会走不到这里),同时保留 will-quit 兜底应对未经 before-quit 的退出路径。
   const shutdownApp = () => {
     appShutdownPromise ??= stopMastra().finally(async () => {
+      await nativeBrowserTargetBroker?.close();
+      nativeBrowserTargetBroker = null;
       await credentialBroker?.close();
       credentialBroker = null;
       credentialVault = null;
@@ -1379,12 +1471,12 @@ function bootstrap(): void {
     return appShutdownPromise;
   };
   app.on("before-quit", (e) => {
-    if (!mastraProcess && !credentialBroker) return;
+    if (!mastraProcess && !credentialBroker && !nativeBrowserTargetBroker) return;
     e.preventDefault();
     void shutdownApp().finally(() => app.quit());
   });
   app.on("will-quit", (e) => {
-    if (mastraProcess || credentialBroker) {
+    if (mastraProcess || credentialBroker || nativeBrowserTargetBroker) {
       e.preventDefault();
       void shutdownApp().finally(() => app.quit());
     }

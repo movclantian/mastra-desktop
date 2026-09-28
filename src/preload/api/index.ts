@@ -1,5 +1,6 @@
 import type { IpcRenderer } from "electron";
 import { createCredentialsApi } from "./credentials";
+import { createBrowserViewApi } from "./browser-view";
 import { createFilesystemApi } from "./filesystem";
 import { createProxyApi } from "./proxy";
 import { createStorageApi } from "./storage";
@@ -9,6 +10,7 @@ import { createWorkspaceApi } from "./workspace";
 
 export function createPreloadApi(ipcRenderer: IpcRenderer) {
   return {
+    browserView: createBrowserViewApi(ipcRenderer),
     credentials: createCredentialsApi(ipcRenderer),
     filesystem: createFilesystemApi(ipcRenderer),
     workspace: createWorkspaceApi(ipcRenderer),

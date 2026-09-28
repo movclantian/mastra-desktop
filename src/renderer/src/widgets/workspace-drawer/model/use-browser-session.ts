@@ -2,10 +2,15 @@ import { useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import {
+  getBrowserSearchEnginePreference,
+  subscribeBrowserSearchEnginePreference,
+} from "@/shared/browser-search-preference";
 import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import {
   type BrowserAction,
+  type BrowserKeyboardRequest,
   type BrowserState,
   browserAction,
   browserResourceUrl,
@@ -13,7 +18,7 @@ import {
   connectBrowserScreencast,
   fetchBrowserState,
   navigateBrowser,
-  sendBrowserKeyboard,
+  sendBrowserKeyboardBatch,
   sendBrowserMouse,
 } from "../api/browser-api";
 
@@ -25,6 +30,41 @@ const EMPTY_BROWSER_STATE: BrowserState = {
   activeTabIndex: 0,
 };
 
+export function isCurrentBrowserStreamEvent(streamEpoch: number, currentEpoch: number): boolean {
+  return streamEpoch === currentEpoch;
+}
+
+export function mapBrowserPointerToViewport(
+  clientX: number,
+  clientY: number,
+  bounds: Pick<DOMRect, "left" | "top" | "width" | "height">,
+  viewport: { width: number; height: number },
+): { x: number; y: number } | undefined {
+  if (
+    !Number.isFinite(clientX) ||
+    !Number.isFinite(clientY) ||
+    !Number.isFinite(bounds.left) ||
+    !Number.isFinite(bounds.top) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0 ||
+    viewport.width <= 0 ||
+    viewport.height <= 0
+  ) {
+    return undefined;
+  }
+  const localX = clientX - bounds.left;
+  const localY = clientY - bounds.top;
+  if (localX < 0 || localY < 0 || localX > bounds.width || localY > bounds.height) {
+    return undefined;
+  }
+  return {
+    x: Math.max(0, Math.min(viewport.width - 1, (localX / bounds.width) * viewport.width)),
+    y: Math.max(0, Math.min(viewport.height - 1, (localY / bounds.height) * viewport.height)),
+  };
+}
+
 export function useBrowserSession() {
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
@@ -34,13 +74,24 @@ export function useBrowserSession() {
   const activePanelTab = useWorkbenchStore((state) => state.activePanelTab);
   const browserRequest = useWorkbenchStore((state) => state.browserRequest);
   const viewActive = activePanelTab.kind === "browser";
+  const nativeBrowser = typeof window !== "undefined" ? window.api?.browserView : undefined;
+  const nativeAvailable = Boolean(nativeBrowser);
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
+  const [searchEngine, setSearchEngine] = React.useState(() =>
+    getBrowserSearchEnginePreference(userId),
+  );
+  const stateRef = React.useRef(state);
+  stateRef.current = state;
   const [frame, setFrame] = React.useState<{
     data: string;
     viewport: { width: number; height: number };
   }>();
+  const frameRef = React.useRef(frame);
+  frameRef.current = frame;
   const pendingFrameRef = React.useRef<typeof frame>(undefined);
   const frameAnimationRef = React.useRef<number | undefined>(undefined);
+  const frameStreamEpochRef = React.useRef(0);
+  const pendingNavigationRef = React.useRef(false);
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false);
   const sessionEpochRef = React.useRef(0);
@@ -49,14 +100,39 @@ export function useBrowserSession() {
   );
   const [screencastAttempt, setScreencastAttempt] = React.useState(0);
   const pointerMoveAtRef = React.useRef(0);
+  const keyboardQueueRef = React.useRef<BrowserKeyboardRequest[]>([]);
+  const keyboardFlushTimerRef = React.useRef<number | undefined>(undefined);
+  const keyboardSendChainRef = React.useRef<Promise<void>>(Promise.resolve());
   const stateUrl = activeThreadId ? browserResourceUrl(activeThreadId, userId) : "";
+
+  React.useEffect(() => {
+    setSearchEngine(getBrowserSearchEnginePreference(userId));
+    return subscribeBrowserSearchEnginePreference(userId, setSearchEngine);
+  }, [userId]);
+
+  const clearFrame = React.useCallback(() => {
+    pendingFrameRef.current = undefined;
+    if (frameAnimationRef.current !== undefined) {
+      window.cancelAnimationFrame(frameAnimationRef.current);
+      frameAnimationRef.current = undefined;
+    }
+    setFrame(undefined);
+    setFrameState("idle");
+  }, []);
+
+  const invalidateFrame = React.useCallback(() => {
+    frameStreamEpochRef.current += 1;
+    clearFrame();
+  }, [clearFrame]);
 
   const refreshState = React.useCallback(async () => {
     if (!activeThreadId) return setState(EMPTY_BROWSER_STATE);
     if (busyRef.current) return;
     const epoch = sessionEpochRef.current;
     try {
-      const nextState = await fetchBrowserState(activeThreadId, userId);
+      const nextState = nativeBrowser
+        ? await nativeBrowser.getState({ resourceId: userId, threadId: activeThreadId })
+        : await fetchBrowserState(activeThreadId, userId);
       if (sessionEpochRef.current === epoch && !busyRef.current) {
         setState(nextState ?? EMPTY_BROWSER_STATE);
       }
@@ -65,12 +141,43 @@ export function useBrowserSession() {
         setState(EMPTY_BROWSER_STATE);
       }
     }
-  }, [activeThreadId, userId]);
+  }, [activeThreadId, nativeBrowser, userId]);
+
+  React.useEffect(() => {
+    if (!nativeBrowser || !activeThreadId) return;
+    let disposed = false;
+    void nativeBrowser
+      .ensure({ resourceId: userId, threadId: activeThreadId })
+      .then((nextState) => {
+        if (!disposed && !busyRef.current) setState(nextState);
+      })
+      .catch(() => {
+        if (!disposed) setState(EMPTY_BROWSER_STATE);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [activeThreadId, nativeBrowser, userId]);
+
+  React.useEffect(() => {
+    if (!nativeBrowser) return;
+    return nativeBrowser.onEvent((event) => {
+      if (event.threadId !== activeThreadId || event.resourceId !== userId) return;
+      if (event.type === "state") {
+        if (!busyRef.current) setState(event.state);
+      } else if (event.type === "url") {
+        setState((current) => ({ ...current, currentUrl: event.url }));
+      }
+    });
+  }, [activeThreadId, nativeBrowser, userId]);
 
   React.useEffect(() => {
     // 浏览器状态属于当前线程;切换线程时先清空旧线程的乐观状态,
     // 再等待新线程的服务端快照,避免侧边栏短暂显示上一个线程的标签页。
     sessionEpochRef.current += 1;
+    stateRef.current = EMPTY_BROWSER_STATE;
+    invalidateFrame();
+    pendingNavigationRef.current = false;
     busyRef.current = false;
     setBusy(false);
     setState(EMPTY_BROWSER_STATE);
@@ -79,13 +186,21 @@ export function useBrowserSession() {
     void refreshState();
     if (!stateUrl) return;
     const timer = window.setInterval(() => void refreshState(), 1_500);
-    return () => window.clearInterval(timer);
-  }, [refreshState, stateUrl]);
+    return () => {
+      window.clearInterval(timer);
+      keyboardQueueRef.current = [];
+      if (keyboardFlushTimerRef.current !== undefined) {
+        window.clearTimeout(keyboardFlushTimerRef.current);
+        keyboardFlushTimerRef.current = undefined;
+      }
+    };
+  }, [invalidateFrame, refreshState, stateUrl]);
 
   React.useEffect(() => {
     void screencastAttempt;
-    if (!viewActive || !stateUrl || !state.active || !activeThreadId) return;
+    if (nativeAvailable || !viewActive || !stateUrl || !state.active || !activeThreadId) return;
     const threadId = activeThreadId;
+    const streamEpoch = ++frameStreamEpochRef.current;
     setFrameState("connecting");
     const controller = new AbortController();
     let disposed = false;
@@ -109,6 +224,10 @@ export function useBrowserSession() {
               .filter((line) => line.startsWith("data:"))
               .map((line) => line.slice(5).trimStart())
               .join("\n");
+            if (!isCurrentBrowserStreamEvent(streamEpoch, frameStreamEpochRef.current)) {
+              boundary = buffer.indexOf("\n\n");
+              continue;
+            }
             if (eventName === "frame") {
               pendingFrameRef.current = JSON.parse(data) as NonNullable<typeof frame>;
               if (frameAnimationRef.current === undefined) {
@@ -123,7 +242,15 @@ export function useBrowserSession() {
             } else if (eventName === "url") {
               const payload = JSON.parse(data) as { url?: string };
               if (typeof payload.url === "string") {
+                const navigationPending = pendingNavigationRef.current;
                 setState((current) => ({ ...current, currentUrl: payload.url ?? null }));
+                if (navigationPending) {
+                  // Keep the last decoded frame while the destination paints.
+                  // Clearing it here turns a normal navigation into a white
+                  // flash on heavy pages; the next frame will replace it.
+                  pendingNavigationRef.current = false;
+                  setFrameState("connecting");
+                }
               }
             } else if (eventName === "stop") {
               const payload = JSON.parse(data) as { reason?: unknown };
@@ -170,7 +297,7 @@ export function useBrowserSession() {
       }
       pendingFrameRef.current = undefined;
     };
-  }, [activeThreadId, refreshState, screencastAttempt, state.active, stateUrl, userId, viewActive]);
+  }, [activeThreadId, clearFrame, invalidateFrame, nativeAvailable, refreshState, screencastAttempt, state.active, stateUrl, userId, viewActive]);
 
   const retryFrame = React.useCallback(() => {
     setFrame(undefined);
@@ -179,39 +306,93 @@ export function useBrowserSession() {
     void refreshState();
   }, [refreshState]);
 
+  const flushKeyboardQueue = React.useCallback(() => {
+    keyboardFlushTimerRef.current = undefined;
+    if (
+      !activeThreadId ||
+      !stateUrl ||
+      busyRef.current ||
+      !stateRef.current.active ||
+      stateRef.current.status === "closing" ||
+      keyboardQueueRef.current.length === 0
+    ) {
+      if (!stateRef.current.active || stateRef.current.status === "closing") {
+        keyboardQueueRef.current = [];
+      }
+      return;
+    }
+    const events = keyboardQueueRef.current.splice(0, 64);
+    const threadId = activeThreadId;
+    const resourceId = userId;
+    keyboardSendChainRef.current = keyboardSendChainRef.current
+      .catch(() => undefined)
+      .then(() => sendBrowserKeyboardBatch(threadId, resourceId, { events }))
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => {
+        if (keyboardQueueRef.current.length > 0 && keyboardFlushTimerRef.current === undefined) {
+          keyboardFlushTimerRef.current = window.setTimeout(flushKeyboardQueue, 8);
+        }
+      });
+  }, [activeThreadId, stateUrl, userId]);
+
+  const queueKeyboardEvent = React.useCallback(
+    (event: BrowserKeyboardRequest) => {
+      keyboardQueueRef.current.push(event);
+      if (keyboardFlushTimerRef.current === undefined) {
+        keyboardFlushTimerRef.current = window.setTimeout(flushKeyboardQueue, 8);
+      }
+    },
+    [flushKeyboardQueue],
+  );
+
   const navigate = React.useCallback(
     async (url: string) => {
-      if (!stateUrl || !url.trim() || !activeThreadId) return;
+      if (!stateUrl || !url.trim() || !activeThreadId || busyRef.current) return false;
       const threadId = activeThreadId;
       const epoch = sessionEpochRef.current;
+      pendingNavigationRef.current = true;
       busyRef.current = true;
       setBusy(true);
+      let succeeded = false;
       try {
-        const payload = await navigateBrowser(threadId, userId, url);
-        if (sessionEpochRef.current !== epoch) return;
+        const payload = nativeBrowser
+          ? { state: await nativeBrowser.navigate({ resourceId: userId, threadId }, url) }
+          : await navigateBrowser(threadId, userId, url);
+        if (sessionEpochRef.current !== epoch) return false;
         if (payload.state) setState(payload.state);
-        await refreshState();
+        succeeded = true;
+        return payload.state?.currentUrl || url;
       } catch (error) {
         if (sessionEpochRef.current === epoch) {
           toastError(error, i18n.t("workspace:navigateFailed"));
         }
+        return false;
       } finally {
         if (sessionEpochRef.current === epoch) {
+          if (!succeeded) {
+            pendingNavigationRef.current = false;
+            clearFrame();
+            setScreencastAttempt((attempt) => attempt + 1);
+          }
           busyRef.current = false;
           setBusy(false);
+          void refreshState();
         }
       }
     },
-    [activeThreadId, refreshState, stateUrl, userId],
+    [activeThreadId, clearFrame, nativeBrowser, refreshState, stateUrl, userId],
   );
 
   const action = React.useCallback(
     async (name: BrowserAction, index?: number, url?: string) => {
-      if (!stateUrl || !activeThreadId) return;
+      if (!stateUrl || !activeThreadId || busyRef.current) return;
       const threadId = activeThreadId;
       const epoch = sessionEpochRef.current;
+      pendingNavigationRef.current = true;
       busyRef.current = true;
       setBusy(true);
+      let succeeded = false;
       const requestUrl = name === "new-tab" && url !== "about:blank" ? url : undefined;
       if (name === "new-tab") {
         const newUrl = requestUrl ?? "about:blank";
@@ -245,8 +426,18 @@ export function useBrowserSession() {
         });
       }
       try {
-        const payload = await browserAction(threadId, userId, name, index, requestUrl);
+        const payload = nativeBrowser
+          ? {
+              state: await nativeBrowser.action(
+                { resourceId: userId, threadId },
+                name,
+                index,
+                requestUrl,
+              ),
+            }
+          : await browserAction(threadId, userId, name, index, requestUrl);
         if (sessionEpochRef.current === epoch && payload.state) setState(payload.state);
+        succeeded = true;
       } catch (error) {
         if (sessionEpochRef.current === epoch) {
           toastError(error, i18n.t("workspace:browserOpFailed"));
@@ -254,21 +445,31 @@ export function useBrowserSession() {
         }
       } finally {
         if (sessionEpochRef.current === epoch) {
+          if (!succeeded) {
+            pendingNavigationRef.current = false;
+            clearFrame();
+            setScreencastAttempt((attempt) => attempt + 1);
+          }
           busyRef.current = false;
           setBusy(false);
+          void refreshState();
         }
       }
     },
-    [activeThreadId, refreshState, stateUrl, userId],
+    [activeThreadId, clearFrame, nativeBrowser, refreshState, stateUrl, userId],
   );
 
   // 当处于浏览器面板且无标签时，自动拉起首个空白标签页（0ms 乐观上屏）。
   React.useEffect(() => {
     if (!viewActive || !activeThreadId || busyRef.current) return;
+    // The Electron-native path creates its initial about:blank tab in the
+    // main-process view manager.  Do not also issue the legacy new-tab action;
+    // doing both races the first open and leaves a duplicate hidden tab.
+    if (nativeAvailable) return;
     if (state.tabs.length === 0 && state.status !== "closing") {
       void action("new-tab");
     }
-  }, [action, activeThreadId, state.status, state.tabs.length, viewActive]);
+  }, [action, activeThreadId, nativeAvailable, state.status, state.tabs.length, viewActive]);
 
   const consumedBrowserRequestRef = React.useRef(0);
   React.useEffect(() => {
@@ -288,20 +489,33 @@ export function useBrowserSession() {
 
   const injectMouse = React.useCallback(
     (event: React.PointerEvent<HTMLImageElement>, type: "mousePressed" | "mouseReleased") => {
-      if (!stateUrl || !frame || !activeThreadId) return;
+      const currentFrame = frameRef.current;
+      if (
+        !stateUrl ||
+        !currentFrame ||
+        !activeThreadId ||
+        busyRef.current ||
+        !stateRef.current.active ||
+        stateRef.current.status === "closing"
+      ) {
+        return;
+      }
       const threadId = activeThreadId;
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const x = ((event.clientX - bounds.left) / bounds.width) * frame.viewport.width;
-      const y = ((event.clientY - bounds.top) / bounds.height) * frame.viewport.height;
+      const coordinates = mapBrowserPointerToViewport(
+        event.clientX,
+        event.clientY,
+        event.currentTarget.getBoundingClientRect(),
+        currentFrame.viewport,
+      );
+      if (!coordinates) return;
       void sendBrowserMouse(threadId, userId, {
         type,
-        x,
-        y,
+        ...coordinates,
         button: "left",
         clickCount: 1,
-      });
+      }).catch(() => undefined);
     },
-    [activeThreadId, frame, stateUrl, userId],
+    [activeThreadId, stateUrl, userId],
   );
 
   const injectMouseMove = React.useCallback(
@@ -309,27 +523,58 @@ export function useBrowserSession() {
       const now = performance.now();
       if (now - pointerMoveAtRef.current < 30) return;
       pointerMoveAtRef.current = now;
-      if (!stateUrl || !frame || !activeThreadId) return;
+      const currentFrame = frameRef.current;
+      if (
+        !stateUrl ||
+        !currentFrame ||
+        !activeThreadId ||
+        busyRef.current ||
+        !stateRef.current.active ||
+        stateRef.current.status === "closing"
+      ) {
+        return;
+      }
       const threadId = activeThreadId;
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const x = ((event.clientX - bounds.left) / bounds.width) * frame.viewport.width;
-      const y = ((event.clientY - bounds.top) / bounds.height) * frame.viewport.height;
-      void sendBrowserMouse(threadId, userId, { type: "mouseMoved", x, y, button: "none" });
+      const coordinates = mapBrowserPointerToViewport(
+        event.clientX,
+        event.clientY,
+        event.currentTarget.getBoundingClientRect(),
+        currentFrame.viewport,
+      );
+      if (!coordinates) return;
+      void sendBrowserMouse(threadId, userId, {
+        type: "mouseMoved",
+        ...coordinates,
+        button: "none",
+      }).catch(() => undefined);
     },
-    [activeThreadId, frame, stateUrl, userId],
+    [activeThreadId, stateUrl, userId],
   );
 
   const injectWheel = React.useCallback(
     (event: React.WheelEvent<HTMLImageElement>) => {
-      if (!stateUrl || !frame || !activeThreadId) return;
+      const currentFrame = frameRef.current;
+      if (
+        !stateUrl ||
+        !currentFrame ||
+        !activeThreadId ||
+        busyRef.current ||
+        !stateRef.current.active ||
+        stateRef.current.status === "closing"
+      ) {
+        return;
+      }
       const threadId = activeThreadId;
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const x = ((event.clientX - bounds.left) / bounds.width) * frame.viewport.width;
-      const y = ((event.clientY - bounds.top) / bounds.height) * frame.viewport.height;
+      const coordinates = mapBrowserPointerToViewport(
+        event.clientX,
+        event.clientY,
+        event.currentTarget.getBoundingClientRect(),
+        currentFrame.viewport,
+      );
+      if (!coordinates) return;
       void sendBrowserMouse(threadId, userId, {
         type: "mouseWheel",
-        x,
-        y,
+        ...coordinates,
         deltaX: event.deltaX,
         deltaY: event.deltaY,
         modifiers:
@@ -337,15 +582,22 @@ export function useBrowserSession() {
           (event.ctrlKey ? 2 : 0) |
           (event.metaKey ? 4 : 0) |
           (event.shiftKey ? 8 : 0),
-      });
+      }).catch(() => undefined);
     },
-    [activeThreadId, frame, stateUrl, userId],
+    [activeThreadId, stateUrl, userId],
   );
 
   const injectKey = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (!stateUrl || !activeThreadId) return;
-      const threadId = activeThreadId;
+      if (
+        !stateUrl ||
+        !activeThreadId ||
+        busyRef.current ||
+        !stateRef.current.active ||
+        stateRef.current.status === "closing"
+      ) {
+        return;
+      }
       event.preventDefault();
       const modifiers =
         (event.altKey ? 1 : 0) |
@@ -358,47 +610,67 @@ export function useBrowserSession() {
         modifiers,
         windowsVirtualKeyCode: event.keyCode,
       };
+      const events: BrowserKeyboardRequest[] = [];
       for (const type of ["keyDown", "keyUp"] as const) {
-        void sendBrowserKeyboard(threadId, userId, {
+        events.push({
           ...payload,
           type,
           ...(type === "keyDown" && event.key.length === 1 ? { text: event.key } : {}),
         });
       }
+      for (const keyboardEvent of events) queueKeyboardEvent(keyboardEvent);
     },
-    [activeThreadId, stateUrl, userId],
+    [activeThreadId, queueKeyboardEvent, stateUrl],
+  );
+
+  const setNativeBounds = React.useCallback(
+    (bounds: { x: number; y: number; width: number; height: number }) => {
+      if (!nativeBrowser || !activeThreadId) return;
+      nativeBrowser.setBounds({ resourceId: userId, threadId: activeThreadId, ...bounds });
+    },
+    [activeThreadId, nativeBrowser, userId],
   );
 
   /**
    * 关闭唯一/最后一个标签页：
-   * 立即从前端清空标签状态（0ms 响应，平滑回退），并结束当前浏览器会话。
+   * 立即从前端清空标签状态，并让服务端导航到空白页以保留已启动的 Chromium 会话。
    */
   const closeLastBrowserTab = React.useCallback(() => {
-    const epoch = ++sessionEpochRef.current;
+    keyboardQueueRef.current = [];
+    if (keyboardFlushTimerRef.current !== undefined) {
+      window.clearTimeout(keyboardFlushTimerRef.current);
+      keyboardFlushTimerRef.current = undefined;
+    }
+    stateRef.current = EMPTY_BROWSER_STATE;
     setState(EMPTY_BROWSER_STATE);
     setFrame(undefined);
     setFrameState("idle");
-    if (activeThreadId && stateUrl) {
-      void closeBrowserRequest(activeThreadId, userId).then(() => {
-        if (sessionEpochRef.current === epoch) void refreshState();
-      }).catch(() => {});
-    }
-  }, [activeThreadId, refreshState, stateUrl, userId]);
+    if (activeThreadId && stateUrl) void action("close-tab", 0);
+  }, [action, activeThreadId, stateUrl]);
 
   /** 显式终止浏览器进程（通过工具栏终止按钮或会话结束调用） */
   const closeBrowser = React.useCallback(() => {
     if (!stateUrl || !activeThreadId) return;
+    keyboardQueueRef.current = [];
+    if (keyboardFlushTimerRef.current !== undefined) {
+      window.clearTimeout(keyboardFlushTimerRef.current);
+      keyboardFlushTimerRef.current = undefined;
+    }
     const threadId = activeThreadId;
     const epoch = ++sessionEpochRef.current;
+    stateRef.current = EMPTY_BROWSER_STATE;
     setState(EMPTY_BROWSER_STATE);
     setFrame(undefined);
     setFrameState("idle");
-    void closeBrowserRequest(threadId, userId).then(() => {
+    const closePromise = nativeBrowser
+      ? nativeBrowser.close({ resourceId: userId, threadId })
+      : closeBrowserRequest(threadId, userId);
+    void closePromise.then(() => {
       if (sessionEpochRef.current === epoch) {
         void refreshState();
       }
     }).catch(() => {});
-  }, [activeThreadId, refreshState, stateUrl, userId]);
+  }, [activeThreadId, nativeBrowser, refreshState, stateUrl, userId]);
 
   return {
     action,
@@ -414,6 +686,9 @@ export function useBrowserSession() {
     injectWheel,
     navigate,
     retryFrame,
+    native: nativeAvailable,
+    searchEngine,
+    setBounds: setNativeBounds,
     state,
     threadKey: activeThreadId,
   };

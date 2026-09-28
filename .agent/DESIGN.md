@@ -2,11 +2,20 @@
 
 ## G0 语义边界
 
-- **Product Core:** 本地优先的 AI 工作台，在桌面端安全地运行 Agent、工作区和知识库能力。
-- **Primary User:** 在本机使用 Mastra Desktop 进行 Agent 对话、代码工作区操作和资料管理的开发者。
-- **Role Ownership:** Electron 主进程负责宿主权限；Mastra 子进程负责服务、Agent 和数据访问；renderer 只通过受约束的 API 交互；数据库和文件系统是本地事实源。
-- **Non-goals:** 本轮不重做 UI、不更换 Agent/存储框架；只把用户确认的品牌图标接入现有品牌位，不把未验证的运行结果包装成已验收。
-- **Forbidden Claims:** 不能把静态检查称为安装后可用；不能把依赖存在称为已获许可证；不能把 CORS/sandbox 配置本身称为已完成安全认证。
+- **Product Core:** 桌面开发工作台内提供可直接使用的网页浏览，并允许 Agent 在受控范围内协助当前页面。
+- **Primary User:** 在 Mastra Desktop 里查看、调试网页并需要 Agent 辅助的开发者。
+- **Role Ownership:** Electron `WebContentsView` 是用户所见页面的事实源；Mastra 持有 Agent/线程上下文；用户决定导航并保留最终控制权；Agent 只能通过线程绑定的浏览器目标进行操作。
+- **Non-goals:** 不重做完整 Chrome/Edge，不把 Bing 当首页或 Agent 专属浏览器，不在本轮宣称或实现按线程隔离 cookies/site storage。
+- **Forbidden Claims:** 未做同机基准前不声称性能等同 Codex；未完成真实 Electron 交互前不声称无闪烁/无延迟；URL 相同不能单独证明 Agent 与用户共享同一页面。
+
+## 当前设计：上游对齐与浏览器变更集成
+
+- **基线:** 以已 fetch 的 `origin/main` `0afc3b51d913164f1a43dee7d7206d8ce9a3e94d` 为唯一集成起点。功能分支在上游 `b18ab3d` 的源树已一致；不重复搬运已合入的 transfer-recovery 代码。
+- **产品语义:** 新标签为 `about:blank`；地址栏支持直接网址和普通搜索词，搜索服务为用户可配置项（当前用户选择 Bing 为默认搜索服务，不代表首页）；用户与 Agent 的目标是同一线程当前可见原生页面。
+- **实现边界:** 主进程管理原生页面及生命周期，renderer 只通过 preload/IPC 操作 UI，Mastra 继续负责 Agent 请求身份和浏览器工具；SSE/JPEG 仅在确认仍有消费者后作为兼容路径保留。
+- **已知边界:** Electron default session 的 cookies/site storage 仍是应用级共享；loopback CDP 旁路风险按 Owner 最新决定列为已知、当前非阻塞项，不在本批扩成 transport 重写。
+- **保护:** 原始脏工作区保留不动；仅迁移与本批目标直接相关且经 diff 审核的源码/测试。临时截图、研究缓存及无法解释的文件不自动进入交付。
+- **完成声明:** 类型/定向回归/完整回归/构建与隔离 Electron 运行态分别报告；未获得性能测量和 Owner 手工体验前，不宣称达到 Codex 性能或完整浏览器等价。
 
 ## Goal
 

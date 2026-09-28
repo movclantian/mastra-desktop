@@ -1,5 +1,58 @@
 # 工程问题修复计划
 
+## 当前批次：对齐 origin/main 并整理浏览器成果（2026-09-28）
+
+**级别:** C2 + R-architecture / R-runtime / R-protocol / R-ui / R-security，A2。用户已授权整理、提交、推送功能分支、创建 PR，并在门禁通过后合并到 main；不打 tag、不发布、不改原开发环境。
+
+### Goal / 边界
+
+- 集成基线固定为 `origin/main` `0afc3b51d913164f1a43dee7d7206d8ce9a3e94d`。
+- 保留上游 Provider 路由、Mastra/依赖升级、pnpm 12.6、release/workspace 修复及其测试门禁。
+- 迁移原生用户浏览器与 Agent 同页能力及必要依赖（包括浏览器侧栏布局、删除线程时关闭浏览器 session）和对应回归；源工作区始终作为原样备份。
+- 长任务聊天渲染、全局光标、Workspace 变更面板属于独立改动，本批不混入；保留在源工作区并记录为后续候选。
+- 不重复 cherry-pick 已与上游 `b18ab3d` 内容一致的 transfer-recovery 功能；搜索首页、浏览器 profile、CDP 风险不借整合之名改变。
+- 不把无关 workspace UI 改动、临时截图、Firecrawl 缓存和无法解释的 `0` / `{console.error(e.message)` 文件混入实现；逐项列为保留/排除，不删除原件。
+
+### 现状与调用链
+
+- 上游 `main` 已含 `fail closed on unresolved startup transfers`；本地分支 `95131f2` 与 `b18ab3d` 的提交树相同，独有提交没有新的净源码差异。
+- 脏工作区拟集成的浏览器路径：renderer `BrowserView/useBrowserSession` → preload IPC → Electron 主进程 `WebContentsView`；Mastra Agent 通过当前请求的 resource/thread 选择原生 target。旧 SSE/JPEG 仍存在，需确认消费者后再决定是否保留。
+- 上游比本地分支新：Provider registry/Gateway 及原生 Provider endpoint 修复、`@mastra/core` 1.71 patch、pnpm 12.6、Release patch-path 门禁和 workspace grep 修正。上游新增 `test-provider-routing.mjs` 必须保留在回归命令中。
+
+### 实施顺序
+
+1. **基线封存:** 核实新 worktree HEAD、clean status、Node/pnpm 实际版本；记录源工作区分支/HEAD/修改清单，不改变源工作区。
+2. **变更归类:** 将源工作区修改分成 browser core、必要共享 UI/测试、无关/临时项；检查每个源文件是否与上游 `main` 同名变更冲突。仅迁移已确认项。
+3. **上游优先:** 依赖、patch、lockfile、CI 与 Provider 源码都以 `origin/main` 为准；合并自定义 browser test commands 时并入 `test-provider-routing.mjs`，不回退依赖版本。
+4. **分层集成:** 先契约/omnibox 纯逻辑测试，再 preload/main native view 与 Mastra target bridge，再 renderer/thread 状态；每批后跑最小受影响测试并查看 diff。
+5. **验证:** 回归（含 Provider routing）、三套 typecheck、Biome、release guard、`git diff --check`、生产 build；再用隔离 profile 跑 Electron native browser target/导航/标签/关闭回归。当前开发进程与用户原 profile 不得触碰。
+6. **独立复核与交付:** 一次 fresh-context 只读 review，重点检查 upstream 依赖兼容、thread target ownership、SSE 降级路径和误带文件；更新本文件、`CURRENT_STATE.md`、最终 `RESULT.md`。提交并推送功能分支、创建 PR；只在 required CI 与 review 通过且合并无冲突时合并到 main。性能是否达到 Codex 单独标待实测。
+
+### Acceptance / 停止条件
+
+- 基于 `origin/main`，不回退上游 Provider、CI、patch、依赖和 workspace 修复；provider-routing 回归仍被执行。
+- 用户页面走原生 `WebContentsView`，地址栏 draft/导航/刷新/标签状态同步；Agent 目标由请求身份映射当前线程页面，不能只靠 URL 相等作证明。
+- 保留原工作区全部文件且不对其执行测试写产物；新 worktree 的自动化与隔离 Electron 运行通过。失败项修复后针对性重测，不空转全量。
+- 不把截图、源码断言或 Vite renderer 测试冒充真实 Electron/TRIAL；不声称性能等同 Codex，除非有同机对照数据。
+- 不修改系统代理或用户 profile；本批允许按授权 push 功能分支并合并 PR，但不创建 tag/Release，也不绕过失败或未完成的 CI/review。
+
+### 当前状态
+
+- 已完成：fetch `origin`；上游指针为 `0afc3b5`；创建独立分支 `align/upstream-main-browser`，与源开发工作区隔离。
+- 已完成：仅迁移浏览器核心及必要 UI/线程生命周期改动；保留上游 provider-routing 回归入口。没有复制长任务聊天渲染、smooth cursor、Workspace changes 面板、截图/cache 或无法解释的散文件；原 worktree 文件未改动。
+- 自动化通过：浏览器导航/删线程生命周期 22/22；`test:regression` 99/99（93 + 6，含 provider routing、transfer recovery）；typecheck；Biome 410 文件；`verify:release`；`git diff --check`；生产 build（Mastra、Electron main/preload/renderer）。
+- Electron 运行态通过：独立临时 userData 的 native browser probe 验证 authenticated bridge、Electron/Playwright target ID 映射、alpha/beta 线程目标隔离、fail-closed 以及 `window.open` 新标签。由于依赖 Electron 44.4.5 的二进制下载停滞，使用本机已安装的 Electron 44.3.0 做此次运行态 smoke；不把它记作 44.4.5 精确版本验证。
+- Fresh review：未发现 P0/P1；初审发现删除线程只清理 Mastra browser session，现已在 renderer 删除成功路径通过 preload IPC 关闭主进程 WebContentsView，定向与全回归复测通过。CDP 端口未认证仍是已接受的本机 P2；运行态 probe 未经过生产 Agent tool/API 全链，因此该链仍需整应用验收。
+- 尚未完成：完整应用 UI 的截图/视觉 QA 与用户手感/卡顿对比。`browser-harness` 不在当前可用技能中；完整应用固定使用 4111 端口，而用户原开发服务仍在监听，因此本批不另起整应用、不触碰原 profile。不得宣称达到 Codex 体验或已消除用户感知卡顿。
+- Fresh review：一个只读 reviewer 已完成首次审查和生命周期补丁复核；未发现未解决 P0/P1/P2。源 worktree 保持 dirty 原样。当前进入分类、提交与 PR 流程；不打 tag、不发布。
+- 代码身份：干净基线 commit `0afc3b51d913164f1a43dee7d7206d8ce9a3e94d`。
+
+---
+
+## 历史计划记录
+
+以下阶段用于追溯，不覆盖本批的基线和产品决定。
+
 ## 当前批次：资料库引用语义纠偏（2026-09-22）
 
 状态：实现完成；定向/全量自动化验证通过；已停止 watcher 释放锁并完成生产构建；开发监听已重新启动，等待真实桌面回归。

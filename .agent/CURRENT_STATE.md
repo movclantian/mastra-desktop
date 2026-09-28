@@ -1,5 +1,66 @@
 # 工程问题修复当前状态
 
+## 当前任务：上游对齐与浏览器成果整合（2026-09-28）
+
+### Goal
+
+在最新 `origin/main` 基线上，审查并整合原工作区中有效的原生浏览器改动；整理变更归属、自动化验收和剩余风险。原工作区不得被改动或重启。
+
+### Product core
+
+桌面开发工作台提供用户可直接使用的网页浏览，并允许 Agent 在受控范围内协助当前线程页面。
+
+### Non-goals
+
+- 不替代完整 Chrome/Edge；不改变用户登录 profile/cookie 的既有产品语义。
+- 不宣称达到 Codex 性能、零闪烁或完整浏览器等价；本批按 Owner 授权准备 PR 并在门禁通过后合并，不打 tag 或发布。
+- 不自动携带 screenshots/cache/无法归属的文件。
+
+### Phase / Decision
+
+- 阶段：CLASSIFY → COMMIT → PR → CI/REVIEW → MERGE。复杂度 `C2`；风险 `R-architecture / R-runtime / R-protocol / R-ui / R-security`；动作 `A2`（Owner 已授权推送功能分支、创建 PR 和通过门禁后合并 main）。
+- 基线：`origin/main` / `0afc3b51d913164f1a43dee7d7206d8ce9a3e94d`。
+- 隔离工作区：分支 `align/upstream-main-browser`；源开发工作区保持原样。
+- 上游已包含 fail-closed transfer recovery；不重复迁移。上游 Provider/Gateway、依赖、pnpm 与 Release/workspace 修复必须保留。
+- 当前目标语义：新页 `about:blank`；Bing 是可选配置的默认搜索服务，不是默认首页；用户与 Agent 使用同一线程当前可见原生页面。default session 的 cookies/site storage 仍按应用共享。
+- loopback CDP 本机进程信任边界按 Owner 最新决定记为已知、非当前阻塞项；本批不做 transport 重写。
+
+### Implemented
+
+- 浏览器用户界面通过 preload/IPC 使用主进程原生 `WebContentsView`；Agent 按已认证 resource/thread 身份选取当前线程页面，不通过 URL 相等来推定共享。
+- 新标签初始 `about:blank`，地址栏支持 URL 与普通搜索词，Bing 是可配置搜索服务而不是默认首页；面板最小宽度/默认比例收敛，删除线程时清理 browser session。
+- 新增线程删除后的 renderer→preload→Electron 生命周期清理：只在服务端删除成功后关闭对应 resource/thread 的原生网页；旧版 preload 缺 API 时安全跳过，IPC 失败只记日志，避免已删除操作被误报失败。
+- 仅从原脏 worktree 迁入本批必要浏览器核心和关联 UI/测试；上游依赖、Provider 路由、CI/Release、workspace 修复与 patch/lock 保持 `origin/main` 原样。迁移中保留 provider-routing 回归命令。
+- 未带入长任务聊天渲染、smooth cursor、Workspace changes 面板、截图/cache 和不明散文件；源 worktree 未运行构建/测试，未修改/清理。
+
+### Evidence
+
+- 原分支：`fix/review-blockers-v0.0.4`，HEAD `95131f2`，与其 tracking remote 相同。
+- 上游：`origin/main` `0afc3b5`；原分支当前提交树与上游 `b18ab3d` 相同，独有提交没有净树差异。
+- 源工作区有 29 个 tracked 修改、35 个 untracked 文件；没有暂存项。保留原样，不在本 worktree 外运行会生成产物的命令。
+- 上游新增 Provider routing 回归；整合 `package.json` 测试命令时必须保留该测试。
+- 浏览器导航/删线程生命周期定向回归：22/22；`pnpm run test:regression`：99/99（首组 93，后组 6，含 upstream provider routing 与真实 transfer recovery）。
+- 三套 TypeScript：通过；Biome：410 files clean；`pnpm run verify:release`：通过；`git diff --check`：通过；最终生产构建：Mastra 与 Electron main/preload/renderer 成功。
+- 隔离 Electron native-browser smoke：通过，检查 authenticated bridge、CDP target ID/Playwright 映射、线程目标隔离、授权失败关闭和 popup 新标签。用本机 Electron 44.3.0 二进制运行，项目依赖声明为 44.4.5；原 worktree 下载 44.4.5 停滞，精确版本运行态仍未验证。
+- 构建警告：ag-psd 的 `util` browser externalization；renderer 最大入口 chunk 约 13.3 MB。构建成功但体积/拆包未在本批优化。
+- 视觉 QA：BLOCKED。浏览器截图 harness 当前不可用；原应用 Mastra 端口 4111 仍被监听，为避免冲突与污染原 profile，本批没有启动完整应用，故不把 fixture/自动化结果冒充完整 UI 截图或手感验收。
+
+### Blocker
+
+源码自动化与构建无阻塞；剩余交付门槛是完整应用视觉/用户体验验收和精确 Electron 44.4.5 runtime 验证。Fresh review 已完成且未发现未解决 P0/P1/P2；CDP 无 token 是已接受的本机 P2。运行态 smoke 没有经过生产 Agent tool/API 全链。
+
+### Next
+
+1. 完成本批变更分类和差异/路径/密钥扫描，提交并推送功能分支，创建 PR。
+2. 等待 required CI 和 review；若失败则修复并重跑，不绕过门禁；通过后合并 main 并核验远端结果。
+3. 完整应用截图/真实用户手感、闪烁/卡顿对比及 Electron 44.4.5 精确 runtime 仍作为已知验证限制记录；不夸大为已解决，不阻止代码 PR 的 CI 门禁。
+
+---
+
+## 历史状态记录
+
+以下为此前阶段记录；若与上方当前基线/决策冲突，以当前段及 `.agent/PLAN.md` 的本批内容为准。
+
 ## 2026-09-21：聊天文档与长期资料库语义对齐（当前批次）
 
 - Goal：让可解析的聊天文档同时进入长期资料库和当前会话，消除“已上传但默认文档目录看不到”的语义错位。

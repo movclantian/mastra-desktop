@@ -1,0 +1,6 @@
+{
+  "name": "native-browser-target-probe",
+  "version": "1.0.0",
+  "private": true,
+  "main": "main.cjs"
+}

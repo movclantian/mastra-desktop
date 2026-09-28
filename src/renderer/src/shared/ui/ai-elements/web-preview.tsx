@@ -2,7 +2,16 @@
 
 import { ChevronDownIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -11,15 +20,40 @@ import { Input } from "@/shared/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/shared/ui/tooltip";
 
 export interface WebPreviewContextValue {
+  draftUrl: string;
   url: string;
-  setUrl: (url: string) => void;
+  setDraftUrl: (url: string) => void;
+  setUrl: (url: string) => Promise<boolean>;
+  submitDraft: () => Promise<boolean>;
   consoleOpen: boolean;
   setConsoleOpen: (open: boolean) => void;
 }
 
+type WebPreviewUrlChange = (
+  url: string,
+) => string | false | undefined | Promise<string | false | undefined>;
+
+export async function requestWebPreviewNavigation(
+  url: string,
+  onUrlChange?: WebPreviewUrlChange,
+): Promise<string | null> {
+  try {
+    const result = await onUrlChange?.(url);
+    if (result === false) return null;
+    return typeof result === "string" ? result : url;
+  } catch {
+    return null;
+  }
+}
+
+export function shouldSubmitWebPreviewDraft(draftUrl: string, currentUrl: string): boolean {
+  const draft = draftUrl.trim();
+  return draft.length > 0 && draft !== currentUrl;
+}
+
 const WebPreviewContext = createContext<WebPreviewContextValue | null>(null);
 
-const useWebPreview = () => {
+export const useWebPreview = () => {
   const context = useContext(WebPreviewContext);
   if (!context) {
     throw new Error("WebPreview components must be used within a WebPreview");
@@ -29,7 +63,8 @@ const useWebPreview = () => {
 
 export type WebPreviewProps = ComponentProps<"div"> & {
   defaultUrl?: string;
-  onUrlChange?: (url: string) => void;
+  onUrlChange?: WebPreviewUrlChange;
+  resolveUrl?: (input: string) => string | null;
 };
 
 export const WebPreview = ({
@@ -37,31 +72,47 @@ export const WebPreview = ({
   children,
   defaultUrl = "",
   onUrlChange,
+  resolveUrl,
   ...props
 }: WebPreviewProps) => {
   const [url, setUrl] = useState(defaultUrl);
+  const [draftUrl, setDraftUrl] = useState(defaultUrl);
   const [consoleOpen, setConsoleOpen] = useState(false);
 
   useEffect(() => {
     setUrl(defaultUrl);
+    setDraftUrl(defaultUrl);
   }, [defaultUrl]);
 
   const handleUrlChange = useCallback(
-    (newUrl: string) => {
-      setUrl(newUrl);
-      onUrlChange?.(newUrl);
+    async (newUrl: string) => {
+      const destination = resolveUrl ? resolveUrl(newUrl) : newUrl;
+      if (!destination) return false;
+      const committedUrl = await requestWebPreviewNavigation(destination, onUrlChange);
+      if (committedUrl === null) return false;
+      setUrl(committedUrl);
+      setDraftUrl(committedUrl);
+      return true;
     },
-    [onUrlChange],
+    [onUrlChange, resolveUrl],
   );
+
+  const submitDraft = useCallback(async () => {
+    if (!shouldSubmitWebPreviewDraft(draftUrl, url)) return false;
+    return handleUrlChange(draftUrl.trim());
+  }, [draftUrl, handleUrlChange, url]);
 
   const contextValue = useMemo<WebPreviewContextValue>(
     () => ({
       consoleOpen,
+      draftUrl,
       setConsoleOpen,
+      setDraftUrl,
       setUrl: handleUrlChange,
+      submitDraft,
       url,
     }),
-    [consoleOpen, handleUrlChange, url],
+    [consoleOpen, draftUrl, handleUrlChange, submitDraft, url],
   );
 
   return (
@@ -124,44 +175,64 @@ export const WebPreviewNavigationButton = ({
 
 export type WebPreviewUrlProps = ComponentProps<typeof Input>;
 
-export const WebPreviewUrl = ({ value, onChange, onKeyDown, ...props }: WebPreviewUrlProps) => {
-  const { url, setUrl } = useWebPreview();
+export const WebPreviewUrl = memo(function WebPreviewUrl({
+  value,
+  onChange,
+  onKeyDown,
+  ...props
+}: WebPreviewUrlProps) {
+  const { draftUrl, setDraftUrl, url, setUrl } = useWebPreview();
   const [prevUrl, setPrevUrl] = useState(url);
   const [inputValue, setInputValue] = useState(url);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sync input value with context URL when it changes externally (derived state pattern)
-  if (url !== prevUrl) {
+  // External browser URL events are frequent on pages such as Bing. Preserve
+  // an in-progress address-bar draft instead of replacing it on every event.
+  useEffect(() => {
+    if (url === prevUrl) return;
+    const hasDraft = inputValue !== prevUrl;
+    const isEditing = document.activeElement === inputRef.current;
     setPrevUrl(url);
-    setInputValue(url);
-  }
+    if (!isEditing || !hasDraft || draftUrl === url) {
+      setInputValue(url);
+      setDraftUrl(url);
+    }
+  }, [draftUrl, inputValue, prevUrl, setDraftUrl, url]);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setInputValue(event.target.value);
+    setDraftUrl(event.target.value);
     onChange?.(event);
   };
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLInputElement>) => {
       if (event.key === "Enter") {
+        event.preventDefault();
         const target = event.target as HTMLInputElement;
-        setUrl(target.value);
+        const requestedUrl = target.value.trim();
+        if (!requestedUrl) return;
+        void setUrl(requestedUrl).then((accepted) => {
+          if (!accepted) setInputValue(url);
+        });
       }
       onKeyDown?.(event);
     },
-    [setUrl, onKeyDown],
+    [setUrl, onKeyDown, url],
   );
 
   return (
     <Input
       className="h-8 flex-1 text-sm"
-      onChange={onChange ?? handleChange}
+      onChange={handleChange}
       onKeyDown={handleKeyDown}
       placeholder={props.placeholder ?? i18n.t("workspace:enterUrl")}
+      ref={inputRef}
       value={value ?? inputValue}
       {...props}
     />
   );
-};
+});
 
 export type WebPreviewBodyProps = ComponentProps<"iframe"> & {
   loading?: ReactNode;

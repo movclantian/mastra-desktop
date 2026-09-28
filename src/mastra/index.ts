@@ -20,7 +20,7 @@ import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mast
 import type { Memory } from "@mastra/memory";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
-import { getBrowserForRequest, getBrowserForResource } from "./agents/browser";
+import { getBrowserConfig, getBrowserForRequest, getBrowserForResource } from "./agents/browser";
 import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
 import { listWorkModes } from "./agents/modes";
 import { toolCategoryOf } from "./agents/permissions";
@@ -122,7 +122,13 @@ const editorBrowserProvider: BrowserProvider = {
   id: "agent-browser",
   name: "Mastra Agent Browser",
   description: "Thread-scoped browser provided by the desktop workbench.",
-  createBrowser: () => getBrowserForResource("default"),
+  createBrowser: async () => {
+    const config = await getBrowserConfig("default");
+    if (process.env.MASTRA_ELECTRON_CDP_URL?.trim() && config.provider === "agent") {
+      throw new Error("Mastra Editor browser requires a work thread; use the workspace browser panel");
+    }
+    return getBrowserForResource("default");
+  },
 };
 
 const workEditor = new MastraEditor({

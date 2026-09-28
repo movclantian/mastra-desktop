@@ -58,6 +58,9 @@ const TAB_DND_TYPE = "application/x-mastra-tab";
 const STORAGE_KEY_FLOATING_BOUNDS = "mastra-workspace:floating-bounds";
 const MIN_FLOATING_WIDTH = 440;
 const MIN_FLOATING_HEIGHT = 300;
+// The native WebContentsView starts below the browser toolbar. Reserve only
+// the part covered by the React menu, so opening + does not reflow the page.
+const NEW_TAB_MENU_OVERLAY_INSET = 64;
 
 interface FloatingBounds {
   x: number;
@@ -122,6 +125,7 @@ export function WorkspacePanelShell() {
   const draggedTabRef = React.useRef<string | null>(null);
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
+  const [newTabMenuOpen, setNewTabMenuOpen] = React.useState(false);
 
   const [floatingBounds, setFloatingBounds] =
     React.useState<FloatingBounds>(getInitialFloatingBounds);
@@ -295,7 +299,7 @@ export function WorkspacePanelShell() {
   /**
    * 关闭一个页面标签:
    * 1. 优先平滑回退到左侧前一个标签;
-   * 2. 若关掉的是唯一一个浏览器标签,回落到最后一个本地标签或起始页,并结束当前浏览器会话。
+   * 2. 若关掉的是唯一一个浏览器标签,回落到最后一个本地标签或起始页,保留浏览器会话供下次快速打开。
    */
   const closeBrowserTab = (index: number) => {
     if (state.tabs.length <= 1) {
@@ -458,7 +462,7 @@ export function WorkspacePanelShell() {
                         setDragOverTabId(null);
                       }}
                       className={cn(
-                        "group relative flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                        "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
                         isSelected
                           ? "border-border bg-background text-foreground shadow-xs font-medium"
                           : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -569,7 +573,8 @@ export function WorkspacePanelShell() {
                                   kind: "browser",
                                   index: state.tabs.length,
                                 });
-                                void action("new-tab");
+                                if (!browserSession.native || state.tabs.length > 0)
+                                  void action("new-tab");
                               }}
                             >
                               <Globe2Icon className="text-muted-foreground" />
@@ -590,7 +595,7 @@ export function WorkspacePanelShell() {
                 <button
                   key={`${index}:${tab.url}:${tab.title ?? ""}`}
                   className={cn(
-                    "group relative flex h-7 max-w-44 min-w-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                    "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
                     isSelected
                       ? "border-border bg-background text-foreground shadow-xs font-medium"
                       : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
@@ -627,7 +632,7 @@ export function WorkspacePanelShell() {
                 </button>
               );
             })}
-            <DropdownMenu>
+            <DropdownMenu onOpenChange={setNewTabMenuOpen}>
               <DropdownMenuTrigger
                 render={
                   <Button
@@ -648,7 +653,7 @@ export function WorkspacePanelShell() {
                       kind: "browser",
                       index: state.tabs.length,
                     });
-                    void action("new-tab");
+                    if (!browserSession.native || state.tabs.length > 0) void action("new-tab");
                   }}
                 >
                   <Globe2Icon />
@@ -737,8 +742,8 @@ export function WorkspacePanelShell() {
           </Button>
         </PanelHeader>
         {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
-          文件树卸载会丢展开层级。浏览器只有一个实例 —— screencast 是每线程单路的,
-          页面之间靠 switch-tab 切换而不是多份视图。 */}
+          文件树卸载会丢展开层级。用户浏览器是每线程唯一的原生 WebContentsView,
+          Agent 通过同一 Electron CDP target 观察和操作它。 */}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {panelTabs.map((tab) => {
             const selected =
@@ -762,6 +767,9 @@ export function WorkspacePanelShell() {
           })}
           <div className={cn("size-full", !isWelcomeActive && browserActive ? "block" : "hidden")}>
             <BrowserView
+              nativeOverlayInsetTop={
+                newTabMenuOpen && browserActive ? NEW_TAB_MENU_OVERLAY_INSET : 0
+              }
               onCloseBrowser={closeBrowserAndReturnToLocalTab}
               session={browserSession}
             />
@@ -810,7 +818,7 @@ export function WorkspacePanelShell() {
                               kind: "browser",
                               index: state.tabs.length,
                             });
-                            void action("new-tab");
+                            if (!browserSession.native) void action("new-tab");
                           }}
                         />
                       }
