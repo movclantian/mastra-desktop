@@ -39,7 +39,10 @@ import {
   saveLibrarySettings,
   statusLabel,
 } from "@/entities/library";
-import { useCreateThreadMutation } from "@/entities/workbench/model/queries/threads";
+import {
+  useCreateThreadMutation,
+  useThreadsQuery,
+} from "@/entities/workbench/model/queries/threads";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import {
@@ -158,6 +161,12 @@ export function KnowledgeLibraryPage({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const createThreadMutation = useCreateThreadMutation(user?.id ?? "anonymous");
+  const threadsQuery = useThreadsQuery(user.id);
+  const threads = threadsQuery.data ?? [];
+  const threadsById = React.useMemo(
+    () => new Map(threads.map((thread) => [thread.id, thread] as const)),
+    [threads],
+  );
   const queueLibraryFiles = useWorkbenchStore((state) => state.queueLibraryFiles);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [folderId, setFolderId] = React.useState<string | null>(null);
@@ -203,10 +212,7 @@ export function KnowledgeLibraryPage({
 
   const scopedAssets = React.useMemo(() => {
     if (view === "session") {
-      if (!activeThreadId) return [];
-      return assets.filter(
-        (asset) => asset.threadIds.length > 0 && asset.threadIds.includes(activeThreadId),
-      );
+      return assets.filter((asset) => asset.threadIds.length > 0);
     }
     if (view === "documents") {
       return assets.filter(
@@ -217,24 +223,25 @@ export function KnowledgeLibraryPage({
       );
     }
     return assets;
-  }, [activeThreadId, assets, documentFolderIds, view]);
+  }, [assets, documentFolderIds, view]);
 
   const sessionAssetCount = React.useMemo(
-    () =>
-      activeThreadId
-        ? assets.filter(
-            (asset) => asset.threadIds.length > 0 && asset.threadIds.includes(activeThreadId),
-          ).length
-        : 0,
-    [activeThreadId, assets],
+    () => assets.filter((asset) => asset.threadIds.length > 0).length,
+    [assets],
   );
 
   const visibleAssets = React.useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     return scopedAssets.filter(
-      (asset) => !needle || asset.filename.toLocaleLowerCase().includes(needle),
+      (asset) =>
+        !needle ||
+        asset.filename.toLocaleLowerCase().includes(needle) ||
+        (view === "session" &&
+          asset.threadIds.some((threadId) =>
+            threadsById.get(threadId)?.title.toLocaleLowerCase().includes(needle),
+          )),
     );
-  }, [query, scopedAssets]);
+  }, [query, scopedAssets, threadsById, view]);
 
   const failedAssetCount = React.useMemo(
     () => assets.filter((asset) => asset.status === "error").length,
@@ -445,6 +452,15 @@ export function KnowledgeLibraryPage({
       asset.folderIds.some((id) => documentFolderIds.has(id)) ||
       (asset.folderIds.length === 0 && asset.threadIds.length === 0);
     const canSaveToDocuments = !isDocumentAsset && asset.status !== "unsupported";
+    const sourceThreadId = asset.threadIds.find((threadId) => threadsById.has(threadId));
+    const sourceThread = sourceThreadId ? threadsById.get(sourceThreadId) : undefined;
+    const sourceSummary = sourceThread
+      ? sourceThread.title
+      : threadsQuery.isLoading
+        ? t("library:loadingSources")
+        : threadsQuery.isError
+          ? t("library:sourceLookupFailed")
+          : t("library:sourceUnavailable");
     return (
       <SidebarMenuItem key={`${keyPrefix}-${asset.id}`}>
         <ContextMenu>
@@ -494,6 +510,14 @@ export function KnowledgeLibraryPage({
                       : ""}
                   </span>
                 </span>
+                {view === "session" ? (
+                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                    {t("library:sourceConversations")}: {sourceSummary}
+                    {asset.threadIds.length > 1
+                      ? ` · ${t("library:moreSources", { count: asset.threadIds.length - 1 })}`
+                      : ""}
+                  </span>
+                ) : null}
                 {asset.status === "error" && asset.indexError ? (
                   <span
                     className="mt-0.5 block truncate text-[11px] text-destructive"
@@ -723,7 +747,7 @@ export function KnowledgeLibraryPage({
                 </SidebarMenuItem>
               </SidebarMenu>
 
-              {view === "search" && directoryOpen ? (
+              {(view === "search" || view === "session") && directoryOpen ? (
                 <div className="relative pt-2">
                   <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -731,7 +755,11 @@ export function KnowledgeLibraryPage({
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                     className="h-8 bg-background pl-8 text-xs"
-                    placeholder={t("library:filterPlaceholder")}
+                    placeholder={
+                      view === "session"
+                        ? t("library:searchSessionFiles")
+                        : t("library:filterPlaceholder")
+                    }
                   />
                 </div>
               ) : null}
@@ -820,9 +848,7 @@ export function KnowledgeLibraryPage({
                     <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
                       {view === "search"
                         ? t("library:noMatchingFiles")
-                        : view === "session" && !activeThreadId
-                          ? t("library:noActiveSession")
-                          : t("library:emptyFiles")}
+                        : t("library:emptyFiles")}
                     </p>
                   ) : null}
                   {!loading && view === "documents"
@@ -1151,6 +1177,44 @@ export function KnowledgeLibraryPage({
                 <RefreshCwIcon className={cn(reindexingIds.has(selected.id) && "animate-spin")} />
                 {t("common:retry")}
               </Button>
+            </div>
+          ) : null}
+          {selected && view === "session" ? (
+            <div
+              aria-label={t("library:sourceConversations")}
+              className="flex max-h-24 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 overflow-y-auto border-b bg-background px-4 py-2"
+              role="group"
+            >
+              <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                {t("library:sourceConversations")}:
+              </span>
+              {selected.threadIds.map((threadId) => {
+                const thread = threadsById.get(threadId);
+                if (!thread) {
+                  return (
+                    <Badge key={threadId} variant="secondary">
+                      {threadsQuery.isLoading
+                        ? t("library:loadingSources")
+                        : threadsQuery.isError
+                          ? t("library:sourceLookupFailed")
+                          : t("library:sourceUnavailable")}
+                    </Badge>
+                  );
+                }
+                return (
+                  <Button
+                    key={thread.id}
+                    className="h-auto min-w-0 max-w-full justify-start gap-1 px-0 py-0 text-xs"
+                    onClick={() => void navigate({ to: "/chat", search: { thread: thread.id } })}
+                    size="sm"
+                    title={thread.title}
+                    variant="link"
+                  >
+                    <span className="truncate">{thread.title}</span>
+                    <ExternalLinkIcon className="size-3 shrink-0" />
+                  </Button>
+                );
+              })}
             </div>
           ) : null}
           <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
