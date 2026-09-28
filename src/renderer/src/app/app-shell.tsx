@@ -1,6 +1,6 @@
 import { Outlet, useLocation, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
-import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
+import { useDefaultLayout, useGroupRef } from "react-resizable-panels";
 import {
   hydrateWorkbenchStore,
   useOpenBrowserUrl,
@@ -22,16 +22,15 @@ import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
 function WorkspaceDrawerContainer({
   open,
-  minWidth,
-  docked,
 }: {
   open: boolean;
-  minWidth: number;
-  docked: boolean;
 }) {
   return (
     <div
-      style={{ minWidth: docked && open ? minWidth : 0 }}
+      // The resizable panel owns the minimum width. Keeping a second
+      // min-width here makes a collapsed panel overflow its zero-width shell
+      // and leaves the native browser surface visible without its sidebar.
+      style={{ minWidth: 0 }}
       className={cn(
         "flex h-full min-h-0 w-full flex-col bg-background transition-opacity duration-200 ease-linear",
         open ? "opacity-100" : "pointer-events-none opacity-0",
@@ -48,6 +47,8 @@ const DRAWER_TRANSITION =
 const PANEL_CLIP = { overflow: "hidden" } as const;
 const SHELL_PANEL_IDS = ["content", "workspace"];
 const CLOSED_SHELL_LAYOUT = { content: 100, workspace: 0 };
+const MAX_RESTORED_WORKSPACE_PERCENT = 42;
+const MAX_WORKSPACE_WIDTH = 760;
 
 function MainGlobalCommandPalette() {
   const { toggleSidebar } = useSidebar();
@@ -139,14 +140,30 @@ export function RootShell() {
     storage: localStorage,
     onlySaveAfterUserInteractions: true,
   });
-  const workspaceRef = usePanelRef();
+  const layoutRef = useGroupRef();
 
   React.useEffect(() => {
-    const panel = workspaceRef.current;
-    if (!panel) return;
-    if (wantsWorkspace && workspacePanelMode === "docked") panel.expand();
-    else panel.collapse();
-  }, [workspacePanelMode, wantsWorkspace, workspaceRef]);
+    const layout = layoutRef.current;
+    if (!layout) return;
+    if (wantsWorkspace && workspacePanelMode === "docked") {
+      const current = layout.getLayout();
+      if ((current.workspace ?? 0) < 1) {
+        const savedSize =
+          typeof defaultLayout?.workspace === "number" && defaultLayout.workspace > 0
+            ? defaultLayout.workspace
+            : 36;
+        const groupWidth = groupRef.current?.clientWidth ?? 0;
+        const maxByWidth = groupWidth > 0 ? (MAX_WORKSPACE_WIDTH / groupWidth) * 100 : 100;
+        const workspace = Math.max(
+          24,
+          Math.min(MAX_RESTORED_WORKSPACE_PERCENT, maxByWidth, savedSize),
+        );
+        layout.setLayout({ content: 100 - workspace, workspace });
+      }
+      return;
+    }
+    layout.setLayout(CLOSED_SHELL_LAYOUT);
+  }, [defaultLayout?.workspace, layoutRef, workspacePanelMode, wantsWorkspace]);
 
   if (!user) return null;
 
@@ -175,6 +192,7 @@ export function RootShell() {
         <ResizablePanelGroup
           orientation="horizontal"
           elementRef={groupRef}
+          groupRef={layoutRef}
           defaultLayout={dockedWorkspace ? defaultLayout : CLOSED_SHELL_LAYOUT}
           onLayoutChanged={onLayoutChanged}
           className={cn("min-h-0 min-w-0 overflow-hidden bg-background", transition.className)}
@@ -193,11 +211,10 @@ export function RootShell() {
           <ResizableHandle {...transition.handleProps} {...drawerHandleProps(dockedWorkspace)} />
           <ResizablePanel
             id="workspace"
-            panelRef={workspaceRef}
             collapsible
             collapsedSize={0}
             minSize={WORKSPACE_MIN_WIDTH}
-            groupResizeBehavior="preserve-pixel-size"
+            groupResizeBehavior="preserve-relative-size"
             style={
               workspacePanelMode === "docked"
                 ? { ...PANEL_CLIP, ...(wantsWorkspace ? {} : { display: "none" }) }
@@ -205,9 +222,7 @@ export function RootShell() {
             }
           >
             <WorkspaceDrawerContainer
-              docked={workspacePanelMode === "docked"}
               open={wantsWorkspace}
-              minWidth={WORKSPACE_MIN_WIDTH}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

@@ -1,5 +1,19 @@
 # 工程问题修复结果
 
+## 2026-09-28：对齐最新上游并整合原生浏览器改动（PR/合并流程中）
+
+- **基线：** `origin/main` / `0afc3b51d913164f1a43dee7d7206d8ce9a3e94d`，集成分支 `align/upstream-main-browser`。原 worktree `fix/review-blockers-v0.0.4` / `95131f2` 保持原样。
+- **变更分类（35 个文件，3547 insertions / 284 deletions）：** ① Electron 原生用户浏览器与 main/preload IPC 生命周期；② Mastra Agent 按认证的 resource/thread 目标复用当前可见页面；③ Renderer 地址栏/搜索偏好/侧栏与标签交互、线程删除清理及设置/i18n；④ 导航竞态和隔离 Electron target runtime 自动化；⑤ `package.json` 只扩展回归测试入口，不回退上游依赖、CI、Provider 或 release 配置；⑥ `.agent` 记录同步本批事实。各类别都服务于“普通用户正常浏览、Agent 可受控辅助同一线程当前页”这一条浏览器产品语义，因此保持为一个原子 PR。
+- **上游保留：** Provider registry/Gateway 与原生 endpoint 修复、Mastra/core/依赖和 pnpm 12.6 升级、workspace grep 与 release patch-path/CI 修复、v0.0.4 transfer recovery。原分支 `95131f2` 的 tree 已与 `b18ab3d` 一致，因此没有重复搬 transfer recovery；回归命令保留 `test-provider-routing.mjs`。
+- **迁入：** 用户浏览器直接使用 Electron 原生 `WebContentsView`；Agent 以 resource/thread 身份复用当前线程当前 tab；导航与新窗口目标由主进程 broker 管理；新 tab 从 `about:blank` 开始，地址栏支持 URL 和搜索词，Bing 是可配置搜索默认项而非首页；必要的侧栏布局/设置/i18n 与删除线程清理；增加导航竞态和真实 Electron target runtime 回归。
+- **有意排除：** 长任务聊天渲染、smooth cursor、Workspace changes 面板与混杂截图/cache/未解释散文件。本次无任何排除项从原工作区删除；不改变 profile/cookie 语义、不重写 loopback CDP、不宣称浏览器等同 Codex。
+- **自动化证据：** browser navigation/thread lifecycle 22/22；`test:regression` 99/99（93 + 6）；TypeScript 三配置通过；Biome 检查 410 文件通过；`verify:release`、`git diff --check` 通过；生产 build 中 Mastra 和 Electron main/preload/renderer 均成功。
+- **Electron runtime：** 隔离 probe 通过 authenticated bridge、Electron/Playwright target ID 映射、两个线程目标隔离、fail-closed 与 `window.open` 新 tab。二进制下载停滞后用现成 Electron 44.3.0 完成运行态 smoke；项目锁定依赖为 44.4.5，所以精确版本仍待验。
+- **Review 与补修：** fresh reviewer 初审发现删除线程只清理 Mastra browser session，未关主进程原生 view；现已在 renderer 删除成功后用 preload IPC 关闭相同 resource/thread 的 view，错误只日志化而不回滚成功删除。新增测试覆盖正常关闭、API 缺失和 IPC 拒绝；复核未发现未解决 P0/P1/P2。已接受的本机 CDP 无 token 风险仍属 P2；浏览器运行态 smoke 没有经过生产 Agent tool/API 全链。
+- **最终自动化证据：** browser navigation/thread lifecycle 22/22；全量 `test:regression` 99/99（93 + 6）；三套 typecheck、Biome 410 files、`verify:release`、`git diff --check`、生产构建通过。
+- **尚未闭环：** 完整应用视觉截图与人类手感/卡顿对比未做；browser-harness 不可用且原服务占用固定 4111，故没有另起完整 UI 污染当前环境。构建仍有 ag-psd `util` externalization warning，renderer 最大入口约 13.3 MB；本批没有包体/性能优化。
+- **交付边界：** Owner 已授权提交、推送功能分支、创建 PR，并在 CI/review 通过后合并 main。当前尚待执行这些步骤；不创建 tag/Release。视觉 QA、卡顿/闪烁对比及 Electron 44.4.5 精确版本运行仍未验收，不将其描述为已解决。
+
 ## 2026-09-21：第一次推送已完成
 
 - State：第一次推送已完成；分支 `codex/freeze-audited-results` 已发布到 `origin/codex/freeze-audited-results`，基线为 `origin/main@9031264`，当前分支 ahead 12、behind 0。

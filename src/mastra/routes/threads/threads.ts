@@ -4,7 +4,7 @@ import { MASTRA_RESOURCE_ID_KEY, RequestContext } from "@mastra/core/request-con
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
-import { getBrowserForResource } from "../../agents/browser";
+import { closeBrowserThreadSessions } from "../../agents/browser";
 import { authUserFromContext, findUserById, listAuthUsers } from "../../auth";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness";
@@ -862,8 +862,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
   }
   if (threadId && thread && c.req.method === "DELETE") {
     await memory.settled();
-    const browser = await getBrowserForResource(resourceId);
-    if (browser.hasThreadSession(threadId)) await browser.closeThreadSession(threadId);
+    await closeBrowserThreadSessions(resourceId, threadId);
     await Promise.all([
       workWebhookSignals.removeThread({ threadId, resourceId }),
       workPollingSignals.removeThread({ threadId, resourceId }),

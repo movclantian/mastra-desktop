@@ -5,11 +5,19 @@ import {
   useCatalogQuery,
   useProviderConfigQuery,
 } from "@/entities/workbench";
+import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
+import {
+  getBrowserSearchEnginePreference,
+  setBrowserSearchEnginePreference,
+} from "@/shared/browser-search-preference";
 import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
-import type { BrowserConfig } from "../../../../../../shared/browser-contract";
+import {
+  BrowserSearchEngineSchema,
+  type BrowserConfig,
+} from "../../../../../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { fetchBrowserConfig, saveBrowserConfig } from "../../api/settings-api";
 import { SettingCard, SettingRow } from "../controls";
@@ -20,6 +28,7 @@ const DEFAULT_CONFIG: BrowserConfig = {
   headless: true,
   viewport: { width: 1280, height: 720 },
   timeout: 30_000,
+  homeUrl: "",
   stagehand: {
     providerId: "",
     modelId: "",
@@ -35,6 +44,11 @@ const DEFAULT_CONFIG: BrowserConfig = {
 
 export function BrowserSection() {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const [searchEngine, setSearchEngine] = React.useState(() =>
+    getBrowserSearchEnginePreference(userId),
+  );
   const providers = useProviderConfigQuery().data?.providers ?? [];
   const catalog = useCatalogQuery().data ?? [];
   const [draft, setDraft] = React.useState(DEFAULT_CONFIG);
@@ -48,6 +62,10 @@ export function BrowserSection() {
       .catch(() => toast.error(t("settings:browser.loadFailed")))
       .finally(() => setLoaded(true));
   }, [t]);
+
+  React.useEffect(() => {
+    setSearchEngine(getBrowserSearchEnginePreference(userId));
+  }, [userId]);
 
   React.useEffect(() => {
     if (!loaded || !dirty) return;
@@ -206,6 +224,42 @@ export function BrowserSection() {
             value={draft.timeout}
             onChange={(event) =>
               update((current) => ({ ...current, timeout: Number(event.target.value) }))
+            }
+          />
+        </SettingRow>
+        <SettingRow
+          title={t("settings:browser.searchEngine")}
+          description={t("settings:browser.searchEngineDesc")}
+        >
+          <Select
+            value={searchEngine}
+            onValueChange={(value) => {
+              const parsed = BrowserSearchEngineSchema.safeParse(value);
+              if (!parsed.success) return;
+              setSearchEngine(parsed.data);
+              setBrowserSearchEnginePreference(userId, parsed.data);
+            }}
+          >
+            <SelectTrigger className="min-w-36" aria-label={t("settings:browser.searchEngine")}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="bing">{t("settings:browser.searchEngineBing")}</SelectItem>
+              <SelectItem value="baidu">{t("settings:browser.searchEngineBaidu")}</SelectItem>
+              <SelectItem value="google">{t("settings:browser.searchEngineGoogle")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingRow>
+        <SettingRow
+          title={t("settings:browser.homeUrl")}
+          description={t("settings:browser.homeUrlDesc")}
+        >
+          <Input
+            className="w-72"
+            placeholder={t("settings:browser.homeUrlPlaceholder")}
+            value={draft.homeUrl}
+            onChange={(event) =>
+              update((current) => ({ ...current, homeUrl: event.target.value }))
             }
           />
         </SettingRow>

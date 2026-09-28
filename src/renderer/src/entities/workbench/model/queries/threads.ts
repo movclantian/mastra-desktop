@@ -10,6 +10,7 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef } from "react";
 import { confirmWorkspaceDraftSwitch } from "@/shared/lib/workspace-drafts";
+import { closeDeletedThreadBrowserView } from "../close-deleted-thread-browser-view";
 import {
   cloneThreadRequest,
   createThreadRequest,
@@ -178,7 +179,11 @@ export function useDeleteThreadMutation(userId: string) {
   const selectThread = useSelectThread();
   return useMutation({
     mutationFn: (threadId: string) => deleteThreadRequest(threadId, userId),
-    onSuccess: (_data, threadId) => {
+    onSuccess: async (_data, threadId) => {
+      await closeDeletedThreadBrowserView(window.api?.browserView, {
+        resourceId: userId,
+        threadId,
+      });
       // 当前线程被删除 → 回到无选中(不自动切到别的线程)
       if (useWorkbenchStore.getState().lastKnownThreadId === threadId) {
         selectThread(null);
