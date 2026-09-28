@@ -649,6 +649,41 @@ test("Browser pointer input rejects stale geometry and clamps valid viewport coo
   assert.match(browserSessionSource, /void sendBrowserMouse[\s\S]*?catch\(\(\) => undefined\)/);
 });
 
+test("Native browser disposal tolerates already-destroyed windows and webContents", () => {
+  const declaration = nativeBrowserSource.match(/^ {2}dispose\(\): void \{[\s\S]*?^ {2}\}/m);
+  assert.ok(declaration, "native browser manager must expose a testable dispose method");
+  const dispose = vm.runInNewContext(
+    `({${declaration[0].replace("dispose(): void", "dispose()")}}).dispose`,
+    vm.createContext({}),
+  );
+
+  const runDispose = (windowDestroyed, webContentsDestroyed) => {
+    const calls = [];
+    const tab = {
+      view: {
+        webContents: {
+          isDestroyed: () => webContentsDestroyed,
+          close: () => calls.push("close"),
+        },
+      },
+    };
+    const window = {
+      isDestroyed: () => windowDestroyed,
+      contentView: { removeChildView: () => calls.push("remove") },
+    };
+    dispose.call({
+      window,
+      sessions: new Map([["session", { tabs: [tab] }]]),
+      ensurePromises: new Map([["session", Promise.resolve()]]),
+    });
+    return calls;
+  };
+
+  assert.deepEqual(runDispose(true, true), []);
+  assert.deepEqual(runDispose(true, false), ["close"]);
+  assert.deepEqual(runDispose(false, false), ["remove", "close"]);
+});
+
 test("Closed CDP pages do not turn stale input into unhandled route failures", () => {
   assert.match(source, /function isClosedBrowserContextError/);
   assert.match(source, /if \(!isClosedBrowserContextError\(error\)\) throw error/);

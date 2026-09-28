@@ -219,9 +219,10 @@ export class NativeBrowserViewManager {
   }
 
   dispose(): void {
+    const windowDestroyed = this.window.isDestroyed();
     for (const current of this.sessions.values()) {
       for (const tab of current.tabs) {
-        this.window.contentView.removeChildView(tab.view);
+        if (!windowDestroyed) this.window.contentView.removeChildView(tab.view);
         if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
       }
     }
