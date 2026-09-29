@@ -124,7 +124,11 @@ const editorBrowserProvider: BrowserProvider = {
   description: "Thread-scoped browser provided by the desktop workbench.",
   createBrowser: async () => {
     const config = await getBrowserConfig("default");
-    if (process.env.MASTRA_ELECTRON_CDP_URL?.trim() && config.provider === "agent") {
+    if (
+      (process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim() ||
+        process.env.MASTRA_DESKTOP_RUNTIME === "true") &&
+      config.provider === "agent"
+    ) {
       throw new Error("Mastra Editor browser requires a work thread; use the workspace browser panel");
     }
     return getBrowserForResource("default");

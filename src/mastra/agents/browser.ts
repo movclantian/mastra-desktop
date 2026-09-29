@@ -1,5 +1,27 @@
 /** Resource-scoped browser configuration and lifecycle. */
-import { AgentBrowser, type AgentBrowserConfig } from "@mastra/agent-browser";
+import {
+  AgentBrowser,
+  type AgentBrowserConfig,
+  type ClickInput,
+  type DragInput,
+  type EvaluateInput,
+  type GotoInput,
+  type HoverInput,
+  type PressInput,
+  type ScrollInput,
+  type SelectInput,
+  type SnapshotInput,
+  type TabsInput,
+  type TypeInput,
+  type WaitInput,
+} from "@mastra/agent-browser";
+import type {
+  BrowserState as MastraBrowserState,
+  BrowserTabState,
+  BrowserToolError,
+  ScreencastOptions,
+  ScreencastStream,
+} from "@mastra/core/browser";
 import { FirecrawlBrowser } from "@mastra/browser-firecrawl";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import {
@@ -8,23 +30,35 @@ import {
   StagehandBrowser,
 } from "@mastra/stagehand";
 import { chromium } from "playwright-core";
-import { type BrowserConfig, BrowserConfigSchema } from "../../shared/browser-contract";
+import {
+  type BrowserConfig,
+  BrowserConfigSchema,
+  BrowserStateSchema,
+  type NativeBrowserAgentOperation,
+} from "../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import { inferGatewayProtocol, normalizeGatewayBaseUrl } from "../models/create-model";
 import { getProvidersConfig, resolveProviderCredential } from "../models/providers";
 import { getAppConfig, setAppConfig } from "../storage";
-import { getNativeBrowserTargetId } from "../native-browser-target";
-import {
-  clearNativeElectronPageSelection,
-  selectNativeElectronPage,
-} from "../browser-target-selection";
-import { withNativeBrowserTargetLock } from "../native-browser-target-lock";
+import { executeNativeBrowserCommand } from "../native-browser-target";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
 const BROWSER_CONFIG_KEY = "browser";
 
 export type WorkBrowser = AgentBrowser | StagehandBrowser | FirecrawlBrowser;
+
+/** Resolve and merge browser tools only when a workbench thread can bind them to its page. */
+export async function mergeBrowserToolsForThread<T extends object>(
+  tools: T,
+  threadId: unknown,
+  resolveBrowser: () => Promise<Pick<WorkBrowser, "getTools">>,
+): Promise<T> {
+  if (typeof threadId !== "string" || !threadId.trim()) return tools;
+  const browser = await resolveBrowser();
+  Object.assign(tools, browser.getTools());
+  return tools;
+}
 
 export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
   provider: "agent",
@@ -109,80 +143,191 @@ function commonOptions(config: BrowserConfig) {
   };
 }
 
-const DESKTOP_ELECTRON_CDP_URL = process.env.MASTRA_ELECTRON_CDP_URL?.trim();
+const HAS_NATIVE_BROWSER_AGENT_BRIDGE = Boolean(
+  process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim(),
+);
+const IS_DESKTOP_RUNTIME = process.env.MASTRA_DESKTOP_RUNTIME === "true";
 
-class DesktopAgentBrowser extends AgentBrowser {
-  private activeThreadId: string | null = null;
+export class NativeElectronAgentBrowser extends AgentBrowser {
+  private readonly knownThreads = new Set<string>();
+  private readonly states = new Map<string, MastraBrowserState>();
 
   constructor(
     options: AgentBrowserConfig,
-    private readonly resolveTargetId: (threadId: string) => Promise<string>,
+    private readonly resourceId: string,
+    threadId: string,
   ) {
-    super(options);
+    super({ ...options, scope: "shared" });
+    this.setCurrentThread(threadId);
+    this.status = "ready";
   }
 
   override getTools() {
     const tools = super.getTools();
-    // Tabs are owned by NativeBrowserViewManager; don't create/close untracked CDP pages.
-    delete tools.browser_tabs;
+    // The Electron window owns its lifetime; the Agent can only change tabs within
+    // the already-bound, visible thread session.
     delete tools.browser_close;
-    for (const tool of Object.values(tools)) {
-      const executable = tool as typeof tool & {
-        execute: (input: unknown, context: { agent?: { threadId?: string } }) => Promise<unknown>;
-      };
-      const execute = executable.execute;
-      executable.execute = (input, context) => {
-        const threadId = context.agent?.threadId;
-        if (!threadId) return Promise.reject(new Error("Agent browser requires a bound thread"));
-        return this.withActiveTarget(threadId, () => execute.call(executable, input, context));
-      };
-    }
+    delete tools.browser_dialog;
     return tools;
   }
 
-  override setCurrentThread(threadId?: string): void {
-    super.setCurrentThread(threadId);
-    this.activeThreadId = threadId || null;
-  }
-
   override async ensureReady(): Promise<void> {
-    await super.ensureReady();
-    if (this.activeThreadId) await this.bindActiveTarget(this.activeThreadId);
-  }
-
-  async withActiveTarget<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
-    return withNativeBrowserTargetLock(
-      this,
-      threadId,
-      async () => {
-        this.setCurrentThread(threadId);
-        await this.ensureReady();
-      },
-      operation,
-    );
+    // A desktop browser session is renderer-owned; never launch an invisible Chromium fallback.
+    this.status = "ready";
   }
 
   protected override async doLaunch(): Promise<void> {
-    await super.doLaunch();
-    try {
-      if (!this.sharedManager) throw new Error("Agent browser CDP manager was not created");
-      if (!this.activeThreadId) throw new Error("Agent browser launch has no thread binding");
-      await this.bindActiveTarget(this.activeThreadId);
-    } catch (error) {
-      await super.doClose().catch(() => undefined);
-      throw error;
-    }
+    this.status = "ready";
   }
 
-  private async bindActiveTarget(threadId: string): Promise<void> {
-    const manager = this.sharedManager;
-    if (!manager) throw new Error("Agent browser CDP manager was not created");
+  protected override async doClose(): Promise<void> {
+    // The Electron view manager owns the page lifecycle.
+    this.status = "ready";
+  }
+
+  protected override isRemoteThreadBrowser(): boolean {
+    return true;
+  }
+
+  override hasThreadSession(threadId: string): boolean {
+    return this.knownThreads.has(threadId);
+  }
+
+  override async closeThreadSession(threadId: string): Promise<void> {
+    this.knownThreads.delete(threadId);
+    this.states.delete(threadId);
+  }
+
+  override async getBrowserState(threadId?: string): Promise<MastraBrowserState | null> {
+    const id = this.threadId(threadId);
+    if (!id) return null;
+    const result = await this.command<{ state: unknown; visible: boolean }>(id, "state");
+    if (!result.state) {
+      this.knownThreads.delete(id);
+      this.states.delete(id);
+      return null;
+    }
+    if (!result.visible) {
+      this.knownThreads.delete(id);
+      this.states.delete(id);
+      return null;
+    }
+    const parsed = BrowserStateSchema.parse(result.state);
+    const state: MastraBrowserState = {
+      tabs: parsed.tabs,
+      activeTabIndex: parsed.activeTabIndex,
+      ...(parsed.closeReason ? { closeReason: parsed.closeReason } : {}),
+      ...(parsed.activeUrlChangeSource ? { activeUrlChangeSource: parsed.activeUrlChangeSource } : {}),
+    };
+    this.knownThreads.add(id);
+    this.states.set(id, state);
+    return state;
+  }
+
+  override async getCurrentUrl(threadId?: string): Promise<string | null> {
+    const state = await this.getBrowserState(threadId);
+    return state?.tabs[state.activeTabIndex]?.url ?? null;
+  }
+
+  override async getTabState(threadId?: string): Promise<BrowserTabState[]> {
+    return (await this.getBrowserState(threadId))?.tabs ?? [];
+  }
+
+  override async getActiveTabIndex(threadId?: string): Promise<number> {
+    return (await this.getBrowserState(threadId))?.activeTabIndex ?? 0;
+  }
+
+  protected override getBrowserStateForThread(threadId?: string): MastraBrowserState | null {
+    const id = this.threadId(threadId);
+    return id ? this.states.get(id) ?? null : null;
+  }
+
+  override goto(input: GotoInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["goto"]>>>("goto", input, threadId, "Goto");
+  }
+
+  override snapshot(input: SnapshotInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["snapshot"]>>>("snapshot", input, threadId, "Snapshot");
+  }
+
+  override screenshot(input: Parameters<AgentBrowser["screenshot"]>[0], threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["screenshot"]>>>("screenshot", input, threadId, "Screenshot");
+  }
+
+  override click(input: ClickInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["click"]>>>("click", input, threadId, "Click");
+  }
+
+  override type(input: TypeInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["type"]>>>("type", input, threadId, "Type");
+  }
+
+  override press(input: PressInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["press"]>>>("press", input, threadId, "Press");
+  }
+
+  override select(input: SelectInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["select"]>>>("select", input, threadId, "Select");
+  }
+
+  override scroll(input: ScrollInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["scroll"]>>>("scroll", input, threadId, "Scroll");
+  }
+
+  override hover(input: HoverInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["hover"]>>>("hover", input, threadId, "Hover");
+  }
+
+  override back(threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["back"]>>>("back", {}, threadId, "Back");
+  }
+
+  override wait(input: WaitInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["wait"]>>>("wait", input, threadId, "Wait");
+  }
+
+  override drag(input: DragInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["drag"]>>>("drag", input, threadId, "Drag");
+  }
+
+  override evaluate(input: EvaluateInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["evaluate"]>>>("evaluate", input, threadId, "Evaluate");
+  }
+
+  override tabs(input: TabsInput, threadId?: string) {
+    return this.invoke<Awaited<ReturnType<AgentBrowser["tabs"]>>>("tabs", input, threadId, "Tabs");
+  }
+
+  override async startScreencast(_options?: ScreencastOptions): Promise<ScreencastStream> {
+    throw new Error("The desktop browser is rendered by its native Electron view; screenshot streaming is disabled.");
+  }
+
+  private threadId(threadId?: string): string | null {
+    const id = threadId ?? this.getCurrentThread();
+    return id.trim() ? id : null;
+  }
+
+  private async command<T>(
+    threadId: string,
+    operation: NativeBrowserAgentOperation,
+    input?: Record<string, unknown>,
+  ): Promise<T> {
+    return executeNativeBrowserCommand<T>({ resourceId: this.resourceId, threadId }, operation, input);
+  }
+
+  private async invoke<T>(
+    operation: NativeBrowserAgentOperation,
+    input: object,
+    threadId: string | undefined,
+    label: string,
+  ): Promise<T | BrowserToolError> {
+    const id = this.threadId(threadId);
+    if (!id) return this.createError("browser_error", "Browser operation requires a bound thread.");
     try {
-      const targetId = await this.resolveTargetId(threadId);
-      await selectNativeElectronPage(manager, targetId);
+      await this.ensureReady();
+      return await this.command<T>(id, operation, input as Record<string, unknown>);
     } catch (error) {
-      clearNativeElectronPageSelection(manager);
-      throw error;
+      return this.createErrorFromException(error, label);
     }
   }
 }
@@ -194,21 +339,16 @@ async function createBrowser(
 ): Promise<WorkBrowser> {
   if (config.provider === "agent") {
     const options = commonOptions(config);
-    if (!DESKTOP_ELECTRON_CDP_URL) return new AgentBrowser(options);
-    if (!threadId) {
-      throw new Error("Native Agent browser requires a resourceId and threadId binding");
+    if (!HAS_NATIVE_BROWSER_AGENT_BRIDGE) {
+      if (IS_DESKTOP_RUNTIME) {
+        throw new Error("Native Electron browser command bridge is unavailable; refusing a hidden browser fallback.");
+      }
+      return new AgentBrowser(options);
     }
-
-    const { executablePath: _executablePath, ...cdpOptions } = options;
-
-    return new DesktopAgentBrowser({
-      ...cdpOptions,
-      cdpUrl: DESKTOP_ELECTRON_CDP_URL,
-      // CDP points at the desktop browser; do not launch another Chromium.
-      scope: "shared",
-    }, (activeThreadId) =>
-      getNativeBrowserTargetId({ resourceId: resourceId || "default", threadId: activeThreadId }),
-    );
+    if (!threadId) {
+      throw new Error("Native Agent browser requires a bound thread");
+    }
+    return new NativeElectronAgentBrowser(options, resourceId || "default", threadId);
   }
   if (config.provider === "stagehand") {
     const provider = (await getProvidersConfig(resourceId)).providers.find(
@@ -287,7 +427,10 @@ export async function getBrowserForThread(
   threadId: string,
 ): Promise<WorkBrowser> {
   const config = await getBrowserConfig(resourceId);
-  if (config.provider !== "agent" || !DESKTOP_ELECTRON_CDP_URL) {
+  if (
+    config.provider !== "agent" ||
+    (!HAS_NATIVE_BROWSER_AGENT_BRIDGE && !IS_DESKTOP_RUNTIME)
+  ) {
     return getBrowserForResource(resourceId);
   }
 
@@ -324,7 +467,10 @@ export async function getBrowserForRequest(requestContext?: { get: (key: string)
   const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
   const effectiveResourceId =
     typeof resourceId === "string" && resourceId ? resourceId : "default";
-  if (DESKTOP_ELECTRON_CDP_URL && (await getBrowserConfig(effectiveResourceId)).provider === "agent") {
+  if (
+    (HAS_NATIVE_BROWSER_AGENT_BRIDGE || IS_DESKTOP_RUNTIME) &&
+    (await getBrowserConfig(effectiveResourceId)).provider === "agent"
+  ) {
     if (typeof threadId !== "string" || !threadId.trim()) {
       throw new Error("Native Agent browser requires a bound thread");
     }
@@ -334,13 +480,11 @@ export async function getBrowserForRequest(requestContext?: { get: (key: string)
 }
 
 export async function withBrowserThreadTarget<T>(
-  browser: WorkBrowser,
-  threadId: string,
+  _browser: WorkBrowser,
+  _threadId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  return browser instanceof DesktopAgentBrowser
-    ? browser.withActiveTarget(threadId, operation)
-    : operation();
+  return operation();
 }
 
 export async function closeBrowserThreadSessions(resourceId: string, threadId: string): Promise<void> {

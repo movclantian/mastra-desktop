@@ -64,6 +64,9 @@ jobs:
       - name: Run focused regression tests
         run: pnpm run test:regression
 
+      - name: Run native Electron browser integration test
+        run: xvfb-run -a pnpm run test:electron-browser-target
+
       - name: Verify release source guards
         run: pnpm run verify:release
 
@@ -127,6 +130,12 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: >-
           node -e "const p=require('./package.json').version,t=process.env.GITHUB_REF_NAME.replace(/^v/,'');if(p!==t){throw new Error('Tag '+process.env.GITHUB_REF_NAME+' does not match package.json version '+p)}"
+
+      - name: Verify release commit is merged to main
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          git fetch origin main --depth=1
+          git merge-base --is-ancestor ${{ github.sha }} FETCH_HEAD
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

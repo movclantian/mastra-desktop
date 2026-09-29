@@ -15,6 +15,13 @@ import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
 import icon from "../../resources/icon.png?asset";
 import {
+  NATIVE_BROWSER_VIEW_CHANNELS,
+  NativeBrowserActionSchema,
+  NativeBrowserBoundsSchema,
+  NativeBrowserNavigateSchema,
+  NativeBrowserSessionSchema,
+} from "../shared/browser-contract";
+import {
   CREDENTIAL_CHANNELS,
   CredentialDeleteRequestSchema,
   CredentialDeleteResultSchema,
@@ -71,14 +78,10 @@ import {
   WORKSPACE_CHANNELS,
 } from "../shared/workspace-contract";
 import {
-  NATIVE_BROWSER_VIEW_CHANNELS,
-  NativeBrowserActionSchema,
-  NativeBrowserBoundsSchema,
-  NativeBrowserNavigateSchema,
-  NativeBrowserSessionSchema,
-} from "../shared/browser-contract";
+  NativeBrowserAgentCommandBroker,
+  NativeBrowserAgentCommandError,
+} from "./browser-target-broker";
 import { NativeBrowserViewManager } from "./browser-view";
-import { NativeBrowserTargetBroker } from "./browser-target-broker";
 import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
@@ -283,7 +286,7 @@ let mainWindow: BrowserWindow | null = null;
 let nativeBrowserViews: NativeBrowserViewManager | null = null;
 let credentialVault: CredentialVault | null = null;
 let credentialBroker: CredentialBroker | null = null;
-let nativeBrowserTargetBroker: NativeBrowserTargetBroker | null = null;
+let nativeBrowserAgentBroker: NativeBrowserAgentCommandBroker | null = null;
 let appShutdownPromise: Promise<void> | null = null;
 
 function isTrustedRendererUrl(value: string): boolean {
@@ -658,14 +661,11 @@ function ensureMastraRunning(): Promise<void> {
         MASTRA_SHUTDOWN_TOKEN,
         MASTRA_CREDENTIAL_BROKER_PATH: broker.endpoint,
         MASTRA_CREDENTIAL_BROKER_TOKEN: broker.token,
-        ...(nativeBrowserTargetBroker
+        ...(nativeBrowserAgentBroker
           ? {
-              MASTRA_NATIVE_BROWSER_TARGET_BROKER_PATH: nativeBrowserTargetBroker.endpoint,
-              MASTRA_NATIVE_BROWSER_TARGET_BROKER_TOKEN: nativeBrowserTargetBroker.token,
+              MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH: nativeBrowserAgentBroker.endpoint,
+              MASTRA_NATIVE_BROWSER_AGENT_BROKER_TOKEN: nativeBrowserAgentBroker.token,
             }
-          : {}),
-        ...(ELECTRON_CDP_PORT
-          ? { MASTRA_ELECTRON_CDP_URL: `http://127.0.0.1:${ELECTRON_CDP_PORT}` }
           : {}),
       };
 
@@ -820,10 +820,7 @@ function createWindow(): void {
     assertTrustedIpcSender(event);
     return nativeBrowser.navigate(NativeBrowserNavigateSchema.parse(value));
   };
-  const handleNativeBrowserAction = async (
-    event: Electron.IpcMainInvokeEvent,
-    value: unknown,
-  ) => {
+  const handleNativeBrowserAction = async (event: Electron.IpcMainInvokeEvent, value: unknown) => {
     assertTrustedIpcSender(event);
     return nativeBrowser.action(NativeBrowserActionSchema.parse(value));
   };
@@ -967,10 +964,7 @@ function createWindow(): void {
   });
   mainWindow.webContents.on("console-message", (event) => {
     const { level, message, lineNumber, sourceId } = event;
-    if (
-      level === "error" ||
-      /maximum update depth|network error|uncaught error/i.test(message)
-    ) {
+    if (level === "error" || /maximum update depth|network error|uncaught error/i.test(message)) {
       console.error(`[Renderer] console level=${level} ${sourceId}:${lineNumber}: ${message}`);
     }
   });
@@ -1118,17 +1112,22 @@ function bootstrap(): void {
       await credentialVault.initialize();
       credentialBroker = new CredentialBroker(credentialVault, vaultDirectory);
       await credentialBroker.start();
-      nativeBrowserTargetBroker = new NativeBrowserTargetBroker(
-        (browserSession) => nativeBrowserViews?.getActiveTargetId(browserSession) ?? null,
+      nativeBrowserAgentBroker = new NativeBrowserAgentCommandBroker(
+        async (browserSession, operation, input) => {
+          if (!nativeBrowserViews) {
+            throw new NativeBrowserAgentCommandError("manager_unavailable");
+          }
+          return nativeBrowserViews.executeAgentCommand(browserSession, operation, input);
+        },
         vaultDirectory,
       );
       try {
-        await nativeBrowserTargetBroker.start();
+        await nativeBrowserAgentBroker.start();
       } catch (error) {
         console.warn(
-          `[native-browser] target bridge unavailable; Agent browser will fail closed: ${error instanceof Error ? error.message : String(error)}`,
+          `[native-browser-agent] command bridge unavailable; Agent browser will fail closed: ${error instanceof Error ? error.message : String(error)}`,
         );
-        nativeBrowserTargetBroker = null;
+        nativeBrowserAgentBroker = null;
       }
     } catch (error) {
       await dialog.showMessageBox({
@@ -1462,8 +1461,8 @@ function bootstrap(): void {
   // quit 会走不到这里),同时保留 will-quit 兜底应对未经 before-quit 的退出路径。
   const shutdownApp = () => {
     appShutdownPromise ??= stopMastra().finally(async () => {
-      await nativeBrowserTargetBroker?.close();
-      nativeBrowserTargetBroker = null;
+      await nativeBrowserAgentBroker?.close();
+      nativeBrowserAgentBroker = null;
       await credentialBroker?.close();
       credentialBroker = null;
       credentialVault = null;
@@ -1471,12 +1470,12 @@ function bootstrap(): void {
     return appShutdownPromise;
   };
   app.on("before-quit", (e) => {
-    if (!mastraProcess && !credentialBroker && !nativeBrowserTargetBroker) return;
+    if (!mastraProcess && !credentialBroker && !nativeBrowserAgentBroker) return;
     e.preventDefault();
     void shutdownApp().finally(() => app.quit());
   });
   app.on("will-quit", (e) => {
-    if (mastraProcess || credentialBroker || nativeBrowserTargetBroker) {
+    if (mastraProcess || credentialBroker || nativeBrowserAgentBroker) {
       e.preventDefault();
       void shutdownApp().finally(() => app.quit());
     }
