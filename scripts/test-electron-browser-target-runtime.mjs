@@ -494,7 +494,14 @@ async function verifyNativeAgentCommands() {
 
 async function startFixture(readyPrefix, mode = "manager") {
   const userData = await mkdtemp(path.join(tmpdir(), "mastra-native-browser-probe-"));
-  const child = spawn(electronPath, [`--user-data-dir=${userData}`, probeApp], {
+  const child = spawn(
+    electronPath,
+    [
+      ...(process.platform === "linux" ? ["--no-sandbox"] : []),
+      `--user-data-dir=${userData}`,
+      probeApp,
+    ],
+    {
     cwd: probeApp,
     env: {
       ...process.env,
@@ -508,7 +515,8 @@ async function startFixture(readyPrefix, mode = "manager") {
     // The Agent fixture must be a genuinely visible Electron window because
     // desktop Agent commands are intentionally restricted to the visible page.
     windowsHide: mode !== "agent",
-  });
+    },
+  );
   let output = "";
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");

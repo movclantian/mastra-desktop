@@ -19,10 +19,12 @@
 - `pnpm run typecheck`：三套配置通过。
 - `pnpm run verify:release`：通过。
 - `git diff --check`：通过。
-- Fresh review 的 release ancestry、排队 deadline、导航期间 click/drag 竞态与 tab-count findings 已按真实运行测试修复；对主进程创建、启动、spawn 环境变量和关闭 broker 加了源码回归门禁。最终 follow-up 只读复核正在进行。
-- 当前工作区有本机 Mastra 开发服务占用 `localhost:4111`；为避免清理/覆盖正在服务的构建输出，本轮未在此工作区强行运行完整 `pnpm run build`。Node 22 PR CI 和 tag package 是构建发布门禁。
+- Fresh review 的 release ancestry、排队 deadline、导航期间 click/drag 竞态与 tab-count findings 已按真实运行测试修复；对主进程创建、启动、spawn 环境变量和关闭 broker 加了源码回归门禁。最终只读 follow-up 未发现剩余可操作的 P1/P2；未审计 GitHub branch protection 设置。
+- 当前工作区有本机 Mastra 开发服务占用 `localhost:4111`；为避免清理/覆盖正在服务的构建输出，本轮未在此工作区强行运行完整 `pnpm run build`。tag package 是构建发布门禁。
 - 本机验证不等于 Node 22 CI、tag package、任意网站桌面 E2E 或性能验收；这些均需分别取得证据。
 
 ## 发布记录状态
 
-PR 尚未创建；PR CI、合并、`v0.0.5` tag 和 GitHub Release 资产均未完成。不得将本文件中的候选验证描述成已发布验收。
+PR #11 已创建。首轮 Node 22 PR CI 的源码检查仅在 Electron fixture 启动时失败：Ubuntu runner 的 `chrome-sandbox` 权限不满足 Chromium SUID 要求；已将 `--no-sandbox` 限定到 Linux 自动化 fixture 进程，未影响正式应用参数，修复提交和 CI 重跑仍待完成。
+
+PR 的重跑 CI、合并、`v0.0.5` tag 和 GitHub Release 资产均未完成。不得将候选验证描述成已发布验收。
