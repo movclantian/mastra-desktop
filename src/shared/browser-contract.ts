@@ -121,14 +121,20 @@ export const BrowserKeyboardBatchRequestSchema = z.strictObject({
   events: z.array(BrowserKeyboardRequestSchema).min(1).max(64),
 });
 
+export const MAX_NATIVE_BROWSER_TABS = 100;
+
 export const BrowserStateSchema = z.strictObject({
   active: z.boolean(),
   status: z.string().min(1).max(64),
   currentUrl: z.string().max(8_192).nullable(),
   tabs: z
     .array(z.object({ url: z.string().max(8_192), title: z.string().max(1_024).optional() }))
-    .max(100),
-  activeTabIndex: z.number().int().min(0).max(99),
+    .max(MAX_NATIVE_BROWSER_TABS),
+  activeTabIndex: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_NATIVE_BROWSER_TABS - 1),
   closeReason: z.enum(["agent", "user", "process_restart", "error"]).optional(),
   activeUrlChangeSource: z.enum(["agent", "user"]).optional(),
 });
@@ -166,12 +172,85 @@ export const NativeBrowserSessionSchema = z.strictObject({
 /** Authenticated local bridge from the Mastra service to the Electron-owned active tab. */
 export const NativeBrowserTargetRequestSchema = z.strictObject({
   ...NativeBrowserSessionSchema.shape,
+  requestId: z.string().uuid(),
   token: z.string().min(32).max(128),
 });
 
+/** Agent operations are routed to the Electron-owned, currently visible page. */
+export const NativeBrowserAgentOperationSchema = z.enum([
+  "state",
+  "goto",
+  "snapshot",
+  "screenshot",
+  "click",
+  "type",
+  "press",
+  "select",
+  "scroll",
+  "hover",
+  "back",
+  "wait",
+  "drag",
+  "evaluate",
+  "tabs",
+]);
+
+export const NativeBrowserAgentCommandRequestSchema = z.strictObject({
+  ...NativeBrowserSessionSchema.shape,
+  requestId: z.string().uuid(),
+  token: z.string().min(32).max(128),
+  operation: NativeBrowserAgentOperationSchema,
+  input: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const NativeBrowserAgentCommandFailureSchema = z.enum([
+  "invalid_request",
+  "unauthorized",
+  "manager_unavailable",
+  "session_not_found",
+  "session_not_visible",
+  "document_changed",
+  "stale_ref",
+  "operation_failed",
+  "tab_limit_reached",
+  "response_too_large",
+  "resolver_failed",
+]);
+
+export const NativeBrowserAgentCommandResponseSchema = z.discriminatedUnion("ok", [
+  z.strictObject({
+    ok: z.literal(true),
+    requestId: z.string().uuid(),
+    result: z.unknown(),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    requestId: z.string().uuid().optional(),
+    error: NativeBrowserAgentCommandFailureSchema,
+  }),
+]);
+
+export const NativeBrowserTargetFailureSchema = z.enum([
+  "invalid_request",
+  "unauthorized",
+  "manager_unavailable",
+  "ensure_failed",
+  "active_target_missing",
+  "target_lookup_failed",
+  "resolver_failed",
+]);
+
 export const NativeBrowserTargetResponseSchema = z.discriminatedUnion("ok", [
-  z.strictObject({ ok: z.literal(true), targetId: z.string().min(1).max(256) }),
-  z.strictObject({ ok: z.literal(false), error: z.enum(["unauthorized", "unavailable"]) }),
+  z.strictObject({
+    ok: z.literal(true),
+    requestId: z.string().uuid(),
+    targetId: z.string().min(1).max(256),
+  }),
+  z.strictObject({
+    ok: z.literal(false),
+    requestId: z.string().uuid().optional(),
+    error: NativeBrowserTargetFailureSchema,
+  }),
 ]);
 
 export const NativeBrowserBoundsSchema = z.strictObject({
@@ -223,5 +302,16 @@ export const NativeBrowserEventSchema = z.discriminatedUnion("type", [
 export type NativeBrowserSession = z.infer<typeof NativeBrowserSessionSchema>;
 export type NativeBrowserTargetRequest = z.infer<typeof NativeBrowserTargetRequestSchema>;
 export type NativeBrowserTargetResponse = z.infer<typeof NativeBrowserTargetResponseSchema>;
+export type NativeBrowserTargetFailure = z.infer<typeof NativeBrowserTargetFailureSchema>;
+export type NativeBrowserAgentOperation = z.infer<typeof NativeBrowserAgentOperationSchema>;
+export type NativeBrowserAgentCommandRequest = z.infer<
+  typeof NativeBrowserAgentCommandRequestSchema
+>;
+export type NativeBrowserAgentCommandFailure = z.infer<
+  typeof NativeBrowserAgentCommandFailureSchema
+>;
+export type NativeBrowserAgentCommandResponse = z.infer<
+  typeof NativeBrowserAgentCommandResponseSchema
+>;
 export type NativeBrowserBounds = z.infer<typeof NativeBrowserBoundsSchema>;
 export type NativeBrowserEvent = z.infer<typeof NativeBrowserEventSchema>;

@@ -314,15 +314,16 @@ test("Reload navigates to the current URL and uses the restored home for blank t
   assert.deepEqual(navigations, ["https://current.example/", "https://www.bing.com"]);
 });
 
-test("The user panel and Agent reuse one thread browser while Bing stays opt-in", () => {
+test("The user panel and Agent share the visible thread page while Bing stays opt-in", () => {
   assert.match(source, /const FALLBACK_BROWSER_HOME_URL = "about:blank"/);
   assert.match(contractSource, /homeUrl: BrowserHomeUrlSchema\.default\(""\)/);
   assert.match(browserAgentSource, /homeUrl: ""/);
   assert.doesNotMatch(source, /getUserBrowserForResource/);
   assert.doesNotMatch(browserAgentSource, /BrowserSessionKind/);
+  assert.match(browserAgentSource, /class NativeElectronAgentBrowser extends AgentBrowser/);
+  assert.match(browserAgentSource, /executeNativeBrowserCommand/);
+  assert.doesNotMatch(browserAgentSource, /getNativeBrowserTargetId|selectNativeElectronPage/);
   assert.match(browserAgentSource, /getBrowserForThread\(/);
-  assert.match(browserAgentSource, /getNativeBrowserTargetId/);
-  assert.match(browserAgentSource, /selectNativeElectronPage/);
   assert.match(source, /getBrowserForThread\(resourceId, threadId\)/);
   assert.match(nativeBrowserSource, /getActiveTargetId\(/);
 });
@@ -341,7 +342,7 @@ test("Native browser opens web popups in a new app tab instead of replacing the 
   assert.match(nativeBrowserSource, /setWindowOpenHandler\(\(\{ url \}\) => \{/);
   assert.match(
     nativeBrowserSource,
-    /if \(isWebUrl\(url\)\) \{\s*void this\.createTab\(current, url\)/,
+    /if \(isWebUrl\(url\)\) \{\s*void this\.enqueueAgentCommand\(current, \(\) => this\.createTab\(current, url\)\)/,
   );
   assert.match(nativeBrowserSource, /return \{ action: "deny" \};/);
 });
@@ -675,13 +676,14 @@ test("Native browser disposal tolerates already-destroyed windows and webContent
       window,
       sessions: new Map([["session", { tabs: [tab] }]]),
       ensurePromises: new Map([["session", Promise.resolve()]]),
+      invalidateAgentCommands: () => calls.push("invalidate"),
     });
     return calls;
   };
 
-  assert.deepEqual(runDispose(true, true), []);
-  assert.deepEqual(runDispose(true, false), ["close"]);
-  assert.deepEqual(runDispose(false, false), ["remove", "close"]);
+  assert.deepEqual(runDispose(true, true), ["invalidate"]);
+  assert.deepEqual(runDispose(true, false), ["invalidate", "close"]);
+  assert.deepEqual(runDispose(false, false), ["invalidate", "remove", "close"]);
 });
 
 test("Closed CDP pages do not turn stale input into unhandled route failures", () => {

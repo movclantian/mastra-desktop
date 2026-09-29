@@ -4,7 +4,11 @@ import { stripTypeScriptTypes } from "node:module";
 import test from "node:test";
 import vm from "node:vm";
 import { toAISdkStream } from "@mastra/ai-sdk";
+import { Agent } from "@mastra/core/agent";
+import { RequestContext } from "@mastra/core/request-context";
+import { createTool } from "@mastra/core/tools";
 import { MDocument } from "@mastra/rag";
+import { z } from "zod";
 
 const { transformDeepSeekRequestBody } = await import("../src/mastra/models/create-model.ts");
 const { PLAN_TOOL_NAMES, READ_ONLY_TOOL_NAMES, toolCategoryOf } = await import(
@@ -12,6 +16,35 @@ const { PLAN_TOOL_NAMES, READ_ONLY_TOOL_NAMES, toolCategoryOf } = await import(
 );
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+test("Desktop Agent browser routes commands to the visible Electron WebContents", () => {
+  const browserSource = read("src/mastra/agents/browser.ts");
+  const managerSource = read("src/main/browser-view.ts");
+  const bridgeSource = read("src/main/browser-target-broker.ts");
+  const mainSource = read("src/main/index.ts");
+  assert.match(browserSource, /class NativeElectronAgentBrowser extends AgentBrowser/);
+  assert.match(browserSource, /executeNativeBrowserCommand/);
+  assert.doesNotMatch(browserSource, /cdpUrl:|getNativeBrowserTargetId|selectNativeElectronPage/);
+  assert.match(managerSource, /executeAgentCommand\(/);
+  assert.match(managerSource, /requireVisibleAgentTab\(current\)/);
+  const agentCommandPath = managerSource.match(
+    /executeAgentCommand\([\s\S]*?\n {2}private enqueueAgentCommand/,
+  );
+  assert.ok(agentCommandPath, "manager must keep an explicit Agent command path");
+  assert.doesNotMatch(agentCommandPath[0], /this\.ensure\(/);
+  assert.match(bridgeSource, /NativeBrowserAgentCommandBroker/);
+  assert.match(bridgeSource, /timingSafeEqual/);
+  assert.match(mainSource, /nativeBrowserAgentBroker = new NativeBrowserAgentCommandBroker/);
+  assert.match(mainSource, /await nativeBrowserAgentBroker\.start\(\)/);
+  assert.match(
+    mainSource,
+    /MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH: nativeBrowserAgentBroker\.endpoint/,
+  );
+  assert.match(
+    mainSource,
+    /MASTRA_NATIVE_BROWSER_AGENT_BROKER_TOKEN: nativeBrowserAgentBroker\.token/,
+  );
+  assert.match(mainSource, /nativeBrowserAgentBroker\??\.close\(\)/);
+});
 test("Upload cleanup is single-flight and throttles both success and failure", async () => {
   let calls = 0;
   let clock = 1000;
@@ -78,6 +111,67 @@ test("Plan and Review never receive tools that mutate the task queue", () => {
   assert.equal(toolCategoryOf("task_check"), "read");
   assert.equal(READ_ONLY_TOOL_NAMES.includes("task_check"), true);
   assert.equal(PLAN_TOOL_NAMES.includes("task_check"), true);
+});
+test("Browser tools are resolved and merged only for a thread-bound workbench session", async () => {
+  const merge = load("src/mastra/agents/browser.ts", "mergeBrowserToolsForThread");
+  let calls = 0;
+  const resolveBrowser = async () => ({
+    getTools: () => {
+      calls++;
+      return { browser_goto: {}, browser_snapshot: {} };
+    },
+  });
+  const tools = { read_file: {} };
+
+  for (const threadId of [undefined, null, "", "  "]) {
+    assert.equal(await merge(tools, threadId, resolveBrowser), tools);
+    assert.deepEqual(Object.keys(tools), ["read_file"]);
+  }
+  assert.equal(calls, 0);
+  assert.equal(await merge(tools, "thread-1", resolveBrowser), tools);
+  assert.deepEqual(Object.keys(tools).sort(), ["browser_goto", "browser_snapshot", "read_file"]);
+  assert.equal(calls, 1);
+
+  const agentSource = read("src/mastra/agents/index.ts");
+  assert.match(agentSource, /mergeBrowserToolsForThread\(tools, threadId/);
+  assert.match(agentSource, /getBrowserForRequest\(requestContext\)/);
+  assert.match(agentSource, /WORKSPACE_THREAD_ID_CONTEXT_KEY/);
+  assert.doesNotMatch(agentSource, /If a required skill such as browser-harness is missing/);
+  assert.equal(PLAN_TOOL_NAMES.includes("browser_snapshot"), true);
+  assert.equal(PLAN_TOOL_NAMES.includes("browser_screenshot"), true);
+  for (const name of ["browser_goto", "browser_click", "browser_type", "browser_press"]) {
+    assert.equal(PLAN_TOOL_NAMES.includes(name), false);
+  }
+});
+test("Mastra Agent resolves browser tools from the thread-aware dynamic toolset", async () => {
+  const merge = load("src/mastra/agents/browser.ts", "mergeBrowserToolsForThread");
+  const browserGoto = createTool({
+    id: "browser_goto",
+    description: "Navigate the active workbench browser page.",
+    inputSchema: z.object({ url: z.string() }),
+    execute: async () => "navigated",
+  });
+  const agent = new Agent({
+    id: "browser-tool-registration-regression",
+    name: "Browser tool registration regression",
+    instructions: "Test dynamic tool registration without a model call.",
+    model: "openai/gpt-4o-mini",
+    tools: async ({ requestContext }) => {
+      const tools = {};
+      return merge(tools, requestContext?.get("thread"), async () => ({
+        getTools: () => ({ browser_goto: browserGoto }),
+      }));
+    },
+  });
+
+  const noThreadContext = new RequestContext();
+  const noThreadTools = await agent.listTools({ requestContext: noThreadContext });
+  assert.equal("browser_goto" in noThreadTools, false);
+
+  const threadContext = new RequestContext();
+  threadContext.setRaw("thread", "thread-1");
+  const threadTools = await agent.listTools({ requestContext: threadContext });
+  assert.equal(threadTools.browser_goto, browserGoto);
 });
 test("Empty delegation summary reports incomplete evidence rather than no findings", () => {
   const describe = load("src/mastra/agents/index.ts", "describeIncompleteDelegation");
@@ -192,14 +286,10 @@ test("Background task recovery never substitutes a context-free static executor"
   );
 });
 test("A task without its request-scoped executor is persisted as failed", async () => {
-  const markFailed = load(
-    "src/mastra/routes/background-tasks.ts",
-    "markInterruptedTaskFailed",
-    {
-      INTERRUPTED_TASK_MESSAGE:
-        "服务已重启，原任务的请求上下文不能安全恢复。为避免使用错误账户、模型或工作区执行，任务已停止；请重新提交。",
-    },
-  );
+  const markFailed = load("src/mastra/routes/background-tasks.ts", "markInterruptedTaskFailed", {
+    INTERRUPTED_TASK_MESSAGE:
+      "服务已重启，原任务的请求上下文不能安全恢复。为避免使用错误账户、模型或工作区执行，任务已停止；请重新提交。",
+  });
   const ensure = load("src/mastra/routes/background-tasks.ts", "ensureTaskExecutorAvailable", {
     workError: (code) => new Error(code),
     markInterruptedTaskFailed: markFailed,
@@ -304,7 +394,10 @@ test("Startup marks persisted pending, running, and suspended tasks failed", asy
     publishLifecycleEvent: async (...args) => events.push(args),
   };
   assert.equal(await reconcile(manager), 3);
-  assert.deepEqual([...records.values()].map((task) => task.status), ["failed", "failed", "failed"]);
+  assert.deepEqual(
+    [...records.values()].map((task) => task.status),
+    ["failed", "failed", "failed"],
+  );
   assert.equal(events.length, 3);
 });
 test("Real AI SDK adapter separates the final request from cumulative run usage", async () => {
@@ -374,10 +467,7 @@ test("Windows terminal toolchain preserves PATH order and reads environment keys
     volta_home: explicitHome,
   };
   normalize(explicitExists)(explicitEnvironment);
-  assert.equal(
-    explicitEnvironment.path,
-    `${explicitHome}\\bin;C:\\Windows;C:\\Tools`,
-  );
+  assert.equal(explicitEnvironment.path, `${explicitHome}\\bin;C:\\Windows;C:\\Tools`);
 
   const userHome = "C:\\Users\\Chen\\AppData\\Local\\Volta";
   const inferredEnvironment = {
@@ -385,10 +475,7 @@ test("Windows terminal toolchain preserves PATH order and reads environment keys
     localappdata: "C:\\Users\\Chen\\AppData\\Local",
   };
   normalize(
-    new Set([
-      `${userHome}\\bin`.toLowerCase(),
-      `${userHome}\\bin\\volta.exe`.toLowerCase(),
-    ]),
+    new Set([`${userHome}\\bin`.toLowerCase(), `${userHome}\\bin\\volta.exe`.toLowerCase()]),
   )(inferredEnvironment);
   assert.equal(inferredEnvironment.path, `${userHome}\\bin;C:\\Windows`);
   assert.equal(inferredEnvironment.VOLTA_HOME, userHome);
