@@ -119,15 +119,7 @@ function providerLabel(
       provider.registryId === namespace ||
       routerPrefix(provider) === namespace,
   );
-  if (configured) return configured.name;
-
-  // Older custom gateway metrics used this fixed namespace. It is only
-  // unambiguous when the resource has one custom gateway configured.
-  if (namespace === "mastra-work-openai-compatible") {
-    const customProviders = configuredProviders.filter((provider) => provider.baseUrl);
-    if (customProviders.length === 1) return customProviders[0].name;
-  }
-  return namespace;
+  return configured?.name ?? namespace;
 }
 
 function buildFilters(resourceId: string, from: number, to: number): MetricFilters {

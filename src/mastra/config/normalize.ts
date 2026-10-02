@@ -1,14 +1,6 @@
 /**
- * 配置边界归一化共享底座。
- *
- * 各 app_config 表的 normalize 入口过去各自手写「字符串 record 清洗 / 数值收敛 /
- * 字符串数组清洗」,逻辑分散且容易漂移。本模块集中提供:
- * - 命令式 helper:stringRecord / clampNumber / clampInt / cleanStrings
- * - 声明式 zod 片段:stringRecordSchema / clampNumberSchema / cleanStringsSchema
- *
- * 命令式版本用于在既有 normalize 函数里逐字段处理(渐进迁移);声明式 zod 片段
- * 供新写或重写的配置 schema 直接组合(zod 已是项目依赖,见 routes/agents.ts、
- * tools/web-search.ts)。两者语义一致,按场景取用。
+ * 配置边界归一化共享底座:stringRecord / clampNumber / clampInt / cleanStrings,
+ * 以及供新写配置 schema 直接组合的 clampNumberSchema / clampIntSchema。
  */
 import { z } from "zod";
 
@@ -24,11 +16,6 @@ export function stringRecord(value: unknown): Record<string, string> {
     ),
   ) as Record<string, string>;
 }
-
-export const stringRecordSchema = z
-  .record(z.string(), z.string())
-  .catch({})
-  .transform((entries) => stringRecord(entries));
 
 /**
  * 数值收敛到 [min, max],非有限值回落 fallback。字符串会先 coerce。
@@ -76,11 +63,4 @@ export function cleanStrings(value: unknown, limit = 100): string[] {
         .filter(Boolean)
         .slice(0, limit)
     : [];
-}
-
-export function cleanStringsSchema(limit = 100) {
-  return z
-    .array(z.string())
-    .catch([])
-    .transform((items) => cleanStrings(items, limit));
 }

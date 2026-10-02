@@ -1,8 +1,14 @@
-# Repository engineering guidance
-
-- Treat the current source and tests as the source of truth. Inspect the relevant call path and preserve unrelated user changes.
-- Keep fixes scoped and fail closed around authorization, thread/resource identity, filesystem writes, and release publication. Never reset user data or databases without explicit authorization.
-- For code changes, run the narrow regression first. For cross-module, browser, or release changes, run the relevant full tests, all typecheck projects, lint, and release/package guards; report exact commands and distinguish automated fixtures from desktop/manual evidence.
-- For renderer/UI changes, follow the root `DESIGN.md` and inspect rendered screenshots with an available browser/computer-use tool. If no suitable tool is available, state that limitation rather than claiming visual verification.
-- Keep public docs aligned with shipped behavior. Keep dated internal measurements identifiable as historical, and exclude credentials, machine-specific paths, runtime traces, and temporary screenshots from release changes.
-- A release tag must match `package.json`; merge only after required PR CI checks pass, and publish only from the merged commit.
+- Do not preserve backward compatibility. Remove obsolete paths instead of adding compatibility layers, fallbacks, or migrations.
+- Never generate `ALTER TABLE` or incremental `DROP` patch statements. Apply all schema changes directly to the final creation/schema definitions. You have permission to drop/reset the development database directly without asking for confirmation.
+- Choose the simplest implementation that fully meets the current requirements. Avoid speculative abstractions, configuration, and indirection.
+- Grow the system in layers. Start from the smallest version that works end to end, and add each new capability on top of a product that already works. Never trade a working product for unfinished complexity.
+- Keep components modular and concerns clearly separated, but avoid file fragmentation. Merge logic or helpers under 100 lines directly into existing related files instead of creating separate micro-files.
+- Prefer established, well-maintained libraries over custom implementations. Never reinvent the wheel. Replicate official best-practice examples and documentation directly for all module implementations.
+- Lean on existing project dependencies before writing your own implementation or adding packages. If a new dependency is required or clearly beneficial, install it automatically without prompting for confirmation.
+- Use the Tavily Skill exclusively for all web searches and online documentation retrieval.
+- Do not start any applications, dev servers, background processes, or automated tests. Only generate and modify code; After completing each task, run pnpm format, pnpm lint, and pnpm typecheck to check code quality; all execution and verification will be done manually by the user.
+- Make architectural decisions for the long term. Do not accept a stopgap that only works for now and is meant to be replaced later.
+- Avoid loose or overflow-prone frontend layouts. Do not use excessive margins or paddings that create unnecessary whitespace. Always use flexbox/grid responsive structures, enforce text wrapping, and incorporate `ScrollArea` components to prevent UI content from clipping or overflowing the viewport.`
+- For long-running asynchronous work:Empty `write_stdin` polls MUST use `yield_time_ms >= 180000`;prefer `300000` when intermediate output is not needed.`functions.wait` MUST use `yield_time_ms >= 180000`;`functions.exec` MUST set its outer `@exec yield_time_ms` at least 30000 ms longer than the longest nested tool wait, so the outer code cell does not yield first.
+- Do not apply the long wait to non-empty `write_stdin` calls that send interactive input.These tools return early when the process or cell completes.
+- Do not wake the model merely to report that work is still running.

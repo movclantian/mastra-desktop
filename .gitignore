@@ -2,6 +2,7 @@ node_modules
 dist
 dist-review-*
 out
+*.tsbuildinfo
 .DS_Store
 .eslintcache
 *.log*

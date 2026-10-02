@@ -25,7 +25,6 @@ import {
   resolveDefaultLanguageModel,
 } from "../models";
 import { libraryIndexSignals } from "../rag/document/indexing";
-import { getBrowserForRequest, mergeBrowserToolsForThread } from "./browser";
 import {
   codeMode,
   MODEL_FAMILY_CONTEXT_KEY,
@@ -41,6 +40,7 @@ import {
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
+import { getBrowserForRequest, mergeBrowserToolsForThread } from "./browser";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   type AgentMemberDefinition,
@@ -374,10 +374,11 @@ function createWorkAgent(
       instructions.push(
         "Only claim tools exposed in this session and skills actually discovered by skill/skill_search as available. Browser tools and skills are separate capabilities: use browser_* tools when exposed, and do not report the browser unavailable merely because a browser skill is absent. If the current mode does not expose a required browser action, state that mode restriction accurately. For web browsing or browser automation, prefer browser_* tools; do not use terminal shell plus Playwright/Puppeteer or install/launch another browser as a fallback. If browser_* tools are unavailable, explain the actual reason and stop. Browser tools must operate only on the current workbench thread's bound page. Never claim screenshots or browser interaction succeeded without actual evidence.",
       );
-      if (process.platform === "win32")
-        instructions.push(
-          "For workspace commands, choose outputEncoding to match the program's stdout/stderr bytes. Run chcp to check the Windows code page: 936 means gbk for cmd/Windows PowerShell console output; Node and other UTF-8 programs need utf-8. A command can override the console encoding. Do not mix differently encoded programs in one invocation or guess by replacing garbled characters. Use separate invocations or explicitly configure each program's output encoding.",
-        );
+      // ponytail: on a GBK console (chcp 936) cmd/PowerShell output decodes as utf-8 and
+      // garbles. @mastra/core 1.74 exposes outputEncoding on LocalSandbox only, not on the
+      // execute-command tool schema, so per-command selection is unreachable from the agent.
+      // Do not add an instruction here until the tool field exists. Upgrade path: set it on
+      // the LocalSandbox in workspace/index.ts, or upstream the tool parameter.
       if (selection) {
         const tools = await resolveWebSearchTools(
           selection,

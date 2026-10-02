@@ -54,15 +54,9 @@ function unsupportedAttachmentText(filename: unknown): string {
 
 export const libraryAttachmentProcessor: InputProcessor = {
   id: "library-attachments",
-  async processInputStep() {
-    // Keep persisted messages and the renderer's chat history lossless. The
-    // previous implementation resolved library URLs here and replaced file
-    // parts with extracted text, which made Markdown/JSON appear as raw text
-    // inside the user's message bubble. Provider-bound rewriting belongs in
-    // processLLMRequest, whose contract explicitly says the mutation is
-    // transient and is not persisted back to the message list.
-    return undefined;
-  },
+  // Resolution happens only here, never in processInputStep: processLLMRequest
+  // mutations are transient and not written back, so persisted messages and the
+  // renderer's chat history stay lossless instead of showing raw extracted text.
   async processLLMRequest({ prompt, requestContext }) {
     const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
     const tokenBudget = requestContext?.get(LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY);

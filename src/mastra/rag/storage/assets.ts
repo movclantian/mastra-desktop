@@ -26,7 +26,6 @@ import {
 } from "../document/extract";
 import { queueAssetIndex, waitForAssetIndexing } from "../document/indexing";
 import { getLibrarySettings } from "../settings";
-import { ensureFolderReference } from "./folders";
 import {
   type LibraryAsset,
   MAX_LIBRARY_FILE_BYTES,
@@ -40,6 +39,7 @@ import {
   withClient,
   withLibraryStorageLock,
 } from "./db";
+import { ensureFolderReference } from "./folders";
 
 /**
  * 资产管理层:
@@ -83,9 +83,7 @@ export async function withThreadAssetTransferLock<T>(
 }
 
 /** True while an accepted transfer is moving this thread's assets or history. */
-export async function isThreadAssetTransferWriteLocked(
-  threadId: string,
-): Promise<boolean> {
+export async function isThreadAssetTransferWriteLocked(threadId: string): Promise<boolean> {
   if (!threadId) return false;
   await ensureLibrarySchema();
   return withClient(async (client) => {
@@ -411,14 +409,6 @@ async function getLibraryAsset(resourceId: string, id: string): Promise<LibraryA
     return result.rows[0];
   });
   return row ? rowToAsset(row) : null;
-}
-
-/** Internal recovery read: ownership is checked by the transfer intent itself. */
-export function getLibraryAssetForTransferRecovery(
-  resourceId: string,
-  id: string,
-): Promise<LibraryAsset | null> {
-  return getLibraryAsset(resourceId, id);
 }
 
 export async function getLibraryAssetTransferDetails(
@@ -810,7 +800,9 @@ export async function listThreadAssetTransfersForResource(
         ORDER BY updated_at DESC LIMIT 100`,
       args: [resourceId, resourceId],
     });
-    const records = result.rows.map((row) => rowToThreadAssetTransfer(row as Record<string, unknown>));
+    const records = result.rows.map((row) =>
+      rowToThreadAssetTransfer(row as Record<string, unknown>),
+    );
     if (records.length === 0) return [];
 
     const placeholders = records.map(() => "?").join(", ");
@@ -849,66 +841,6 @@ export async function listThreadAssetTransfersForResource(
       };
     });
   });
-}
-
-/** Persist the cross-store transfer intent before either store is changed. */
-export async function beginThreadAssetTransfer(input: {
-  threadId: string;
-  sourceResourceId: string;
-  targetResourceId: string;
-  initiatedBy: string;
-}): Promise<ThreadAssetTransferRecord> {
-  await ensureLibrarySchema();
-  const id = nanoid();
-  const timestamp = now();
-  await withClient((client) =>
-    client.batch([
-      {
-        sql: `INSERT INTO library_thread_transfers
-          (id, thread_id, source_resource_id, target_resource_id, initiated_by, asset_ids, asset_mappings, status, error_message, created_at, updated_at, completed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
-        args: [
-          id,
-          input.threadId,
-          input.sourceResourceId,
-          input.targetResourceId,
-          input.initiatedBy,
-          "[]",
-          "{}",
-          "prepared",
-          timestamp,
-          timestamp,
-        ],
-      },
-      {
-        sql: `INSERT INTO library_thread_transfer_events
-          (id, transfer_id, action, actor_resource_id, details, created_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-        args: [
-          nanoid(),
-          id,
-          "prepared",
-          input.initiatedBy,
-          JSON.stringify({ threadId: input.threadId, targetResourceId: input.targetResourceId }),
-          timestamp,
-        ],
-      },
-    ]),
-  );
-  return {
-    id,
-    threadId: input.threadId,
-    sourceResourceId: input.sourceResourceId,
-    targetResourceId: input.targetResourceId,
-    initiatedBy: input.initiatedBy,
-    assetIds: [],
-    assetMappings: {},
-    status: "prepared",
-    errorMessage: null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-    completedAt: null,
-  };
 }
 
 async function updateThreadAssetTransfer(

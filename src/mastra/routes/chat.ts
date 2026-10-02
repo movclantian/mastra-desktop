@@ -986,7 +986,7 @@ export const workChatRoute = registerApiRoute("/chat/:agentId", {
         const tool = runs
           .find((run) => run.runId === explicitResumeTarget.runId)
           ?.toolCalls.find((call) => call.toolCallId === explicitResumeTarget.toolCallId);
-        if (!tool)
+        if (!tool?.toolCallId)
           throw workError("VALIDATION_FAILED", { text: "Tool interaction is no longer pending" });
         if (tool.requiresApproval !== (body.approval !== undefined)) {
           throw workError("VALIDATION_FAILED", {

@@ -314,15 +314,6 @@ export async function ensureLibrarySchema(): Promise<void> {
           args: [],
         },
       ]);
-      // Existing local databases were created before asset copy-on-transfer.
-      // SQLite has no IF NOT EXISTS form for ADD COLUMN, so make the migration
-      // idempotent and tolerate the already-migrated case.
-      await client
-        .execute({
-          sql: "ALTER TABLE library_thread_transfers ADD COLUMN asset_mappings TEXT NOT NULL DEFAULT '{}'",
-          args: [],
-        })
-        .catch(() => undefined);
       void cleanupExpiredLibraryUploadSessions().catch((error) => {
         console.warn("[library-upload] startup cleanup deferred", error);
       });

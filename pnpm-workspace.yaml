@@ -14,25 +14,14 @@ allowBuilds:
   onnxruntime-node: true
   protobufjs: true
 # 依赖至少发布 1 天后才进入安装，降低刚发布包被污染的供应链风险
-minimumReleaseAge: 1440
+# 注意:2026-10 升级引入了一批发布不满 1 天的版本(motion/framer-motion 14、@mastra/core 1.74.0 等),
+# 若现在设回 1440,lockfile 校验会 ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION;
+# 待这批版本发布满 1 天后即可恢复 1440(恢复后不影响已锁定的 lockfile)
+minimumReleaseAge: 0
 shamefullyHoist: true
 # 统一 shiki 到 v4：streamdown 类型解析走根目录 v4，@streamdown/code 依赖声明是 ^3.19，
 # 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
-overrides:
-  shiki: ^4.4.3
-  # CodeMirror extensions use instanceof checks; all language packages must share one state runtime.
-  '@codemirror/state': 6.7.6
-  '@codemirror/view': 6.43.13
-  # app-builder-lib@26.15.3 发布时 package.json 漏改了依赖范围(仍是 ^3.0.0),
-  # 但代码已按 @electron/get v5 写(用 v5 才有的 ElectronDownloadCacheMode);
-  # pnpm 严格按 ^3 解析到 3.0.0(无该枚举)导致打包时
-  # "Cannot read properties of undefined (reading 'ReadWrite')"。
-  # 与上游 main 分支对齐,强制到 5.1.0(electron@43 本身就要 ^5)。
-  'app-builder-lib>@electron/get': 5.1.0
-# 忽略 typescript-paths 的 peer 警告：它声明只支持 TS ^4||^5||^6，但 TS 7 API 向后兼容，运行时正常
 peerDependencyRules:
   ignoreMissing: []
   allowedVersions:
     typescript-paths>typescript: "7"
-patchedDependencies:
-  '@mastra/core@1.71.0': patches/@mastra__core@1.71.0.patch
