@@ -17,7 +17,6 @@ import { readdir, readFile, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { Session } from "@mastra/core/agent-controller";
 import type { Mastra } from "@mastra/core/mastra";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { validateSkillContent } from "@mastra/core/skills";
 import {
   LocalFilesystem,
@@ -30,6 +29,7 @@ import {
 } from "@mastra/core/workspace";
 import matter from "gray-matter";
 import { z } from "zod";
+import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
   clampInt,
   clampNumber,
@@ -39,8 +39,8 @@ import {
   getStorageDirectory,
   setAppConfig,
   stringRecord,
-} from "../storage";
-import { getContentObjectAccessPaths } from "../storage/content-objects";
+  userIdFromContext,
+} from "../storage/database";
 import {
   createWorkspaceChangeHooks,
   createWorkspaceOutputArchiveHooks,
@@ -640,9 +640,7 @@ export async function getThreadWorkspace(
       tools: workspaceTools,
       skillSource: new LocalSkillSource({ basePath: workspacePath }),
       skills: async ({ requestContext }) => {
-        const contextResourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
-        const scopedResourceId =
-          resourceId ?? (typeof contextResourceId === "string" ? contextResourceId : undefined);
+        const scopedResourceId = resourceId ?? userIdFromContext(requestContext);
         return [...config.skillsPaths, ...(await getManagedSkillPaths(scopedResourceId))];
       },
       ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),

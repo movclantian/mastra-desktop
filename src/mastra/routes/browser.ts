@@ -68,23 +68,7 @@ const BROWSER_STREAM_QUALITY = 60;
 const BROWSER_STREAM_MAX_WIDTH = 960;
 const BROWSER_STREAM_MAX_HEIGHT = 540;
 
-function isAgentBrowser(browser: WorkBrowser): browser is Extract<WorkBrowser, { goto: unknown }> {
-  return "goto" in browser;
-}
-
-function isScreenshotBrowser(
-  browser: WorkBrowser,
-): browser is Extract<WorkBrowser, { screenshot: unknown }> {
-  return "screenshot" in browser && typeof browser.screenshot === "function";
-}
-
-function browserGoto(browser: WorkBrowser, url: string, threadId: string) {
-  return isAgentBrowser(browser)
-    ? browser.goto({ url }, threadId)
-    : browser.navigate({ url }, threadId);
-}
-
-async function browserForward(browser: Extract<WorkBrowser, { goto: unknown }>, threadId: string) {
+async function browserForward(browser: WorkBrowser, threadId: string) {
   const previousUrl = await browser.getCurrentUrl(threadId);
   try {
     return await browser.evaluate({ script: "history.forward()" }, threadId);
@@ -104,11 +88,7 @@ async function browserForward(browser: Extract<WorkBrowser, { goto: unknown }>, 
   }
 }
 
-async function browserReload(
-  browser: Extract<WorkBrowser, { goto: unknown }>,
-  threadId: string,
-  resourceId: string,
-) {
+async function browserReload(browser: WorkBrowser, threadId: string, resourceId: string) {
   const currentUrl = await browser.getCurrentUrl(threadId);
   const targetUrl =
     currentUrl && currentUrl !== "about:blank" ? currentUrl : await getBrowserHomeUrl(resourceId);
@@ -125,7 +105,7 @@ async function navigateBrowserTab(
   url: string,
   threadId: string,
 ): Promise<void> {
-  const result = await browserGoto(browser, url, threadId);
+  const result = await browser.goto({ url: url }, threadId);
   if (!("success" in result) || result.success !== true) {
     throw new Error(
       "message" in result && typeof result.message === "string"
@@ -133,10 +113,6 @@ async function navigateBrowserTab(
         : "Browser tab could not be created",
     );
   }
-}
-
-function browserTabs(browser: WorkBrowser, input: unknown, threadId: string) {
-  return browser.tabs(input as never, threadId);
 }
 
 function isClosedBrowserContextError(error: unknown): boolean {
@@ -336,7 +312,7 @@ export const browserScreencastRoute = registerApiRoute(
             flush();
           };
           const sendSnapshot = async () => {
-            if (disposed || stopped || !isScreenshotBrowser(browser)) return;
+            if (disposed || stopped) return;
             try {
               const snapshot = await browser.screenshot({ fullPage: false }, threadId);
               if (disposed || stopped || !("base64" in snapshot)) return;
@@ -385,7 +361,7 @@ export const browserScreencastRoute = registerApiRoute(
           // Retry after a short paint window. This covers about:blank and
           // static pages whose only screencast frame arrived before the SSE
           // listeners attached.
-          if (isScreenshotBrowser(browser)) scheduleSnapshot(350);
+          scheduleSnapshot(350);
         },
         pull() {
           flush();
@@ -426,7 +402,7 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     try {
       // 首次就绪时直接落到目标地址,省掉一次多余的首页往返
       const navigated = await ensureBrowserTab(browser, resourceId, threadId, url);
-      const result = navigated ? { success: true } : await browserGoto(browser, url, threadId);
+      const result = navigated ? { success: true } : await browser.goto({ url: url }, threadId);
       if (!("success" in result) || result.success !== true) return c.json(result, 400);
       return c.json(BrowserResponseSchema.parse({ state: await browserState(browser, threadId) }));
     } catch (error) {
@@ -456,15 +432,12 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
       let result: unknown;
       switch (body.action) {
         case "back":
-          if (!isAgentBrowser(browser)) throw workError("BROWSER_ACTION_UNSUPPORTED");
           result = await browser.back(threadId);
           break;
         case "forward":
-          if (!isAgentBrowser(browser)) throw workError("BROWSER_ACTION_UNSUPPORTED");
           result = await browserForward(browser, threadId);
           break;
         case "reload":
-          if (!isAgentBrowser(browser)) throw workError("BROWSER_ACTION_UNSUPPORTED");
           result = await browserReload(browser, threadId, resourceId);
           break;
         case "new-tab": {
@@ -475,8 +448,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
           const navigated = await ensureBrowserTab(browser, resourceId, threadId, homeUrl);
           result = navigated
             ? { success: true }
-            : await browserTabs(
-                browser,
+            : await browser.tabs(
                 {
                   action: "new",
                   url: homeUrl === FALLBACK_BROWSER_HOME_URL ? undefined : homeUrl,
@@ -491,7 +463,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
             const visibleTabs = visibleBrowserTabs(currentState);
             const rawIndex = visibleTabs[body.index]?.index;
             if (rawIndex === undefined) throw workError("VALIDATION_FAILED");
-            result = await browserTabs(browser, { action: "switch", index: rawIndex }, threadId);
+            result = await browser.tabs({ action: "switch", index: rawIndex }, threadId);
           }
           break;
         case "close-tab": {
@@ -503,11 +475,11 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
             // 关掉唯一标签时保留空白页让 Chromium 保持就绪;状态接口会隐藏它,
             // 下次打开时可直接复用,不必冷启动浏览器进程。
             if (currentState?.activeTabIndex !== rawIndex) {
-              await browserTabs(browser, { action: "switch", index: rawIndex }, threadId);
+              await browser.tabs({ action: "switch", index: rawIndex }, threadId);
             }
-            result = await browserGoto(browser, "about:blank", threadId);
+            result = await browser.goto({ url: "about:blank" }, threadId);
           } else {
-            result = await browserTabs(browser, { action: "close", index: rawIndex }, threadId);
+            result = await browser.tabs({ action: "close", index: rawIndex }, threadId);
           }
           break;
         }
@@ -516,10 +488,10 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
           const count = currentState?.tabs.length ?? 0;
           for (let i = count - 1; i >= 1; i--) {
             try {
-              await browserTabs(browser, { action: "close", index: i }, threadId);
+              await browser.tabs({ action: "close", index: i }, threadId);
             } catch {}
           }
-          result = await browserGoto(browser, "about:blank", threadId);
+          result = await browser.goto({ url: "about:blank" }, threadId);
           break;
         }
         default:

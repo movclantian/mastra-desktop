@@ -1,7 +1,7 @@
 /**
  * 工作区路由:读写用户可配置的 Workspace 参数(数据库 app_config 表,保存后实时生效),
  * 近期绑定目录列表与线程工作区文件树。
- * Workspace 主体(文件系统/沙箱/搜索/LSP/Skills)见 src/mastra/workspace/index.ts。
+ * Workspace 主体(文件系统/沙箱/搜索/LSP/Skills)见 src/mastra/workspace/workspace-manager.ts。
  */
 import { realpath } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
@@ -12,16 +12,16 @@ import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { workError, workValidationError } from "../errors";
 import {
-  getWorkspaceConfig,
-  listRecentWorkspaces,
-  saveWorkspaceConfig,
-  workspaceConfigSchema,
-} from "../workspace";
-import {
   listWorkspaceChanges,
   readWorkspaceChangeContent,
   recordWorkspaceChange,
 } from "../workspace/changes";
+import {
+  getWorkspaceConfig,
+  listRecentWorkspaces,
+  saveWorkspaceConfig,
+  workspaceConfigSchema,
+} from "../workspace/workspace-manager";
 import type { ThreadMetadata } from "./threads/shared";
 import { getOwnedThread, getWorkMemory, isTrustedLocalRequest } from "./threads/shared";
 

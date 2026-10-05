@@ -13,9 +13,9 @@ import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credent
 import { resolveCredential } from "../credential-broker";
 import { errorText, workError, workValidationError } from "../errors";
 import {
+  createProviderModel,
   getProvidersConfig,
   providersPatchSchema,
-  resolveConfiguredModel,
   saveProvidersConfig,
 } from "../models/providers";
 
@@ -290,7 +290,11 @@ export const testProviderModelRoute = createRoute({
     .strict(),
   handler: async (params) => {
     const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const model = await resolveConfiguredModel(params.providerId, params.modelId, resourceId);
+    const config = await getProvidersConfig(resourceId);
+    const provider = config.providers.find((candidate) => candidate.id === params.providerId);
+    if (!provider) throw workError("MODEL_NOT_CONFIGURED");
+    // Testing checks the saved connection before a model is enabled for conversations.
+    const model = await createProviderModel(provider, params.modelId, resourceId);
     if (!model) throw workError("MODEL_NOT_CONFIGURED");
     const testAgent = new Agent({
       model,
@@ -319,8 +323,8 @@ export const testProviderModelRoute = createRoute({
 // ---------------------------------------------------------------------------
 // 供应商配置(app_config 表 key = "providers")
 //
-// 工作台与 Agent 统一按认证资源读取服务端配置。resolveConfiguredModel 是唯一
-// 模型构建入口；Key 不注入 process.env、也不随请求体下发。
+// 工作台、Agent 与连接测试统一按认证资源读取服务端配置。
+// Key 不注入 process.env、也不随请求体下发。
 // ---------------------------------------------------------------------------
 
 // GET /work/providers/config — 读取供应商与当前选定模型

@@ -19,24 +19,27 @@
  *   任意 schema/hook 仍保留为代码级扩展点,不允许普通 JSON 设置执行任意代码。
  */
 
-import type { MastraModelConfig } from "@mastra/core/llm";
 import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
 import { LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
 import { z } from "zod";
-import { resolveContextModel } from "../models/providers";
+import { resolveAgentModel } from "../models/providers";
 import {
   appStorage,
   getAppConfig,
   getStorageUrl,
   type RequestContextLike,
-  resourceIdFromContext,
   setAppConfig,
-} from "../storage";
+  userIdFromContext,
+} from "../storage/database";
 
 const MEMORY_CONFIG_KEY = "memory";
 const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
+// OM's main output is XML; only its subsequent structured extraction requests JSON.
+// The same instruction is retained by the native observer/reflector extraction agents.
+const OM_STRUCTURED_OUTPUT_INSTRUCTION =
+  "When asked to extract structured data, return only the requested JSON object. For observation or reflection, keep the requested observation format.";
 
 const omExtractorConfigSchema = z
   .object({
@@ -352,7 +355,7 @@ export async function getMemory(options?: {
   requestContext?: RequestContext;
   memoryScope?: "thread" | "resource";
 }): Promise<Memory> {
-  const resourceId = resourceIdFromContext(options?.requestContext as RequestContextLike);
+  const resourceId = userIdFromContext(options?.requestContext as RequestContextLike);
   const config = await getMemoryConfig(resourceId);
   const runtime = getMemoryRuntime(resourceId);
   if (options?.memoryScope) {
@@ -385,18 +388,6 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
   const semanticRecallScope = overrides.memoryScope ?? config.semanticRecallScope;
   const workingMemoryScope = overrides.memoryScope ?? config.workingMemoryScope;
   const observationalMemoryScope = overrides.memoryScope ?? config.omScope;
-  // OM 永远跟随当前主请求模型,避免 Observer/Reflector 使用另一套模型配置。
-  // 没有请求级模型的线程维护或后台任务使用当前资源的默认模型。
-  const resolveCurrentRequestModel = async (
-    requestContext: RequestContext,
-  ): Promise<MastraModelConfig> => {
-    const model = await resolveContextModel(requestContext);
-    if (!model) {
-      throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
-    }
-    return model;
-  };
-
   // 自定义抽取器(observational-memory.mdx「Extractor API」):schema 省略 =
   // 内联字符串抽取,Observer/Reflector 主输出顺带产出,无额外结构化调用。
   // 同批 name 去重(官方按 name 生成 slug,重名会在运行时报冲突)。
@@ -479,7 +470,7 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
       ...(config.observationalMemory
         ? {
             observationalMemory: {
-              model: ({ requestContext }) => resolveCurrentRequestModel(requestContext),
+              model: resolveAgentModel,
               scope: observationalMemoryScope,
               // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
               // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
@@ -499,9 +490,9 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
                 : {}),
               observation: {
                 continuationHints: false,
-                ...(config.omObserverInstruction.trim()
-                  ? { instruction: config.omObserverInstruction.trim() }
-                  : {}),
+                instruction: [OM_STRUCTURED_OUTPUT_INSTRUCTION, config.omObserverInstruction.trim()]
+                  .filter(Boolean)
+                  .join("\n\n"),
                 ...(config.omThreadTitle ? { threadTitle: true } : {}),
                 ...(config.omManageWorkingMemory ? { manageWorkingMemory: true } : {}),
                 // 'auto' 字面量 = 按模型多模态能力自动决定;on/off → true/false
@@ -527,9 +518,12 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
               },
               reflection: {
                 continuationHints: false,
-                ...(config.omReflectionInstruction.trim()
-                  ? { instruction: config.omReflectionInstruction.trim() }
-                  : {}),
+                instruction: [
+                  OM_STRUCTURED_OUTPUT_INSTRUCTION,
+                  config.omReflectionInstruction.trim(),
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
                 ...(config.omObservationTokens > 0
                   ? { observationTokens: config.omObservationTokens }
                   : {}),

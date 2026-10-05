@@ -1,5 +1,5 @@
 import type { FileUIPart } from "ai";
-import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { apiFetch, getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import type {
   BackgroundTaskState,
@@ -188,34 +188,20 @@ export async function runWorkflowAction(
   });
 }
 
-export async function runBackgroundTaskAction(
-  taskId: string,
-  action: string,
-  resumeData?: unknown,
-): Promise<Response> {
-  return apiFetch(`/work/background-tasks/${encodeURIComponent(taskId)}/${action}`, {
-    method: "POST",
-    ...(action === "resume" ? { body: { resumeData } } : {}),
-  });
-}
-
 export async function enqueueFollowUp(
   threadId: string,
   resourceId: string,
   body: {
     content: string;
-    model?: unknown;
-    reasoningEffort?: unknown;
+    modelSettings?: unknown;
+    providerOptions?: unknown;
     webSearch?: unknown;
     agentProfileId: string;
     metadata: { skillNames: string[]; fileReferences: MessageFileReference[] };
   },
-): Promise<{ queued: true }> {
-  const payload = await requestJson<{ queued?: boolean }>(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/follow-up?${resourceQuery(resourceId)}`,
-    { method: "POST", body },
-    i18n.t("chat:api.queueNotAccepted"),
-  );
-  if (!payload.queued) throw new Error(i18n.t("chat:api.queueNotAccepted"));
-  return { queued: true };
+): Promise<void> {
+  const { content, metadata, ...options } = body;
+  await getWorkbenchClientSession(resourceId, threadId).followUp(content, {
+    requestContext: { "mastra-work:message-options": { ...options, ...metadata } },
+  });
 }

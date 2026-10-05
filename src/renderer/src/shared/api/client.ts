@@ -1,7 +1,20 @@
+import { MastraClient } from "@mastra/client-js";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload, type WorkErrorPayload } from "@/shared/lib";
 
 export const MASTRA_SERVER_URL = import.meta.env.VITE_MASTRA_SERVER_URL ?? "http://localhost:4111";
+
+const mastraClient = new MastraClient({
+  baseUrl: MASTRA_SERVER_URL,
+  retries: 0,
+  credentials: "include",
+});
+
+export function getWorkbenchClientSession(resourceId: string, threadId: string) {
+  return mastraClient
+    .getAgentController("workbench")
+    .session(resourceId, JSON.stringify(["workbench", threadId]));
+}
 
 export type ApiRequestInit = Omit<RequestInit, "body"> & {
   body?: BodyInit | Record<string, unknown> | null;

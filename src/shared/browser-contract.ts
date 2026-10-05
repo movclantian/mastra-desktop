@@ -39,19 +39,11 @@ const BrowserViewportSchema = z.union([
 
 export const BrowserConfigSchema = z
   .strictObject({
-    provider: z.enum(["agent", "stagehand", "firecrawl"]),
+    provider: z.enum(["agent", "firecrawl"]),
     scope: z.enum(["thread", "shared"]),
-    headless: z.boolean(),
     viewport: BrowserViewportSchema,
     timeout: z.number().int().min(1_000).max(300_000),
     homeUrl: BrowserHomeUrlSchema.default(""),
-    stagehand: z.strictObject({
-      providerId: z
-        .string()
-        .trim()
-        .regex(/^(?:[a-zA-Z0-9_-]{1,64})?$/),
-      modelId: z.string().trim().max(256),
-    }),
     firecrawl: z.strictObject({
       apiUrl: z.string().trim().max(2_048),
       ttl: z.number().int().min(60).max(86_400),
@@ -61,17 +53,6 @@ export const BrowserConfigSchema = z
     }),
   })
   .superRefine((config, context) => {
-    if (config.provider === "stagehand") {
-      for (const field of ["providerId", "modelId"] as const) {
-        if (!config.stagehand[field]) {
-          context.addIssue({
-            code: "custom",
-            path: ["stagehand", field],
-            message: `Stagehand ${field} is required`,
-          });
-        }
-      }
-    }
     if (config.provider === "firecrawl" && !config.firecrawl.credential.hasCredential) {
       context.addIssue({
         code: "custom",
@@ -82,6 +63,21 @@ export const BrowserConfigSchema = z
   });
 
 export type BrowserConfig = z.infer<typeof BrowserConfigSchema>;
+
+export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
+  provider: "agent",
+  scope: "thread",
+  viewport: { width: 1280, height: 720 },
+  timeout: 30_000,
+  homeUrl: "",
+  firecrawl: {
+    apiUrl: "",
+    ttl: 600,
+    activityTtl: 60,
+    streamWebView: false,
+    credential: { hasCredential: false },
+  },
+};
 
 export const BrowserNavigateRequestSchema = z.strictObject({ url: BrowserUrlSchema });
 
@@ -169,13 +165,6 @@ export const NativeBrowserSessionSchema = z.strictObject({
   threadId: z.string().trim().min(1).max(256),
 });
 
-/** Authenticated local bridge from the Mastra service to the Electron-owned active tab. */
-export const NativeBrowserTargetRequestSchema = z.strictObject({
-  ...NativeBrowserSessionSchema.shape,
-  requestId: z.string().uuid(),
-  token: z.string().min(32).max(128),
-});
-
 /** Agent operations are routed to the Electron-owned, currently visible page. */
 export const NativeBrowserAgentOperationSchema = z.enum([
   "state",
@@ -230,29 +219,6 @@ export const NativeBrowserAgentCommandResponseSchema = z.discriminatedUnion("ok"
   }),
 ]);
 
-export const NativeBrowserTargetFailureSchema = z.enum([
-  "invalid_request",
-  "unauthorized",
-  "manager_unavailable",
-  "ensure_failed",
-  "active_target_missing",
-  "target_lookup_failed",
-  "resolver_failed",
-]);
-
-export const NativeBrowserTargetResponseSchema = z.discriminatedUnion("ok", [
-  z.strictObject({
-    ok: z.literal(true),
-    requestId: z.string().uuid(),
-    targetId: z.string().min(1).max(256),
-  }),
-  z.strictObject({
-    ok: z.literal(false),
-    requestId: z.string().uuid().optional(),
-    error: NativeBrowserTargetFailureSchema,
-  }),
-]);
-
 export const NativeBrowserBoundsSchema = z.strictObject({
   ...NativeBrowserSessionSchema.shape,
   x: z.number().finite().min(0).max(32_767),
@@ -300,9 +266,6 @@ export const NativeBrowserEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export type NativeBrowserSession = z.infer<typeof NativeBrowserSessionSchema>;
-export type NativeBrowserTargetRequest = z.infer<typeof NativeBrowserTargetRequestSchema>;
-export type NativeBrowserTargetResponse = z.infer<typeof NativeBrowserTargetResponseSchema>;
-export type NativeBrowserTargetFailure = z.infer<typeof NativeBrowserTargetFailureSchema>;
 export type NativeBrowserAgentOperation = z.infer<typeof NativeBrowserAgentOperationSchema>;
 export type NativeBrowserAgentCommandRequest = z.infer<
   typeof NativeBrowserAgentCommandRequestSchema

@@ -210,16 +210,6 @@ export function BrowserView({
       onUrlChange={navigate}
       resolveUrl={(input) => resolveBrowserOmniboxInput(input, searchEngine)?.url ?? null}
     >
-      <div className="flex min-h-8 shrink-0 items-center justify-between gap-3 border-b bg-background px-3 py-1 text-xs">
-        <div className="flex min-w-0 items-center gap-1.5 font-medium text-foreground">
-          <Globe2Icon className="size-3.5 shrink-0 text-primary" />
-          <span>{t("workspace:myBrowser")}</span>
-        </div>
-        <div className="flex min-w-0 items-center gap-1 text-muted-foreground">
-          <BotIcon className="size-3.5 shrink-0" />
-          <span className="truncate">{t("workspace:agentBrowserShared")}</span>
-        </div>
-      </div>
       <WebPreviewNavigation className="h-10 shrink-0 gap-0.5 p-1">
         <WebPreviewNavigationButton
           disabled={!state.active || busy}

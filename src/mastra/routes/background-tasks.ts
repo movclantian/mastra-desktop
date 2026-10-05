@@ -177,17 +177,6 @@ export const backgroundTaskGetRoute = registerApiRoute("/work/background-tasks/:
   handler: async (c) => c.json(await ownedTask(c, managerFor(c))),
 });
 
-export const backgroundTaskResumeRoute = registerApiRoute("/work/background-tasks/:taskId/resume", {
-  method: "POST",
-  handler: async (c) => {
-    const manager = managerFor(c);
-    const task = await ownedTask(c, manager);
-    await ensureTaskExecutorAvailable(manager, task);
-    const body = (await c.req.json().catch(() => ({}))) as { resumeData?: unknown };
-    return c.json(await manager.resume(task.id, body.resumeData));
-  },
-});
-
 export const backgroundTaskRestartRoute = registerApiRoute(
   "/work/background-tasks/:taskId/restart",
   {
@@ -214,7 +203,6 @@ export const backgroundTaskCancelRoute = registerApiRoute("/work/background-task
 export const backgroundTaskRoutes = [
   backgroundTaskStreamRoute,
   backgroundTaskListRoute,
-  backgroundTaskResumeRoute,
   backgroundTaskRestartRoute,
   backgroundTaskCancelRoute,
   backgroundTaskGetRoute,

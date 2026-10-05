@@ -27,7 +27,7 @@ import {
   storeCredential,
 } from "../credential-broker";
 import { errorText, workError } from "../errors";
-import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
+import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage/database";
 
 export const mcpServerConfigSchema = z
   .object({

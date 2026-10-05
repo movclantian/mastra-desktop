@@ -3,7 +3,7 @@ import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace/workspace-manager";
 
 const PLAN_DRAFT_ROOT = "plans";
 

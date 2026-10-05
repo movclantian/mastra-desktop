@@ -15,7 +15,6 @@ import type {
 } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
@@ -27,6 +26,7 @@ import {
   parsePermissionRules,
   resolveMode,
 } from "../agents/permissions";
+import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents/work-agent";
 import { errorText, WorkApiError, workError } from "../errors";
 import {
   getProvidersConfig,
@@ -39,6 +39,7 @@ import {
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
 } from "../rag/types";
+import { AUTHENTICATED_USER_ID_CONTEXT_KEY } from "../storage/database";
 import {
   deleteThreadWorkspace,
   ensureDirectory,
@@ -47,8 +48,8 @@ import {
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
-} from "../workspace";
-import { getWorkbenchSession } from "./session";
+} from "../workspace/workspace-manager";
+import { getWorkbenchSession } from "./session-context";
 import type { ThreadMetadata } from "./threads/shared";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
@@ -116,8 +117,13 @@ export async function prepareScheduledRun({
   if (!resourceId || !threadId) return null;
   const profileId = stored.metadata.profileId;
   const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === profileId);
-  if (!profile) return null;
+  if (!profile?.enabled) return null;
+  if (profile.workflow?.strategy === "workflow")
+    throw workError("SCHEDULE_INVALID", {
+      text: "Agent 定时任务不能启动显式团队流程，请使用团队运行入口",
+    });
   const requestContext = new RequestContext();
+  requestContext.set(AUTHENTICATED_USER_ID_CONTEXT_KEY, resourceId);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, resourceId);
   const memory = await mastra.getAgentById(DEFAULT_AGENT_PROFILE_ID).getMemory({ requestContext });
   const thread = await memory?.getThreadById({ threadId });
@@ -152,6 +158,7 @@ export async function prepareScheduledRun({
       ...stored.ifIdle,
       streamOptions: {
         requestContext: {
+          [AUTHENTICATED_USER_ID_CONTEXT_KEY]: resourceId,
           [MASTRA_RESOURCE_ID_KEY]: resourceId,
           [AGENT_PROFILE_CONTEXT_KEY]: profile.id,
           [REQUEST_MODEL_ID_CONTEXT_KEY]: modelId,
@@ -208,7 +215,11 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
     const input = parsed.data;
     const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === input.agentId);
-    if (!profile) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
+    if (!profile?.enabled) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
+    if (profile.workflow?.strategy === "workflow")
+      throw workError("SCHEDULE_INVALID", {
+        text: "Agent 定时任务仅支持单 Agent 和主管团队，显式流程请通过团队运行入口启动",
+      });
     const memory = await getWorkMemory(c.get("requestContext"));
     const createdThread = !input.threadId;
     const thread = input.threadId

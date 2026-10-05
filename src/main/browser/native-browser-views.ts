@@ -15,8 +15,8 @@ import {
   NativeBrowserNavigateSchema,
   type NativeBrowserSession,
   NativeBrowserSessionSchema,
-} from "../shared/browser-contract";
-import { NativeBrowserAgentCommandError } from "./browser-target-broker";
+} from "../../shared/browser-contract";
+import { NativeBrowserAgentCommandError } from "./agent-command-broker";
 
 type BrowserViewFactory = () => WebContentsView;
 
@@ -1452,14 +1452,6 @@ export class NativeBrowserViewManager {
       contents.once("did-stop-loading", onLoaded);
       contents.once("did-navigate-in-page", onInPageNavigation);
     });
-  }
-
-  getActiveTargetId(rawSession: unknown): string | null {
-    const session = NativeBrowserSessionSchema.parse(rawSession);
-    const current = this.sessions.get(sessionKey(session));
-    const tab = current?.tabs[current.activeTabIndex];
-    if (!tab || tab.view.webContents.isDestroyed()) return null;
-    return tab.view.webContents.getOrCreateDevToolsTargetId();
   }
 
   async close(rawSession: unknown): Promise<void> {

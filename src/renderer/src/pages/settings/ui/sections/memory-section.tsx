@@ -41,7 +41,7 @@ const PROJECT_TEMPLATE =
 
 // ---------------------------------------------------------------------------
 // 记忆(暴露 Memory 可配置项,写入数据库 app_config 表,保存后实时生效)
-// 字段与 src/mastra/memory/index.ts 的 MemoryUserConfig 一一对应。
+// 字段与 src/mastra/memory/memory-runtime.ts 的 MemoryUserConfig 一一对应。
 // ---------------------------------------------------------------------------
 
 /** 纯文本编辑字段:保存时静默,不弹撤回 toast(其余开关/滑块/下拉变化才弹) */

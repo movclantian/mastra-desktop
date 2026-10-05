@@ -60,11 +60,25 @@ function workflowStepMatchesMember(
   member: AgentProfile["members"][number],
   profile: AgentProfile,
 ): boolean {
-  return (profile.workflow?.steps ?? []).some(
-    (step) =>
-      step.memberId === member.id &&
-      (step.id === stepId || stepId.startsWith(`${step.id}-`) || stepId.startsWith(`${step.id}[`)),
-  );
+  return (profile.workflow?.steps ?? []).some((step) => {
+    const ids =
+      step.kind === "approval"
+        ? []
+        : step.kind === "branch"
+          ? [
+              step.branch.onTrueMemberId === member.id ? `${step.id}-true` : "",
+              step.branch.onFalseMemberId === member.id ? `${step.id}-false` : "",
+            ]
+          : step.kind === "council"
+            ? [
+                step.memberIds.includes(member.id) ? `${step.id}-${member.id}` : "",
+                step.judgeMemberId === member.id ? `${step.id}-synthesis` : "",
+              ]
+            : step.memberId === member.id
+              ? [step.id]
+              : [];
+    return ids.some((id) => id && (stepId === id || stepId.startsWith(`${id}[`)));
+  });
 }
 
 function workflowText(value: unknown): string | undefined {

@@ -1,10 +1,5 @@
 import * as React from "react";
 import { toast } from "sonner";
-import {
-  getModelCapabilities,
-  useCatalogQuery,
-  useProviderConfigQuery,
-} from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import {
   getBrowserSearchEnginePreference,
@@ -17,30 +12,11 @@ import { Switch } from "@/shared/ui/switch";
 import {
   type BrowserConfig,
   BrowserSearchEngineSchema,
+  DEFAULT_BROWSER_CONFIG,
 } from "../../../../../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { fetchBrowserConfig, saveBrowserConfig } from "../../api/settings-api";
 import { SettingCard, SettingRow } from "../controls";
-
-const DEFAULT_CONFIG: BrowserConfig = {
-  provider: "agent",
-  scope: "thread",
-  headless: true,
-  viewport: { width: 1280, height: 720 },
-  timeout: 30_000,
-  homeUrl: "",
-  stagehand: {
-    providerId: "",
-    modelId: "",
-  },
-  firecrawl: {
-    apiUrl: "",
-    ttl: 600,
-    activityTtl: 60,
-    streamWebView: false,
-    credential: { hasCredential: false },
-  },
-};
 
 export function BrowserSection() {
   const { t } = useTranslation();
@@ -49,9 +25,7 @@ export function BrowserSection() {
   const [searchEngine, setSearchEngine] = React.useState(() =>
     getBrowserSearchEnginePreference(userId),
   );
-  const providers = useProviderConfigQuery().data?.providers ?? [];
-  const catalog = useCatalogQuery().data ?? [];
-  const [draft, setDraft] = React.useState(DEFAULT_CONFIG);
+  const [draft, setDraft] = React.useState(DEFAULT_BROWSER_CONFIG);
   const [firecrawlKey, setFirecrawlKey] = React.useState("");
   const [loaded, setLoaded] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
@@ -94,28 +68,6 @@ export function BrowserSection() {
     setDirty(true);
   };
 
-  const multimodalModels = React.useMemo(
-    () =>
-      providers
-        .filter((provider) => !provider.disabled && provider.hasCredential)
-        .flatMap((provider) =>
-          provider.enabledModels
-            .filter((model) => getModelCapabilities(provider, model.id, catalog).vision)
-            .map((model) => ({
-              providerId: provider.id,
-              providerName: provider.name,
-              modelId: model.id,
-              modelName: model.name,
-              value: `${provider.id}/${model.id}`,
-            })),
-        ),
-    [catalog, providers],
-  );
-  const selectedStagehandModel = multimodalModels.find(
-    (model) =>
-      model.providerId === draft.stagehand.providerId && model.modelId === draft.stagehand.modelId,
-  );
-
   return (
     <>
       <SettingCard title={t("settings:browser.title")} description={t("settings:browser.desc")}>
@@ -135,7 +87,6 @@ export function BrowserSection() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="agent">{t("settings:browser.agentProvider")}</SelectItem>
-              <SelectItem value="stagehand">{t("settings:browser.stagehandProvider")}</SelectItem>
               <SelectItem value="firecrawl">{t("settings:browser.firecrawlProvider")}</SelectItem>
             </SelectContent>
           </Select>
@@ -158,12 +109,6 @@ export function BrowserSection() {
               <SelectItem value="shared">{t("settings:browser.scopeShared")}</SelectItem>
             </SelectContent>
           </Select>
-        </SettingRow>
-        <SettingRow title={t("settings:browser.headless")}>
-          <Switch
-            checked={draft.headless}
-            onCheckedChange={(checked) => update((current) => ({ ...current, headless: checked }))}
-          />
         </SettingRow>
         <SettingRow title={t("settings:browser.viewport")}>
           <Select
@@ -260,40 +205,6 @@ export function BrowserSection() {
             value={draft.homeUrl}
             onChange={(event) => update((current) => ({ ...current, homeUrl: event.target.value }))}
           />
-        </SettingRow>
-      </SettingCard>
-      <SettingCard
-        title={t("settings:browser.stagehandTitle")}
-        description={t("settings:browser.stagehandDesc")}
-      >
-        <SettingRow title={t("settings:browser.model")}>
-          <Select
-            disabled={multimodalModels.length === 0}
-            value={selectedStagehandModel?.value ?? null}
-            onValueChange={(value) => {
-              const selected = multimodalModels.find((model) => model.value === value);
-              if (selected) {
-                update((current) => ({
-                  ...current,
-                  stagehand: {
-                    providerId: selected.providerId,
-                    modelId: selected.modelId,
-                  },
-                }));
-              }
-            }}
-          >
-            <SelectTrigger className="w-56" aria-label={t("settings:browser.model")}>
-              <SelectValue placeholder={t("settings:browser.noMultimodalModels")} />
-            </SelectTrigger>
-            <SelectContent>
-              {multimodalModels.map((model) => (
-                <SelectItem key={model.value} value={model.value}>
-                  {model.modelName || model.modelId} - {model.providerName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </SettingRow>
       </SettingCard>
       <SettingCard

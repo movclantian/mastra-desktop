@@ -12,13 +12,14 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { InputGroup, InputGroupAddon } from "@/shared/ui/input-group";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 
 function Command({ className, ...props }: React.ComponentProps<typeof CommandPrimitive>) {
   return (
     <CommandPrimitive
       data-slot="command"
       className={cn(
-        "flex size-full flex-col overflow-hidden rounded-xl! bg-popover p-1 text-popover-foreground",
+        "flex size-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl! bg-popover p-1 text-popover-foreground",
         className,
       )}
       {...props}
@@ -45,14 +46,19 @@ function CommandDialog({
   return (
     <Dialog {...props}>
       <DialogContent
-        className={cn("top-1/3 translate-y-0 overflow-hidden rounded-xl! p-0", className)}
+        className={cn(
+          "flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden rounded-xl! p-0",
+          className,
+        )}
         showCloseButton={showCloseButton}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <Command {...commandProps}>{children}</Command>
+        <Command {...commandProps} className={cn("h-auto flex-1", commandProps?.className)}>
+          {children}
+        </Command>
       </DialogContent>
     </Dialog>
   );
@@ -63,7 +69,7 @@ function CommandInput({
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
-    <div data-slot="command-input-wrapper" className="p-1 pb-0">
+    <div data-slot="command-input-wrapper" className="shrink-0 p-1 pb-0">
       <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
         <CommandPrimitive.Input
           data-slot="command-input"
@@ -83,14 +89,14 @@ function CommandInput({
 
 function CommandList({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.List>) {
   return (
-    <CommandPrimitive.List
-      data-slot="command-list"
+    <ScrollArea
       className={cn(
-        "no-scrollbar max-h-72 scroll-py-1 overflow-x-hidden overflow-y-auto outline-none",
+        "min-h-0 max-h-72 min-w-0 [&>[data-slot=scroll-area-viewport]]:max-h-[inherit] [&>[data-slot=scroll-area-viewport]]:scroll-py-1",
         className,
       )}
-      {...props}
-    />
+    >
+      <CommandPrimitive.List data-slot="command-list" className="outline-none" {...props} />
+    </ScrollArea>
   );
 }
 

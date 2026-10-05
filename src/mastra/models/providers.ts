@@ -17,7 +17,6 @@ import {
   ModelsDevGateway,
   modelSupportsStructuredOutput,
 } from "@mastra/core/llm";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { defaultSettingsMiddleware, type LanguageModelMiddleware, wrapLanguageModel } from "ai";
 import { z } from "zod";
 import {
@@ -26,7 +25,8 @@ import {
   SecretRefSchema,
 } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
-import { getAppConfig, setAppConfig } from "../storage";
+import { readContentObject } from "../storage/content-objects";
+import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
 
 const REGISTRY_GATEWAY = new ModelsDevGateway();
 type GatewayProtocol = "openai" | "anthropic" | "gemini";
@@ -44,6 +44,84 @@ const libraryAttachmentMiddleware: LanguageModelMiddleware = {
     };
   },
 };
+
+/** Keep image references in Mastra history; load bytes only at the provider boundary. */
+function screenshotMiddleware(resourceId?: string): LanguageModelMiddleware {
+  const load = async (url: URL) => {
+    const parts = url.pathname.slice(1).split("/").map(decodeURIComponent);
+    if (
+      !resourceId ||
+      parts.length !== 3 ||
+      parts.some((part) => !part) ||
+      parts[0] !== resourceId ||
+      url.host ||
+      url.search ||
+      url.hash
+    )
+      throw new Error("Screenshot does not belong to the authenticated user");
+    const bytes = await readContentObject(parts[2], {
+      userId: resourceId,
+      threadId: parts[1],
+      kind: "screenshot",
+    });
+    if (!bytes) throw new Error("Screenshot content is missing");
+    return bytes;
+  };
+  return {
+    async overrideSupportedUrls({ model }) {
+      const supported = await model.supportedUrls;
+      return { ...supported, "image/*": [...(supported["image/*"] ?? []), /^mastra-image:\/\//] };
+    },
+    async transformParams({ params }) {
+      const prompt: typeof params.prompt = [];
+      let images: Extract<(typeof prompt)[number], { role: "user" }>["content"] = [];
+      for (const original of params.prompt) {
+        // Finish the whole tool-response batch before attaching images. Chat-completions
+        // providers serialize tool content as JSON; user image parts use their vision path.
+        if (original.role !== "tool" && images.length) {
+          prompt.push({ role: "user", content: images });
+          images = [];
+        }
+        const message = { ...original };
+        prompt.push(message);
+        if (message.role === "system") continue;
+        message.content = message.content.map((part) => ({ ...part })) as typeof message.content;
+        for (const part of message.content) {
+          if (
+            part.type === "file" &&
+            part.data.type === "url" &&
+            part.data.url.protocol === "mastra-image:"
+          ) {
+            part.data = { type: "data", data: await load(part.data.url) };
+          }
+          if (part.type === "tool-result" && part.output.type === "content") {
+            const value = [];
+            for (const item of part.output.value) {
+              if (
+                item.type === "file" &&
+                item.data.type === "url" &&
+                item.data.url.protocol === "mastra-image:"
+              ) {
+                const text = `Screenshot from ${part.toolName} (${part.toolCallId}), attached after the tool results.`;
+                images.push(
+                  { type: "text", text },
+                  {
+                    ...item,
+                    data: { type: "data", data: await load(item.data.url) },
+                  },
+                );
+                value.push({ type: "text" as const, text });
+              } else value.push(item);
+            }
+            part.output = { ...part.output, value };
+          }
+        }
+      }
+      if (images.length) prompt.push({ role: "user", content: images });
+      return { ...params, prompt };
+    },
+  };
+}
 
 /** Resolve the SDK protocol from Mastra's provider registry metadata. */
 export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
@@ -211,12 +289,23 @@ export async function resolveConfiguredModel(
   const config = await getProvidersConfig(resourceId);
   const provider = config.providers.find((candidate) => candidate.id === providerId);
 
-  if (!provider || provider.disabled || !provider.hasCredential || !modelId) return undefined;
+  if (!provider || provider.disabled) return undefined;
   // A route is valid only when the model is explicitly enabled for this
   // provider. This keeps persisted subagent selections and request overrides
   // aligned with the same catalog used by the model picker.
   if (!provider.enabledModels.some((model) => model.id === modelId)) return undefined;
-  if (!provider.registryId && !provider.baseUrl) return undefined;
+  return createProviderModel(provider, modelId, resourceId);
+}
+
+/** Build a model from server-owned provider settings, including models being tested before enabling. */
+export async function createProviderModel(
+  provider: UserProviderConfig,
+  modelId: string,
+  resourceId?: string,
+): Promise<GatewayLanguageModel | undefined> {
+  if (!modelId.trim() || !provider.hasCredential || (!provider.registryId && !provider.baseUrl)) {
+    return undefined;
+  }
   const apiKey = await resolveProviderCredential(provider);
 
   const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
@@ -259,6 +348,7 @@ export async function resolveConfiguredModel(
     model,
     middleware: [
       libraryAttachmentMiddleware,
+      screenshotMiddleware(resourceId),
       ...(protocol === "anthropic"
         ? [
             defaultSettingsMiddleware({
@@ -345,7 +435,7 @@ export async function resolveDefaultLanguageModel(
 export async function resolveContextModel(requestContext?: {
   get(key: string): unknown;
 }): Promise<GatewayLanguageModel | undefined> {
-  const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+  const resourceId = userIdFromContext(requestContext);
   const controller = requestContext?.get("controller") as
     | { session?: { modelId?: string } }
     | undefined;
@@ -358,11 +448,22 @@ export async function resolveContextModel(requestContext?: {
     : resolveDefaultLanguageModel(resourceId);
 }
 
+/** Shared dynamic model for primary agents, delegated agents and observational memory. */
+export async function resolveAgentModel({
+  requestContext,
+}: {
+  requestContext?: { get(key: string): unknown };
+}): Promise<GatewayLanguageModel> {
+  const model = await resolveContextModel(requestContext);
+  if (!model) throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
+  return model;
+}
+
 /** Native mode transitions can change the provider after the HTTP request was prepared. */
 export async function resolveContextModelFamily(requestContext?: {
   get(key: string): unknown;
 }): Promise<string | undefined> {
-  const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+  const resourceId = userIdFromContext(requestContext);
   const controller = requestContext?.get("controller") as
     | { session?: { modelId?: string } }
     | undefined;

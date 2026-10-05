@@ -1,21 +1,164 @@
 /**
  * 自定义输入处理器(docs/en/docs/agents/processors.mdx):
  * - libraryAttachmentProcessor:资料库附件 URL → 真实内容注入
- * - editor / terminal / workbench 三条 state lane(computeStateSignal,
- *   docs/en/docs/harness/signals.mdx「State signals」)
  * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { isUserAuthoredMessage } from "@mastra/core/agent";
+import { MessageMerger } from "@mastra/core/agent/message-list";
 import { AgentsMDInjector, type InputProcessor } from "@mastra/core/processors";
+import { MASTRA_THREAD_ID_KEY } from "@mastra/core/request-context";
+import { createSignal, mastraDBMessageToSignal } from "@mastra/core/signals";
 import { z } from "zod";
+import { resolveContextModel } from "../models/providers";
+import { searchLibrary } from "../rag/retrieval/search";
 import { getAssetContext, getLibraryAssetId } from "../rag/storage/assets";
 import {
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
+  LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
+  LIBRARY_THREAD_CONTEXT_KEY,
+  libraryCitationSources,
   MAX_LIBRARY_INLINE_MEDIA_BYTES,
 } from "../rag/types";
-import { appStorage } from "../storage";
+
+export const WORK_MESSAGE_OPTIONS_CONTEXT_KEY = "mastra-work:message-options";
+export const workMessageMetadataSchema = z.object({
+  goal: z.boolean().optional(),
+  skillNames: z.array(z.string()).max(4).optional(),
+  fileReferences: z
+    .array(
+      z
+        .object({
+          id: z.string(),
+          filename: z.string(),
+          url: z.string(),
+          mediaType: z.string().optional(),
+        })
+        .strict(),
+    )
+    .optional(),
+  files: z
+    .array(
+      z
+        .object({
+          url: z.string().min(1),
+          mediaType: z.string().min(1),
+          filename: z.string().optional(),
+        })
+        .strict(),
+    )
+    .optional(),
+});
+
+/** Enrich native user signals; retrieval text exists only in the outgoing prompt. */
+export const libraryContextProcessor: InputProcessor = {
+  id: "library-context",
+  async processInputStep({ messageList, requestContext, state, writer }) {
+    const messages = messageList.get.all.db();
+    const message = messages.findLast(isUserAuthoredMessage);
+    if (!message || state.messageId === message.id) return;
+    state.context = undefined;
+    const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
+    const threadId = requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY) as string | undefined;
+    const origin = requestContext?.get(LIBRARY_ORIGIN_CONTEXT_KEY) as string | undefined;
+    const signal = message.role === "signal" ? mastraDBMessageToSignal(message) : undefined;
+    const businessMetadata = signal ? signal.metadata : message.content.metadata;
+    // Saving drains get.input, while getPersisted.input retains this run's input identities.
+    // Replacing an observed message would make MessageList append a new ID instead.
+    const canEnrich =
+      !Object.hasOwn(businessMetadata ?? {}, "librarySources") &&
+      messageList.getPersisted.input.db().some((input) => input.id === message.id) &&
+      messages.indexOf(message) > messages.findLastIndex(MessageMerger.isSealed);
+    // Delegation copies request context; parent attachments belong only to the parent turn.
+    const options =
+      canEnrich &&
+      !state.optionsApplied &&
+      threadId &&
+      requestContext?.get(MASTRA_THREAD_ID_KEY) === threadId
+        ? workMessageMetadataSchema.parse(
+            requestContext?.get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY) ?? {},
+          )
+        : {};
+    const contents = signal
+      ? typeof signal.contents === "string"
+        ? [{ type: "text" as const, text: signal.contents }]
+        : signal.contents
+      : message.content.parts.filter((part) => part.type === "text");
+    const query = contents
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ")
+      .trim();
+    const hits =
+      resourceId && origin && query
+        ? await searchLibrary({
+            resourceId,
+            origin,
+            threadId,
+            query,
+            rerankModel: await resolveContextModel(requestContext),
+          })
+        : [];
+    const librarySources = libraryCitationSources({ results: hits });
+    if (hits.length) {
+      state.context = `<library-context>\n${hits.map((hit) => `[${hit.filename}] [^${hit.citationId}]\n${hit.text}`).join("\n\n---\n\n")}\n\n${librarySources.map((source) => `[^${source.id}]: [${source.filename}](${source.url}) — ${source.snippet}`).join("\n")}\n</library-context>`;
+    }
+    if (!canEnrich) {
+      state.messageId = message.id;
+      state.optionsApplied = true;
+      return;
+    }
+    const metadata = {
+      ...businessMetadata,
+      ...(options.skillNames ? { skillNames: options.skillNames } : {}),
+      ...(options.fileReferences ? { fileReferences: options.fileReferences } : {}),
+      librarySources,
+    };
+    if (signal) {
+      const updated = createSignal({
+        ...signal,
+        metadata,
+        contents: [
+          ...contents,
+          ...(options.files ?? [])
+            .filter(
+              (file) => !contents.some((part) => part.type === "file" && part.data === file.url),
+            )
+            .map((file) => ({
+              type: "file" as const,
+              data: file.url,
+              mediaType: file.mediaType,
+              filename: file.filename,
+            })),
+        ],
+      });
+      messageList.add(
+        updated.toDBMessage({ threadId: message.threadId, resourceId: message.resourceId }),
+        "input",
+      );
+      // Native Controller understands this signal event and updates the same server-generated id.
+      await writer?.custom(updated.toDataPart());
+    } else {
+      messageList.add({ ...message, content: { ...message.content, metadata } }, "input");
+    }
+    state.messageId = message.id;
+    state.optionsApplied = true;
+  },
+  processLLMRequest({ prompt, state }) {
+    if (typeof state.context !== "string") return;
+    const index = prompt.findLastIndex((message) => message.role === "user");
+    const position = index < 0 ? prompt.length : index;
+    return {
+      prompt: [
+        ...prompt.slice(0, position),
+        { role: "user", content: [{ type: "text", text: state.context }] },
+        ...prompt.slice(position),
+      ],
+    };
+  },
+};
 
 /**
  * 资料库附件输入处理器 (docs/en/docs/agents/processors.mdx):
@@ -221,68 +364,6 @@ export const workbenchStateSchema = z.object({
     })
     .optional(),
 });
-
-type WorkbenchState = z.infer<typeof workbenchStateSchema>;
-
-const WORKBENCH_STATE_TYPE = "workbench";
-const workbenchWrites = new Map<string, Promise<unknown>>();
-
-async function getWorkbenchStateStore() {
-  return appStorage.getStore("threadState");
-}
-
-function stateThreadId(resourceId: string, threadId: string): string {
-  return JSON.stringify([resourceId, threadId]);
-}
-
-export async function mergeWorkbenchState(
-  resourceId: string,
-  threadId: string,
-  patch: WorkbenchState,
-): Promise<WorkbenchState> {
-  const store = await getWorkbenchStateStore();
-  const key = stateThreadId(resourceId, threadId);
-  const previous = workbenchWrites.get(key) ?? Promise.resolve();
-  const next = previous.then(async () => {
-    const current =
-      (await store?.getState<WorkbenchState>({ threadId: key, type: WORKBENCH_STATE_TYPE })) ?? {};
-    const merged = workbenchStateSchema.parse({ ...current, ...patch });
-    await store?.setState({ threadId: key, type: WORKBENCH_STATE_TYPE, value: merged });
-    return merged;
-  });
-  workbenchWrites.set(key, next);
-  try {
-    return await next;
-  } finally {
-    if (workbenchWrites.get(key) === next) workbenchWrites.delete(key);
-  }
-}
-
-async function readWorkbenchState(
-  resourceId: string,
-  threadId: string,
-): Promise<WorkbenchState | undefined> {
-  const store = await getWorkbenchStateStore();
-  return store?.getState<WorkbenchState>({
-    threadId: stateThreadId(resourceId, threadId),
-    type: WORKBENCH_STATE_TYPE,
-  });
-}
-
-export const [
-  editorStateProcessor,
-  terminalStateProcessor,
-  workbenchStateProcessor,
-]: InputProcessor[] = (["editor", "terminal", "workbench"] as const).map((stateId) => ({
-  id: `${stateId}-state`,
-  stateId,
-  async computeStateSignal({ resourceId, threadId }) {
-    const value = (await readWorkbenchState(resourceId, threadId))?.[stateId];
-    if (!value) return;
-    const contents = JSON.stringify(value);
-    return { mode: "snapshot", cacheKey: contents, contents, value };
-  },
-}));
 
 // Official instruction discovery scans AGENTS.md, CLAUDE.md, and CONTEXT.md
 // in the ancestry of paths returned by completed workspace tool calls.

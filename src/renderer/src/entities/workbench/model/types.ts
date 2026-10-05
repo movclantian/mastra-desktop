@@ -96,51 +96,13 @@ export interface ModelSelection {
   reasoningEffort: ReasoningEffort | "off";
 }
 
-export interface AgentMemberDefinition {
-  id: string;
-  name: string;
-  profession: string;
-  description: string;
-  instructions: string;
-  skills: string[];
-  memoryScope: "thread" | "resource";
-}
+export type {
+  AgentMemberDefinition,
+  AgentProfile,
+  AgentWorkflowDefinition,
+} from "../../../../../shared/agent-contract";
 
-export interface AgentWorkflowDefinition {
-  strategy: "supervisor" | "handoff" | "workflow" | "council";
-  steps: Array<{
-    id: string;
-    memberId?: string;
-    kind?: "agent" | "approval" | "branch" | "loop";
-    prompt?: string;
-    retries?: number;
-    condition?: { operator: "contains" | "equals" | "not_contains"; value: string };
-    branch?: { onTrueMemberId: string; onFalseMemberId: string };
-    loop?: { mode: "until" | "while" | "foreach"; maxIterations: number; concurrency?: number };
-    approval?: { title: string; description: string };
-  }>;
-  synthesis: boolean;
-}
-
-export interface AgentProfile {
-  id: string;
-  type: "agent" | "team";
-  name: string;
-  displayName: string;
-  profession: string;
-  description: string;
-  instructions: string;
-  skills: string[];
-  members: AgentMemberDefinition[];
-  workflow?: AgentWorkflowDefinition;
-  categoryId?: string;
-  tags: string[];
-  quickPrompts: string[];
-  avatar?: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+import type { AgentProfile } from "../../../../../shared/agent-contract";
 
 export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   id: "mastra-work-agent",

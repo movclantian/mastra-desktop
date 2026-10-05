@@ -6,8 +6,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { validateSkillContent } from "@mastra/core/skills";
 import matter from "gray-matter";
-import { getAppConfig, setAppConfig } from "../storage";
-import { getManagedSkillsDirectory } from "../workspace";
+import { getAppConfig, setAppConfig } from "../storage/database";
+import { getManagedSkillsDirectory } from "../workspace/workspace-manager";
 
 export function categorizeSkillResources(resources: string[]) {
   const references: string[] = [];

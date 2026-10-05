@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
-import icon from "../../resources/icon.png?asset";
+import icon from "../../build/icon.png?asset";
 import {
   NATIVE_BROWSER_VIEW_CHANNELS,
   NativeBrowserActionSchema,
@@ -81,8 +81,8 @@ import {
 import {
   NativeBrowserAgentCommandBroker,
   NativeBrowserAgentCommandError,
-} from "./browser-target-broker";
-import { NativeBrowserViewManager } from "./browser-view";
+} from "./browser/agent-command-broker";
+import { NativeBrowserViewManager } from "./browser/native-browser-views";
 import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
@@ -109,16 +109,6 @@ const GRACEFUL_EXIT_WAIT_MS = 1_500;
  * 打包态主进程 spawn 的就是服务 ESM 入口,IPC 直达(兜底通路)。
  */
 const MASTRA_SHUTDOWN_MESSAGE = "mastra-work:shutdown";
-
-// Native WebContentsView is intentionally the user-visible surface. Mastra
-// attaches to the same Electron target for Agent inspection instead of
-// launching a second browser. The endpoint is loopback-only; the environment
-// variable remains an override for development/test port conflicts.
-const ELECTRON_CDP_PORT = process.env.MASTRA_ELECTRON_CDP_PORT?.trim() || "9229";
-if (ELECTRON_CDP_PORT) {
-  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
-  app.commandLine.appendSwitch("remote-debugging-port", ELECTRON_CDP_PORT);
-}
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -196,18 +186,28 @@ async function applySessionProxy(config: ProxyConfig): Promise<string | undefine
     }
   }
 
-  // 若 Mastra 服务在线，同步通知动态变更 Dispatcher
-  if (await isServerUp(300)) {
-    const response = await fetch(`${MASTRA_SERVER_URL}/work/proxy`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-mastra-desktop-token": MASTRA_DESKTOP_CONTROL_TOKEN,
-      },
-      body: JSON.stringify({ url: outboundProxy }),
-      signal: AbortSignal.timeout(1_500),
-    });
-    if (!response.ok) throw new Error(`Mastra 代理更新失败：HTTP ${response.status}`);
+  // 若 Mastra 服务在线，同步通知动态变更 Dispatcher。
+  // 尽力而为:服务未就绪或瞬时超时不应让整个 set 失败(Chromium Session 与出站
+  // 环境变量已生效),否则一次网络抖动会让有效改动被判定失败且不予持久化。
+  try {
+    if (await isServerUp(300)) {
+      const response = await fetch(`${MASTRA_SERVER_URL}/work/proxy`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-mastra-desktop-token": MASTRA_DESKTOP_CONTROL_TOKEN,
+        },
+        body: JSON.stringify({ url: outboundProxy }),
+        signal: AbortSignal.timeout(1_500),
+      });
+      if (!response.ok) console.warn(`[proxy] Mastra Dispatcher 更新失败：HTTP ${response.status}`);
+    }
+  } catch (error) {
+    console.warn(
+      `[proxy] Mastra Dispatcher 通知失败（已应用 Session 与环境变量，稍后随服务重启同步）：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
   return outboundProxy;
 }
@@ -701,14 +701,17 @@ function ensureMastraRunning(): Promise<void> {
         args = [getMastraCliEntry(projectRoot), "dev"];
         cwd = projectRoot;
         env.FORCE_COLOR = "1";
-        env.PLAYWRIGHT_BROWSERS_PATH = join(projectRoot, "resources", "browsers");
+        env.MASTRA_BUILTIN_SKILLS_DIRECTORY = join(projectRoot, "resources", "builtin-skills");
       } else {
         command = process.execPath;
         args = [getPackagedMastraEntry()];
         cwd = process.resourcesPath;
         // 不要让 Mastra 又去走 dev 分支找 pnpm-lock.yaml
         env.NODE_ENV = "production";
-        env.PLAYWRIGHT_BROWSERS_PATH = join(getPackagedResourceDirectory(), "browsers");
+        env.MASTRA_BUILTIN_SKILLS_DIRECTORY = join(
+          getPackagedResourceDirectory(),
+          "builtin-skills",
+        );
       }
 
       let proc: ChildProcess;

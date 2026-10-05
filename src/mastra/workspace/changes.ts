@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type { BackgroundProcessConfig } from "@mastra/core/workspace";
-import { atomicWrite, getStorageDirectory } from "../storage";
 import {
   type ContentObjectMetadata,
   contentObjectReference,
@@ -12,6 +10,11 @@ import {
   putContentObject,
   readContentObject,
 } from "../storage/content-objects";
+import {
+  AUTHENTICATED_USER_ID_CONTEXT_KEY,
+  atomicWrite,
+  getStorageDirectory,
+} from "../storage/database";
 
 export interface WorkspaceFilesystem {
   readFile(path: string, options?: { encoding?: string }): Promise<string | Buffer>;
@@ -127,7 +130,7 @@ export function createWorkspaceOutputArchiveHooks(): {
         if (workspaceToolName !== "mastra_workspace_execute_command") return;
         const userId =
           outputRequestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ??
-          outputRequestValue(context, MASTRA_RESOURCE_ID_KEY);
+          outputRequestValue(context, AUTHENTICATED_USER_ID_CONTEXT_KEY);
         const threadId = outputThreadId(context);
         const callId = outputCallId(context);
         if (!userId || !threadId || !callId) return;

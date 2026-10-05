@@ -269,7 +269,7 @@ export type ContextContentProps = ComponentProps<typeof HoverCardContent>;
 export const ContextContent = ({ className, ...props }: ContextContentProps) => (
   <HoverCardContent
     className={cn(
-      "w-64 min-w-56 max-w-[calc(100vw-2rem)] divide-y divide-border/60 overflow-hidden p-0 text-xs shadow-lg",
+      "w-72 min-w-56 max-w-[calc(100vw-2rem)] divide-y divide-border/60 overflow-hidden p-0 text-xs shadow-lg",
       className,
     )}
     {...props}
@@ -296,12 +296,12 @@ export const ContextContentHeader = ({
       {children ?? (
         <>
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">
+            <span className="whitespace-nowrap text-xs font-medium text-muted-foreground">
               {t("chat:context.usageTitle")}
             </span>
           </div>
           <div className="flex items-baseline justify-between gap-3">
-            <p className="flex items-baseline gap-0.5 text-lg font-bold tabular-nums text-foreground">
+            <p className="flex shrink-0 items-baseline gap-0.5 whitespace-nowrap text-lg font-bold tabular-nums text-foreground">
               {usage?.inputTokens === undefined ? (
                 "—"
               ) : (
@@ -311,7 +311,7 @@ export const ContextContentHeader = ({
                 </>
               )}
             </p>
-            <p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground tabular-nums">
+            <p className="flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground tabular-nums">
               <span>{t("chat:context.used")}</span>
               <span>
                 {usage?.inputTokens === undefined ? "—" : formatCompactTokens(input.total)}
@@ -389,7 +389,7 @@ export const ContextContentBreakdown = ({ className, ...props }: ContextContentB
               />
               <span className="truncate text-foreground/90">{metric.label}</span>
             </span>
-            <span className="flex shrink-0 items-baseline gap-2 font-mono text-[11px] tabular-nums">
+            <span className="flex shrink-0 items-baseline gap-2 whitespace-nowrap font-mono text-[11px] tabular-nums">
               <span className="text-muted-foreground">{formatCompactTokens(metric.tokens)}</span>
               <span className="font-medium text-foreground">{formatUsagePercent(percent)}</span>
             </span>
@@ -427,7 +427,7 @@ export const ContextContentFooter = ({
   return (
     <div
       className={cn(
-        "flex w-full items-center justify-between gap-3 bg-muted/40 px-3 py-2 text-xs",
+        "flex w-full items-center justify-between gap-3 whitespace-nowrap bg-muted/40 px-3 py-2 text-xs",
         className,
       )}
       {...props}

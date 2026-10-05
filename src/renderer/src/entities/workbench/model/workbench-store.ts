@@ -153,6 +153,16 @@ export interface WorkbenchStore {
   setRenamingThread: (thread: WorkThread | null) => void;
 
   // ---- panels:右侧/底部工作面板 -------------------------------------------
+  filePreview: {
+    threadId: string;
+    tabId: string;
+    asset: { id: string; filename: string; url: string; mediaType: string };
+  } | null;
+  requestFilePreview: (
+    threadId: string,
+    asset: NonNullable<WorkbenchStore["filePreview"]>["asset"],
+  ) => void;
+  clearFilePreview: () => void;
   workspacePanelOpen: boolean;
   setWorkspacePanelOpen: (open: boolean) => void;
   workspacePanelMode: WorkspacePanelMode;
@@ -223,6 +233,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       const nextWorkspace = state.workspaceByThread[nextKey] ?? createThreadWorkspaceState();
       return {
         lastKnownThreadId: id,
+        filePreview: null,
         workspaceByThread: {
           ...state.workspaceByThread,
           [currentKey]: snapshotThreadWorkspace(state),
@@ -553,7 +564,15 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       terminalRequest: { ...request, id: state.terminalRequestId + 1 },
       terminalRequestId: state.terminalRequestId + 1,
     })),
+  filePreview: null,
   browserRequest: null,
+  requestFilePreview: (threadId, asset) => {
+    if (get().lastKnownThreadId !== threadId) return;
+    get().openWorkspacePanel("files");
+    const tab = get().activePanelTab;
+    if (tab.kind === "files") set({ filePreview: { threadId, tabId: tab.id, asset } });
+  },
+  clearFilePreview: () => set({ filePreview: null }),
   browserRequestId: 0,
   requestBrowserPanel: (url) => {
     const normalized = url.trim();
@@ -632,6 +651,7 @@ export function hydrateWorkbenchStore(userId: string): void {
     terminalSessions: freshWorkspace.terminalSessions,
     terminalSessionsVersion: 0,
     terminalRequest: null,
+    filePreview: null,
     browserRequest: null,
     workspacePanelMode: (() => {
       const stored = localStorage.getItem(`mastra-workspace-panel-mode:${userId}`);
@@ -685,6 +705,7 @@ export function resetWorkbenchStore(): void {
     terminalSessionsVersion: 0,
     terminalRequest: null,
     terminalRequestId: 0,
+    filePreview: null,
     browserRequest: null,
     browserRequestId: 0,
     modeId: DEFAULT_MODE_ID,

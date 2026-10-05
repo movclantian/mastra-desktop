@@ -3,14 +3,14 @@ import {
   type AgentControllerSubscription,
   isKnownAgentControllerEvent,
   type KnownAgentControllerEvent,
-  MastraClient,
 } from "@mastra/client-js";
-import type { FileUIPart } from "ai";
+import { mastraDBMessageToSignal } from "@mastra/core/signals";
+import { DefaultChatTransport, type FileUIPart, readUIMessageStream } from "ai";
 import * as React from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
-import { MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import type { WorkMessageMetadata, WorkUIMessage } from "./types";
 
@@ -40,17 +40,13 @@ function createThreadSession(
   onSettled: () => void,
 ) {
   const store = createStore<SessionView>(() => ({ messages: [], status: "ready" }));
-  const client = new MastraClient({
-    baseUrl: MASTRA_SERVER_URL,
-    retries: 0,
-    credentials: "include",
-  })
-    .getAgentController("workbench")
-    .session(userId, JSON.stringify(["workbench", threadId]));
+  const client = getWorkbenchClientSession(userId, threadId);
   let subscription: AgentControllerSubscription | undefined;
   let connecting: Promise<void> | undefined;
   let disposed = false;
   let commandPending = false;
+  let workflowStreaming = false;
+  let awaitingRun = false;
   let failed = false;
   let revision = 0;
   let librarySources: unknown[] = [];
@@ -66,26 +62,46 @@ function createThreadSession(
   const fail = (error: unknown) => {
     if (disposed) return;
     failed = true;
+    awaitingRun = false;
     setStatus("error");
     const detail = error instanceof Error ? error.message : String(error);
     toast.error(i18n.t("chat:messages.turnFailed", { detail }));
   };
   const applyDisplay = (native: NativeDisplayState) => {
+    if (native.isRunning) awaitingRun = false;
     revision++;
     store.setState({ native });
     const current = native.currentMessage;
+    const signal =
+      current?.role === "signal"
+        ? mastraDBMessageToSignal({ ...current, createdAt: new Date(current.createdAt) })
+        : undefined;
     if (
       current &&
-      (current.role === "assistant" ||
-        current.role === "user" ||
-        (current.role === "signal" && current.type === "user"))
+      (current.role === "assistant" || current.role === "user" || signal?.type === "user")
     ) {
+      const stored = signal?.toDBMessage() ?? current;
+      const metadata: Record<string, unknown> = { ...stored.content.metadata, ...signal?.metadata };
       const message = {
-        ...current,
+        ...stored,
+        content: { ...stored.content, metadata },
         createdAt: new Date(current.createdAt),
         role: current.role === "signal" ? ("user" as const) : current.role,
       };
       const converted = toAISdkMessages([message], { version: "v7" }) as WorkUIMessage[];
+      const filenames = new Map(
+        typeof signal?.contents === "object"
+          ? signal.contents.flatMap((part) =>
+              part.type === "file" && typeof part.data === "string" && part.filename
+                ? [[part.data, part.filename] as const]
+                : [],
+            )
+          : [],
+      );
+      if (message.role === "user") {
+        const sources = message.content.metadata.librarySources;
+        librarySources = Array.isArray(sources) ? sources : [];
+      }
       setMessages((messages) => {
         const next = [...messages];
         for (const ui of converted) {
@@ -95,6 +111,8 @@ function createThreadSession(
           const previous = next[index];
           const parts = ui.parts.map((part) => {
             if (part.type !== "file" || part.filename) return part;
+            const filename = filenames.get(part.url);
+            if (filename) return { ...part, filename };
             const original = previous?.parts.find(
               (item) => item.type === "file" && item.url === part.url,
             );
@@ -119,7 +137,13 @@ function createThreadSession(
       });
     }
     setStatus(
-      failed ? "error" : native.isRunning ? "streaming" : commandPending ? "submitted" : "ready",
+      failed
+        ? "error"
+        : native.isRunning || workflowStreaming
+          ? "streaming"
+          : commandPending || awaitingRun
+            ? "submitted"
+            : "ready",
     );
   };
   const refresh = async () => {
@@ -169,13 +193,16 @@ function createThreadSession(
         onEvent: (event) => {
           if (disposed || !isKnownAgentControllerEvent(event)) return;
           if (event.type === "display_state_changed") applyDisplay(event.displayState);
-          else if (event.type === "agent_end") void refresh().then(onSettled).catch(fail);
-          else if (
+          else if (event.type === "agent_end") {
+            awaitingRun = false;
+            void refresh().then(onSettled).catch(fail);
+          } else if (
             [
               "tool_approval_required",
               "tool_suspended",
               "tool_suspension_cancelled",
               "task_updated",
+              "goal_evaluation",
             ].includes(event.type)
           )
             onSettled();
@@ -197,90 +224,164 @@ function createThreadSession(
       });
     return connecting;
   };
-  const request = async (body: Record<string, unknown>) => {
+  const request = async (command: () => Promise<unknown>) => {
     try {
       await connect();
       failed = false;
       commandPending = true;
+      awaitingRun = true;
       setStatus("submitted");
-      const previousMessageId = store.getState().native?.currentMessage?.id;
-      const response = await requestJson<{ ok: boolean; librarySources?: unknown[] }>(
-        "/chat/mastra-work-agent",
-        {
-          method: "POST",
-          body: { ...buildBody(), ...body, id: threadId },
-        },
-      );
+      await command();
       commandPending = false;
-      librarySources = response.librarySources ?? [];
       const native = store.getState().native;
-      setStatus(failed ? "error" : native?.isRunning ? "streaming" : "ready");
-      if (
-        librarySources.length &&
-        native?.currentMessage?.role === "assistant" &&
-        native.currentMessage.id !== previousMessageId
-      ) {
-        const messageId = native.currentMessage.id;
-        setMessages((messages) =>
-          messages.map((message) =>
-            message.id === messageId
-              ? {
-                  ...message,
-                  parts: [
-                    ...message.parts.filter((part) => part.type !== "data-library-sources"),
-                    { type: "data-library-sources", data: librarySources },
-                  ],
-                }
-              : message,
-          ),
-        );
-      }
+      setStatus(
+        failed ? "error" : native?.isRunning ? "streaming" : awaitingRun ? "submitted" : "ready",
+      );
     } catch (error) {
       commandPending = false;
       fail(error);
       throw error;
     }
   };
+  const messageOptions = (input?: MessageInput) => {
+    const { runWorkflow: _runWorkflow, ...body } = buildBody();
+    return {
+      ...body,
+      ...input?.metadata,
+      ...(input?.files
+        ? {
+            files: input.files.map(({ url, mediaType, filename }) => ({
+              url,
+              mediaType,
+              filename,
+            })),
+          }
+        : {}),
+    };
+  };
+  const requestOptions = (options: Record<string, unknown>) => ({
+    requestContext: { "mastra-work:message-options": options },
+  });
+  const streamWorkflow = async (path: string, body: Record<string, unknown>) => {
+    const transport = new DefaultChatTransport({
+      api: `${MASTRA_SERVER_URL}${path}`,
+      credentials: "include",
+      prepareSendMessagesRequest: () => ({ body }),
+    });
+    workflowStreaming = true;
+    awaitingRun = false;
+    try {
+      const stream = await transport.sendMessages({
+        chatId: threadId,
+        trigger: "submit-message",
+        messages: [],
+        messageId: undefined,
+        abortSignal: undefined,
+      });
+      await refresh();
+      onSettled();
+      setStatus("streaming");
+      for await (const message of readUIMessageStream<WorkUIMessage>({
+        stream,
+        terminateOnError: true,
+      })) {
+        revision++;
+        setMessages((messages) => [...messages.filter((item) => item.id !== message.id), message]);
+      }
+    } finally {
+      workflowStreaming = false;
+      awaitingRun = false;
+      await refresh();
+      onSettled();
+    }
+  };
+  const rewrite = (messageId: string, action: "edit" | "regenerate", content?: string) =>
+    request(async () => {
+      const current = store.getState().messages;
+      const targetIndex = current.findIndex((message) => message.id === messageId);
+      const start =
+        action === "edit"
+          ? targetIndex
+          : current.slice(0, targetIndex).findLastIndex((message) => message.role === "user");
+      const removed = new Set(start < 0 ? [] : current.slice(start).map((message) => message.id));
+      const path = `/work/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/rewrite`;
+      const body = { action, content, options: messageOptions() };
+      if (buildBody().runWorkflow === true) {
+        await streamWorkflow(path, body);
+      } else {
+        await requestJson(path, { method: "POST", body });
+        setMessages((messages) => messages.filter((message) => !removed.has(message.id)));
+      }
+      await refresh();
+    });
   return {
     store,
     connect,
     refresh,
     setMessages,
-    async send(input?: MessageInput, options?: { body?: Record<string, unknown> }) {
-      await connect();
+    async send(input: MessageInput) {
       librarySources = [];
-      let message: WorkUIMessage | undefined;
-      if (input) {
-        message = {
-          id: input.messageId ?? crypto.randomUUID(),
-          role: "user",
-          metadata: input.metadata,
-          parts: [
-            ...(input.text ? [{ type: "text" as const, text: input.text }] : []),
-            ...(input.files ?? []),
-          ],
-        };
-        const nextMessage = message;
-        setMessages((messages) => {
-          const index = messages.findIndex((item) => item.id === nextMessage.id);
-          return [...(index < 0 ? messages : messages.slice(0, index)), nextMessage];
-        });
-      }
-      return request({
-        trigger: "submit-message",
-        messageId: input?.messageId,
-        messages: message ? [message] : [],
-        ...options?.body,
-      });
+      if (input.messageId) return rewrite(input.messageId, "edit", input.text ?? "");
+      return request(() =>
+        buildBody().runWorkflow === true
+          ? streamWorkflow(
+              `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/team-runs`,
+              {
+                content: input.text?.trim() || "请处理附带的资料。",
+                options: messageOptions(input),
+              },
+            )
+          : client.sendMessage(input.text ?? "", requestOptions(messageOptions(input))),
+      );
+    },
+    workflowAction(
+      workflowId: string,
+      runId: string,
+      action: "resume" | "rerun",
+      resumeData: unknown,
+      label?: string,
+    ) {
+      return request(() =>
+        streamWorkflow(
+          `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/${action}?resourceId=${encodeURIComponent(userId)}`,
+          { resumeData, label },
+        ),
+      );
     },
     async regenerate({ messageId }: { messageId: string }) {
-      await connect();
       librarySources = [];
-      setMessages((messages) => {
-        const index = messages.findIndex((message) => message.id === messageId);
-        return index < 0 ? messages : messages.slice(0, index);
+      return rewrite(messageId, "regenerate");
+    },
+    steer(input: MessageInput) {
+      librarySources = [];
+      return request(() => client.steer(input.text ?? "", requestOptions(messageOptions(input))));
+    },
+    respond(
+      toolCallId: string,
+      response: { approved: boolean; reason?: string } | { resumeData: unknown },
+    ) {
+      return request(async () => {
+        const options = messageOptions();
+        if ("approved" in response && !response.approved && response.reason?.trim()) {
+          await requestJson(
+            `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/tool-decline?resourceId=${encodeURIComponent(userId)}`,
+            {
+              method: "POST",
+              body: { toolCallId, reason: response.reason.trim(), options },
+            },
+          );
+          return;
+        }
+        const result =
+          "approved" in response
+            ? await client.approveTool(toolCallId, response.approved, requestOptions(options))
+            : await client.respondToToolSuspension(
+                toolCallId,
+                response.resumeData as Parameters<typeof client.respondToToolSuspension>[1],
+                requestOptions(options),
+              );
+        if (!result.ok) throw new Error(result.reason);
       });
-      return request({ trigger: "regenerate-message", messageId, messages: [] });
     },
     dispose() {
       disposed = true;

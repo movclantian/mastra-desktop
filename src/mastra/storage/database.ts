@@ -13,7 +13,6 @@ import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { DuckDBStore } from "@mastra/duckdb";
 import { LibSQLStore } from "@mastra/libsql";
@@ -23,9 +22,11 @@ export interface RequestContextLike {
   get?: (key: string) => unknown;
 }
 
-/** Resolve the authenticated tenant from Mastra's official request context. */
-export function resourceIdFromContext(context?: RequestContextLike): string | undefined {
-  const value = context?.get?.(MASTRA_RESOURCE_ID_KEY);
+export const AUTHENTICATED_USER_ID_CONTEXT_KEY = "userId";
+
+/** Tenant configuration follows authenticated identity; delegated memory gets its own resource ID. */
+export function userIdFromContext(context?: RequestContextLike): string | undefined {
+  const value = context?.get?.(AUTHENTICATED_USER_ID_CONTEXT_KEY);
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 

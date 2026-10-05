@@ -1,5 +1,5 @@
 import { toast } from "sonner";
-import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { apiFetch, getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import type { WorkspaceApp } from "../../../../../shared/workspace-contract";
@@ -121,12 +121,14 @@ export async function updateThreadMode(
   resourceId: string,
   modeId: string,
 ): Promise<WorkThread> {
-  const payload = await requestJson<{ thread: MemoryThread }>(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/mode?${resourceQuery(resourceId)}`,
-    { method: "PATCH", body: { modeId } },
-    i18n.t("sidebar:saveModeFailed"),
+  await getWorkbenchClientSession(resourceId, threadId).switchMode(modeId);
+  return workThread(
+    await requestJson<MemoryThread>(
+      `/api/memory/threads/${encodeURIComponent(threadId)}?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}`,
+      {},
+      i18n.t("sidebar:readThreadFailed"),
+    ),
   );
-  return workThread(payload.thread);
 }
 
 export async function updateThreadPermissions(
@@ -137,11 +139,7 @@ export async function updateThreadPermissions(
     tools: Partial<Record<string, string>>;
   },
 ): Promise<void> {
-  await requestJson(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/permissions?${resourceQuery(resourceId)}`,
-    { method: "PATCH", body: rules },
-    i18n.t("sidebar:savePermissionsFailed"),
-  );
+  await getWorkbenchClientSession(resourceId, threadId).setState({ permissionRules: rules });
 }
 
 export async function generateThreadTitle(
@@ -190,6 +188,24 @@ export async function fetchThreadSource(
   return typeof source?.id === "string" && typeof source.title === "string"
     ? { id: source.id, title: source.title }
     : null;
+}
+
+export interface ThreadContextItem {
+  id: string;
+  kind: "skill" | "mcp" | "web" | "file" | "artifact";
+  label: string;
+  url?: string;
+  path?: string;
+  mediaType?: string;
+}
+export interface ThreadContextSnapshot {
+  threadId: string;
+  title: string;
+  latestRequest: string;
+  items: ThreadContextItem[];
+}
+export function fetchThreadContext(threadId: string): Promise<ThreadContextSnapshot> {
+  return requestJson(`/work/threads/${encodeURIComponent(threadId)}/context`);
 }
 
 export interface ThreadSummaryResult {
@@ -292,20 +308,11 @@ export async function fetchAgents(): Promise<AgentProfile[]> {
   return Array.isArray(payload.agents) ? payload.agents : [];
 }
 
-export interface AgentAssistDraft {
-  displayName?: unknown;
-  profession?: unknown;
-  description?: unknown;
-  instructions?: unknown;
-  members?: unknown;
-  workflow?: { strategy?: unknown; steps?: unknown };
-}
-
 export async function generateAgentAssist(
   type: "agent" | "team",
   description: string,
-): Promise<AgentAssistDraft> {
-  const payload = await requestJson<{ draft: AgentAssistDraft }>(
+): Promise<AgentProfile> {
+  const payload = await requestJson<{ agent: AgentProfile }>(
     "/work/agents/assist",
     {
       method: "POST",
@@ -313,16 +320,7 @@ export async function generateAgentAssist(
     },
     i18n.t("agentHub:aiCreateFailed"),
   );
-  return payload.draft;
-}
-
-export async function saveAgent(payload: Record<string, unknown>): Promise<AgentProfile | null> {
-  const result = await requestJson<{ agent?: AgentProfile }>(
-    "/work/agents",
-    { method: "POST", body: payload },
-    i18n.t("agentHub:saveFailed"),
-  );
-  return result.agent ?? null;
+  return payload.agent;
 }
 
 export async function deleteAgent(id: string): Promise<void> {

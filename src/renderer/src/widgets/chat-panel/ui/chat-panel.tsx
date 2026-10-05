@@ -26,6 +26,7 @@ import {
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import { requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { readErrorPayload, toastError } from "@/shared/lib";
 import { PromptInputProvider } from "@/shared/ui/ai-elements/prompt-input";
@@ -68,7 +69,10 @@ import {
   type AgentInteraction,
   type AgentTask,
   areTasksEqual,
+  asRecord,
+  asString,
   type BackgroundTaskState,
+  type GoalObjective,
   getActiveToolsFromMessages,
   getBackgroundTasksFromMessages,
   getSubagentsFromMessages,
@@ -102,6 +106,7 @@ import {
   WorkflowRunPanel,
 } from "./";
 import type { WorkflowRunAction } from "./agent-panels";
+import { type GoalAction, GoalPanel } from "./goal-panel";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
   "completed",
@@ -303,6 +308,12 @@ export function ChatPanel() {
   const [queueDispatchVersion, setQueueDispatchVersion] = React.useState(0);
   const [queueCanDispatch, setQueueCanDispatch] = React.useState(false);
   const [persistedInteractions, setPersistedInteractions] = React.useState<AgentInteraction[]>([]);
+  const [objectiveSnapshot, setObjectiveSnapshot] = React.useState<{
+    threadId: string;
+    objective: GoalObjective | null;
+  } | null>(null);
+  const objective =
+    objectiveSnapshot?.threadId === activeThreadId ? objectiveSnapshot.objective : null;
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
   const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
   const [activeMemberId, setActiveMemberId] = React.useState<string | null>(null);
@@ -396,7 +407,7 @@ export function ChatPanel() {
   const buildRequestBodyRef = React.useRef<(threadId: string) => Record<string, unknown>>(
     () => ({}),
   );
-  buildRequestBodyRef.current = (threadId: string) => ({
+  buildRequestBodyRef.current = () => ({
     // 思考等级:标准 modelSettings.reasoning(max 档退回 providerOptions)
     ...(selectedProvider && modelSelection && modelSelection.reasoningEffort !== "off"
       ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
@@ -407,8 +418,6 @@ export function ChatPanel() {
     ...(pendingWorkspacePathRef.current && !workspaceLockedRef.current
       ? { workspacePath: pendingWorkspacePathRef.current }
       : {}),
-    // 线程 id 取自该 Session 自己的绑定,不是"当前激活线程" —— 后台流式线程若发请求也不会串台
-    memory: { resource: user.id, thread: threadId },
     attachmentTokenBudget: attachmentTokenBudgetRef.current,
     attachmentCapabilities: {
       vision: selectedCapabilities?.vision === true,
@@ -416,6 +425,7 @@ export function ChatPanel() {
     },
     skillNames: selectedSkillNamesRef.current,
     agentProfileId: agentSelection.id,
+    runWorkflow: agentSelection.workflow?.strategy === "workflow",
   });
 
   const { getThreadSession, retainActive } = useThreadSessions(
@@ -574,6 +584,7 @@ export function ChatPanel() {
       setPersistedInteractions([]);
       setBackgroundTasks([]);
       setWorkflowRuns([]);
+      setObjectiveSnapshot(null);
       return;
     }
     try {
@@ -586,6 +597,10 @@ export function ChatPanel() {
         mergeBackgroundTaskSnapshot(current, displayState?.backgroundTasks ?? []),
       );
       setWorkflowRuns(displayState?.workflowRuns ?? []);
+      setObjectiveSnapshot({
+        threadId: activeThreadId,
+        objective: displayState?.objective ?? null,
+      });
       setTaskSnapshotLoaded(Boolean(displayState));
       return displayState;
     } catch {
@@ -594,6 +609,7 @@ export function ChatPanel() {
       setPersistedInteractions([]);
       setBackgroundTasks([]);
       setWorkflowRuns([]);
+      setObjectiveSnapshot(null);
       return undefined;
     }
   }, [activeThreadId, fetchDisplayState]);
@@ -902,6 +918,7 @@ export function ChatPanel() {
         instructions: subagent.task,
         skills: [],
         memoryScope: "thread",
+        delegates: [],
       });
     }
 
@@ -920,6 +937,7 @@ export function ChatPanel() {
         instructions: t("chat:panels.backgroundTaskDescription", { name: task.toolName }),
         skills: [],
         memoryScope: "thread",
+        delegates: [],
       });
     }
 
@@ -950,6 +968,7 @@ export function ChatPanel() {
       instructions: agentSelection.instructions,
       skills: agentSelection.skills,
       memoryScope: "thread",
+      delegates: [],
     };
     return {
       ...agentSelection,
@@ -1010,6 +1029,19 @@ export function ChatPanel() {
     async (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => {
       if (!activeThreadId) return;
       try {
+        if (action === "resume" || action === "rerun") {
+          await getThreadSession(activeThreadId).workflowAction(
+            run.workflowId,
+            run.runId,
+            action,
+            resumeData,
+            asString(
+              asRecord(run.steps.find((step) => step.status === "suspended")?.suspendPayload)
+                ?.resumeLabel,
+            ),
+          );
+          return;
+        }
         const response = await runWorkflowAction(
           activeThreadId,
           user.id,
@@ -1022,8 +1054,6 @@ export function ChatPanel() {
           toastError(await readErrorPayload(response, t("chat:welcome.toastWorkflowFailed")));
           return;
         }
-        // Resume/restart are UI streams. Consume the response so the official
-        // workflow run advances to its terminal state and persists its result.
         await response.text();
         await reloadDisplayState();
         await reloadMessages();
@@ -1031,7 +1061,7 @@ export function ChatPanel() {
         toastError(error, t("chat:welcome.toastWorkflowFailed"));
       }
     },
-    [activeThreadId, reloadDisplayState, reloadMessages, t, user.id],
+    [activeThreadId, getThreadSession, reloadDisplayState, reloadMessages, t, user.id],
   );
   const interactions = React.useMemo(
     () =>
@@ -1094,15 +1124,18 @@ export function ChatPanel() {
         if (activeThreadIdRef.current !== threadId) return;
 
         // HTTP 返回命令接收结果，后续输出由常驻 Session 订阅呈现。
+        if (!interaction.toolCallId) throw new Error("Missing tool call ID");
         setQueueCanDispatch(false);
         setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
-        const resumeRequest = chat.send(undefined, {
-          body: {
-            runId: interaction.runId,
-            toolCallId: interaction.toolCallId,
-            ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
-          },
-        });
+        const resumeRequest = chat.respond(
+          interaction.toolCallId,
+          interaction.requiresApproval
+            ? {
+                approved: decision?.approved === true,
+                ...(typeof decision?.reason === "string" ? { reason: decision.reason } : {}),
+              }
+            : { resumeData },
+        );
         // A rejected command restores the still-pending interaction.
         void resumeRequest
           .then(async () => {
@@ -1291,12 +1324,17 @@ export function ChatPanel() {
       text: string;
       files?: FileUIPart[];
       skills?: string[];
+      goal?: boolean;
       fileReferences?: MessageFileReference[];
     },
     clearPrompt: () => void,
   ) => {
     const text = message.text.trim();
     const files = message.files ?? [];
+    if (message.goal && (isBusy || !text || agentSelection.workflow?.strategy === "workflow")) {
+      toast.error(t("chat:goal.cannotStart"));
+      return;
+    }
     if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
 
     if (isBusy) {
@@ -1304,7 +1342,12 @@ export function ChatPanel() {
       if (!threadId) return;
       try {
         const persistedFiles = await persistAttachments(files, threadId);
-        if (text && persistedFiles.length === 0 && queuedRequests.length === 0) {
+        if (
+          agentSelection.workflow?.strategy !== "workflow" &&
+          text &&
+          persistedFiles.length === 0 &&
+          queuedRequests.length === 0
+        ) {
           await enqueueFollowUp(threadId, user.id, {
             content: text,
             ...(selectedProvider && modelSelection
@@ -1400,6 +1443,7 @@ export function ChatPanel() {
               text,
               files: persistedFiles,
               metadata: {
+                goal: message.goal,
                 skillNames: message.skills ?? [],
                 fileReferences: message.fileReferences ?? [],
               },
@@ -1407,6 +1451,7 @@ export function ChatPanel() {
           : {
               files: persistedFiles,
               metadata: {
+                goal: message.goal,
                 skillNames: message.skills ?? [],
                 fileReferences: message.fileReferences ?? [],
               },
@@ -1422,7 +1467,7 @@ export function ChatPanel() {
       });
     if (!sent) return;
     clearPrompt();
-    // prepareThreadSession 已将首条消息携带的显式目录写入线程元数据;
+    // 原生会话中间件已将首条消息携带的显式目录写入线程元数据;
     // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
     await invalidateThreads(userId);
     // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
@@ -1456,22 +1501,13 @@ export function ChatPanel() {
       setQueueCanDispatch(false);
       setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
       void (async () => {
-        await getThreadSession(targetThreadId).send(
-          {
-            text: request.text,
-            metadata: {
-              skillNames: request.skills ?? [],
-              fileReferences: request.fileReferences ?? [],
-            },
+        await getThreadSession(targetThreadId).steer({
+          text: request.text,
+          metadata: {
+            skillNames: request.skills ?? [],
+            fileReferences: request.fileReferences ?? [],
           },
-          {
-            body: {
-              agentProfileId: agentSelection.id,
-              sessionAction: "steer",
-              sessionScope: "workbench",
-            },
-          },
-        );
+        });
       })()
         .catch(() => {
           setQueuedRequests((current) => [request, ...current]);
@@ -1559,7 +1595,18 @@ export function ChatPanel() {
   );
   const showAgentQueue =
     !dismissedQueueSignature || dismissedQueueSignature !== queueContentSignature;
+  const handleGoalAction = async (action: GoalAction) => {
+    const threadId = activeThreadIdRef.current;
+    if (!threadId) return;
+    const { runWorkflow: _runWorkflow, ...options } = buildRequestBodyRef.current(threadId);
+    await requestJson(`/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/goal`, {
+      method: "POST",
+      body: { ...action, options },
+    });
+    if (activeThreadIdRef.current === threadId) await reloadDisplayState();
+  };
   const hasQueueCard =
+    Boolean(objective) ||
     queuedRequests.length > 0 ||
     (showAgentQueue && (visibleTasks.length > 0 || activeTools.length > 0 || queuedFollowUps > 0));
   const promptArea = (
@@ -1594,6 +1641,18 @@ export function ChatPanel() {
       {hasQueueCard ? (
         <div className="mx-auto w-full max-w-3xl">
           <Queue className="mx-auto w-[96%] rounded-b-none border-b-0 px-2 pt-1 pb-1">
+            {objective && (
+              <GoalPanel
+                key={activeThreadId}
+                objective={objective}
+                running={isBusy || visibleInteractions.length > 0}
+                canResume={
+                  agentSelection.workflow?.strategy !== "workflow" &&
+                  visibleInteractions.length === 0
+                }
+                onAction={handleGoalAction}
+              />
+            )}
             <UserRequestQueuePanel
               onRemove={removeQueuedRequest}
               onReorder={reorderQueuedRequests}
@@ -1633,6 +1692,7 @@ export function ChatPanel() {
             ) : null}
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
+              goalAvailable={agentSelection.workflow?.strategy !== "workflow"}
               usage={latestUsage}
               billingUsage={billingUsage}
               onSubmit={handleSubmit}

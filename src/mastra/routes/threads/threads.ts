@@ -5,13 +5,109 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { closeBrowserThreadSessions } from "../../agents/browser";
+import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
+import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
 import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models/providers";
-import { appStorage } from "../../storage";
-import { deleteThreadWorkspace } from "../../workspace";
+import { appStorage } from "../../storage/database";
+import { listWorkspaceChanges } from "../../workspace/changes";
+import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
+import { abortWorkbenchSession, observeSessionWork } from "../session";
+import { prepareWorkbenchMessage } from "../session-context";
+import { assertNoActiveTeamRun, startTeamWorkflow } from "../team-runs";
 import { workbenchMessages } from "./messages";
-import { getOwnedThread, getWorkMemory, normalizeChatHistoryMessages } from "./shared";
+import {
+  deleteThreadMessages,
+  getOwnedThread,
+  getWorkMemory,
+  normalizeChatHistoryMessages,
+} from "./shared";
+
+/** Editing rewrites stored history; ordinary messages use Controller.sendMessage. */
+const rewriteThreadMessageRoute = registerApiRoute(
+  "/work/threads/:threadId/messages/:messageId/rewrite",
+  {
+    method: "POST",
+    handler: async (c) => {
+      const body = z
+        .discriminatedUnion("action", [
+          z.object({
+            action: z.literal("edit"),
+            content: z.string(),
+            options: z.record(z.string(), z.unknown()).optional(),
+          }),
+          z.object({
+            action: z.literal("regenerate"),
+            options: z.record(z.string(), z.unknown()).optional(),
+          }),
+        ])
+        .parse(await c.req.json());
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      const threadId = c.req.param("threadId");
+      const messageId = c.req.param("messageId");
+      const result = await prepareWorkbenchMessage(c, threadId, resourceId, body.options);
+      await assertNoActiveTeamRun(resourceId, threadId);
+      await abortWorkbenchSession(result.controllerSession);
+      await result.memory.settled();
+      const recalled = await result.memory.recall({ threadId, resourceId, perPage: false });
+      const history = normalizeChatHistoryMessages(recalled.messages);
+      const targetIndex = history.findIndex((message) => message.id === messageId);
+      const target = history[targetIndex];
+      if (!target || target.role !== (body.action === "edit" ? "user" : "assistant")) {
+        throw workError("MESSAGE_NOT_FOUND");
+      }
+      const original =
+        body.action === "edit"
+          ? target
+          : history.slice(0, targetIndex).findLast((message) => message.role === "user");
+      if (!original) throw workError("MESSAGE_NOT_FOUND");
+      const [message] = workbenchMessages([original]);
+      const content =
+        body.action === "edit"
+          ? body.content
+          : message.parts
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n");
+      const files = message.parts.flatMap((part) =>
+        part.type === "file"
+          ? [{ url: part.url, mediaType: part.mediaType, filename: part.filename }]
+          : [],
+      );
+      if (!content.trim() && files.length === 0) throw workError("SESSION_INPUT_REQUIRED");
+      const metadata = message.metadata as
+        | { skillNames?: string[]; fileReferences?: unknown[] }
+        | undefined;
+      await prepareWorkbenchMessage(c, threadId, resourceId, {
+        ...body.options,
+        skillNames: metadata?.skillNames ?? [],
+        fileReferences: metadata?.fileReferences ?? [],
+        files,
+      });
+      // A new native message gets a new ID, so remove the source user as well.
+      const boundary = recalled.messages.findIndex((entry) => entry.id === original.id);
+      await deleteThreadMessages(
+        result.memory,
+        threadId,
+        resourceId,
+        recalled.messages.slice(boundary).map((entry) => entry.id),
+      );
+      result.controllerSession.displayState.resetThread();
+      const profile = await getAgentProfile(
+        c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
+        resourceId,
+      );
+      if (profile.workflow?.strategy === "workflow") return startTeamWorkflow(c, result, content);
+      observeSessionWork(
+        c,
+        result.controllerSession,
+        result.controllerSession.sendMessage({ content, requestContext: c.get("requestContext") }),
+      );
+      return c.json({ ok: true });
+    },
+  },
+);
 
 export const searchThreadsRoute = registerApiRoute("/work/threads/search", {
   method: "GET",
@@ -343,10 +439,134 @@ const threadTodosExtractor = new Extractor({
   metadataKeyPath: false,
 });
 
-/**
- * 会话纪要(官方 summarizeThread):一次性蒸馏整段对话并运行 Extractor,
- * 分页加载消息(从最新往前,受 maxInputTokens 约束),不回写 memory。
- */
+/** Facts come from persisted messages, never from generated summary text. */
+const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
+  method: "GET",
+  handler: async (c) => {
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const threadId = c.req.param("threadId");
+    const memory = await getWorkMemory(c.get("requestContext"));
+    const thread = await getOwnedThread(memory, threadId, resourceId);
+    if (!thread) throw workError("THREAD_NOT_FOUND");
+    const [{ messages }, mcp, changes] = await Promise.all([
+      memory.recall({ threadId, resourceId, perPage: false }),
+      getMcpConfig(resourceId),
+      listWorkspaceChanges(threadId, resourceId),
+    ]);
+    type Item = {
+      id: string;
+      kind: "skill" | "mcp" | "web" | "file" | "artifact";
+      label: string;
+      url?: string;
+      path?: string;
+      mediaType?: string;
+    };
+    const items = new Map<string, Item>();
+    const record = (value: unknown): Record<string, unknown> =>
+      value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+    const add = (item: Item) => items.set(`${item.kind}:${item.id}`, item);
+    const addFile = (raw: unknown) => {
+      const file = record(raw);
+      if (typeof file.url !== "string") return;
+      let url: URL;
+      try {
+        url = new URL(file.url, c.req.url);
+      } catch {
+        return;
+      }
+      if (!/^\/work\/library\/assets\/[^/]+\/content$/.test(url.pathname)) return;
+      // Rebuild the authenticated local URL: message metadata must not choose a preview host.
+      const localUrl = `${url.pathname}?resourceId=${encodeURIComponent(resourceId)}`;
+      add({
+        id: url.pathname,
+        kind: "file",
+        label: String(file.filename ?? file.title ?? "文件"),
+        url: localUrl,
+        mediaType: String(file.mediaType ?? ""),
+      });
+    };
+    let latestRequest = "";
+    for (const message of workbenchMessages(messages)) {
+      const metadata = record(message.metadata);
+      if (message.role === "user") {
+        latestRequest = message.parts
+          .filter((part) => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        for (const name of Array.isArray(metadata.skillNames) ? metadata.skillNames : []) {
+          if (typeof name === "string") add({ id: name, kind: "skill", label: name });
+        }
+        for (const source of Array.isArray(metadata.librarySources) ? metadata.librarySources : [])
+          addFile(source);
+        for (const file of Array.isArray(metadata.fileReferences) ? metadata.fileReferences : [])
+          addFile(file);
+      }
+      for (const raw of message.parts) {
+        const part = record(raw);
+        if (part.type === "file") addFile(part);
+        if (part.type === "data-library-sources" && Array.isArray(part.data))
+          for (const source of part.data) addFile(source);
+        if (typeof part.type !== "string") continue;
+        const name =
+          part.type === "dynamic-tool"
+            ? String(part.toolName)
+            : part.type.startsWith("tool-")
+              ? part.type.slice(5)
+              : "";
+        if (!name || part.state !== "output-available") continue;
+        const input = record(part.input);
+        const output = record(part.output);
+        const server = mcp.servers.find((server) => name.startsWith(`${server.id}_`));
+        if (server) add({ id: server.id, kind: "mcp", label: server.name });
+        const skillName =
+          name === "skill" ? input.name : name === "skill_read" ? input.skillName : undefined;
+        if (typeof skillName === "string") add({ id: skillName, kind: "skill", label: skillName });
+        if (output.isError === true || output.success === false || output.ok === false) continue;
+        if (
+          /^(?:web_fetch|browser_(?:navigate|snapshot|screenshot)|firecrawl_scrape)$/.test(name)
+        ) {
+          const url = output.url ?? input.url;
+          if (typeof url === "string" && /^https?:\/\//i.test(url))
+            add({
+              id: url,
+              kind: "web",
+              label: typeof output.title === "string" && output.title ? output.title : url,
+              url,
+            });
+        }
+        const archived = record(output.contentObject);
+        if (name === "browser_screenshot" && typeof archived.workspacePath === "string") {
+          add({
+            id: archived.workspacePath,
+            kind: "artifact",
+            label: "screenshot.png",
+            path: archived.workspacePath,
+            mediaType: "image/png",
+          });
+        }
+        const path = input.path ?? input.filePath ?? output.path;
+        if (typeof path === "string" && /(?:write_file|edit_file|ast_edit|read_file)$/.test(name)) {
+          const kind = /read_file/.test(name) ? "file" : "artifact";
+          add({ id: path, kind, label: path.split(/[\\/]/).pop() || path, path });
+        }
+      }
+    }
+    // Filesystem hooks also record edits performed outside the top-level tool stream.
+    for (const change of changes) {
+      if (change.kind === "deleted") items.delete(`artifact:${change.path}`);
+      else
+        add({
+          id: change.path,
+          kind: "artifact",
+          label: change.path.split(/[\\/]/).pop() || change.path,
+          path: change.path,
+          mediaType: change.after?.contentType,
+        });
+    }
+    return c.json({ threadId, title: thread.title, latestRequest, items: [...items.values()] });
+  },
+});
+
 export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize", {
   method: "POST",
   handler: async (c) => {
@@ -408,6 +628,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     for (const threadId of threadIds) {
       if (!threadId || !(await getOwnedThread(memory, threadId, resourceId)))
         throw workError("THREAD_NOT_FOUND");
+      await assertNoActiveTeamRun(resourceId, threadId);
     }
     await memory.settled();
     for (const threadId of threadIds) {
@@ -462,6 +683,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     }
   }
   if (threadId && c.req.method === "DELETE") {
+    await assertNoActiveTeamRun(resourceId, threadId);
     for (const agent of Object.values(c.get("mastra").listAgents())) {
       await agent.abortThreadStream({ resourceId, threadId });
     }
@@ -515,11 +737,13 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
 
 /** Desktop-only thread extensions. CRUD is registered by Mastra Server. */
 export const threadRoutes = [
+  rewriteThreadMessageRoute,
   generateThreadTitleRoute,
   toggleMessageReactionRoute,
   cloneThreadRoute,
   threadSourceRoute,
   threadMessagesPageRoute,
   summarizeThreadRoute,
+  threadContextRoute,
   searchThreadsRoute,
 ];

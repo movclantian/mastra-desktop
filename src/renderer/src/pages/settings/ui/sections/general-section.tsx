@@ -5,7 +5,6 @@ import {
   LanguagesIcon,
   LaptopIcon,
   RefreshCwIcon,
-  SaveIcon,
   ServerIcon,
   WifiOffIcon,
 } from "lucide-react";
@@ -29,7 +28,7 @@ import { SettingCard } from "../controls";
 export function GeneralSection() {
   const { t, i18n } = useTranslation();
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
+  const [applying, setApplying] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
   const [mode, setMode] = React.useState<ProxyMode>("system");
   const [manualUrl, setManualUrl] = React.useState("");
@@ -59,27 +58,51 @@ export function GeneralSection() {
     };
   }, [t]);
 
-  const hasDirtyChanges =
-    mode !== savedConfig.mode ||
-    (mode === "manual" && manualUrl.trim() !== (savedConfig.url ?? ""));
+  /**
+   * 立即下发并持久化代理配置(无手动保存步骤)。
+   * 主进程会同步应用到 Chromium Session、出站环境变量与 Mastra Dispatcher。
+   * 失败时回滚草稿到当前已生效配置。
+   */
+  const applyConfig = React.useCallback(
+    async (next: ProxyConfig) => {
+      setApplying(true);
+      try {
+        await saveProxySettings(next);
+        setSavedConfig(next);
+      } catch (error) {
+        toastError(error, t("settings:general.saveProxyFailed"));
+        setMode(savedConfig.mode);
+        setManualUrl(savedConfig.url ?? "");
+      } finally {
+        setApplying(false);
+      }
+    },
+    [savedConfig, t],
+  );
 
-  const handleSave = async () => {
-    if (mode === "manual" && !manualUrl.trim()) {
-      toast.error(t("settings:general.pleaseEnterValidUrl"));
+  const selectMode = (next: ProxyMode) => {
+    if (loading || applying) return;
+    setMode(next);
+    setTestResult(null);
+    if (next === "manual") {
+      const url = manualUrl.trim();
+      if (url) void applyConfig({ mode: "manual", url });
       return;
     }
-    setSaving(true);
-    try {
-      const newConfig: ProxyConfig = mode === "manual" ? { mode, url: manualUrl.trim() } : { mode };
-      await saveProxySettings(newConfig);
-      setSavedConfig(newConfig);
-      toast.success(t("settings:general.proxyUpdated"));
-    } catch (error) {
-      toastError(error, t("settings:general.saveProxyFailed"));
-    } finally {
-      setSaving(false);
-    }
+    void applyConfig({ mode: next });
   };
+
+  // 手动地址输入防抖后自动生效,无需点击保存。
+  React.useEffect(() => {
+    if (loading || applying || mode !== "manual") return;
+    const url = manualUrl.trim();
+    if (!url) return;
+    if (savedConfig.mode === "manual" && (savedConfig.url ?? "") === url) return;
+    const timer = setTimeout(() => {
+      void applyConfig({ mode: "manual", url });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [loading, applying, mode, manualUrl, savedConfig, applyConfig]);
 
   const handleTest = async () => {
     const urlToTest = mode === "manual" ? manualUrl.trim() : undefined;
@@ -249,15 +272,9 @@ export function GeneralSection() {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => {
-                setMode("system");
-                setTestResult(null);
-              }}
+              onClick={() => selectMode("system")}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  setMode("system");
-                  setTestResult(null);
-                }
+                if (e.key === "Enter" || e.key === " ") selectMode("system");
               }}
               className={cn(
                 "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
@@ -296,15 +313,9 @@ export function GeneralSection() {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => {
-                setMode("direct");
-                setTestResult(null);
-              }}
+              onClick={() => selectMode("direct")}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  setMode("direct");
-                  setTestResult(null);
-                }
+                if (e.key === "Enter" || e.key === " ") selectMode("direct");
               }}
               className={cn(
                 "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
@@ -343,15 +354,9 @@ export function GeneralSection() {
             <div
               role="button"
               tabIndex={0}
-              onClick={() => {
-                setMode("manual");
-                setTestResult(null);
-              }}
+              onClick={() => selectMode("manual")}
               onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  setMode("manual");
-                  setTestResult(null);
-                }
+                if (e.key === "Enter" || e.key === " ") selectMode("manual");
               }}
               className={cn(
                 "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
@@ -490,30 +495,6 @@ export function GeneralSection() {
               </Button>
             </div>
           ) : null}
-
-          {/* 保存配置操作行 */}
-          <div className="flex items-center justify-between pt-2 border-t border-border/60">
-            <p className="text-xs text-muted-foreground">
-              {hasDirtyChanges
-                ? t("settings:general.proxyStatusChanged")
-                : t("settings:general.proxyStatusLatest")}
-            </p>
-            <Button
-              type="button"
-              disabled={
-                loading || saving || (mode === "manual" && !manualUrl.trim()) || !hasDirtyChanges
-              }
-              onClick={handleSave}
-              className="gap-1.5 text-xs h-8 px-4 cursor-pointer"
-            >
-              {saving ? (
-                <RefreshCwIcon className="size-3.5 animate-spin" />
-              ) : (
-                <SaveIcon className="size-3.5" />
-              )}
-              <span>{saving ? t("common:saving") : t("settings:general.proxySave")}</span>
-            </Button>
-          </div>
         </div>
       </SettingCard>
     </div>

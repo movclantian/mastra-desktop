@@ -98,8 +98,13 @@ function SkillsRoute() {
 const skillsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/skills",
-  validateSearch: (search: Record<string, unknown>): { skill?: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { skill?: string; section?: "public" | "personal" | "mcp" } => ({
     ...(typeof search.skill === "string" && search.skill ? { skill: search.skill } : {}),
+    ...(search.section === "public" || search.section === "personal" || search.section === "mcp"
+      ? { section: search.section }
+      : {}),
   }),
   component: SkillsRoute,
 });

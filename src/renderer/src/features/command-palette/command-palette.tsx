@@ -221,7 +221,7 @@ export function CommandPaletteDialog({
         onValueChange={setSearch}
         placeholder={t("commandPalette:inputPlaceholder")}
       />
-      <CommandList className="max-h-[min(65vh,28rem)]">
+      <CommandList className="max-h-[min(65dvh,28rem)]">
         <CommandEmpty>{t("commandPalette:noResults")}</CommandEmpty>
         {groups.map((group, index) => (
           <React.Fragment key={group.id}>
@@ -242,8 +242,8 @@ export function CommandPaletteDialog({
                   >
                     <IconComponent className="size-4 shrink-0 text-muted-foreground" />
                     <div className="flex min-w-0 flex-1 flex-col">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-sm text-foreground truncate">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="font-medium text-sm text-foreground break-words">
                           {item.label}
                         </span>
                         {item.disabled ? (
@@ -271,8 +271,8 @@ export function CommandPaletteDialog({
         ))}
       </CommandList>
       {/* 底部键盘交互提示栏 */}
-      <div className="flex items-center justify-between border-t border-border/40 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground select-none">
-        <div className="flex items-center gap-3">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/40 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground select-none">
+        <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-1">
             <kbd className="rounded border bg-background px-1 py-0.5 font-mono text-[10px] shadow-2xs">
               ↑↓

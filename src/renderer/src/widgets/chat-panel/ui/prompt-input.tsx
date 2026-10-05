@@ -14,12 +14,12 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useQuery } from "@tanstack/react-query";
 import type { FileUIPart, LanguageModelUsage } from "ai";
 import {
   FileIcon,
   GripVerticalIcon,
   ListTodoIcon,
-  PaperclipIcon,
   PencilIcon,
   SparklesIcon,
   Trash2Icon,
@@ -40,11 +40,6 @@ import {
 } from "@/shared/ui/ai-elements/attachments";
 import {
   PromptInput,
-  PromptInputActionAddAttachments,
-  PromptInputActionAddScreenshot,
-  PromptInputActionMenu,
-  PromptInputActionMenuContent,
-  PromptInputActionMenuTrigger,
   PromptInputBody,
   PromptInputCommand,
   PromptInputCommandEmpty,
@@ -61,7 +56,6 @@ import {
   PromptInputSubmit,
   PromptInputTabsList,
   PromptInputTextarea,
-  PromptInputTools,
   usePromptInputAttachments,
   usePromptInputController,
   usePromptInputReferencedSources,
@@ -86,48 +80,11 @@ import { Button } from "@/shared/ui/button";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
 import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
-import { ChatAgentSelector } from "./agent-selector";
+import { ComposerMenu } from "./composer-menu";
 import { ChatContextUsage } from "./context-usage";
 import { ChatModeSelector } from "./mode-selector";
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
-import { ChatSearchSelector } from "./search-selector";
-
-// ---------------------------------------------------------------------------
-// 输入区工具按钮(Paperclip 附件 / Agent 选择 / 联网检索多级菜单)
-// 必须位于 PromptInputProvider 内部以访问附件上下文
-// ---------------------------------------------------------------------------
-
-function PromptInputActions({ screenshotEnabled }: { screenshotEnabled: boolean }) {
-  const { t } = useTranslation();
-
-  return (
-    // 基类自带 min-w-0,整组可随容器收缩;收缩只发生在各按钮的文字标签上
-    // (审批/检索的按钮标签可能 truncate),按钮尺寸与图标不受影响。
-    <PromptInputTools>
-      {/* 附件 → Agent / Agent 团队 → 联网检索,依次排在整个输入区的左侧 */}
-      <PromptInputActionMenu>
-        <PromptInputActionMenuTrigger
-          aria-label={t("chat:addAttachment")}
-          size="icon-sm"
-          title={t("chat:addAttachment")}
-          type="button"
-          variant="outline"
-        >
-          <PaperclipIcon className="text-muted-foreground" />
-        </PromptInputActionMenuTrigger>
-        <PromptInputActionMenuContent>
-          <PromptInputActionAddAttachments label={t("chat:addAttachment")} />
-          {screenshotEnabled ? (
-            <PromptInputActionAddScreenshot label={t("chat:prompt.takeScreenshot")} />
-          ) : null}
-        </PromptInputActionMenuContent>
-      </PromptInputActionMenu>
-      <ChatAgentSelector />
-      <ChatSearchSelector />
-    </PromptInputTools>
-  );
-}
 
 function PromptInputAttachments() {
   const { t } = useTranslation();
@@ -194,23 +151,21 @@ function SkillAwareTextarea({
   const referencedSources = usePromptInputReferencedSources();
   const { user } = useAuth();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
-  const [skills, setSkills] = React.useState<SkillOption[]>([]);
-  const [files, setFiles] = React.useState<FileReferenceOption[]>([]);
+  const userId = user?.id ?? "anonymous";
+  const skills =
+    useQuery({
+      queryKey: ["composer-skills", userId],
+      queryFn: () => fetchChatSkills<SkillOption>(),
+    }).data ?? [];
+  const files =
+    useQuery({
+      queryKey: ["composer-library", userId],
+      queryFn: () => fetchChatLibraryAssets(userId),
+    }).data ?? [];
+  const queueFiles = useWorkbenchStore((state) => state.queueLibraryFiles);
   const [query, setQuery] = React.useState("");
   const [command, setCommand] = React.useState<"skill" | "file" | null>(null);
   const deferredQuery = React.useDeferredValue(query.toLocaleLowerCase());
-
-  React.useEffect(() => {
-    void Promise.all([
-      fetchChatSkills<SkillOption>(),
-      fetchChatLibraryAssets(user?.id ?? "anonymous"),
-    ])
-      .then(([nextSkills, nextFiles]) => {
-        setSkills(nextSkills);
-        setFiles(nextFiles);
-      })
-      .catch(() => undefined);
-  }, [user?.id]);
 
   const handleTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = event.currentTarget.value;
@@ -252,6 +207,10 @@ function SkillAwareTextarea({
   };
 
   const selectSkill = (skill: SkillOption) => {
+    if (!selectedSkills.includes(skill.name) && selectedSkills.length >= 4) {
+      toast.error(t("chat:composer.skillLimit"));
+      return;
+    }
     const prefix = removeCommandToken("/").trimEnd();
     const nextSkills = selectedSkills.includes(skill.name)
       ? selectedSkills
@@ -267,14 +226,7 @@ function SkillAwareTextarea({
     const nextValue = removeCommandToken("@").trimEnd();
     controller.textInput.setInput(nextValue ? `${nextValue} ` : "");
     if (!selectedFileReferences.some((item) => item.url === file.url)) {
-      controller.attachments.restore([
-        {
-          type: "file",
-          url: file.url,
-          filename: file.filename,
-          mediaType: file.mediaType,
-        },
-      ]);
+      queueFiles([{ type: "file", ...file }]);
       onChangeFileReferences([...selectedFileReferences, file]);
       referencedSources.add({
         type: "source-document",
@@ -685,8 +637,10 @@ export function ChatPromptInput({
   onStop,
   attachmentTokenBudget,
   attachmentCapabilities,
+  goalAvailable,
 }: {
   activeThread: boolean;
+  goalAvailable: boolean;
   usage: LanguageModelUsage | undefined;
   billingUsage?: LanguageModelUsage;
   onSubmit: (
@@ -694,6 +648,7 @@ export function ChatPromptInput({
       text: string;
       files?: Array<FileUIPart & { byteSize?: number; file?: File }>;
       skills?: string[];
+      goal?: boolean;
       fileReferences?: MessageFileReference[];
     },
     clearPrompt: () => void,
@@ -802,6 +757,10 @@ export function ChatPromptInput({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [reportPromptMinWidth]);
+  const [goalMode, setGoalMode] = React.useState(false);
+  React.useEffect(() => {
+    if (!goalAvailable) setGoalMode(false);
+  }, [goalAvailable]);
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<
     MessageFileReference[]
@@ -831,10 +790,16 @@ export function ChatPromptInput({
         }),
       0,
     );
+    let byteTotal = currentFiles.reduce((sum, file) => sum + (file.byteSize ?? 0), 0);
     const capacity = Math.max(0, 10 - currentFiles.length);
     let acceptedCount = 0;
     const accepted = pendingLibraryFiles.filter((file) => {
-      if (acceptedCount >= capacity) return false;
+      if (acceptedCount >= capacity || currentFiles.some((item) => item.url === file.url))
+        return false;
+      const bytes = file.byteSize ?? 0;
+      if (bytes > 50 * 1024 * 1024 || byteTotal + bytes > 100 * 1024 * 1024) return false;
+      if (file.mediaType.startsWith("image/") && !attachmentCapabilities?.vision) return false;
+      if (file.mediaType.startsWith("audio/") && !attachmentCapabilities?.audio) return false;
       const fileTokens = estimateAttachmentTokens({
         name: file.filename ?? t("chat:messages.untitledAttachment"),
         size: file.byteSize ?? 0,
@@ -844,6 +809,7 @@ export function ChatPromptInput({
       if (tokenTotal + fileTokens > (attachmentTokenBudget ?? Number.POSITIVE_INFINITY))
         return false;
       tokenTotal += fileTokens;
+      byteTotal += bytes;
       acceptedCount += 1;
       return true;
     });
@@ -854,6 +820,8 @@ export function ChatPromptInput({
     clearPendingLibraryFiles();
   }, [
     attachmentTokenBudget,
+    attachmentCapabilities?.vision,
+    attachmentCapabilities?.audio,
     clearPendingLibraryFiles,
     controller.attachments,
     estimateAttachmentTokens,
@@ -916,14 +884,16 @@ export function ChatPromptInput({
               ...message,
               text: message.text,
               skills: selectedSkills,
-              fileReferences: selectedFileReferences.filter((reference) =>
-                message.files?.some((file) => file.url === reference.url),
-              ),
+              goal: goalMode,
+              fileReferences: selectedFileReferences
+                .filter((reference) => message.files?.some((file) => file.url === reference.url))
+                .map(({ id, filename, url }) => ({ id, filename, url })),
             },
             () => {
               controller.textInput.clear();
               controller.attachments.clear();
               setSelectedSkills([]);
+              setGoalMode(false);
               setSelectedFileReferences([]);
             },
           )
@@ -931,8 +901,24 @@ export function ChatPromptInput({
       >
         <PromptInputAttachments />
         <PromptInputBody>
+          {goalMode && (
+            <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 break-words">{t("chat:goal.composerHint")}</span>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={t("common:cancel")}
+                onClick={() => setGoalMode(false)}
+              >
+                <XIcon />
+              </Button>
+            </div>
+          )}
           <SelectedFileReferenceBadges
-            files={selectedFileReferences}
+            files={selectedFileReferences.filter((reference) =>
+              controller.attachments.files.some((file) => file.url === reference.url),
+            )}
             onRemove={(file) => {
               const attachment = controller.attachments.files.find((item) => item.url === file.url);
               if (attachment) controller.attachments.remove(attachment.id);
@@ -961,7 +947,20 @@ export function ChatPromptInput({
           className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2"
           ref={footerRef}
         >
-          <PromptInputActions screenshotEnabled={attachmentCapabilities?.vision === true} />
+          <ComposerMenu
+            screenshotEnabled={attachmentCapabilities?.vision === true}
+            skills={selectedSkills}
+            onSkillsChange={setSelectedSkills}
+            onFileReference={(file) =>
+              setSelectedFileReferences((current) =>
+                current.some((item) => item.url === file.url) ? current : [...current, file],
+              )
+            }
+            goal={goalMode}
+            onGoalChange={setGoalMode}
+            goalAvailable={goalAvailable}
+            busy={status === "submitted" || status === "streaming"}
+          />
           <div className="ml-auto flex min-w-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">

@@ -2,49 +2,17 @@ import { Agent } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
+import { agentMemberSchema } from "../../shared/agent-contract";
 import {
   agentWorkflowSchema,
+  createAgentProfile,
   deleteAgentProfile,
   ensureProfileAgentsRegistered,
   listAgentProfiles,
   unregisterProfileAgents,
-  upsertAgentProfile,
 } from "../agents/custom";
 import { errorText, workError, workValidationError } from "../errors";
 import { resolveDefaultLanguageModel } from "../models/providers";
-
-const agentProfileInputSchema = z
-  .object({
-    id: z.string().optional(),
-    type: z.enum(["agent", "team"]),
-    name: z.string().optional(),
-    displayName: z.string().min(1),
-    profession: z.string().optional(),
-    description: z.string().optional(),
-    instructions: z.string().min(1),
-    skills: z.array(z.string()).optional(),
-    workflow: agentWorkflowSchema.optional(),
-    members: z
-      .array(
-        z.object({
-          id: z.string().optional(),
-          name: z.string().min(1),
-          profession: z.string().optional(),
-          description: z.string().optional(),
-          instructions: z.string().min(1),
-          skills: z.array(z.string()).optional(),
-          memoryScope: z.enum(["thread", "resource"]).optional(),
-        }),
-      )
-      .optional(),
-    tags: z.array(z.string()).optional(),
-    quickPrompts: z.array(z.string()).optional(),
-    enabled: z.boolean().optional(),
-  })
-  .refine((profile) => profile.type !== "team" || Boolean(profile.members?.length), {
-    path: ["members"],
-    message: "Agent 团队至少需要一位成员",
-  });
 
 export const agentProfilesRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
@@ -54,16 +22,21 @@ export const agentProfilesRoute = createRoute({
   method: "GET",
   handler: async (params) => {
     const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const agents = await listAgentProfiles(resourceId);
+    const agents = (await listAgentProfiles(resourceId)).filter((profile) => profile.enabled);
     const registry = params.mastra;
     const registrations = await Promise.all(
       agents.map((profile) => ensureProfileAgentsRegistered(registry, profile, resourceId)),
     );
-    const registryEntries = Object.entries(registry.listAgents()).map(([registryKey, agent]) => ({
-      registryKey,
-      agentId: agent.id,
-      name: agent.name,
-    }));
+    const registryEntries = registrations
+      .flatMap((entry) => [
+        [entry.profileKey, entry.profile] as const,
+        ...Object.entries(entry.memberKeys).map(([id, key]) => [key, entry.members[id]] as const),
+      ])
+      .map(([registryKey, agent]) => ({
+        registryKey,
+        agentId: agent.id,
+        name: agent.name,
+      }));
     return {
       agents,
       registeredAgentIds: registrations.flatMap((registration) => [
@@ -87,22 +60,6 @@ export const agentProfilesRoute = createRoute({
   },
 });
 
-export const saveAgentProfileRoute = createRoute({
-  queryParamSchema: z.object({}).strict(),
-  path: "/work/agents",
-  responseType: "json",
-  onValidationError: workValidationError,
-  method: "POST",
-  bodySchema: agentProfileInputSchema.transform((profile) => ({ profile })),
-  handler: async (params) => {
-    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const profile = await upsertAgentProfile(params.profile, resourceId);
-    if (profile.enabled) await ensureProfileAgentsRegistered(params.mastra, profile, resourceId);
-    else unregisterProfileAgents(params.mastra, profile.id, resourceId);
-    return { agent: profile };
-  },
-});
-
 export const deleteAgentProfileRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: z.object({}).strict().optional(),
@@ -114,29 +71,20 @@ export const deleteAgentProfileRoute = createRoute({
   handler: async (params) => {
     const agentId = params.agentId;
     const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    unregisterProfileAgents(params.mastra, agentId, resourceId);
     await deleteAgentProfile(agentId, resourceId);
+    unregisterProfileAgents(params.mastra, agentId, resourceId);
     return { ok: true };
   },
 });
 
 const agentDraftSchema = z.object({
   type: z.enum(["agent", "team"]),
-  displayName: z.string(),
+  displayName: z.string().trim().min(1),
   profession: z.string(),
   description: z.string(),
-  instructions: z.string(),
+  instructions: z.string().trim().min(1),
   workflow: agentWorkflowSchema.optional(),
-  members: z.array(
-    z.object({
-      name: z.string(),
-      profession: z.string(),
-      description: z.string(),
-      instructions: z.string(),
-      skills: z.array(z.string()).optional(),
-      memoryScope: z.enum(["thread", "resource"]).optional(),
-    }),
-  ),
+  members: z.array(agentMemberSchema),
   tags: z.array(z.string()),
   quickPrompts: z.array(z.string()),
 });
@@ -167,14 +115,14 @@ export const assistAgentProfileRoute = createRoute({
       model: selectedModel,
       id: "mastra-work-agent-assist",
       name: "MastraWork Agent Assistant",
-      instructions: "根据用户描述生成可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。",
+      instructions: "根据用户描述生成可执行的 Mastra Agent 配置。只返回 JSON 结构化字段,不要解释。",
     });
     const result = await assistant
       .generate(
-        `类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
+        `类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只允许 supervisor（主管自主委派，steps 可为空，非空流程作为可调用工具）或 workflow（每条消息直接执行 steps）。成员必须有唯一 id，steps 引用这些 id。步骤 kind 支持 agent、council（memberIds 至少两名及 judgeMemberId，必须综合）、branch、loop、approval。每步 context 为 request 或 previous。成员 delegates 明确列出允许委派的成员 ID，默认不委派，禁止循环。单 Agent 不配置 workflow，members 必须为空数组。用户描述:\n${body.description}`,
         {
           structuredOutput: {
-            schema: agentDraftSchema,
+            schema: agentDraftSchema.extend({ type: z.literal(body.type) }),
             jsonPromptInjection: "auto",
           },
           abortSignal: params.abortSignal,
@@ -186,6 +134,12 @@ export const assistAgentProfileRoute = createRoute({
           cause: error,
         });
       });
-    return { draft: result.object };
+    const generated = agentDraftSchema.parse(result.object);
+    const profile = await createAgentProfile(
+      { ...generated, name: generated.displayName },
+      resourceId,
+    );
+    await ensureProfileAgentsRegistered(params.mastra, profile, resourceId);
+    return { agent: profile };
   },
 });

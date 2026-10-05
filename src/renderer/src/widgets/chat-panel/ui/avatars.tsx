@@ -1,5 +1,6 @@
 import { WaypointsIcon } from "lucide-react";
 import * as React from "react";
+import { preload } from "react-dom";
 import { apiFetch } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar";
@@ -67,6 +68,18 @@ function fetchRandomHeadUrl(cacheKey: string): Promise<string | null> {
   return promise;
 }
 
+/** 登录后就准备两张头像,消息首次出现时复用浏览器图片缓存。 */
+export function preloadChatAvatars(userId: string) {
+  for (const cacheKey of [
+    "mastra-work:assistant-head-url",
+    `mastra-work:user-head-url:${userId}`,
+  ]) {
+    void fetchRandomHeadUrl(cacheKey).then((url) => {
+      if (url) preload(url, { as: "image" });
+    });
+  }
+}
+
 const RandomHeadAvatar = React.memo(function RandomHeadAvatar({
   alt,
   cacheKey,
@@ -78,9 +91,19 @@ const RandomHeadAvatar = React.memo(function RandomHeadAvatar({
   fallback: React.ReactNode;
   fallbackClassName: string;
 }) {
-  const [headUrl, setHeadUrl] = React.useState<string | null>(headUrlMemory.get(cacheKey) ?? null);
+  const [headUrl, setHeadUrl] = React.useState<string | null>(
+    () => headUrlMemory.get(cacheKey) ?? loadCachedHeadUrl(cacheKey),
+  );
   React.useEffect(() => {
-    if (!headUrl) void fetchRandomHeadUrl(cacheKey).then(setHeadUrl);
+    let active = true;
+    if (!headUrl) {
+      void fetchRandomHeadUrl(cacheKey).then((url) => {
+        if (active) setHeadUrl(url);
+      });
+    }
+    return () => {
+      active = false;
+    };
   }, [cacheKey, headUrl]);
 
   return (
@@ -88,7 +111,10 @@ const RandomHeadAvatar = React.memo(function RandomHeadAvatar({
       {headUrl ? (
         <AvatarImage
           alt={alt}
-          onError={() => {
+          className="absolute inset-0 data-[loading]:invisible data-[error]:invisible"
+          keepMounted
+          onLoadingStatusChange={(status) => {
+            if (status !== "error") return;
             // 记住的 URL 指向第三方 CDN,它不保证长期有效。图挂了就丢掉这条记录
             // 重取一张,否则一次 404 会把这个键永久钉在 fallback 图标上。
             // 只重取一次:新取的还是坏图就安静退回 fallback,不做无限重试。
@@ -122,6 +148,7 @@ export function UserAvatar({ userId }: { userId: string }) {
     <RandomHeadAvatar
       alt={t("chat:avatars.userAvatar")}
       cacheKey={`mastra-work:user-head-url:${userId}`}
+      key={userId}
       fallback={t("chat:avatars.userFallback")}
       fallbackClassName="bg-primary text-primary-foreground"
     />

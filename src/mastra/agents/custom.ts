@@ -3,81 +3,26 @@ import { basename } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
-import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
+import type { AnyWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
+import {
+  type AgentMemberDefinition,
+  type AgentProfile,
+  agentMemberSchema,
+  agentWorkflowSchema,
+  validateAgentTeam,
+} from "../../shared/agent-contract";
 import { workError } from "../errors";
-import { getAppConfig, setAppConfig } from "../storage";
-import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace";
+import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
+import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace/workspace-manager";
+import { compileTeamWorkflow, TEAM_PROFILE_CONTEXT_KEY } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 const CONFIG_KEY = "agent-profiles";
 
-export type AgentProfileType = "agent" | "team";
-
-/**
- * The four coordination patterns used in Mastra's multi-agent guide.
- *
- * `handoff` and `council` are implemented with Workflow control flow, while
- * `supervisor` stays model-driven through Agent delegation and `workflow`
- * exposes the explicit graph controls.
- */
-export type AgentWorkflowStrategy = "supervisor" | "handoff" | "workflow" | "council";
-
-export type AgentWorkflowCondition = {
-  operator: "contains" | "equals" | "not_contains";
-  value: string;
-};
-
-export type AgentWorkflowStepKind = "agent" | "approval" | "branch" | "loop";
-
-export interface AgentWorkflowStep {
-  id: string;
-  memberId?: string;
-  kind?: AgentWorkflowStepKind;
-  prompt?: string;
-  retries?: number;
-  condition?: AgentWorkflowCondition;
-  branch?: { onTrueMemberId: string; onFalseMemberId: string };
-  loop?: { mode: "until" | "while" | "foreach"; maxIterations: number; concurrency?: number };
-  approval?: { title: string; description: string };
-}
-
-export interface AgentWorkflowDefinition {
-  strategy: AgentWorkflowStrategy;
-  steps: AgentWorkflowStep[];
-  synthesis: boolean;
-}
-
-export interface AgentMemberDefinition {
-  id: string;
-  name: string;
-  profession: string;
-  description: string;
-  instructions: string;
-  skills: string[];
-  memoryScope: "thread" | "resource";
-}
-
-export interface AgentProfile {
-  id: string;
-  type: AgentProfileType;
-  name: string;
-  displayName: string;
-  profession: string;
-  description: string;
-  instructions: string;
-  skills: string[];
-  members: AgentMemberDefinition[];
-  workflow?: AgentWorkflowDefinition;
-  categoryId?: string;
-  tags: string[];
-  quickPrompts: string[];
-  avatar?: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
+export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
+export { agentWorkflowSchema } from "../../shared/agent-contract";
 
 type AgentProfileInput = Omit<Partial<AgentProfile>, "members"> & {
   members?: Partial<AgentMemberDefinition>[];
@@ -104,7 +49,6 @@ const DEFAULT_PROFILE: AgentProfile = {
 function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()): AgentProfile {
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
-  const usedMemberIds = new Set<string>();
   return {
     ...DEFAULT_PROFILE,
     type: raw.type === "team" ? "team" : "agent",
@@ -120,32 +64,7 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
     skills: Array.isArray(raw.skills)
       ? raw.skills.filter((item): item is string => typeof item === "string")
       : [],
-    members: Array.isArray(raw.members)
-      ? raw.members
-          .filter((item) => typeof item === "object" && item !== null)
-          .map((item) => {
-            const baseId =
-              typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID();
-            let memberId = baseId;
-            let suffix = 2;
-            while (usedMemberIds.has(memberId)) memberId = `${baseId}-${suffix++}`;
-            usedMemberIds.add(memberId);
-            return {
-              id: memberId,
-              name: typeof item.name === "string" ? item.name.trim() : "团队成员",
-              profession: typeof item.profession === "string" ? item.profession.trim() : "",
-              description: typeof item.description === "string" ? item.description.trim() : "",
-              instructions: typeof item.instructions === "string" ? item.instructions.trim() : "",
-              skills: Array.isArray(item.skills)
-                ? item.skills.filter(
-                    (skill): skill is string =>
-                      typeof skill === "string" && skill.trim().length > 0,
-                  )
-                : [],
-              memoryScope: item.memoryScope === "resource" ? "resource" : "thread",
-            };
-          })
-      : [],
+    members: (raw.members ?? []).map((member) => agentMemberSchema.parse(member)),
     workflow: raw.workflow === undefined ? undefined : agentWorkflowSchema.parse(raw.workflow),
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((item): item is string => typeof item === "string")
@@ -159,61 +78,47 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
   };
 }
 
-export const agentWorkflowSchema = z.object({
-  strategy: z.enum(["supervisor", "handoff", "workflow", "council"]),
-  steps: z.array(
-    z.object({
-      id: z.string(),
-      memberId: z.string().optional(),
-      kind: z.enum(["agent", "approval", "branch", "loop"]).optional(),
-      prompt: z.string().optional(),
-      retries: z.number().int().min(0).max(5).optional(),
-      condition: z
-        .object({
-          operator: z.enum(["contains", "equals", "not_contains"]),
-          value: z.string(),
-        })
-        .optional(),
-      branch: z.object({ onTrueMemberId: z.string(), onFalseMemberId: z.string() }).optional(),
-      loop: z
-        .object({
-          mode: z.enum(["until", "while", "foreach"]),
-          maxIterations: z.number().int().min(1).max(20),
-          concurrency: z.number().int().min(1).max(8).optional(),
-        })
-        .optional(),
-      approval: z.object({ title: z.string(), description: z.string() }).optional(),
-    }),
-  ),
-  synthesis: z.boolean(),
-});
-
 export async function listAgentProfiles(resourceId?: string): Promise<AgentProfile[]> {
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
   if (!raw) return [DEFAULT_PROFILE];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    const profiles = Array.isArray(parsed)
-      ? parsed.map((item) => normalizeProfile(item as Partial<AgentProfile>))
-      : [];
-    return [
-      DEFAULT_PROFILE,
-      ...profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID && profile.enabled),
-    ];
-  } catch {
-    return [DEFAULT_PROFILE];
-  }
+  const profiles = z
+    .array(z.unknown())
+    .parse(JSON.parse(raw))
+    .map((item) => {
+      try {
+        const profile = normalizeProfile(item as AgentProfileInput);
+        validateAgentTeam(profile);
+        return profile;
+      } catch (cause) {
+        throw workError("VALIDATION_FAILED", {
+          text: `Agent 配置不符合当前格式，请删除并重建: ${String((item as AgentProfileInput)?.id ?? "unknown")}`,
+          cause,
+        });
+      }
+    });
+  return [
+    DEFAULT_PROFILE,
+    ...profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID),
+  ];
 }
 
 export async function getAgentProfile(
   id: string | undefined,
   resourceId?: string,
 ): Promise<AgentProfile> {
-  const profiles = await listAgentProfiles(resourceId);
-  return (
-    profiles.find((profile) => profile.id === (id?.trim() || DEFAULT_AGENT_PROFILE_ID)) ??
-    DEFAULT_PROFILE
-  );
+  const selectedId = id?.trim() || DEFAULT_AGENT_PROFILE_ID;
+  if (selectedId === DEFAULT_AGENT_PROFILE_ID) return DEFAULT_PROFILE;
+  const raw = await getAppConfig(CONFIG_KEY, resourceId);
+  const selected = raw
+    ? z
+        .array(z.object({ id: z.string() }).passthrough())
+        .parse(JSON.parse(raw))
+        .find((item) => item.id === selectedId)
+    : undefined;
+  const profile = selected ? normalizeProfile(selected) : undefined;
+  if (!profile?.enabled) throw workError("VALIDATION_FAILED", { text: "Agent 不存在或已停用" });
+  validateAgentTeam(profile);
+  return profile;
 }
 
 async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Promise<void> {
@@ -224,75 +129,52 @@ async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Prom
   );
 }
 
-export async function upsertAgentProfile(
-  input: AgentProfileInput,
+async function assertProfileIdle(id: string, resourceId?: string) {
+  const store = await appStorage.getStore("workflows");
+  const runs = await store?.listWorkflowRuns({ resourceId, perPage: false });
+  for (const run of runs?.runs ?? []) {
+    if (!run.workflowName.startsWith("team-")) continue;
+    const snapshot = typeof run.snapshot === "string" ? JSON.parse(run.snapshot) : run.snapshot;
+    if (
+      snapshot?.requestContext?.[TEAM_PROFILE_CONTEXT_KEY]?.id === id &&
+      ["pending", "running", "waiting", "suspended", "paused"].includes(snapshot.status)
+    )
+      throw workError("VALIDATION_FAILED", {
+        text: "请先完成或取消该团队的流程，再修改或删除团队",
+      });
+  }
+}
+
+export async function createAgentProfile(
+  input: Omit<AgentProfileInput, "id" | "createdAt" | "updatedAt">,
   resourceId?: string,
 ): Promise<AgentProfile> {
-  if (input.id === DEFAULT_AGENT_PROFILE_ID)
-    throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可覆盖" });
-  const current = (await listAgentProfiles(resourceId)).filter(
-    (profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID,
-  );
-  const existing = current.find((profile) => profile.id === input.id);
-  const previousUpdatedAt = existing ? Date.parse(existing.updatedAt) : Number.NaN;
-  const now = new Date(
-    Math.max(Date.now(), Number.isFinite(previousUpdatedAt) ? previousUpdatedAt + 1 : 0),
-  ).toISOString();
-  const teamWorkflow =
-    input.type === "team" && !input.workflow
-      ? {
-          strategy: "supervisor" as const,
-          steps: (input.members ?? existing?.members ?? []).map((member, index) => ({
-            id: `step-${index + 1}`,
-            memberId: member.id,
-          })),
-          synthesis: true,
-        }
-      : undefined;
-  const profile = normalizeProfile(
-    {
-      ...(existing ?? {}),
-      ...input,
-      ...(teamWorkflow ? { workflow: teamWorkflow } : {}),
-      updatedAt: now,
-    },
-    existing?.createdAt ?? now,
-  );
-  if (profile.type === "team" && profile.workflow?.strategy !== "supervisor" && profile.workflow) {
-    const { strategy, steps } = profile.workflow;
-    if (!steps.length) throw workError("VALIDATION_FAILED", { text: "团队工作流至少需要一个步骤" });
-    const ids = new Set<string>();
-    const members = new Set(profile.members.map((member) => member.id));
-    for (const step of steps) {
-      if (!step.id.trim() || ids.has(step.id))
-        throw workError("VALIDATION_FAILED", { text: "工作流步骤 ID 必须非空且唯一" });
-      ids.add(step.id);
-      const kind = step.kind ?? "agent";
-      if (strategy !== "workflow" && kind !== "agent")
-        throw workError("VALIDATION_FAILED", { text: "交接和并行评议只接受 Agent 步骤" });
-      const targets =
-        kind === "branch"
-          ? [step.branch?.onTrueMemberId, step.branch?.onFalseMemberId]
-          : kind === "approval"
-            ? []
-            : [step.memberId];
-      if (targets.some((id) => !id || !members.has(id)))
-        throw workError("VALIDATION_FAILED", { text: `步骤 ${step.id} 引用了不存在的成员` });
-      if (kind === "branch" && !step.condition)
-        throw workError("VALIDATION_FAILED", { text: `分支 ${step.id} 缺少条件` });
-      if (kind === "loop" && (!step.loop || (step.loop.mode !== "foreach" && !step.condition)))
-        throw workError("VALIDATION_FAILED", { text: `循环 ${step.id} 缺少循环设置或条件` });
-    }
+  const current = await listAgentProfiles(resourceId);
+  const profile = normalizeProfile({ ...input, id: randomUUID() });
+  try {
+    validateAgentTeam(profile);
+  } catch (cause) {
+    throw workError("VALIDATION_FAILED", {
+      text: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
   }
-  await saveProfiles([...current.filter((item) => item.id !== profile.id), profile], resourceId);
+  await saveProfiles([...current, profile], resourceId);
   return profile;
 }
 
 export async function deleteAgentProfile(id: string, resourceId?: string): Promise<void> {
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可删除" });
-  await saveProfiles(
-    (await listAgentProfiles(resourceId)).filter((profile) => profile.id !== id),
+  await assertProfileIdle(id, resourceId);
+  // Deletion must also work for invalid definitions, without interpreting an obsolete graph.
+  const raw = await getAppConfig(CONFIG_KEY, resourceId);
+  const profiles = z
+    .array(z.object({ id: z.string() }).passthrough())
+    .parse(JSON.parse(raw ?? "[]"));
+  await setAppConfig(
+    CONFIG_KEY,
+    JSON.stringify(profiles.filter((profile) => profile.id !== id)),
     resourceId,
   );
   memberCache.delete(scopedProfileKey(id, resourceId));
@@ -322,10 +204,10 @@ function scopedProfileKey(id: string, resourceScope?: string): string {
   return `${resourceScope?.trim() || "__system__"}\u0000${id}`;
 }
 
-export async function resolveProfileMembers(
+export function resolveProfileMembers(
   profile: AgentProfile,
   resourceScope?: string,
-): Promise<Record<string, Agent>> {
+): Record<string, Agent> {
   if (profile.type !== "team") return {};
   const key = scopedProfileKey(profile.id, resourceScope);
   const cached = memberCache.get(key);
@@ -355,7 +237,7 @@ function registrationToken(value: string): string {
 export function profileAgentRegistryKey(profile: AgentProfile, resourceScope?: string): string {
   return `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(
     profile.id,
-  )}`;
+  )}-${registrationToken(profile.updatedAt)}`;
 }
 
 export function profileMemberAgentRegistryKey(
@@ -374,167 +256,82 @@ export function profileAgentRuntimeId(
   const prefix = memberId ? "member" : "profile";
   return `${prefix}-${registrationToken(registrationScope(resourceScope))}-${registrationToken(
     profile.id,
-  )}${memberId ? `-${registrationToken(memberId)}` : ""}`;
+  )}-${registrationToken(profile.updatedAt)}${memberId ? `-${registrationToken(memberId)}` : ""}`;
 }
 
-type AgentRegistry = Pick<Mastra, "addAgent" | "removeAgent" | "listAgents">;
+type AgentRegistry = Pick<
+  Mastra,
+  "addAgent" | "removeAgent" | "listAgents" | "addWorkflow" | "removeWorkflow"
+>;
 
 export interface RegisteredProfileAgents {
   profile: Agent;
   members: Record<string, Agent>;
   profileKey: string;
   memberKeys: Record<string, string>;
+  workflow?: AnyWorkflow;
 }
 
 const registeredProfiles = new Map<
   string,
   { updatedAt: string; registration: RegisteredProfileAgents }
 >();
-const registrationLocks = new Map<
-  string,
-  { updatedAt: string; promise: Promise<RegisteredProfileAgents> }
->();
-const removedProfileKeys = new Set<string>();
 
-function isRegistrationPresent(
-  registry: AgentRegistry,
-  registration: RegisteredProfileAgents,
-): boolean {
-  const agents = registry.listAgents();
-  if (agents[registration.profileKey] !== registration.profile) return false;
-  return Object.entries(registration.memberKeys).every(
-    ([memberId, key]) => agents[key] === registration.members[memberId],
-  );
-}
-
-function removeRegisteredProfileEntries(registry: AgentRegistry, profileKey: string): void {
-  const memberPrefix = `${profileKey}-member-`;
-  for (const key of Object.keys(registry.listAgents())) {
-    if (key === profileKey || key.startsWith(memberPrefix)) registry.removeAgent(key);
-  }
-}
-
-async function registerProfileAgents(
+/** Registration has no await boundary: factories and native registry writes are synchronous. */
+export function ensureProfileAgentsRegistered(
   registry: AgentRegistry,
   profile: AgentProfile,
-  profileKey: string,
-  resourceScope: string,
-): Promise<RegisteredProfileAgents> {
+  resourceScope?: string,
+): RegisteredProfileAgents {
+  if (profile.id === DEFAULT_AGENT_PROFILE_ID) {
+    const agent = Object.values(registry.listAgents()).find(
+      (candidate) => candidate.id === DEFAULT_AGENT_PROFILE_ID,
+    );
+    if (!agent) throw new Error("Default work agent is not registered");
+    return { profile: agent, members: {}, profileKey: DEFAULT_AGENT_PROFILE_ID, memberKeys: {} };
+  }
+  const profileKey = profileAgentRegistryKey(profile, resourceScope);
   const cached = registeredProfiles.get(profileKey);
-  if (
-    cached?.updatedAt === profile.updatedAt &&
-    isRegistrationPresent(registry, cached.registration)
-  ) {
-    return cached.registration;
-  }
-
-  if (cached) {
-    removeRegisteredProfileEntries(registry, cached.registration.profileKey);
-    registeredProfiles.delete(profileKey);
-  }
-
+  if (cached?.updatedAt === profile.updatedAt) return cached.registration;
   if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
   const profileAgent = profileAgentFactory(profile, resourceScope);
-  const members = await resolveProfileMembers(profile, resourceScope);
+  const members = resolveProfileMembers(profile, resourceScope);
   const memberKeys = Object.fromEntries(
-    Object.keys(members).map((memberId) => [
-      memberId,
-      profileMemberAgentRegistryKey(profile, memberId, resourceScope),
+    Object.keys(members).map((id) => [
+      id,
+      profileMemberAgentRegistryKey(profile, id, resourceScope),
     ]),
   );
-
-  // Remove stale registry entries as well, so a hot reload or process-level
-  // cache reset cannot turn a valid profile save into a duplicate-key error.
-  if (removedProfileKeys.has(profileKey)) {
-    removeRegisteredProfileEntries(registry, profileKey);
-    throw new Error("Profile Agent was removed during registration");
-  }
-  removeRegisteredProfileEntries(registry, profileKey);
+  const workflow =
+    profile.type === "team" && profile.workflow?.steps.length
+      ? compileTeamWorkflow(profile, members, `team-${profileKey}`)
+      : undefined;
+  memberCache.set(scopedProfileKey(profile.id, resourceScope), {
+    updatedAt: profile.updatedAt,
+    agents: members,
+  });
   registry.addAgent(profileAgent, profileKey);
-  for (const [memberId, member] of Object.entries(members)) {
-    registry.addAgent(member, memberKeys[memberId]);
-  }
-
-  const registration = { profile: profileAgent, members, profileKey, memberKeys };
-  const agents = registry.listAgents();
-  if (agents[profileKey] !== profileAgent) {
-    throw new Error(`Profile Agent registration was not accepted for key ${profileKey}`);
-  }
-  for (const [memberId, key] of Object.entries(memberKeys)) {
-    if (agents[key] !== members[memberId]) {
-      throw new Error(`Team member registration was not accepted for ${memberId}`);
-    }
-  }
+  for (const [id, agent] of Object.entries(members)) registry.addAgent(agent, memberKeys[id]);
+  if (workflow) registry.addWorkflow(workflow);
+  const registration = { profile: profileAgent, members, profileKey, memberKeys, workflow };
   registeredProfiles.set(profileKey, { updatedAt: profile.updatedAt, registration });
   return registration;
 }
 
-/**
- * Create and register a real Profile Agent and all of its Team members.
- * Registration is idempotent for an unchanged profile and replaces the
- * previous instance after a profile edit. The returned Profile Agent is the
- * object that chat/session routes must execute, rather than the default Agent.
- */
-export async function ensureProfileAgentsRegistered(
-  registry: AgentRegistry,
-  profile: AgentProfile,
-  resourceScope?: string,
-): Promise<RegisteredProfileAgents> {
-  if (profile.id === DEFAULT_AGENT_PROFILE_ID) {
-    const defaultAgent = Object.values(registry.listAgents()).find(
-      (agent) => agent.id === DEFAULT_AGENT_PROFILE_ID,
-    );
-    if (!defaultAgent) throw new Error("Default work agent is not registered");
-    return {
-      profile: defaultAgent,
-      members: {},
-      profileKey: DEFAULT_AGENT_PROFILE_ID,
-      memberKeys: {},
-    };
-  }
-  const normalizedScope = registrationScope(resourceScope);
-  const profileKey = profileAgentRegistryKey(profile, normalizedScope);
-  removedProfileKeys.delete(profileKey);
-  const cached = registeredProfiles.get(profileKey);
-  if (
-    cached?.updatedAt === profile.updatedAt &&
-    isRegistrationPresent(registry, cached.registration)
-  ) {
-    return cached.registration;
-  }
-
-  const active = registrationLocks.get(profileKey);
-  if (active?.updatedAt === profile.updatedAt) return active.promise;
-
-  const promise = active
-    ? active.promise
-        .catch(() => undefined)
-        .then(() => registerProfileAgents(registry, profile, profileKey, normalizedScope))
-    : registerProfileAgents(registry, profile, profileKey, normalizedScope);
-  registrationLocks.set(profileKey, { updatedAt: profile.updatedAt, promise });
-  try {
-    return await promise;
-  } finally {
-    if (registrationLocks.get(profileKey)?.promise === promise) {
-      registrationLocks.delete(profileKey);
-    }
-  }
-}
-
-/** Remove a profile and all registered Team members from Mastra. */
 export function unregisterProfileAgents(
   registry: AgentRegistry,
   profileId: string,
   resourceScope?: string,
 ): void {
-  const prefix = `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(profileId)}`;
-  removedProfileKeys.add(prefix);
-  memberCache.delete(scopedProfileKey(profileId, resourceScope));
-  removeRegisteredProfileEntries(registry, prefix);
-  for (const [key] of registeredProfiles) {
-    if (key !== prefix) continue;
-    registeredProfiles.delete(key);
+  const key = `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(profileId)}`;
+  for (const [registeredKey, { registration }] of registeredProfiles) {
+    if (!registeredKey.startsWith(`${key}-`)) continue;
+    if (registration.workflow) registry.removeWorkflow(registration.workflow.id);
+    registry.removeAgent(registration.profileKey);
+    for (const memberKey of Object.values(registration.memberKeys)) registry.removeAgent(memberKey);
+    registeredProfiles.delete(registeredKey);
   }
+  memberCache.delete(scopedProfileKey(profileId, resourceScope));
 }
 
 export async function resolveManagedSkillPaths(
@@ -555,176 +352,4 @@ export async function loadManagedSkill(name: string, resourceId?: string) {
   const paths = await resolveManagedSkillPaths([name], resourceId);
   if (!paths.length) return undefined;
   return (await resolveAgentSkills(paths).get(name)) ?? undefined;
-}
-
-// Every team stage carries the original request and its latest result. In particular,
-// native loops feed their output back into the same input schema on every iteration.
-const teamStageSchema = z.object({ request: z.string(), text: z.string() });
-type TeamStage = z.infer<typeof teamStageSchema>;
-
-function conditionMatches(text: string, condition?: AgentWorkflowCondition): boolean {
-  if (!condition) return true;
-  if (condition.operator === "equals") return text.trim() === condition.value.trim();
-  const contains = text.toLowerCase().includes(condition.value.toLowerCase());
-  return condition.operator === "not_contains" ? !contains : contains;
-}
-
-function createApprovalWorkflowStep(step: AgentWorkflowStep) {
-  const title = step.approval?.title || "人工审批";
-  const description = step.approval?.description || "请确认是否继续工作流。";
-  return createStep({
-    id: step.id,
-    inputSchema: teamStageSchema,
-    outputSchema: teamStageSchema,
-    resumeSchema: z.object({ approved: z.boolean(), feedback: z.string().optional() }),
-    suspendSchema: z.object({ title: z.string(), description: z.string() }),
-    execute: async ({ inputData, resumeData, suspend, bail }) => {
-      if (!resumeData) return await suspend({ title, description });
-      if (!resumeData.approved) return bail(inputData);
-      return inputData;
-    },
-  });
-}
-
-/** Compose native Workflow steps; no application run loop or workflow state machine. */
-export async function buildProfileWorkflow(
-  profile: AgentProfile,
-  resourceScope?: string,
-): Promise<{ workflow: AnyWorkflow } | undefined> {
-  const definition = profile.workflow;
-  if (profile.type !== "team" || !definition || definition.strategy === "supervisor")
-    return undefined;
-  if (definition.steps.length === 0) throw new Error("Team workflow requires at least one step");
-  const members = await resolveProfileMembers(profile, resourceScope);
-  const workflowId = `team-${profileAgentRegistryKey(profile, resourceScope)}`;
-  const stage = (step: AgentWorkflowStep, memberId = step.memberId, id = step.id) => {
-    const member = memberId ? members[memberId] : undefined;
-    if (!member) throw new Error(`Workflow step "${step.id}" references a missing member`);
-    return createWorkflow({
-      id: `${workflowId}-${id}`,
-      inputSchema: teamStageSchema,
-      outputSchema: teamStageSchema,
-    })
-      .map(
-        async ({ inputData }) => ({
-          prompt: `${step.prompt || "继续处理这个任务"}: ${inputData.request}\n\n上一步结果: ${inputData.text}`,
-        }),
-        { id: "input" },
-      )
-      .then(cloneStep(createStep(member, { retries: step.retries ?? 0 }), { id: "agent" }))
-      .map(
-        async ({ inputData, getInitData }) => ({
-          request: getInitData<TeamStage>().request,
-          text: inputData.text,
-        }),
-        { id: "result" },
-      )
-      .commit();
-  };
-  const mergeResults = async ({
-    inputData,
-    getInitData,
-  }: {
-    inputData: Record<string, TeamStage | undefined> | TeamStage[];
-    getInitData: () => { request: string };
-  }): Promise<TeamStage> => ({
-    request: getInitData().request,
-    text: Object.values(inputData)
-      .flatMap((result) => (result ? [result.text] : []))
-      .join("\n\n"),
-  });
-  let flow: AnyWorkflow = createWorkflow({
-    id: workflowId,
-    description: `${profile.displayName} 的可执行协作流程`,
-    inputSchema: z.object({ request: z.string().min(1) }),
-    outputSchema: z.object({ text: z.string() }),
-  }).map(async ({ inputData }) => ({ request: inputData.request, text: inputData.request }), {
-    id: "workflow-input",
-  });
-
-  if (definition.strategy === "council") {
-    flow = flow
-      .parallel(definition.steps.map((step) => stage(step)))
-      .map(mergeResults, { id: "parallel-result" });
-  } else {
-    for (const step of definition.steps) {
-      const kind = definition.strategy === "handoff" ? "agent" : (step.kind ?? "agent");
-      if (kind === "approval") {
-        flow = flow.then(createApprovalWorkflowStep(step));
-      } else if (kind === "branch") {
-        if (!step.branch || !step.condition)
-          throw new Error(`Branch "${step.id}" requires targets and a condition`);
-        flow = flow
-          .branch([
-            [
-              async ({ inputData }: { inputData: TeamStage }) =>
-                conditionMatches(inputData.text, step.condition),
-              stage(step, step.branch.onTrueMemberId, `${step.id}-true`),
-            ],
-            [
-              async ({ inputData }: { inputData: TeamStage }) =>
-                !conditionMatches(inputData.text, step.condition),
-              stage(step, step.branch.onFalseMemberId, `${step.id}-false`),
-            ],
-          ])
-          .map(mergeResults, { id: `${step.id}-merge` });
-      } else if (kind === "loop") {
-        const loop = step.loop;
-        if (!loop) throw new Error(`Loop "${step.id}" requires loop settings`);
-        const body = stage(step);
-        if (loop.mode === "foreach") {
-          flow = flow
-            .map(
-              async ({ inputData }: { inputData: TeamStage }) =>
-                inputData.request
-                  .split(/\r?\n/)
-                  .map((request) => request.trim())
-                  .filter(Boolean)
-                  .map((request) => ({ request, text: inputData.text })),
-              { id: `${step.id}-items` },
-            )
-            .foreach(body, { concurrency: loop.concurrency ?? 1 })
-            .map(mergeResults, { id: `${step.id}-merge` });
-        } else {
-          if (!step.condition) throw new Error(`Loop "${step.id}" requires a condition`);
-          const condition = async ({
-            inputData,
-            iterationCount,
-          }: {
-            inputData: TeamStage;
-            iterationCount: number;
-          }) =>
-            loop.mode === "while"
-              ? conditionMatches(inputData.text, step.condition) &&
-                iterationCount < loop.maxIterations
-              : conditionMatches(inputData.text, step.condition) ||
-                iterationCount >= loop.maxIterations;
-          flow =
-            loop.mode === "while" ? flow.dowhile(body, condition) : flow.dountil(body, condition);
-        }
-      } else {
-        flow = flow.then(stage(step));
-      }
-    }
-  }
-  if (definition.synthesis) {
-    if (!profileAgentFactory) throw new Error("Profile Agent factory is not initialized");
-    // The synthesizer must not expose the same workflow recursively.
-    const synthesizer = profileAgentFactory({ ...profile, workflow: undefined }, resourceScope);
-    flow = flow
-      .map(
-        async ({ inputData }: { inputData: TeamStage }) => ({
-          prompt: `请汇总以下团队结果并给出最终答复。原始请求: ${inputData.request}\n\n团队结果: ${inputData.text}`,
-        }),
-        { id: "synthesis-input" },
-      )
-      .then(cloneStep(createStep(synthesizer), { id: "synthesis" }));
-  }
-  return {
-    workflow: flow
-      .map(async ({ inputData }: { inputData: { text: string } }) => ({ text: inputData.text }), {
-        id: "workflow-result",
-      })
-      .commit(),
-  };
 }

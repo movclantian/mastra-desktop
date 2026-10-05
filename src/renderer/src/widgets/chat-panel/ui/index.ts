@@ -1,6 +1,5 @@
 export * from "./agent-member-stream";
 export * from "./agent-panels";
-export * from "./agent-selector";
 export * from "./approval-selector";
 export * from "./assistant-trace";
 export * from "./avatars";

@@ -82,7 +82,10 @@ export function ChatModeSelector() {
             const hint = t(`chat:modes.${id}.hint`, meta.hint);
             return (
               <DropdownMenuSub key={id}>
-                <DropdownMenuSubTrigger className="items-start gap-2 py-2">
+                <DropdownMenuSubTrigger
+                  className="items-start gap-2 py-2"
+                  onClick={() => void setModeId(id)}
+                >
                   <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5">
                     <span className="flex items-center gap-1.5">
@@ -92,7 +95,10 @@ export function ChatModeSelector() {
                     <span className="whitespace-normal text-[11px] leading-snug text-muted-foreground">
                       {desc}
                     </span>
-                    <Badge className="h-4 w-fit px-1.5 text-[10px]" variant="secondary">
+                    <Badge
+                      className="h-auto w-fit px-1.5 py-0.5 text-left text-[10px] leading-snug break-words whitespace-normal"
+                      variant="secondary"
+                    >
                       {hint}
                     </Badge>
                   </span>

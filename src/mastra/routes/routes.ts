@@ -5,12 +5,7 @@ import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 
-import {
-  agentProfilesRoute,
-  assistAgentProfileRoute,
-  deleteAgentProfileRoute,
-  saveAgentProfileRoute,
-} from "./agents";
+import { agentProfilesRoute, assistAgentProfileRoute, deleteAgentProfileRoute } from "./agents";
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
@@ -91,6 +86,7 @@ import {
   uploadSkillRoute,
 } from "./skills";
 import { storageInfoRoute } from "./storage";
+import { teamWorkflowRoutes } from "./team-runs";
 import { threadRoutes } from "./threads/threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import { usageSummaryRoute } from "./usage";
@@ -108,6 +104,7 @@ import {
 } from "./workspace";
 
 export const workRoutes = [
+  ...teamWorkflowRoutes,
   inlineCompletionRoute,
   inlineEditRoute,
   authLoginRoute,
@@ -116,7 +113,6 @@ export const workRoutes = [
   authMeRoute,
   ...backgroundTaskRoutes,
   agentProfilesRoute,
-  saveAgentProfileRoute,
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
@@ -200,5 +196,3 @@ export const workRoutes = [
   updateSkillRoute,
   deleteSkillRoute,
 ];
-
-export { workChatRoute } from "./chat";

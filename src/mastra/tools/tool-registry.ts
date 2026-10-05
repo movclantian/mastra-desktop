@@ -10,7 +10,7 @@ import {
   libraryGraphSearchTool,
   libraryVectorSearchTool,
 } from "../rag/tools";
-import { DEFAULT_MASTRA_DATA_DIRECTORY, getStorageDirectory } from "../storage";
+import { DEFAULT_MASTRA_DATA_DIRECTORY, getStorageDirectory } from "../storage/database";
 
 /**
  * Code Mode 工具 (docs/en/docs/agents/code-mode.mdx, reference/tools/create-code-mode.mdx):

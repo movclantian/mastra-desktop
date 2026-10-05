@@ -12,8 +12,6 @@ files:
   # against the app-level production dependencies. Do not duplicate the
   # deployer's pnpm tree in app.asar.unpacked.
   - '!.mastra/output/node_modules/**'
-  - 'resources/icon.png'
-  - 'resources/browsers/**'
   - 'resources/builtin-skills/**'
   - '!**/.vscode/*'
   # Source maps are useful for development but are not loaded by the packaged
@@ -35,7 +33,6 @@ asarUnpack:
   # Only these directories are consumed through filesystem paths outside the
   # asar. The icon is loaded from app.asar by the main-process asset import;
   # keeping all of resources/** unpacked duplicated it in every installer.
-  - resources/browsers/**
   - resources/builtin-skills/**
   - 'node_modules/node-pty/**'
 win:

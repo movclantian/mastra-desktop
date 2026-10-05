@@ -4,6 +4,7 @@ import type {
   ToolCategory,
 } from "@mastra/core/agent-controller";
 import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace";
+import { z } from "zod";
 
 /** Workbench category catalog and persisted native Controller permission rules. */
 const DEFAULT_CATEGORY_POLICIES = {
@@ -23,9 +24,22 @@ const PERMISSION_POLICY_KEYS = {
 export const TOOL_CATEGORIES = Object.keys(DEFAULT_CATEGORY_POLICIES) as ToolCategory[];
 export const PERMISSION_POLICIES = Object.keys(PERMISSION_POLICY_KEYS) as PermissionPolicy[];
 
+export const permissionRulesSchema = z.object({
+  categories: z.partialRecord(z.enum(TOOL_CATEGORIES), z.enum(PERMISSION_POLICIES)),
+  tools: z.record(z.string(), z.enum(PERMISSION_POLICIES)),
+});
+
+/** Validate product-owned state without stripping native OM/subagent state keys. */
+export const workbenchSessionStateSchema = z
+  .object({
+    permissionRules: permissionRulesSchema.optional(),
+    yolo: z.boolean().optional(),
+  })
+  .passthrough();
+
 export type { PermissionPolicy, PermissionRules, ToolCategory };
 
-/** chat 路由 → Agent defaultOptions 传递本线程生效规则的 RequestContext key */
+/** 已认证会话与定时任务传给 Agent 的当前线程权限规则。 */
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
 
@@ -151,28 +165,13 @@ export function toolCategoryOf(toolName: string): ToolCategory {
 // 规则解析
 // ---------------------------------------------------------------------------
 
-function isPolicy(value: unknown): value is PermissionPolicy {
-  return typeof value === "string" && (PERMISSION_POLICIES as readonly string[]).includes(value);
-}
-
-/** 从 thread.metadata / RequestContext 读回规则(容错:非法字段丢弃,缺失回落默认) */
+/** Thread metadata is durable; each Session receives its own validated rules. */
 export function parsePermissionRules(value: unknown): PermissionRules {
-  if (typeof value !== "object" || value === null) return DEFAULT_PERMISSION_RULES;
-  const raw = value as { categories?: unknown; tools?: unknown };
-  const categories: PermissionRules["categories"] = { ...DEFAULT_PERMISSION_RULES.categories };
-  if (typeof raw.categories === "object" && raw.categories !== null) {
-    for (const category of TOOL_CATEGORIES) {
-      const policy = (raw.categories as Record<string, unknown>)[category];
-      if (isPolicy(policy)) categories[category] = policy;
-    }
-  }
-  const tools: PermissionRules["tools"] = { ...DEFAULT_PERMISSION_RULES.tools };
-  if (typeof raw.tools === "object" && raw.tools !== null) {
-    for (const [toolName, policy] of Object.entries(raw.tools as Record<string, unknown>)) {
-      if (isPolicy(policy)) tools[toolName] = policy;
-    }
-  }
-  return { categories, tools };
+  const rules = permissionRulesSchema.parse(value ?? { categories: {}, tools: {} });
+  return {
+    categories: { ...DEFAULT_PERMISSION_RULES.categories, ...rules.categories },
+    tools: { ...DEFAULT_PERMISSION_RULES.tools, ...rules.tools },
+  };
 }
 
 /** Official Controller modes shared by the workbench and agent request handlers. */
@@ -231,7 +230,7 @@ export function listWorkModes(): WorkMode[] {
 export const DEFAULT_MODE_ID: WorkModeId =
   WORK_MODES.find((mode) => mode.metadata?.default)?.id ?? "plan";
 
-/** chat 路由 → Agent 动态 instructions/tools 传递当前模式的 RequestContext key */
+/** 会话与定时任务传给 Agent 动态 instructions/tools 的当前模式。 */
 export const MODE_ID_CONTEXT_KEY = "mastra-work:mode-id";
 
 /** 按 id 取模式;非法或缺失回落默认模式(因此路由层不必再校验 modeId) */

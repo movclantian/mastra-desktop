@@ -8,7 +8,7 @@ import { mkdir, readFile, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { nanoid } from "nanoid";
-import { getStorageDirectory } from "../../storage";
+import { getStorageDirectory } from "../../storage/database";
 import {
   deleteAssetVectors,
   extractText,

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, writeSync } from "node:fs";
 import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWrite, getStorageDirectory, resourceIdFromContext } from "./index";
+import { atomicWrite, getStorageDirectory, userIdFromContext } from "./database";
 
 export type ContentEncoding = BufferEncoding | "binary";
 
@@ -274,7 +274,7 @@ export async function archiveTextContent(
   context: { requestContext?: { get?: (key: string) => unknown } },
   options: { kind: "web"; source?: string; contentType?: string },
 ) {
-  const userId = resourceIdFromContext(context.requestContext);
+  const userId = userIdFromContext(context.requestContext);
   if (!userId) throw new Error("Authenticated user is required");
   return putContentObject(text, {
     userId,

@@ -6,7 +6,7 @@ import { createReadStream } from "node:fs";
 import { type FileHandle, mkdir, open, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { nanoid } from "nanoid";
-import { getStorageDirectory } from "../../storage";
+import { getStorageDirectory } from "../../storage/database";
 import { normalizeFilename, resolveMediaType } from "../document/indexing";
 import {
   type LibraryAsset,

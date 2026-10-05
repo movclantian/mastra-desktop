@@ -1,6 +1,6 @@
 import type { MetricRecord, MetricsFilter, ObservabilityStorage } from "@mastra/core/storage";
 import { getProvidersConfig, routerPrefix, type UserProviderConfig } from "./models/providers";
-import { appStorage } from "./storage";
+import { appStorage } from "./storage/database";
 
 const INPUT_TOKENS_METRIC = "mastra_model_total_input_tokens";
 const OUTPUT_TOKENS_METRIC = "mastra_model_total_output_tokens";

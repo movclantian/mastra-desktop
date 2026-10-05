@@ -11,8 +11,11 @@ import {
 } from "@mastra/core/signals";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { appStorage, getLibsqlClient } from "../storage";
-import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
+import { appStorage, getLibsqlClient } from "../storage/database";
+import {
+  WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
+  WORKSPACE_THREAD_ID_CONTEXT_KEY,
+} from "../workspace/workspace-manager";
 
 // SignalProvider.__registerMastra only stores a Mastra reference; its registry is an in-memory
 // Map (reference/signals/signal-provider.mdx). This table supplies restart persistence only.

@@ -28,8 +28,8 @@ import {
   type SkillsShSkill,
   saveSkillMarketplaces,
 } from "../skills/marketplaces";
-import { resourceIdFromContext } from "../storage";
-import { getManagedSkillsDirectory } from "../workspace";
+import { userIdFromContext } from "../storage/database";
+import { getManagedSkillsDirectory } from "../workspace/workspace-manager";
 
 const MAX_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_UNPACKED_BYTES = 100 * 1024 * 1024;
@@ -37,8 +37,8 @@ const MAX_SKILL_ENTRIES = 2_000;
 function builtinSkillsDirectory(): string {
   // Built-ins are shipped from this repository. Do not reach into @mastra/editor/ee:
   // that directory is covered by a separate Enterprise Edition license.
-  const browsersPath = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (browsersPath) return resolve(dirname(browsersPath), "builtin-skills");
+  const configured = process.env.MASTRA_BUILTIN_SKILLS_DIRECTORY;
+  if (configured) return resolve(configured);
   return resolve(process.cwd(), "resources", "builtin-skills");
 }
 
@@ -220,7 +220,7 @@ export const skillsRoute = createRoute({
   onValidationError: workValidationError,
   queryParamSchema: z.object({}).strict(),
   handler: async ({ requestContext }) => {
-    const root = getManagedSkillsDirectory(resourceIdFromContext(requestContext));
+    const root = getManagedSkillsDirectory(userIdFromContext(requestContext));
     const entries = await readdir(root, { withFileTypes: true });
     const skills = (
       await Promise.all(
@@ -242,7 +242,7 @@ export const skillRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   handler: async ({ name, requestContext }) => {
     const skill = await readLocalSkill(
-      resolve(getManagedSkillsDirectory(resourceIdFromContext(requestContext)), name),
+      resolve(getManagedSkillsDirectory(userIdFromContext(requestContext)), name),
     ).catch(missingSkill);
     if (!skill) throw workError("SKILL_NOT_FOUND");
     return { skill };
@@ -267,7 +267,7 @@ export const builtinSkillsRoute = createRoute({
         .filter((entry) => entry.isDirectory())
         .map((entry) => readLocalSkill(resolve(root, entry.name)).catch(missingSkill)),
     );
-    const marketplaces = await getSkillMarketplaces(resourceIdFromContext(requestContext));
+    const marketplaces = await getSkillMarketplaces(userIdFromContext(requestContext));
     const externalSkills = (
       await Promise.all(
         marketplaces
@@ -340,7 +340,7 @@ export const skillMarketplacesRoute = createRoute({
   onValidationError: workValidationError,
   queryParamSchema: z.object({}).strict(),
   handler: async ({ requestContext }) => ({
-    marketplaces: await getSkillMarketplaces(resourceIdFromContext(requestContext)),
+    marketplaces: await getSkillMarketplaces(userIdFromContext(requestContext)),
   }),
 });
 
@@ -352,7 +352,7 @@ export const marketplaceSkillRoute = createRoute({
   pathParamSchema: marketplaceIdSchema,
   queryParamSchema: z.object({ path: marketplaceSourcePathSchema }),
   handler: async ({ id, path, requestContext }) => {
-    const resourceId = resourceIdFromContext(requestContext);
+    const resourceId = userIdFromContext(requestContext);
     if (!(await getSkillMarketplaces(resourceId)).some((marketplace) => marketplace.id === id))
       throw workError("SKILL_MARKETPLACE_NOT_FOUND");
     return { skill: await getMarketplaceSkillDetail(id, path, resourceId) };
@@ -449,7 +449,7 @@ export const saveSkillMarketplaceRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: marketplaceSchema,
   handler: async ({ marketplace, requestContext }) => {
-    const resourceId = resourceIdFromContext(requestContext);
+    const resourceId = userIdFromContext(requestContext);
     const current = await getSkillMarketplaces(resourceId);
     await saveSkillMarketplaces(
       [...current.filter((item) => item.id !== marketplace.id), marketplace],
@@ -468,7 +468,7 @@ export const deleteSkillMarketplaceRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: z.object({}).strict().optional(),
   handler: async ({ id, requestContext }) => {
-    const resourceId = resourceIdFromContext(requestContext);
+    const resourceId = userIdFromContext(requestContext);
     const current = await getSkillMarketplaces(resourceId);
     if (!current.some((marketplace) => marketplace.id === id))
       throw workError("SKILL_MARKETPLACE_NOT_FOUND");
@@ -489,7 +489,7 @@ export const installMarketplaceSkillRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: z.object({ path: marketplaceSourcePathSchema }),
   handler: async ({ id, path, requestContext }) => {
-    const resourceId = resourceIdFromContext(requestContext);
+    const resourceId = userIdFromContext(requestContext);
     if (!(await getSkillMarketplaces(resourceId)).some((marketplace) => marketplace.id === id))
       throw workError("SKILL_MARKETPLACE_NOT_FOUND");
     const root = await installMarketplaceSkill(id, path, resourceId).catch(installConflict);
@@ -512,10 +512,7 @@ export const installBuiltinSkillRoute = createRoute({
     const validation = validateSkillContent({ content, directoryName: name });
     if (!validation.valid)
       throw workError("SKILL_PACKAGE_INVALID", { text: validation.errors.join("\n") });
-    const targetRoot = resolve(
-      getManagedSkillsDirectory(resourceIdFromContext(requestContext)),
-      name,
-    );
+    const targetRoot = resolve(getManagedSkillsDirectory(userIdFromContext(requestContext)), name);
     await mkdir(targetRoot).catch(installConflict);
     try {
       await cp(source, targetRoot, { recursive: true, errorOnExist: true, force: false });
@@ -535,11 +532,9 @@ export const installSkillsShSkillRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: skillsShIdentitySchema,
   handler: async ({ source, slug, requestContext }) => {
-    const root = await installSkillsShSkill(
-      source,
-      slug,
-      resourceIdFromContext(requestContext),
-    ).catch(installConflict);
+    const root = await installSkillsShSkill(source, slug, userIdFromContext(requestContext)).catch(
+      installConflict,
+    );
     return { skill: await readLocalSkill(root) };
   },
 });
@@ -555,7 +550,7 @@ export const uploadSkillRoute = registerApiRoute("/work/skills", {
     if (value.size > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
     const skill = await unpackSkillArchive(
       Buffer.from(await value.arrayBuffer()),
-      resourceIdFromContext(c.get("requestContext")),
+      userIdFromContext(c.get("requestContext")),
     );
     return c.json({ skill }, 201);
   },
@@ -578,7 +573,7 @@ export const importSkillRoute = createRoute({
       throw new HTTPException(502, { message: `下载技能包失败（HTTP ${response.status}）` });
     const buffer = Buffer.from(await response.arrayBuffer());
     if (buffer.byteLength > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
-    return { skill: await unpackSkillArchive(buffer, resourceIdFromContext(requestContext)) };
+    return { skill: await unpackSkillArchive(buffer, userIdFromContext(requestContext)) };
   },
 });
 
@@ -591,7 +586,7 @@ export const deleteSkillRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   bodySchema: z.object({}).strict().optional(),
   handler: async ({ name, requestContext }) => {
-    const target = resolve(getManagedSkillsDirectory(resourceIdFromContext(requestContext)), name);
+    const target = resolve(getManagedSkillsDirectory(userIdFromContext(requestContext)), name);
     await rm(target, { recursive: true, force: true });
     return { ok: true };
   },
@@ -612,7 +607,7 @@ export const updateSkillRoute = createRoute({
     })
     .transform((updates) => ({ updates })),
   handler: async ({ name, updates, requestContext }) => {
-    const target = resolve(getManagedSkillsDirectory(resourceIdFromContext(requestContext)), name);
+    const target = resolve(getManagedSkillsDirectory(userIdFromContext(requestContext)), name);
     const skillMdPath = resolve(target, "SKILL.md");
     const existingContent = await readFile(skillMdPath, "utf8").catch(missingSkill);
     if (existingContent === null) throw workError("SKILL_NOT_FOUND");

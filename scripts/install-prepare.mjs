@@ -1,30 +1,16 @@
+// Ensure Electron itself is installed. Browser automation uses Electron or Firecrawl.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// 启动/构建前的本地运行时就绪检查，两步各自「已就绪则跳过」：
-//   1. Electron 二进制：electron 自 v43 起 npm 包不再声明 postinstall，`pnpm install` 只会装上
-//      JS 包装而不会下载 node_modules/electron/dist 与 path.txt；electron-vite 只读 path.txt，
-//      缺文件即抛 "Electron uninstall"。这里直接调用 electron 自带的 install.js 补齐。
-//   2. Playwright Chromium：内嵌浏览器视图与 browser agent 需要 resources/browsers 下的浏览器。
-// 可用环境变量：
-//   INSTALL_PREPARE_SKIP_ELECTRON=1 / INSTALL_PREPARE_SKIP_BROWSER=1  跳过对应步骤
-//   INSTALL_PREPARE_NO_MIRROR=1                                       不走镜像，直连官方源
-//   ELECTRON_MIRROR / PLAYWRIGHT_DOWNLOAD_HOST                        覆盖各自的镜像地址
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const browserPath = resolve(projectRoot, "resources", "browsers");
 const electronDir = join(projectRoot, "node_modules", "electron");
-const playwrightCli = join(projectRoot, "node_modules", "playwright-core", "cli.js");
 
 const ELECTRON_MIRROR = "https://cdn.npmmirror.com/binaries/electron/";
-const PLAYWRIGHT_MIRROR = "https://cdn.npmmirror.com/binaries/playwright";
 
 const truthy = (value) => ["1", "true", "yes"].includes((value ?? "").trim().toLowerCase());
 const useMirror = process.env.INSTALL_PREPARE_NO_MIRROR !== "1";
-const browserEnv = { PLAYWRIGHT_BROWSERS_PATH: browserPath };
-
-mkdirSync(browserPath, { recursive: true });
 
 // 镜像是国内 CDN，直连最优：清空代理变量并设 NO_PROXY=*，避免被出口代理绕路后频繁 ECONNRESET。
 const directEnv = { ...process.env };
@@ -42,10 +28,9 @@ directEnv.NO_PROXY = "*";
 directEnv.no_proxy = "*";
 
 /** 回退官方源时保留系统代理设置，并清掉镜像变量。 */
-function officialEnv(extra) {
-  const env = { ...process.env, ...extra };
+function officialEnv() {
+  const env = { ...process.env };
   delete env.ELECTRON_MIRROR;
-  delete env.PLAYWRIGHT_DOWNLOAD_HOST;
   return env;
 }
 
@@ -81,24 +66,6 @@ function electronInstalled() {
   }
 }
 
-function expectedChromiumExecutable() {
-  try {
-    const manifest = JSON.parse(
-      readFileSync(join(projectRoot, "node_modules", "playwright-core", "browsers.json"), "utf8"),
-    );
-    const revision = manifest.browsers?.find((browser) => browser.name === "chromium")?.revision;
-    if (!revision) return undefined;
-    const browserRoot = join(browserPath, `chromium-${revision}`);
-    if (process.platform === "win32") return join(browserRoot, "chrome-win64", "chrome.exe");
-    if (process.platform === "darwin") {
-      return join(browserRoot, "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium");
-    }
-    return join(browserRoot, "chrome-linux", "chrome");
-  } catch {
-    return undefined;
-  }
-}
-
 const electronScript = join(electronDir, "install.js");
 const electronMirror = process.env.ELECTRON_MIRROR ?? ELECTRON_MIRROR;
 
@@ -131,29 +98,4 @@ if (truthy(process.env.INSTALL_PREPARE_SKIP_ELECTRON)) {
     );
   }
   console.log("[install-prepare] Electron 已就绪");
-}
-
-const chromiumExecutable = expectedChromiumExecutable();
-
-if (truthy(process.env.INSTALL_PREPARE_SKIP_BROWSER)) {
-  console.log("[install-prepare] 已通过 INSTALL_PREPARE_SKIP_BROWSER 跳过 Chromium 检查");
-} else if (chromiumExecutable && existsSync(chromiumExecutable)) {
-  console.log(`[install-prepare] 已找到 Chromium，跳过下载: ${chromiumExecutable}`);
-} else {
-  const playwrightMirror = process.env.PLAYWRIGHT_DOWNLOAD_HOST ?? PLAYWRIGHT_MIRROR;
-  download(
-    "Chromium",
-    [playwrightCli, "install", "chromium"],
-    [
-      ...(useMirror
-        ? [
-            {
-              source: `镜像 ${playwrightMirror} (直连)`,
-              env: { ...directEnv, ...browserEnv, PLAYWRIGHT_DOWNLOAD_HOST: playwrightMirror },
-            },
-          ]
-        : []),
-      { source: "官方源 cdn.playwright.dev", env: officialEnv(browserEnv) },
-    ],
-  );
 }

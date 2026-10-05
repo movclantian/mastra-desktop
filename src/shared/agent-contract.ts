@@ -1,0 +1,180 @@
+import { z } from "zod";
+
+const identifier = z
+  .string()
+  .trim()
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
+const conditionSchema = z
+  .object({
+    operator: z.enum(["contains", "equals", "not_contains"]),
+    value: z.string().min(1),
+  })
+  .strict();
+
+export const agentMemberSchema = z
+  .object({
+    id: identifier,
+    name: z.string().trim().min(1),
+    profession: z.string().default(""),
+    description: z.string().default(""),
+    instructions: z.string().trim().min(1),
+    skills: z.array(z.string()).default([]),
+    memoryScope: z.enum(["thread", "resource"]).default("thread"),
+    delegates: z.array(identifier).default([]),
+  })
+  .strict();
+
+const stepBase = {
+  id: identifier,
+  prompt: z.string().optional(),
+  context: z.enum(["request", "previous"]).default("previous"),
+  retries: z.number().int().min(0).max(5).default(0),
+};
+
+export const agentWorkflowStepSchema = z.discriminatedUnion("kind", [
+  z.object({ ...stepBase, kind: z.literal("agent"), memberId: identifier }).strict(),
+  z
+    .object({
+      ...stepBase,
+      kind: z.literal("council"),
+      memberIds: z.array(identifier).min(2),
+      judgeMemberId: identifier,
+    })
+    .strict(),
+  z
+    .object({
+      id: identifier,
+      kind: z.literal("approval"),
+      approval: z.object({ title: z.string().min(1), description: z.string() }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...stepBase,
+      kind: z.literal("branch"),
+      condition: conditionSchema,
+      branch: z.object({ onTrueMemberId: identifier, onFalseMemberId: identifier }).strict(),
+    })
+    .strict(),
+  z
+    .object({
+      ...stepBase,
+      kind: z.literal("loop"),
+      memberId: identifier,
+      condition: conditionSchema.optional(),
+      loop: z.discriminatedUnion("mode", [
+        z
+          .object({
+            mode: z.enum(["until", "while"]),
+            maxIterations: z.number().int().min(1).max(20),
+          })
+          .strict(),
+        z
+          .object({
+            mode: z.literal("foreach"),
+            concurrency: z.number().int().min(1).max(8).default(1),
+          })
+          .strict(),
+      ]),
+    })
+    .strict(),
+]);
+
+// Strategy selects the entry point. Councils and supervisors compose inside the graph.
+export const agentWorkflowSchema = z
+  .object({
+    strategy: z.enum(["supervisor", "workflow"]),
+    steps: z.array(agentWorkflowStepSchema),
+  })
+  .strict();
+
+export type AgentMemberDefinition = z.infer<typeof agentMemberSchema>;
+export type AgentWorkflowStep = z.infer<typeof agentWorkflowStepSchema>;
+export type AgentWorkflowCondition = z.infer<typeof conditionSchema>;
+export type AgentWorkflowDefinition = z.infer<typeof agentWorkflowSchema>;
+export type AgentProfileType = "agent" | "team";
+
+export interface AgentProfile {
+  id: string;
+  type: AgentProfileType;
+  name: string;
+  displayName: string;
+  profession: string;
+  description: string;
+  instructions: string;
+  skills: string[];
+  members: AgentMemberDefinition[];
+  workflow?: AgentWorkflowDefinition;
+  categoryId?: string;
+  tags: string[];
+  quickPrompts: string[];
+  avatar?: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export function validateAgentTeam(
+  profile: Pick<AgentProfile, "type" | "members" | "workflow">,
+): void {
+  if (profile.type !== "team") {
+    if (profile.members.length || profile.workflow)
+      throw new Error("单 Agent 不能配置团队成员或流程");
+    return;
+  }
+  const members = new Map(profile.members.map((member) => [member.id, member]));
+  if (!members.size || members.size !== profile.members.length)
+    throw new Error("团队成员 ID 必须非空且唯一");
+  const visited = new Set<string>();
+  const visit = (id: string, path: string[]) => {
+    const member = members.get(id);
+    if (!member) throw new Error(`不存在的团队成员: ${id}`);
+    if (path.includes(id)) throw new Error(`成员委派不能成环: ${[...path, id].join(" → ")}`);
+    if (visited.has(id)) return;
+    for (const target of member.delegates) visit(target, [...path, id]);
+    visited.add(id);
+  };
+  for (const id of members.keys()) visit(id, []);
+  const definition = profile.workflow;
+  if (!definition) throw new Error("团队必须选择执行方式");
+  if (definition.strategy === "workflow" && !definition.steps.length)
+    throw new Error("显式流程至少需要一个步骤");
+  const ids = new Set<string>();
+  for (const step of definition.steps) {
+    const generated = [
+      step.id,
+      ...(step.kind === "council"
+        ? [
+            ...step.memberIds.map((id) => `${step.id}-${id}`),
+            `${step.id}-opinions`,
+            `${step.id}-synthesis`,
+          ]
+        : step.kind === "branch"
+          ? [`${step.id}-true`, `${step.id}-false`, `${step.id}-merge`]
+          : step.kind === "loop"
+            ? [`${step.id}-items`, `${step.id}-merge`]
+            : []),
+    ];
+    for (const id of generated) {
+      if (["workflow-input", "workflow-result"].includes(id) || ids.has(id))
+        throw new Error(`重复或保留的步骤 ID: ${id}`);
+      ids.add(id);
+    }
+    const targets =
+      step.kind === "approval"
+        ? []
+        : step.kind === "branch"
+          ? [step.branch.onTrueMemberId, step.branch.onFalseMemberId]
+          : step.kind === "council"
+            ? [...step.memberIds, step.judgeMemberId]
+            : [step.memberId];
+    for (const id of targets)
+      if (!members.has(id)) throw new Error(`步骤 ${step.id} 引用了不存在的成员 ${id}`);
+    if (step.kind === "council" && new Set(step.memberIds).size !== step.memberIds.length)
+      throw new Error(`评议 ${step.id} 的成员不能重复`);
+    if (step.kind === "loop" && step.loop.mode !== "foreach" && !step.condition)
+      throw new Error(`循环 ${step.id} 缺少条件`);
+    if (step.kind === "loop" && step.loop.mode === "foreach" && step.condition)
+      throw new Error(`foreach ${step.id} 不接受循环终止条件`);
+  }
+}

@@ -7,7 +7,7 @@
  * MCP:docs/en/reference/tools/mcp-client.mdx；AnySearch 协议:
  * https://github.com/anysearch-ai/anysearch-mcp-server#mcp-transport
  * 引擎 + 强度档(fast/balanced/deep)经 RequestContext 传入,由 Agent 的动态
- * tools / instructions 消费(见 src/mastra/agents/index.ts)。
+ * tools / instructions 消费(见 src/mastra/agents/work-agent.ts)。
  */
 import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
@@ -23,13 +23,13 @@ import {
   searchCredentialPurpose,
 } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
-import { getAppConfig, setAppConfig } from "../storage";
 import {
   archiveTextContent,
   contentObjectReference,
   contentReferenceText,
   contentSummary,
 } from "../storage/content-objects";
+import { getAppConfig, setAppConfig } from "../storage/database";
 
 export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];

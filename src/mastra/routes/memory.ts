@@ -1,6 +1,6 @@
 /**
  * 记忆路由:读写用户可配置的 Memory 参数(数据库 app_config 表,保存后实时生效)。
- * Memory 主体见 src/mastra/memory/index.ts,
+ * Memory 主体见 src/mastra/memory/memory-runtime.ts,
  * 参数语义参考 docs/en/docs/memory/{overview,semantic-recall,working-memory}.mdx。
  */
 
@@ -9,7 +9,7 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { workError, workValidationError } from "../errors";
-import { getMemoryConfig, memoryConfigSchema, saveMemoryConfig } from "../memory";
+import { getMemoryConfig, memoryConfigSchema, saveMemoryConfig } from "../memory/memory-runtime";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 // GET /work/memory — 读取当前记忆配置

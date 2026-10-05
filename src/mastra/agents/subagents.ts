@@ -3,32 +3,32 @@ import type { ToolsInput } from "@mastra/core/agent";
 import { Agent } from "@mastra/core/agent";
 import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
-import { getMemory } from "../memory";
-import { resolveContextModel, resolveContextModelFamily } from "../models/providers";
+import { getMemory } from "../memory/memory-runtime";
+import { resolveAgentModel, resolveContextModelFamily } from "../models/providers";
 import {
   libraryDocumentChunkerTool,
   libraryGraphSearchTool,
   libraryVectorSearchTool,
 } from "../rag/tools";
+import { userIdFromContext } from "../storage/database";
+import { writePlanDraftTool } from "../tools/plan-draft";
 import {
   CODE_MODE_EXTERNAL_TOOL_NAMES,
   codeMode,
   parseWebSearchSelection,
   resolveWebSearchTools,
   WEB_SEARCH_CONTEXT_KEY,
-} from "../tools";
-import { writePlanDraftTool } from "../tools/plan-draft";
+} from "../tools/tool-registry";
 import { webSearchArchiveProcessor } from "../tools/web-search";
 import {
   getThreadWorkspace,
   SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
-} from "../workspace";
+} from "../workspace/workspace-manager";
 import {
   buildGuardrailErrorProcessors,
   buildGuardrailInputProcessors,
@@ -46,30 +46,20 @@ import {
 } from "./permissions";
 import {
   agentsMdProcessor,
-  editorStateProcessor,
   libraryAttachmentProcessor,
-  terminalStateProcessor,
-  workbenchStateProcessor,
+  libraryContextProcessor,
 } from "./processors";
-
-function createSubagentModelResolver() {
-  return async ({ requestContext }: { requestContext: RequestContextLike }) => {
-    const model = await resolveContextModel(requestContext);
-    if (model) return model;
-    throw new Error("子 Agent 未能解析到当前请求模型,请先在设置中配置供应商");
-  };
-}
+import { TEAM_WORKFLOW_CONTEXT_KEY } from "./team-workflow";
 
 function resolveSubagentWorkspace(requestContext: RequestContextLike) {
-  const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
-  const scopedResourceId = typeof resourceId === "string" ? resourceId : undefined;
+  const resourceId = userIdFromContext(requestContext);
   const path = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspacePath = typeof path === "string" && path.trim() ? path.trim() : process.cwd();
   const threadId = requestContext.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
   return getThreadWorkspace(
     workspacePath,
     typeof threadId === "string" ? threadId : undefined,
-    scopedResourceId,
+    resourceId,
   );
 }
 
@@ -83,7 +73,7 @@ const explorerAgent = new Agent({
   description: "快速搜集信息、探查环境与资料,并给出结构化汇总。",
   instructions:
     "你是探索子 Agent (Explorer)。\n专注于迅速探查指定目录、文档或网络信息,用清晰、简短的结构化列表返回事实与关键结论。",
-  model: createSubagentModelResolver(),
+  model: resolveAgentModel,
   tools: ({ requestContext }) => resolveSharedTools(requestContext),
   memory: ({ requestContext }) => getMemory({ requestContext }),
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
@@ -93,12 +83,11 @@ const explorerAgent = new Agent({
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
-    buildGuardrailErrorProcessors(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined),
+    buildGuardrailErrorProcessors(userIdFromContext(requestContext)),
   defaultOptions: async ({ requestContext }) => {
-    const { maxProcessorRetries } = await getGuardrailsConfig(
-      requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-    );
+    const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
+      untilIdle: true,
       ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
     };
   },
@@ -115,7 +104,7 @@ const reviewerAgent = new Agent({
   description: "审查代码变更、规范、边界条件与缺陷风险,给出针对性的改进建议。",
   instructions:
     "你是审查子 Agent (Reviewer)。\n专注于静态分析、逻辑校验、架构一致性与安全隐患排查,输出严谨的技术评审意见。",
-  model: createSubagentModelResolver(),
+  model: resolveAgentModel,
   tools: ({ requestContext }) => resolveSharedTools(requestContext),
   memory: ({ requestContext }) => getMemory({ requestContext }),
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
@@ -125,12 +114,11 @@ const reviewerAgent = new Agent({
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
-    buildGuardrailErrorProcessors(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined),
+    buildGuardrailErrorProcessors(userIdFromContext(requestContext)),
   defaultOptions: async ({ requestContext }) => {
-    const { maxProcessorRetries } = await getGuardrailsConfig(
-      requestContext.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-    );
+    const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
+      untilIdle: true,
       ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
     };
   },
@@ -170,28 +158,28 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
     ...(await resolveWebSearchTools(
       parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
       await resolveContextModelFamily(requestContext),
-      requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
+      userIdFromContext(requestContext),
     )),
-    ...(await getConfiguredMcpTools(
-      requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-    )),
+    ...(await getConfiguredMcpTools(userIdFromContext(requestContext))),
   };
 }
 
 /** An unattended run exposes only tools authorized by its persisted mode and permission rules. */
-const scheduledToolPolicy = {
-  id: "scheduled-tool-policy",
+const scopedToolPolicy = {
+  id: "scoped-tool-policy",
   processInputStep({ requestContext, tools, activeTools }) {
-    if (requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) !== true) return;
+    const scheduled = requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true;
+    if (!scheduled && requestContext?.get(TEAM_WORKFLOW_CONTEXT_KEY) !== true) return;
     const rules = parsePermissionRules(requestContext.get(PERMISSION_RULES_CONTEXT_KEY));
     const mode = resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY));
     return {
       activeTools: (activeTools ?? Object.keys(tools ?? {})).filter(
         (name) =>
-          name !== "ask_user" &&
-          name !== "submit_plan" &&
+          (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
           (!mode.availableTools || mode.availableTools.includes(name)) &&
-          (rules.tools[name] ?? rules.categories[toolCategoryOf(name)]) === "allow",
+          (scheduled
+            ? (rules.tools[name] ?? rules.categories[toolCategoryOf(name)]) === "allow"
+            : (rules.tools[name] ?? rules.categories[toolCategoryOf(name)]) !== "deny"),
       ),
     };
   },
@@ -202,11 +190,9 @@ export async function buildInputPipeline(
   requestContext?: RequestContextLike,
 ): Promise<InputProcessorOrWorkflow[]> {
   return [
-    scheduledToolPolicy,
+    scopedToolPolicy,
+    libraryContextProcessor,
     libraryAttachmentProcessor,
-    editorStateProcessor,
-    terminalStateProcessor,
-    workbenchStateProcessor,
     agentsMdProcessor,
     ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),
   ];

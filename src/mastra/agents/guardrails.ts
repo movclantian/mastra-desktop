@@ -53,14 +53,14 @@ import type { RequestContext } from "@mastra/core/request-context";
 import type { Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import { resolveContextModel, resolveDefaultLanguageModel } from "../models/providers";
-import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
+import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
 import {
   getThreadWorkspace,
   invalidateWorkspaceInstances,
   onWorkspaceDestroy,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
-} from "../workspace";
+} from "../workspace/workspace-manager";
 import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
@@ -875,7 +875,7 @@ function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
 export async function buildGuardrailInputProcessors(
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
-  const resourceId = resourceIdFromContext(requestContext);
+  const resourceId = userIdFromContext(requestContext);
   const cfg = await getGuardrailsConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const input = await buildInput(cfg, resourceId, requestContext);
@@ -907,7 +907,7 @@ export async function buildGuardrailInputProcessors(
 export async function buildGuardrailOutputProcessors(
   requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
-  const resourceId = resourceIdFromContext(requestContext);
+  const resourceId = userIdFromContext(requestContext);
   return buildOutput(await getGuardrailsConfig(resourceId), resourceId, requestContext);
 }
 

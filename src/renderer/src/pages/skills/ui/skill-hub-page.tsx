@@ -126,7 +126,21 @@ export function SkillHubPage() {
     (view: string) => void navigate({ to: `/${view}` }),
     [navigate],
   );
-  const [section, setSection] = React.useState<SkillSection>("public");
+  const section = useRouterState({
+    select: (state) => (state.location.search as { section?: SkillSection }).section ?? "public",
+  });
+  const setSection = React.useCallback<React.Dispatch<React.SetStateAction<SkillSection>>>(
+    (next) => {
+      void navigate({
+        to: "/skills",
+        search: (previous) => ({
+          ...previous,
+          section: typeof next === "function" ? next(section) : next,
+        }),
+      });
+    },
+    [navigate, section],
+  );
   const [marketCategory, setMarketCategory] = React.useState<MarketCategory>("leaderboard");
   const [leaderboardView, setLeaderboardView] = React.useState<LeaderboardView>("all-time");
   const [selectedMaker, setSelectedMaker] = React.useState<string | null>(null);

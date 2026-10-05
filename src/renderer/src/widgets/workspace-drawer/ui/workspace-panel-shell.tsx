@@ -54,6 +54,8 @@ import { BrowserView } from "./browser-view";
 import { ChangesWorkspace } from "./changes-workspace";
 import { FilesWorkspace } from "./files-workspace";
 
+const LibraryFilePreview = React.lazy(() => import("@/features/library-upload/file-preview"));
+
 const TAB_DND_TYPE = "application/x-mastra-tab";
 const STORAGE_KEY_FLOATING_BOUNDS = "mastra-workspace:floating-bounds";
 const MIN_FLOATING_WIDTH = 440;
@@ -107,6 +109,8 @@ function getInitialFloatingBounds(): FloatingBounds {
 
 export function WorkspacePanelShell() {
   const { t } = useTranslation();
+  const filePreview = useWorkbenchStore((store) => store.filePreview);
+  const clearFilePreview = useWorkbenchStore((store) => store.clearFilePreview);
   const activePanelTab = useWorkbenchStore((store) => store.activePanelTab);
   const activatePanelTab = useWorkbenchStore((store) => store.activatePanelTab);
   const addPanelTab = useWorkbenchStore((store) => store.addPanelTab);
@@ -743,7 +747,7 @@ export function WorkspacePanelShell() {
         </PanelHeader>
         {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
           文件树卸载会丢展开层级。用户浏览器是每线程唯一的原生 WebContentsView,
-          Agent 通过同一 Electron CDP target 观察和操作它。 */}
+          Agent 通过命名管道 RPC 观察和操作它。 */}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {panelTabs.map((tab) => {
             const selected =
@@ -754,7 +758,55 @@ export function WorkspacePanelShell() {
                 key={`${tab.id}:${activeThreadId ?? "none"}`}
               >
                 {tab.kind === "files" ? (
-                  <FilesWorkspace active={selected} tabId={tab.id} />
+                  <div className="relative size-full">
+                    <div
+                      className={cn(
+                        "size-full",
+                        filePreview?.threadId === activeThreadId &&
+                          filePreview.tabId === tab.id &&
+                          "hidden",
+                      )}
+                    >
+                      <FilesWorkspace
+                        active={selected && filePreview?.tabId !== tab.id}
+                        tabId={tab.id}
+                      />
+                    </div>
+                    {filePreview?.threadId === activeThreadId && filePreview.tabId === tab.id && (
+                      <div
+                        className="absolute inset-0 flex min-h-0 min-w-0 flex-col bg-background"
+                        data-slot="workspace-file-preview"
+                      >
+                        <div className="flex min-w-0 items-center gap-2 border-b px-3 py-1.5">
+                          <span
+                            className="min-w-0 flex-1 truncate text-sm"
+                            title={filePreview.asset.filename}
+                          >
+                            {filePreview.asset.filename}
+                          </span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={clearFilePreview}
+                          >
+                            {t("common:back")}
+                          </Button>
+                        </div>
+                        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                          <React.Suspense
+                            fallback={
+                              <p className="p-3 text-sm text-muted-foreground">
+                                {t("common:loading")}
+                              </p>
+                            }
+                          >
+                            <LibraryFilePreview asset={filePreview.asset} />
+                          </React.Suspense>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : tab.kind === "changes" ? (
                   <ChangesWorkspace active={selected} />
                 ) : (

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { workValidationError } from "../errors";
-import { getToolsConfig, saveToolsConfig } from "../tools";
+import { getToolsConfig, saveToolsConfig } from "../tools/tool-registry";
 import { toolsConfigSchema } from "../tools/web-search";
 
 // GET /work/tools — 读取当前工具配置

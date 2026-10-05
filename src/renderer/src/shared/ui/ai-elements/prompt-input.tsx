@@ -1125,37 +1125,17 @@ export const PromptInput = ({
             return (formData.get("message") as string) || "";
           })();
 
-      // Reset form immediately after capturing text to avoid race condition
-      // where user input during async blob conversion would be lost
-      if (!usingProvider) {
-        form.reset();
-      }
-
       try {
         const convertedFiles = files.map(({ id: _id, fingerprint: _fingerprint, ...item }) => item);
-
-        const result = onSubmit({ files: convertedFiles, text }, event);
-
-        // Handle both sync and async onSubmit
-        if (result instanceof Promise) {
-          try {
-            await result;
-            clear();
-            if (usingProvider) {
-              controller.textInput.clear();
-            }
-          } catch {
-            // Don't clear on error - user may want to retry
-          }
-        } else {
-          // Sync function completed without throwing, clear inputs
+        await onSubmit({ files: convertedFiles, text }, event);
+        // The provider's owner clears only after its send has been accepted.
+        // A handled upload/validation failure must retain the draft and attachments.
+        if (!usingProvider) {
           clear();
-          if (usingProvider) {
-            controller.textInput.clear();
-          }
+          form.reset();
         }
       } catch {
-        // Don't clear on error - user may want to retry
+        // Keep the draft available for retry.
       }
     },
     [usingProvider, controller, files, onSubmit, clear],

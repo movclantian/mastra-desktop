@@ -5,7 +5,7 @@ import { getAgentProfile } from "../agents/custom";
 import { resolveMode } from "../agents/permissions";
 import { workError } from "../errors";
 import { resolveRequestModel } from "../models/providers";
-import { getWorkbenchSession } from "../routes/session";
+import { getWorkbenchSession } from "../routes/session-context";
 import type { ThreadMetadata } from "../routes/threads/shared";
 import { getOwnedThread, getWorkMemory } from "../routes/threads/shared";
 

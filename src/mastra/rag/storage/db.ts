@@ -14,7 +14,7 @@ import {
   getLibsqlClient,
   getStorageDirectory,
   setAppConfig,
-} from "../../storage";
+} from "../../storage/database";
 import {
   DEFAULT_LIBRARY_SETTINGS,
   type LibraryAsset,

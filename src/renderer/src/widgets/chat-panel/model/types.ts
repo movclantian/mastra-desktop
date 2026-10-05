@@ -10,11 +10,11 @@ import { i18n } from "@/shared/i18n";
 import type { ToolPart } from "@/shared/ui/ai-elements/tool";
 
 /**
- * 本项目的助手消息 metadata:与服务端 chat 路由的 messageMetadata 一一对应
- * (src/mastra/routes/chat.ts 的 WorkMessageMetadata)。
- * 给 Chat / useChat 传这个泛型,读 usage 就不再需要类型断言。
+ * 工作台消息 metadata：用户引用由服务端 libraryContextProcessor 注入，
+ * 助手用量由原生 Session 与历史投影恢复。
  */
 export interface WorkMessageMetadata {
+  goal?: boolean;
   /** 本轮各步累计用量，仅用于计费，不是当前上下文水位。 */
   usage?: LanguageModelUsage;
   contextUsage?: LanguageModelUsage | null;
@@ -211,7 +211,20 @@ export interface AgentInteraction {
   policy?: PermissionPolicy;
 }
 
+export interface GoalObjective {
+  id?: string;
+  objective: string;
+  status: "active" | "paused" | "done";
+  runsUsed: number;
+  maxRuns?: number;
+  activeDurationMs?: number;
+  pausedReason?: string;
+  startedAt: number;
+  updatedAt: number;
+}
+
 export interface WorkDisplayState {
+  objective?: GoalObjective | null;
   status: "idle" | "running" | "suspended";
   threadId: string;
   activeRunId: string | null;
@@ -295,6 +308,7 @@ export interface WorkflowRuntimeRun {
   finishedAt?: string;
   error?: string;
   output?: unknown;
+  controlledByAgent?: boolean;
   steps: WorkflowRuntimeStep[];
   events: WorkflowRuntimeEvent[];
 }
@@ -414,6 +428,7 @@ function workflowSnapshotToRuntime(run: WorkflowRunSummaryState): WorkflowRuntim
     })
     .map((event, index) => ({ ...event, id: index + 1 }));
   const error = workflowErrorText(snapshot?.error);
+  const profile = asRecord(asRecord(snapshot?.requestContext)?.["mastra-work:team-profile"]);
   return {
     runId: run.runId,
     workflowId: run.workflowName,
@@ -425,6 +440,7 @@ function workflowSnapshotToRuntime(run: WorkflowRunSummaryState): WorkflowRuntim
     steps,
     events,
     output: snapshot?.result,
+    controlledByAgent: asRecord(profile?.workflow)?.strategy === "supervisor",
     ...(error ? { error } : {}),
     ...(!["pending", "running", "waiting", "suspended", "paused"].includes(status)
       ? { finishedAt: updatedAt }

@@ -17,33 +17,31 @@ import { MastraEditor } from "@mastra/editor";
 import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
-import { mastraWorkAgent } from "./agents";
 import { getBrowserConfig, getBrowserForRequest, getBrowserForResource } from "./agents/browser";
 import { getConfiguredProcessorRegistry } from "./agents/guardrails";
-import { listWorkModes, toolCategoryOf } from "./agents/permissions";
+import { listWorkModes, toolCategoryOf, workbenchSessionStateSchema } from "./agents/permissions";
 import {
   agentsMdProcessor,
-  editorStateProcessor,
   libraryAttachmentProcessor,
-  terminalStateProcessor,
-  workbenchStateProcessor,
+  libraryContextProcessor,
 } from "./agents/processors";
 import { workSubagents } from "./agents/subagents";
+import { mastraWorkAgent } from "./agents/work-agent";
 import { workAuth, workRequestContextMiddleware } from "./auth";
 import { handleWorkError } from "./errors";
-import { workChatRoute, workRoutes } from "./routes";
 import { failInterruptedBackgroundTasksOnStartup } from "./routes/background-tasks";
+import { workRoutes } from "./routes/routes";
 import { prepareScheduledRun } from "./routes/schedules";
 import { registerWorkbenchSessionLifecycle, workbenchControllerMiddleware } from "./routes/session";
 import { registerShutdownHandlers, shutdownRequestMiddleware } from "./routes/shutdown";
 import { memoryThreadMiddleware } from "./routes/threads/threads";
-import { appStorage } from "./storage";
+import { appStorage } from "./storage/database";
 import {
   getThreadWorkspace,
   getWorkspaceConfig,
   registerWorkspaceLifecycle,
   scheduleIdleWorkspaceCleanup,
-} from "./workspace";
+} from "./workspace/workspace-manager";
 
 // `mastra dev` sets MASTRA_DEV=true in the runtime child process. That flag is
 // intended for Mastra's standalone development playground; this Electron
@@ -96,10 +94,8 @@ if (
 
 const configuredProcessorRegistry = await getConfiguredProcessorRegistry();
 const processorRegistry = {
+  "library-context": libraryContextProcessor,
   "library-attachments": libraryAttachmentProcessor,
-  "editor-state": editorStateProcessor as Processor,
-  "terminal-state": terminalStateProcessor as Processor,
-  "workbench-state": workbenchStateProcessor as Processor,
   "agents-md-injector": agentsMdProcessor as Processor,
   ...configuredProcessorRegistry.processors,
 };
@@ -111,6 +107,7 @@ const logger = new PinoLogger({
 
 const workAgentController = new AgentController({
   id: "mastra-work-controller",
+  stateSchema: workbenchSessionStateSchema,
   agent: mastraWorkAgent,
   modes: listWorkModes(),
   defaultModeId: "plan",
@@ -124,11 +121,7 @@ const editorBrowserProvider: BrowserProvider = {
   description: "Thread-scoped browser provided by the desktop workbench.",
   createBrowser: async () => {
     const config = await getBrowserConfig("default");
-    if (
-      (process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim() ||
-        process.env.MASTRA_DESKTOP_RUNTIME === "true") &&
-      config.provider === "agent"
-    ) {
+    if (config.provider === "agent") {
       throw new Error(
         "Mastra Editor browser requires a work thread; use the workspace browser panel",
       );
@@ -220,7 +213,7 @@ export const mastra = new Mastra({
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Authorization", "Content-Type"],
     },
-    apiRoutes: [workChatRoute, ...workRoutes],
+    apiRoutes: workRoutes,
   },
   storage: appStorage,
   logger,

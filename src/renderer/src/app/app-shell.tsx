@@ -18,6 +18,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/u
 import { SidebarInset, SidebarProvider, useSidebar } from "@/shared/ui/sidebar";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
+import { preloadChatAvatars } from "@/widgets/chat-panel/ui/avatars";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
@@ -106,7 +107,10 @@ export function RootShell() {
 
   // 登录后注入用户 + 从 localStorage 恢复面板模式与会话草稿(幂等)
   React.useEffect(() => {
-    if (user) hydrateWorkbenchStore(user.id);
+    if (user) {
+      hydrateWorkbenchStore(user.id);
+      preloadChatAvatars(user.id);
+    }
   }, [user]);
 
   useSyncThreadToStore(urlThread);

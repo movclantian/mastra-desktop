@@ -115,7 +115,7 @@ function workflowTimeLabel(value: string | undefined): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toLocaleTimeString();
 }
 
-export type WorkflowRunAction = "resume" | "restart" | "cancel";
+export type WorkflowRunAction = "resume" | "rerun" | "cancel";
 
 function WorkflowRunCard({
   run,
@@ -141,7 +141,7 @@ function WorkflowRunCard({
           {workflowStatusLabel(run.status, t)}
         </Badge>
       </div>
-      {onAction && onResume ? (
+      {onAction && onResume && !run.controlledByAgent ? (
         <div className="mt-2 flex flex-wrap justify-end gap-1">
           {run.status === "suspended" ? (
             /* 挂起的 Workflow 在等人操作 —— 脉冲扩散把"该你了"从一排同质按钮里拉出来 */
@@ -162,7 +162,7 @@ function WorkflowRunCard({
             <Button
               aria-label={t("chat:panels.restartWorkflow")}
               className="h-6 px-2 text-[10px]"
-              onClick={() => onAction(run, "restart")}
+              onClick={() => onAction(run, "rerun")}
               size="sm"
               title={t("chat:panels.restartWorkflow")}
               variant="outline"
@@ -311,18 +311,24 @@ export function WorkflowRunPanel({
           }
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{t("chat:panels.resumeWorkflow")}</DialogTitle>
-            <DialogDescription>
-              {resumeDescription || t("chat:panels.resumeDesc")}
-            </DialogDescription>
+            <DialogDescription>{t("chat:panels.resumeDesc")}</DialogDescription>
           </DialogHeader>
-          <Textarea
-            className="min-h-32 font-mono text-xs"
-            onChange={(event) => setResumeText(event.target.value)}
-            value={resumeText}
-          />
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="grid min-w-0 gap-3">
+              {resumeDescription ? (
+                <pre className="whitespace-pre-wrap break-words text-xs">{resumeDescription}</pre>
+              ) : null}
+              <Textarea
+                aria-label={t("chat:panels.resumeWorkflow")}
+                className="min-h-32 max-h-64 whitespace-pre-wrap break-words font-mono text-xs"
+                onChange={(event) => setResumeText(event.target.value)}
+                value={resumeText}
+              />
+            </div>
+          </ScrollArea>
           {resumeError ? <p className="text-xs text-destructive">{resumeError}</p> : null}
           <DialogFooter>
             <Button onClick={() => setResumeRun(null)} variant="ghost">

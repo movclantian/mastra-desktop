@@ -13,7 +13,7 @@ import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
 import { errorText } from "../../errors";
 import { resolveDefaultLanguageModel } from "../../models/providers";
-import { getStorageDirectory, getStorageUrl } from "../../storage";
+import { getStorageDirectory, getStorageUrl } from "../../storage/database";
 import {
   beginLibraryIndexRun,
   ensureLibrarySchema,

@@ -9,7 +9,7 @@ import type {
 import { getRequestHeader, getWebRequest, MastraAuthProvider } from "@mastra/core/server";
 import { z } from "zod";
 import { workError } from "./errors";
-import { getLibsqlClient } from "./storage";
+import { AUTHENTICATED_USER_ID_CONTEXT_KEY, getLibsqlClient } from "./storage/database";
 
 export interface AuthUser {
   id: string;
@@ -432,7 +432,7 @@ export async function workRequestContextMiddleware(
   }
 
   requestContext.set("user", user);
-  requestContext.set("userId", user.id);
+  requestContext.set(AUTHENTICATED_USER_ID_CONTEXT_KEY, user.id);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
   await next();
 }

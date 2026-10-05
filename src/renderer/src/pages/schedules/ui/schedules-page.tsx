@@ -2,6 +2,7 @@ import { useRouterState } from "@tanstack/react-router";
 import {
   CalendarClockIcon,
   CheckIcon,
+  ChevronRightIcon,
   Clock3Icon,
   MoreHorizontalIcon,
   PauseIcon,
@@ -30,6 +31,7 @@ import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -235,6 +237,11 @@ export function SchedulesPage() {
     setEditing(false);
   };
 
+  const closeForm = () => {
+    setEditing(false);
+    if (!selected) setSelectedId(null);
+  };
+
   const save = async () => {
     if (!draft.prompt.trim()) {
       toast.error(t("schedules:promptRequired"));
@@ -404,143 +411,139 @@ export function SchedulesPage() {
         <main className="min-h-0 min-w-0 flex-1">
           <ScrollArea className="size-full">
             <div className="mx-auto w-full max-w-3xl p-5 md:p-8">
-              {editing || selected ? (
+              {selected && !editing ? (
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between gap-4 border-b">
                     <div className="min-w-0">
-                      <CardTitle>
-                        {selected ? t("schedules:detailsTitle") : t("schedules:newSchedule")}
-                      </CardTitle>
+                      <CardTitle>{t("schedules:detailsTitle")}</CardTitle>
                       <CardDescription className="mt-1">
                         {t("schedules:detailsDesc")}
                       </CardDescription>
                     </div>
-                    {selected && !editing ? (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title={t("schedules:edit")}
-                        aria-label={t("schedules:edit")}
-                        onClick={() => setEditing(true)}
-                      >
-                        <MoreHorizontalIcon />
-                      </Button>
-                    ) : (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title={t("schedules:cancelEdit")}
-                        aria-label={t("schedules:cancelEdit")}
-                        onClick={() => {
-                          setEditing(false);
-                          if (!selected) setSelectedId(null);
-                        }}
-                      >
-                        <XIcon />
-                      </Button>
-                    )}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title={t("schedules:edit")}
+                      aria-label={t("schedules:edit")}
+                      onClick={() => setEditing(true)}
+                    >
+                      <MoreHorizontalIcon />
+                    </Button>
                   </CardHeader>
                   <CardContent className="space-y-5 pt-5">
-                    {selected && !editing ? (
-                      <div className="space-y-5">
-                        <div className="rounded-lg bg-muted/40 p-4">
-                          <p className="whitespace-pre-wrap text-sm leading-6">{selected.prompt}</p>
+                    <div className="space-y-5">
+                      <div className="rounded-lg bg-muted/40 p-4">
+                        <p className="whitespace-pre-wrap text-sm leading-6">{selected.prompt}</p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">{t("schedules:runIn")}</p>
+                          <p className="mt-1 text-sm">
+                            {selectedThread
+                              ? threadTitle(selectedThread, t("schedules:newThread"))
+                              : t("schedules:newThreadPerRun")}
+                          </p>
                         </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <div>
-                            <p className="text-xs text-muted-foreground">{t("schedules:runIn")}</p>
-                            <p className="mt-1 text-sm">
-                              {selectedThread
-                                ? threadTitle(selectedThread, t("schedules:newThread"))
-                                : t("schedules:newThreadPerRun")}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Cron</p>
-                            <p className="mt-1 font-mono text-sm">{selected.cron}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">{t("schedules:signal")}</p>
-                            <p className="mt-1 text-sm">
-                              {selected.signalType ?? "notification"} · &lt;
-                              {selected.tagName ?? "schedule"}&gt;
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">
-                              {t("schedules:busyIdleStatus")}
-                            </p>
-                            <p className="mt-1 text-sm">
-                              {selected.ifActive?.behavior ?? "deliver"} /{" "}
-                              {selected.ifIdle?.behavior ?? "wake"}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">
-                              {t("schedules:nextRun")}
-                            </p>
-                            <p className="mt-1 text-sm">
-                              {formatFireAt(selected.nextFireAt, t("schedules:neverRun"))}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">
-                              {t("schedules:lastRun")}
-                            </p>
-                            <p className="mt-1 text-sm">
-                              {formatFireAt(selected.lastFireAt, t("schedules:neverRun"))}
-                            </p>
-                          </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Cron</p>
+                          <p className="mt-1 font-mono text-sm">{selected.cron}</p>
                         </div>
-                        <Separator />
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            onClick={() => void act(selected.id, "run")}
-                            disabled={busyId === selected.id}
-                          >
-                            <PlayIcon /> {t("schedules:runNow")}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() =>
-                              void act(
-                                selected.id,
-                                selected.status === "active" ? "pause" : "resume",
-                              )
-                            }
-                            disabled={busyId === selected.id}
-                          >
-                            {selected.status === "active" ? <PauseIcon /> : <CheckIcon />}
-                            {selected.status === "active"
-                              ? t("schedules:pause")
-                              : t("schedules:resume")}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => void act(selected.id, "delete")}
-                            disabled={busyId === selected.id}
-                          >
-                            <Trash2Icon /> {t("schedules:delete")}
-                          </Button>
+                        <div>
+                          <p className="text-xs text-muted-foreground">{t("schedules:signal")}</p>
+                          <p className="mt-1 text-sm">
+                            {selected.signalType ?? "notification"} · &lt;
+                            {selected.tagName ?? "schedule"}&gt;
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">
+                            {t("schedules:busyIdleStatus")}
+                          </p>
+                          <p className="mt-1 text-sm">
+                            {selected.ifActive?.behavior ?? "deliver"} /{" "}
+                            {selected.ifIdle?.behavior ?? "wake"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">{t("schedules:nextRun")}</p>
+                          <p className="mt-1 text-sm">
+                            {formatFireAt(selected.nextFireAt, t("schedules:neverRun"))}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">{t("schedules:lastRun")}</p>
+                          <p className="mt-1 text-sm">
+                            {formatFireAt(selected.lastFireAt, t("schedules:neverRun"))}
+                          </p>
                         </div>
                       </div>
-                    ) : (
-                      <ScheduleForm
-                        draft={draft}
-                        threads={threads}
-                        agents={agents}
-                        targetEditable={!selected}
-                        saving={saving}
-                        onChange={updateDraft}
-                        onSave={() => void save()}
-                      />
-                    )}
+                      <Separator />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => void act(selected.id, "run")}
+                          disabled={busyId === selected.id}
+                        >
+                          <PlayIcon /> {t("schedules:runNow")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            void act(selected.id, selected.status === "active" ? "pause" : "resume")
+                          }
+                          disabled={busyId === selected.id}
+                        >
+                          {selected.status === "active" ? <PauseIcon /> : <CheckIcon />}
+                          {selected.status === "active"
+                            ? t("schedules:pause")
+                            : t("schedules:resume")}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => void act(selected.id, "delete")}
+                          disabled={busyId === selected.id}
+                        >
+                          <Trash2Icon /> {t("schedules:delete")}
+                        </Button>
+                      </div>
+                    </div>
                   </CardContent>
                 </Card>
+              ) : editing ? (
+                <div className="space-y-6">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <h2 className="text-lg font-semibold tracking-tight">
+                        {selected ? t("schedules:edit") : t("schedules:newSchedule")}
+                      </h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {t("schedules:detailsDesc")}
+                      </p>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      title={t("schedules:cancelEdit")}
+                      aria-label={t("schedules:cancelEdit")}
+                      onClick={closeForm}
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                  <ScheduleForm
+                    draft={draft}
+                    threads={threads}
+                    agents={agents}
+                    targetEditable={!selected}
+                    saving={saving}
+                    onChange={updateDraft}
+                    onSave={() => void save()}
+                    onCancel={closeForm}
+                  />
+                </div>
               ) : (
                 <div className="flex min-h-[26rem] flex-col items-center justify-center text-center">
                   <CalendarClockIcon className="size-10 text-muted-foreground/60" />
@@ -569,6 +572,7 @@ function ScheduleForm({
   saving,
   onChange,
   onSave,
+  onCancel,
 }: {
   draft: ScheduleDraft;
   threads: WorkThread[];
@@ -577,259 +581,302 @@ function ScheduleForm({
   saving: boolean;
   onChange: (patch: Partial<ScheduleDraft>) => void;
   onSave: () => void;
+  onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const frequency = draft.frequency;
+  const [advancedOpen, setAdvancedOpen] = React.useState(!targetEditable);
   return (
     <form
-      className="space-y-5"
+      className="space-y-6"
       onSubmit={(event) => {
         event.preventDefault();
         onSave();
       }}
     >
-      <Field>
-        <FieldLabel htmlFor="schedule-name">{t("schedules:form.title")}</FieldLabel>
-        <Input
-          id="schedule-name"
-          value={draft.name}
-          onChange={(event) => onChange({ name: event.target.value })}
-          placeholder={t("schedules:form.titlePlaceholder")}
-        />
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="schedule-prompt">{t("schedules:form.prompt")}</FieldLabel>
-        <Textarea
-          id="schedule-prompt"
-          value={draft.prompt}
-          onChange={(event) => onChange({ prompt: event.target.value })}
-          placeholder={t("schedules:form.promptPlaceholder")}
-          rows={5}
-        />
-        <FieldDescription>{t("schedules:form.promptHint")}</FieldDescription>
-      </Field>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <section className="space-y-4">
+        <h3 className="text-sm font-medium">{t("schedules:form.basicSection")}</h3>
         <Field>
-          <FieldLabel>{t("schedules:form.runIn")}</FieldLabel>
-          <Select
-            value={draft.threadId || "__new__"}
-            onValueChange={(threadId) =>
-              onChange({ threadId: threadId === "__new__" ? "" : (threadId ?? "") })
-            }
-            disabled={!targetEditable}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder={t("schedules:form.selectThread")} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__new__">{t("schedules:form.newThreadOption")}</SelectItem>
-              {threads
-                .filter((thread) => !thread.metadata?.archivedAt)
-                .map((thread) => (
-                  <SelectItem key={thread.id} value={thread.id}>
-                    {threadTitle(thread, t("schedules:newThread"))}
+          <FieldLabel htmlFor="schedule-name">{t("schedules:form.title")}</FieldLabel>
+          <Input
+            id="schedule-name"
+            value={draft.name}
+            onChange={(event) => onChange({ name: event.target.value })}
+            placeholder={t("schedules:form.titlePlaceholder")}
+          />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="schedule-prompt">{t("schedules:form.prompt")}</FieldLabel>
+          <Textarea
+            id="schedule-prompt"
+            value={draft.prompt}
+            onChange={(event) => onChange({ prompt: event.target.value })}
+            placeholder={t("schedules:form.promptPlaceholder")}
+            rows={5}
+          />
+          <FieldDescription>{t("schedules:form.promptHint")}</FieldDescription>
+        </Field>
+      </section>
+      <Separator />
+      <section className="space-y-4">
+        <h3 className="text-sm font-medium">{t("schedules:form.cadenceSection")}</h3>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel>{t("schedules:form.runIn")}</FieldLabel>
+            <Select
+              value={draft.threadId || "__new__"}
+              onValueChange={(threadId) =>
+                onChange({ threadId: threadId === "__new__" ? "" : (threadId ?? "") })
+              }
+              disabled={!targetEditable}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={t("schedules:form.selectThread")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__new__">{t("schedules:form.newThreadOption")}</SelectItem>
+                {threads
+                  .filter((thread) => !thread.metadata?.archivedAt)
+                  .map((thread) => (
+                    <SelectItem key={thread.id} value={thread.id}>
+                      {threadTitle(thread, t("schedules:newThread"))}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>{t("schedules:form.useAgent")}</FieldLabel>
+            <Select
+              value={draft.agentId}
+              onValueChange={(agentId) => onChange({ agentId: agentId ?? "mastra-work-agent" })}
+              disabled={!targetEditable}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder={t("schedules:form.selectAgent")} />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {agentLabel(agent)}
                   </SelectItem>
                 ))}
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel>{t("schedules:form.useAgent")}</FieldLabel>
-          <Select
-            value={draft.agentId}
-            onValueChange={(agentId) => onChange({ agentId: agentId ?? "mastra-work-agent" })}
-            disabled={!targetEditable}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder={t("schedules:form.selectAgent")} />
-            </SelectTrigger>
-            <SelectContent>
-              {agents.map((agent) => (
-                <SelectItem key={agent.id} value={agent.id}>
-                  {agentLabel(agent)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field>
-          <FieldLabel htmlFor="schedule-attributes">{t("schedules:form.attributes")}</FieldLabel>
-          <Textarea
-            id="schedule-attributes"
-            value={draft.attributesJson}
-            onChange={(event) => onChange({ attributesJson: event.target.value })}
-            placeholder={'{"source":"cron"}'}
-            rows={3}
-            className="font-mono text-xs"
-          />
-          <FieldDescription>{t("schedules:form.attributesHint")}</FieldDescription>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="schedule-provider-options">
-            {t("schedules:form.providerOptions")}
-          </FieldLabel>
-          <Textarea
-            id="schedule-provider-options"
-            value={draft.providerOptionsJson}
-            onChange={(event) => onChange({ providerOptionsJson: event.target.value })}
-            placeholder={'{"openai":{"reasoningEffort":"low"}}'}
-            rows={3}
-            className="font-mono text-xs"
-          />
-          <FieldDescription>{t("schedules:form.providerOptionsHint")}</FieldDescription>
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field>
-          <FieldLabel>{t("schedules:form.signalType")}</FieldLabel>
-          <Select
-            value={draft.signalType}
-            onValueChange={(value) => onChange({ signalType: value as SignalType })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="notification">
-                {t("schedules:form.signalTypes.notification")}
-              </SelectItem>
-              <SelectItem value="user">{t("schedules:form.signalTypes.user")}</SelectItem>
-              <SelectItem value="user-message">
-                {t("schedules:form.signalTypes.userMessage")}
-              </SelectItem>
-              <SelectItem value="reactive">{t("schedules:form.signalTypes.reactive")}</SelectItem>
-              <SelectItem value="state">{t("schedules:form.signalTypes.state")}</SelectItem>
-              <SelectItem value="system-reminder">
-                {t("schedules:form.signalTypes.systemReminder")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel htmlFor="schedule-tag">{t("schedules:form.signalTag")}</FieldLabel>
-          <Input
-            id="schedule-tag"
-            value={draft.tagName}
-            onChange={(event) => onChange({ tagName: event.target.value })}
-            placeholder="schedule"
-          />
-          <FieldDescription>{t("schedules:form.signalTagHint")}</FieldDescription>
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field>
-          <FieldLabel>{t("schedules:form.runningBehavior")}</FieldLabel>
-          <Select
-            value={draft.ifActive}
-            onValueChange={(value) => onChange({ ifActive: value as ActiveBehavior })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="deliver">
-                {t("schedules:form.runningBehaviors.deliver")}
-              </SelectItem>
-              <SelectItem value="discard">
-                {t("schedules:form.runningBehaviors.discard")}
-              </SelectItem>
-              <SelectItem value="persist">
-                {t("schedules:form.runningBehaviors.persist")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field>
-          <FieldLabel>{t("schedules:form.idleBehavior")}</FieldLabel>
-          <Select
-            value={draft.ifIdle}
-            onValueChange={(value) => onChange({ ifIdle: value as IdleBehavior })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="wake">{t("schedules:form.idleBehaviors.wake")}</SelectItem>
-              <SelectItem value="discard">{t("schedules:form.idleBehaviors.discard")}</SelectItem>
-              <SelectItem value="persist">{t("schedules:form.idleBehaviors.persist")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field>
-          <FieldLabel>{t("schedules:form.frequency")}</FieldLabel>
-          <Select
-            value={frequency}
-            onValueChange={(value) => onChange({ frequency: value as Frequency })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="daily">{t("schedules:form.frequencies.daily")}</SelectItem>
-              <SelectItem value="weekdays">{t("schedules:form.frequencies.weekdays")}</SelectItem>
-              <SelectItem value="weekly">{t("schedules:form.frequencies.weekly")}</SelectItem>
-              <SelectItem value="custom">{t("schedules:form.frequencies.custom")}</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        {frequency === "custom" ? (
-          <Field>
-            <FieldLabel htmlFor="schedule-cron">{t("schedules:form.cronExpression")}</FieldLabel>
-            <Input
-              id="schedule-cron"
-              value={draft.cron}
-              onChange={(event) => onChange({ cron: event.target.value })}
-              placeholder="0 9 * * 1-5"
-              className="font-mono"
-            />
+              </SelectContent>
+            </Select>
           </Field>
-        ) : (
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
           <Field>
-            <FieldLabel htmlFor="schedule-time">{t("schedules:form.time")}</FieldLabel>
-            <Input
-              id="schedule-time"
-              type="time"
-              value={draft.time}
-              onChange={(event) => onChange({ time: event.target.value })}
-            />
+            <FieldLabel>{t("schedules:form.frequency")}</FieldLabel>
+            <Select
+              value={frequency}
+              onValueChange={(value) => onChange({ frequency: value as Frequency })}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="daily">{t("schedules:form.frequencies.daily")}</SelectItem>
+                <SelectItem value="weekdays">{t("schedules:form.frequencies.weekdays")}</SelectItem>
+                <SelectItem value="weekly">{t("schedules:form.frequencies.weekly")}</SelectItem>
+                <SelectItem value="custom">{t("schedules:form.frequencies.custom")}</SelectItem>
+              </SelectContent>
+            </Select>
           </Field>
-        )}
-      </div>
-      {frequency === "weekly" ? (
-        <Field>
-          <FieldLabel>{t("schedules:form.weekday")}</FieldLabel>
-          <Select
-            value={draft.weekday}
-            onValueChange={(weekday) => onChange({ weekday: weekday ?? "1" })}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {WEEKDAY_KEYS.map(([value, key]) => (
-                <SelectItem key={value} value={value}>
-                  {t(key)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      ) : null}
-      <Field>
-        <FieldLabel htmlFor="schedule-timezone">{t("schedules:form.timezone")}</FieldLabel>
-        <Input
-          id="schedule-timezone"
-          value={draft.timezone}
-          onChange={(event) => onChange({ timezone: event.target.value })}
-          placeholder="Asia/Shanghai"
-        />
-        <FieldDescription>{t("schedules:form.timezoneHint")}</FieldDescription>
-      </Field>
-      <div className="flex justify-end gap-2 pt-2">
+          {frequency === "custom" ? (
+            <Field>
+              <FieldLabel htmlFor="schedule-cron">{t("schedules:form.cronExpression")}</FieldLabel>
+              <Input
+                id="schedule-cron"
+                value={draft.cron}
+                onChange={(event) => onChange({ cron: event.target.value })}
+                placeholder="0 9 * * 1-5"
+                className="font-mono"
+              />
+            </Field>
+          ) : (
+            <Field>
+              <FieldLabel htmlFor="schedule-time">{t("schedules:form.time")}</FieldLabel>
+              <Input
+                id="schedule-time"
+                type="time"
+                value={draft.time}
+                onChange={(event) => onChange({ time: event.target.value })}
+              />
+            </Field>
+          )}
+          {frequency === "weekly" ? (
+            <Field>
+              <FieldLabel>{t("schedules:form.weekday")}</FieldLabel>
+              <Select
+                value={draft.weekday}
+                onValueChange={(weekday) => onChange({ weekday: weekday ?? "1" })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {WEEKDAY_KEYS.map(([value, key]) => (
+                    <SelectItem key={value} value={value}>
+                      {t(key)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          ) : null}
+        </div>
+      </section>
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTrigger
+          type="button"
+          className="flex w-full items-center gap-2 rounded-md py-1 text-left"
+        >
+          <ChevronRightIcon
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform",
+              advancedOpen && "rotate-90",
+            )}
+          />
+          <span className="shrink-0 text-sm font-medium">
+            {t("schedules:form.advancedSection")}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {t("schedules:form.advancedHint")}
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="space-y-4 pt-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel htmlFor="schedule-attributes">
+                  {t("schedules:form.attributes")}
+                </FieldLabel>
+                <Textarea
+                  id="schedule-attributes"
+                  value={draft.attributesJson}
+                  onChange={(event) => onChange({ attributesJson: event.target.value })}
+                  placeholder={'{"source":"cron"}'}
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                <FieldDescription>{t("schedules:form.attributesHint")}</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="schedule-provider-options">
+                  {t("schedules:form.providerOptions")}
+                </FieldLabel>
+                <Textarea
+                  id="schedule-provider-options"
+                  value={draft.providerOptionsJson}
+                  onChange={(event) => onChange({ providerOptionsJson: event.target.value })}
+                  placeholder={'{"openai":{"reasoningEffort":"low"}}'}
+                  rows={3}
+                  className="font-mono text-xs"
+                />
+                <FieldDescription>{t("schedules:form.providerOptionsHint")}</FieldDescription>
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel>{t("schedules:form.signalType")}</FieldLabel>
+                <Select
+                  value={draft.signalType}
+                  onValueChange={(value) => onChange({ signalType: value as SignalType })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="notification">
+                      {t("schedules:form.signalTypes.notification")}
+                    </SelectItem>
+                    <SelectItem value="user">{t("schedules:form.signalTypes.user")}</SelectItem>
+                    <SelectItem value="user-message">
+                      {t("schedules:form.signalTypes.userMessage")}
+                    </SelectItem>
+                    <SelectItem value="reactive">
+                      {t("schedules:form.signalTypes.reactive")}
+                    </SelectItem>
+                    <SelectItem value="state">{t("schedules:form.signalTypes.state")}</SelectItem>
+                    <SelectItem value="system-reminder">
+                      {t("schedules:form.signalTypes.systemReminder")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="schedule-tag">{t("schedules:form.signalTag")}</FieldLabel>
+                <Input
+                  id="schedule-tag"
+                  value={draft.tagName}
+                  onChange={(event) => onChange({ tagName: event.target.value })}
+                  placeholder="schedule"
+                />
+                <FieldDescription>{t("schedules:form.signalTagHint")}</FieldDescription>
+              </Field>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel>{t("schedules:form.runningBehavior")}</FieldLabel>
+                <Select
+                  value={draft.ifActive}
+                  onValueChange={(value) => onChange({ ifActive: value as ActiveBehavior })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="deliver">
+                      {t("schedules:form.runningBehaviors.deliver")}
+                    </SelectItem>
+                    <SelectItem value="discard">
+                      {t("schedules:form.runningBehaviors.discard")}
+                    </SelectItem>
+                    <SelectItem value="persist">
+                      {t("schedules:form.runningBehaviors.persist")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel>{t("schedules:form.idleBehavior")}</FieldLabel>
+                <Select
+                  value={draft.ifIdle}
+                  onValueChange={(value) => onChange({ ifIdle: value as IdleBehavior })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="wake">{t("schedules:form.idleBehaviors.wake")}</SelectItem>
+                    <SelectItem value="discard">
+                      {t("schedules:form.idleBehaviors.discard")}
+                    </SelectItem>
+                    <SelectItem value="persist">
+                      {t("schedules:form.idleBehaviors.persist")}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </div>
+            <Field>
+              <FieldLabel htmlFor="schedule-timezone">{t("schedules:form.timezone")}</FieldLabel>
+              <Input
+                id="schedule-timezone"
+                value={draft.timezone}
+                onChange={(event) => onChange({ timezone: event.target.value })}
+                placeholder="Asia/Shanghai"
+              />
+              <FieldDescription>{t("schedules:form.timezoneHint")}</FieldDescription>
+            </Field>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
+      <div className="flex justify-end gap-2 border-t pt-4">
+        <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
+          {t("schedules:form.cancel")}
+        </Button>
         <Button type="submit" disabled={saving || !draft.prompt.trim()}>
           {saving ? <RefreshCwIcon className="animate-spin" /> : <CheckIcon />}
           {t("schedules:form.save")}

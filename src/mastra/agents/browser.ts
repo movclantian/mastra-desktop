@@ -25,35 +25,24 @@ import type {
   ScreencastOptions,
   ScreencastStream,
 } from "@mastra/core/browser";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import {
-  type ModelConfiguration,
-  STAGEHAND_MODEL_PROVIDERS,
-  StagehandBrowser,
-} from "@mastra/stagehand";
-import { chromium } from "playwright-core";
 import {
   type BrowserConfig,
   BrowserConfigSchema,
   BrowserStateSchema,
+  DEFAULT_BROWSER_CONFIG,
   NativeBrowserAgentCommandRequestSchema,
   NativeBrowserAgentCommandResponseSchema,
   type NativeBrowserAgentOperation,
 } from "../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
-import {
-  getProvidersConfig,
-  inferGatewayProtocol,
-  resolveProviderCredential,
-} from "../models/providers";
-
-import { getAppConfig, setAppConfig } from "../storage";
-import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
+import { contentObjectReference, putContentObject } from "../storage/content-objects";
+import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
+import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 
 const BROWSER_CONFIG_KEY = "browser";
 
-export type WorkBrowser = AgentBrowser | StagehandBrowser | FirecrawlBrowser;
+export type WorkBrowser = NativeElectronAgentBrowser | FirecrawlBrowser;
 
 /** Resolve and merge browser tools only when a workbench thread can bind them to its page. */
 export async function mergeBrowserToolsForThread<T extends object>(
@@ -63,36 +52,57 @@ export async function mergeBrowserToolsForThread<T extends object>(
 ): Promise<T> {
   if (typeof threadId !== "string" || !threadId.trim()) return tools;
   const browser = await resolveBrowser();
-  Object.assign(tools, browser.getTools());
-  return tools;
-}
-
-export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
-  provider: "agent",
-  scope: "thread",
-  headless: true,
-  viewport: { width: 1280, height: 720 },
-  timeout: 30_000,
-  homeUrl: "",
-  stagehand: {
-    providerId: "",
-    modelId: "",
-  },
-  firecrawl: {
-    apiUrl: "",
-    ttl: 600,
-    activityTtl: 60,
-    streamWebView: false,
-    credential: { hasCredential: false },
-  },
-};
-
-function resolveBundledChromium(): string | undefined {
-  try {
-    return chromium.executablePath() || undefined;
-  } catch {
-    return undefined;
+  const browserTools = browser.getTools();
+  // Memory threads of team members differ from the visible workspace thread.
+  for (const tool of Object.values(browserTools)) {
+    const execute = tool.execute;
+    if (execute)
+      tool.execute = (input, context) =>
+        execute(input, {
+          ...context,
+          agent: context?.agent ? { ...context.agent, threadId } : undefined,
+        });
   }
+  const screenshot = browserTools.browser_screenshot;
+  const capture = screenshot?.execute;
+  if (screenshot && capture) {
+    const errorOutput = screenshot.toModelOutput;
+    screenshot.execute = async (input, context) => {
+      const result = await capture(input, context);
+      if (
+        !result ||
+        typeof result !== "object" ||
+        !("base64" in result) ||
+        typeof result.base64 !== "string"
+      )
+        return result;
+      const { base64, ...metadata } = result;
+      const userId = userIdFromContext(context?.requestContext);
+      if (!userId) throw new Error("Screenshot storage requires an authenticated user");
+      const image = await putContentObject(Buffer.from(base64, "base64"), {
+        userId,
+        threadId,
+        kind: "screenshot",
+        contentType: "image/png",
+        encoding: "binary",
+      });
+      return {
+        ...metadata,
+        imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${image.objectId}`,
+        contentObject: contentObjectReference(image),
+      };
+    };
+    screenshot.toModelOutput = (output) => {
+      if (!output || typeof output !== "object" || !("imageUrl" in output))
+        return errorOutput?.(output);
+      return {
+        type: "content",
+        value: [{ type: "image-url", url: output.imageUrl, mediaType: "image/png" }],
+      };
+    };
+  }
+  Object.assign(tools, browserTools);
+  return tools;
 }
 
 export async function getBrowserConfig(resourceId?: string): Promise<BrowserConfig> {
@@ -135,9 +145,7 @@ export async function saveBrowserConfig(
 
 function commonOptions(config: BrowserConfig) {
   return {
-    executablePath: resolveBundledChromium(),
     scope: config.scope,
-    headless: config.headless,
     viewport: config.viewport,
     timeout: config.timeout,
     screencast: {
@@ -153,7 +161,6 @@ function commonOptions(config: BrowserConfig) {
 const HAS_NATIVE_BROWSER_AGENT_BRIDGE = Boolean(
   process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim(),
 );
-const IS_DESKTOP_RUNTIME = process.env.MASTRA_DESKTOP_RUNTIME === "true";
 
 export class NativeElectronAgentBrowser extends AgentBrowser {
   private readonly knownThreads = new Set<string>();
@@ -358,50 +365,10 @@ async function createBrowser(
 ): Promise<WorkBrowser> {
   if (config.provider === "agent") {
     const options = commonOptions(config);
-    if (!HAS_NATIVE_BROWSER_AGENT_BRIDGE) {
-      if (IS_DESKTOP_RUNTIME) {
-        throw new Error(
-          "Native Electron browser command bridge is unavailable; refusing a hidden browser fallback.",
-        );
-      }
-      return new AgentBrowser(options);
-    }
-    if (!threadId) {
-      throw new Error("Native Agent browser requires a bound thread");
+    if (!HAS_NATIVE_BROWSER_AGENT_BRIDGE || !threadId) {
+      throw new Error("Native Agent browser requires an Electron bridge and a bound thread");
     }
     return new NativeElectronAgentBrowser(options, resourceId || "default", threadId);
-  }
-  if (config.provider === "stagehand") {
-    const provider = (await getProvidersConfig(resourceId)).providers.find(
-      (candidate) => candidate.id === config.stagehand.providerId,
-    );
-    if (
-      !provider ||
-      provider.disabled ||
-      !provider.enabledModels.some((model) => model.id === config.stagehand.modelId)
-    ) {
-      throw new Error("Stagehand provider or model is not available");
-    }
-    const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
-    if (!protocol) throw new Error("Stagehand provider protocol is not supported");
-    const modelProvider = provider.registryId
-      ? STAGEHAND_MODEL_PROVIDERS.find((candidate) => candidate === provider.registryId)
-      : protocol === "gemini"
-        ? "google"
-        : protocol;
-    if (!modelProvider) throw new Error("Stagehand provider is not supported");
-    const baseURL = provider.baseUrl;
-    return new StagehandBrowser({
-      ...commonOptions(config),
-      model: {
-        modelName: `${modelProvider}/${config.stagehand.modelId}`,
-        apiKey: await resolveProviderCredential(provider),
-        ...(baseURL ? { baseURL } : {}),
-        ...(protocol === "openai"
-          ? { openaiEndpointFormat: provider.useResponses ? "responses" : "chat" }
-          : {}),
-      } satisfies ModelConfiguration,
-    });
   }
   const credential = config.firecrawl.credential;
   if (!credential.hasCredential) throw new Error("Firecrawl credential is required");
@@ -448,7 +415,7 @@ export async function getBrowserForThread(
   threadId: string,
 ): Promise<WorkBrowser> {
   const config = await getBrowserConfig(resourceId);
-  if (config.provider !== "agent" || (!HAS_NATIVE_BROWSER_AGENT_BRIDGE && !IS_DESKTOP_RUNTIME)) {
+  if (config.provider !== "agent") {
     return getBrowserForResource(resourceId);
   }
 
@@ -481,13 +448,10 @@ export async function getBrowserForThread(
 }
 
 export async function getBrowserForRequest(requestContext?: { get: (key: string) => unknown }) {
-  const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
+  const resourceId = userIdFromContext(requestContext);
   const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-  const effectiveResourceId = typeof resourceId === "string" && resourceId ? resourceId : "default";
-  if (
-    (HAS_NATIVE_BROWSER_AGENT_BRIDGE || IS_DESKTOP_RUNTIME) &&
-    (await getBrowserConfig(effectiveResourceId)).provider === "agent"
-  ) {
+  const effectiveResourceId = resourceId ?? "default";
+  if ((await getBrowserConfig(effectiveResourceId)).provider === "agent") {
     if (typeof threadId !== "string" || !threadId.trim()) {
       throw new Error("Native Agent browser requires a bound thread");
     }
