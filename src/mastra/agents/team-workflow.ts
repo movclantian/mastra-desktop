@@ -159,7 +159,10 @@ export function compileTeamWorkflow(
               options,
             );
         for await (const chunk of output.fullStream) {
-          await writer.write(chunk);
+          // 成员原始 fullStream(含 reasoning/step/tool 噪声)仅用于父级实时展示,成员的
+          // 权威结果由工作流另行汇总。按官方文档标记 transient,使其实时下发但不落库,
+          // 避免冗长中间块撑爆存储。
+          await writer.write({ ...chunk, transient: true } as typeof chunk);
           if (chunk.type === "error") throw chunk.payload.error;
           if (chunk.type === "tripwire") throw new Error(chunk.payload.reason);
         }

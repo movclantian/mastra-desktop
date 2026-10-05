@@ -164,6 +164,13 @@ export function createWorkspaceOutputArchiveHooks(): {
               if (item?.type === "data-sandbox-stdout") append(record, "stdout", data.output);
               if (item?.type === "data-sandbox-stderr") append(record, "stderr", data.output);
             }
+            // 逐行 stdout/stderr 仅用于实时展示:完整输出已写入内容对象,收尾的
+            // data-workspace-log 才是持久化引用。按官方文档把 transient 作为 chunk
+            // 属性传入(而非 writer.custom 的第二参数),使逐行块实时下发但不落库,
+            // 避免高频输出撑爆消息历史。
+            if (item?.type === "data-sandbox-stdout" || item?.type === "data-sandbox-stderr") {
+              return record.emit?.({ ...item, transient: true });
+            }
             return record.emit?.(chunk);
           };
           ctx.writer = proxy;
