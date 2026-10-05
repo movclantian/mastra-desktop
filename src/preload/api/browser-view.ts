@@ -1,16 +1,16 @@
 import type { IpcRenderer, IpcRendererEvent } from "electron";
 import {
-  NATIVE_BROWSER_VIEW_CHANNELS,
-  NativeBrowserActionSchema,
-  NativeBrowserBoundsSchema,
-  NativeBrowserEventSchema,
-  NativeBrowserNavigateSchema,
-  NativeBrowserSessionSchema,
   type BrowserAction,
   type BrowserState,
-  type NativeBrowserEvent,
+  NATIVE_BROWSER_VIEW_CHANNELS,
+  NativeBrowserActionSchema,
   type NativeBrowserBounds,
+  NativeBrowserBoundsSchema,
+  type NativeBrowserEvent,
+  NativeBrowserEventSchema,
+  NativeBrowserNavigateSchema,
   type NativeBrowserSession,
+  NativeBrowserSessionSchema,
 } from "../../shared/browser-contract";
 
 export function createBrowserViewApi(ipcRenderer: IpcRenderer) {

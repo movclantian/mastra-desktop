@@ -1,11 +1,7 @@
 "use client";
 
 import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
-import {
-  HelpCircleIcon,
-  KeyboardIcon,
-  SearchIcon,
-} from "lucide-react";
+import { HelpCircleIcon, KeyboardIcon, SearchIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import {
@@ -446,9 +442,7 @@ export function useGlobalShortcuts() {
   const activeTerminalDrawerSessionId = useWorkbenchStore(
     (state) => state.activeTerminalDrawerSessionId,
   );
-  const closeTerminalDrawerSession = useWorkbenchStore(
-    (state) => state.closeTerminalDrawerSession,
-  );
+  const closeTerminalDrawerSession = useWorkbenchStore((state) => state.closeTerminalDrawerSession);
   const activePanelTab = useWorkbenchStore((state) => state.activePanelTab);
   const closePanelTab = useWorkbenchStore((state) => state.closePanelTab);
 
@@ -708,11 +702,7 @@ export function useGlobalShortcuts() {
 /**
  * 全局命令面板集成器 (挂载于应用主壳根节点)
  */
-export function GlobalCommandPalette({
-  toggleSidebar,
-}: {
-  toggleSidebar?: () => void;
-} = {}) {
+export function GlobalCommandPalette({ toggleSidebar }: { toggleSidebar?: () => void } = {}) {
   const commandPaletteOpen = useWorkbenchStore((state) => state.commandPaletteOpen);
   const setCommandPaletteOpen = useWorkbenchStore((state) => state.setCommandPaletteOpen);
   const threadSearchOpen = useWorkbenchStore((state) => state.threadSearchOpen);

@@ -11,12 +11,9 @@ import type {
   RecentWorkspace,
   ToolsConfig,
   TreeEntry,
-  ThreadTransferHistoryItem,
-  ThreadTransferStatus,
   WorkspaceChangeSnapshot,
   WorkspaceFileChange,
   WorkThread,
-  WorkUserOption,
 } from "../model/types";
 
 function resourceQuery(resourceId: string): string {
@@ -109,25 +106,27 @@ export async function updateThreadModel(
   threadId: string,
   resourceId: string,
   modeId: string,
-  selection: ModelSelection | null,
-): Promise<void> {
-  await requestJson(
+  selection: ModelSelection,
+): Promise<WorkThread> {
+  const payload = await requestJson<{ thread: MemoryThread }>(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/model?${resourceQuery(resourceId)}`,
     { method: "PATCH", body: { selection, modeId } },
     i18n.t("sidebar:saveModelFailed"),
   );
+  return workThread(payload.thread);
 }
 
 export async function updateThreadMode(
   threadId: string,
   resourceId: string,
   modeId: string,
-): Promise<void> {
-  await requestJson(
+): Promise<WorkThread> {
+  const payload = await requestJson<{ thread: MemoryThread }>(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/mode?${resourceQuery(resourceId)}`,
     { method: "PATCH", body: { modeId } },
     i18n.t("sidebar:saveModeFailed"),
   );
+  return workThread(payload.thread);
 }
 
 export async function updateThreadPermissions(
@@ -209,51 +208,6 @@ export async function summarizeThreadRequest(
     `/work/threads/${encodeURIComponent(threadId)}/summarize`,
     { method: "POST", body: { resourceId, ...(model !== undefined ? { model } : {}) } },
     i18n.t("sidebar:summarizeThreadFailed"),
-  );
-}
-
-/** 会话所有权迁移(官方 memory.updateThreadResourceId):线程及全部消息转移给目标账户 */
-export async function transferThreadRequest(
-  threadId: string,
-  targetResourceId: string,
-): Promise<{ id: string; status: ThreadTransferStatus }> {
-  const payload = await requestJson<{
-    transfer: { id: string; status: ThreadTransferStatus };
-  }>(
-    `/work/threads/${encodeURIComponent(threadId)}/transfer`,
-    { method: "POST", body: { targetResourceId } },
-    i18n.t("sidebar:transferThreadFailed"),
-  );
-  return payload.transfer;
-}
-
-/** 注册账户列表(会话迁移目标候选) */
-export async function fetchWorkUsers(): Promise<WorkUserOption[]> {
-  const payload = await requestJson<{ users?: WorkUserOption[] }>(
-    "/work/users",
-    {},
-    i18n.t("sidebar:loadAccountsFailed"),
-  );
-  return Array.isArray(payload.users) ? payload.users : [];
-}
-
-export async function fetchThreadTransferHistory(): Promise<ThreadTransferHistoryItem[]> {
-  const payload = await requestJson<{ transfers?: ThreadTransferHistoryItem[] }>(
-    "/work/thread-transfers",
-    {},
-    i18n.t("sidebar:transferHistoryFailed"),
-  );
-  return Array.isArray(payload.transfers) ? payload.transfers : [];
-}
-
-export async function decideThreadTransferRequest(
-  transferId: string,
-  decision: "accept" | "reject",
-): Promise<{ status: string; threadId?: string }> {
-  return requestJson(
-    `/work/thread-transfers/${encodeURIComponent(transferId)}/decision`,
-    { method: "POST", body: { decision } },
-    i18n.t("sidebar:transferDecisionFailed"),
   );
 }
 

@@ -22,8 +22,8 @@ import { Button } from "@/shared/ui/button";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/shared/ui/empty";
 import type { BrowserSearchEngine } from "../../../../../shared/browser-contract";
-import { resolveBrowserOmniboxInput } from "../model/browser-omnibox";
 import type { BrowserAction, BrowserState } from "../api/browser-api";
+import { resolveBrowserOmniboxInput } from "../model/browser-omnibox";
 
 export interface BrowserSessionViewState {
   action: (name: BrowserAction, index?: number, url?: string) => Promise<void>;

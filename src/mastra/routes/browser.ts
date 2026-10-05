@@ -7,8 +7,8 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import {
   BrowserActionRequestSchema,
-  BrowserKeyboardRequestSchema,
   BrowserKeyboardBatchRequestSchema,
+  BrowserKeyboardRequestSchema,
   BrowserMouseRequestSchema,
   BrowserNavigateRequestSchema,
   BrowserOkResultSchema,
@@ -20,24 +20,22 @@ import {
   getBrowserForThread,
   saveBrowserConfig,
   type WorkBrowser,
-  withBrowserThreadTarget,
 } from "../agents/browser";
 import { errorText, workError } from "../errors";
-import { getOwnedThread, getWorkMemoryForThread, isTrustedLocalRequest } from "./threads/shared";
+import { getOwnedThread, getWorkMemory, isTrustedLocalRequest } from "./threads/shared";
 
 async function ownedBrowserThread(c: ContextWithMastra) {
   if (!isTrustedLocalRequest(c)) return null;
   const threadId = c.req.param("threadId");
   const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY);
   if (!threadId || typeof resourceId !== "string" || !resourceId.trim()) return null;
-  const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
+  const memory = await getWorkMemory(c.get("requestContext"));
   if (!(await getOwnedThread(memory, threadId, resourceId))) return null;
   return { threadId, resourceId, browser: await getBrowserForThread(resourceId, threadId) };
 }
 
 function browserState(browser: WorkBrowser, threadId: string) {
-  return withBrowserThreadTarget(browser, threadId, () =>
-    Promise.all([browser.getBrowserState(threadId), browser.getCurrentUrl(threadId)]).then(
+  return Promise.all([browser.getBrowserState(threadId), browser.getCurrentUrl(threadId)]).then(
     ([state, currentUrl]) => {
       const visibleTabs = visibleBrowserTabs(state);
       const tabs = visibleTabs.map(({ tab }) => tab);
@@ -49,19 +47,18 @@ function browserState(browser: WorkBrowser, threadId: string) {
       return BrowserStateSchema.parse({
         active: hasSession && tabs.length > 0,
         status: browser.status,
-          currentUrl:
-            activeVisibleTab?.tab.url && activeVisibleTab.tab.url !== "about:blank"
-              ? activeVisibleTab.tab.url
-              : currentUrl === "about:blank"
-                ? null
-                : currentUrl,
+        currentUrl:
+          activeVisibleTab?.tab.url && activeVisibleTab.tab.url !== "about:blank"
+            ? activeVisibleTab.tab.url
+            : currentUrl === "about:blank"
+              ? null
+              : currentUrl,
         tabs,
         activeTabIndex: selectedTabIndex >= 0 ? selectedTabIndex : 0,
         closeReason: state?.closeReason,
         activeUrlChangeSource: state?.activeUrlChangeSource,
       });
     },
-    ),
   );
 }
 
@@ -82,36 +79,29 @@ function isScreenshotBrowser(
 }
 
 function browserGoto(browser: WorkBrowser, url: string, threadId: string) {
-  return withBrowserThreadTarget(browser, threadId, () =>
-    isAgentBrowser(browser)
-      ? browser.goto({ url }, threadId)
-      : browser.navigate({ url }, threadId),
-  );
+  return isAgentBrowser(browser)
+    ? browser.goto({ url }, threadId)
+    : browser.navigate({ url }, threadId);
 }
 
-async function browserForward(
-  browser: Extract<WorkBrowser, { goto: unknown }>,
-  threadId: string,
-) {
-  return withBrowserThreadTarget(browser, threadId, async () => {
-    const previousUrl = await browser.getCurrentUrl(threadId);
-    try {
-      return await browser.evaluate({ script: "history.forward()" }, threadId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/execution context was destroyed.*navigation/i.test(message)) throw error;
-      if (!browser.hasThreadSession(threadId)) throw error;
+async function browserForward(browser: Extract<WorkBrowser, { goto: unknown }>, threadId: string) {
+  const previousUrl = await browser.getCurrentUrl(threadId);
+  try {
+    return await browser.evaluate({ script: "history.forward()" }, threadId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/execution context was destroyed.*navigation/i.test(message)) throw error;
+    if (!browser.hasThreadSession(threadId)) throw error;
 
-      // history.forward() 会销毁旧页面的 JS context。仅当同一浏览器会话已切到
-      // 另一条有效 URL 时，将它认作成功导航；其他错误仍按失败上报。
-      const state = await browser.getBrowserState(threadId);
-      const activeTab = state?.tabs[state.activeTabIndex ?? 0];
-      if (!activeTab?.url || activeTab.url === "about:blank" || activeTab.url === previousUrl) {
-        throw error;
-      }
-      return { success: true };
+    // history.forward() 会销毁旧页面的 JS context。仅当同一浏览器会话已切到
+    // 另一条有效 URL 时，将它认作成功导航；其他错误仍按失败上报。
+    const state = await browser.getBrowserState(threadId);
+    const activeTab = state?.tabs[state.activeTabIndex ?? 0];
+    if (!activeTab?.url || activeTab.url === "about:blank" || activeTab.url === previousUrl) {
+      throw error;
     }
-  });
+    return { success: true };
+  }
 }
 
 async function browserReload(
@@ -119,14 +109,10 @@ async function browserReload(
   threadId: string,
   resourceId: string,
 ) {
-  return withBrowserThreadTarget(browser, threadId, async () => {
-    const currentUrl = await browser.getCurrentUrl(threadId);
-    const targetUrl =
-      currentUrl && currentUrl !== "about:blank"
-        ? currentUrl
-        : await getBrowserHomeUrl(resourceId);
-    return browser.goto({ url: targetUrl }, threadId);
-  });
+  const currentUrl = await browser.getCurrentUrl(threadId);
+  const targetUrl =
+    currentUrl && currentUrl !== "about:blank" ? currentUrl : await getBrowserHomeUrl(resourceId);
+  return browser.goto({ url: targetUrl }, threadId);
 }
 
 async function getBrowserHomeUrl(resourceId: string): Promise<string> {
@@ -150,7 +136,7 @@ async function navigateBrowserTab(
 }
 
 function browserTabs(browser: WorkBrowser, input: unknown, threadId: string) {
-  return withBrowserThreadTarget(browser, threadId, () => browser.tabs(input as never, threadId));
+  return browser.tabs(input as never, threadId);
 }
 
 function isClosedBrowserContextError(error: unknown): boolean {
@@ -255,21 +241,17 @@ export const browserScreencastRoute = registerApiRoute(
       const { browser, threadId, resourceId } = owned;
       const browserConfig = await getBrowserConfig(resourceId);
       const frameViewport =
-        browserConfig.viewport === "window"
-          ? { width: 1280, height: 720 }
-          : browserConfig.viewport;
+        browserConfig.viewport === "window" ? { width: 1280, height: 720 } : browserConfig.viewport;
       let screencast: Awaited<ReturnType<typeof browser.startScreencast>>;
       try {
-        await withBrowserThreadTarget(browser, threadId, async () => {
-          await ensureBrowserTab(browser, resourceId, threadId);
-          screencast = await browser.startScreencast({
-            format: "jpeg",
-            quality: BROWSER_STREAM_QUALITY,
-            maxWidth: BROWSER_STREAM_MAX_WIDTH,
-            maxHeight: BROWSER_STREAM_MAX_HEIGHT,
-            everyNthFrame: 2,
-            threadId,
-          });
+        await ensureBrowserTab(browser, resourceId, threadId);
+        screencast = await browser.startScreencast({
+          format: "jpeg",
+          quality: BROWSER_STREAM_QUALITY,
+          maxWidth: BROWSER_STREAM_MAX_WIDTH,
+          maxHeight: BROWSER_STREAM_MAX_HEIGHT,
+          everyNthFrame: 2,
+          threadId,
         });
       } catch (error) {
         return c.json(
@@ -315,9 +297,7 @@ export const browserScreencastRoute = registerApiRoute(
           if (pendingFrame === undefined) break;
           const frame = pendingFrame;
           pendingFrame = undefined;
-          controllerRef.enqueue(
-            encoder.encode(`event: frame\ndata: ${JSON.stringify(frame)}\n\n`),
-          );
+          controllerRef.enqueue(encoder.encode(`event: frame\ndata: ${JSON.stringify(frame)}\n\n`));
         }
         closeIfDrained();
       };
@@ -358,9 +338,7 @@ export const browserScreencastRoute = registerApiRoute(
           const sendSnapshot = async () => {
             if (disposed || stopped || !isScreenshotBrowser(browser)) return;
             try {
-              const snapshot = await withBrowserThreadTarget(browser, threadId, () =>
-                browser.screenshot({ fullPage: false }, threadId),
-              );
+              const snapshot = await browser.screenshot({ fullPage: false }, threadId);
               if (disposed || stopped || !("base64" in snapshot)) return;
               send("frame", {
                 data: snapshot.base64,
@@ -447,14 +425,10 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
     const { url } = request.data;
     try {
       // 首次就绪时直接落到目标地址,省掉一次多余的首页往返
-      return await withBrowserThreadTarget(browser, threadId, async () => {
-        const navigated = await ensureBrowserTab(browser, resourceId, threadId, url);
-        const result = navigated ? { success: true } : await browserGoto(browser, url, threadId);
-        if (!("success" in result) || result.success !== true) return c.json(result, 400);
-        return c.json(
-          BrowserResponseSchema.parse({ state: await browserState(browser, threadId) }),
-        );
-      });
+      const navigated = await ensureBrowserTab(browser, resourceId, threadId, url);
+      const result = navigated ? { success: true } : await browserGoto(browser, url, threadId);
+      if (!("success" in result) || result.success !== true) return c.json(result, 400);
+      return c.json(BrowserResponseSchema.parse({ state: await browserState(browser, threadId) }));
     } catch (error) {
       return c.json(
         {
@@ -479,9 +453,8 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
     }
     const body = request.data;
     try {
-      return await withBrowserThreadTarget(browser, threadId, async () => {
-        let result: unknown;
-        switch (body.action) {
+      let result: unknown;
+      switch (body.action) {
         case "back":
           if (!isAgentBrowser(browser)) throw workError("BROWSER_ACTION_UNSUPPORTED");
           result = await browser.back(threadId);
@@ -504,7 +477,10 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
             ? { success: true }
             : await browserTabs(
                 browser,
-                { action: "new", url: homeUrl === FALLBACK_BROWSER_HOME_URL ? undefined : homeUrl },
+                {
+                  action: "new",
+                  url: homeUrl === FALLBACK_BROWSER_HOME_URL ? undefined : homeUrl,
+                },
                 threadId,
               );
           break;
@@ -548,14 +524,11 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
         }
         default:
           throw workError("BROWSER_ACTION_UNSUPPORTED");
-        }
-        if (result && typeof result === "object" && "success" in result && result.success !== true) {
-          return c.json(result, 400);
-        }
-        return c.json(
-          BrowserResponseSchema.parse({ state: await browserState(browser, threadId) }),
-        );
-      });
+      }
+      if (result && typeof result === "object" && "success" in result && result.success !== true) {
+        return c.json(result, 400);
+      }
+      return c.json(BrowserResponseSchema.parse({ state: await browserState(browser, threadId) }));
     } catch (error) {
       return c.json(
         {
@@ -579,9 +552,7 @@ export const browserMouseRoute = registerApiRoute("/work/threads/:threadId/brows
       throw workError("VALIDATION_FAILED", { text: request.error.issues[0]?.message });
     }
     try {
-      await withBrowserThreadTarget(browser, threadId, () =>
-        browser.injectMouseEvent(request.data, threadId),
-      );
+      await browser.injectMouseEvent(request.data, threadId);
     } catch (error) {
       if (!isClosedBrowserContextError(error)) throw error;
     }
@@ -600,9 +571,7 @@ export const browserKeyboardRoute = registerApiRoute("/work/threads/:threadId/br
       throw workError("VALIDATION_FAILED", { text: request.error.issues[0]?.message });
     }
     try {
-      await withBrowserThreadTarget(browser, threadId, () =>
-        browser.injectKeyboardEvent(request.data, threadId),
-      );
+      await browser.injectKeyboardEvent(request.data, threadId);
     } catch (error) {
       if (!isClosedBrowserContextError(error)) throw error;
     }
@@ -623,11 +592,9 @@ export const browserKeyboardBatchRoute = registerApiRoute(
         throw workError("VALIDATION_FAILED", { text: request.error.issues[0]?.message });
       }
       try {
-        await withBrowserThreadTarget(browser, threadId, async () => {
-          for (const event of request.data.events) {
-            await browser.injectKeyboardEvent(event, threadId);
-          }
-        });
+        for (const event of request.data.events) {
+          await browser.injectKeyboardEvent(event, threadId);
+        }
       } catch (error) {
         if (!isClosedBrowserContextError(error)) throw error;
       }
@@ -650,18 +617,16 @@ export const browserCloseRoute = registerApiRoute("/work/threads/:threadId/brows
       } catch {}
     }
     try {
-      await withBrowserThreadTarget(browser, threadId, async () => {
-        browser.markBrowserCloseReason("user", threadId);
-        const closePromise = browser.closeThreadSession(threadId);
-        browserClosingPromises.set(key, closePromise);
-        try {
-          await closePromise;
-        } finally {
-          if (browserClosingPromises.get(key) === closePromise) {
-            browserClosingPromises.delete(key);
-          }
+      browser.markBrowserCloseReason("user", threadId);
+      const closePromise = browser.closeThreadSession(threadId);
+      browserClosingPromises.set(key, closePromise);
+      try {
+        await closePromise;
+      } finally {
+        if (browserClosingPromises.get(key) === closePromise) {
+          browserClosingPromises.delete(key);
         }
-      });
+      }
     } finally {
       if (!browser.hasThreadSession(threadId)) browserClosingPromises.delete(key);
     }

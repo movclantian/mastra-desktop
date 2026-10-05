@@ -12,18 +12,15 @@ import type { BrowserProvider } from "@mastra/core/editor";
 import { EventEmitterPubSub, withCaching } from "@mastra/core/events";
 import { Mastra } from "@mastra/core/mastra";
 import type { Processor } from "@mastra/core/processors";
-import type { RequestContext } from "@mastra/core/request-context";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { MastraEditor } from "@mastra/editor";
 import { PinoLogger } from "@mastra/loggers";
 import { MastraStorageExporter, Observability, SensitiveDataFilter } from "@mastra/observability";
-import type { Memory } from "@mastra/memory";
 import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { mastraWorkAgent } from "./agents";
 import { getBrowserConfig, getBrowserForRequest, getBrowserForResource } from "./agents/browser";
-import { getConfiguredProcessorRegistry, getGuardrailsConfig } from "./agents/guardrails";
-import { listWorkModes } from "./agents/modes";
-import { toolCategoryOf } from "./agents/permissions";
+import { getConfiguredProcessorRegistry } from "./agents/guardrails";
+import { listWorkModes, toolCategoryOf } from "./agents/permissions";
 import {
   agentsMdProcessor,
   editorStateProcessor,
@@ -34,15 +31,19 @@ import {
 import { workSubagents } from "./agents/subagents";
 import { workAuth, workRequestContextMiddleware } from "./auth";
 import { handleWorkError } from "./errors";
-import { failInterruptedBackgroundTasksOnStartup } from "./routes/background-tasks";
-import { WORKBENCH_GATEWAY_ID, WorkbenchGateway } from "./models";
-
 import { workChatRoute, workRoutes } from "./routes";
-import { registerShutdownHandlers } from "./routes/shutdown";
+import { failInterruptedBackgroundTasksOnStartup } from "./routes/background-tasks";
+import { prepareScheduledRun } from "./routes/schedules";
+import { registerWorkbenchSessionLifecycle, workbenchControllerMiddleware } from "./routes/session";
+import { registerShutdownHandlers, shutdownRequestMiddleware } from "./routes/shutdown";
 import { memoryThreadMiddleware } from "./routes/threads/threads";
-import { recoverPendingThreadTransfers } from "./routes/threads/transfer-recovery";
 import { appStorage } from "./storage";
-import { getThreadsRoot, getThreadWorkspace } from "./workspace";
+import {
+  getThreadWorkspace,
+  getWorkspaceConfig,
+  registerWorkspaceLifecycle,
+  scheduleIdleWorkspaceCleanup,
+} from "./workspace";
 
 // `mastra dev` sets MASTRA_DEV=true in the runtime child process. That flag is
 // intended for Mastra's standalone development playground; this Electron
@@ -93,7 +94,6 @@ if (
   setGlobalDispatcher(new EnvHttpProxyAgent());
 }
 
-await getGuardrailsConfig();
 const configuredProcessorRegistry = await getConfiguredProcessorRegistry();
 const processorRegistry = {
   "library-attachments": libraryAttachmentProcessor,
@@ -129,7 +129,9 @@ const editorBrowserProvider: BrowserProvider = {
         process.env.MASTRA_DESKTOP_RUNTIME === "true") &&
       config.provider === "agent"
     ) {
-      throw new Error("Mastra Editor browser requires a work thread; use the workspace browser panel");
+      throw new Error(
+        "Mastra Editor browser requires a work thread; use the workspace browser panel",
+      );
     }
     return getBrowserForResource("default");
   },
@@ -158,32 +160,42 @@ export const mastra = new Mastra({
     perAgentConcurrency: 5,
     backpressure: "queue",
     defaultTimeoutMs: 300_000,
-    onTaskComplete: (task) =>
-      logger.info("Background task completed", { taskId: task.id, threadId: task.threadId }),
-    onTaskFailed: (task) =>
+    onTaskComplete: (task) => {
+      logger.info("Background task completed", { taskId: task.id, threadId: task.threadId });
+      scheduleIdleWorkspaceCleanup();
+    },
+    onTaskFailed: (task) => {
       logger.error("Background task failed", {
         taskId: task.id,
         threadId: task.threadId,
         error: task.error,
-      }),
+      });
+      scheduleIdleWorkspaceCleanup();
+    },
   },
   schedules: {
-    onFinish: ({ agentId, schedule, trigger, outcome, runId }) =>
+    prepare: prepareScheduledRun,
+    onFinish: ({ agentId, schedule, trigger, outcome, runId }) => {
       logger.info("Scheduled agent run finished", {
         agentId,
         scheduleId: schedule.id,
         trigger: trigger.kind,
         outcome,
         runId,
-      }),
-    onError: ({ agentId, schedule, trigger, phase, error }) =>
+      });
+      scheduleIdleWorkspaceCleanup();
+    },
+    onError: ({ agentId, schedule, trigger, phase, error }) => {
       logger.error("Scheduled agent run failed", {
         agentId,
         scheduleId: schedule.id,
         trigger: trigger.kind,
         phase,
         error,
-      }),
+      });
+      scheduleIdleWorkspaceCleanup();
+    },
+    onAbort: () => scheduleIdleWorkspaceCleanup(),
   },
   pubsub: withCaching(new EventEmitterPubSub(), new InMemoryServerCache()),
   processors: processorRegistry,
@@ -191,14 +203,15 @@ export const mastra = new Mastra({
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
   },
-  gateways: { [WORKBENCH_GATEWAY_ID]: new WorkbenchGateway() },
   editor: workEditor,
-  workspace: getThreadWorkspace(getThreadsRoot()),
+  workspace: await getThreadWorkspace((await getWorkspaceConfig()).threadsRoot),
   server: {
     auth: workAuth,
     storedResources: { scope: { metadataKey: "mastra_resource_id" } },
     middleware: [
+      { path: "/*", handler: shutdownRequestMiddleware },
       { path: "/*", handler: workRequestContextMiddleware },
+      { path: "/api/agent-controller/*", handler: workbenchControllerMiddleware },
       { path: "/api/memory/*", handler: memoryThreadMiddleware },
     ],
     onError: handleWorkError,
@@ -222,20 +235,8 @@ export const mastra = new Mastra({
   }),
 });
 
-// Reconcile the durable cross-store transfer journal before the service begins
-// accepting requests. Otherwise startup recovery can mistake a transfer that
-// was just accepted by a live request for an abandoned operation and roll its
-// library assets back while Memory is being moved.
-await recoverPendingThreadTransfers({
-  throwOnError: true,
-  getMemory: async (requestContext: RequestContext) => {
-    const memory = await mastra
-      .getAgentById("mastra-work-agent")
-      .getMemory({ requestContext });
-    if (!memory) throw new Error("Agent memory is not configured");
-    return memory as Memory;
-  },
-});
+registerWorkspaceLifecycle(mastra);
+registerWorkbenchSessionLifecycle(mastra);
 
 const backgroundTaskManager = mastra.backgroundTaskManager;
 if (backgroundTaskManager) {
@@ -248,4 +249,4 @@ if (backgroundTaskManager) {
   }
 }
 
-registerShutdownHandlers();
+registerShutdownHandlers(mastra);

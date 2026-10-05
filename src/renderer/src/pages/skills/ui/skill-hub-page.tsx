@@ -961,6 +961,11 @@ const SkillCard = React.memo(function SkillCard({
               <span className="mt-1 line-clamp-2 text-xs text-muted-foreground leading-relaxed">
                 {skill.description || t("skills:noDescription")}
               </span>
+              {skill.validationErrors?.length ? (
+                <p className="mt-1 break-words text-xs text-destructive">
+                  {skill.validationErrors.join("; ")}
+                </p>
+              ) : null}
 
               {/* 安装量与热度指标 */}
               <div className="mt-2 flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -1888,6 +1893,11 @@ function SkillDetailPage({
                     <p className="mt-2 max-w-2xl text-base text-muted-foreground">
                       {detail.description || t("skills:noDescription")}
                     </p>
+                    {detail.validationErrors?.length ? (
+                      <p className="mt-2 max-w-2xl break-words text-sm text-destructive">
+                        {detail.validationErrors.join("; ")}
+                      </p>
+                    ) : null}
                     <div className="mt-3 flex items-center gap-2 flex-wrap">
                       <Badge variant="outline">{skillSourceLabel(detail)}</Badge>
                       {detail.installs ? (

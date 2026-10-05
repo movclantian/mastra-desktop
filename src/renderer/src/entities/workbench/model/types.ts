@@ -24,21 +24,14 @@ export interface ThreadMetadata {
   workspaceExplicit?: boolean;
   currentModeId?: string;
   permissionRules?: PermissionRules;
-  modelSelectionByMode?: Record<
-    string,
-    {
-      providerId: string;
-      modelId: string;
-      modelName: string;
-      reasoningEffort: string;
-    }
-  >;
+  /** Mastra Session.model persists the selected router ID for each mode. */
+  [key: `modeModelId_${string}`]: string | undefined;
+  reasoningEffortByMode?: Record<string, string>;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;
   contextUsage?: Record<string, unknown> | null;
   contextUsageVersion?: number;
-  totalUsage?: Record<string, unknown> | null;
   isWorking?: boolean;
   activeRunId?: string | null;
   /** 克隆/分支溯源(memory.copyThread 自动写入,官方 clone-utilities) */
@@ -47,47 +40,6 @@ export interface ThreadMetadata {
     clonedAt?: string;
     lastMessageId?: string;
   };
-}
-
-/** 会话所有权迁移的目标账户候选(GET /work/users) */
-export interface WorkUserOption {
-  id: string;
-  name: string;
-  email: string;
-  role: "admin" | "user";
-}
-
-export type ThreadTransferStatus =
-  | "awaiting_confirmation"
-  | "prepared"
-  | "assets_moved"
-  | "memory_moved"
-  | "messages_rewritten"
-  | "committed"
-  | "failed"
-  | "rejected"
-  | "needs_reconciliation";
-
-export interface ThreadTransferAuditEvent {
-  action: string;
-  actorResourceId: string;
-  createdAt: string;
-  threadTitle?: string;
-}
-
-export interface ThreadTransferHistoryItem {
-  id: string;
-  threadId: string;
-  threadTitle: string;
-  sourceResourceId: string;
-  sourceName: string;
-  targetResourceId: string;
-  targetName: string;
-  status: ThreadTransferStatus;
-  createdAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-  events: ThreadTransferAuditEvent[];
 }
 
 export interface WorkThread {
@@ -118,8 +70,6 @@ export interface WorkspaceChangeSnapshot {
   byteSize: number;
   contentType: string;
   encoding: string;
-  chunkSize: number;
-  chunkCount: number;
 }
 
 export interface WorkspaceFileChange {

@@ -10,3 +10,8 @@ export const MigrateStorageRequestSchema = DirectoryPathSchema;
 export const MigrateStorageResultSchema = z.boolean();
 export const ResetAppDataRequestSchema = z.undefined();
 export const ResetAppDataResultSchema = z.boolean();
+
+export const StorageInfoResultSchema = z.object({
+  url: z.string().min(1),
+  directory: DirectoryPathSchema,
+});

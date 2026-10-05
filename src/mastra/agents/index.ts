@@ -17,22 +17,22 @@ import type {
 import { buildBasePrompt, createCodingAgent } from "@mastra/core/coding-agent";
 import { MASTRA_RESOURCE_ID_KEY, type RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
-import { workPollingSignals, workWebhookSignals } from "../harness";
+import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { getMemory } from "../memory";
 import {
-  type GatewayLanguageModel,
-  REQUEST_MODEL_CONTEXT_KEY,
-  resolveDefaultLanguageModel,
-} from "../models";
+  REQUEST_MODEL_ID_CONTEXT_KEY,
+  resolveContextModel,
+  resolveContextModelFamily,
+} from "../models/providers";
 import { libraryIndexSignals } from "../rag/document/indexing";
 import {
   codeMode,
-  MODEL_FAMILY_CONTEXT_KEY,
   parseWebSearchSelection,
   resolveWebSearchTools,
   WEB_SEARCH_CONTEXT_KEY,
   webSearchInstructions,
 } from "../tools";
+import { webSearchArchiveProcessor } from "../tools/web-search";
 import {
   getManagedSkillPaths,
   getThreadWorkspace,
@@ -57,9 +57,15 @@ import {
 import {
   buildGuardrailErrorProcessors,
   buildGuardrailOutputProcessors,
-  getGuardrailsRuntimeConfig,
+  getGuardrailsConfig,
 } from "./guardrails";
-import { MODE_ID_CONTEXT_KEY, resolveMode } from "./modes";
+import {
+  MODE_ID_CONTEXT_KEY,
+  PERMISSION_RULES_CONTEXT_KEY,
+  parsePermissionRules,
+  resolveMode,
+  toolCategoryOf,
+} from "./permissions";
 import {
   buildInputPipeline,
   isCodeModeAvailable,
@@ -99,18 +105,6 @@ function currentGitBranch(projectPath: string): string | undefined {
   return value;
 }
 
-function modelIdFromRequestContext(requestContext?: RequestContext): string | undefined {
-  const model = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
-    | { id?: unknown; modelId?: unknown; provider?: unknown }
-    | string
-    | undefined;
-  if (typeof model === "string") return model;
-  if (typeof model?.modelId === "string" && model.modelId.trim()) return model.modelId;
-  if (typeof model?.id === "string" && model.id.trim()) return model.id;
-  if (typeof model?.provider === "string" && model.provider.trim()) return model.provider;
-  return undefined;
-}
-
 function codingAgentBasePrompt(requestContext?: RequestContext): string {
   const controller = requestContext?.get("controller") as
     | { session?: { modeId?: unknown; modelId?: unknown } }
@@ -123,7 +117,7 @@ function codingAgentBasePrompt(requestContext?: RequestContext): string {
   const mode = resolveMode(
     controller?.session?.modeId ?? requestContext?.get(MODE_ID_CONTEXT_KEY),
   ).id;
-  const modelId = modelIdFromRequestContext(requestContext);
+  const modelId = requestContext?.get(REQUEST_MODEL_ID_CONTEXT_KEY);
 
   return buildBasePrompt({
     projectPath,
@@ -133,10 +127,11 @@ function codingAgentBasePrompt(requestContext?: RequestContext): string {
     date: new Date().toDateString(),
     mode,
     modelId:
-      modelId ??
-      (typeof controller?.session?.modelId === "string" && controller.session.modelId.trim()
+      typeof controller?.session?.modelId === "string" && controller.session.modelId.trim()
         ? controller.session.modelId
-        : undefined),
+        : typeof modelId === "string"
+          ? modelId
+          : undefined,
     // Resume payloads are client input; without a persisted server-validated plan,
     // injecting them here would turn untrusted text into system instructions.
     activePlan: null,
@@ -357,7 +352,7 @@ function createWorkAgent(
             codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
             ...(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
-              ? [resolveMode("build").instructions]
+              ? [resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).instructions]
               : []),
             member.instructions ||
               `你是团队成员 ${member.name},负责${member.profession || "完成分配的专业任务"}。`,
@@ -366,7 +361,7 @@ function createWorkAgent(
             codingAgentBasePrompt(requestContext),
             BASE_INSTRUCTIONS,
             ...(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
-              ? [resolveMode("build").instructions]
+              ? [resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY)).instructions]
               : []),
             ...(isCodeModeAvailable(requestContext) ? [codeMode.instructions] : []),
             profile.instructions,
@@ -382,7 +377,7 @@ function createWorkAgent(
       if (selection) {
         const tools = await resolveWebSearchTools(
           selection,
-          requestContext?.get(MODEL_FAMILY_CONTEXT_KEY),
+          await resolveContextModelFamily(requestContext),
           requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
         );
         const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
@@ -414,13 +409,7 @@ function createWorkAgent(
       return instructions;
     },
     model: async ({ requestContext }) => {
-      const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY) as
-        | GatewayLanguageModel
-        | undefined;
-      if (requestModel) return requestModel;
-      const model = await resolveDefaultLanguageModel(
-        requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-      );
+      const model = await resolveContextModel(requestContext);
       if (!model) {
         throw new Error(
           "尚未配置模型供应商。请在 MastraWork 的设置 →「模型供应商」中添加供应商与 API Key,并选定一个模型。",
@@ -458,7 +447,12 @@ function createWorkAgent(
       return [...new Set([...configuredPaths, ...selectedPaths])];
     },
     inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
-    outputProcessors: async ({ requestContext }) => buildGuardrailOutputProcessors(requestContext),
+    outputProcessors: async ({ requestContext }) => [
+      webSearchArchiveProcessor,
+      ...(await buildGuardrailOutputProcessors(requestContext)),
+    ],
+    // The settings own this stack; do not restore processors the user disabled.
+    errorProcessorDefaults: false,
     errorProcessors: async ({ requestContext }) =>
       buildGuardrailErrorProcessors(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
@@ -519,9 +513,9 @@ function createWorkAgent(
       );
     },
     defaultOptions: async ({ requestContext }) => {
-      const retries = getGuardrailsRuntimeConfig(
+      const { maxProcessorRetries: retries } = await getGuardrailsConfig(
         requestContext?.get(MASTRA_RESOURCE_ID_KEY) as string | undefined,
-      ).maxProcessorRetries;
+      );
       const processorRetries = {
         ...(requestContext?.get(SESSION_EXECUTION_CONTEXT_KEY) as
           | AgentExecutionOptions<undefined>
@@ -531,7 +525,17 @@ function createWorkAgent(
       return {
         ...processorRetries,
         delegation: WORK_DELEGATION,
-        requireToolApproval: requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) !== true,
+        requireToolApproval:
+          requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
+            ? ({ toolName }) => {
+                const rules = parsePermissionRules(
+                  requestContext.get(PERMISSION_RULES_CONTEXT_KEY),
+                );
+                return (
+                  (rules.tools[toolName] ?? rules.categories[toolCategoryOf(toolName)]) !== "allow"
+                );
+              }
+            : true,
       };
     },
   });

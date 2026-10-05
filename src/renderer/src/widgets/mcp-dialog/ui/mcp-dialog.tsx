@@ -187,8 +187,10 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     let headerKeys = form.headerKeys ?? [];
     let envCredential = form.envCredential;
     let envKeys = form.envKeys ?? [];
-    let oauth = form.oauth;
-    if (Object.keys(headers).length > 0) {
+    let oauth: McpFormServer["oauth"] = form.oauth
+      ? { ...form.oauth, clientId: form.oauth.clientId?.trim() }
+      : undefined;
+    if (form.transport === "http" && Object.keys(headers).length > 0) {
       const purpose = mcpCredentialPurpose(id, "headers");
       headerCredential = await window.api.credentials.put({
         purpose,
@@ -197,13 +199,13 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       headerKeys = Object.keys(headers);
       created.push({ purpose, secretRef: headerCredential.credentialRef });
     }
-    if (Object.keys(env).length > 0) {
+    if (form.transport === "stdio" && Object.keys(env).length > 0) {
       const purpose = mcpCredentialPurpose(id, "env");
       envCredential = await window.api.credentials.put({ purpose, value: JSON.stringify(env) });
       envKeys = Object.keys(env);
       created.push({ purpose, secretRef: envCredential.credentialRef });
     }
-    if (oauthClientSecret.trim()) {
+    if (form.transport === "http" && oauthClientSecret.trim()) {
       const purpose = mcpCredentialPurpose(id, "client-secret");
       const clientSecretCredential = await window.api.credentials.put({
         purpose,
@@ -214,23 +216,36 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     }
     return {
       server: {
-        ...form,
         id,
         name: form.name.trim() || id,
-        headerCredential,
-        headerKeys,
-        envCredential,
-        envKeys,
-        oauth,
-        args: parseLines(argsText),
-        allowedHosts:
-          parseLines(allowedHostsText).length > 0 ? parseLines(allowedHostsText) : undefined,
+        enabled: form.enabled,
+        transport: form.transport,
+        requireToolApproval: form.requireToolApproval,
+        ...(form.transport === "http"
+          ? {
+              url: form.url?.trim(),
+              headerCredential,
+              headerKeys,
+              oauth,
+              allowedHosts: parseLines(allowedHostsText),
+            }
+          : {
+              command: form.command?.trim(),
+              args: parseLines(argsText),
+              envCredential,
+              envKeys,
+              inheritDefaultEnv: form.inheritDefaultEnv,
+            }),
       },
       created,
     };
   };
 
   const validate = () => {
+    if (form.transport === "http" && form.oauth?.enabled && !form.oauth.clientId?.trim()) {
+      toast.error(t("mcp:pleaseEnterOauthClientId"));
+      return false;
+    }
     if (form.transport === "http" && !form.url?.trim()) {
       toast.error(t("mcp:pleaseEnterUrl"));
       return false;
@@ -408,6 +423,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                         <TextField
                           id="mcp-oauth-client-id"
                           label={t("mcp:oauthClientId")}
+                          required
                           value={form.oauth.clientId ?? ""}
                           onChange={(clientId) =>
                             update({

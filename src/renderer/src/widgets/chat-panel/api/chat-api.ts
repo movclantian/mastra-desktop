@@ -199,18 +199,6 @@ export async function runBackgroundTaskAction(
   });
 }
 
-export async function grantToolCategory(
-  threadId: string,
-  resourceId: string,
-  category: string,
-): Promise<void> {
-  await requestJson(
-    `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/grants?${resourceQuery(resourceId)}`,
-    { method: "POST", body: { category } },
-    i18n.t("chat:api.grantPermissionFailed"),
-  );
-}
-
 export async function enqueueFollowUp(
   threadId: string,
   resourceId: string,

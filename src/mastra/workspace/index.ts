@@ -14,8 +14,11 @@
  */
 import { mkdirSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
+import type { Session } from "@mastra/core/agent-controller";
+import type { Mastra } from "@mastra/core/mastra";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import { validateSkillContent } from "@mastra/core/skills";
 import {
   LocalFilesystem,
   LocalSandbox,
@@ -25,12 +28,17 @@ import {
   type WorkspaceToolConfig,
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
-import { clampInt, clampNumber, cleanStrings, stringRecord } from "../config/normalize";
+import matter from "gray-matter";
+import { z } from "zod";
 import {
+  clampInt,
+  clampNumber,
+  cleanStrings,
   DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
   getStorageDirectory,
   setAppConfig,
+  stringRecord,
 } from "../storage";
 import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
@@ -89,55 +97,51 @@ function defaultThreadsRoot(resourceId?: string): string {
     : DEFAULT_THREADS_ROOT;
 }
 
-export interface WorkspaceUserConfig {
-  /** 线程工作区根目录:隐式绑定线程的目录为 <threadsRoot>/<threadId>/ */
-  threadsRoot: string;
-  /** 只读文件系统(禁用写入/编辑/删除/建目录工具) */
-  readOnly: boolean;
-  /** 工作区之外允许访问的额外目录(绝对路径,附加到每个线程实例) */
-  allowedPaths: string[];
-  /** 本地沙箱(execute_command 等命令执行工具)开关 */
-  sandboxEnabled: boolean;
-  /** 沙箱命令超时(毫秒) */
-  sandboxTimeoutMs: number;
-  /** 沙箱环境变量(默认仅 PATH,避免泄漏宿主密钥) */
-  sandboxEnv: Record<string, string>;
-  /** BM25 关键词搜索(skills 内容亦自动索引) */
-  bm25: boolean;
-  bm25K1: number;
-  bm25B: number;
-  /** LSP 语义代码检查(需本机可用语言服务器,Windows 需自行安装) */
-  lsp: boolean;
-  lspDiagnosticTimeoutMs: number;
-  lspInitTimeoutMs: number;
-  lspMaxOpenClients: number;
-  lspDisableServers: string[];
-  lspBinaryOverrides: Record<string, string>;
-  lspSearchPaths: string[];
-  tools: WorkspaceToolsUserConfig;
-  /** Skills 目录(相对每个工作区,含 SKILL.md 的文件夹的父目录) */
-  skillsPaths: string[];
-  /** 初始化时自动索引的路径/glob(相对每个工作区) */
-  autoIndexPaths: string[];
-}
+const workspaceToolRuleSchema = z.object({
+  enabled: z.boolean().optional(),
+  requireApproval: z.boolean().optional(),
+  requireReadBeforeWrite: z.boolean().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  name: z.string().trim().min(1).max(80).optional(),
+  mediaTypes: z.union([z.array(z.string()).max(20), z.literal(false)]).optional(),
+  maxMediaBytes: z
+    .number()
+    .int()
+    .positive()
+    .max(100 * 1024 * 1024)
+    .optional(),
+});
+const workspaceToolsSchema = z
+  .object({
+    requireApproval: z.boolean().optional(),
+    requireReadBeforeWrite: z.boolean().optional(),
+    maxOutputTokens: z.number().int().positive().optional(),
+    writeLockTimeoutMs: z.number().int().positive().optional(),
+  })
+  .catchall(z.union([z.boolean(), z.number(), workspaceToolRuleSchema]).optional());
 
-interface WorkspaceToolRule {
-  enabled?: boolean;
-  requireApproval?: boolean;
-  requireReadBeforeWrite?: boolean;
-  maxOutputTokens?: number;
-  name?: string;
-  mediaTypes?: string[] | false;
-  maxMediaBytes?: number;
-}
-
-interface WorkspaceToolsUserConfig {
-  requireApproval?: boolean;
-  requireReadBeforeWrite?: boolean;
-  maxOutputTokens?: number;
-  writeLockTimeoutMs?: number;
-  [toolName: string]: boolean | number | WorkspaceToolRule | undefined;
-}
+export const workspaceConfigSchema = z.object({
+  threadsRoot: z.string(),
+  readOnly: z.boolean(),
+  allowedPaths: z.array(z.string()),
+  sandboxEnabled: z.boolean(),
+  sandboxTimeoutMs: z.number(),
+  sandboxEnv: z.record(z.string(), z.string()),
+  bm25: z.boolean(),
+  bm25K1: z.number(),
+  bm25B: z.number(),
+  lsp: z.boolean(),
+  lspDiagnosticTimeoutMs: z.number(),
+  lspInitTimeoutMs: z.number(),
+  lspMaxOpenClients: z.number(),
+  lspDisableServers: z.array(z.string()),
+  lspBinaryOverrides: z.record(z.string(), z.string()),
+  lspSearchPaths: z.array(z.string()),
+  tools: workspaceToolsSchema,
+  skillsPaths: z.array(z.string()),
+  autoIndexPaths: z.array(z.string()),
+});
+export type WorkspaceUserConfig = z.infer<typeof workspaceConfigSchema>;
 
 const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 /** Scheduler worker -> agent context marker for unattended threaded runs. */
@@ -168,11 +172,7 @@ function wrapWorkspaceApproval(
 ): WorkspaceToolConfig["requireApproval"] {
   if (value === undefined) return undefined;
   return async (context: ToolConfigWithArgsContext) => {
-    if (
-      context.requestContext[SCHEDULE_RUN_CONTEXT_KEY] === true ||
-      isSessionFullyAllowed(context.requestContext)
-    )
-      return false;
+    if (isSessionFullyAllowed(context.requestContext)) return false;
     return typeof value === "function" ? value(context) : value;
   };
 }
@@ -225,78 +225,38 @@ function defaultWorkspaceConfig(resourceId?: string): WorkspaceUserConfig {
   return { ...DEFAULT_CONFIG, threadsRoot: defaultThreadsRoot(resourceId) };
 }
 
-/** 读取工作区配置(app_config 表 key="workspace";无记录或损坏时回落默认值) */
+/** Load each resource's workspace settings only when its workspace is first needed. */
 export async function getWorkspaceConfig(resourceId?: string): Promise<WorkspaceUserConfig> {
-  const raw = await getAppConfig(WORKSPACE_CONFIG_KEY, resourceId);
-  if (!raw) {
-    const next = defaultWorkspaceConfig(resourceId);
-    getRuntime(resourceId).config = next;
-    return next;
+  const runtime = getRuntime(resourceId);
+  if (!runtime.loaded) {
+    runtime.loading ??= (async () => {
+      const raw = await getAppConfig(WORKSPACE_CONFIG_KEY, resourceId);
+      runtime.config = raw
+        ? normalizeWorkspaceConfig(JSON.parse(raw) as Partial<WorkspaceUserConfig>, resourceId)
+        : defaultWorkspaceConfig(resourceId);
+      runtime.loaded = true;
+    })().finally(() => {
+      runtime.loading = undefined;
+    });
+    await runtime.loading;
   }
-  try {
-    const next = normalizeWorkspaceConfig(
-      JSON.parse(raw) as Partial<WorkspaceUserConfig>,
-      resourceId,
-    );
-    getRuntime(resourceId).config = next;
-    return next;
-  } catch {
-    const next = defaultWorkspaceConfig(resourceId);
-    getRuntime(resourceId).config = next;
-    return next;
-  }
+  return runtime.config;
 }
 
-/** 写入工作区配置并实时生效:替换运行时配置、清空实例缓存(下次请求按新配置重建) */
+/** New settings replace idle instances; an active run keeps its original workspace. */
 export async function saveWorkspaceConfig(
   next: WorkspaceUserConfig,
   resourceId?: string,
 ): Promise<void> {
+  await getWorkspaceConfig(resourceId);
   const normalized = normalizeWorkspaceConfig(next, resourceId);
-  await setAppConfig(WORKSPACE_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
   const runtime = getRuntime(resourceId);
-  runtime.config = normalized;
-  const previous = [...runtime.cache.values()];
-  runtime.cache.clear();
-  await Promise.allSettled(previous.map(async (workspace) => workspace.destroy()));
-}
-
-function normalizeWorkspaceTools(value: unknown): WorkspaceToolsUserConfig {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return DEFAULT_CONFIG.tools;
-  const output: WorkspaceToolsUserConfig = {};
-  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
-    if (["requireApproval", "requireReadBeforeWrite"].includes(key)) {
-      if (typeof raw === "boolean") output[key] = raw;
-      continue;
-    }
-    if (["maxOutputTokens", "writeLockTimeoutMs"].includes(key)) {
-      if (typeof raw === "number" && Number.isFinite(raw))
-        output[key] = Math.round(Math.max(1, raw));
-      continue;
-    }
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) continue;
-    const source = raw as Record<string, unknown>;
-    const rule: WorkspaceToolRule = {};
-    if (typeof source.enabled === "boolean") rule.enabled = source.enabled;
-    if (typeof source.requireApproval === "boolean") rule.requireApproval = source.requireApproval;
-    if (typeof source.requireReadBeforeWrite === "boolean")
-      rule.requireReadBeforeWrite = source.requireReadBeforeWrite;
-    if (typeof source.maxOutputTokens === "number" && Number.isFinite(source.maxOutputTokens)) {
-      rule.maxOutputTokens = Math.round(Math.max(1, source.maxOutputTokens));
-    }
-    if (typeof source.name === "string" && source.name.trim())
-      rule.name = source.name.trim().slice(0, 80);
-    if (source.mediaTypes === false) rule.mediaTypes = false;
-    if (Array.isArray(source.mediaTypes)) rule.mediaTypes = cleanStrings(source.mediaTypes, 20);
-    if (typeof source.maxMediaBytes === "number" && Number.isFinite(source.maxMediaBytes)) {
-      rule.maxMediaBytes = Math.round(
-        Math.min(100 * 1024 * 1024, Math.max(1, source.maxMediaBytes)),
-      );
-    }
-    output[key] = rule;
-  }
-  return output;
+  await withWorkspaceRuntime(runtime, async () => {
+    await setAppConfig(WORKSPACE_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
+    runtime.config = normalized;
+    runtime.version += 1;
+    await pruneWorkspaces(runtime);
+  });
 }
 
 function normalizeWorkspaceConfig(
@@ -331,7 +291,7 @@ function normalizeWorkspaceConfig(
             ),
           ) as Record<string, string>)
         : {},
-    tools: normalizeWorkspaceTools(merged.tools),
+    tools: workspaceToolsSchema.parse(merged.tools),
     skillsPaths: cleanStrings(merged.skillsPaths),
     autoIndexPaths: cleanStrings(merged.autoIndexPaths),
   };
@@ -366,66 +326,181 @@ export async function addRecentWorkspace(path: string, resourceId?: string): Pro
   await setAppConfig(RECENT_WORKSPACES_KEY, JSON.stringify(next, null, 2), resourceId);
 }
 
-interface WorkspaceRuntime {
-  config: WorkspaceUserConfig;
-  cache: Map<string, Workspace>;
+interface WorkspaceEntry {
+  workspace: Workspace;
+  threadId?: string;
+  resourceId?: string;
+  version: number;
 }
 
-const WORKSPACE_CACHE_LIMIT = 32;
-const RUNTIME_SCOPE_LIMIT = 32;
+interface WorkspaceRuntime {
+  config: WorkspaceUserConfig;
+  loaded: boolean;
+  loading?: Promise<void>;
+  version: number;
+  pending: Promise<unknown>;
+  cache: Map<string, WorkspaceEntry>;
+}
 
-function cachedWorkspacesForPath(runtime: WorkspaceRuntime, workspacePath: string) {
-  return [...runtime.cache.entries()].filter(
-    ([key]) => key === workspacePath || key.startsWith(`${workspacePath}\u0000`),
+// Active runs and background processes may temporarily exceed the idle cache target.
+const WORKSPACE_CACHE_LIMIT = 32;
+const runtimeByScope = new Map<string, WorkspaceRuntime>();
+const workspaceCleanups = new WeakMap<Workspace, Set<() => void>>();
+let workspaceMastra: Mastra | undefined;
+let workspaceCleanupStopped = false;
+const workspaceSessions = new Map<Session, () => void>();
+
+export function onWorkspaceDestroy(workspace: Workspace, cleanup: () => void): void {
+  let cleanups = workspaceCleanups.get(workspace);
+  if (!cleanups) {
+    cleanups = new Set();
+    workspaceCleanups.set(workspace, cleanups);
+  }
+  cleanups.add(cleanup);
+}
+
+function hasWorkspaceRun(entry: WorkspaceEntry): boolean {
+  if (!workspaceMastra || !entry.threadId) return true;
+  return (
+    Object.values(workspaceMastra.listAgents()).some((agent) =>
+      agent
+        .listActiveThreadRuns()
+        .some((run) => run.resourceId === entry.resourceId && run.threadId === entry.threadId),
+    ) ||
+    [...workspaceSessions.keys()].some(
+      (session) =>
+        session.identity.getResourceId() === entry.resourceId &&
+        session.thread.getId() === entry.threadId &&
+        session.run.isRunning(),
+    )
   );
 }
 
-const runtimeByScope = new Map<string, WorkspaceRuntime>();
+async function workspaceIsBusy(entry: WorkspaceEntry): Promise<boolean> {
+  if (hasWorkspaceRun(entry)) return true;
+  const tasks = await workspaceMastra?.backgroundTaskManager?.listTasks({
+    resourceId: entry.resourceId,
+    threadId: entry.threadId,
+    status: ["pending", "running", "suspended"],
+    perPage: 1,
+  });
+  if (tasks?.total || hasWorkspaceRun(entry)) return true;
+  // LSP servers are workspace-owned services, not user background commands.
+  await entry.workspace.lsp?.shutdownAll();
+  const processes = await entry.workspace.sandbox?.processes?.list();
+  return hasWorkspaceRun(entry) || Boolean(processes?.some((process) => process.running));
+}
 
-function evictTerminalWorkspace(
-  cache: Map<string, Workspace>,
-  limit: number,
-): boolean {
-  if (cache.size <= limit) return false;
-  for (const [cacheKey, workspace] of cache) {
-    // Workspace does not expose an in-flight operation counter. Never destroy
-    // a pending/ready workspace from an LRU path: an Agent, Sandbox, or LSP
-    // operation may still hold the instance after this lookup returns.
-    if (workspace.status !== "error" && workspace.status !== "destroyed") continue;
-    cache.delete(cacheKey);
-    void workspace.destroy().catch(() => undefined);
-    return true;
+async function destroyWorkspace(runtime: WorkspaceRuntime, key: string, entry: WorkspaceEntry) {
+  if (!(await workspaceMastra?.removeWorkspace(entry.workspace.id, { destroy: true }))) {
+    await entry.workspace.destroy();
   }
-  return false;
+  for (const cleanup of workspaceCleanups.get(entry.workspace) ?? []) cleanup();
+  workspaceCleanups.delete(entry.workspace);
+  runtime.cache.delete(key);
+}
+
+async function pruneWorkspaces(runtime: WorkspaceRuntime, retainedKey?: string): Promise<void> {
+  for (const [key, entry] of runtime.cache) {
+    if (key === retainedKey) continue;
+    if (["error", "destroying", "destroyed"].includes(entry.workspace.status)) {
+      await destroyWorkspace(runtime, key, entry);
+      continue;
+    }
+    if (entry.version === runtime.version && runtime.cache.size <= WORKSPACE_CACHE_LIMIT) continue;
+    if (await workspaceIsBusy(entry)) continue;
+    await destroyWorkspace(runtime, key, entry);
+  }
+}
+
+/** Retire workspace-bound processors with the workspace after its current run completes. */
+export async function invalidateWorkspaceInstances(resourceId?: string): Promise<void> {
+  const runtime = getRuntime(resourceId);
+  await withWorkspaceRuntime(runtime, async () => {
+    runtime.version += 1;
+    await pruneWorkspaces(runtime);
+  });
+}
+
+/** Native finish callbacks run before their final run-state cleanup. */
+export function scheduleIdleWorkspaceCleanup(): void {
+  if (workspaceCleanupStopped) return;
+  setImmediate(() => {
+    if (workspaceCleanupStopped) return;
+    void pruneIdleWorkspaces().catch((error) =>
+      workspaceMastra?.getLogger().warn("Workspace cleanup failed", { error }),
+    );
+  }).unref();
+}
+
+/** Prevent deferred cleanup queries after shutdown closes the shared storage. */
+export async function stopWorkspaceCleanup(): Promise<void> {
+  workspaceCleanupStopped = true;
+  await Promise.all([...runtimeByScope.values()].map((runtime) => runtime.pending));
+}
+
+async function withWorkspaceRuntime<T>(
+  runtime: WorkspaceRuntime,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const pending = runtime.pending.catch(() => undefined).then(operation);
+  runtime.pending = pending;
+  return pending;
+}
+
+/** Release excess idle workspaces when native session runs end, without dropping session state. */
+export function registerWorkspaceLifecycle(mastra: Mastra): void {
+  workspaceMastra = mastra;
+  for (const controller of Object.values(mastra.listAgentControllers())) {
+    controller.onSessionCreated((session) => {
+      const unsubscribe = session.subscribe((event) => {
+        if (event.type === "agent_end") scheduleIdleWorkspaceCleanup();
+      });
+      workspaceSessions.set(session, unsubscribe);
+    });
+    controller.onSessionDeleted((session) => {
+      workspaceSessions.get(session)?.();
+      workspaceSessions.delete(session);
+      scheduleIdleWorkspaceCleanup();
+    });
+  }
+}
+
+export async function pruneIdleWorkspaces(): Promise<void> {
+  await Promise.all(
+    [...runtimeByScope.values()].map((runtime) =>
+      withWorkspaceRuntime(runtime, () => pruneWorkspaces(runtime)),
+    ),
+  );
 }
 
 function getRuntime(resourceId?: string): WorkspaceRuntime {
   const key = scopeKey(resourceId);
   let runtime = runtimeByScope.get(key);
-  if (runtime) {
-    runtimeByScope.delete(key);
+  if (!runtime) {
+    runtime = {
+      config: defaultWorkspaceConfig(resourceId),
+      loaded: false,
+      version: 0,
+      pending: Promise.resolve(),
+      cache: new Map(),
+    };
     runtimeByScope.set(key, runtime);
-    return runtime;
-  }
-  runtime = { config: defaultWorkspaceConfig(resourceId), cache: new Map() };
-  runtimeByScope.set(key, runtime);
-  if (runtimeByScope.size > RUNTIME_SCOPE_LIMIT) {
-    const oldest = runtimeByScope.entries().next().value as [string, WorkspaceRuntime] | undefined;
-    if (oldest && oldest[1].cache.size === 0) {
-      runtimeByScope.delete(oldest[0]);
-    }
   }
   return runtime;
 }
 
 /** 线程工作区根目录(隐式绑定的父目录) */
-export function getThreadsRoot(resourceId?: string): string {
-  return getRuntime(resourceId).config.threadsRoot;
+export async function getThreadsRoot(resourceId?: string): Promise<string> {
+  return (await getWorkspaceConfig(resourceId)).threadsRoot;
 }
 
 /** 线程的隐式工作区目录(仅路径计算;实际创建发生在首条消息绑定时) */
-export function implicitThreadWorkspacePath(threadId: string, resourceId?: string): string {
-  return join(getThreadsRoot(resourceId), threadId);
+export async function implicitThreadWorkspacePath(
+  threadId: string,
+  resourceId?: string,
+): Promise<string> {
+  return join(await getThreadsRoot(resourceId), threadId);
 }
 
 /** 确保目录存在(隐式绑定首次落盘) */
@@ -454,7 +529,11 @@ export async function getManagedSkillPaths(resourceId?: string): Promise<string[
           const directory = join(root, entry.name);
           try {
             const content = await readFile(join(directory, "SKILL.md"), "utf8");
-            if (/^enabled\s*:\s*["']?(?:false|0|no)["']?\s*$/im.test(content)) return undefined;
+            if (
+              !validateSkillContent({ content, directoryName: entry.name }).valid ||
+              matter(content).data.enabled === false
+            )
+              return undefined;
             return directory;
           } catch {
             return undefined;
@@ -471,93 +550,113 @@ export async function getManagedSkillPaths(resourceId?: string): Promise<string[
  * Agent 的动态 workspace 函数按 requestContext 里的线程工作区路径调用;
  * 每个实例的 filesystem/sandbox 都 contained 在该目录内。
  */
-export function getThreadWorkspace(
+export async function getThreadWorkspace(
   workspacePath: string,
   threadId?: string,
   resourceId?: string,
-): Workspace {
+): Promise<Workspace> {
+  await getWorkspaceConfig(resourceId);
   const runtime = getRuntime(resourceId);
-  const config = runtime.config;
-  const cacheKey = [workspacePath, threadId, resourceId].filter(Boolean).join("\u0000");
-  const cached = runtime.cache.get(cacheKey);
-  if (cached) {
-    // Map insertion order is used as a small LRU: active workspaces stay warm,
-    // while long-lived sessions cannot retain an unbounded number of runtimes.
-    runtime.cache.delete(cacheKey);
-    runtime.cache.set(cacheKey, cached);
-    return cached;
-  }
-
-  const managedSkillsDirectory = getManagedSkillsDirectory(resourceId);
-  const allowedPaths = [
-    ...config.allowedPaths,
-    ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
-    managedSkillsDirectory,
-  ];
-  const filesystem = new LocalFilesystem({
-    basePath: workspacePath,
-    ...(allowedPaths.length ? { allowedPaths } : {}),
-    ...(config.readOnly ? { readOnly: true } : {}),
-  });
-  const changeHooks = createWorkspaceChangeHooks(filesystem);
-  const outputArchive = createWorkspaceOutputArchiveHooks();
-  // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
-  const workspaceTools = getWorkspaceToolsConfig(resourceId);
-  const executeConfig = workspaceTools.mastra_workspace_execute_command;
-  workspaceTools.mastra_workspace_execute_command = {
-    ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),
-    backgroundProcesses: outputArchive.backgroundProcesses,
-  };
-  workspaceTools.hooks = {
-    beforeToolCall: async (params) => {
-      await changeHooks.beforeToolCall?.(params);
-      await outputArchive.hooks.beforeToolCall?.(params);
-    },
-    afterToolCall: async (params) => {
-      await changeHooks.afterToolCall?.(params);
-      await outputArchive.hooks.afterToolCall?.(params);
-    },
-  };
-  const sandbox = config.sandboxEnabled
-    ? new LocalSandbox({
-        workingDirectory: workspacePath,
-        timeout: config.sandboxTimeoutMs,
-        env: config.sandboxEnv,
-      })
-    : undefined;
-  const bm25 = config.bm25 ? { k1: config.bm25K1, b: config.bm25B } : undefined;
-  const lsp = config.lsp
-    ? {
-        root: workspacePath,
-        diagnosticTimeout: config.lspDiagnosticTimeoutMs,
-        initTimeout: config.lspInitTimeoutMs,
-        maxOpenClients: config.lspMaxOpenClients,
-        disableServers: config.lspDisableServers,
-        binaryOverrides: config.lspBinaryOverrides,
-        searchPaths: config.lspSearchPaths,
+  return withWorkspaceRuntime(runtime, async () => {
+    const config = runtime.config;
+    const cacheKey = JSON.stringify([workspacePath, threadId, resourceId]);
+    const cached = runtime.cache.get(cacheKey);
+    if (cached) {
+      if (
+        ["error", "destroying", "destroyed"].includes(cached.workspace.status) ||
+        (cached.version !== runtime.version && !(await workspaceIsBusy(cached)))
+      ) {
+        await destroyWorkspace(runtime, cacheKey, cached);
+      } else {
+        runtime.cache.delete(cacheKey);
+        runtime.cache.set(cacheKey, cached);
+        await pruneWorkspaces(runtime, cacheKey);
+        return cached.workspace;
       }
-    : undefined;
-  const workspaceConfig: ConstructorParameters<typeof Workspace>[0] = {
-    id: `mastra-work:${workspacePath}${threadId ? `:${threadId}` : ""}`,
-    name: "MastraWork Workspace",
-    filesystem,
-    ...(sandbox ? { sandbox } : {}),
-    ...(bm25 ? { bm25 } : {}),
-    ...(lsp ? { lsp } : {}),
-    tools: workspaceTools,
-    skillSource: new LocalSkillSource({ basePath: workspacePath }),
-    skills: async ({ requestContext }) => {
-      const contextResourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
-      const scopedResourceId =
-        resourceId ?? (typeof contextResourceId === "string" ? contextResourceId : undefined);
-      return [...config.skillsPaths, ...(await getManagedSkillPaths(scopedResourceId))];
-    },
-    ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
-  };
-  const workspace = new Workspace(workspaceConfig) as Workspace;
-  runtime.cache.set(cacheKey, workspace);
-  evictTerminalWorkspace(runtime.cache, WORKSPACE_CACHE_LIMIT);
-  return workspace;
+    }
+
+    const managedSkillsDirectory = getManagedSkillsDirectory(resourceId);
+    const allowedPaths = [
+      ...config.allowedPaths,
+      ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
+      managedSkillsDirectory,
+    ];
+    const filesystem = new LocalFilesystem({
+      basePath: workspacePath,
+      ...(allowedPaths.length ? { allowedPaths } : {}),
+      ...(config.readOnly ? { readOnly: true } : {}),
+    });
+    const changeHooks = createWorkspaceChangeHooks(filesystem);
+    const outputArchive = createWorkspaceOutputArchiveHooks();
+    // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
+    const workspaceTools = getWorkspaceToolsConfig(resourceId);
+    const executeConfig = workspaceTools.mastra_workspace_execute_command;
+    workspaceTools.mastra_workspace_execute_command = {
+      ...(typeof executeConfig === "object" && executeConfig !== null ? executeConfig : {}),
+      backgroundProcesses: {
+        ...outputArchive.backgroundProcesses,
+        onExit: async (meta) => {
+          await outputArchive.backgroundProcesses.onExit?.(meta);
+          scheduleIdleWorkspaceCleanup();
+        },
+      },
+    };
+    workspaceTools.hooks = {
+      beforeToolCall: async (params) => {
+        await changeHooks.beforeToolCall?.(params);
+        await outputArchive.hooks.beforeToolCall?.(params);
+      },
+      afterToolCall: async (params) => {
+        await changeHooks.afterToolCall?.(params);
+        await outputArchive.hooks.afterToolCall?.(params);
+      },
+    };
+    const sandbox = config.sandboxEnabled
+      ? new LocalSandbox({
+          workingDirectory: workspacePath,
+          timeout: config.sandboxTimeoutMs,
+          env: config.sandboxEnv,
+        })
+      : undefined;
+    const bm25 = config.bm25 ? { k1: config.bm25K1, b: config.bm25B } : undefined;
+    const lsp = config.lsp
+      ? {
+          root: workspacePath,
+          diagnosticTimeout: config.lspDiagnosticTimeoutMs,
+          initTimeout: config.lspInitTimeoutMs,
+          maxOpenClients: config.lspMaxOpenClients,
+          disableServers: config.lspDisableServers,
+          binaryOverrides: config.lspBinaryOverrides,
+          searchPaths: config.lspSearchPaths,
+        }
+      : undefined;
+    const workspaceConfig: ConstructorParameters<typeof Workspace>[0] = {
+      id: `mastra-work:${cacheKey}`,
+      name: "MastraWork Workspace",
+      filesystem,
+      ...(sandbox ? { sandbox } : {}),
+      ...(bm25 ? { bm25 } : {}),
+      ...(lsp ? { lsp } : {}),
+      tools: workspaceTools,
+      skillSource: new LocalSkillSource({ basePath: workspacePath }),
+      skills: async ({ requestContext }) => {
+        const contextResourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
+        const scopedResourceId =
+          resourceId ?? (typeof contextResourceId === "string" ? contextResourceId : undefined);
+        return [...config.skillsPaths, ...(await getManagedSkillPaths(scopedResourceId))];
+      },
+      ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
+    };
+    const workspace = new Workspace(workspaceConfig) as Workspace;
+    runtime.cache.set(cacheKey, {
+      workspace,
+      threadId,
+      resourceId,
+      version: runtime.version,
+    });
+    await pruneWorkspaces(runtime, cacheKey);
+    return workspace;
+  });
 }
 
 /**
@@ -571,29 +670,22 @@ export async function deleteThreadWorkspace(
   resourceId: string,
 ): Promise<void> {
   const meta = metadata as { workspacePath?: string; workspaceExplicit?: boolean } | undefined;
-  const implicitPath = implicitThreadWorkspacePath(threadId, resourceId);
+  await getWorkspaceConfig(resourceId);
+  const implicitPath = await implicitThreadWorkspacePath(threadId, resourceId);
   const runtime = getRuntime(resourceId);
-
-  // 1. 销毁并清除隐式工作区的 Workspace 实例及物理目录
-  for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, implicitPath)) {
-    runtime.cache.delete(cacheKey);
-    await workspace.destroy().catch(() => undefined);
-  }
-  await rm(implicitPath, { recursive: true, force: true }).catch(() => undefined);
-
-  // 2. 若 metadata 指向了自定义路径:
-  if (meta?.workspacePath) {
-    for (const [cacheKey, workspace] of cachedWorkspacesForPath(runtime, meta.workspacePath)) {
-      runtime.cache.delete(cacheKey);
-      await workspace.destroy().catch(() => undefined);
+  await withWorkspaceRuntime(runtime, async () => {
+    for (const [key, entry] of runtime.cache) {
+      if (entry.threadId !== threadId || entry.resourceId !== resourceId) continue;
+      if (hasWorkspaceRun(entry))
+        throw new Error("Cannot delete a workspace while its thread is running");
+      await destroyWorkspace(runtime, key, entry);
     }
-    // 如果该路径非用户外部显式选中的项目(例如位于 threadsRoot 内部),亦物理清理
-    if (
-      !meta.workspaceExplicit &&
-      resolve(meta.workspacePath).startsWith(resolve(runtime.config.threadsRoot))
-    ) {
-      await rm(meta.workspacePath, { recursive: true, force: true }).catch(() => undefined);
+    await rm(implicitPath, { recursive: true, force: true });
+    if (meta?.workspacePath && !meta.workspaceExplicit) {
+      const root = resolve(runtime.config.threadsRoot);
+      const path = resolve(meta.workspacePath);
+      if (path.startsWith(`${root}${sep}`)) await rm(path, { recursive: true, force: true });
     }
-  }
+  });
   await deleteWorkspaceChanges(threadId, resourceId);
 }

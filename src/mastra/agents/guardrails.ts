@@ -1,7 +1,7 @@
 /**
  * 护栏与处理器管线(docs/en/docs/agents/guardrails.mdx + processors.mdx,
  * 参数详见 docs/en/reference/processors/*.mdx)。
- * 把 @mastra/core/processors 的全部内置处理器暴露成设置面板可配置项,
+ * 将产品支持的 @mastra/core/processors 处理器参数暴露为设置项,
  * 写入数据库 app_config 表(key = "guardrails"),保存后实时生效
  * (置空实例缓存,下次请求按新配置重建)。
  *
@@ -38,7 +38,6 @@ import {
   PromptInjectionDetector,
   ProviderHistoryCompat,
   RegexFilterProcessor,
-  type RegexPreset,
   type RegexRule,
   ResponseCache,
   SkillSearchProcessor,
@@ -51,183 +50,177 @@ import {
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { clampNumber, cleanStrings } from "../config/normalize";
-import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
+import type { Workspace } from "@mastra/core/workspace";
+import { z } from "zod";
+import { resolveContextModel, resolveDefaultLanguageModel } from "../models/providers";
 import { getAppConfig, resourceIdFromContext, setAppConfig } from "../storage";
-import { getThreadWorkspace, WORKSPACE_PATH_CONTEXT_KEY } from "../workspace";
+import {
+  getThreadWorkspace,
+  invalidateWorkspaceInstances,
+  onWorkspaceDestroy,
+  WORKSPACE_PATH_CONTEXT_KEY,
+  WORKSPACE_THREAD_ID_CONTEXT_KEY,
+} from "../workspace";
 import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
 
-type RegexStrategy = "block" | "redact" | "warn";
-type RegexPhase = "input" | "output" | "all";
-type InjectionStrategy = "block" | "warn" | "filter" | "rewrite";
-type ModerationStrategy = "block" | "warn" | "filter";
-type PIIStrategy = "block" | "warn" | "filter" | "redact";
-type PIIRedaction = "mask" | "hash" | "remove" | "placeholder";
-type LanguageStrategy = "detect" | "translate" | "block" | "warn";
-type ScrubberStrategy = "block" | "warn" | "filter" | "redact";
-type ScrubberRedaction = "mask" | "placeholder" | "remove";
-type TokenLimitTrimMode = "best-fit" | "contiguous";
-type TokenLimitOutputStrategy = "truncate" | "abort";
-type TokenLimitCountMode = "cumulative" | "part";
-type CostScope = "run" | "resource" | "thread" | "user" | "organization" | "session";
-type CostWindow = "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
-type CostStrategy = "block" | "warn";
-type CacheScopeMode = "auto" | "none" | "custom";
-type ToolSearchStorage = "in-memory" | "context";
-export interface GuardrailsUserConfig {
-  // --- 通用 ---------------------------------------------------------------
-  /**
-   * 内部检测 agent 用「提示词注入 JSON」代替原生 structured output。
-   * 第三方网关/兼容端点常不支持 response_format,关闭会让检测结果解析失败。
-   */
-  jsonPromptInjection: boolean;
-  /** JSON provider options shared by the internal detector agents. */
-  detectorProviderOptions: string;
-  /** 处理器重试上限(abort({retry:true}) 生效前提);0 = 不显式设置 */
-  maxProcessorRetries: number;
+export const guardrailsConfigSchema = z
+  .object({
+    // --- 通用 ---------------------------------------------------------------
+    /**
+     * 内部检测 agent 用「提示词注入 JSON」代替原生 structured output。
+     * 第三方网关/兼容端点常不支持 response_format,关闭会让检测结果解析失败。
+     */
+    jsonPromptInjection: z.boolean(),
+    /** JSON provider options shared by the internal detector agents. */
+    detectorProviderOptions: z.string().max(100_000),
+    /** 处理器重试上限(abort({retry:true}) 生效前提);0 = 不显式设置 */
+    maxProcessorRetries: z.number().int().min(0).max(50),
 
-  // --- UnicodeNormalizer(输入) --------------------------------------------
-  unicode: boolean;
-  unicodeStripControlChars: boolean;
-  unicodePreserveEmojis: boolean;
-  unicodeCollapseWhitespace: boolean;
-  unicodeTrim: boolean;
+    // --- UnicodeNormalizer(输入) --------------------------------------------
+    unicode: z.boolean(),
+    unicodeStripControlChars: z.boolean(),
+    unicodePreserveEmojis: z.boolean(),
+    unicodeCollapseWhitespace: z.boolean(),
+    unicodeTrim: z.boolean(),
 
-  // --- RegexFilterProcessor(零 LLM 成本,输入/输出) ------------------------
-  regex: boolean;
-  regexPresets: RegexPreset[];
-  regexStrategy: RegexStrategy;
-  regexPhase: RegexPhase;
-  regexIncludeRedactedValues: boolean;
-  regexStreamCarryoverSize: number;
-  /** 自定义规则 JSON 文本:[{ name, pattern, flags?, replacement? }] */
-  regexRules: string;
+    // --- RegexFilterProcessor(零 LLM 成本,输入/输出) ------------------------
+    regex: z.boolean(),
+    regexPresets: z.array(z.enum(["pii", "secrets", "urls"])).max(3),
+    regexStrategy: z.enum(["block", "redact", "warn"]),
+    regexPhase: z.enum(["input", "output", "all"]),
+    regexIncludeRedactedValues: z.boolean(),
+    regexStreamCarryoverSize: z.number().int().min(0).max(100_000),
+    /** 自定义规则 JSON 文本:[{ name, pattern, flags?, replacement? }] */
+    regexRules: z.string().max(100_000),
 
-  // --- PromptInjectionDetector(输入) --------------------------------------
-  injection: boolean;
-  injectionTypes: string[];
-  injectionThreshold: number;
-  injectionStrategy: InjectionStrategy;
-  injectionLastMessageOnly: boolean;
-  injectionIncludeScores: boolean;
-  injectionInstructions: string;
+    // --- PromptInjectionDetector(输入) --------------------------------------
+    injection: z.boolean(),
+    injectionTypes: z.array(z.string()).max(50),
+    injectionThreshold: z.number().min(0).max(1),
+    injectionStrategy: z.enum(["block", "warn", "filter", "rewrite"]),
+    injectionLastMessageOnly: z.boolean(),
+    injectionIncludeScores: z.boolean(),
+    injectionInstructions: z.string().max(100_000),
 
-  // --- LanguageDetector(输入) ---------------------------------------------
-  language: boolean;
-  languageTargets: string[];
-  languageThreshold: number;
-  languageStrategy: LanguageStrategy;
-  languagePreserveOriginal: boolean;
-  languageMinTextLength: number;
-  languageLastMessageOnly: boolean;
-  languageIncludeDetails: boolean;
-  languageInstructions: string;
+    // --- LanguageDetector(输入) ---------------------------------------------
+    language: z.boolean(),
+    languageTargets: z.array(z.string()).max(50),
+    languageThreshold: z.number().min(0).max(1),
+    languageStrategy: z.enum(["detect", "translate", "block", "warn"]),
+    languagePreserveOriginal: z.boolean(),
+    languageMinTextLength: z.number().int().min(0).max(10_000),
+    languageLastMessageOnly: z.boolean(),
+    languageIncludeDetails: z.boolean(),
+    languageInstructions: z.string().max(100_000),
 
-  // --- ModerationProcessor(输入/输出共用一份参数) --------------------------
-  moderationInput: boolean;
-  moderationOutput: boolean;
-  moderationCategories: string[];
-  moderationThreshold: number;
-  moderationStrategy: ModerationStrategy;
-  moderationLastMessageOnly: boolean;
-  moderationIncludeScores: boolean;
-  moderationChunkWindow: number;
-  moderationInstructions: string;
+    // --- ModerationProcessor(输入/输出共用一份参数) --------------------------
+    moderationInput: z.boolean(),
+    moderationOutput: z.boolean(),
+    moderationCategories: z.array(z.string()).max(50),
+    moderationThreshold: z.number().min(0).max(1),
+    moderationStrategy: z.enum(["block", "warn", "filter"]),
+    moderationLastMessageOnly: z.boolean(),
+    moderationIncludeScores: z.boolean(),
+    moderationChunkWindow: z.number().int().min(0).max(50),
+    moderationInstructions: z.string().max(100_000),
 
-  // --- PIIDetector(输入/输出共用一份参数) ---------------------------------
-  piiInput: boolean;
-  piiOutput: boolean;
-  piiTypes: string[];
-  piiThreshold: number;
-  piiStrategy: PIIStrategy;
-  piiRedactionMethod: PIIRedaction;
-  piiPreserveFormat: boolean;
-  piiLastMessageOnly: boolean;
-  piiIncludeDetections: boolean;
-  piiBufferSize: number;
-  piiInstructions: string;
+    // --- PIIDetector(输入/输出共用一份参数) ---------------------------------
+    piiInput: z.boolean(),
+    piiOutput: z.boolean(),
+    piiTypes: z.array(z.string()).max(50),
+    piiThreshold: z.number().min(0).max(1),
+    piiStrategy: z.enum(["block", "warn", "filter", "redact"]),
+    piiRedactionMethod: z.enum(["mask", "hash", "remove", "placeholder"]),
+    piiPreserveFormat: z.boolean(),
+    piiLastMessageOnly: z.boolean(),
+    piiIncludeDetections: z.boolean(),
+    piiBufferSize: z.number().int().min(1).max(10_000),
+    piiInstructions: z.string().max(100_000),
 
-  // --- SystemPromptScrubber(输出) -----------------------------------------
-  scrubber: boolean;
-  scrubberStrategy: ScrubberStrategy;
-  scrubberRedactionMethod: ScrubberRedaction;
-  scrubberPlaceholderText: string;
-  scrubberCustomPatterns: string[];
-  scrubberIncludeDetections: boolean;
-  scrubberLastMessageOnly: boolean;
-  scrubberInstructions: string;
+    // --- SystemPromptScrubber(输出) -----------------------------------------
+    scrubber: z.boolean(),
+    scrubberStrategy: z.enum(["block", "warn", "filter", "redact"]),
+    scrubberRedactionMethod: z.enum(["mask", "placeholder", "remove"]),
+    scrubberPlaceholderText: z.string().max(100_000),
+    scrubberCustomPatterns: z.array(z.string()).max(100),
+    scrubberIncludeDetections: z.boolean(),
+    scrubberLastMessageOnly: z.boolean(),
+    scrubberInstructions: z.string().max(100_000),
 
-  // --- BatchPartsProcessor(输出) ------------------------------------------
-  batchParts: boolean;
-  batchPartsSize: number;
-  /** 0 = 不设超时(仅按 batchSize 触发) */
-  batchPartsMaxWaitTime: number;
-  batchPartsEmitOnNonText: boolean;
+    // --- BatchPartsProcessor(输出) ------------------------------------------
+    batchParts: z.boolean(),
+    batchPartsSize: z.number().int().min(1).max(100),
+    /** 0 = 不设超时(仅按 batchSize 触发) */
+    batchPartsMaxWaitTime: z.number().int().min(0).max(120_000),
+    batchPartsEmitOnNonText: z.boolean(),
 
-  // --- TokenLimiterProcessor(输入 / 输出各一份) ---------------------------
-  tokenLimitInput: boolean;
-  tokenLimitInputValue: number;
-  tokenLimitTrimMode: TokenLimitTrimMode;
-  tokenLimitOutput: boolean;
-  tokenLimitOutputValue: number;
-  tokenLimitOutputStrategy: TokenLimitOutputStrategy;
-  tokenLimitOutputCountMode: TokenLimitCountMode;
+    // --- TokenLimiterProcessor(输入 / 输出各一份) ---------------------------
+    tokenLimitInput: z.boolean(),
+    tokenLimitInputValue: z.number().int().min(1).max(2_000_000),
+    tokenLimitTrimMode: z.enum(["best-fit", "contiguous"]),
+    tokenLimitOutput: z.boolean(),
+    tokenLimitOutputValue: z.number().int().min(1).max(500_000),
+    tokenLimitOutputStrategy: z.enum(["truncate", "abort"]),
+    tokenLimitOutputCountMode: z.enum(["cumulative", "part"]),
 
-  // --- TokenCostControl(输入) ---------------------------------------------
-  tokenCost: boolean;
-  /** 美元上限(近似值:观测指标异步落盘,快跑的 run 可能短暂越界) */
-  tokenCostMax: number;
-  tokenCostScope: CostScope;
-  tokenCostWindow: CostWindow;
-  tokenCostStrategy: CostStrategy;
-  /** 软阈值百分比(0 = 不启用软告警) */
-  tokenCostWarnAtPercent: number;
-  tokenCostIncludeBreakdown: boolean;
+    // --- TokenCostControl(输入) ---------------------------------------------
+    tokenCost: z.boolean(),
+    /** 美元上限(近似值:观测指标异步落盘,快跑的 run 可能短暂越界) */
+    tokenCostMax: z.number().min(0).max(1_000_000),
+    tokenCostScope: z.enum(["run", "resource", "thread", "user", "organization", "session"]),
+    tokenCostWindow: z.enum(["1h", "6h", "24h", "7d", "30d", "365d"]),
+    tokenCostStrategy: z.enum(["block", "warn"]),
+    /** 软阈值百分比(0 = 不启用软告警) */
+    tokenCostWarnAtPercent: z.number().min(0).max(100),
+    tokenCostIncludeBreakdown: z.boolean(),
 
-  // --- ToolCallFilter(输入,processLLMRequest) -----------------------------
-  toolCallFilter: boolean;
-  /** 仅裁剪这些工具;留空 = 裁剪全部工具调用 */
-  toolCallFilterExclude: string[];
-  /** 保留最近 N 个产生工具调用的步骤;-1 = 不在本轮循环内裁剪 */
-  toolCallFilterAfterToolSteps: number;
-  toolCallFilterPreserveModelOutput: boolean;
+    // --- ToolCallFilter(输入,processLLMRequest) -----------------------------
+    toolCallFilter: z.boolean(),
+    /** 仅裁剪这些工具;留空 = 裁剪全部工具调用 */
+    toolCallFilterExclude: z.array(z.string()).max(100),
+    /** 保留最近 N 个产生工具调用的步骤;-1 = 不在本轮循环内裁剪 */
+    toolCallFilterAfterToolSteps: z.number().int(),
+    toolCallFilterPreserveModelOutput: z.boolean(),
 
-  // --- ResponseCache(输入,processLLMRequest/Response) ---------------------
-  responseCache: boolean;
-  responseCacheTtl: number;
-  /** auto = 按 resourceId 隔离;none = 全局共享;custom = 固定租户键 */
-  responseCacheScopeMode: CacheScopeMode;
-  responseCacheScopeValue: string;
+    // --- ResponseCache(输入,processLLMRequest/Response) ---------------------
+    responseCache: z.boolean(),
+    responseCacheTtl: z.number().int().min(0).max(86_400),
+    /** auto = 按 resourceId 隔离;none = 全局共享;custom = 固定租户键 */
+    responseCacheScopeMode: z.enum(["auto", "none", "custom"]),
+    responseCacheScopeValue: z.string().max(100_000),
 
-  // --- ProviderHistoryCompat(输入,processLLMRequest + processAPIError) ----
-  providerCompat: boolean;
+    // --- ProviderHistoryCompat(输入,processLLMRequest + processAPIError) ----
+    providerCompat: z.boolean(),
 
-  // --- SkillSearchProcessor(输入,需工作区) --------------------------------
-  skillSearch: boolean;
-  skillSearchTopK: number;
-  skillSearchMinScore: number;
-  skillSearchTtl: number;
-  skillSearchBlockingRefresh: boolean;
+    // --- SkillSearchProcessor(输入,需工作区) --------------------------------
+    skillSearch: z.boolean(),
+    skillSearchTopK: z.number().int().min(1).max(100),
+    skillSearchMinScore: z.number().min(0).max(1),
+    skillSearchTtl: z.number().int().min(0).max(86_400_000),
+    skillSearchBlockingRefresh: z.boolean(),
 
-  // --- ToolSearchProcessor(输入,动态工具发现) -------------------------------
-  toolSearch: boolean;
-  toolSearchTopK: number;
-  toolSearchMinScore: number;
-  toolSearchInjectCatalog: boolean;
-  toolSearchAutoLoad: boolean;
-  toolSearchStorage: ToolSearchStorage;
-  toolSearchTtl: number;
+    // --- ToolSearchProcessor(输入,动态工具发现) -------------------------------
+    toolSearch: z.boolean(),
+    toolSearchTopK: z.number().int().min(1).max(100),
+    toolSearchMinScore: z.number().min(0).max(1),
+    toolSearchInjectCatalog: z.boolean(),
+    toolSearchAutoLoad: z.boolean(),
+    toolSearchStorage: z.enum(["in-memory", "context"]),
+    toolSearchTtl: z.number().int().min(0).max(86_400_000),
 
-  // --- errorProcessors ----------------------------------------------------
-  prefillErrorHandler: boolean;
-  streamErrorRetry: boolean;
-  streamErrorRetryMax: number;
-  streamErrorRetryDelayMs: number;
-  streamErrorRetryMaxRetryAfterMs: number;
-  streamErrorRetryUnknown: boolean;
-}
+    // --- errorProcessors ----------------------------------------------------
+    prefillErrorHandler: z.boolean(),
+    streamErrorRetry: z.boolean(),
+    streamErrorRetryMax: z.number().int().min(0).max(10),
+    streamErrorRetryDelayMs: z.number().int().min(0).max(120_000),
+    streamErrorRetryMaxRetryAfterMs: z.number().int().min(0).max(600_000),
+    streamErrorRetryUnknown: z.boolean(),
+  })
+  .strict();
+
+export type GuardrailsUserConfig = z.infer<typeof guardrailsConfigSchema>;
 
 /** ModerationProcessor 默认类别(与 OpenAI moderation 一致) */
 const MODERATION_CATEGORIES = [
@@ -430,193 +423,34 @@ export async function saveGuardrailsConfig(
   next: GuardrailsUserConfig,
   resourceId?: string,
 ): Promise<void> {
+  const previous = await getGuardrailsConfig(resourceId);
   const normalized = normalizeGuardrailsConfig(next);
   await setAppConfig(GUARDRAILS_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
   guardrailsConfigByScope.set(scopeKey(resourceId), normalized);
   invalidateCache(resourceId);
+  if (
+    (
+      [
+        "skillSearch",
+        "skillSearchTopK",
+        "skillSearchMinScore",
+        "skillSearchTtl",
+        "skillSearchBlockingRefresh",
+      ] as const
+    ).some((key) => previous[key] !== normalized[key])
+  ) {
+    await invalidateWorkspaceInstances(resourceId);
+  }
 }
 
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
 
 function normalizeGuardrailsConfig(input: Partial<GuardrailsUserConfig>): GuardrailsUserConfig {
-  const raw = input as Record<string, unknown>;
-  const output = { ...DEFAULT_CONFIG } as Record<string, unknown>;
-  const booleans = [
-    "jsonPromptInjection",
-    "unicode",
-    "unicodeStripControlChars",
-    "unicodePreserveEmojis",
-    "unicodeCollapseWhitespace",
-    "unicodeTrim",
-    "regex",
-    "regexIncludeRedactedValues",
-    "injection",
-    "injectionLastMessageOnly",
-    "injectionIncludeScores",
-    "language",
-    "languagePreserveOriginal",
-    "languageLastMessageOnly",
-    "languageIncludeDetails",
-    "moderationInput",
-    "moderationOutput",
-    "moderationLastMessageOnly",
-    "moderationIncludeScores",
-    "piiInput",
-    "piiOutput",
-    "piiPreserveFormat",
-    "piiLastMessageOnly",
-    "piiIncludeDetections",
-    "scrubber",
-    "scrubberIncludeDetections",
-    "scrubberLastMessageOnly",
-    "batchParts",
-    "batchPartsEmitOnNonText",
-    "tokenLimitInput",
-    "tokenLimitOutput",
-    "tokenCost",
-    "tokenCostIncludeBreakdown",
-    "toolCallFilter",
-    "toolCallFilterPreserveModelOutput",
-    "responseCache",
-    "providerCompat",
-    "skillSearch",
-    "skillSearchBlockingRefresh",
-    "toolSearch",
-    "toolSearchInjectCatalog",
-    "toolSearchAutoLoad",
-    "prefillErrorHandler",
-    "streamErrorRetry",
-    "streamErrorRetryUnknown",
-  ] as const;
-  for (const key of booleans) {
-    if (typeof raw[key] === "boolean") output[key] = raw[key];
-  }
-
-  const numbers: Record<string, [number, number, number]> = {
-    maxProcessorRetries: [0, 0, 50],
-    injectionThreshold: [0.7, 0, 1],
-    languageThreshold: [0.7, 0, 1],
-    languageMinTextLength: [10, 0, 10_000],
-    moderationThreshold: [0.5, 0, 1],
-    moderationChunkWindow: [0, 0, 50],
-    piiThreshold: [0.6, 0, 1],
-    piiBufferSize: [200, 1, 10_000],
-    regexStreamCarryoverSize: [128, 0, 100_000],
-    batchPartsSize: [5, 1, 100],
-    batchPartsMaxWaitTime: [100, 0, 120_000],
-    tokenLimitInputValue: [120_000, 1, 2_000_000],
-    tokenLimitOutputValue: [4_000, 1, 500_000],
-    tokenCostMax: [5, 0, 1_000_000],
-    tokenCostWarnAtPercent: [80, 0, 100],
-    toolCallFilterAfterToolSteps: [-1, -1, 100],
-    responseCacheTtl: [300, 0, 86_400],
-    skillSearchTopK: [5, 1, 100],
-    skillSearchMinScore: [0, 0, 1],
-    skillSearchTtl: [3_600_000, 0, 86_400_000],
-    toolSearchTopK: [5, 1, 100],
-    toolSearchMinScore: [0, 0, 1],
-    toolSearchTtl: [3_600_000, 0, 86_400_000],
-    streamErrorRetryMax: [2, 0, 10],
-    streamErrorRetryDelayMs: [3_000, 0, 120_000],
-    streamErrorRetryMaxRetryAfterMs: [30_000, 0, 600_000],
-  };
-  for (const [key, [fallback, min, max]] of Object.entries(numbers)) {
-    output[key] = clampNumber(raw[key], fallback, min, max);
-  }
-
-  const integerKeys = new Set([
-    "maxProcessorRetries",
-    "languageMinTextLength",
-    "moderationChunkWindow",
-    "piiBufferSize",
-    "regexStreamCarryoverSize",
-    "batchPartsSize",
-    "batchPartsMaxWaitTime",
-    "tokenLimitInputValue",
-    "tokenLimitOutputValue",
-    "toolCallFilterAfterToolSteps",
-    "responseCacheTtl",
-    "skillSearchTopK",
-    "skillSearchTtl",
-    "toolSearchTopK",
-    "toolSearchTtl",
-    "streamErrorRetryMax",
-    "streamErrorRetryDelayMs",
-    "streamErrorRetryMaxRetryAfterMs",
-  ]);
-  for (const key of integerKeys) {
-    const value = output[key];
-    if (typeof value === "number") output[key] = Math.round(value);
-  }
-
-  const lists: Record<string, number> = {
-    regexPresets: 3,
-    injectionTypes: 50,
-    languageTargets: 50,
-    moderationCategories: 50,
-    piiTypes: 50,
-    scrubberCustomPatterns: 100,
-    toolCallFilterExclude: 100,
-  };
-  for (const [key, limit] of Object.entries(lists)) {
-    if (raw[key] !== undefined) output[key] = cleanStrings(raw[key], limit);
-  }
-  output.regexPresets = (output.regexPresets as string[]).filter((value): value is RegexPreset =>
-    ["pii", "secrets", "urls"].includes(value),
-  );
-
-  const textKeys = [
-    "detectorProviderOptions",
-    "regexRules",
-    "injectionInstructions",
-    "languageInstructions",
-    "moderationInstructions",
-    "piiInstructions",
-    "scrubberPlaceholderText",
-    "scrubberInstructions",
-    "responseCacheScopeValue",
-  ] as const;
-  for (const key of textKeys) {
-    if (typeof raw[key] === "string") output[key] = raw[key].slice(0, 100_000);
-  }
-
-  const enums: Record<string, readonly string[]> = {
-    regexStrategy: ["block", "redact", "warn"],
-    regexPhase: ["input", "output", "all"],
-    injectionStrategy: ["block", "warn", "filter", "rewrite"],
-    languageStrategy: ["detect", "translate", "block", "warn"],
-    moderationStrategy: ["block", "warn", "filter"],
-    piiStrategy: ["block", "warn", "filter", "redact"],
-    piiRedactionMethod: ["mask", "hash", "remove", "placeholder"],
-    scrubberStrategy: ["block", "warn", "filter", "redact"],
-    scrubberRedactionMethod: ["mask", "placeholder", "remove"],
-    tokenLimitTrimMode: ["best-fit", "contiguous"],
-    tokenLimitOutputStrategy: ["truncate", "abort"],
-    tokenLimitOutputCountMode: ["cumulative", "part"],
-    tokenCostScope: ["run", "resource", "thread", "user", "organization", "session"],
-    tokenCostWindow: ["1h", "6h", "24h", "7d", "30d", "365d"],
-    tokenCostStrategy: ["block", "warn"],
-    responseCacheScopeMode: ["auto", "none", "custom"],
-    toolSearchStorage: ["in-memory", "context"],
-  };
-  for (const [key, allowed] of Object.entries(enums)) {
-    if (typeof raw[key] === "string" && allowed.includes(raw[key])) output[key] = raw[key];
-  }
-
-  return output as unknown as GuardrailsUserConfig;
+  return guardrailsConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
 }
 
 function scopeKey(resourceId?: string): string {
   return resourceId?.trim() || "__system__";
-}
-
-function currentConfig(resourceId?: string): GuardrailsUserConfig {
-  return guardrailsConfigByScope.get(scopeKey(resourceId)) ?? DEFAULT_CONFIG;
-}
-
-/** 当前配置(chat 路由与 Agent 的 defaultOptions 读它决定 maxProcessorRetries) */
-export function getGuardrailsRuntimeConfig(resourceId?: string): GuardrailsUserConfig {
-  return currentConfig(resourceId);
 }
 
 // ---------------------------------------------------------------------------
@@ -628,7 +462,7 @@ export function getGuardrailsRuntimeConfig(resourceId?: string): GuardrailsUserC
 
 interface GuardrailRuntime {
   cachedError: ErrorProcessorOrWorkflow[] | null;
-  skillSearchCache: Map<string, SkillSearchProcessor>;
+  skillSearchCache: WeakMap<Workspace, SkillSearchProcessor>;
   responseCacheBackend: InMemoryServerCache | null;
 }
 
@@ -640,7 +474,7 @@ function getRuntime(resourceId?: string): GuardrailRuntime {
   if (!runtime) {
     runtime = {
       cachedError: null,
-      skillSearchCache: new Map(),
+      skillSearchCache: new WeakMap(),
       responseCacheBackend: null,
     };
     runtimeByScope.set(key, runtime);
@@ -651,7 +485,6 @@ function getRuntime(resourceId?: string): GuardrailRuntime {
 function invalidateCache(resourceId?: string): void {
   const runtime = getRuntime(resourceId);
   runtime.cachedError = null;
-  runtime.skillSearchCache.clear();
   runtime.responseCacheBackend = null;
 }
 
@@ -660,11 +493,9 @@ async function resolveGuardrailModel(
   requestContext?: RequestContext,
   resourceId?: string,
 ): Promise<MastraModelConfig | undefined> {
-  const requestModel = requestContext?.get(REQUEST_MODEL_CONTEXT_KEY);
-  if (typeof requestModel === "object" && requestModel !== null) {
-    return requestModel as MastraModelConfig;
-  }
-  return resolveDefaultLanguageModel(resourceId);
+  return requestContext
+    ? resolveContextModel(requestContext)
+    : resolveDefaultLanguageModel(resourceId);
 }
 
 /** 内部检测 agent 的结构化输出形态(第三方网关不支持 response_format 时必需) */
@@ -785,7 +616,7 @@ function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetec
  * 运行时搜索 → processLLMRequest 类(工具裁剪 / 供应商兼容 / 响应缓存)。
  */
 async function buildInput(
-  cfg = currentConfig(),
+  cfg: GuardrailsUserConfig,
   resourceId?: string,
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
@@ -939,7 +770,7 @@ async function buildInput(
 
 /** 输出处理器数组:先批处理与截断,再交给按块调用 LLM 的重处理器 */
 async function buildOutput(
-  cfg = currentConfig(),
+  cfg: GuardrailsUserConfig,
   resourceId?: string,
   requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
@@ -997,9 +828,15 @@ async function buildOutput(
   return processors;
 }
 
-/** 错误处理器数组:供应商 API 拒绝时的恢复通路 */
-function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
+/**
+ * Settings own the complete error stack (errorProcessorDefaults: false).
+ * Repair the request before a broad retry matcher can resend it unchanged.
+ * Both error/output arrays are explicit; CyberRefusalHandler is not enabled.
+ */
+function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
   const processors: ErrorProcessorOrWorkflow[] = [];
+  if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
+  if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
   if (cfg.streamErrorRetry) {
     processors.push(
       new StreamErrorRetryProcessor({
@@ -1027,8 +864,6 @@ function buildError(cfg = currentConfig()): ErrorProcessorOrWorkflow[] {
       }),
     );
   }
-  if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
-  if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
   return processors;
 }
 
@@ -1041,22 +876,30 @@ export async function buildGuardrailInputProcessors(
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
   const resourceId = resourceIdFromContext(requestContext);
-  const cfg = currentConfig(resourceId);
+  const cfg = await getGuardrailsConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const input = await buildInput(cfg, resourceId, requestContext);
   if (!cfg.skillSearch) return input;
   const contextPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspacePath =
     typeof contextPath === "string" && contextPath.trim() ? contextPath.trim() : process.cwd();
-  let skillSearch = runtime.skillSearchCache.get(workspacePath);
+  const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
+  const workspace = await getThreadWorkspace(
+    workspacePath,
+    typeof threadId === "string" ? threadId : undefined,
+    resourceId,
+  );
+  let skillSearch = runtime.skillSearchCache.get(workspace);
   if (!skillSearch) {
     skillSearch = new SkillSearchProcessor({
-      workspace: getThreadWorkspace(workspacePath, undefined, resourceId),
+      workspace,
       search: { topK: cfg.skillSearchTopK, minScore: cfg.skillSearchMinScore },
       ttl: cfg.skillSearchTtl,
       blockingRefresh: cfg.skillSearchBlockingRefresh,
     });
-    runtime.skillSearchCache.set(workspacePath, skillSearch);
+    runtime.skillSearchCache.set(workspace, skillSearch);
+    const processor = skillSearch;
+    onWorkspaceDestroy(workspace, () => processor.dispose());
   }
   return [...input, skillSearch];
 }
@@ -1065,12 +908,15 @@ export async function buildGuardrailOutputProcessors(
   requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
   const resourceId = resourceIdFromContext(requestContext);
-  return buildOutput(currentConfig(resourceId), resourceId, requestContext);
+  return buildOutput(await getGuardrailsConfig(resourceId), resourceId, requestContext);
 }
 
-export function buildGuardrailErrorProcessors(resourceId?: string): ErrorProcessorOrWorkflow[] {
+export async function buildGuardrailErrorProcessors(
+  resourceId?: string,
+): Promise<ErrorProcessorOrWorkflow[]> {
+  const config = await getGuardrailsConfig(resourceId);
   const runtime = getRuntime(resourceId);
-  runtime.cachedError ??= buildError(currentConfig(resourceId));
+  runtime.cachedError ??= buildError(config);
   return runtime.cachedError;
 }
 
@@ -1087,7 +933,7 @@ export async function getConfiguredProcessorRegistry(): Promise<{
 }> {
   const input = await buildGuardrailInputProcessors();
   const output = await buildGuardrailOutputProcessors();
-  const error = buildGuardrailErrorProcessors();
+  const error = await buildGuardrailErrorProcessors();
   const processors = new Map<string, Processor>();
   for (const candidate of [...input, ...output, ...error]) {
     if (isProcessorWorkflow(candidate) || typeof candidate.id !== "string") continue;

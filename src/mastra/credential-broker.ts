@@ -16,22 +16,38 @@ async function request(payload: Record<string, unknown>) {
   return new Promise<ReturnType<typeof CredentialBrokerResponseSchema.parse>>((resolve, reject) => {
     const socket = createConnection(endpoint);
     let response = "";
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      reject(error);
+    };
+    const closedWithoutResponse = () => fail(new Error("凭据 Broker 未返回完整响应即关闭连接"));
     socket.setEncoding("utf8");
-    socket.setTimeout(5_000, () => socket.destroy(new Error("凭据 Broker 请求超时")));
+    socket.setTimeout(5_000, () => fail(new Error("凭据 Broker 请求超时")));
     socket.once("connect", () => socket.write(`${JSON.stringify({ ...payload, token })}\n`));
     socket.on("data", (chunk: string) => {
+      if (settled) return;
       response += chunk;
-      if (response.length > 131_072) socket.destroy(new Error("凭据 Broker 响应过大"));
+      if (response.length > 131_072) {
+        fail(new Error("凭据 Broker 响应过大"));
+        return;
+      }
       const newline = response.indexOf("\n");
       if (newline === -1) return;
-      socket.end();
       try {
-        resolve(CredentialBrokerResponseSchema.parse(JSON.parse(response.slice(0, newline))));
+        const result = CredentialBrokerResponseSchema.parse(JSON.parse(response.slice(0, newline)));
+        settled = true;
+        socket.destroy();
+        resolve(result);
       } catch (error) {
-        reject(error);
+        fail(error);
       }
     });
-    socket.once("error", reject);
+    socket.once("error", fail);
+    socket.once("end", closedWithoutResponse);
+    socket.once("close", closedWithoutResponse);
   });
 }
 

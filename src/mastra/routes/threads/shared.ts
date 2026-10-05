@@ -67,15 +67,6 @@ export async function getWorkMemory(requestContext: RequestContext): Promise<Mem
   return memory as Memory;
 }
 
-/** Resolve the Memory instance used by thread routes. OM follows the request model. */
-export async function getWorkMemoryForThread(
-  requestContext: RequestContext,
-  _threadId: string,
-  _resourceId: string,
-): Promise<Memory> {
-  return getWorkMemory(requestContext);
-}
-
 /**
  * 所有按 threadId 访问的业务路由都必须先经过这一个边界检查。
  * 线程 ID 属于不可信输入；resourceId 是当前桌面用户的唯一租户边界。
@@ -109,3 +100,41 @@ export function isTrustedLocalRequest(c: ContextWithMastra): boolean {
     return false;
   }
 }
+
+/**
+ * 线程业务 metadata 类型:工作区绑定 / 模式 / 权限规则 / 原生模型选择 /
+ * 子代理与草稿标记。
+ */
+export type ThreadMetadata = {
+  /** 当前线程使用的 Agent 或 Agent 团队 profile。缺省为 mastra-work-agent。 */
+  agentProfileId?: string;
+  pinned?: boolean;
+  archivedAt?: string | null;
+  draft?: boolean;
+  /**
+   * 会话模式(plan / build / review,见 src/mastra/agents/permissions.ts)。
+   * 缺省视为默认模式;非法值由 resolveMode 回落,故不需要在路由层校验。
+   */
+  currentModeId?: string;
+  /**
+   * 工具审批规则(官方 PermissionRules 形状,见 src/mastra/agents/permissions.ts)。
+   * 缺省使用工作台默认规则；用户保存的分类和单工具规则覆盖默认值。
+   */
+  permissionRules?: {
+    categories?: Record<string, string>;
+    tools?: Record<string, string>;
+  };
+  /** Mastra Session.model persists the selected router ID for each mode. */
+  [key: `modeModelId_${string}`]: string | undefined;
+  reasoningEffortByMode?: Record<string, string>;
+  /**
+   * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
+   * - 显式绑定:用户在 promptInput 选择器选定的本地目录
+   * - 隐式绑定:<threadsRoot>/<threadId>/(线程专属默认目录,用户同样可浏览)
+   */
+  workspacePath?: string;
+  /** true = 用户显式选定的目录;false/缺省 = 隐式默认目录(两者都可浏览) */
+  workspaceExplicit?: boolean;
+  contextUsage?: Record<string, unknown> | null;
+  contextUsageVersion?: number;
+};

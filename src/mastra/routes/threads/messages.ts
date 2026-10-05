@@ -1,9 +1,12 @@
 /** Desktop message presentation, using the official AI SDK converter. */
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { MastraDBMessage } from "@mastra/core/agent";
+import {
+  LIBRARY_SEARCH_TOOL_NAMES,
+  type LibraryCitationSource,
+  libraryCitationSources,
+} from "../../rag/types";
 import { normalizeChatHistoryMessages } from "./shared";
-
-const LIBRARY_SEARCH_TOOL_NAMES = new Set(["library_vector_search", "library_graph_search"]);
 
 function getLibraryToolName(part: Record<string, unknown>): string | undefined {
   if (part.type === "dynamic-tool") {
@@ -13,59 +16,24 @@ function getLibraryToolName(part: Record<string, unknown>): string | undefined {
   return part.type.slice("tool-".length);
 }
 
-function appendLibrarySourceParts<Message extends { id?: string; role: string; parts: unknown[] }>(
-  messages: Message[],
-): Message[] {
+function appendLibrarySourceParts<
+  Message extends { id?: string; role: string; parts: unknown[]; metadata?: unknown },
+>(messages: Message[]): Message[] {
+  let turnSources: LibraryCitationSource[] = [];
   return messages.map((message) => {
-    if (message.role !== "assistant") return message;
-    if (
-      message.parts.some(
-        (part) =>
-          typeof part === "object" &&
-          part !== null &&
-          (part as { type?: unknown }).type === "data-library-sources",
-      )
-    ) {
-      return message;
+    if (message.role === "user") {
+      const metadata = message.metadata as { librarySources?: LibraryCitationSource[] } | undefined;
+      turnSources = Array.isArray(metadata?.librarySources) ? metadata.librarySources : [];
     }
-
-    const sources = new Map<string, Record<string, unknown>>();
+    if (message.role !== "assistant") return message;
+    const sources = new Map(turnSources.map((source) => [source.id, source]));
     for (const rawPart of message.parts) {
       if (typeof rawPart !== "object" || rawPart === null) continue;
       const part = rawPart as Record<string, unknown>;
       const toolName = getLibraryToolName(part);
       if (!toolName || !LIBRARY_SEARCH_TOOL_NAMES.has(toolName)) continue;
-      const output = part.output;
-      if (typeof output !== "object" || output === null) continue;
-      const results = (output as { results?: unknown }).results;
-      if (!Array.isArray(results)) continue;
-
-      for (const rawResult of results) {
-        if (typeof rawResult !== "object" || rawResult === null) continue;
-        const result = rawResult as Record<string, unknown>;
-        const assetId = typeof result.assetId === "string" ? result.assetId : "";
-        const url = typeof result.url === "string" ? result.url : "";
-        if (!assetId || !url) continue;
-        try {
-          const parsed = new URL(url);
-          if (!parsed.pathname.startsWith("/work/library/assets/")) continue;
-        } catch {
-          continue;
-        }
-        const id =
-          typeof result.citationId === "string" && result.citationId
-            ? result.citationId
-            : `library-${assetId}`;
-        sources.set(id, {
-          id,
-          assetId,
-          filename:
-            typeof result.filename === "string" && result.filename ? result.filename : "资料库文件",
-          url,
-          snippet: typeof result.text === "string" ? result.text.slice(0, 280) : "",
-          score:
-            typeof result.score === "number" && Number.isFinite(result.score) ? result.score : 0,
-        });
+      for (const source of libraryCitationSources(part.output)) {
+        sources.set(source.id, source);
       }
     }
     if (sources.size === 0) return message;

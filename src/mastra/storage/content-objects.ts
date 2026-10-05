@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdirSync, writeSync } from "node:fs";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWrite, getStorageDirectory, resourceIdFromContext } from "./index";
 
@@ -28,8 +28,6 @@ export interface ContentObjectMetadata {
   source?: string;
   storagePath: string;
   createdAt: string;
-  chunkSize: number;
-  chunkCount: number;
 }
 
 export interface PutContentObjectOptions {
@@ -39,22 +37,12 @@ export interface PutContentObjectOptions {
   contentType: string;
   encoding?: ContentEncoding;
   source?: string;
-  chunkSize?: number;
 }
 
-export interface ReadContentObjectOptions {
-  userId?: string;
+interface ContentObjectLocation {
+  userId: string;
   threadId?: string;
-  kind?: ContentObjectKind;
-  offset?: number;
-  limit?: number;
-}
-
-export interface ReadContentObjectResult {
-  metadata: ContentObjectMetadata;
-  offset: number;
-  limit: number;
-  content: Buffer;
+  kind: ContentObjectKind;
 }
 
 function pathSegment(value: string, name: string): string {
@@ -121,8 +109,6 @@ function metadataFromBytes(
       ? {}
       : { characterCount: [...text].length, lineCount: text ? text.split("\n").length : 0 }),
     sha256: createHash("sha256").update(bytes).digest("hex"),
-    chunkSize: bytes.byteLength || 1,
-    chunkCount: 1,
   };
 }
 
@@ -168,43 +154,75 @@ export async function putContentObject(
   });
 }
 
-function metadataForPath(
-  bytes: Buffer,
-  userId: string,
-  id: string,
-  kind: ContentObjectKind,
-  threadId: string | undefined,
-  storagePath: string,
-): ContentObjectMetadata {
-  return metadataFromBytes(bytes, {
-    objectId: id,
-    userId,
-    ...(threadId ? { threadId } : {}),
-    kind,
-    contentType: "application/octet-stream",
-    encoding: "binary",
-    storagePath,
-    createdAt: new Date(0).toISOString(),
+/** A bounded-memory log sink. Synchronous chunk writes apply backpressure to void callbacks. */
+export async function createContentObjectWriter(options: PutContentObjectOptions) {
+  const userId = userIdFor(options.userId);
+  const id = randomUUID();
+  const path = objectPath(userId, id, options.kind, options.threadId);
+  await mkdir(objectDirectory(contentRoot(userId), options.kind, options.threadId), {
+    recursive: true,
   });
+  const file = await open(path, "wx");
+  const hash = createHash("sha256");
+  let byteSize = 0;
+  let characterCount = 0;
+  let newlines = 0;
+  let failure: unknown;
+  const createdAt = new Date().toISOString();
+  return {
+    append(text: string) {
+      if (failure) return;
+      const bytes = Buffer.from(text, "utf8");
+      try {
+        let offset = 0;
+        while (offset < bytes.length) {
+          const written = writeSync(file.fd, bytes, offset, bytes.length - offset);
+          if (!written) throw new Error("Content archive write made no progress");
+          offset += written;
+        }
+        hash.update(bytes);
+        byteSize += bytes.byteLength;
+        for (const char of text) {
+          characterCount++;
+          if (char === "\n") newlines++;
+        }
+      } catch (error) {
+        failure = error;
+      }
+    },
+    async finish(): Promise<ContentObjectMetadata> {
+      await file.close();
+      if (failure) {
+        await rm(path, { force: true });
+        throw failure;
+      }
+      return {
+        objectId: id,
+        userId,
+        threadId: options.threadId,
+        kind: options.kind,
+        contentType: options.contentType,
+        encoding: "utf8",
+        source: options.source,
+        storagePath: path.slice(contentRoot(userId).length + 1).replaceAll("\\", "/"),
+        createdAt,
+        byteSize,
+        characterCount,
+        lineCount: byteSize ? newlines + 1 : 0,
+        sha256: hash.digest("hex"),
+      };
+    },
+  };
 }
 
-export async function getContentObjectMetadata(
+/** Read archive bytes once; snapshot metadata belongs to the stored change record. */
+export async function readContentObject(
   id: string,
-  options: Omit<ReadContentObjectOptions, "offset" | "limit"> = {},
-): Promise<ContentObjectMetadata | null> {
-  const userId = userIdFor(options.userId);
-  if (!options.kind) return null;
-  const root = contentRoot(userId);
-  const path = objectPath(userId, id, options.kind, options.threadId);
+  options: ContentObjectLocation,
+): Promise<Buffer | null> {
   try {
-    const bytes = await readFile(path);
-    return metadataForPath(
-      bytes,
-      userId,
-      objectId(id),
-      options.kind,
-      options.threadId,
-      path.slice(root.length + 1),
+    return await readFile(
+      objectPath(userIdFor(options.userId), id, options.kind, options.threadId),
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -212,31 +230,13 @@ export async function getContentObjectMetadata(
   }
 }
 
-export async function readContentObject(
-  id: string,
-  options: ReadContentObjectOptions = {},
-): Promise<ReadContentObjectResult | null> {
-  const metadata = await getContentObjectMetadata(id, options);
-  if (!metadata) return null;
-  const bytes = await readFile(join(contentRoot(metadata.userId), metadata.storagePath));
-  const offset = options.offset ?? 0;
-  const limit = options.limit ?? bytes.byteLength - offset;
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > bytes.byteLength) {
-    throw new Error("offset is invalid");
-  }
-  if (!Number.isSafeInteger(limit) || limit < 0) throw new Error("limit is invalid");
-  const content = bytes.subarray(offset, Math.min(bytes.byteLength, offset + limit));
-  return { metadata, offset, limit: content.byteLength, content };
-}
-
 export async function deleteContentObject(
   id: string,
-  options: Omit<ReadContentObjectOptions, "offset" | "limit"> = {},
-): Promise<boolean> {
-  const metadata = await getContentObjectMetadata(id, options);
-  if (!metadata) return false;
-  await rm(join(contentRoot(metadata.userId), metadata.storagePath), { force: true });
-  return true;
+  options: ContentObjectLocation,
+): Promise<void> {
+  await rm(objectPath(userIdFor(options.userId), id, options.kind, options.threadId), {
+    force: true,
+  });
 }
 
 export function contentObjectReference(metadata: ContentObjectMetadata): {
@@ -245,8 +245,6 @@ export function contentObjectReference(metadata: ContentObjectMetadata): {
   byteSize: number;
   contentType: string;
   encoding: ContentEncoding;
-  chunkSize: number;
-  chunkCount: number;
   storagePath: string;
   workspacePath: string;
 } {
@@ -256,8 +254,6 @@ export function contentObjectReference(metadata: ContentObjectMetadata): {
     byteSize: metadata.byteSize,
     contentType: metadata.contentType,
     encoding: metadata.encoding,
-    chunkSize: metadata.chunkSize,
-    chunkCount: metadata.chunkCount,
     storagePath: metadata.storagePath,
     workspacePath: join(contentRoot(metadata.userId), metadata.storagePath),
   };

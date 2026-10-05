@@ -4,7 +4,6 @@ import * as React from "react";
 import { type Activity, ActivityCalendar } from "react-activity-calendar";
 import type { DateRange } from "react-day-picker";
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from "recharts";
-import { calculateCostUSD, formatCostUSD, useModelCatalog } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
@@ -49,37 +48,40 @@ type UsageDetailTab = "requests" | "providers" | "models";
 interface UsageSummary {
   totals: {
     requests: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
     totalLatencyMs: number;
     longestChatMs: number;
     totalCost: number | null;
+    costUnit: string | null;
   };
-  activity: Array<{ date: string; count: number; tokens: number }>;
+  activity: Array<{ date: string; count: number; tokens: number | null }>;
   trend: Array<{
     date: string;
     requests: number;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
   }>;
   providers: Array<{
     provider: string;
     requests: number;
-    inputTokens: number;
-    outputTokens: number;
-    tokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    tokens: number | null;
     cost: number | null;
+    costUnit: string | null;
   }>;
   models: Array<{
     model: string;
     provider: string;
     requests: number;
-    inputTokens: number;
-    outputTokens: number;
-    tokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    tokens: number | null;
     cost: number | null;
+    costUnit: string | null;
     averageCost: number | null;
   }>;
   requests: Array<{
@@ -87,13 +89,14 @@ interface UsageSummary {
     createdAt: string;
     provider: string;
     model: string;
-    inputTokens: number;
-    outputTokens: number;
-    totalTokens: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
     latencyMs: number;
-    status: number;
+    status: "ok" | "error" | null;
     source: string;
     cost: number | null;
+    costUnit: string | null;
   }>;
 }
 
@@ -122,8 +125,14 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat().format(value);
+function formatNumber(value: number | null): string {
+  return value === null ? "—" : new Intl.NumberFormat().format(value);
+}
+
+function formatCost(value: number | null, unit: string | null): string {
+  return value === null || !unit
+    ? "—"
+    : `${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(value)} ${unit}`;
 }
 
 function formatDuration(ms: number): string {
@@ -173,16 +182,16 @@ function DurationTicker({ ms }: { ms: number }) {
 function activityForRange(
   range: DateRange | undefined,
   entries: UsageSummary["activity"],
-): Array<Activity & { tokens?: number }> {
+): Array<Activity & { tokens?: number | null }> {
   const from = startOfDay(range?.from ?? subDays(new Date(), 30));
   const to = startOfDay(range?.to ?? new Date());
   const byDate = new Map(entries.map((entry) => [entry.date, entry]));
-  const result: Array<Activity & { tokens?: number }> = [];
+  const result: Array<Activity & { tokens?: number | null }> = [];
   for (let date = from; date <= to; date = addDays(date, 1)) {
     const key = format(date, "yyyy-MM-dd");
     const item = byDate.get(key);
     const count = item?.count ?? 0;
-    const tokens = item?.tokens ?? 0;
+    const tokens = item ? item.tokens : 0;
     result.push({
       date: key,
       count,
@@ -207,15 +216,15 @@ export function UsageSection() {
   const [profile, setProfile] = React.useState<MemoryProfile | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [detailTab, setDetailTab] = React.useState<UsageDetailTab>("requests");
-  const catalog = useModelCatalog();
   const [requestsPage, setRequestsPage] = React.useState(1);
   const [providersPage, setProvidersPage] = React.useState(1);
   const [modelsPage, setModelsPage] = React.useState(1);
 
   const query = React.useMemo(() => {
-    const from = range.from ? format(startOfDay(range.from), "yyyy-MM-dd") : "";
-    const to = range.to ? format(addDays(startOfDay(range.to), 1), "yyyy-MM-dd") : "";
-    return `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+    const params = new URLSearchParams();
+    if (range.from) params.set("from", format(startOfDay(range.from), "yyyy-MM-dd"));
+    if (range.to) params.set("to", format(addDays(startOfDay(range.to), 1), "yyyy-MM-dd"));
+    return `?${params}`;
   }, [range.from, range.to]);
 
   React.useEffect(() => {
@@ -245,49 +254,7 @@ export function UsageSection() {
     void load();
   }, [load]);
 
-  const augmentedSummary = React.useMemo<UsageSummary | null>(() => {
-    if (!summary) return null;
-
-    const requests = summary.requests.map((req) => {
-      const cost =
-        req.cost ?? calculateCostUSD(req.model, req.inputTokens, req.outputTokens, catalog);
-      return { ...req, cost };
-    });
-
-    const models = summary.models.map((m) => {
-      const cost = m.cost ?? calculateCostUSD(m.model, m.inputTokens, m.outputTokens, catalog);
-      const averageCost = cost !== null && m.requests > 0 ? cost / m.requests : null;
-      return { ...m, cost, averageCost };
-    });
-
-    const providers = summary.providers.map((p) => {
-      const providerModels = models.filter((m) => m.provider === p.provider);
-      const hasAnyCost = providerModels.some((m) => m.cost !== null);
-      const modelsCost = hasAnyCost
-        ? providerModels.reduce((acc, m) => acc + (m.cost ?? 0), 0)
-        : null;
-      const cost = p.cost ?? modelsCost;
-      return { ...p, cost };
-    });
-
-    const hasAnyCost = models.some((m) => m.cost !== null);
-    const totalCost =
-      summary.totals.totalCost ??
-      (hasAnyCost ? models.reduce((acc, m) => acc + (m.cost ?? 0), 0) : null);
-
-    return {
-      ...summary,
-      totals: {
-        ...summary.totals,
-        totalCost,
-      },
-      providers,
-      models,
-      requests,
-    };
-  }, [summary, catalog]);
-
-  const totals = augmentedSummary?.totals ?? {
+  const totals = summary?.totals ?? {
     requests: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -295,13 +262,14 @@ export function UsageSection() {
     totalLatencyMs: 0,
     longestChatMs: 0,
     totalCost: null,
+    costUnit: null,
   };
-  const activity = activityForRange(range, augmentedSummary?.activity ?? []);
+  const activity = activityForRange(range, summary?.activity ?? []);
   const averageLatencyMs = totals.requests
     ? Math.round(totals.totalLatencyMs / totals.requests)
     : 0;
-  const activeDays = augmentedSummary?.activity.filter((entry) => entry.count > 0).length ?? 0;
-  const requestsList = augmentedSummary?.requests ?? [];
+  const activeDays = summary?.activity.filter((entry) => entry.count > 0).length ?? 0;
+  const requestsList = summary?.requests ?? [];
   const requestsTotalPages = Math.ceil(requestsList.length / PAGE_SIZE) || 1;
   const safeRequestsPage = Math.min(Math.max(1, requestsPage), requestsTotalPages);
   const paginatedRequests = React.useMemo(() => {
@@ -320,13 +288,17 @@ export function UsageSection() {
   /**
    * 数值型指标走动态数字:Token 总量用 SlidingNumber(里程表逐位翻页,
    * 与聊天页上下文用量同一种视觉语言),计数型用 NumberTicker 弹簧滚动。
-   * 费用保留 formatCostUSD —— 它有「未定价」「< $0.0001」等非数值分支,
-   * 塞进数字组件会丢掉这些语义。
+   * 费用直接显示观测记录的币种;缺失或不完整的费用显示为未知。
    */
   const stats: Array<{ label: string; value: React.ReactNode }> = [
     {
       label: t("settings:usage.stats.totalTokens"),
-      value: <SlidingNumber className="tabular-nums" number={totals.totalTokens} />,
+      value:
+        totals.totalTokens === null ? (
+          "—"
+        ) : (
+          <SlidingNumber className="tabular-nums" number={totals.totalTokens} />
+        ),
     },
     {
       label: t("settings:usage.stats.requests"),
@@ -334,7 +306,7 @@ export function UsageSection() {
     },
     {
       label: t("settings:usage.stats.totalCost"),
-      value: formatCostUSD(totals.totalCost),
+      value: formatCost(totals.totalCost, totals.costUnit),
     },
     {
       label: t("settings:usage.stats.avgLatency"),
@@ -470,7 +442,7 @@ export function UsageSection() {
         {stats.map((stat) => (
           <Card key={stat.label} className="min-w-0">
             <CardContent className="flex min-w-0 flex-col gap-1 p-3">
-              <span className="flex min-w-0 truncate text-lg font-semibold tabular-nums">
+              <span className="flex min-w-0 break-words text-lg font-semibold tabular-nums">
                 {stat.value}
               </span>
               <span className="truncate text-xs text-muted-foreground">{stat.label}</span>
@@ -500,7 +472,7 @@ export function UsageSection() {
               showWeekdayLabels
               showTotalCount
               renderBlock={(block, item) => {
-                const activityItem = item as Activity & { tokens?: number };
+                const activityItem = item as Activity & { tokens?: number | null };
                 return (
                   <Tooltip key={item.date}>
                     <TooltipTrigger render={block} />
@@ -510,7 +482,7 @@ export function UsageSection() {
                         <span>
                           {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
                         </span>
-                        {typeof activityItem.tokens === "number" && activityItem.tokens > 0 ? (
+                        {activityItem.tokens !== undefined ? (
                           <span>Token：{formatNumber(activityItem.tokens)}</span>
                         ) : null}
                       </div>
@@ -532,7 +504,7 @@ export function UsageSection() {
           <ChartContainer config={chartConfig} className="h-[240px] w-full">
             <AreaChart
               accessibilityLayer
-              data={augmentedSummary?.trend ?? []}
+              data={summary?.trend ?? []}
               margin={{ left: 4, right: 8, top: 8 }}
             >
               <CartesianGrid vertical={false} />
@@ -653,13 +625,26 @@ export function UsageSection() {
                               {formatNumber(request.totalTokens)}
                             </TableCell>
                             <TableCell className="text-right tabular-nums font-mono text-xs">
-                              {formatCostUSD(requestCost)}
+                              {formatCost(requestCost, request.costUnit)}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
                               {formatDuration(request.latencyMs)}
                             </TableCell>
-                            <TableCell className="text-right text-emerald-500">
-                              {request.status}
+                            <TableCell
+                              className={cn(
+                                "text-right",
+                                request.status === "ok"
+                                  ? "text-emerald-500"
+                                  : request.status === "error"
+                                    ? "text-destructive"
+                                    : "text-muted-foreground",
+                              )}
+                            >
+                              {request.status === "ok"
+                                ? t("common:success")
+                                : request.status === "error"
+                                  ? t("common:error")
+                                  : t("common:unknown")}
                             </TableCell>
                             <TableCell className="text-muted-foreground">
                               {request.source}
@@ -689,12 +674,12 @@ export function UsageSection() {
               t("settings:usage.table.tokens"),
               t("settings:usage.table.cost"),
             ]}
-            rows={(augmentedSummary?.providers ?? []).map((row) => {
+            rows={(summary?.providers ?? []).map((row) => {
               return [
                 row.provider,
                 formatNumber(row.requests),
                 formatNumber(row.tokens),
-                formatCostUSD(row.cost),
+                formatCost(row.cost, row.costUnit),
               ];
             })}
             page={providersPage}
@@ -713,14 +698,14 @@ export function UsageSection() {
               t("settings:usage.table.totalCost"),
               t("settings:usage.table.avgCost"),
             ]}
-            rows={(augmentedSummary?.models ?? []).map((row) => {
+            rows={(summary?.models ?? []).map((row) => {
               return [
                 row.model,
                 row.provider,
                 formatNumber(row.requests),
                 formatNumber(row.tokens),
-                formatCostUSD(row.cost),
-                formatCostUSD(row.averageCost),
+                formatCost(row.cost, row.costUnit),
+                formatCost(row.averageCost, row.costUnit),
               ];
             })}
             page={modelsPage}

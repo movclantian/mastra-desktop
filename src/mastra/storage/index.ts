@@ -17,6 +17,7 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { DuckDBStore } from "@mastra/duckdb";
 import { LibSQLStore } from "@mastra/libsql";
+import { z } from "zod";
 
 export interface RequestContextLike {
   get?: (key: string) => unknown;
@@ -142,6 +143,54 @@ export function getLibsqlClient(): Promise<Client> {
  */
 const APP_CONFIG_TABLE = "app_config";
 let appConfigTableReady: Promise<void> | undefined;
+
+/** Shared normalization for persisted settings; schema adapters use the same functions. */
+export function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      ([key, item]) => key.trim().length > 0 && typeof item === "string",
+    ),
+  ) as Record<string, string>;
+}
+
+export function clampNumber(
+  value: unknown,
+  fallback: number,
+  min = 0,
+  max = Number.POSITIVE_INFINITY,
+): number {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+export function clampInt(
+  value: unknown,
+  fallback: number,
+  min = 0,
+  max = Number.POSITIVE_INFINITY,
+): number {
+  return Math.round(clampNumber(value, fallback, min, max));
+}
+
+export function clampNumberSchema(fallback: number, min = 0, max = Number.POSITIVE_INFINITY) {
+  return z.unknown().transform((value) => clampNumber(value, fallback, min, max));
+}
+
+export function clampIntSchema(fallback: number, min = 0, max = Number.POSITIVE_INFINITY) {
+  return z.unknown().transform((value) => clampInt(value, fallback, min, max));
+}
+
+export function cleanStrings(value: unknown, limit = 100): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, limit)
+    : [];
+}
+
 function scopedConfigKey(key: string, resourceId?: string): string {
   const scope = resourceId?.trim();
   return scope ? `${scope}\u0000${key}` : key;

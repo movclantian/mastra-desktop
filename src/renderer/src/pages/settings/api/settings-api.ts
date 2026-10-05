@@ -80,7 +80,7 @@ export function fetchWorkspaceSettings<T>(): Promise<T> {
 export function saveWorkspaceSettings<T extends Record<string, unknown>>(config: T): Promise<void> {
   return requestJson<void>(
     "/work/workspace",
-    { method: "POST", body: { mode: config.mode, ...(config.url ? { url: config.url } : {}) } },
+    { method: "POST", body: config },
     i18n.t("settings:api.saveWorkspaceFailed"),
   );
 }
@@ -125,13 +125,9 @@ export function fetchMemoryProfile<T>(): Promise<T> {
   );
 }
 
-export function fetchThreadObservationalMemory<T>(
-  threadId: string,
-  resourceId: string,
-): Promise<T> {
-  const query = new URLSearchParams({ resourceId });
+export function fetchThreadObservationalMemory<T>(threadId: string): Promise<T> {
   return requestJson<T>(
-    `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config?${query}`,
+    `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config`,
     {},
     i18n.t("settings:api.fetchThreadObservationalMemoryFailed"),
   );
@@ -139,12 +135,11 @@ export function fetchThreadObservationalMemory<T>(
 
 export function saveThreadObservationalMemory(
   threadId: string,
-  resourceId: string,
   config: Record<string, unknown>,
 ): Promise<void> {
   return requestJson<void>(
     `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config`,
-    { method: "PUT", body: { resourceId, config } },
+    { method: "PUT", body: { config } },
     i18n.t("settings:api.saveThreadObservationalMemoryFailed"),
   );
 }

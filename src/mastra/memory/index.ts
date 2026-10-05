@@ -22,10 +22,10 @@
 import type { MastraModelConfig } from "@mastra/core/llm";
 import type { RequestContext } from "@mastra/core/request-context";
 import { fastembed } from "@mastra/fastembed";
-import { type LibSQLStore, LibSQLVector } from "@mastra/libsql";
+import { LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
-import { clampInt, clampNumber } from "../config/normalize";
-import { REQUEST_MODEL_CONTEXT_KEY, resolveDefaultLanguageModel } from "../models";
+import { z } from "zod";
+import { resolveContextModel } from "../models/providers";
 import {
   appStorage,
   getAppConfig,
@@ -38,101 +38,109 @@ import {
 const MEMORY_CONFIG_KEY = "memory";
 const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
 
-export interface MemoryUserConfig {
-  /** options.lastMessages — OM 关闭时每次请求注入的最近消息数,默认 20 */
-  lastMessages: number;
-  /** options.readOnly — 只读记忆(不保存新消息,不注册 updateWorkingMemory 工具) */
-  readOnly: boolean;
-  /** options.semanticRecall — 语义召回开关(需 vector + embedder) */
-  semanticRecall: boolean;
-  /** options.semanticRecall.topK — 相似消息数,默认 4 */
-  semanticRecallTopK: number;
-  /** options.semanticRecall.messageRange.before — 每条命中消息向前附带条数 */
-  semanticRecallMessageRangeBefore: number;
-  /** options.semanticRecall.messageRange.after — 每条命中消息向后附带条数 */
-  semanticRecallMessageRangeAfter: number;
-  /** options.semanticRecall.scope — thread(线程内)/ resource(跨线程),默认 thread */
-  semanticRecallScope: "thread" | "resource";
-  /** options.semanticRecall.threshold — 相似度下限,0 = 使用向量库全部结果 */
-  semanticRecallThreshold: number;
-  /** options.semanticRecall.indexName — 向量索引名,空字符串使用官方默认 */
-  semanticRecallIndexName: string;
-  /** options.workingMemory.enabled — 工作记忆开关 */
-  workingMemory: boolean;
-  /** options.workingMemory.scope — resource(跨线程用户画像) / thread(线程内) */
-  workingMemoryScope: "resource" | "thread";
-  /**
-   * 工作记忆形态:template(Markdown 模板,replace 语义)或
-   * schema(Standard JSON Schema,merge 语义)。二者互斥(working-memory.mdx)。
-   */
-  workingMemoryFormat: "template" | "schema";
-  /** options.workingMemory.template — Markdown 模板(定义工作记忆结构) */
-  workingMemoryTemplate: string;
-  /** options.workingMemory.schema — JSON Schema 文本(JSON 形态,format = schema 时生效) */
-  workingMemorySchema: string;
-  /** options.generateTitle — 自动为新线程生成标题 */
-  generateTitle: boolean;
-  /** options.observationalMemory — 观察记忆(长上下文自动观察/反思) */
-  observationalMemory: boolean;
-  /** options.observationalMemory.scope — thread / resource(跨线程共享) */
-  omScope: "thread" | "resource";
-  /** options.observationalMemory.temporalMarkers — ≥10min 间隔插入时间标记 */
-  omTemporalMarkers: boolean;
-  /** observation.instruction — 追加到 Observer 系统提示的自定义指令 */
-  omObserverInstruction: string;
-  /** reflection.instruction — 追加到 Reflector 系统提示的自定义指令 */
-  omReflectionInstruction: string;
-  /** observation.threadTitle — Observer 顺手维护线程标题(官方默认关) */
-  omThreadTitle: boolean;
-  /** observation.manageWorkingMemory — 让 Observer 通过 OM 抽取管理工作记忆 */
-  omManageWorkingMemory: boolean;
-  /** observation.observeAttachments — 附件转发给 Observer:on / off / auto(按模型多模态能力) */
-  omObserveAttachments: "auto" | "on" | "off";
-  /** observation.messageTokens — 触发观察的 token 阈值(默认 16K;设置页按模型派生) */
-  omMessageTokens: number;
-  /** observation.maxTokensPerBatch — resource 侧多线程批量观察的批大小(0 = 库默认 10000) */
-  omMaxTokensPerBatch: number;
-  /** observation.modelSettings.temperature — Observer 温度(库默认 0.3) */
-  omTemperature: number;
-  /** observation.modelSettings.maxOutputTokens — Observer 输出上限(0 = 库默认) */
-  omMaxOutputTokens: number;
-  /** observation.bufferTokens — 异步缓冲频率(<1 为 messageTokens 比例,≥1 为绝对值) */
-  omBufferTokens: number;
-  /** 关闭 observation.bufferTokens(官方 false = 禁用全部异步缓冲) */
-  omBufferEnabled: boolean;
-  /** reflection.observationTokens — 触发反思的观察 token 阈值(0 = 库默认 40000) */
-  omObservationTokens: number;
-  /** options.observationalMemory.retrieval — 注册 recall 工具回查原始消息 */
-  omRetrieval: boolean;
-  /** retrieval.vector — recall 同时启用语义检索(用 Memory 的 vector + embedder) */
-  omRetrievalVector: boolean;
-  /** retrieval.scope — recall 的回查范围,官方默认 resource */
-  omRetrievalScope: "thread" | "resource";
-  /**
-   * OM 自定义抽取器(observation.extract / reflection.extract,
-   * observational-memory.mdx「Extractor API」)。schema 省略 = 内联字符串抽取器,
-   * 由 Observer/Reflector 在主输出中直接产出,不额外发起结构化调用;
-   * 抽取结果持久化在线程 OM metadata 的 om.extracted.<slug> 下。
-   */
-  omExtractors: OmExtractorUserConfig[];
-}
+const omExtractorConfigSchema = z
+  .object({
+    /** 面板行 id(nanoid,与官方 slug 无关) */
+    id: z.string().trim().min(1).max(80),
+    /** 官方 Extractor name:人类可读,OM 自行 slug 化,同批内不可重名 */
+    name: z.string().trim().max(120),
+    /** 官方 Extractor instructions:抽取什么、何时更新 */
+    instructions: z.string().trim().max(8_000),
+    /** 挂到观察(observation)还是反思(reflection)阶段 */
+    stage: z.enum(["observation", "reflection"]),
+    /** 关闭后保留草稿但不注入 Memory */
+    enabled: z.boolean(),
+    /** 将上一次提取结果放回下一次提示，便于增量更新 */
+    includePreviousExtraction: z.boolean().optional(),
+    /** OM metadata 中的持久化路径；空字符串使用官方默认 extracted.<slug> */
+    metadataKeyPath: z.string().trim().max(160).optional(),
+  })
+  .strict();
 
-interface OmExtractorUserConfig {
-  /** 面板行 id(nanoid,与官方 slug 无关) */
-  id: string;
-  /** 官方 Extractor name:人类可读,OM 自行 slug 化,同批内不可重名 */
-  name: string;
-  /** 官方 Extractor instructions:抽取什么、何时更新 */
-  instructions: string;
-  /** 挂到观察(observation)还是反思(reflection)阶段 */
-  stage: "observation" | "reflection";
-  /** 关闭后保留草稿但不注入 Memory */
-  enabled: boolean;
-  /** 将上一次提取结果放回下一次提示，便于增量更新 */
-  includePreviousExtraction?: boolean;
-  /** OM metadata 中的持久化路径；空字符串使用官方默认 extracted.<slug> */
-  metadataKeyPath?: string;
-}
+type OmExtractorUserConfig = z.infer<typeof omExtractorConfigSchema>;
+
+export const memoryConfigSchema = z
+  .object({
+    /** options.lastMessages — OM 关闭时每次请求注入的最近消息数,默认 20 */
+    lastMessages: z.number().int().min(1).max(500),
+    /** options.readOnly — 只读记忆(不保存新消息,不注册 updateWorkingMemory 工具) */
+    readOnly: z.boolean(),
+    /** options.semanticRecall — 语义召回开关(需 vector + embedder) */
+    semanticRecall: z.boolean(),
+    /** options.semanticRecall.topK — 相似消息数,默认 4 */
+    semanticRecallTopK: z.number().int().min(1).max(50),
+    /** options.semanticRecall.messageRange.before — 每条命中消息向前附带条数 */
+    semanticRecallMessageRangeBefore: z.number().int().min(0).max(50),
+    /** options.semanticRecall.messageRange.after — 每条命中消息向后附带条数 */
+    semanticRecallMessageRangeAfter: z.number().int().min(0).max(50),
+    /** options.semanticRecall.scope — thread(线程内)/ resource(跨线程),默认 thread */
+    semanticRecallScope: z.enum(["thread", "resource"]),
+    /** options.semanticRecall.threshold — 相似度下限,0 = 使用向量库全部结果 */
+    semanticRecallThreshold: z.number().min(0).max(1),
+    /** options.semanticRecall.indexName — 向量索引名,空字符串使用官方默认 */
+    semanticRecallIndexName: z.string().trim().max(128),
+    /** options.workingMemory.enabled — 工作记忆开关 */
+    workingMemory: z.boolean(),
+    /** options.workingMemory.scope — resource(跨线程用户画像) / thread(线程内) */
+    workingMemoryScope: z.enum(["resource", "thread"]),
+    /**
+     * 工作记忆形态:template(Markdown 模板,replace 语义)或
+     * schema(Standard JSON Schema,merge 语义)。二者互斥(working-memory.mdx)。
+     */
+    workingMemoryFormat: z.enum(["template", "schema"]),
+    /** options.workingMemory.template — Markdown 模板(定义工作记忆结构) */
+    workingMemoryTemplate: z.string().max(100_000),
+    /** options.workingMemory.schema — JSON Schema 文本(JSON 形态,format = schema 时生效) */
+    workingMemorySchema: z.string().max(100_000),
+    /** options.generateTitle — 自动为新线程生成标题 */
+    generateTitle: z.boolean(),
+    /** options.observationalMemory — 观察记忆(长上下文自动观察/反思) */
+    observationalMemory: z.boolean(),
+    /** options.observationalMemory.scope — thread / resource(跨线程共享) */
+    omScope: z.enum(["thread", "resource"]),
+    /** options.observationalMemory.temporalMarkers — ≥10min 间隔插入时间标记 */
+    omTemporalMarkers: z.boolean(),
+    /** observation.instruction — 追加到 Observer 系统提示的自定义指令 */
+    omObserverInstruction: z.string().max(100_000),
+    /** reflection.instruction — 追加到 Reflector 系统提示的自定义指令 */
+    omReflectionInstruction: z.string().max(100_000),
+    /** observation.threadTitle — Observer 顺手维护线程标题(官方默认关) */
+    omThreadTitle: z.boolean(),
+    /** observation.manageWorkingMemory — 让 Observer 通过 OM 抽取管理工作记忆 */
+    omManageWorkingMemory: z.boolean(),
+    /** observation.observeAttachments — 附件转发给 Observer:on / off / auto(按模型多模态能力) */
+    omObserveAttachments: z.enum(["auto", "on", "off"]),
+    /** observation.messageTokens — 触发观察的 token 阈值(默认 16K;设置页按模型派生) */
+    omMessageTokens: z.number().int().min(0).max(250000),
+    /** observation.maxTokensPerBatch — resource 侧多线程批量观察的批大小(0 = 库默认 10000) */
+    omMaxTokensPerBatch: z.number().int().min(0).max(2000000),
+    /** observation.modelSettings.temperature — Observer 温度(库默认 0.3) */
+    omTemperature: z.number().min(0).max(2),
+    /** observation.modelSettings.maxOutputTokens — Observer 输出上限(0 = 库默认) */
+    omMaxOutputTokens: z.number().int().min(0).max(500000),
+    /** observation.bufferTokens — 异步缓冲频率(<1 为 messageTokens 比例,≥1 为绝对值) */
+    omBufferTokens: z.number().min(0).max(500000),
+    /** 关闭 observation.bufferTokens(官方 false = 禁用全部异步缓冲) */
+    omBufferEnabled: z.boolean(),
+    /** reflection.observationTokens — 触发反思的观察 token 阈值(0 = 库默认 40000) */
+    omObservationTokens: z.number().int().min(0).max(2000000),
+    /** options.observationalMemory.retrieval — 注册 recall 工具回查原始消息 */
+    omRetrieval: z.boolean(),
+    /** retrieval.vector — recall 同时启用语义检索(用 Memory 的 vector + embedder) */
+    omRetrievalVector: z.boolean(),
+    /** retrieval.scope — recall 的回查范围,官方默认 resource */
+    omRetrievalScope: z.enum(["thread", "resource"]),
+    /**
+     * OM 自定义抽取器(observation.extract / reflection.extract,
+     * observational-memory.mdx「Extractor API」)。schema 省略 = 内联字符串抽取器,
+     * 由 Observer/Reflector 在主输出中直接产出,不额外发起结构化调用;
+     * 抽取结果持久化在线程 OM metadata 的 om.extracted.<slug> 下。
+     */
+    omExtractors: z.array(omExtractorConfigSchema),
+  })
+  .strict();
+
+export type MemoryUserConfig = z.infer<typeof memoryConfigSchema>;
 
 const DEFAULT_WORKING_MEMORY_TEMPLATE = `# User Profile
 - **Name**:
@@ -234,10 +242,6 @@ function memoryScopeKey(resourceId?: string): string {
   return resourceId?.trim() || "__system__";
 }
 
-function currentConfig(resourceId?: string): MemoryUserConfig {
-  return memoryConfigByScope.get(memoryScopeKey(resourceId)) ?? DEFAULT_CONFIG;
-}
-
 export async function getMemoryConfig(resourceId?: string): Promise<MemoryUserConfig> {
   const scope = memoryScopeKey(resourceId);
   const cached = memoryConfigByScope.get(scope);
@@ -259,102 +263,18 @@ export async function getMemoryConfig(resourceId?: string): Promise<MemoryUserCo
 
 /** 写入记忆配置并实时生效。嵌入固定使用本机 FastEmbed，不持久化模型或版本状态。 */
 export async function saveMemoryConfig(next: MemoryUserConfig, resourceId?: string): Promise<void> {
-  const normalized = normalizeMemoryConfig({ ...currentConfig(resourceId), ...next });
+  const normalized = normalizeMemoryConfig({ ...(await getMemoryConfig(resourceId)), ...next });
   await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
   memoryConfigByScope.set(memoryScopeKey(resourceId), normalized);
   const runtime = getMemoryRuntime(resourceId);
+  if (runtime.cachedMemory) retiredMemories.add(runtime.cachedMemory);
+  for (const memory of runtime.memoryByScope.values()) retiredMemories.add(memory);
   runtime.cachedMemory = null;
   runtime.memoryByScope.clear();
 }
 
-function normalizeExtractor(value: unknown, index: number): OmExtractorUserConfig | null {
-  if (typeof value !== "object" || value === null) return null;
-  const item = value as Partial<OmExtractorUserConfig>;
-  const name = typeof item.name === "string" ? item.name.trim().slice(0, 120) : "";
-  const instructions =
-    typeof item.instructions === "string" ? item.instructions.trim().slice(0, 8_000) : "";
-  const stage = item.stage === "reflection" ? "reflection" : "observation";
-  if (!name || !instructions) return null;
-  return {
-    id: typeof item.id === "string" && item.id.trim() ? item.id.trim().slice(0, 80) : `om-${index}`,
-    name,
-    instructions,
-    stage,
-    enabled: item.enabled !== false,
-    includePreviousExtraction: item.includePreviousExtraction === true,
-    metadataKeyPath:
-      typeof item.metadataKeyPath === "string" ? item.metadataKeyPath.trim().slice(0, 160) : "",
-  };
-}
-
-/** 配置边界的唯一归一化入口,避免 HTTP JSON 直接破坏运行时类型。 */
 function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConfig {
-  const merged = { ...DEFAULT_CONFIG, ...input };
-  const stored = Object.fromEntries(
-    Object.entries(merged).filter(([key]) => key in DEFAULT_CONFIG),
-  ) as unknown as MemoryUserConfig;
-  const extractors = Array.isArray(input.omExtractors)
-    ? input.omExtractors
-        .map((item, index) => normalizeExtractor(item, index))
-        .filter((item): item is OmExtractorUserConfig => Boolean(item))
-    : DEFAULT_CONFIG.omExtractors;
-  const unique = new Set<string>();
-  return {
-    ...DEFAULT_CONFIG,
-    ...stored,
-    lastMessages: clampInt(merged.lastMessages, DEFAULT_CONFIG.lastMessages, 1, 500),
-    semanticRecallTopK: clampInt(merged.semanticRecallTopK, 4, 1, 50),
-    semanticRecallMessageRangeBefore: clampInt(
-      merged.semanticRecallMessageRangeBefore,
-      DEFAULT_CONFIG.semanticRecallMessageRangeBefore,
-      0,
-      50,
-    ),
-    semanticRecallMessageRangeAfter: clampInt(
-      merged.semanticRecallMessageRangeAfter,
-      DEFAULT_CONFIG.semanticRecallMessageRangeAfter,
-      0,
-      50,
-    ),
-    semanticRecallScope: merged.semanticRecallScope === "resource" ? "resource" : "thread",
-    semanticRecallThreshold: clampNumber(merged.semanticRecallThreshold, 0, 0, 1),
-    semanticRecallIndexName:
-      typeof merged.semanticRecallIndexName === "string"
-        ? merged.semanticRecallIndexName.trim().slice(0, 128)
-        : "",
-    workingMemoryScope: merged.workingMemoryScope === "thread" ? "thread" : "resource",
-    workingMemoryFormat: merged.workingMemoryFormat === "schema" ? "schema" : "template",
-    omScope: merged.omScope === "resource" ? "resource" : "thread",
-    omObserveAttachments:
-      merged.omObserveAttachments === "on" || merged.omObserveAttachments === "off"
-        ? merged.omObserveAttachments
-        : "auto",
-    // 页面派生值最多 250K;更大的值无法对常见模型提供可靠的窗口保护。
-    omMessageTokens: clampInt(merged.omMessageTokens, DEFAULT_OM_MESSAGE_TOKENS, 0, 250_000),
-    omMaxTokensPerBatch: clampInt(merged.omMaxTokensPerBatch, 0, 0, 2_000_000),
-    omTemperature: clampNumber(merged.omTemperature, 0.3, 0, 2),
-    omMaxOutputTokens: clampInt(merged.omMaxOutputTokens, 0, 0, 500_000),
-    omBufferTokens: clampNumber(merged.omBufferTokens, 0.2, 0, 500_000),
-    omObservationTokens: clampInt(merged.omObservationTokens, 0, 0, 2_000_000),
-    omRetrievalScope: merged.omRetrievalScope === "thread" ? "thread" : "resource",
-    omExtractors: extractors.filter((item) => {
-      const key = `${item.stage}:${item.name.toLowerCase()}`;
-      if (unique.has(key)) return false;
-      unique.add(key);
-      return true;
-    }),
-    workingMemory: merged.workingMemory === true,
-    readOnly: merged.readOnly === true,
-    semanticRecall: merged.semanticRecall === true,
-    generateTitle: merged.generateTitle === true,
-    observationalMemory: merged.observationalMemory === true,
-    omTemporalMarkers: merged.omTemporalMarkers === true,
-    omThreadTitle: merged.omThreadTitle === true,
-    omManageWorkingMemory: merged.omManageWorkingMemory === true,
-    omBufferEnabled: merged.omBufferEnabled !== false,
-    omRetrieval: merged.omRetrieval === true,
-    omRetrievalVector: merged.omRetrievalVector === true,
-  };
+  return memoryConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
 }
 
 /** 解析 schema 文本为 JSON Schema 对象;非法 JSON 或非对象时返回 undefined */
@@ -404,6 +324,11 @@ interface MemoryRuntime {
 }
 
 const memoryRuntimeByScope = new Map<string, MemoryRuntime>();
+// A request can still hold an old instance and start work after settled() returns.
+// Keep retired instances until shutdown; object count grows with config saves,
+// while all configurations share one vector connection for the process lifetime.
+const retiredMemories = new Set<Memory>();
+let memoryVector: LibSQLVector | undefined;
 
 function getMemoryRuntime(resourceId?: string): MemoryRuntime {
   const scope = memoryScopeKey(resourceId);
@@ -423,35 +348,40 @@ interface MemoryBuildOverrides {
  * 当前 Memory 实例。Agent 以函数形式引用(memory: () => getMemory()),
  * 配置保存后无需重启即对后续请求生效。
  */
-export function getMemory(options?: {
+export async function getMemory(options?: {
   requestContext?: RequestContext;
   memoryScope?: "thread" | "resource";
-}): Memory {
+}): Promise<Memory> {
   const resourceId = resourceIdFromContext(options?.requestContext as RequestContextLike);
+  const config = await getMemoryConfig(resourceId);
   const runtime = getMemoryRuntime(resourceId);
   if (options?.memoryScope) {
     const existing = runtime.memoryByScope.get(options.memoryScope);
     if (existing) return existing;
-    const memory = buildMemory({ memoryScope: options.memoryScope }, resourceId);
+    const memory = buildMemory(config, { memoryScope: options.memoryScope });
     runtime.memoryByScope.set(options.memoryScope, memory);
     return memory;
   }
-  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory({}, resourceId);
+  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory(config, {});
   return runtime.cachedMemory;
 }
 
-/** Wait for every cached Memory instance before process shutdown. */
+/** Call only after the relevant runs return; includes every retired configuration. */
 export async function settleAllMemory(): Promise<void> {
-  const instances = new Set<Memory>();
+  const instances = new Set(retiredMemories);
   for (const runtime of memoryRuntimeByScope.values()) {
     if (runtime.cachedMemory) instances.add(runtime.cachedMemory);
     for (const memory of runtime.memoryByScope.values()) instances.add(memory);
   }
-  await Promise.allSettled([...instances].map((memory) => memory.settled()));
+  await Promise.all([...instances].map((memory) => memory.settled()));
 }
 
-function buildMemory(overrides: MemoryBuildOverrides = {}, resourceId?: string): Memory {
-  const config = currentConfig(resourceId);
+/** The shutdown owner stops producers and drains Memory before closing this shared handle. */
+export async function closeMemoryVector(): Promise<void> {
+  await memoryVector?.close();
+}
+
+function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides): Memory {
   const semanticRecallScope = overrides.memoryScope ?? config.semanticRecallScope;
   const workingMemoryScope = overrides.memoryScope ?? config.workingMemoryScope;
   const observationalMemoryScope = overrides.memoryScope ?? config.omScope;
@@ -460,10 +390,7 @@ function buildMemory(overrides: MemoryBuildOverrides = {}, resourceId?: string):
   const resolveCurrentRequestModel = async (
     requestContext: RequestContext,
   ): Promise<MastraModelConfig> => {
-    const requestModel = requestContext.get(REQUEST_MODEL_CONTEXT_KEY) as
-      | MastraModelConfig
-      | undefined;
-    const model = requestModel ?? (await resolveDefaultLanguageModel(resourceId));
+    const model = await resolveContextModel(requestContext);
     if (!model) {
       throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
     }
@@ -476,10 +403,11 @@ function buildMemory(overrides: MemoryBuildOverrides = {}, resourceId?: string):
   const observationExtract = dedupeExtractors(config.omExtractors, "observation");
   const reflectionExtract = dedupeExtractors(config.omExtractors, "reflection");
 
+  memoryVector ??= new LibSQLVector({ id: "mastra-vector", url: getStorageUrl() });
   return new Memory({
-    storage: appStorage as LibSQLStore,
+    storage: appStorage,
     // semantic-recall.mdx:LibSQLVector 与 LibSQLStore 共用同一数据库文件
-    vector: new LibSQLVector({ id: "mastra-vector", url: getStorageUrl() }),
+    vector: memoryVector,
     embedder: fastembed.small,
     options: {
       // observational-memory.mdx:启用 OM 后由 OM 处理未观察消息窗口,

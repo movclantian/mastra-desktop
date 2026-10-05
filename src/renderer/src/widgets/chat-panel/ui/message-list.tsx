@@ -602,7 +602,10 @@ export const MessageItem = React.memo(function MessageItem({
                   <MessageAttachments align="end" files={files} messageId={message.id} />
                   {text ? (
                     <ContextMenu>
-                      <ContextMenuTrigger className="max-w-full" onKeyDown={handleUserBubbleKeyDown}>
+                      <ContextMenuTrigger
+                        className="max-w-full"
+                        onKeyDown={handleUserBubbleKeyDown}
+                      >
                         <Bubble
                           align="end"
                           className="max-w-full"
@@ -624,7 +627,9 @@ export const MessageItem = React.memo(function MessageItem({
                           <ContextMenuItem onClick={handleCopy}>
                             <CopyIcon className="text-muted-foreground" />
                             <span>{t("chat:messages.copyContent")}</span>
-                            <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
+                            <ContextMenuShortcut>
+                              {formatShortcutDisplay(["Mod", "C"], isMac)}
+                            </ContextMenuShortcut>
                           </ContextMenuItem>
                           {!readOnly ? (
                             <ContextMenuItem onClick={startEditing}>
@@ -773,7 +778,9 @@ export const MessageItem = React.memo(function MessageItem({
                         <ContextMenuItem onClick={handleCopy}>
                           <CopyIcon className="text-muted-foreground" />
                           <span>{t("chat:messages.copyAnswer")}</span>
-                          <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
+                          <ContextMenuShortcut>
+                            {formatShortcutDisplay(["Mod", "C"], isMac)}
+                          </ContextMenuShortcut>
                         </ContextMenuItem>
                         {onForkFromMessage ? (
                           <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
@@ -785,7 +792,9 @@ export const MessageItem = React.memo(function MessageItem({
                           <ContextMenuItem onClick={() => onRetry(message.id)}>
                             <RefreshCcwIcon className="text-muted-foreground" />
                             <span>{t("chat:messages.regenerate")}</span>
-                            <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "R"], isMac)}</ContextMenuShortcut>
+                            <ContextMenuShortcut>
+                              {formatShortcutDisplay(["Mod", "R"], isMac)}
+                            </ContextMenuShortcut>
                           </ContextMenuItem>
                         ) : null}
                       </ContextMenuGroup>

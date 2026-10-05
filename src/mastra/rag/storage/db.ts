@@ -1,18 +1,30 @@
 /**
  * RAG 数据库存储层(docs/en/reference/rag/database-config.mdx):
- * 共享 LibSQL 客户端、library_* 表建表与索引运行状态记录。
+ * 共享 LibSQL 客户端、library_* 表建表、索引运行状态与资料库配置持久化。
  */
 import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { Client } from "@libsql/client";
 import { nanoid } from "nanoid";
-import { getLibsqlClient, getStorageDirectory } from "../../storage";
-import type {
-  LibraryAsset,
-  LibraryIndexRunStatus,
-  LibraryIndexRunSummary,
-  LibraryIndexStage,
-  LibraryUploadSession,
+import { z } from "zod";
+import {
+  clampIntSchema,
+  clampNumberSchema,
+  getAppConfig,
+  getLibsqlClient,
+  getStorageDirectory,
+  setAppConfig,
+} from "../../storage";
+import {
+  DEFAULT_LIBRARY_SETTINGS,
+  type LibraryAsset,
+  type LibraryIndexRunStatus,
+  type LibraryIndexRunSummary,
+  type LibraryIndexStage,
+  type LibrarySettings,
+  type LibrarySettingsUpdate,
+  type LibraryUploadSession,
+  VALID_CHUNK_STRATEGIES,
 } from "../types";
 
 export function now(): string {
@@ -23,35 +35,45 @@ export async function withClient<T>(run: (client: Client) => Promise<T>): Promis
   return run(await getLibsqlClient());
 }
 
-const libraryStorageLocks = new Map<string, Promise<void>>();
+const libraryAssetLocks = new Map<string, Promise<unknown>>();
 
-/** Serialize one library-storage resource within this Mastra process. */
-export async function withLibraryStorageLock<T>(
-  key: string,
+/** Keep indexing, reindex preparation, and deletion of one asset in order. */
+export async function withLibraryAssetLock<T>(
+  assetId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const previous = libraryStorageLocks.get(key) ?? Promise.resolve();
+  const previous = libraryAssetLocks.get(assetId) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  libraryAssetLocks.set(assetId, next);
+  try {
+    return await next;
+  } finally {
+    if (libraryAssetLocks.get(assetId) === next) libraryAssetLocks.delete(assetId);
+  }
+}
+
+const libraryUploadSessionLocks = new Map<string, Promise<void>>();
+
+/** Serialize chunk writes, completion, cancellation, and expiry cleanup per upload session. */
+export async function withLibraryUploadSessionLock<T>(
+  sessionId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = libraryUploadSessionLocks.get(sessionId) ?? Promise.resolve();
   let releaseCurrent!: () => void;
   const current = new Promise<void>((resolveCurrent) => {
     releaseCurrent = resolveCurrent;
   });
   const queued = previous.then(() => current);
-  libraryStorageLocks.set(key, queued);
+  libraryUploadSessionLocks.set(sessionId, queued);
   await previous;
   try {
     return await operation();
   } finally {
     releaseCurrent();
-    if (libraryStorageLocks.get(key) === queued) libraryStorageLocks.delete(key);
+    if (libraryUploadSessionLocks.get(sessionId) === queued)
+      libraryUploadSessionLocks.delete(sessionId);
   }
-}
-
-/** Serialize chunk writes, completion, cancellation, and expiry cleanup per upload session. */
-export function withLibraryUploadSessionLock<T>(
-  sessionId: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return withLibraryStorageLock(`upload:${sessionId}`, operation);
 }
 
 const uploadChunksDirectory = () => join(getStorageDirectory(), "library", "_chunks");
@@ -191,18 +213,6 @@ export async function ensureLibrarySchema(): Promise<void> {
           args: [],
         },
         {
-          sql: `CREATE TABLE IF NOT EXISTS library_chunks (
-            id TEXT PRIMARY KEY,
-            asset_id TEXT NOT NULL,
-            chunk_index INTEGER NOT NULL,
-            text TEXT NOT NULL,
-            metadata TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(asset_id, chunk_index)
-          )`,
-          args: [],
-        },
-        {
           sql: `CREATE TABLE IF NOT EXISTS library_index_runs (
             id TEXT PRIMARY KEY,
             asset_id TEXT NOT NULL,
@@ -246,43 +256,11 @@ export async function ensureLibrarySchema(): Promise<void> {
           args: [],
         },
         {
-          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfers (
-            id TEXT PRIMARY KEY,
-            thread_id TEXT NOT NULL,
-            source_resource_id TEXT NOT NULL,
-            target_resource_id TEXT NOT NULL,
-            initiated_by TEXT NOT NULL,
-            asset_ids TEXT NOT NULL DEFAULT '[]',
-            asset_mappings TEXT NOT NULL DEFAULT '{}',
-            status TEXT NOT NULL,
-            error_message TEXT,
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            completed_at TEXT
-          )`,
-          args: [],
-        },
-        {
-          sql: `CREATE TABLE IF NOT EXISTS library_thread_transfer_events (
-            id TEXT PRIMARY KEY,
-            transfer_id TEXT NOT NULL,
-            action TEXT NOT NULL,
-            actor_resource_id TEXT NOT NULL,
-            details TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL
-          )`,
-          args: [],
-        },
-        {
           sql: "CREATE INDEX IF NOT EXISTS library_assets_resource_idx ON library_assets(resource_id, updated_at)",
           args: [],
         },
         {
           sql: "CREATE INDEX IF NOT EXISTS library_asset_refs_thread_idx ON library_asset_refs(resource_id, thread_id, asset_id)",
-          args: [],
-        },
-        {
-          sql: "CREATE INDEX IF NOT EXISTS library_chunks_asset_idx ON library_chunks(asset_id, chunk_index)",
           args: [],
         },
         {
@@ -295,22 +273,6 @@ export async function ensureLibrarySchema(): Promise<void> {
         },
         {
           sql: "CREATE INDEX IF NOT EXISTS library_upload_sessions_expires_idx ON library_upload_sessions(expires_at)",
-          args: [],
-        },
-        {
-          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_pending_idx ON library_thread_transfers(status, updated_at)",
-          args: [],
-        },
-        {
-          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfers_thread_idx ON library_thread_transfers(thread_id, updated_at)",
-          args: [],
-        },
-        {
-          sql: "CREATE UNIQUE INDEX IF NOT EXISTS library_thread_transfers_open_request_idx ON library_thread_transfers(thread_id, source_resource_id) WHERE status = 'awaiting_confirmation'",
-          args: [],
-        },
-        {
-          sql: "CREATE INDEX IF NOT EXISTS library_thread_transfer_events_transfer_idx ON library_thread_transfer_events(transfer_id, created_at)",
           args: [],
         },
       ]);
@@ -446,4 +408,85 @@ export function rowToUploadSession(
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
+}
+
+/** Per-user retrieval and indexing settings persisted in app_config. */
+const SETTINGS_KEY = "library_settings";
+const cachedSettingsByScope = new Map<string, LibrarySettings>();
+
+function scopeKey(resourceId?: string): string {
+  return resourceId?.trim() || "__system__";
+}
+
+/**
+ * 落库前的唯一归一化入口(zod schema):枚举字段校验取值,数值字段收敛到
+ * 合法区间,非法字段回落默认值,未知字段被剥离(等价原先的白名单过滤)。
+ * 每个字段都带 .catch,保证单个字段损坏不会拖垮整份配置。
+ */
+const librarySettingsSchema = z.object({
+  chunkSize: clampIntSchema(DEFAULT_LIBRARY_SETTINGS.chunkSize, 1, Number.POSITIVE_INFINITY),
+  chunkOverlap: clampIntSchema(DEFAULT_LIBRARY_SETTINGS.chunkOverlap, 0, Number.POSITIVE_INFINITY),
+  chunkStrategy: z.enum([...VALID_CHUNK_STRATEGIES]).catch(DEFAULT_LIBRARY_SETTINGS.chunkStrategy),
+  topK: clampIntSchema(DEFAULT_LIBRARY_SETTINGS.topK, 1, Number.POSITIVE_INFINITY),
+  minScore: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.minScore),
+  graphRag: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.graphRag),
+  graphThreshold: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.graphThreshold),
+  graphRandomWalkSteps: clampIntSchema(
+    DEFAULT_LIBRARY_SETTINGS.graphRandomWalkSteps,
+    0,
+    Number.POSITIVE_INFINITY,
+  ),
+  graphRestartProb: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.graphRestartProb),
+  rerank: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.rerank),
+  rerankScorer: z.enum(["model", "mastra-agent"]).catch(DEFAULT_LIBRARY_SETTINGS.rerankScorer),
+  rerankSemanticWeight: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.rerankSemanticWeight),
+  rerankVectorWeight: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.rerankVectorWeight),
+  rerankPositionWeight: clampNumberSchema(DEFAULT_LIBRARY_SETTINGS.rerankPositionWeight),
+  extractTitle: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.extractTitle),
+  extractSummary: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.extractSummary),
+  extractQuestions: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.extractQuestions),
+  extractKeywords: z.boolean().catch(DEFAULT_LIBRARY_SETTINGS.extractKeywords),
+});
+
+function normalizeSettings(parsed: unknown): LibrarySettings {
+  const normalized = librarySettingsSchema.parse({
+    ...DEFAULT_LIBRARY_SETTINGS,
+    ...(parsed as object),
+  });
+  return {
+    ...normalized,
+    // MDocument.chunk requires overlap < chunk size. Keep persisted settings
+    // usable even when an older client saved an invalid combination.
+    chunkOverlap: Math.min(normalized.chunkOverlap, Math.max(0, normalized.chunkSize - 1)),
+  };
+}
+
+export async function getLibrarySettings(resourceId?: string): Promise<LibrarySettings> {
+  const scope = scopeKey(resourceId);
+  const cachedSettings = cachedSettingsByScope.get(scope);
+  if (cachedSettings) return cachedSettings;
+  const raw = await getAppConfig(SETTINGS_KEY, resourceId);
+  if (!raw) {
+    const next = { ...DEFAULT_LIBRARY_SETTINGS };
+    cachedSettingsByScope.set(scope, next);
+    return next;
+  }
+  let next: LibrarySettings;
+  try {
+    next = normalizeSettings(JSON.parse(raw));
+  } catch {
+    next = { ...DEFAULT_LIBRARY_SETTINGS };
+  }
+  cachedSettingsByScope.set(scope, next);
+  return next;
+}
+
+export async function saveLibrarySettings(
+  update: LibrarySettingsUpdate,
+  resourceId?: string,
+): Promise<LibrarySettings> {
+  const next = normalizeSettings({ ...(await getLibrarySettings(resourceId)), ...update });
+  await setAppConfig(SETTINGS_KEY, JSON.stringify(next, null, 2), resourceId);
+  cachedSettingsByScope.set(scopeKey(resourceId), next);
+  return next;
 }

@@ -28,7 +28,7 @@ import {
 // - 询问:流里发 tool-call-approval,渲染审批面板等用户批准
 // - 拒绝:该类工具不给模型(自己注入的直接不注入,工作区工具在调用前被拦下)
 // 当前模式强制拒绝的类别(如复查模式的写入/执行)仍由服务端执行,
-// 不在这个入口重复展示或编辑(见 src/mastra/agents/modes.ts)。
+// 不在这个入口重复展示或编辑(见 src/mastra/agents/permissions.ts)。
 // ---------------------------------------------------------------------------
 
 export function ChatApprovalSelector() {
@@ -113,7 +113,9 @@ export function ApprovalMenuItems({
           preset.id === "standard"
             ? t("chat:approvals.standard.desc")
             : t(
-                modeId === "plan" ? "chat:approvals.allowAll.planDesc" : "chat:approvals.allowAll.desc",
+                modeId === "plan"
+                  ? "chat:approvals.allowAll.planDesc"
+                  : "chat:approvals.allowAll.desc",
               );
         return (
           <DropdownMenuItem

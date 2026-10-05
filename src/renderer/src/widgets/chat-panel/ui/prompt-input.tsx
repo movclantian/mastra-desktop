@@ -545,20 +545,18 @@ function SortableRequestItem({
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div className="flex min-w-0 items-start gap-1">
-        {!request.queuedOnServer ? (
-          <Button
-            aria-label={t("chat:dragToReorder")}
-            className="mt-0.5 shrink-0 text-muted-foreground"
-            ref={setActivatorNodeRef}
-            size="icon-xs"
-            type="button"
-            variant="ghost"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVerticalIcon />
-          </Button>
-        ) : null}
+        <Button
+          aria-label={t("chat:dragToReorder")}
+          className="mt-0.5 shrink-0 text-muted-foreground"
+          ref={setActivatorNodeRef}
+          size="icon-xs"
+          type="button"
+          variant="ghost"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVerticalIcon />
+        </Button>
         <div className="min-w-0 flex-1">
           <QueueItemContent className="line-clamp-2 whitespace-pre-wrap">
             {request.text ||
@@ -573,11 +571,6 @@ function SortableRequestItem({
           ) : null}
         </div>
         <QueueItemActions className="shrink-0">
-          {/* 立即转向排在编辑左侧:它是这条请求的主动作(打断当前回合、越过
-              队列顺序直接发出),编辑/移除是它的辅助动作。native follow-up
-              (已被服务端会话接受并排入 follow-up 队列)不能改文本也不能单独
-              撤回,但可以被转向——steer 会 abort 当前 run 并作废服务端整个
-              follow-up 队列 */}
           {onSteerNow ? (
             <QueueItemAction
               aria-label={t("chat:prompt.steerNow")}
@@ -588,28 +581,24 @@ function SortableRequestItem({
               <WaypointsIcon />
             </QueueItemAction>
           ) : null}
-          {!request.queuedOnServer ? (
-            <QueueItemAction
-              aria-label={t("chat:prompt.editQueued")}
-              className="opacity-100"
-              onClick={() => onEdit(request)}
-            >
-              <PencilIcon />
-            </QueueItemAction>
-          ) : null}
-          {!request.queuedOnServer ? (
-            <QueueItemAction
-              aria-label={t("chat:prompt.removeQueued")}
-              className="opacity-100"
-              onClick={() => onRemove(request.id)}
-            >
-              <Trash2Icon />
-            </QueueItemAction>
-          ) : null}
+          <QueueItemAction
+            aria-label={t("chat:prompt.editQueued")}
+            className="opacity-100"
+            onClick={() => onEdit(request)}
+          >
+            <PencilIcon />
+          </QueueItemAction>
+          <QueueItemAction
+            aria-label={t("chat:prompt.removeQueued")}
+            className="opacity-100"
+            onClick={() => onRemove(request.id)}
+          >
+            <Trash2Icon />
+          </QueueItemAction>
         </QueueItemActions>
       </div>
       {request.files.length > 0 ? (
-        <QueueItemAttachment className={request.queuedOnServer ? "ml-0" : "ml-8"}>
+        <QueueItemAttachment className="ml-8">
           {request.files.map((file) => (
             <QueuedFilePreview
               file={file}
@@ -655,9 +644,6 @@ export function UserRequestQueuePanel({
   };
 
   return (
-    // 只渲染 QueueSection,与 AgentQueuePanel 的任务 section 同住一张 Queue 卡片
-    // (由 chat/panel.tsx 统一包裹)——两个队列本是同一份「进行中的工作」,
-    // 不各自成卡,避免上下两张卡片叠出的割裂感。
     <QueueSection defaultOpen>
       <QueueSectionTrigger className="px-2 py-1">
         <QueueSectionLabel

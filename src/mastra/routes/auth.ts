@@ -1,84 +1,70 @@
-import { registerApiRoute } from "@mastra/core/server";
+import { createRoute } from "@mastra/server/server-adapter";
+import { z } from "zod";
 import {
+  authLoginSchema,
+  authRegistrationSchema,
   authUserFromContext,
-  listAuthUsers,
   loginAuthUser,
   registerAuthUser,
   revokeAuthSession,
 } from "../auth";
-import { workError } from "../errors";
+import { workError, workValidationError } from "../errors";
 
-async function readJson<T extends Record<string, unknown>>(c: {
-  req: { json: <T>() => Promise<T> };
-}): Promise<T> {
-  try {
-    return await c.req.json<T>();
-  } catch {
-    throw workError("VALIDATION_INVALID_JSON");
-  }
-}
-
-export const authLoginRoute = registerApiRoute("/work/auth/login", {
+export const authLoginRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/auth/login",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
+  bodySchema: authLoginSchema.transform((credentials) => ({ credentials })),
   requiresAuth: false,
-  handler: async (c) => {
-    return c.json(await loginAuthUser(await readJson<{ email: unknown; password: unknown }>(c)));
+  handler: async (params) => {
+    return await loginAuthUser(params.credentials);
   },
 });
 
-export const authRegisterRoute = registerApiRoute("/work/auth/register", {
+export const authRegisterRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/auth/register",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
+  bodySchema: authRegistrationSchema.transform((credentials) => ({ credentials })),
   requiresAuth: false,
-  handler: async (c) => {
-    return c.json(
-      await registerAuthUser(
-        await readJson<{ name: unknown; email: unknown; password: unknown }>(c),
-      ),
-      201,
-    );
+  handler: async (params) => {
+    return await registerAuthUser(params.credentials);
   },
 });
 
-export const authLogoutRoute = registerApiRoute("/work/auth/logout", {
+export const authLogoutRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  bodySchema: z.object({}).strict().optional(),
+  path: "/work/auth/logout",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    const authorization = c.req.header("authorization") ?? "";
+  handler: async (params) => {
+    const authorization = params.request?.headers.get("authorization") ?? "";
     await revokeAuthSession(authorization.replace(/^Bearer\s+/i, "").trim());
-    return c.json({ ok: true });
+    return { ok: true };
   },
 });
 
-export const authMeRoute = registerApiRoute("/work/auth/me", {
+export const authMeRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/auth/me",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: (c) => {
-    const user = authUserFromContext(c.get("requestContext")?.get("user"));
+  handler: async (params) => {
+    const user = authUserFromContext(params.requestContext?.get("user"));
     if (!user) throw workError("AUTH_REQUIRED");
-    return c.json({
+    return {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
       },
-    });
-  },
-});
-
-/** 注册账户列表:会话所有权迁移(updateThreadResourceId)的目标候选 */
-export const workUsersRoute = registerApiRoute("/work/users", {
-  method: "GET",
-  handler: async (c) => {
-    const currentUser = authUserFromContext(c.get("requestContext")?.get("user"));
-    if (!currentUser) throw workError("AUTH_REQUIRED");
-    if (currentUser.role !== "admin") throw workError("AUTH_FORBIDDEN");
-    const users = await listAuthUsers();
-    return c.json({
-      users: users.map((user) => ({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-      })),
-    });
+    };
   },
 });

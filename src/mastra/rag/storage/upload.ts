@@ -3,11 +3,11 @@
  */
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, rm, stat, type FileHandle } from "node:fs/promises";
+import { type FileHandle, mkdir, open, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import { getStorageDirectory } from "../../storage";
-import { normalizeFilename, resolveMediaType } from "../document/extract";
+import { normalizeFilename, resolveMediaType } from "../document/indexing";
 import {
   type LibraryAsset,
   type LibraryUploadSession,
@@ -15,16 +15,16 @@ import {
   MAX_LIBRARY_UPLOAD_CHUNK_BYTES,
   MIN_LIBRARY_UPLOAD_CHUNK_BYTES,
 } from "../types";
-import { THREAD_TRANSFER_WRITE_LOCK_STATUSES, uploadAssetFromFile } from "./assets";
-import { ensureFolderReference } from "./folders";
+import { uploadAssetFromFile } from "./assets";
 import {
   cleanupExpiredLibraryUploadSessions,
   ensureLibrarySchema,
   now,
   rowToUploadSession,
-  withLibraryUploadSessionLock,
   withClient,
+  withLibraryUploadSessionLock,
 } from "./db";
+import { ensureFolderReference } from "./folders";
 
 /**
  * 分片断点续传服务:
@@ -90,16 +90,11 @@ export async function createLibraryUploadSession(input: {
   const createdAt = now();
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 
-  const inserted = await withClient((client) =>
+  await withClient((client) =>
     client.execute({
       sql: `INSERT INTO library_upload_sessions
         (id, resource_id, filename, media_type, byte_size, chunk_size, total_chunks, folder_id, thread_id, created_at, updated_at, expires_at)
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        WHERE ? = '' OR NOT EXISTS (
-          SELECT 1 FROM library_thread_transfers
-          WHERE thread_id = ?
-            AND status IN (${THREAD_TRANSFER_WRITE_LOCK_STATUSES.map(() => "?").join(", ")})
-        )`,
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         id,
         input.resourceId,
@@ -113,15 +108,9 @@ export async function createLibraryUploadSession(input: {
         createdAt,
         createdAt,
         expiresAt,
-        input.threadId ?? "",
-        input.threadId ?? "",
-        ...THREAD_TRANSFER_WRITE_LOCK_STATUSES,
       ],
     }),
   );
-  if ((inserted.rowsAffected ?? 0) !== 1) {
-    throw new Error("会话正在转交，无法开始上传附件");
-  }
 
   await mkdir(uploadSessionDirectory(id), { recursive: true });
   return {
@@ -172,9 +161,7 @@ type SaveLibraryUploadChunkInput = {
 export async function saveLibraryUploadChunk(
   input: SaveLibraryUploadChunkInput,
 ): Promise<LibraryUploadSession> {
-  return withLibraryUploadSessionLock(input.sessionId, () =>
-    saveLibraryUploadChunkUnlocked(input),
-  );
+  return withLibraryUploadSessionLock(input.sessionId, () => saveLibraryUploadChunkUnlocked(input));
 }
 
 async function saveLibraryUploadChunkUnlocked(
@@ -227,7 +214,14 @@ async function saveLibraryUploadChunkUnlocked(
             sha256 = excluded.sha256,
             storage_path = excluded.storage_path,
             created_at = excluded.created_at`,
-          args: [session.id, input.chunkIndex, input.bytes.byteLength, sha256, chunkPath, timestamp],
+          args: [
+            session.id,
+            input.chunkIndex,
+            input.bytes.byteLength,
+            sha256,
+            chunkPath,
+            timestamp,
+          ],
         },
         {
           sql: "UPDATE library_upload_sessions SET updated_at = ? WHERE id = ?",

@@ -1,8 +1,8 @@
+import { Agent } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
+import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import {
-  type AgentProfile,
   agentWorkflowSchema,
   deleteAgentProfile,
   ensureProfileAgentsRegistered,
@@ -10,43 +10,52 @@ import {
   unregisterProfileAgents,
   upsertAgentProfile,
 } from "../agents/custom";
-import { errorText } from "../errors";
-import { createEphemeralAgent, resolveDefaultLanguageModel } from "../models";
+import { errorText, workError, workValidationError } from "../errors";
+import { resolveDefaultLanguageModel } from "../models/providers";
 
-const agentProfileInputSchema = z.object({
-  id: z.string().optional(),
-  type: z.enum(["agent", "team"]),
-  name: z.string().optional(),
-  displayName: z.string().min(1),
-  profession: z.string().optional(),
-  description: z.string().optional(),
-  instructions: z.string().min(1),
-  skills: z.array(z.string()).optional(),
-  workflow: agentWorkflowSchema.optional(),
-  members: z
-    .array(
-      z.object({
-        id: z.string().optional(),
-        name: z.string().min(1),
-        profession: z.string().optional(),
-        description: z.string().optional(),
-        instructions: z.string().min(1),
-        skills: z.array(z.string()).optional(),
-        memoryScope: z.enum(["thread", "resource"]).optional(),
-      }),
-    )
-    .optional(),
-  tags: z.array(z.string()).optional(),
-  quickPrompts: z.array(z.string()).optional(),
-  enabled: z.boolean().optional(),
-});
+const agentProfileInputSchema = z
+  .object({
+    id: z.string().optional(),
+    type: z.enum(["agent", "team"]),
+    name: z.string().optional(),
+    displayName: z.string().min(1),
+    profession: z.string().optional(),
+    description: z.string().optional(),
+    instructions: z.string().min(1),
+    skills: z.array(z.string()).optional(),
+    workflow: agentWorkflowSchema.optional(),
+    members: z
+      .array(
+        z.object({
+          id: z.string().optional(),
+          name: z.string().min(1),
+          profession: z.string().optional(),
+          description: z.string().optional(),
+          instructions: z.string().min(1),
+          skills: z.array(z.string()).optional(),
+          memoryScope: z.enum(["thread", "resource"]).optional(),
+        }),
+      )
+      .optional(),
+    tags: z.array(z.string()).optional(),
+    quickPrompts: z.array(z.string()).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .refine((profile) => profile.type !== "team" || Boolean(profile.members?.length), {
+    path: ["members"],
+    message: "Agent 团队至少需要一位成员",
+  });
 
-export const agentProfilesRoute = registerApiRoute("/work/agents", {
+export const agentProfilesRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/agents",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+  handler: async (params) => {
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
     const agents = await listAgentProfiles(resourceId);
-    const registry = c.get("mastra");
+    const registry = params.mastra;
     const registrations = await Promise.all(
       agents.map((profile) => ensureProfileAgentsRegistered(registry, profile, resourceId)),
     );
@@ -55,7 +64,7 @@ export const agentProfilesRoute = registerApiRoute("/work/agents", {
       agentId: agent.id,
       name: agent.name,
     }));
-    return c.json({
+    return {
       agents,
       registeredAgentIds: registrations.flatMap((registration) => [
         registration.profile.id,
@@ -74,46 +83,40 @@ export const agentProfilesRoute = registerApiRoute("/work/agents", {
           registryKey: registration.memberKeys[memberId],
         })),
       })),
-    });
+    };
   },
 });
 
-export const saveAgentProfileRoute = registerApiRoute("/work/agents", {
+export const saveAgentProfileRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/agents",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    try {
-      const parsed = agentProfileInputSchema.safeParse(await c.req.json());
-      if (!parsed.success) return c.json({ error: "Agent 配置字段无效" }, 400);
-      if (
-        parsed.data.type === "team" &&
-        (!parsed.data.members || parsed.data.members.length === 0)
-      ) {
-        return c.json({ error: "Agent 团队至少需要一位成员" }, 400);
-      }
-      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-      const profile = await upsertAgentProfile(parsed.data as Partial<AgentProfile>, resourceId);
-      if (profile.enabled)
-        await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId);
-      else unregisterProfileAgents(c.get("mastra"), profile.id, resourceId);
-      return c.json({ agent: profile });
-    } catch (error) {
-      return c.json({ error: errorText(error) }, 400);
-    }
+  bodySchema: agentProfileInputSchema.transform((profile) => ({ profile })),
+  handler: async (params) => {
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    const profile = await upsertAgentProfile(params.profile, resourceId);
+    if (profile.enabled) await ensureProfileAgentsRegistered(params.mastra, profile, resourceId);
+    else unregisterProfileAgents(params.mastra, profile.id, resourceId);
+    return { agent: profile };
   },
 });
 
-export const deleteAgentProfileRoute = registerApiRoute("/work/agents/:agentId", {
+export const deleteAgentProfileRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  bodySchema: z.object({}).strict().optional(),
+  path: "/work/agents/:agentId",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "DELETE",
-  handler: async (c) => {
-    try {
-      const agentId = c.req.param("agentId");
-      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-      unregisterProfileAgents(c.get("mastra"), agentId, resourceId);
-      await deleteAgentProfile(agentId, resourceId);
-      return c.json({ ok: true });
-    } catch (error) {
-      return c.json({ error: errorText(error) }, 400);
-    }
+  pathParamSchema: z.object({ agentId: z.string().trim().min(1) }),
+  handler: async (params) => {
+    const agentId = params.agentId;
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    unregisterProfileAgents(params.mastra, agentId, resourceId);
+    await deleteAgentProfile(agentId, resourceId);
+    return { ok: true };
   },
 });
 
@@ -138,48 +141,51 @@ const agentDraftSchema = z.object({
   quickPrompts: z.array(z.string()),
 });
 
-export const assistAgentProfileRoute = registerApiRoute("/work/agents/assist", {
+export const assistAgentProfileRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/agents/assist",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    const body = (await c.req.json()) as {
-      description?: unknown;
-      type?: unknown;
-    };
-    if (typeof body.description !== "string" || !body.description.trim()) {
-      return c.json({ error: "请描述想创建的 Agent 或 Agent 团队" }, 400);
+  bodySchema: z
+    .object({
+      description: z.string().trim().min(1).max(100_000),
+      type: z.enum(["agent", "team"]).default("agent"),
+    })
+    .strict(),
+  handler: async (params) => {
+    const body = params;
+    const requestContext = params.requestContext;
+    const resourceIdValue = requestContext.get(MASTRA_RESOURCE_ID_KEY);
+    const resourceId = typeof resourceIdValue === "string" ? resourceIdValue : undefined;
+    const selectedModel = await resolveDefaultLanguageModel(resourceId);
+    if (!selectedModel) {
+      throw workError("MODEL_NOT_CONFIGURED");
     }
-    try {
-      const requestContext = c.get("requestContext");
-      const resourceIdValue = requestContext.get(MASTRA_RESOURCE_ID_KEY);
-      const resourceId = typeof resourceIdValue === "string" ? resourceIdValue : undefined;
-      const selectedModel = await resolveDefaultLanguageModel(resourceId);
-      if (!selectedModel) {
-        return c.json(
-          {
-            error: "当前用户尚未配置可用模型,请先在设置中启用供应商并选定模型",
-          },
-          400,
-        );
-      }
 
-      const assistant = createEphemeralAgent(selectedModel, {
-        id: "mastra-work-agent-assist",
-        name: "MastraWork Agent Assistant",
-        instructions: "根据用户描述生成可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。",
-      });
-      const result = await assistant.generate(
+    const assistant = new Agent({
+      model: selectedModel,
+      id: "mastra-work-agent-assist",
+      name: "MastraWork Agent Assistant",
+      instructions: "根据用户描述生成可执行的 Mastra Agent 配置草稿。只返回结构化字段,不要解释。",
+    });
+    const result = await assistant
+      .generate(
         `类型:${body.type === "team" ? "team" : "agent"}。团队 workflow.strategy 只能使用官方四类名称: supervisor(主 Agent 动态委派)、handoff(成员之间按顺序交接)、workflow(显式 Workflow 编排,支持分支/循环/审批)、council(多个成员并行评议后汇总)。用户描述:\n${body.description}`,
         {
           structuredOutput: {
             schema: agentDraftSchema,
             jsonPromptInjection: "auto",
           },
-          abortSignal: c.req.raw.signal,
+          abortSignal: params.abortSignal,
         },
-      );
-      return c.json({ draft: result.object });
-    } catch (error) {
-      return c.json({ error: `AI 创建失败: ${errorText(error)}` }, 503);
-    }
+      )
+      .catch((error: unknown) => {
+        throw workError("MODEL_GENERATION_FAILED", {
+          text: `AI 创建失败: ${errorText(error)}`,
+          cause: error,
+        });
+      });
+    return { draft: result.object };
   },
 });

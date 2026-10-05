@@ -2,7 +2,6 @@ import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router
 import {
   ArchiveIcon,
   ArrowLeftIcon,
-  ArrowLeftRightIcon,
   BotIcon,
   CalendarClockIcon,
   ChevronsUpDown,
@@ -20,6 +19,7 @@ import {
   WaypointsIcon,
 } from "lucide-react";
 import * as React from "react";
+import { useWorkbenchStore } from "@/entities/workbench";
 import {
   useActiveThreadResolver,
   useCreateThreadMutation,
@@ -28,7 +28,6 @@ import {
 } from "@/entities/workbench/model/queries/threads";
 import type { MainView, WorkThread } from "@/entities/workbench/model/types";
 import { viewFromPath } from "@/entities/workbench/model/types";
-import { useWorkbenchStore } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
@@ -98,7 +97,6 @@ import {
   ThreadWorkspaceTree,
   WorkspaceGroup,
 } from "./thread-list";
-import { ThreadTransferInboxDialog } from "./thread-transfer-inbox";
 
 // 结构参考:
 // - 第一组(无 label)直接操作:新建任务 / 技能套件 / 资料库 / 主题风格(可折叠二级子菜单)
@@ -134,7 +132,6 @@ function NavUser() {
   const { isMobile } = useSidebar();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [transferCenterOpen, setTransferCenterOpen] = React.useState(false);
   const openSettings = (section?: string) => {
     void navigate({
       to: "/settings",
@@ -257,19 +254,10 @@ function NavUser() {
                 <Settings2Icon />
                 {t("sidebar:settings")}
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setTransferCenterOpen(true)}>
-                <ArrowLeftRightIcon />
-                {t("sidebar:transferCenter")}
-              </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
-      <ThreadTransferInboxDialog
-        onOpenChange={setTransferCenterOpen}
-        open={transferCenterOpen}
-        userId={user.id}
-      />
     </SidebarMenu>
   );
 }

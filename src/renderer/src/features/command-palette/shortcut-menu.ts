@@ -1,4 +1,3 @@
-import type { ComponentType } from "react";
 import {
   BotIcon,
   CalendarClockIcon,
@@ -17,6 +16,7 @@ import {
   TerminalSquareIcon,
   WaypointsIcon,
 } from "lucide-react";
+import type { ComponentType } from "react";
 
 /**
  * 快捷键业务分类

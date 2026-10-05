@@ -6,31 +6,38 @@
 
 import { getThreadOMMetadata } from "@mastra/core/memory";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
+import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
-import { workError } from "../errors";
-import { getMemoryConfig, type MemoryUserConfig, saveMemoryConfig } from "../memory";
-import { getOwnedThread, getWorkMemory, getWorkMemoryForThread } from "./threads/shared";
+import { workError, workValidationError } from "../errors";
+import { getMemoryConfig, memoryConfigSchema, saveMemoryConfig } from "../memory";
+import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 // GET /work/memory — 读取当前记忆配置
-export const memoryConfigRoute = registerApiRoute("/work/memory", {
+export const memoryConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/memory",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    return c.json(
-      await getMemoryConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
-    );
+  handler: async (params) => {
+    return await getMemoryConfig(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
   },
 });
 
 // POST /work/memory — 写入记忆配置
-export const saveMemoryConfigRoute = registerApiRoute("/work/memory", {
+export const saveMemoryConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/memory",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
+  bodySchema: memoryConfigSchema.transform((config) => ({ config })),
+  handler: async (params) => {
     await saveMemoryConfig(
-      await c.req.json<MemoryUserConfig>(),
-      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      params.config,
+      params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
     );
-    return c.json({ ok: true });
+    return { ok: true };
   },
 });
 
@@ -39,13 +46,17 @@ export const saveMemoryConfigRoute = registerApiRoute("/work/memory", {
  * Extractors 按线程持久化在 thread.metadata.mastra.om.extracted,因此这里按
  * 最近更新时间合并同一 resource 下的线程,并返回来源线程供设置页追溯。
  */
-export const memoryProfileRoute = registerApiRoute("/work/memory/profile", {
+export const memoryProfileRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/memory/profile",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-    if (!resourceId) return c.json({ workingMemory: null, extractors: [] });
+  handler: async (params) => {
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) return { workingMemory: null, extractors: [] };
 
-    const memory = await getWorkMemory(c.get("requestContext"));
+    const memory = await getWorkMemory(params.requestContext);
     const { threads } = await memory.listThreads({
       filter: { resourceId },
       perPage: false,
@@ -99,11 +110,11 @@ export const memoryProfileRoute = registerApiRoute("/work/memory/profile", {
           resourceId,
         })
       : null;
-    return c.json({
+    return {
       workingMemory,
       extractors: [...extracted.values()],
       threadCount: threads.length,
-    });
+    };
   },
 });
 
@@ -122,59 +133,60 @@ const threadOmConfigSchema = z
       config.reflection?.observationTokens !== undefined,
   );
 
-export const observationalMemoryConfigRoute = registerApiRoute(
-  "/work/threads/:threadId/observational-memory-config",
-  {
-    method: "GET",
-    handler: async (c) => {
-      const threadId = c.req.param("threadId");
-      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-      if (!resourceId) throw workError("AUTH_REQUIRED");
-      const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
-      if (!(await getOwnedThread(memory, threadId, resourceId)))
-        throw workError("THREAD_NOT_FOUND");
-      const om = await memory.omEngine;
-      if (!om) return c.json({ config: {} });
-      const status = await om.getStatus({ threadId, resourceId });
-      return c.json({
-        config: {
-          observation: { messageTokens: status.threshold },
-          reflection: { observationTokens: status.effectiveObservationTokensThreshold },
-        },
-      });
-    },
+export const observationalMemoryConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/threads/:threadId/observational-memory-config",
+  responseType: "json",
+  onValidationError: workValidationError,
+  method: "GET",
+  pathParamSchema: z.object({ threadId: z.string().trim().min(1) }),
+  handler: async (params) => {
+    const threadId = params.threadId;
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) throw workError("AUTH_REQUIRED");
+    const memory = await getWorkMemory(params.requestContext);
+    if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
+    const om = await memory.omEngine;
+    if (!om) return { config: {} };
+    const status = await om.getStatus({ threadId, resourceId });
+    return {
+      config: {
+        observation: { messageTokens: status.threshold },
+        reflection: { observationTokens: status.effectiveObservationTokensThreshold },
+      },
+    };
   },
-);
+});
 
-export const updateObservationalMemoryConfigRoute = registerApiRoute(
-  "/work/threads/:threadId/observational-memory-config",
-  {
-    method: "PUT",
-    handler: async (c) => {
-      const threadId = c.req.param("threadId");
-      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-      if (!resourceId) throw workError("AUTH_REQUIRED");
-      const parsed = z.object({ config: threadOmConfigSchema }).safeParse(await c.req.json());
-      if (!parsed.success) throw workError("VALIDATION_FAILED", { text: "观察记忆阈值无效" });
-      const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
-      if (!(await getOwnedThread(memory, threadId, resourceId)))
-        throw workError("THREAD_NOT_FOUND");
-      const om = await memory.omEngine;
-      if (!om) return c.json({ error: "Observational Memory is disabled" }, 409);
-      await om.getStatus({ threadId, resourceId });
-      await memory.updateObservationalMemoryConfig({
-        threadId,
-        resourceId,
-        config: parsed.data.config,
-      });
-      const status = await om.getStatus({ threadId, resourceId });
-      return c.json({
-        ok: true,
-        config: {
-          observation: { messageTokens: status.threshold },
-          reflection: { observationTokens: status.effectiveObservationTokensThreshold },
-        },
-      });
-    },
+export const updateObservationalMemoryConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/threads/:threadId/observational-memory-config",
+  responseType: "json",
+  onValidationError: workValidationError,
+  method: "PUT",
+  pathParamSchema: z.object({ threadId: z.string().trim().min(1) }),
+  bodySchema: z.object({ config: threadOmConfigSchema }).strict(),
+  handler: async (params) => {
+    const threadId = params.threadId;
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) throw workError("AUTH_REQUIRED");
+    const memory = await getWorkMemory(params.requestContext);
+    if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
+    const om = await memory.omEngine;
+    if (!om) throw workError("OBSERVATIONAL_MEMORY_DISABLED");
+    await om.getStatus({ threadId, resourceId });
+    await memory.updateObservationalMemoryConfig({
+      threadId,
+      resourceId,
+      config: params.config,
+    });
+    const status = await om.getStatus({ threadId, resourceId });
+    return {
+      ok: true,
+      config: {
+        observation: { messageTokens: status.threshold },
+        reflection: { observationTokens: status.effectiveObservationTokensThreshold },
+      },
+    };
   },
-);
+});

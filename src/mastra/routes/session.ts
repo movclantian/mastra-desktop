@@ -1,21 +1,22 @@
 /**
  * 工作台会话控制路由(/work/sessions/:scope/threads/:threadId/*):
- * stream / message / steer / follow-up / abort / mode / model / permissions /
+ * message / steer / follow-up / abort / mode / model / permissions /
  * grants / workbench-state / notification。
  * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
  */
 import { toAISdkStream, workflowSnapshotToStream } from "@mastra/ai-sdk";
 import type { Agent, AgentExecutionOptions } from "@mastra/core/agent";
-import type { Session as ControllerSession } from "@mastra/core/agent-controller";
+import type { Session as ControllerSession, TokenUsage } from "@mastra/core/agent-controller";
+import type { Mastra } from "@mastra/core/mastra";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import type { MastraModelOutput } from "@mastra/core/stream";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import {
   type AnyWorkflow,
   createWorkflowStateReader,
   type WorkflowState,
 } from "@mastra/core/workflows";
-import { createUIMessageStreamResponse, type LanguageModelUsage } from "ai";
+import { createUIMessageStreamResponse } from "ai";
 import { z } from "zod";
 import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents";
 import {
@@ -23,46 +24,115 @@ import {
   ensureProfileAgentsRegistered,
   getAgentProfile,
 } from "../agents/custom";
-import { MODE_ID_CONTEXT_KEY, resolveMode } from "../agents/modes";
 import {
+  listWorkModes,
+  MODE_ID_CONTEXT_KEY,
   PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
+  resolveMode,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
   TOOL_CATEGORIES,
-  type ToolCategory,
   toolCategoryOf,
 } from "../agents/permissions";
 import { mergeWorkbenchState, workbenchStateSchema } from "../agents/processors";
 import { errorText, workError } from "../errors";
 import {
-  REQUEST_MODEL_CONTEXT_KEY,
-  requestModelFamily,
+  REQUEST_MODEL_ID_CONTEXT_KEY,
   resolveConfiguredModel,
+  resolveDefaultModelId,
   resolveRequestModel,
   usesOpenAIResponses,
-} from "../models";
+} from "../models/providers";
 import {
-  isThreadAssetTransferWriteLocked,
+  LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
-  withThreadAssetTransferLock,
-} from "../rag";
+  LIBRARY_THREAD_CONTEXT_KEY,
+} from "../rag/types";
 import { appStorage } from "../storage";
+import { parseWebSearchSelection, WEB_SEARCH_CONTEXT_KEY } from "../tools";
 import {
-  MODEL_FAMILY_CONTEXT_KEY,
-  parseWebSearchSelection,
-  WEB_SEARCH_CONTEXT_KEY,
-} from "../tools";
-import {
-  getThreadWorkspace,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
-import { getOwnedThread, getWorkMemoryForThread, type OwnedThread } from "./threads/shared";
-import type { ThreadMetadata } from "./threads/types";
+import { workbenchMessages } from "./threads/messages";
+import type { ThreadMetadata } from "./threads/shared";
+import { getOwnedThread, getWorkMemory, type OwnedThread } from "./threads/shared";
 
 function scopeOf(value: string | undefined): string {
   return value?.trim() || "workbench";
+}
+
+/** Match the official Controller routes: acknowledge work while its outcome arrives over SSE. */
+export function observeSessionWork(
+  c: ContextWithMastra,
+  session: ControllerSession,
+  work: Promise<unknown>,
+): void {
+  void work.catch((error: unknown) => {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    c.get("mastra").getLogger().error("Workbench session operation failed", { error: failure });
+    session.emit({ type: "error", error: failure });
+  });
+}
+
+/** Persist only the last-step context measure; cumulative usage belongs to Session. */
+export function registerWorkbenchSessionLifecycle(mastra: Mastra): void {
+  mastra.getAgentController("workbench")?.onSessionCreated((session) => {
+    let lastStepUsage: TokenUsage | undefined;
+    session.subscribe((event) => {
+      if (event.type === "agent_start") lastStepUsage = undefined;
+      if (event.type === "usage_update") lastStepUsage = event.usage;
+    });
+    session.onBeforeAgentEnd(async () => {
+      if (!lastStepUsage || !session.thread.getId()) return;
+      await session.thread.setSetting({
+        key: "contextUsage",
+        value: {
+          inputTokens: lastStepUsage.promptTokens,
+          outputTokens: lastStepUsage.completionTokens,
+          totalTokens: lastStepUsage.totalTokens,
+          inputTokenDetails: { cacheReadTokens: lastStepUsage.cachedInputTokens },
+          outputTokenDetails: { reasoningTokens: lastStepUsage.reasoningTokens },
+        },
+      });
+      await session.thread.setSetting({ key: "contextUsageVersion", value: 2 });
+    });
+  });
+}
+
+/** Native SSE reconnects restore the exact owned thread before the official handler subscribes. */
+export async function workbenchControllerMiddleware(
+  c: ContextWithMastra,
+  next: () => Promise<void>,
+) {
+  const match = c.req.path.match(/^\/api\/agent-controller\/workbench\/sessions\/([^/]+)(\/.*)?$/);
+  if (!match) return next();
+  const resourceId = decodeURIComponent(match[1]);
+  if (resourceId !== c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY)) {
+    throw workError("AUTH_FORBIDDEN");
+  }
+  // Resource identity comes from login; each workbench scope stays bound to one thread.
+  const operation = match[2] ?? "";
+  if (
+    operation === "/resource" ||
+    operation === "/resources" ||
+    (c.req.method !== "GET" && ["/thread", "/threads", "/threads/clone"].includes(operation))
+  ) {
+    throw workError("AUTH_FORBIDDEN");
+  }
+  let scope: unknown;
+  try {
+    scope = JSON.parse(c.req.query("sessionScope") ?? "null");
+  } catch {
+    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session scope" });
+  }
+  const parsed = z.tuple([z.literal("workbench"), z.string().trim().min(1)]).safeParse(scope);
+  if (!parsed.success || c.req.query("sessionScope") !== JSON.stringify(parsed.data)) {
+    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session scope" });
+  }
+  await sessionFor(c, { resourceId, threadId: parsed.data[1], scope: parsed.data[0] });
+  await next();
 }
 
 /**
@@ -84,31 +154,15 @@ const notificationInputSchema = z.object({
 interface SessionRouteResult {
   controllerSession: ControllerSession;
   agent: Agent;
-  memory: Awaited<ReturnType<typeof getWorkMemoryForThread>>;
+  memory: Awaited<ReturnType<typeof getWorkMemory>>;
   resourceId: string;
   threadId: string;
   thread: NonNullable<OwnedThread>;
 }
 
-async function withWritableThreadSession<T>(
-  result: SessionRouteResult,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return withThreadAssetTransferLock(result.threadId, async () => {
-    if (await isThreadAssetTransferWriteLocked(result.threadId)) {
-      throw workError("THREAD_TRANSFER_IN_PROGRESS");
-    }
-    if (!(await getOwnedThread(result.memory, result.threadId, result.resourceId))) {
-      throw workError("THREAD_NOT_FOUND");
-    }
-    return operation();
-  });
-}
-
 interface SessionMessageBody {
   content?: string;
   metadata?: Record<string, unknown>;
-  model?: unknown;
   modelSettings?: unknown;
   providerOptions?: unknown;
   /** Official per-invocation subagent version overrides. */
@@ -121,6 +175,19 @@ interface SessionMessageBody {
   agentProfileId?: unknown;
 }
 
+/** Restore the native per-mode selection; a new mode starts with the user's default. */
+async function restoreSessionModel(session: ControllerSession, resourceId: string) {
+  const defaultModelId = await resolveDefaultModelId(resourceId);
+  if (defaultModelId) {
+    for (const mode of listWorkModes()) {
+      if (!(await session.model.resolveForMode({ modeId: mode.id }))) {
+        await session.model.switch({ modelId: defaultModelId, modeId: mode.id });
+      }
+    }
+  }
+  await session.model.syncFromPersisted({ modeId: session.mode.get() });
+}
+
 /** Resolve the single official Session for a workbench thread. */
 export async function getWorkbenchSession(
   c: ContextWithMastra,
@@ -129,7 +196,7 @@ export async function getWorkbenchSession(
   scope?: string,
 ) {
   const requestContext = c.get("requestContext");
-  const memory = await getWorkMemoryForThread(requestContext, threadId, resourceId);
+  const memory = await getWorkMemory(requestContext);
   const thread = await getOwnedThread(memory, threadId, resourceId);
   if (!thread) throw workError("THREAD_NOT_FOUND");
   const controller = c.get("mastra").getAgentController("workbench");
@@ -137,23 +204,24 @@ export async function getWorkbenchSession(
   const mode = resolveMode(thread.metadata?.currentModeId);
   requestContext.set(MODE_ID_CONTEXT_KEY, mode.id);
   await controller.init();
-  const workspacePath = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
-  const workspace = getThreadWorkspace(
-    typeof workspacePath === "string" && workspacePath ? workspacePath : process.cwd(),
-    threadId,
-    resourceId,
-  );
+  requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
+  requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
+  const workspacePath =
+    requestContext.get(WORKSPACE_PATH_CONTEXT_KEY) ?? thread.metadata?.workspacePath;
+  if (typeof workspacePath === "string" && workspacePath) {
+    requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, workspacePath);
+  }
   const session = await controller.createSession({
     resourceId,
     threadId,
     scope: JSON.stringify([scopeOf(scope), threadId]),
     requestContext,
-    workspace,
   });
   requestContext.set(SESSION_TOOL_POLICY_CONTEXT_KEY, (toolName: string) =>
     session.resolveToolApproval(toolName),
   );
   if (session.mode.get() !== mode.id) await session.mode.switch({ modeId: mode.id });
+  await restoreSessionModel(session, resourceId);
   const rules = parsePermissionRules(thread.metadata?.permissionRules);
   const yolo =
     TOOL_CATEGORIES.every((category) => rules.categories[category] === "allow") &&
@@ -168,13 +236,16 @@ export async function getWorkbenchSession(
   return session;
 }
 
-async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
-  const threadId = c.req.param("threadId");
-  const resourceId = c.req.query("resourceId");
-  const scope = scopeOf(c.req.param("scope"));
+async function sessionFor(
+  c: ContextWithMastra,
+  target?: { threadId: string; resourceId: string; scope: string },
+): Promise<SessionRouteResult> {
+  const threadId = target?.threadId ?? c.req.param("threadId");
+  const resourceId = target?.resourceId ?? c.req.query("resourceId");
+  const scope = target?.scope ?? scopeOf(c.req.param("scope"));
   if (!resourceId || !threadId)
     throw workError("VALIDATION_FAILED", { text: "resourceId and threadId are required" });
-  const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
+  const memory = await getWorkMemory(c.get("requestContext"));
   const thread = await getOwnedThread(memory, threadId, resourceId);
   if (!thread) {
     throw workError("THREAD_NOT_FOUND");
@@ -182,24 +253,15 @@ async function sessionFor(c: ContextWithMastra): Promise<SessionRouteResult> {
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
   const profile = await getAgentProfile(metadata.agentProfileId, resourceId);
   await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId);
-  const mode = resolveMode(metadata.currentModeId);
   const requestContext = c.get("requestContext");
   requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
   requestContext.set(LIBRARY_RESOURCE_CONTEXT_KEY, resourceId);
+  requestContext.set(LIBRARY_THREAD_CONTEXT_KEY, threadId);
+  requestContext.set(LIBRARY_ORIGIN_CONTEXT_KEY, new URL(c.req.url).origin);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   if (metadata.workspacePath) {
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, metadata.workspacePath);
-  }
-  const modelSelection = metadata.modelSelectionByMode?.[mode.id];
-  if (modelSelection) {
-    const model = await resolveConfiguredModel(
-      modelSelection.providerId,
-      modelSelection.modelId,
-      resourceId,
-    );
-    if (!model) throw workError("MODEL_NOT_CONFIGURED");
-    requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
   }
   const controllerSession = await getWorkbenchSession(c, threadId, resourceId, scope);
   const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(controllerSession);
@@ -230,13 +292,10 @@ async function sessionExecutionOptions(
         .slice(0, 4),
     );
   }
-  if (body.model !== undefined) {
-    const model = await resolveRequestModel(body.model, result.resourceId);
-    if (!model) throw workError("MODEL_NOT_CONFIGURED");
-    requestContext.set(REQUEST_MODEL_CONTEXT_KEY, model);
-    const family = requestModelFamily(body.model);
-    if (family) requestContext.set(MODEL_FAMILY_CONTEXT_KEY, family);
-  }
+  const selectedModel = { id: result.controllerSession.model.get() };
+  const model = await resolveRequestModel(selectedModel, result.resourceId);
+  if (!model) throw workError("MODEL_NOT_CONFIGURED");
+  requestContext.set(REQUEST_MODEL_ID_CONTEXT_KEY, selectedModel.id);
   const webSearch = parseWebSearchSelection(body.webSearch);
   if (webSearch) requestContext.set(WEB_SEARCH_CONTEXT_KEY, webSearch);
 
@@ -244,8 +303,7 @@ async function sessionExecutionOptions(
     typeof body.providerOptions === "object" && body.providerOptions !== null
       ? (body.providerOptions as Record<string, unknown>)
       : undefined;
-  const reasoningSummary =
-    body.model !== undefined && (await usesOpenAIResponses(body.model, result.resourceId));
+  const reasoningSummary = await usesOpenAIResponses(selectedModel, result.resourceId);
   const providerOptions = reasoningSummary
     ? {
         ...(rawProviderOptions ?? {}),
@@ -366,7 +424,7 @@ function workflowResumeTarget(
 }
 
 async function persistentDisplayState(c: ContextWithMastra, result: SessionRouteResult) {
-  const displayState = result.controllerSession.displayState.get();
+  const displayState = structuredClone(result.controllerSession.displayState.get());
   const threadState = await appStorage.getStore("threadState");
   const tasks = await threadState?.getState<TaskItem[]>({
     threadId: result.threadId,
@@ -437,7 +495,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   const workflowRunning = workflowRuns.some((run) =>
     ["pending", "running", "waiting"].includes(run.status ?? ""),
   );
-  const suspendedRuns = runs.flatMap((run) => {
+  const storedSuspensions = runs.flatMap((run) => {
     const toolCalls = run.toolCalls.flatMap((toolCall) => {
       const toolName = toolCall.toolName ?? "";
       const policy = result.controllerSession.resolveToolApproval(toolName);
@@ -446,8 +504,55 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     });
     return toolCalls.length > 0 ? [{ ...run, toolCalls }] : [];
   });
+  const storedToolCalls = new Set(
+    storedSuspensions.flatMap((run) => run.toolCalls.map((tool) => tool.toolCallId)),
+  );
+  const liveSuspensions = [...displayState.pendingSuspensions].flatMap(([toolCallId, tool]) => {
+    const pending = result.controllerSession.suspensions.get({ toolCallId });
+    if (
+      !pending ||
+      pending.threadId !== result.threadId ||
+      pending.resourceId !== result.resourceId
+    )
+      return [];
+    return [{ runId: pending.runId, toolCall: { ...tool, toolCallId, requiresApproval: false } }];
+  });
+  const activeRunId = result.controllerSession.getCurrentRunId();
+  const liveApprovals = [...displayState.pendingApprovals].flatMap(([toolCallId, tool]) => {
+    if (
+      !activeRunId ||
+      !result.controllerSession.approval.isArmed({
+        toolCallId,
+        threadId: result.threadId,
+        runId: activeRunId,
+      })
+    )
+      return [];
+    return [{ runId: activeRunId, toolCall: { ...tool, toolCallId, requiresApproval: true } }];
+  });
+  const suspendedRuns = [
+    ...storedSuspensions,
+    ...[...liveSuspensions, ...liveApprovals]
+      .filter(({ toolCall }) => !storedToolCalls.has(toolCall.toolCallId))
+      .map(({ runId, toolCall }) => ({
+        runId,
+        toolCalls: [
+          {
+            ...toolCall,
+            category: toolCategoryOf(toolCall.toolName),
+            policy: result.controllerSession.resolveToolApproval(toolCall.toolName),
+          },
+        ],
+      })),
+  ];
   return {
     ...displayState,
+    activeTools: Object.fromEntries(displayState.activeTools),
+    toolInputBuffers: Object.fromEntries(displayState.toolInputBuffers),
+    pendingSuspensions: Object.fromEntries(displayState.pendingSuspensions),
+    pendingApprovals: Object.fromEntries(displayState.pendingApprovals),
+    activeSubagents: Object.fromEntries(displayState.activeSubagents),
+    modifiedFiles: Object.fromEntries(displayState.modifiedFiles),
     threadId: result.threadId,
     state: result.controllerSession.state.get(),
     grants: result.controllerSession.getGrants(),
@@ -466,55 +571,6 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     workflowRuns,
   };
 }
-
-// A tool-call finish hands control back to the agent loop. Only a non-tool
-// finish closes the subscribed run; `step-finish` is never terminal.
-function isTerminalAgentChunk(chunk: {
-  type: string;
-  finishReason?: unknown;
-  payload?: unknown;
-}): boolean {
-  if (chunk.type === "error" || chunk.type === "abort" || chunk.type === "tool-call-suspended")
-    return true;
-  if (chunk.type !== "finish") return false;
-  const payload =
-    typeof chunk.payload === "object" && chunk.payload !== null
-      ? (chunk.payload as { finishReason?: unknown; stepResult?: { reason?: unknown } })
-      : undefined;
-  const finishReason = chunk.finishReason ?? payload?.finishReason;
-  return finishReason !== "tool-calls" && payload?.stepResult?.reason !== "tool-calls";
-}
-
-const BACKGROUND_TASK_START_CHUNKS = new Set([
-  "background-task-started",
-  "background-task-running",
-  "background-task-resumed",
-  "background-task-output",
-]);
-const BACKGROUND_TASK_END_CHUNKS = new Set([
-  "background-task-completed",
-  "background-task-failed",
-  "background-task-cancelled",
-  "background-task-suspended",
-  "background-task-timed-out",
-]);
-
-/** Keep background-task tracking correct even while a reconnect replays old chunks. */
-export function trackBackgroundTaskChunk(
-  backgroundTasks: Set<string>,
-  chunk: { type?: unknown; payload?: unknown },
-): void {
-  if (typeof chunk.type !== "string") return;
-  const payload =
-    typeof chunk.payload === "object" && chunk.payload !== null
-      ? (chunk.payload as { taskId?: unknown })
-      : undefined;
-  if (typeof payload?.taskId !== "string") return;
-  if (BACKGROUND_TASK_START_CHUNKS.has(chunk.type)) backgroundTasks.add(payload.taskId);
-  else if (BACKGROUND_TASK_END_CHUNKS.has(chunk.type)) backgroundTasks.delete(payload.taskId);
-}
-
-type StreamReplayMode = { kind: "approval"; toolCallId: string } | { kind: "terminal" };
 
 /** Wait for the native run to stop before any destructive history operation. */
 export async function abortWorkbenchSession(session: ControllerSession) {
@@ -536,209 +592,6 @@ export async function abortWorkbenchSession(session: ControllerSession) {
   }
 }
 
-/** Session owns the run; the official Agent subscription supplies AI SDK transport chunks. */
-export function createUsageMetadata() {
-  let contextUsage: LanguageModelUsage | undefined;
-  return ({
-    part,
-  }: {
-    part: { type: string; usage?: LanguageModelUsage; totalUsage?: LanguageModelUsage };
-  }) => {
-    if (part.type === "start") contextUsage = undefined;
-    if (part.type === "finish-step") contextUsage = part.usage;
-    if (part.type !== "finish") return undefined;
-    return { usage: part.totalUsage, contextUsage: contextUsage ?? null, contextUsageVersion: 2 };
-  };
-}
-
-export async function streamWorkbenchSession(
-  c: ContextWithMastra,
-  session: ControllerSession,
-  action?: () => Promise<unknown>,
-  replayMode?: StreamReplayMode,
-  resumeTool?: { runId: string; toolCallId: string; toolName: string; args?: unknown },
-  keepUntilIdle = false,
-) {
-  const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(session);
-  const threadId = session.thread.getId();
-  if (!agent || !threadId) throw new Error("Workbench Session has no bound Agent/thread");
-  const subscription = await agent.subscribeToThread({
-    threadId,
-    resourceId: session.identity.getResourceId(),
-  });
-  const initialBackgroundTasks = new Set<string>();
-  if (keepUntilIdle) {
-    const manager = c.get("mastra").backgroundTaskManager;
-    if (manager) {
-      try {
-        const listed = await manager.listTasks({
-          resourceId: session.identity.getResourceId(),
-          threadId,
-          orderBy: "createdAt",
-          orderDirection: "desc",
-          perPage: 100,
-        });
-        for (const task of listed.tasks) {
-          if (task.status === "pending" || task.status === "running")
-            initialBackgroundTasks.add(task.id);
-        }
-      } catch {
-        // The stream itself remains authoritative if the snapshot is unavailable.
-      }
-    }
-  }
-  let discardReplay = replayMode !== undefined && subscription.activeRunId() !== null;
-  let closed = false;
-  let unsubscribeEvents: (() => void) | undefined;
-  const fullStream = new ReadableStream({
-    start(controller) {
-      const fail = (error: unknown) => {
-        if (closed) return;
-        closed = true;
-        subscription.unsubscribe();
-        unsubscribeEvents?.();
-        controller.error(error);
-      };
-      unsubscribeEvents = session.subscribe((event) => {
-        if (event.type === "error") fail(event.error);
-      });
-      // A resumed suspended tool emits its result from a fresh Agent stream.
-      // Seed the UI stream with the original call so AI SDK can apply that result
-      // even when the client restored the history from persisted tool output.
-      if (resumeTool) {
-        controller.enqueue({
-          type: "tool-call",
-          runId: resumeTool.runId,
-          from: "AGENT",
-          payload: {
-            toolCallId: resumeTool.toolCallId,
-            toolName: resumeTool.toolName,
-            args: resumeTool.args ?? {},
-          },
-        });
-      }
-      void (async () => {
-        let automaticApproval = false;
-        const backgroundTasks = new Set(initialBackgroundTasks);
-        for await (const chunk of subscription.stream) {
-          if (closed) break;
-          // Track before replay filtering. A reconnect can replay the task start
-          // before the resume boundary; skipping it makes the later finish look
-          // terminal and closes the stream while the task is still running.
-          if (keepUntilIdle) trackBackgroundTaskChunk(backgroundTasks, chunk);
-          // A subscription replays the parked segment before the resumed one.
-          // The client already holds that message; discard through its boundary.
-          if (discardReplay) {
-            const reachesApprovalBoundary =
-              replayMode?.kind === "approval" &&
-              chunk.type === "tool-call-approval" &&
-              "payload" in chunk &&
-              typeof chunk.payload === "object" &&
-              chunk.payload !== null &&
-              (chunk.payload as { toolCallId?: unknown }).toolCallId === replayMode.toolCallId;
-            const reachesTerminalBoundary =
-              replayMode?.kind === "terminal" && isTerminalAgentChunk(chunk);
-            if (reachesApprovalBoundary || reachesTerminalBoundary) discardReplay = false;
-            continue;
-          }
-          if (chunk.type === "start") automaticApproval = false;
-          if (chunk.type === "tool-call-approval") {
-            automaticApproval = session.resolveToolApproval(chunk.payload.toolName) !== "ask";
-            if (automaticApproval) continue;
-          }
-          if (chunk.type === "finish" && automaticApproval) {
-            automaticApproval = false;
-            continue;
-          }
-          controller.enqueue(chunk);
-          if (isTerminalAgentChunk(chunk) && (!keepUntilIdle || backgroundTasks.size === 0)) break;
-        }
-        if (!closed) {
-          closed = true;
-          controller.close();
-          subscription.unsubscribe();
-          unsubscribeEvents?.();
-        }
-      })().catch(fail);
-      if (action) void action().catch(fail);
-    },
-    cancel() {
-      closed = true;
-      subscription.unsubscribe();
-      unsubscribeEvents?.();
-    },
-  });
-  return toAISdkStream({ fullStream } as unknown as MastraModelOutput, {
-    from: "agent",
-    version: "v7",
-    sendReasoning: true,
-    messageMetadata: createUsageMetadata(),
-  });
-}
-
-export const sessionStreamRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/stream",
-  {
-    method: "GET",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      if (!result.controllerSession.stream.isActive()) return new Response(null, { status: 204 });
-      return createUIMessageStreamResponse({
-        // Reconnects must use the same background-task lifecycle semantics as
-        // the initial POST stream; otherwise the first terminal replay chunk
-        // truncates a long tool chain.
-        stream: await streamWorkbenchSession(
-          c,
-          result.controllerSession,
-          undefined,
-          undefined,
-          undefined,
-          true,
-        ),
-      });
-    },
-  },
-);
-
-export const sessionMessageRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/message",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const body = (await c.req.json()) as SessionMessageBody;
-      if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
-      const content = body.content.trim();
-      const execution = await sessionExecutionOptions(c, result, body);
-      await withWritableThreadSession(result, () =>
-        result.controllerSession.sendMessage({
-          content,
-          requestContext: execution.requestContext,
-        }),
-      );
-      return c.json({ ok: true });
-    },
-  },
-);
-
-export const sessionSteerRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/steer", {
-  method: "POST",
-  handler: async (c) => {
-    const result = await sessionFor(c);
-    const body = (await c.req.json()) as SessionMessageBody;
-    if (!body.content?.trim()) throw workError("SESSION_INPUT_REQUIRED");
-    const content = body.content.trim();
-    const execution = await sessionExecutionOptions(c, result, body);
-    await withWritableThreadSession(result, () =>
-      result.controllerSession.steer({
-        content,
-        requestContext: execution.requestContext,
-      }),
-    );
-    return c.json({ ok: true });
-  },
-});
-
 export const sessionFollowUpRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/follow-up",
   {
@@ -750,7 +603,9 @@ export const sessionFollowUpRoute = registerApiRoute(
         throw workError("SESSION_INPUT_REQUIRED");
       const content = body.content.trim();
       const execution = await sessionExecutionOptions(c, result, body);
-      await withWritableThreadSession(result, () =>
+      observeSessionWork(
+        c,
+        result.controllerSession,
         result.controllerSession.followUp({
           content,
           requestContext: execution.requestContext,
@@ -770,32 +625,6 @@ export const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads
   },
 });
 
-export const sessionStateRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/state", {
-  method: "GET",
-  handler: async (c) => {
-    const result = await sessionFor(c);
-    return c.json({ state: result.controllerSession.state.get() });
-  },
-});
-
-export const updateSessionStateRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/state",
-  {
-    method: "PATCH",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      try {
-        const updates = z.record(z.string(), z.unknown()).parse(await c.req.json());
-        await result.controllerSession.state.set(updates);
-        const state = result.controllerSession.state.get();
-        return c.json({ state });
-      } catch (error) {
-        return c.json({ error: errorText(error, "Invalid session state") }, 400);
-      }
-    },
-  },
-);
-
 export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/mode", {
   method: "PATCH",
   handler: async (c) => {
@@ -803,6 +632,7 @@ export const sessionModeRoute = registerApiRoute("/work/sessions/:scope/threads/
     const body = (await c.req.json()) as { modeId?: unknown };
     const mode = resolveMode(body.modeId);
     await result.controllerSession.mode.switch({ modeId: mode.id });
+    await restoreSessionModel(result.controllerSession, result.resourceId);
     const thread = await result.memory.getThreadById({ threadId: result.threadId });
     return c.json({ modeId: mode.id, mode, thread });
   },
@@ -812,71 +642,36 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
   method: "PATCH",
   handler: async (c) => {
     const result = await sessionFor(c);
-    const body = (await c.req.json()) as {
-      modeId?: unknown;
-      selection?: unknown;
-    };
-    const mode = resolveMode(
-      body.modeId ?? (result.thread.metadata as ThreadMetadata)?.currentModeId,
-    );
-    if (body.selection === null) {
-      const modelSelectionByMode = {
-        ...((result.thread.metadata as ThreadMetadata)?.modelSelectionByMode ?? {}),
-      };
-      delete modelSelectionByMode[mode.id];
-      const thread = await result.memory.updateThread({
-        id: result.threadId,
-        title: result.thread.title,
-        metadata: { ...result.thread.metadata, modelSelectionByMode },
-      });
-      return c.json({ modeId: mode.id, selection: null, thread });
+    const body = z
+      .object({
+        modeId: z.enum(["plan", "build", "review"]).optional(),
+        selection: z.object({
+          providerId: z.string().trim().min(1),
+          modelId: z.string().trim().min(1),
+          reasoningEffort: z.string().optional(),
+        }),
+      })
+      .parse(await c.req.json());
+    const modeId = body.modeId ?? result.controllerSession.mode.get();
+    const { providerId, modelId, reasoningEffort = "off" } = body.selection;
+    if (!(await resolveConfiguredModel(providerId, modelId, result.resourceId))) {
+      throw workError("MODEL_NOT_CONFIGURED");
     }
-    if (typeof body.selection !== "object" || body.selection === null) {
-      throw workError("MODEL_SELECTION_REQUIRED");
-    }
-    const raw = body.selection as Record<string, unknown>;
-    if (typeof raw.providerId !== "string" || typeof raw.modelId !== "string") {
-      throw workError("MODEL_SELECTION_REQUIRED", {
-        text: "selection.providerId and selection.modelId are required",
-      });
-    }
-    const model = await resolveConfiguredModel(raw.providerId, raw.modelId, result.resourceId);
-    if (!model) throw workError("MODEL_NOT_CONFIGURED");
-    const selection = {
-      providerId: raw.providerId,
-      modelId: raw.modelId,
-      modelName: typeof raw.modelName === "string" ? raw.modelName : raw.modelId,
-      reasoningEffort: typeof raw.reasoningEffort === "string" ? raw.reasoningEffort : "off",
-    };
-    const metadata = result.thread.metadata as ThreadMetadata;
-    const thread = await result.memory.updateThread({
-      id: result.threadId,
-      title: result.thread.title,
-      metadata: {
-        ...result.thread.metadata,
-        modelSelectionByMode: {
-          ...(metadata.modelSelectionByMode ?? {}),
-          [mode.id]: selection,
-        },
+    await result.controllerSession.model.switch({
+      modelId: `${providerId}/${modelId}`,
+      modeId,
+    });
+    await result.controllerSession.thread.setSetting({
+      key: "reasoningEffortByMode",
+      value: {
+        ...((result.thread.metadata as ThreadMetadata)?.reasoningEffortByMode ?? {}),
+        [modeId]: reasoningEffort,
       },
     });
-    return c.json({ modeId: mode.id, selection, thread });
+    const thread = await result.memory.getThreadById({ threadId: result.threadId });
+    return c.json({ modeId, modelId: result.controllerSession.model.get(), thread });
   },
 });
-
-export const sessionPermissionsRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/permissions",
-  {
-    method: "GET",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const rules = parsePermissionRules(
-        (result.thread.metadata as ThreadMetadata | undefined)?.permissionRules,
-      );
-      return c.json({ rules, grants: result.controllerSession.getGrants() });
-    },
-  },
-);
 
 export const updateSessionPermissionsRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/permissions",
@@ -905,7 +700,24 @@ export const sessionDisplayStateRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
-      return c.json({ displayState: await persistentDisplayState(c, result) });
+      const displayState = await persistentDisplayState(c, result);
+      let messages: ReturnType<typeof workbenchMessages> | undefined;
+      if (c.req.query("includeMessages") === "true") {
+        const history = (
+          await result.memory.recall({
+            threadId: result.threadId,
+            resourceId: result.resourceId,
+            perPage: false,
+          })
+        ).messages;
+        const current = displayState.currentMessage;
+        if (current && !history.some((message) => message.id === current.id)) history.push(current);
+        messages = workbenchMessages(history);
+      }
+      return c.json({
+        displayState,
+        ...(messages ? { messages } : {}),
+      });
     },
   },
 );
@@ -1002,38 +814,6 @@ export const workflowRunCancelRoute = registerApiRoute(
   },
 );
 
-export const sessionGrantRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/grants",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const body = (await c.req.json()) as { category?: unknown };
-      if (!TOOL_CATEGORIES.includes(body.category as ToolCategory)) {
-        throw workError("VALIDATION_FAILED", { text: "unsupported grant category" });
-      }
-      result.controllerSession.grantCategory(body.category as ToolCategory);
-      return c.json({ grants: result.controllerSession.getGrants() });
-    },
-  },
-);
-
-export const sessionToolGrantRoute = registerApiRoute(
-  "/work/sessions/:scope/threads/:threadId/grants/tools",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const body = (await c.req.json()) as { toolName?: unknown };
-      if (typeof body.toolName !== "string" || !body.toolName.trim()) {
-        throw workError("VALIDATION_FAILED", { text: "toolName is required" });
-      }
-      result.controllerSession.grantTool(body.toolName.trim());
-      return c.json({ grants: result.controllerSession.getGrants() });
-    },
-  },
-);
-
 /**
  * 工作台状态上报(state lane 的生产者入口)。
  *
@@ -1091,18 +871,12 @@ export const sessionNotificationRoute = registerApiRoute(
 );
 
 export const sessionRoutes = [
-  sessionStreamRoute,
-  sessionMessageRoute,
-  sessionSteerRoute,
   sessionFollowUpRoute,
   sessionAbortRoute,
-  sessionStateRoute,
-  updateSessionStateRoute,
   updateSessionWorkbenchStateRoute,
   sessionNotificationRoute,
   sessionModeRoute,
   sessionModelRoute,
-  sessionPermissionsRoute,
   updateSessionPermissionsRoute,
   sessionDisplayStateRoute,
   workflowRunDetailRoute,
@@ -1110,6 +884,4 @@ export const sessionRoutes = [
   workflowRunResumeRoute,
   workflowRunRestartRoute,
   workflowRunCancelRoute,
-  sessionGrantRoute,
-  sessionToolGrantRoute,
 ];

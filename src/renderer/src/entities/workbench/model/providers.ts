@@ -210,39 +210,6 @@ export const GATEWAY_PROTOCOLS: { value: GatewayProtocol; label: string }[] = [
   { value: "gemini", label: "Google Gemini" },
 ];
 
-/**
- * 网关 Base URL 归一化(防护性处理 + 协议感知补 /v1):
- * - 去首尾空白与尾部斜杠
- * - 无协议时补 https://
- * - 重复的版本段折叠(/v1/v1 → /v1)
- * - openai / anthropic 协议且路径为空(裸域名/裸 IP)时补 /v1:两家 SDK 的
- *   自定义 baseURL 需含版本段(默认 …/v1,SDK 只追加 /chat/completions、
- *   /messages,不会自行补 /v1;实测 @ai-sdk/anthropic 仅默认 URL 带 /v1)。
- *   业界客户端同样默认裸域名 → /v1。已带路径的端点(如 /api/paas/v4、
- *   /api/coding/v3)原样保留;gemini 协议不补(由 SDK 默认 baseURL 处理)。
- * 后端 create-model.ts 的 normalizeGatewayBaseUrl 同款逻辑,两端保持一致。
- */
-export function normalizeGatewayUrl(input: string, protocol?: GatewayProtocol): string {
-  let url = input.trim().replace(/[\\/]+$/, "");
-  if (!url) return url;
-  if (!/^https?:\/\//i.test(url)) {
-    url = `https://${url}`;
-  }
-  // 折叠相邻重复的版本段(/v1/v1 → /v1;版本号不同则不动,如 /v1beta 不受影响)
-  url = url.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
-  if (protocol === "openai" || protocol === "anthropic") {
-    try {
-      const parsed = new URL(url);
-      if (parsed.pathname === "/" || parsed.pathname === "") {
-        url = `${parsed.origin}/v1`;
-      }
-    } catch {
-      // 非法 URL 交由保存前的表单校验兜底,归一化不强行处理
-    }
-  }
-  return url;
-}
-
 // ---------------------------------------------------------------------------
 // 用户供应商配置(由 Workbench 同步到服务端 app_config,按用户隔离)
 // ---------------------------------------------------------------------------
@@ -742,5 +709,5 @@ export async function testProviderModel(
 // ---------------------------------------------------------------------------
 
 export function buildRequestModel(provider: ProviderConfig, modelId: string): RequestModelPayload {
-  return { id: `${provider.registryId ?? provider.id}/${modelId}` };
+  return { id: `${provider.id}/${modelId}` };
 }

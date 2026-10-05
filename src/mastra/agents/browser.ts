@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { createConnection } from "node:net";
 /** Resource-scoped browser configuration and lifecycle. */
 import {
   AgentBrowser,
@@ -15,14 +17,14 @@ import {
   type TypeInput,
   type WaitInput,
 } from "@mastra/agent-browser";
+import { FirecrawlBrowser } from "@mastra/browser-firecrawl";
 import type {
-  BrowserState as MastraBrowserState,
   BrowserTabState,
   BrowserToolError,
+  BrowserState as MastraBrowserState,
   ScreencastOptions,
   ScreencastStream,
 } from "@mastra/core/browser";
-import { FirecrawlBrowser } from "@mastra/browser-firecrawl";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import {
   type ModelConfiguration,
@@ -34,14 +36,19 @@ import {
   type BrowserConfig,
   BrowserConfigSchema,
   BrowserStateSchema,
+  NativeBrowserAgentCommandRequestSchema,
+  NativeBrowserAgentCommandResponseSchema,
   type NativeBrowserAgentOperation,
 } from "../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
-import { inferGatewayProtocol, normalizeGatewayBaseUrl } from "../models/create-model";
-import { getProvidersConfig, resolveProviderCredential } from "../models/providers";
+import {
+  getProvidersConfig,
+  inferGatewayProtocol,
+  resolveProviderCredential,
+} from "../models/providers";
+
 import { getAppConfig, setAppConfig } from "../storage";
-import { executeNativeBrowserCommand } from "../native-browser-target";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
 const BROWSER_CONFIG_KEY = "browser";
@@ -217,7 +224,9 @@ export class NativeElectronAgentBrowser extends AgentBrowser {
       tabs: parsed.tabs,
       activeTabIndex: parsed.activeTabIndex,
       ...(parsed.closeReason ? { closeReason: parsed.closeReason } : {}),
-      ...(parsed.activeUrlChangeSource ? { activeUrlChangeSource: parsed.activeUrlChangeSource } : {}),
+      ...(parsed.activeUrlChangeSource
+        ? { activeUrlChangeSource: parsed.activeUrlChangeSource }
+        : {}),
     };
     this.knownThreads.add(id);
     this.states.set(id, state);
@@ -239,67 +248,69 @@ export class NativeElectronAgentBrowser extends AgentBrowser {
 
   protected override getBrowserStateForThread(threadId?: string): MastraBrowserState | null {
     const id = this.threadId(threadId);
-    return id ? this.states.get(id) ?? null : null;
+    return id ? (this.states.get(id) ?? null) : null;
   }
 
   override goto(input: GotoInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["goto"]>>>("goto", input, threadId, "Goto");
+    return this.invoke("goto", input, threadId, "Goto");
   }
 
   override snapshot(input: SnapshotInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["snapshot"]>>>("snapshot", input, threadId, "Snapshot");
+    return this.invoke("snapshot", input, threadId, "Snapshot");
   }
 
   override screenshot(input: Parameters<AgentBrowser["screenshot"]>[0], threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["screenshot"]>>>("screenshot", input, threadId, "Screenshot");
+    return this.invoke("screenshot", input, threadId, "Screenshot");
   }
 
   override click(input: ClickInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["click"]>>>("click", input, threadId, "Click");
+    return this.invoke("click", input, threadId, "Click");
   }
 
   override type(input: TypeInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["type"]>>>("type", input, threadId, "Type");
+    return this.invoke("type", input, threadId, "Type");
   }
 
   override press(input: PressInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["press"]>>>("press", input, threadId, "Press");
+    return this.invoke("press", input, threadId, "Press");
   }
 
   override select(input: SelectInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["select"]>>>("select", input, threadId, "Select");
+    return this.invoke("select", input, threadId, "Select");
   }
 
   override scroll(input: ScrollInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["scroll"]>>>("scroll", input, threadId, "Scroll");
+    return this.invoke("scroll", input, threadId, "Scroll");
   }
 
   override hover(input: HoverInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["hover"]>>>("hover", input, threadId, "Hover");
+    return this.invoke("hover", input, threadId, "Hover");
   }
 
   override back(threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["back"]>>>("back", {}, threadId, "Back");
+    return this.invoke("back", {}, threadId, "Back");
   }
 
   override wait(input: WaitInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["wait"]>>>("wait", input, threadId, "Wait");
+    return this.invoke("wait", input, threadId, "Wait");
   }
 
   override drag(input: DragInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["drag"]>>>("drag", input, threadId, "Drag");
+    return this.invoke("drag", input, threadId, "Drag");
   }
 
   override evaluate(input: EvaluateInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["evaluate"]>>>("evaluate", input, threadId, "Evaluate");
+    return this.invoke("evaluate", input, threadId, "Evaluate");
   }
 
   override tabs(input: TabsInput, threadId?: string) {
-    return this.invoke<Awaited<ReturnType<AgentBrowser["tabs"]>>>("tabs", input, threadId, "Tabs");
+    return this.invoke("tabs", input, threadId, "Tabs");
   }
 
   override async startScreencast(_options?: ScreencastOptions): Promise<ScreencastStream> {
-    throw new Error("The desktop browser is rendered by its native Electron view; screenshot streaming is disabled.");
+    throw new Error(
+      "The desktop browser is rendered by its native Electron view; screenshot streaming is disabled.",
+    );
   }
 
   private threadId(threadId?: string): string | null {
@@ -312,20 +323,28 @@ export class NativeElectronAgentBrowser extends AgentBrowser {
     operation: NativeBrowserAgentOperation,
     input?: Record<string, unknown>,
   ): Promise<T> {
-    return executeNativeBrowserCommand<T>({ resourceId: this.resourceId, threadId }, operation, input);
+    return executeNativeBrowserCommand<T>(
+      { resourceId: this.resourceId, threadId },
+      operation,
+      input,
+    );
   }
 
-  private async invoke<T>(
-    operation: NativeBrowserAgentOperation,
+  private async invoke<K extends Exclude<NativeBrowserAgentOperation, "state">>(
+    operation: K,
     input: object,
     threadId: string | undefined,
     label: string,
-  ): Promise<T | BrowserToolError> {
+  ): Promise<Awaited<ReturnType<AgentBrowser[K]>> | BrowserToolError> {
     const id = this.threadId(threadId);
     if (!id) return this.createError("browser_error", "Browser operation requires a bound thread.");
     try {
       await this.ensureReady();
-      return await this.command<T>(id, operation, input as Record<string, unknown>);
+      return await this.command<Awaited<ReturnType<AgentBrowser[K]>>>(
+        id,
+        operation,
+        input as Record<string, unknown>,
+      );
     } catch (error) {
       return this.createErrorFromException(error, label);
     }
@@ -341,7 +360,9 @@ async function createBrowser(
     const options = commonOptions(config);
     if (!HAS_NATIVE_BROWSER_AGENT_BRIDGE) {
       if (IS_DESKTOP_RUNTIME) {
-        throw new Error("Native Electron browser command bridge is unavailable; refusing a hidden browser fallback.");
+        throw new Error(
+          "Native Electron browser command bridge is unavailable; refusing a hidden browser fallback.",
+        );
       }
       return new AgentBrowser(options);
     }
@@ -369,7 +390,7 @@ async function createBrowser(
         ? "google"
         : protocol;
     if (!modelProvider) throw new Error("Stagehand provider is not supported");
-    const baseURL = normalizeGatewayBaseUrl(provider.baseUrl, protocol);
+    const baseURL = provider.baseUrl;
     return new StagehandBrowser({
       ...commonOptions(config),
       model: {
@@ -427,10 +448,7 @@ export async function getBrowserForThread(
   threadId: string,
 ): Promise<WorkBrowser> {
   const config = await getBrowserConfig(resourceId);
-  if (
-    config.provider !== "agent" ||
-    (!HAS_NATIVE_BROWSER_AGENT_BRIDGE && !IS_DESKTOP_RUNTIME)
-  ) {
+  if (config.provider !== "agent" || (!HAS_NATIVE_BROWSER_AGENT_BRIDGE && !IS_DESKTOP_RUNTIME)) {
     return getBrowserForResource(resourceId);
   }
 
@@ -465,8 +483,7 @@ export async function getBrowserForThread(
 export async function getBrowserForRequest(requestContext?: { get: (key: string) => unknown }) {
   const resourceId = requestContext?.get(MASTRA_RESOURCE_ID_KEY);
   const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-  const effectiveResourceId =
-    typeof resourceId === "string" && resourceId ? resourceId : "default";
+  const effectiveResourceId = typeof resourceId === "string" && resourceId ? resourceId : "default";
   if (
     (HAS_NATIVE_BROWSER_AGENT_BRIDGE || IS_DESKTOP_RUNTIME) &&
     (await getBrowserConfig(effectiveResourceId)).provider === "agent"
@@ -479,15 +496,10 @@ export async function getBrowserForRequest(requestContext?: { get: (key: string)
   return getBrowserForResource(effectiveResourceId);
 }
 
-export async function withBrowserThreadTarget<T>(
-  _browser: WorkBrowser,
-  _threadId: string,
-  operation: () => Promise<T>,
-): Promise<T> {
-  return operation();
-}
-
-export async function closeBrowserThreadSessions(resourceId: string, threadId: string): Promise<void> {
+export async function closeBrowserThreadSessions(
+  resourceId: string,
+  threadId: string,
+): Promise<void> {
   const threadBrowser = threadBrowsers.get(resourceId)?.get(threadId);
   threadBrowsers.get(resourceId)?.delete(threadId);
   if (threadBrowsers.get(resourceId)?.size === 0) threadBrowsers.delete(resourceId);
@@ -526,7 +538,9 @@ export async function replaceBrowserForResource(resourceId = "default"): Promise
 export async function closeAllBrowsers(): Promise<void> {
   const pending = [...browserPromises.values()];
   const created = await Promise.allSettled(pending);
-  const pendingThread = [...threadBrowserPromises.values()].flatMap((entries) => [...entries.values()]);
+  const pendingThread = [...threadBrowserPromises.values()].flatMap((entries) => [
+    ...entries.values(),
+  ]);
   const createdThread = await Promise.allSettled(pendingThread);
   const current = [
     ...browsers.values(),
@@ -539,4 +553,92 @@ export async function closeAllBrowsers(): Promise<void> {
   threadBrowsers.clear();
   threadBrowserPromises.clear();
   await Promise.allSettled([...new Set(current)].map((browser) => browser.close()));
+}
+
+const endpoint = process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim();
+const token = process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_TOKEN?.trim();
+const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+async function executeNativeBrowserCommand<T = unknown>(
+  session: { resourceId: string; threadId: string },
+  operation: NativeBrowserAgentOperation,
+  input?: Record<string, unknown>,
+): Promise<T> {
+  if (!endpoint || !token) throw new Error("Native browser command bridge is unavailable");
+  const requestId = randomUUID();
+  const request = NativeBrowserAgentCommandRequestSchema.parse({
+    ...session,
+    requestId,
+    token,
+    operation,
+    ...(input ? { input } : {}),
+  });
+  const payload = `${JSON.stringify(request)}\n`;
+  if (Buffer.byteLength(payload) > MAX_REQUEST_BYTES) {
+    throw new Error("Native browser command request is too large");
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const socket = createConnection(endpoint);
+    let response = "";
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    socket.setEncoding("utf8");
+    socket.setTimeout(65_000, () => socket.destroy(new Error("Native browser command timed out")));
+    socket.once("connect", () => socket.write(payload));
+    socket.on("data", (chunk: string) => {
+      response += chunk;
+      if (Buffer.byteLength(response) > MAX_RESPONSE_BYTES) {
+        socket.destroy(new Error("Native browser command response is too large"));
+        return;
+      }
+      const newline = response.indexOf("\n");
+      if (newline < 0) return;
+      socket.end();
+      try {
+        const result = NativeBrowserAgentCommandResponseSchema.parse(
+          JSON.parse(response.slice(0, newline)),
+        );
+        if (result.requestId && result.requestId !== requestId) {
+          fail(new Error("Native browser command returned a mismatched request ID"));
+          return;
+        }
+        if (!result.ok) {
+          const hint =
+            result.error === "session_not_visible"
+              ? "Open the Browser panel in this thread, then retry."
+              : result.error === "document_changed"
+                ? "The page navigated during the operation. Take a fresh snapshot and retry."
+                : result.error === "stale_ref"
+                  ? "Take a new browser snapshot to refresh element references."
+                  : result.error === "tab_limit_reached"
+                    ? "The browser has reached its 100-tab limit. Close a tab before opening another."
+                    : "";
+          fail(
+            new Error(
+              `Native browser ${operation} failed (${result.error}${hint ? `; ${hint}` : ""}; requestId=${requestId})`,
+            ),
+          );
+          return;
+        }
+        if (result.requestId !== requestId) {
+          fail(new Error("Native browser command returned a mismatched request ID"));
+          return;
+        }
+        settled = true;
+        resolve(result.result as T);
+      } catch (error) {
+        fail(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+    socket.once("error", fail);
+    socket.once("close", () => {
+      if (!settled) fail(new Error("Native browser command bridge closed before responding"));
+    });
+  });
 }

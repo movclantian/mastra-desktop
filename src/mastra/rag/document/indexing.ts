@@ -4,29 +4,122 @@
  * vector-databases.mdx;索引终态经 onLibraryIndexSettled 回调对外广播。
  */
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import type { MastraLanguageModel } from "@mastra/core/agent";
 import { SignalProvider } from "@mastra/core/signals";
 import { fastembed } from "@mastra/fastembed";
 import { LibSQLVector } from "@mastra/libsql";
 import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
-import { nanoid } from "nanoid";
 import { errorText } from "../../errors";
-import { resolveDefaultLanguageModel } from "../../models";
+import { resolveDefaultLanguageModel } from "../../models/providers";
 import { getStorageDirectory, getStorageUrl } from "../../storage";
-import { getLibrarySettings } from "../settings";
 import {
   beginLibraryIndexRun,
   ensureLibrarySchema,
   finishLibraryIndexRun,
+  getLibrarySettings,
   now,
   rowToAsset,
   updateLibraryIndexRunStage,
   withClient,
+  withLibraryAssetLock,
 } from "../storage/db";
 import type { LibraryAsset, LibraryIndexStage, LibrarySettings } from "../types";
-import { extractText } from "./extract";
+
+/**
+ * 文件名规范、媒体类型推断与文本抽取 (docs/en/reference/rag/extract-params.mdx):
+ * docx/xlsx/pdf 按需动态导入官方解析库。
+ */
+
+export function normalizeFilename(filename: string): string {
+  const name = basename(filename)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: 清洗文件名中的非法字符与控制字符
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .trim();
+  return name || "未命名附件";
+}
+
+function isTextLike(filename: string, mediaType: string): boolean {
+  if (mediaType.startsWith("text/")) return true;
+  return /\.(txt|md|markdown|json|csv|tsv|xml|yaml|yml|html|htm|js|jsx|ts|tsx|css|scss|less|py|go|rs|java|c|cpp|h|hpp|sql|sh|ps1|log)$/i.test(
+    filename,
+  );
+}
+
+export function isExtractable(filename: string, mediaType: string): boolean {
+  if (isTextLike(filename, mediaType)) return true;
+  if (mediaType === "application/pdf") return true;
+  return [".docx", ".xlsx", ".xls", ".csv", ".pdf"].includes(extname(filename).toLowerCase());
+}
+
+export function resolveMediaType(filename: string, supplied: string): string {
+  if (supplied && supplied !== "application/octet-stream") return supplied;
+  const byExtension: Record<string, string> = {
+    ".aac": "audio/aac",
+    ".csv": "text/csv",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".gif": "image/gif",
+    ".htm": "text/html",
+    ".html": "text/html",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".json": "application/json",
+    ".m4a": "audio/mp4",
+    ".md": "text/markdown",
+    ".mp3": "audio/mpeg",
+    ".mp4": "video/mp4",
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".tsv": "text/tab-separated-values",
+    ".txt": "text/plain",
+    ".wav": "audio/wav",
+    ".webm": "video/webm",
+    ".webp": "image/webp",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xml": "application/xml",
+    ".yaml": "application/yaml",
+    ".yml": "application/yaml",
+    ".zip": "application/zip",
+  };
+  return byExtension[extname(filename).toLowerCase()] ?? "application/octet-stream";
+}
+
+export async function extractText(
+  bytes: Uint8Array,
+  filename: string,
+  mediaType: string,
+): Promise<string | null> {
+  if (isTextLike(filename, mediaType)) return Buffer.from(bytes).toString("utf8");
+  const extension = extname(filename).toLowerCase();
+  if (extension === ".docx") {
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer: Buffer.from(bytes) });
+    return result.value;
+  }
+  if ([".xlsx", ".xls", ".csv"].includes(extension)) {
+    const XLSX = await import("xlsx");
+    const workbook = XLSX.read(bytes, { type: "array" });
+    return workbook.SheetNames.map(
+      (sheet) => `# ${sheet}\n${XLSX.utils.sheet_to_csv(workbook.Sheets[sheet])}`,
+    ).join("\n\n");
+  }
+  if (extension === ".pdf" || mediaType === "application/pdf") {
+    const { PDFParse } = await import("pdf-parse");
+    const parser = new PDFParse({ data: bytes });
+    try {
+      const result = await parser.getText();
+      return result.text;
+    } finally {
+      await parser.destroy();
+    }
+  }
+  return null;
+}
 
 let vectorPromise: Promise<LibSQLVector> | undefined;
 const vectorIndexPromises = new Map<string, Promise<void>>();
@@ -42,12 +135,24 @@ export async function getVector(): Promise<LibSQLVector> {
   return vectorPromise;
 }
 
+/** Called after all library requests and indexing jobs have settled. */
+export async function closeLibraryVector(): Promise<void> {
+  await (await vectorPromise)?.close();
+}
+
 export function libraryEmbedder() {
   return fastembed.small;
 }
 
 export function libraryIndexName(): string {
   return "library_vectors_fastembed_small";
+}
+
+export async function deleteAssetVectors(resourceId: string, assetId: string): Promise<void> {
+  const vector = await getVector();
+  const indexName = libraryIndexName();
+  if (!(await vector.listIndexes()).includes(indexName)) return;
+  await vector.deleteVectors({ indexName, filter: { resourceId, assetId } });
 }
 
 export function createDocument(text: string, filename = "", mediaType = ""): MDocument {
@@ -216,113 +321,65 @@ function emitIndexSettled(event: LibraryIndexSettledEvent): void {
 }
 
 export function queueAssetIndex(
-  asset: LibraryAsset,
-  extractedText: string,
+  target: Pick<LibraryAsset, "id" | "resourceId">,
   settings: LibrarySettings,
 ): Promise<void> {
-  const key = `${asset.resourceId}\u0000${asset.id}`;
-  const previous = indexingPromises.get(key) ?? Promise.resolve();
-  const next = previous
-    .catch(() => undefined)
-    .then(async () => {
-      let stage: LibraryIndexStage = "chunk";
-      const run = await beginLibraryIndexRun(asset.resourceId, asset.id);
-      try {
-        await ensureLibrarySchema();
-        const vector = await getVector();
-        const embedder = libraryEmbedder();
-        const doc = createDocument(extractedText, asset.filename, asset.mediaType);
-        await updateLibraryIndexRunStage(run.id, "chunk");
+  const key = `${target.resourceId}\u0000${target.id}`;
+  const next = withLibraryAssetLock(target.id, async () => {
+    await ensureLibrarySchema();
+    const result = await withClient((client) =>
+      client.execute({
+        sql: "SELECT * FROM library_assets WHERE id = ? AND resource_id = ? LIMIT 1",
+        args: [target.id, target.resourceId],
+      }),
+    );
+    const row = result.rows[0];
+    if (!row) return;
+    const asset = rowToAsset(row);
+    const refs = await withClient((client) =>
+      client.execute({
+        sql: "SELECT DISTINCT thread_id FROM library_asset_refs WHERE asset_id = ? AND resource_id = ? AND thread_id != ''",
+        args: [asset.id, asset.resourceId],
+      }),
+    );
+    asset.threadIds = refs.rows.map((ref) => String(ref.thread_id));
+    let stage: LibraryIndexStage = "extract";
+    const run = await beginLibraryIndexRun(asset.resourceId, asset.id);
+    try {
+      await withClient((client) =>
+        client.execute({
+          sql: "UPDATE library_assets SET status = 'indexing', updated_at = ? WHERE id = ? AND resource_id = ?",
+          args: [now(), asset.id, asset.resourceId],
+        }),
+      );
+      let text = isExtractable(asset.filename, asset.mediaType) ? asset.extractedText : null;
+      if (!text && isExtractable(asset.filename, asset.mediaType)) {
+        text = await extractText(
+          await readFile(join(getStorageDirectory(), String(row.storage_path))),
+          asset.filename,
+          asset.mediaType,
+        );
+      }
+      await withClient((client) =>
+        client.execute({
+          sql: "UPDATE library_assets SET extracted_text = ?, updated_at = ? WHERE id = ? AND resource_id = ?",
+          args: [text, now(), asset.id, asset.resourceId],
+        }),
+      );
+      stage = "chunk";
+      await updateLibraryIndexRunStage(run.id, "chunk");
+      let chunks: Awaited<ReturnType<typeof chunkDocument>> = [];
+      if (text?.trim()) {
+        const doc = createDocument(text, asset.filename, asset.mediaType);
         await extractMetadata(doc, settings, undefined, asset.resourceId);
-        const chunks = await chunkDocument(doc, settings);
-        if (chunks.length === 0) {
-          await finishLibraryIndexRun(run.id, "unsupported", "chunk", "文档未能切分出有效文本块");
-          await withClient((client) =>
-            client.execute({
-              sql: "UPDATE library_assets SET status = 'unsupported', updated_at = ? WHERE id = ? AND resource_id = ?",
-              args: [now(), asset.id, asset.resourceId],
-            }),
-          );
-          emitIndexSettled({
-            resourceId: asset.resourceId,
-            assetId: asset.id,
-            filename: asset.filename,
-            threadIds: asset.threadIds,
-            outcome: "unsupported",
-          });
-          return;
-        }
-
-        stage = "embedding";
-        await updateLibraryIndexRunStage(run.id, "embedding");
-        const chunkTexts = chunks.map((chunk) => chunk.text);
-        const { embeddings } = await embedMany({
-          model: embedder,
-          values: chunkTexts,
-        });
-        const dimension = observedEmbeddingDimension(embeddings);
-        const indexName = await ensureVectorIndex(vector, dimension);
-
-        stage = "vector";
-        await updateLibraryIndexRunStage(run.id, "vector");
-        const vectorIds = chunks.map((_, index) => `${asset.id}_${index}`);
-        const vectorMetadatas = chunks.map((chunk, index) => ({
-          assetId: asset.id,
-          resourceId: asset.resourceId,
-          filename: asset.filename,
-          chunkIndex: index,
-          text: chunk.text,
-          ...(chunk.metadata ?? {}),
-        }));
-        await vector.upsert({
-          indexName,
-          vectors: embeddings,
-          ids: vectorIds,
-          metadata: vectorMetadatas,
-        });
-
-        stage = "persist";
-        await updateLibraryIndexRunStage(run.id, "persist");
-        await withClient(async (client) => {
-          const statements = [
-            {
-              sql: "DELETE FROM library_chunks WHERE asset_id = ?",
-              args: [asset.id],
-            },
-            ...chunks.map((chunk, index) => ({
-              sql: `INSERT INTO library_chunks (id, asset_id, chunk_index, text, metadata, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-              args: [
-                nanoid(),
-                asset.id,
-                index,
-                chunk.text,
-                JSON.stringify(chunk.metadata ?? {}),
-                now(),
-              ],
-            })),
-            {
-              sql: "UPDATE library_assets SET status = 'ready', updated_at = ? WHERE id = ? AND resource_id = ?",
-              args: [now(), asset.id, asset.resourceId],
-            },
-          ];
-          await client.batch(statements);
-        });
-        await finishLibraryIndexRun(run.id, "succeeded", "persist");
-        emitIndexSettled({
-          resourceId: asset.resourceId,
-          assetId: asset.id,
-          filename: asset.filename,
-          threadIds: asset.threadIds,
-          outcome: "succeeded",
-          chunkCount: chunks.length,
-        });
-      } catch (error) {
-        const message = errorText(error, "文档索引失败");
-        await finishLibraryIndexRun(run.id, "failed", stage, message);
+        chunks = (await chunkDocument(doc, settings)).filter((chunk) => chunk.text.trim());
+      }
+      if (chunks.length === 0) {
+        await deleteAssetVectors(asset.resourceId, asset.id);
+        await finishLibraryIndexRun(run.id, "unsupported", "chunk", "文档未能切分出有效文本块");
         await withClient((client) =>
           client.execute({
-            sql: "UPDATE library_assets SET status = 'error', updated_at = ? WHERE id = ? AND resource_id = ?",
+            sql: "UPDATE library_assets SET status = 'unsupported', updated_at = ? WHERE id = ? AND resource_id = ?",
             args: [now(), asset.id, asset.resourceId],
           }),
         );
@@ -331,14 +388,82 @@ export function queueAssetIndex(
           assetId: asset.id,
           filename: asset.filename,
           threadIds: asset.threadIds,
-          outcome: "failed",
-          error: message,
+          outcome: "unsupported",
         });
+        return;
       }
-    })
-    .finally(() => {
-      if (indexingPromises.get(key) === next) indexingPromises.delete(key);
-    });
+
+      stage = "embedding";
+      await updateLibraryIndexRunStage(run.id, "embedding");
+      const chunkTexts = chunks.map((chunk) => chunk.text);
+      const { embeddings } = await embedMany({
+        model: libraryEmbedder(),
+        values: chunkTexts,
+      });
+      const dimension = observedEmbeddingDimension(embeddings);
+      const vector = await getVector();
+      const indexName = await ensureVectorIndex(vector, dimension);
+
+      stage = "vector";
+      await updateLibraryIndexRunStage(run.id, "vector");
+      const vectorIds = chunks.map((_, index) => `${asset.id}_${index}`);
+      const vectorMetadatas = chunks.map((chunk, index) => ({
+        ...(chunk.metadata ?? {}),
+        assetId: asset.id,
+        resourceId: asset.resourceId,
+        filename: asset.filename,
+        chunkIndex: index,
+        text: chunk.text,
+      }));
+      await vector.deleteVectors({
+        indexName,
+        filter: { resourceId: asset.resourceId, assetId: asset.id },
+      });
+      await vector.upsert({
+        indexName,
+        vectors: embeddings,
+        ids: vectorIds,
+        metadata: vectorMetadatas,
+      });
+
+      stage = "persist";
+      await updateLibraryIndexRunStage(run.id, "persist");
+      await withClient((client) =>
+        client.execute({
+          sql: "UPDATE library_assets SET status = 'ready', updated_at = ? WHERE id = ? AND resource_id = ?",
+          args: [now(), asset.id, asset.resourceId],
+        }),
+      );
+      await finishLibraryIndexRun(run.id, "succeeded", "persist");
+      emitIndexSettled({
+        resourceId: asset.resourceId,
+        assetId: asset.id,
+        filename: asset.filename,
+        threadIds: asset.threadIds,
+        outcome: "succeeded",
+        chunkCount: chunks.length,
+      });
+    } catch (error) {
+      const message = errorText(error, "文档索引失败");
+      await finishLibraryIndexRun(run.id, "failed", stage, message);
+      await withClient((client) =>
+        client.execute({
+          sql: "UPDATE library_assets SET status = 'error', updated_at = ? WHERE id = ? AND resource_id = ?",
+          args: [now(), asset.id, asset.resourceId],
+        }),
+      );
+      emitIndexSettled({
+        resourceId: asset.resourceId,
+        assetId: asset.id,
+        filename: asset.filename,
+        threadIds: asset.threadIds,
+        outcome: "failed",
+        error: message,
+      });
+    }
+  }).finally(() => {
+    if (indexingPromises.get(key) === next) indexingPromises.delete(key);
+  });
   indexingPromises.set(key, next);
   return next;
 }
@@ -353,51 +478,28 @@ export async function reindexAsset(
   assetId: string,
   settings: LibrarySettings,
 ): Promise<LibraryAsset | null> {
-  await ensureLibrarySchema();
-  const result = await withClient((client) =>
-    client.execute({
-      sql: "SELECT * FROM library_assets WHERE id = ? AND resource_id = ? LIMIT 1",
-      args: [assetId, resourceId],
-    }),
-  );
-  const row = result.rows[0];
-  if (!row) return null;
-  const asset = rowToAsset(row);
-  let text = asset.extractedText;
-  if (!text) {
-    const rawPath = String(row.storage_path || "");
-    const absolute = join(getStorageDirectory(), rawPath);
-    const bytes = await readFile(absolute).catch(() => null);
-    if (bytes) {
-      text = await extractText(bytes, asset.filename, asset.mediaType);
-      if (text) {
-        await withClient((client) =>
-          client.execute({
-            sql: "UPDATE library_assets SET extracted_text = ?, updated_at = ? WHERE id = ? AND resource_id = ?",
-            args: [text, now(), asset.id, asset.resourceId],
-          }),
-        );
-        asset.extractedText = text;
-      }
-    }
-  }
-  if (!text) {
+  return withLibraryAssetLock(assetId, async () => {
+    await ensureLibrarySchema();
+    const result = await withClient((client) =>
+      client.execute({
+        sql: "SELECT * FROM library_assets WHERE id = ? AND resource_id = ? LIMIT 1",
+        args: [assetId, resourceId],
+      }),
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const asset = rowToAsset(row);
     await withClient((client) =>
       client.execute({
-        sql: "UPDATE library_assets SET status = 'unsupported', updated_at = ? WHERE id = ? AND resource_id = ?",
+        sql: "UPDATE library_assets SET status = 'indexing', updated_at = ? WHERE id = ? AND resource_id = ?",
         args: [now(), asset.id, asset.resourceId],
       }),
     );
-    return { ...asset, status: "unsupported" };
-  }
-  await withClient((client) =>
-    client.execute({
-      sql: "UPDATE library_assets SET status = 'indexing', updated_at = ? WHERE id = ? AND resource_id = ?",
-      args: [now(), asset.id, asset.resourceId],
-    }),
-  );
-  void queueAssetIndex(asset, text, settings);
-  return { ...asset, status: "indexing" };
+    void queueAssetIndex(asset, settings).catch((error) => {
+      console.error("[library-index] reindex failed", error);
+    });
+    return { ...asset, status: "indexing" };
+  });
 }
 
 export async function recoverInterruptedLibraryIndexes(): Promise<void> {
@@ -412,11 +514,7 @@ export async function recoverInterruptedLibraryIndexes(): Promise<void> {
     const asset = rowToAsset(row);
     void (async () => {
       const settings = await getLibrarySettings(asset.resourceId);
-      if (asset.extractedText) {
-        await queueAssetIndex(asset, asset.extractedText, settings);
-      } else {
-        await reindexAsset(asset.resourceId, asset.id, settings);
-      }
+      await queueAssetIndex(asset, settings);
     })().catch(() => undefined);
   }
 }
@@ -425,6 +523,8 @@ export async function recoverInterruptedLibraryIndexes(): Promise<void> {
 class LibraryIndexSignalProvider extends SignalProvider {
   readonly id = "library-index-signals";
   private listenerCleanup?: () => void;
+  private recovery?: Promise<void>;
+  private notifications = new Set<Promise<void>>();
 
   async start(): Promise<void> {
     this.listenerCleanup?.();
@@ -436,7 +536,7 @@ class LibraryIndexSignalProvider extends SignalProvider {
             ? `Library indexing skipped "${event.filename}": no usable text could be extracted.`
             : `Library indexing failed for "${event.filename}"${event.error ? `: ${event.error}` : "."}`;
       for (const threadId of event.threadIds) {
-        void this.notify(
+        const pending = this.notify(
           {
             source: "library",
             kind: `index-${event.outcome}`,
@@ -455,15 +555,23 @@ class LibraryIndexSignalProvider extends SignalProvider {
         ).catch((error) => {
           this.mastra?.getLogger().error("Library notification failed", { error, threadId });
         });
+        this.notifications.add(pending);
+        void pending.finally(() => this.notifications.delete(pending));
       }
     });
-    await recoverInterruptedLibraryIndexes();
+    this.recovery = recoverInterruptedLibraryIndexes();
+    await this.recovery;
   }
 
   stop(): void {
     this.listenerCleanup?.();
     this.listenerCleanup = undefined;
     super.stop();
+  }
+
+  async settled(): Promise<void> {
+    await this.recovery;
+    await Promise.all([...indexingPromises.values(), ...this.notifications]);
   }
 }
 

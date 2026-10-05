@@ -12,7 +12,6 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { CommandPaletteTrigger } from "@/features/command-palette";
 import {
   buildRequestModel,
   summarizeThreadRequest,
@@ -23,6 +22,7 @@ import { useIsThreadBusy, useThreadsQuery } from "@/entities/workbench/model/que
 import { viewFromPath } from "@/entities/workbench/model/types";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import { CommandPaletteTrigger } from "@/features/command-palette";
 import { OpenInIde } from "@/features/workspace-session";
 import { useTranslation } from "@/shared/i18n";
 import {

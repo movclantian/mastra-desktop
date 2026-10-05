@@ -4,21 +4,20 @@
  * - /work/providers/catalog:models.dev 能力目录服务端代理,用于可选的能力徽章
  * - /work/providers/models:自定义网关模型列表拉取(参考 docs/en/models/gateways/custom-gateways.mdx)
  */
+import { Agent } from "@mastra/core/agent";
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
-import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
 import { resolveCredential } from "../credential-broker";
-import { errorText, WorkApiError, workError } from "../errors";
+import { errorText, workError, workValidationError } from "../errors";
 import {
-  createEphemeralAgent,
   getProvidersConfig,
-  parseModelSelection,
+  providersPatchSchema,
   resolveConfiguredModel,
   saveProvidersConfig,
-} from "../models";
+} from "../models/providers";
 
 // ---------------------------------------------------------------------------
 // 内置供应商注册表(随 @mastra/core 打包)
@@ -52,9 +51,13 @@ const builtinProviderRegistry: RegistryProvider[] = Object.entries(PROVIDER_REGI
   .sort((a, b) => a.name.localeCompare(b.name));
 
 // GET /work/providers/registry — 内置供应商列表(按名称排序)
-export const providerRegistryRoute = registerApiRoute("/work/providers/registry", {
+export const providerRegistryRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/registry",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: (c) => c.json({ providers: builtinProviderRegistry }),
+  handler: async () => ({ providers: builtinProviderRegistry }),
 });
 
 // ---------------------------------------------------------------------------
@@ -125,11 +128,15 @@ function describeFetchError(error: unknown): string {
   return `${error.message}（${code ? `${code}: ` : ""}${cause.message}）`;
 }
 
-export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
+export const modelsCatalogRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/catalog",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
+  handler: async () => {
     try {
-      return c.json(await fetchModelsDevCatalog());
+      return await fetchModelsDevCatalog();
     } catch (error) {
       throw workError("PROVIDER_CATALOG_UNAVAILABLE", {
         text: `模型能力目录不可用：${(error as Error).message}`,
@@ -147,38 +154,32 @@ export const modelsCatalogRoute = registerApiRoute("/work/providers/catalog", {
 /** 网关 /models 本身很快,但经代理时握手会慢,给到 30s */
 const GATEWAY_TIMEOUT_MS = 30_000;
 
-export const listProviderModelsRoute = registerApiRoute("/work/providers/models", {
+const providerModelsRequestSchema = z
+  .object({
+    providerId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    protocol: z.enum(["openai", "anthropic", "gemini"]),
+    url: z.url({ protocol: /^https?$/ }).max(2_048),
+    credentialRef: SecretRefSchema,
+  })
+  .strict();
+
+export const listProviderModelsRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/models",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    let payload: z.infer<typeof providerModelsRequestSchema>;
-    try {
-      payload = providerModelsRequestSchema.parse(await c.req.json());
-    } catch {
-      throw workError("VALIDATION_INVALID_JSON");
-    }
+  bodySchema: providerModelsRequestSchema.transform((payload) => ({ payload })),
+  handler: async (params) => {
+    const payload = params.payload;
     const { protocol } = payload;
     const apiKey = await resolveCredential(
       payload.credentialRef,
       providerCredentialPurpose(payload.providerId),
     );
 
-    // 与前端 normalizeGatewayUrl 同款的服务端兜底:openai/anthropic 的模型列表端点在
-    // 版本段之下(…/v1/models)。裸域名不补 /v1 会打到网关的网页(返回 HTML),JSON
-    // 解析报错完全对不上号;已带路径的端点不动。
-    let base = (payload.url ?? "").trim().replace(/\/+$/, "");
-    if (!base) throw workError("VALIDATION_FAILED", { text: "Base URL 不能为空" });
-    if (!/^https?:\/\//i.test(base)) base = `https://${base}`;
-    base = base.replace(/\/(v\d+)(?:\/\1)+/gi, "/$1");
-    if (protocol === "openai" || protocol === "anthropic") {
-      try {
-        const parsed = new URL(base);
-        if (parsed.pathname === "/" || parsed.pathname === "") {
-          base = `${parsed.origin}/v1`;
-        }
-      } catch {
-        throw workError("VALIDATION_FAILED", { text: `Base URL 不是合法地址：${payload.url}` });
-      }
-    }
+    // Use the configured API root exactly; the provider owns its version/path convention.
+    const base = payload.url.replace(/\/+$/, "");
 
     let endpoint = `${base}/models`;
     const headers: Record<string, string> = {};
@@ -246,20 +247,11 @@ export const listProviderModelsRoute = registerApiRoute("/work/providers/models"
           id: m.name.replace(/^models\//, ""),
           name: m.displayName ?? m.name.replace(/^models\//, ""),
         }));
-    return c.json({
+    return {
       models,
-    });
+    };
   },
 });
-
-const providerModelsRequestSchema = z
-  .object({
-    providerId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
-    protocol: z.enum(["openai", "anthropic", "gemini"]),
-    url: z.string().min(1).max(2_048),
-    credentialRef: SecretRefSchema,
-  })
-  .strict();
 
 function providerErrorStatus(error: unknown): number | undefined {
   const values: unknown[] = [error];
@@ -272,7 +264,12 @@ function providerErrorStatus(error: unknown): number | undefined {
     const record = value as Record<string, unknown>;
     for (const key of ["statusCode", "responseStatusCode", "status"]) {
       const status = record[key];
-      if (typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599) {
+      if (
+        typeof status === "number" &&
+        Number.isInteger(status) &&
+        status >= 400 &&
+        status <= 599
+      ) {
         return status;
       }
     }
@@ -282,46 +279,39 @@ function providerErrorStatus(error: unknown): number | undefined {
 
 // POST /work/providers/test — 用一次性 Mastra Agent 测试纯文本连通性,
 // 不创建线程或写入 Memory。
-export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
+export const testProviderModelRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/test",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
+  bodySchema: z
+    .object({ providerId: z.string().trim().min(1), modelId: z.string().trim().min(1) })
+    .strict(),
+  handler: async (params) => {
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    const model = await resolveConfiguredModel(params.providerId, params.modelId, resourceId);
+    if (!model) throw workError("MODEL_NOT_CONFIGURED");
+    const testAgent = new Agent({
+      model,
+      id: "mastra-work-model-test",
+      name: "MastraWork Model Test",
+      instructions: "只返回简短的纯文本问候语。",
+    });
     try {
-      const payload = (await c.req.json()) as { providerId?: unknown; modelId?: unknown };
-      const selection = parseModelSelection(payload);
-      if (!selection) throw workError("MODEL_SELECTION_REQUIRED");
-      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-      const model = await resolveConfiguredModel(
-        selection.providerId,
-        selection.modelId,
-        resourceId,
-      );
-      if (!model) throw workError("MODEL_NOT_CONFIGURED");
-      const testAgent = createEphemeralAgent(model, {
-        id: "mastra-work-model-test",
-        name: "MastraWork Model Test",
-        instructions: "只返回简短的纯文本问候语。",
-      });
-      // This endpoint verifies connectivity and credentials, not structured-output
-      // support. A plain text probe avoids false negatives for valid providers whose
-      // selected model does not advertise JSON/schema output.
       const result = await testAgent.generate("请只回复一个简短的 hi。", {
-        abortSignal: c.req.raw.signal,
+        abortSignal: params.abortSignal,
       });
       const reply = result.text.trim().slice(0, 120);
       if (!reply) throw new Error("模型返回了空响应");
-      return c.json({ ok: true, reply });
+      return { ok: true, reply };
     } catch (error) {
-      if (error instanceof WorkApiError) throw error;
       const upstreamStatus = providerErrorStatus(error);
-      const status = (upstreamStatus ?? 502) as ContentfulStatusCode;
-      return c.json(
-        {
-          ok: false,
-          error: errorText(error, "模型连接测试失败"),
-          ...(upstreamStatus ? { upstreamStatus } : {}),
-        },
-        status,
-      );
+      throw workError("MODEL_GENERATION_FAILED", {
+        text: errorText(error, "模型连接测试失败"),
+        cause: error,
+        ...(upstreamStatus ? { details: { upstreamStatus } } : {}),
+      });
     }
   },
 });
@@ -329,30 +319,35 @@ export const testProviderModelRoute = registerApiRoute("/work/providers/test", {
 // ---------------------------------------------------------------------------
 // 供应商配置(app_config 表 key = "providers")
 //
-// 配置必须在服务端:Studio 的模型选择器与 Agent 的默认模型都要读到它,
-// 而 Studio 跑在 Mastra 进程里,读不到渲染进程的 localStorage。
-// 请求内的模型实例由 resolveConfiguredModel 按资源直接构造；WorkbenchGateway
-// 仅保留给 Studio/model registry 使用。Key 不注入 process.env、也不随请求体下发。
+// 工作台与 Agent 统一按认证资源读取服务端配置。resolveConfiguredModel 是唯一
+// 模型构建入口；Key 不注入 process.env、也不随请求体下发。
 // ---------------------------------------------------------------------------
 
 // GET /work/providers/config — 读取供应商与当前选定模型
-export const providersConfigRoute = registerApiRoute("/work/providers/config", {
+export const providersConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/config",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    return c.json(
-      await getProvidersConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
-    );
+  handler: async (params) => {
+    return await getProvidersConfig(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
   },
 });
 
 // POST /work/providers/config — 写入供应商与/或当前选定模型
-export const saveProvidersConfigRoute = registerApiRoute("/work/providers/config", {
+export const saveProvidersConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/providers/config",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
+  bodySchema: providersPatchSchema.transform((config) => ({ config })),
+  handler: async (params) => {
     await saveProvidersConfig(
-      await c.req.json(),
-      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      params.config,
+      params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
     );
-    return c.json({ ok: true });
+    return { ok: true };
   },
 });

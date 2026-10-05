@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
+import { resolveAgentSkills } from "@mastra/core/skills";
 import { type AnyWorkflow, cloneStep, createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
+import { workError } from "../errors";
 import { getAppConfig, setAppConfig } from "../storage";
 import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace";
 
@@ -78,6 +79,10 @@ export interface AgentProfile {
   updatedAt: string;
 }
 
+type AgentProfileInput = Omit<Partial<AgentProfile>, "members"> & {
+  members?: Partial<AgentMemberDefinition>[];
+};
+
 const DEFAULT_PROFILE: AgentProfile = {
   id: DEFAULT_AGENT_PROFILE_ID,
   type: "agent",
@@ -96,10 +101,7 @@ const DEFAULT_PROFILE: AgentProfile = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-function normalizeProfile(
-  raw: Partial<AgentProfile>,
-  now = new Date().toISOString(),
-): AgentProfile {
+function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()): AgentProfile {
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
   const usedMemberIds = new Set<string>();
@@ -120,9 +122,7 @@ function normalizeProfile(
       : [],
     members: Array.isArray(raw.members)
       ? raw.members
-          .filter(
-            (item): item is AgentMemberDefinition => typeof item === "object" && item !== null,
-          )
+          .filter((item) => typeof item === "object" && item !== null)
           .map((item) => {
             const baseId =
               typeof item.id === "string" && item.id.trim() ? item.id.trim() : randomUUID();
@@ -225,10 +225,11 @@ async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Prom
 }
 
 export async function upsertAgentProfile(
-  input: Partial<AgentProfile>,
+  input: AgentProfileInput,
   resourceId?: string,
 ): Promise<AgentProfile> {
-  if (input.id === DEFAULT_AGENT_PROFILE_ID) throw new Error("默认 Agent 不可覆盖");
+  if (input.id === DEFAULT_AGENT_PROFILE_ID)
+    throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可覆盖" });
   const current = (await listAgentProfiles(resourceId)).filter(
     (profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID,
   );
@@ -259,15 +260,16 @@ export async function upsertAgentProfile(
   );
   if (profile.type === "team" && profile.workflow?.strategy !== "supervisor" && profile.workflow) {
     const { strategy, steps } = profile.workflow;
-    if (!steps.length) throw new Error("团队工作流至少需要一个步骤");
+    if (!steps.length) throw workError("VALIDATION_FAILED", { text: "团队工作流至少需要一个步骤" });
     const ids = new Set<string>();
     const members = new Set(profile.members.map((member) => member.id));
     for (const step of steps) {
-      if (!step.id.trim() || ids.has(step.id)) throw new Error("工作流步骤 ID 必须非空且唯一");
+      if (!step.id.trim() || ids.has(step.id))
+        throw workError("VALIDATION_FAILED", { text: "工作流步骤 ID 必须非空且唯一" });
       ids.add(step.id);
       const kind = step.kind ?? "agent";
       if (strategy !== "workflow" && kind !== "agent")
-        throw new Error("交接和并行评议只接受 Agent 步骤");
+        throw workError("VALIDATION_FAILED", { text: "交接和并行评议只接受 Agent 步骤" });
       const targets =
         kind === "branch"
           ? [step.branch?.onTrueMemberId, step.branch?.onFalseMemberId]
@@ -275,10 +277,11 @@ export async function upsertAgentProfile(
             ? []
             : [step.memberId];
       if (targets.some((id) => !id || !members.has(id)))
-        throw new Error(`步骤 ${step.id} 引用了不存在的成员`);
-      if (kind === "branch" && !step.condition) throw new Error(`分支 ${step.id} 缺少条件`);
+        throw workError("VALIDATION_FAILED", { text: `步骤 ${step.id} 引用了不存在的成员` });
+      if (kind === "branch" && !step.condition)
+        throw workError("VALIDATION_FAILED", { text: `分支 ${step.id} 缺少条件` });
       if (kind === "loop" && (!step.loop || (step.loop.mode !== "foreach" && !step.condition)))
-        throw new Error(`循环 ${step.id} 缺少循环设置或条件`);
+        throw workError("VALIDATION_FAILED", { text: `循环 ${step.id} 缺少循环设置或条件` });
     }
   }
   await saveProfiles([...current.filter((item) => item.id !== profile.id), profile], resourceId);
@@ -286,7 +289,8 @@ export async function upsertAgentProfile(
 }
 
 export async function deleteAgentProfile(id: string, resourceId?: string): Promise<void> {
-  if (id === DEFAULT_AGENT_PROFILE_ID) throw new Error("默认 Agent 不可删除");
+  if (id === DEFAULT_AGENT_PROFILE_ID)
+    throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可删除" });
   await saveProfiles(
     (await listAgentProfiles(resourceId)).filter((profile) => profile.id !== id),
     resourceId,
@@ -541,39 +545,16 @@ export async function resolveManagedSkillPaths(
     ? new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean))
     : undefined;
   if (requested?.size === 0) return [];
-  const paths: string[] = [];
-  for (const directory of await getManagedSkillPaths(resourceId)) {
-    const entryName = basename(directory);
-    try {
-      const content = await readFile(join(directory, "SKILL.md"), "utf8");
-      const metadataName = /^---\s*[\s\S]*?\bname:\s*["']?([^\r\n"']+)/m.exec(content)?.[1]?.trim();
-      if (
-        !requested ||
-        requested.has(entryName.toLowerCase()) ||
-        (metadataName && requested.has(metadataName.toLowerCase()))
-      ) {
-        paths.push(directory);
-      }
-    } catch {
-      // Invalid skill directories are excluded from a profile instead of breaking the run.
-    }
-  }
-  return paths;
+  return (await getManagedSkillPaths(resourceId)).filter(
+    (directory) => !requested || requested.has(basename(directory).toLowerCase()),
+  );
 }
 
-/** Read an explicitly activated managed skill from the current resource scope. */
-export async function loadManagedSkill(
-  name: string,
-  resourceId?: string,
-): Promise<{ name: string; instructions: string } | undefined> {
-  const [directory] = await resolveManagedSkillPaths([name], resourceId);
-  if (!directory) return undefined;
-  const content = await readFile(join(directory, "SKILL.md"), "utf8");
-  const metadataName = /^---\s*[\s\S]*?\bname:\s*["']?([^\r\n"']+)/m.exec(content)?.[1]?.trim();
-  return {
-    name: metadataName || basename(directory),
-    instructions: content.replace(/^---\s*[\s\S]*?\s*---\s*/, "").trim(),
-  };
+/** Read an explicitly activated managed skill through the native skill resolver. */
+export async function loadManagedSkill(name: string, resourceId?: string) {
+  const paths = await resolveManagedSkillPaths([name], resourceId);
+  if (!paths.length) return undefined;
+  return (await resolveAgentSkills(paths).get(name)) ?? undefined;
 }
 
 // Every team stage carries the original request and its latest result. In particular,

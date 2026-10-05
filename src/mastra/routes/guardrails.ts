@@ -1,3 +1,4 @@
+import { z } from "zod";
 /**
  * 护栏路由:读写「护栏与处理器」配置(数据库 app_config 表 key="guardrails",
  * 保存后实时生效),以及一个运行时可用性探测。
@@ -8,33 +9,41 @@
  */
 
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
+import { createRoute } from "@mastra/server/server-adapter";
 import {
-  type GuardrailsUserConfig,
   getGuardrailsConfig,
+  guardrailsConfigSchema,
   saveGuardrailsConfig,
 } from "../agents/guardrails";
-import { resolveDefaultModelId } from "../models";
+import { workValidationError } from "../errors";
+import { resolveDefaultModelId } from "../models/providers";
 
 // GET /work/guardrails — 读取当前护栏配置
-export const guardrailsConfigRoute = registerApiRoute("/work/guardrails", {
+export const guardrailsConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/guardrails",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    return c.json(
-      await getGuardrailsConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
-    );
+  handler: async (params) => {
+    return await getGuardrailsConfig(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
   },
 });
 
 // POST /work/guardrails — 写入护栏配置
-export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
+export const saveGuardrailsConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/guardrails",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
+  bodySchema: guardrailsConfigSchema.transform((config) => ({ config })),
+  handler: async (params) => {
     await saveGuardrailsConfig(
-      await c.req.json<GuardrailsUserConfig>(),
-      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      params.config,
+      params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
     );
-    return c.json({ ok: true });
+    return { ok: true };
   },
 });
 
@@ -46,19 +55,23 @@ export const saveGuardrailsConfigRoute = registerApiRoute("/work/guardrails", {
  * - costMetricsReady:TokenCostControl 依赖观测存储的 getMetricAggregate
  * - workspaceReady:每条线程始终绑定 Workspace,无显式路径时以 process.cwd() 为兜底
  */
-export const guardrailsStatusRoute = registerApiRoute("/work/guardrails/status", {
+export const guardrailsStatusRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/guardrails/status",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
+  handler: async (params) => {
     // 组合存储按 domain 路由:经 getStore('observability') 取观测域接口
-    const observability = (await c.get("mastra").getStorage()?.getStore("observability")) as
+    const observability = (await params.mastra.getStorage()?.getStore("observability")) as
       | { getMetricAggregate?: unknown }
       | undefined;
-    return c.json({
+    return {
       modelReady: Boolean(
-        await resolveDefaultModelId(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
+        await resolveDefaultModelId(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
       ),
       costMetricsReady: typeof observability?.getMetricAggregate === "function",
       workspaceReady: true,
-    });
+    };
   },
 });

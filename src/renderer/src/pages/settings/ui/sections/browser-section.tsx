@@ -6,17 +6,17 @@ import {
   useProviderConfigQuery,
 } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
-import { useTranslation } from "@/shared/i18n";
 import {
   getBrowserSearchEnginePreference,
   setBrowserSearchEnginePreference,
 } from "@/shared/browser-search-preference";
+import { useTranslation } from "@/shared/i18n";
 import { Input } from "@/shared/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
 import {
-  BrowserSearchEngineSchema,
   type BrowserConfig,
+  BrowserSearchEngineSchema,
 } from "../../../../../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { fetchBrowserConfig, saveBrowserConfig } from "../../api/settings-api";
@@ -258,9 +258,7 @@ export function BrowserSection() {
             className="w-72"
             placeholder={t("settings:browser.homeUrlPlaceholder")}
             value={draft.homeUrl}
-            onChange={(event) =>
-              update((current) => ({ ...current, homeUrl: event.target.value }))
-            }
+            onChange={(event) => update((current) => ({ ...current, homeUrl: event.target.value }))}
           />
         </SettingRow>
       </SettingCard>

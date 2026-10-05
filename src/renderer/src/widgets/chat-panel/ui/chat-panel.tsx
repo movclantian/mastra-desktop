@@ -1,4 +1,3 @@
-import { useChat } from "@ai-sdk/react";
 import { arrayMove } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
@@ -10,7 +9,6 @@ import { toast } from "sonner";
 import type { AgentMemberDefinition, AgentProfile, ToolCategory } from "@/entities/workbench";
 import {
   buildReasoningRequest,
-  buildRequestModel,
   fetchThreadSource,
   getModelCapabilities,
   getModelContextWindow,
@@ -89,7 +87,7 @@ import {
   type WorkDisplayState,
   type WorkflowRuntimeRun,
 } from "../model/types";
-import { usePlaceholderChat, useThreadChats } from "../model/use-thread-chats";
+import { useSessionView, useThreadSessions } from "../model/use-thread-sessions";
 import {
   AgentInteractionPanel,
   AgentMemberMessageView,
@@ -316,8 +314,7 @@ export function ChatPanel() {
     () => new Set(),
   );
   const displayStateRequestId = React.useRef(0);
-  const settledReconcileTimerRef = React.useRef<number | null>(null);
-  const pendingSettledThreadsRef = React.useRef(new Set<string>());
+
   const rewriteRefreshRef = React.useRef(false);
   // 分支来源(官方 isClone / getSourceThread):非分支线程为 undefined,分支线程
   // 在 effect 里取回 { id, title };来源已删除/查询失败为 null
@@ -378,54 +375,39 @@ export function ChatPanel() {
   );
 
   // 最新 threadId 的 ref:解决「首条消息先建线程再发送」时
-  // memoized transport 持有旧值的竞态
+  // 请求回调 持有旧值的竞态
   const activeThreadIdRef = React.useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
   // 新线程首条消息发送期间,路由会先切到新线程。此时不能用尚为空的
-  // 服务端历史覆盖 Chat 即将写入的乐观用户消息。
+  // 服务端历史覆盖 会话即将写入的乐观用户消息。
   const initialSendRef = React.useRef<{ threadId: string | null } | null>(null);
-  // 工作区路径/锁定状态同样经 ref 透传给 memoized transport
+  // 工作区路径/锁定状态同样经 ref 透传给 请求回调
   const pendingWorkspacePathRef = React.useRef(pendingWorkspacePath);
   pendingWorkspacePathRef.current = pendingWorkspacePath;
   const workspaceLockedRef = React.useRef(false);
-  // useThreadChats 在本文件稍后才拿到 reloadMessages/reloadDisplayState；用 ref
+  // useThreadSessions 在本文件稍后才拿到 reloadMessages/reloadDisplayState；用 ref
   // 连接流生命周期与面板的服务端真相对账，避免把后定义的回调放进 Hook 闭包。
   const reconcileSettledThreadRef = React.useRef<(threadId: string) => void>(() => undefined);
 
   // 每次请求携带的公共字段(BYOK 模型 + 思考等级 + 检索开关 + memory 标识 + 附件预算)。
-  // body 格式参考 docs/en/reference/ai-sdk/chat-route.mdx。
-  // 放在 ref 里而不是 memo 依赖里:每个线程有自己的 Chat 实例与 transport(见下),
+  // 产品命令由 HTTP 提交，运行事件由原生 Session SSE 接收。
+  // 放在 ref 里而不是 memo 依赖里:每个线程有自己的 Session 订阅,
   // 它们都要读**最新**的选择,而不是各自创建时的快照。
   const buildRequestBodyRef = React.useRef<(threadId: string) => Record<string, unknown>>(
     () => ({}),
   );
   buildRequestBodyRef.current = (threadId: string) => ({
-    ...(selectedProvider && modelSelection
-      ? { model: buildRequestModel(selectedProvider, modelSelection.modelId) }
-      : {}),
-    // 模型形态快照:服务端写进 thread.metadata.modelSelection,
-    // 切回本线程时前端据此恢复模型与思考等级选择
-    ...(modelSelection
-      ? {
-          modelSelection: {
-            providerId: modelSelection.providerId,
-            modelId: modelSelection.modelId,
-            modelName: modelSelection.modelName,
-            reasoningEffort: modelSelection.reasoningEffort,
-          },
-        }
-      : {}),
     // 思考等级:标准 modelSettings.reasoning(max 档退回 providerOptions)
     ...(selectedProvider && modelSelection && modelSelection.reasoningEffort !== "off"
       ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
       : {}),
-    // 联网检索开关:服务端据此注入检索工具并要求结构化检索报告
+    // 联网检索开关:服务端据此注入检索工具
     ...(searchSelection ? { webSearch: searchSelection } : {}),
     // 首条消息的显式工作区选定(未锁定线程才携带,服务端绑定后忽略后续)
     ...(pendingWorkspacePathRef.current && !workspaceLockedRef.current
       ? { workspacePath: pendingWorkspacePathRef.current }
       : {}),
-    // 线程 id 取自该 Chat 自己的绑定,不是"当前激活线程" —— 后台流式线程若发请求也不会串台
+    // 线程 id 取自该 Session 自己的绑定,不是"当前激活线程" —— 后台流式线程若发请求也不会串台
     memory: { resource: user.id, thread: threadId },
     attachmentTokenBudget: attachmentTokenBudgetRef.current,
     attachmentCapabilities: {
@@ -436,32 +418,14 @@ export function ChatPanel() {
     agentProfileId: agentSelection.id,
   });
 
-  const { getThreadChat, retainActive } = useThreadChats(
+  const { getThreadSession, retainActive } = useThreadSessions(
     user.id,
     (threadId) => buildRequestBodyRef.current(threadId),
     setThreadBusy,
     (threadId) => reconcileSettledThreadRef.current(threadId),
   );
-  const placeholderChat = usePlaceholderChat();
-  const activeChat = activeThreadId ? getThreadChat(activeThreadId) : placeholderChat;
-
-  // throttle 必填。AI SDK 默认不节流(throttle: undefined),于是每个 chunk 都经
-  // useSyncExternalStore 独立通知一次 —— 那是同步车道(SyncLane),每次都要走完
-  // 一整轮 render + commit。React 在每次 commit 收尾时若发现同步车道上还有活,
-  // 就把嵌套更新计数 +1,累到 50 直接抛 "Maximum update depth exceeded"。
-  //
-  // 模型逐 token 吐字时 chunk 间有真实间隔,计数每轮都清零,所以纯文本对话看不出问题;
-  // 工具调用结束的那一刻不一样 —— 服务端在本机(零网络延迟)会把工具结果整块加上紧随
-  // 其后的续写文本一次性 flush 出来,几十个 chunk 落在同一批微任务里被读出,连续几十次
-  // 同步 commit 之间没有任何空隙,计数一路撞上限。异常在 chunk 处理栈里抛出,于是表现为
-  // useChat 的 onError:「本轮生成失败」+ 流式中断。
-  //
-  // 50ms(20fps)对流式文字已足够顺滑,同时把这条对话树的重渲染次数压到原来的几十分之一。
-  const { messages, setMessages, status, stop } = useChat({
-    chat: activeChat,
-    resume: Boolean(activeThreadId),
-    throttle: 50,
-  });
+  const activeSession = activeThreadId ? getThreadSession(activeThreadId) : null;
+  const { messages, setMessages, status, native } = useSessionView(activeSession);
 
   // 历史分页(官方 message-scroller-load-history):每线程已加载页数与
   // “还有更早历史”只驱动命令式加载,不参与渲染,全部走 ref。
@@ -511,9 +475,7 @@ export function ChatPanel() {
 
   // 从服务端拉取历史消息并重建消息流(线程切换 / 压缩后刷新共用)。
   //
-  // setMessages 恒定写「当前」Chat(useChat 里它闭包的是一个永久稳定的 ref),
-  // 所以必须校验归属:快速切换时 A 的历史可能在 B 已激活后才返回,写进去等于
-  // 用 A 的旧历史覆盖 B —— B 若正在流式,这一下就把流打断在视觉上。
+  // 异步历史返回前校验当前线程，避免切换后应用过期响应。
   //
   // 分页(官方 message-scroller-load-history):并行拉取该线程已加载深度的
   // 全部页(page 0 最新),向上加载过更早历史后刷新不会把已读内容收回去。
@@ -524,6 +486,7 @@ export function ChatPanel() {
       return Promise.resolve(true);
     }
     const pageCount = historyPageCountRef.current.get(threadId) ?? 1;
+    const startingMessages = activeSession?.store.getState().messages;
     return Promise.all(
       Array.from({ length: pageCount }, (_, page) =>
         fetchThreadMessagesPage(threadId, user.id, page),
@@ -544,16 +507,20 @@ export function ChatPanel() {
           });
         // hasMore 指向更旧的页:取已加载的最旧一页(数组末项)判断
         hasEarlierHistoryRef.current = pages[pages.length - 1]?.hasMore ?? false;
-        setMessages(loaded);
+        if (activeSession?.store.getState().messages !== startingMessages) return false;
+        const currentMessageId = activeSession?.store.getState().native?.currentMessage?.id;
+        setMessages((current) => [
+          ...loaded,
+          ...current.filter((message) => message.id === currentMessageId && !seen.has(message.id)),
+        ]);
         return true;
       })
       .catch(() => {
         // A transient history/API failure must not erase the optimistic/live
-        // conversation. Keep the current messages and let the next bounded
-        // reconciliation retry fetch the server truth.
+        // conversation. The next Session refresh will fetch the server history.
         return false;
       });
-  }, [activeThreadId, setMessages, user.id]);
+  }, [activeSession, activeThreadId, setMessages, user.id]);
 
   // 向上滚动到顶部附近时加载更早一页历史:前置插入 + preserveScrollOnPrepend
   // (MessageScrollerViewport 默认启用)保持阅读位置不跳动。
@@ -631,73 +598,19 @@ export function ChatPanel() {
     }
   }, [activeThreadId, fetchDisplayState]);
 
-  // 流结束不等于服务端已经把最后一条 assistant/tool 消息写入消息表。
-  // 以 display-state 的 activeRunId 为门闩做最多 4 次短退避：既不会让每个
-  // token 触发请求，也不会把“服务端已完成但 UI 仍停在旧快照”留给用户。
-  const reconcileSettledThread = React.useCallback(
-    (threadId: string) => {
-      if (activeThreadIdRef.current !== threadId) {
-        // 后台线程结算时用户可能正在看另一条线程；切回时由线程切换
-        // effect 消费这个标记，不能把这次服务端状态变化静默丢掉。
-        pendingSettledThreadsRef.current.add(threadId);
-        return;
-      }
-      pendingSettledThreadsRef.current.delete(threadId);
-      if (settledReconcileTimerRef.current !== null) {
-        window.clearTimeout(settledReconcileTimerRef.current);
-      }
-      const schedule = (attempt: number) => {
-        if (activeThreadIdRef.current !== threadId) return;
-        const delay = attempt === 0 ? 120 : Math.min(250 * 2 ** (attempt - 1), 1000);
-        settledReconcileTimerRef.current = window.setTimeout(() => {
-          settledReconcileTimerRef.current = null;
-          if (activeThreadIdRef.current !== threadId) return;
-          void fetchDisplayState(threadId)
-            .then(async (displayState) => {
-              if (activeThreadIdRef.current !== threadId) return;
-              if (displayState?.activeRunId) {
-                if (attempt < 4) schedule(attempt + 1);
-                else {
-                  // Never reload message history while the server still owns
-                  // the run. The persisted history can legitimately lag the
-                  // live stream and would erase already-rendered output.
-                  await reloadDisplayState();
-                }
-                return;
-              }
-              // 结算回调与下一轮发送可能相邻到达；绝不能用上一轮服务端
-              // 快照覆盖正在增长的本地消息。下一轮结束时会再次对账。
-              const chat = getThreadChat(threadId);
-              if (chat.status === "submitted" || chat.status === "streaming") {
-                if (attempt < 4) schedule(attempt + 1);
-                return;
-              }
-              await reloadMessages();
-              await reloadDisplayState();
-            })
-            .catch(() => {
-              if (attempt < 4) schedule(attempt + 1);
-            });
-        }, delay);
-      };
-      schedule(0);
-    },
-    [fetchDisplayState, getThreadChat, reloadDisplayState, reloadMessages],
-  );
-
+  // Session completion already refreshes messages; refresh the business panels once.
   React.useEffect(() => {
-    reconcileSettledThreadRef.current = reconcileSettledThread;
+    reconcileSettledThreadRef.current = (threadId) => {
+      if (activeThreadIdRef.current === threadId) void reloadDisplayState();
+      void invalidateThreads(userId);
+    };
     return () => {
       reconcileSettledThreadRef.current = () => undefined;
-      if (settledReconcileTimerRef.current !== null) {
-        window.clearTimeout(settledReconcileTimerRef.current);
-        settledReconcileTimerRef.current = null;
-      }
     };
-  }, [reconcileSettledThread]);
+  }, [invalidateThreads, reloadDisplayState, userId]);
 
   /**
-   * 从持久化快照读取本线程仍在等待的工具交互(Agent.listSuspendedRuns)。
+   * 读取本线程原生 Session 和持久化快照中仍在等待的工具交互。
    * 同时被两处使用:一轮响应结束后的面板恢复,以及 resume 前的过期预检。
    * 类别与生效策略由统一 display-state 快照在服务端算好。
    */
@@ -708,11 +621,11 @@ export function ChatPanel() {
     [fetchDisplayState],
   );
 
-  // 切换线程:首次进入才拉历史,并回收闲置线程的 Chat 实例。
+  // 切换线程:首次进入才拉历史,并回收闲置线程的 Session 订阅。
   //
   // 不能无条件 reloadMessages —— 切回一条仍在流式的线程时,setMessages 会把
   // 正在增长的消息覆盖成服务端尚未落库的旧历史,等于把流打断在视觉上。
-  // 因此只有「这个 Chat 还没装载过历史」时才拉:实例是新建的(切换/首次)且当前空闲。
+  // 因此只有「这个 Session 尚未恢复消息」时才拉:实例是新建的(切换/首次)且当前空闲。
   React.useEffect(() => {
     // 换线程后“还有更早历史”未知,reloadMessages 完成后会重新赋值
     hasEarlierHistoryRef.current = false;
@@ -720,15 +633,8 @@ export function ChatPanel() {
     const isInitialSendThread =
       initialSend !== null &&
       (initialSend.threadId === null || initialSend.threadId === activeThreadId);
-    if (!isInitialSendThread && activeChat.messages.length === 0 && activeChat.status === "ready") {
+    if (!isInitialSendThread && activeSession?.store.getState().status === "ready") {
       void reloadMessages();
-    }
-    if (
-      activeThreadId &&
-      pendingSettledThreadsRef.current.delete(activeThreadId) &&
-      activeChat.status === "ready"
-    ) {
-      reconcileSettledThread(activeThreadId);
     }
     setTasks([]);
     setTaskSnapshotLoaded(false);
@@ -740,7 +646,7 @@ export function ChatPanel() {
     setWorkflowRuns([]);
     setResolvedInteractionKeys(new Set());
     retainActive(activeThreadId);
-  }, [activeChat, activeThreadId, reconcileSettledThread, reloadMessages, retainActive]);
+  }, [activeSession, activeThreadId, reloadMessages, retainActive]);
 
   const interactionReloadVersion = React.useRef(0);
   // 任务和暂停交互都是服务端持久化状态;只在切线和一轮响应结束后读取,
@@ -761,25 +667,24 @@ export function ChatPanel() {
 
   /**
    * 重试:重生成**指定**的那条助手消息,而不是永远重生成最后一条。
-   * regenerate({ messageId }) 会以 trigger: 'regenerate-message' 发送,
-   * toAISdkStream 据此把那条助手消息从输入里切掉再重跑(见 transport 的注释)。
+   * 服务器按 messageId 截断历史并通过原生 Session 启动新运行。
    */
   const handleRetry = React.useCallback(
     (messageId: string) => {
       setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
-      void activeChat.regenerate({ messageId });
+      void activeSession?.regenerate({ messageId }).catch(() => undefined);
     },
-    [activeChat],
+    [activeSession],
   );
 
   const handleEdit = React.useCallback(
     (messageId: string, text: string) => {
       setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
-      void activeChat.sendMessage({ text, messageId });
+      void activeSession?.send({ text, messageId }).catch(() => undefined);
     },
-    [activeChat],
+    [activeSession],
   );
 
   // 表情反应(官方 BubbleReactions 业务对接):乐观更新 + 服务端持久化。
@@ -817,22 +722,22 @@ export function ChatPanel() {
   }, [reloadMessages, status]);
 
   /**
-   * 停止生成。服务端已不把 HTTP 断连当作中止信号,所以先按当前会话线程
-   * 真正 abort 掉 run(否则只是本地不再读流),再断开 AI SDK 客户端流。
-   *
-   * 刻意**不**在这之后重新拉历史:chat.stop() 保留已收到的 token(官方语义),
-   * 而服务端此刻可能还没把中止点之后的状态落库,立刻重读反而会把已显示的部分抹掉。
+   * 取消服务端运行。常驻 Session 订阅继续接收最终状态和后续任务事件。
    */
   const handleStop = React.useCallback(async () => {
     const threadId = activeThreadIdRef.current;
-    if (threadId) {
-      await abortThread(threadId, user.id).catch(() => undefined);
+    if (!threadId) return;
+    try {
+      await abortThread(threadId, user.id);
+    } catch (error) {
+      toastError(error);
     }
-    setQueuedRequests((current) => current.filter((request) => !request.queuedOnServer));
-    await stop();
-  }, [stop, user.id]);
+  }, [user.id]);
 
   const isBusy = status === "submitted" || status === "streaming";
+  const hasLiveWorkflow = (workflowRuns ?? []).some((run) =>
+    ["pending", "running", "waiting"].includes(run.status ?? ""),
+  );
   const hasLiveBackgroundWork = React.useMemo(
     () =>
       backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
@@ -846,12 +751,12 @@ export function ChatPanel() {
     setThreadBusy(activeThreadId, isBusy || hasLiveBackgroundWork);
   }, [activeThreadId, hasLiveBackgroundWork, isBusy, setThreadBusy]);
   React.useEffect(() => {
-    if ((!isBusy && !hasLiveBackgroundWork) || !activeThreadId) return;
+    if (!hasLiveWorkflow || !activeThreadId) return;
     const timer = window.setInterval(() => {
       void reloadDisplayState();
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [activeThreadId, hasLiveBackgroundWork, isBusy, reloadDisplayState]);
+  }, [activeThreadId, hasLiveWorkflow, reloadDisplayState]);
 
   // Keep the queue current after the agent stream closes. The official
   // BackgroundTaskManager stream emits lifecycle events for tasks that finish
@@ -893,8 +798,8 @@ export function ChatPanel() {
       if (taskFlushTimer === undefined) {
         taskFlushTimer = window.setTimeout(flushTasks, 120);
       }
-      // The 1200ms foreground poll covers running/output updates. A durable
-      // refresh is needed when a task leaves the running state so the final
+      // SSE covers running/output updates. A durable refresh is needed
+      // when a task leaves the running state so the final
       // result/interaction snapshot is visible without navigating away.
       if (task.status !== "running") scheduleDisplayStateRefresh();
     });
@@ -919,8 +824,15 @@ export function ChatPanel() {
   }, [isBusy, messages]);
   const visibleTasks = streamingTasks ?? (taskSnapshotLoaded ? tasks : (liveTasks ?? tasks));
   const activeTools = React.useMemo(
-    () => (isBusy ? getActiveToolsFromMessages(messages) : []),
-    [isBusy, messages],
+    () =>
+      native
+        ? Object.entries(native.activeTools).map(([toolCallId, tool]) => ({
+            toolCallId,
+            name: tool.name,
+            status: tool.status,
+          }))
+        : getActiveToolsFromMessages(messages),
+    [native, messages],
   );
   const handledPanelToolCallsRef = React.useRef(new Set<string>());
   React.useEffect(() => {
@@ -958,7 +870,14 @@ export function ChatPanel() {
     }
     return [...merged.values()];
   }, [backgroundTasks, streamedBackgroundTasks]);
-  const subagents = React.useMemo(() => getSubagentsFromMessages(messages), [messages]);
+  const subagents = React.useMemo(() => {
+    const merged = new Map(
+      getSubagentsFromMessages(messages).map((agent) => [agent.agentType, agent]),
+    );
+    for (const agent of Object.values(native?.activeSubagents ?? {}))
+      merged.set(agent.agentType, agent);
+    return [...merged.values()];
+  }, [native, messages]);
   const streamedWorkflow = React.useMemo(() => getWorkflowStateFromMessages(messages), [messages]);
   const persistedWorkflow = React.useMemo(
     () => getWorkflowStateFromDisplayState(workflowRuns),
@@ -1119,7 +1038,7 @@ export function ChatPanel() {
       persistedInteractions.filter((interaction) => !resolvedInteractionKeys.has(interaction.key)),
     [persistedInteractions, resolvedInteractionKeys],
   );
-  const visibleInteractions = status === "submitted" || status === "streaming" ? [] : interactions;
+  const visibleInteractions = interactions;
   const displayMessages = React.useMemo(() => buildDisplayMessages(messages), [messages]);
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
@@ -1151,14 +1070,13 @@ export function ChatPanel() {
       // The ref closes the gap between two rapid approval clicks or duplicate UI events.
       resumingKeysRef.current.add(resumeKey);
       setResumingKeys((current) => new Set(current).add(resumeKey));
-      // 恢复目标以服务端挂起运行列表为准；不要在恢复前刷新 Chat 内存消息。
-      // 刷新会替换 AI SDK 的 tool invocation，导致恢复时找不到 toolCallId。
+      // 恢复目标以服务端挂起运行列表为准。
       try {
         const pending = await fetchSuspendedInteractions(threadId);
         const stillPending = pending.some(
           (item) => item.runId === interaction.runId && item.toolCallId === interaction.toolCallId,
         );
-        const chat = getThreadChat(threadId);
+        const chat = getThreadSession(threadId);
         if (!stillPending) {
           if (activeThreadIdRef.current !== threadId) return;
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
@@ -1175,25 +1093,21 @@ export function ChatPanel() {
           throw new Error("Missing approved field in tool approval response");
         if (activeThreadIdRef.current !== threadId) return;
 
-        // 发送恢复请求后立即把交互标成“已接收”。AI SDK 的 sendMessage
-        // Promise 会等整条长流结束才 resolve；若把按钮 busy 绑定到这个
-        // Promise，长任务期间审批卡片会永久灰掉。失败时再从服务端挂起
-        // 列表恢复卡片，仍然保留重试能力。
+        // HTTP 返回命令接收结果，后续输出由常驻 Session 订阅呈现。
         setQueueCanDispatch(false);
         setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
-        const resumeRequest = chat.sendMessage(undefined, {
+        const resumeRequest = chat.send(undefined, {
           body: {
             runId: interaction.runId,
             toolCallId: interaction.toolCallId,
             ...(interaction.requiresApproval ? { approval: resumeData } : { resumeData }),
           },
         });
-        // Do not await the complete stream here. Keep the rejection attached so
-        // a failed HTTP/stream request can put a still-pending interaction back.
+        // A rejected command restores the still-pending interaction.
         void resumeRequest
           .then(async () => {
             if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId) {
-              // The resume stream already succeeded; a settings refresh is
+              // The resume command was accepted; a settings refresh is
               // auxiliary and must not turn that success into a failed resume.
               void refreshThreadSettings().catch(() => undefined);
             }
@@ -1247,7 +1161,7 @@ export function ChatPanel() {
         });
       }
     },
-    [activeThreadId, fetchSuspendedInteractions, getThreadChat, refreshThreadSettings, t],
+    [activeThreadId, fetchSuspendedInteractions, getThreadSession, refreshThreadSettings, t],
   );
 
   /**
@@ -1280,11 +1194,22 @@ export function ChatPanel() {
       : activeThread?.metadata.contextUsageVersion === 2
         ? persistedUsage
         : undefined;
-  const billingUsage =
-    streamedMetadata?.usage ??
-    (activeThread?.metadata.contextUsageVersion === 2
-      ? (activeThread.metadata.totalUsage as LanguageModelUsage | undefined)
-      : persistedUsage);
+  const billingUsage: LanguageModelUsage | undefined = native
+    ? {
+        inputTokens: native.tokenUsage.promptTokens,
+        outputTokens: native.tokenUsage.completionTokens,
+        totalTokens: native.tokenUsage.totalTokens,
+        inputTokenDetails: {
+          cacheReadTokens: native.tokenUsage.cachedInputTokens,
+          cacheWriteTokens: undefined,
+          noCacheTokens: undefined,
+        },
+        outputTokenDetails: {
+          reasoningTokens: native.tokenUsage.reasoningTokens,
+          textTokens: undefined,
+        },
+      }
+    : undefined;
   const usedContextTokens = Math.max(0, latestUsage?.inputTokens ?? 0);
   const responseReserve = Math.min(8_192, Math.floor((selectedContextWindow ?? 32_000) * 0.1));
   const attachmentTokenBudget = Math.max(
@@ -1304,7 +1229,7 @@ export function ChatPanel() {
   const sendFailed = useDelayedTrue(Boolean(failedUserMessage), 2000);
 
   // 行内重试:同 messageId 的 sendMessage 会替换该用户消息并重新触发请求
-  // (AI SDK 语义),服务端 chat 路由按 submit-message + messageId 截断重跑。
+  // 服务端 chat 路由按 submit-message + messageId 截断重跑。
   const handleRetrySend = React.useCallback(() => {
     const failed = failedUserMessage;
     if (!failed) return;
@@ -1315,12 +1240,14 @@ export function ChatPanel() {
       .map((part) => part.text)
       .join("\n");
     const files = failed.parts.filter((part) => part.type === "file");
-    void activeChat.sendMessage(
-      text
-        ? { text, files, metadata: failed.metadata, messageId: failed.id }
-        : { files, metadata: failed.metadata, messageId: failed.id },
-    );
-  }, [activeChat, failedUserMessage]);
+    void activeSession
+      ?.send(
+        text
+          ? { text, files, metadata: failed.metadata, messageId: failed.id }
+          : { files, metadata: failed.metadata, messageId: failed.id },
+      )
+      .catch(() => undefined);
+  }, [activeSession, failedUserMessage]);
 
   // 从某条消息处创建分支(官方 cloneThread 的 messageFilter 截断):复制截至
   // 该消息(含)的历史到新线程并切换过去。聚合助手消息的 id 是末条源消息 id,
@@ -1377,16 +1304,11 @@ export function ChatPanel() {
       if (!threadId) return;
       try {
         const persistedFiles = await persistAttachments(files, threadId);
-        let queuedOnServer = false;
-        const onlyNativeFollowUps = queuedRequests.every((request) =>
-          Boolean(request.queuedOnServer),
-        );
-        if (text && persistedFiles.length === 0 && onlyNativeFollowUps) {
-          const payload = await enqueueFollowUp(threadId, user.id, {
+        if (text && persistedFiles.length === 0 && queuedRequests.length === 0) {
+          await enqueueFollowUp(threadId, user.id, {
             content: text,
             ...(selectedProvider && modelSelection
               ? {
-                  model: buildRequestModel(selectedProvider, modelSelection.modelId),
                   ...(modelSelection.reasoningEffort !== "off"
                     ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
                     : {}),
@@ -1399,7 +1321,8 @@ export function ChatPanel() {
               fileReferences: message.fileReferences ?? [],
             },
           });
-          queuedOnServer = payload.queued;
+          clearPrompt();
+          return;
         }
         setQueuedRequests((current) => [
           ...current,
@@ -1409,7 +1332,6 @@ export function ChatPanel() {
             files: persistedFiles,
             skills: message.skills,
             fileReferences: message.fileReferences,
-            queuedOnServer,
           },
         ]);
       } catch (error) {
@@ -1467,13 +1389,12 @@ export function ChatPanel() {
       // 保留在当前页面，错误提示不会被路由切换掩盖。
       selectThread(targetThreadId);
     }
-    clearPrompt();
     setQueueCanDispatch(false);
     selectedSkillNamesRef.current = message.skills ?? [];
-    // 显式发到目标线程自己的 Chat 实例:新建线程时渲染层还没切过去,
+    // 显式发到目标线程自己的 Session 订阅:新建线程时渲染层还没切过去,
     // 用渲染时绑定的实例会把消息发进上一条线程。
-    await getThreadChat(targetThreadId)
-      .sendMessage(
+    const sent = await getThreadSession(targetThreadId)
+      .send(
         text
           ? {
               text,
@@ -1491,13 +1412,19 @@ export function ChatPanel() {
               },
             },
       )
+      .then(
+        () => true,
+        () => false,
+      )
       .finally(() => {
         if (initialSendRef.current === initialSend) initialSendRef.current = null;
+        selectedSkillNamesRef.current = [];
       });
+    if (!sent) return;
+    clearPrompt();
     // prepareThreadSession 已将首条消息携带的显式目录写入线程元数据;
     // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
     await invalidateThreads(userId);
-    selectedSkillNamesRef.current = [];
     // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
     if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
   };
@@ -1516,10 +1443,7 @@ export function ChatPanel() {
 
   // 「立即转向」:打断当前回合,把指定排队请求直接发出(失败放回队首)。
   //
-  // 服务端 session.steer() 会 abort 当前 run 并 clearFollowUps(),因此已被
-  // 服务端会话接受的 native follow-up 全部作废 —— 前端必须同步
-  // 清掉它们(带 queuedOnServer 的项),否则界面上会留下永远不会被执行的幽灵项。
-  // 纯本地排队项不受影响,继续按顺序等下一回合。
+  // 仅操作尚未提交的本地请求；已接受的 follow-up 数量由原生 Session 展示。
   const steerQueuedRequestNow = React.useCallback(
     (request: QueuedRequest) => {
       const targetThreadId = activeThreadIdRef.current;
@@ -1530,12 +1454,9 @@ export function ChatPanel() {
       }
       sendingQueuedRequest.current = true;
       setQueueCanDispatch(false);
-      setQueuedRequests((current) =>
-        current.filter((item) => item.id !== request.id && !item.queuedOnServer),
-      );
+      setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
       void (async () => {
-        await getThreadChat(targetThreadId).stop();
-        await getThreadChat(targetThreadId).sendMessage(
+        await getThreadSession(targetThreadId).send(
           {
             text: request.text,
             metadata: {
@@ -1561,10 +1482,14 @@ export function ChatPanel() {
           setQueueDispatchVersion((version) => version + 1);
         });
     },
-    [agentSelection.id, getThreadChat, t],
+    [agentSelection.id, getThreadSession, t],
   );
 
   const sendingQueuedRequest = React.useRef(false);
+  const hasNativeInteraction =
+    Object.keys(native?.pendingApprovals ?? {}).length > 0 ||
+    Object.keys(native?.pendingSuspensions ?? {}).length > 0;
+  const queuedFollowUps = native?.queuedFollowUps ?? 0;
   // queueDispatchVersion 是故意的重触发器:一条排队请求发送完毕后
   // 立即重新评估队列,即使其余依赖未变化
   React.useEffect(() => {
@@ -1574,6 +1499,8 @@ export function ChatPanel() {
       !activeThreadId ||
       !queueCanDispatch ||
       interactions.length > 0 ||
+      hasNativeInteraction ||
+      queuedFollowUps > 0 ||
       workflowBlocksQueue ||
       queuedRequests.length === 0 ||
       sendingQueuedRequest.current
@@ -1585,32 +1512,17 @@ export function ChatPanel() {
     if (!nextRequest) return;
     sendingQueuedRequest.current = true;
     setQueueCanDispatch(false);
-    const request = nextRequest.queuedOnServer
-      ? getThreadChat(activeThreadId).resumeStream()
-      : (() => {
-          selectedSkillNamesRef.current = nextRequest.skills ?? [];
-          return getThreadChat(activeThreadId).sendMessage(
-            nextRequest.text
-              ? {
-                  text: nextRequest.text,
-                  files: nextRequest.files,
-                  metadata: {
-                    skillNames: nextRequest.skills ?? [],
-                    fileReferences: nextRequest.fileReferences ?? [],
-                  },
-                }
-              : {
-                  files: nextRequest.files,
-                  metadata: {
-                    skillNames: nextRequest.skills ?? [],
-                    fileReferences: nextRequest.fileReferences ?? [],
-                  },
-                },
-          );
-        })();
+    selectedSkillNamesRef.current = nextRequest.skills ?? [];
+    const request = getThreadSession(activeThreadId).send({
+      text: nextRequest.text,
+      files: nextRequest.files,
+      metadata: {
+        skillNames: nextRequest.skills ?? [],
+        fileReferences: nextRequest.fileReferences ?? [],
+      },
+    });
     void request
-      .then(async () => {
-        if (nextRequest.queuedOnServer) await reloadMessages();
+      .then(() => {
         setQueuedRequests((current) => current.filter((queued) => queued.id !== nextRequest.id));
       })
       .catch(() => {
@@ -1623,12 +1535,13 @@ export function ChatPanel() {
       });
   }, [
     activeThreadId,
-    getThreadChat,
+    getThreadSession,
+    hasNativeInteraction,
     interactions.length,
     queueCanDispatch,
     queueDispatchVersion,
     queuedRequests,
-    reloadMessages,
+    queuedFollowUps,
     status,
     workflow,
   ]);
@@ -1640,15 +1553,15 @@ export function ChatPanel() {
       [
         visibleTasks.map((task) => `${task.id}:${task.status}`).join(","),
         activeTools.map((tool) => `${tool.toolCallId}:${tool.status}`).join(","),
-        queuedRequests.filter((request) => request.queuedOnServer).length,
+        queuedFollowUps,
       ].join("|"),
-    [activeTools, queuedRequests, visibleTasks],
+    [activeTools, queuedFollowUps, visibleTasks],
   );
   const showAgentQueue =
     !dismissedQueueSignature || dismissedQueueSignature !== queueContentSignature;
   const hasQueueCard =
     queuedRequests.length > 0 ||
-    (showAgentQueue && (visibleTasks.length > 0 || activeTools.length > 0));
+    (showAgentQueue && (visibleTasks.length > 0 || activeTools.length > 0 || queuedFollowUps > 0));
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1690,7 +1603,7 @@ export function ChatPanel() {
             <AgentQueuePanel
               activeTools={activeTools}
               onClose={() => setDismissedQueueSignature(queueContentSignature)}
-              queuedFollowUps={queuedRequests.filter((request) => request.queuedOnServer).length}
+              queuedFollowUps={queuedFollowUps}
               tasks={showAgentQueue ? visibleTasks : []}
             />
           </Queue>

@@ -1,11 +1,6 @@
 import { apiFetch } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 
-interface EditorModelSelection {
-  providerId: string;
-  modelId: string;
-}
-
 export interface InlineCompletionRequest {
   threadId: string;
   resourceId: string;
@@ -14,7 +9,6 @@ export interface InlineCompletionRequest {
   prefix: string;
   beforeContext: string;
   afterContext: string;
-  modelSelection?: EditorModelSelection;
   signal?: AbortSignal;
 }
 
@@ -41,7 +35,6 @@ export interface InlineEditRequest {
   beforeContext: string;
   afterContext: string;
   instruction: string;
-  modelSelection?: EditorModelSelection;
   signal?: AbortSignal;
 }
 

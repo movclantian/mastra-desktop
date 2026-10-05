@@ -389,9 +389,7 @@ export function TerminalSession({
           <ContextMenuItem onClick={handleClear}>
             <EraserIcon className="text-muted-foreground" />
             <span>{t("workspace:clear")}</span>
-            <ContextMenuShortcut>
-              {formatShortcutDisplay(["Mod", "K"], isMac)}
-            </ContextMenuShortcut>
+            <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "K"], isMac)}</ContextMenuShortcut>
           </ContextMenuItem>
           <ContextMenuItem onClick={handleRestart} disabled={status === "connecting"}>
             <RefreshCwIcon className="text-muted-foreground" />

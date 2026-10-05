@@ -7,8 +7,8 @@ import { atomicWrite, getStorageDirectory } from "../storage";
 import {
   type ContentObjectMetadata,
   contentObjectReference,
+  createContentObjectWriter,
   deleteContentObject,
-  getContentObjectMetadata,
   putContentObject,
   readContentObject,
 } from "../storage/content-objects";
@@ -41,13 +41,14 @@ interface OutputWriter {
 }
 
 interface PendingOutput {
-  userId: string;
-  threadId: string;
+  sink: Awaited<ReturnType<typeof createContentObjectWriter>>;
   command: string;
-  pid?: string;
-  stdout: string;
-  stderr: string;
-  emit?: (chunk: unknown) => Promise<unknown> | unknown;
+  background: boolean;
+  exitCode: number | null;
+  stdout: { lines: number; bytes: number };
+  stderr: { lines: number; bytes: number };
+  emit?: OutputWriter["custom"];
+  restore?: () => void;
 }
 
 function outputContextRecord(value: unknown): Record<string, unknown> | null {
@@ -84,197 +85,116 @@ function outputThreadId(context: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function outputStats(value: string) {
-  return {
-    lines: value ? value.split(/\r?\n/).length : 0,
-    bytes: Buffer.byteLength(value, "utf8"),
-  };
-}
-
-function outputText(stdout: string, stderr: string, exitCode: number | null): string {
-  return [
-    stdout ? `stdout:\n${stdout}` : "",
-    stderr ? `stderr:\n${stderr}` : "",
-    exitCode === null ? "Process still running" : `Exit code: ${exitCode}`,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-/**
- * Enhances the official Workspace command tools without replacing them.
- * Foreground output is observed through the official writer events; background
- * output is observed through execute_command's backgroundProcesses callbacks.
- */
+/** Native process callbacks own lifecycle; only file sinks are retained for archiving. */
 export function createWorkspaceOutputArchiveHooks(): {
   hooks: WorkspaceToolHooks;
   backgroundProcesses: BackgroundProcessConfig;
 } {
-  // Foreground and background commands have different lifecycle callbacks;
-  // maps bridge their start/output/exit events without putting state on Workspace.
   const pending = new Map<string, PendingOutput>();
-  const pendingBackground = new Map<string, PendingOutput>();
-  const backgroundByPid = new Map<string, PendingOutput>();
-  const pendingContexts = new WeakMap<object, string>();
-
-  const archive = async (
-    record: PendingOutput,
-    stdout: string,
-    stderr: string,
-    exitCode: number | null,
-  ) => {
-    const metadata = await putContentObject(outputText(stdout, stderr, exitCode), {
-      userId: record.userId,
-      threadId: record.threadId,
-      kind: "log",
-      contentType: "text/plain; charset=utf-8",
-      encoding: "utf8",
-      source: record.command,
+  const append = (record: PendingOutput, channel: "stdout" | "stderr", text: string) => {
+    if (!text) return;
+    const stats = record[channel];
+    if (!stats.bytes) stats.lines++;
+    for (const char of text) if (char === "\n") stats.lines++;
+    stats.bytes += Buffer.byteLength(text, "utf8");
+    record.sink.append(`[${channel}] ${text}`);
+  };
+  const finish = async (callId: string, exitCode: number | null, error?: unknown) => {
+    const record = pending.get(callId);
+    if (!record) return;
+    pending.delete(callId);
+    record.restore?.();
+    if (error) append(record, "stderr", String(error));
+    record.sink.append(`\nExit code: ${exitCode ?? "unknown"}\n`);
+    const metadata = await record.sink.finish();
+    await record.emit?.({
+      type: "data-workspace-log",
+      id: metadata.objectId,
+      data: {
+        ...contentObjectReference(metadata),
+        characterCount: metadata.characterCount ?? 0,
+        lineCount: metadata.lineCount ?? 0,
+        exitCode,
+        stdout: record.stdout,
+        stderr: record.stderr,
+        source: record.command,
+      },
     });
-    const payload = {
-      objectId: metadata.objectId,
-      sha256: metadata.sha256,
-      byteSize: metadata.byteSize,
-      contentType: metadata.contentType,
-      encoding: metadata.encoding,
-      chunkSize: metadata.chunkSize,
-      chunkCount: metadata.chunkCount,
-      storagePath: metadata.storagePath,
-      workspacePath: contentObjectReference(metadata).workspacePath,
-      characterCount: metadata.characterCount ?? 0,
-      lineCount: metadata.lineCount ?? 0,
-      exitCode,
-      stdout: outputStats(stdout),
-      stderr: outputStats(stderr),
-      source: record.command,
-    };
-    await record.emit?.({ type: "data-workspace-log", id: metadata.objectId, data: payload });
   };
-
-  const captureWriter = (context: unknown, record: PendingOutput) => {
-    const contextRecord = outputContextRecord(context);
-    const original = outputWriter(context);
-    if (!contextRecord || !original?.custom) return;
-    const originalCustom = original.custom.bind(original);
-    const proxy = Object.create(original) as OutputWriter;
-    proxy.custom = async (chunk: unknown) => {
-      const item = outputContextRecord(chunk);
-      const data = outputContextRecord(item?.data);
-      const output = data?.output;
-      if (typeof output === "string") {
-        if (item?.type === "data-sandbox-stdout") record.stdout += output;
-        if (item?.type === "data-sandbox-stderr") record.stderr += output;
-      }
-      return originalCustom(chunk);
-    };
-    contextRecord.writer = proxy;
-    record.emit = proxy.custom;
-  };
-
   return {
     hooks: {
       beforeToolCall: async ({ workspaceToolName, input, context }) => {
-        if (
-          workspaceToolName !== "mastra_workspace_execute_command" &&
-          workspaceToolName !== "mastra_workspace_get_process_output"
-        )
-          return;
+        if (workspaceToolName !== "mastra_workspace_execute_command") return;
         const userId =
           outputRequestValue(context, WORKSPACE_RESOURCE_ID_CONTEXT_KEY) ??
           outputRequestValue(context, MASTRA_RESOURCE_ID_KEY);
         const threadId = outputThreadId(context);
-        if (!userId || !threadId) return;
-        const callId = outputCallId(context) ?? `${threadId}:${Date.now()}:${Math.random()}`;
+        const callId = outputCallId(context);
+        if (!userId || !threadId || !callId) return;
+        const command = outputInputCommand(input);
         const record: PendingOutput = {
-          userId,
-          threadId,
-          command:
-            workspaceToolName === "mastra_workspace_execute_command"
-              ? outputInputCommand(input)
-              : `get_process_output:${String(outputContextRecord(input)?.pid ?? "unknown")}`,
-          stdout: "",
-          stderr: "",
+          sink: await createContentObjectWriter({
+            userId,
+            threadId,
+            kind: "log",
+            contentType: "text/plain; charset=utf-8",
+            source: command,
+          }),
+          command,
+          background: outputContextRecord(input)?.background === true,
+          exitCode: null,
+          stdout: { lines: 0, bytes: 0 },
+          stderr: { lines: 0, bytes: 0 },
         };
-        captureWriter(context, record);
-        const contextRecord = outputContextRecord(context);
-        if (contextRecord) pendingContexts.set(contextRecord, callId);
-        if (
-          workspaceToolName === "mastra_workspace_execute_command" &&
-          outputContextRecord(input)?.background
-        ) {
-          pendingBackground.set(callId, record);
-        } else {
-          pending.set(callId, record);
+        const original = outputWriter(context);
+        record.emit = original?.custom?.bind(original);
+        const ctx = outputContextRecord(context);
+        // Foreground commands emit structured stdout/stderr/exit events through the official writer.
+        if (!record.background && ctx) {
+          const proxy = Object.create(original ?? null) as OutputWriter;
+          proxy.custom = async (chunk) => {
+            const item = outputContextRecord(chunk);
+            const data = outputContextRecord(item?.data);
+            if (item?.type === "data-sandbox-exit" && typeof data?.exitCode === "number")
+              record.exitCode = data.exitCode;
+            if (typeof data?.output === "string") {
+              if (item?.type === "data-sandbox-stdout") append(record, "stdout", data.output);
+              if (item?.type === "data-sandbox-stderr") append(record, "stderr", data.output);
+            }
+            return record.emit?.(chunk);
+          };
+          ctx.writer = proxy;
+          record.restore = () => {
+            if (ctx.writer === proxy) ctx.writer = original;
+          };
         }
+        pending.set(callId, record);
       },
-      afterToolCall: async ({ workspaceToolName, context, input, output, error }) => {
-        if (
-          workspaceToolName !== "mastra_workspace_execute_command" &&
-          workspaceToolName !== "mastra_workspace_get_process_output"
-        )
-          return;
-        const contextRecord = outputContextRecord(context);
-        const callId =
-          outputCallId(context) ?? (contextRecord ? pendingContexts.get(contextRecord) : undefined);
-        if (!callId) return;
-        const record = pending.get(callId);
-        if (!record) return;
-        pending.delete(callId);
-        if (contextRecord) pendingContexts.delete(contextRecord);
-        const resultText = typeof output === "string" ? output : "";
-        const exitMatch = resultText.match(/Exit code:\s*(-?\d+)/i);
-        const exitCode = exitMatch ? Number(exitMatch[1]) : error ? -1 : 0;
-        let stdout = record.stdout;
-        let stderr = record.stderr;
-        if (workspaceToolName === "mastra_workspace_get_process_output") {
-          const pid = outputContextRecord(input)?.pid;
-          const background = typeof pid === "string" ? backgroundByPid.get(pid) : undefined;
-          if (
-            background &&
-            background.userId === record.userId &&
-            background.threadId === record.threadId
-          ) {
-            stdout = background.stdout || stdout;
-            stderr = background.stderr || stderr;
-            record.command = background.command;
-          }
-        } else if (!stdout && !error && resultText && resultText !== "(no output)") {
-          stdout = resultText;
+      afterToolCall: async ({ workspaceToolName, context, error }) => {
+        if (workspaceToolName !== "mastra_workspace_execute_command") return;
+        const callId = outputCallId(context);
+        const record = callId ? pending.get(callId) : undefined;
+        if (callId && record && (!record.background || error)) {
+          await finish(callId, record.exitCode, error).catch((archiveError) =>
+            console.error("[workspace-log] archive failed", archiveError),
+          );
         }
-        await archive(record, stdout, stderr || (error ? String(error) : ""), exitCode).catch(
-          () => undefined,
-        );
       },
     },
     backgroundProcesses: {
       onStdout: (data, meta) => {
-        const record = pendingBackground.get(meta.toolCallId ?? "");
-        if (record) {
-          record.pid = meta.pid;
-          backgroundByPid.set(meta.pid, record);
-          record.stdout += data;
-        }
+        const record = pending.get(meta.toolCallId ?? "");
+        if (record) append(record, "stdout", data);
       },
       onStderr: (data, meta) => {
-        const record = pendingBackground.get(meta.toolCallId ?? "");
-        if (record) {
-          record.pid = meta.pid;
-          backgroundByPid.set(meta.pid, record);
-          record.stderr += data;
-        }
+        const record = pending.get(meta.toolCallId ?? "");
+        if (record) append(record, "stderr", data);
       },
-      onExit: (meta) => {
-        const record = pendingBackground.get(meta.toolCallId ?? "");
-        if (!record) return;
-        pendingBackground.delete(meta.toolCallId ?? "");
-        record.pid = meta.pid;
-        backgroundByPid.delete(meta.pid);
-        void archive(
-          record,
-          record.stdout || meta.stdout,
-          record.stderr || meta.stderr,
-          meta.exitCode,
-        ).catch(() => undefined);
+      onExit: async (meta) => {
+        if (meta.toolCallId)
+          await finish(meta.toolCallId, meta.exitCode).catch((error) =>
+            console.error("[workspace-log] archive failed", error),
+          );
       },
     },
   };
@@ -293,8 +213,6 @@ export interface WorkspaceChangeSnapshot {
   byteSize: number;
   contentType: string;
   encoding: ContentObjectMetadata["encoding"];
-  chunkSize: number;
-  chunkCount: number;
 }
 
 export interface WorkspaceFileChange {
@@ -370,9 +288,7 @@ function isSnapshot(value: unknown): value is WorkspaceChangeSnapshot {
     typeof item.sha256 === "string" &&
     Number.isSafeInteger(item.byteSize) &&
     typeof item.contentType === "string" &&
-    typeof item.encoding === "string" &&
-    Number.isSafeInteger(item.chunkSize) &&
-    Number.isSafeInteger(item.chunkCount)
+    typeof item.encoding === "string"
   );
 }
 
@@ -437,7 +353,7 @@ export async function readWorkspaceChangeContent(input: {
   changeId: string;
   side: "before" | "after";
   userId?: string;
-}): Promise<{ metadata: ContentObjectMetadata; content: string; binary: boolean } | null> {
+}): Promise<{ metadata: WorkspaceChangeSnapshot; content: string; binary: boolean } | null> {
   const owner = currentUserId(input.userId);
   const change = (await readChanges(input.threadId, owner)).find(
     (item) => item.id === input.changeId,
@@ -446,31 +362,18 @@ export async function readWorkspaceChangeContent(input: {
   const snapshot = change[input.side];
   if (!snapshot) return null;
   const kind = input.side === "before" ? "change-before" : "change-after";
-  const metadata = await getContentObjectMetadata(snapshot.objectId, {
+  const content = await readContentObject(snapshot.objectId, {
     userId: owner,
     threadId: input.threadId,
     kind,
   });
-  if (!metadata) return null;
-  const result = await readContentObject(snapshot.objectId, {
-    userId: owner,
-    threadId: input.threadId,
-    kind,
-  });
-  if (!result) return null;
-  const snapshotMetadata = {
-    ...metadata,
-    contentType: snapshot.contentType,
-    encoding: snapshot.encoding,
-    chunkSize: snapshot.chunkSize,
-    chunkCount: snapshot.chunkCount,
-  } satisfies ContentObjectMetadata;
+  if (!content) return null;
   if (snapshot.encoding === "binary") {
-    return { metadata: snapshotMetadata, content: "", binary: true };
+    return { metadata: snapshot, content: "", binary: true };
   }
   return {
-    metadata: snapshotMetadata,
-    content: result.content.toString(snapshot.encoding),
+    metadata: snapshot,
+    content: content.toString(snapshot.encoding),
     binary: false,
   };
 }

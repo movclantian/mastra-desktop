@@ -3,16 +3,24 @@
  *
  * 观察记忆的 observe/reflect 循环与 deleteThread/deleteMessages 的向量清理
  * 都在 Agent 运行返回后于后台继续写库(docs/en/docs/memory/observational-memory.mdx),
- * 退出前必须 await memory.settled() 等落盘完成,否则强杀会截断这些写入。
+ * 停止新请求和生产者,中止并等待在途运行,再 await memory.settled()、关闭资源。
  * memory.settled() 为 @mastra/memory 的官方落盘屏障。触发通路:
  * 1. HTTP POST /work/shutdown(主通路):dev 态服务进程是 mastra CLI 的孙进程,
  *    Electron 主进程挂在 CLI 上的 IPC/信号根本到不了这里,HTTP 是唯一能穿透
  *    包装链的方式,dev / 打包态、所有平台统一走这条路(主进程的 stopMastra)。
  * 2. IPC message + SIGTERM/SIGINT 兜底:注册在 src/mastra/index.ts。
  */
-import { registerApiRoute } from "@mastra/core/server";
+import { setTimeout as delay } from "node:timers/promises";
+import type { Session } from "@mastra/core/agent-controller";
+import type { Mastra } from "@mastra/core/mastra";
+import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { closeAllBrowsers } from "../agents/browser";
-import { settleAllMemory } from "../memory";
+import { isDesktopControlRequest } from "../auth";
+import { workPollingSignals, workWebhookSignals } from "../harness/signals";
+import { closeMemoryVector, settleAllMemory } from "../memory";
+import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
+import { closeWebSearchClients } from "../tools/web-search";
+import { stopWorkspaceCleanup } from "../workspace";
 
 /** 落盘上限:超时即退出,不能让退出流程挂住(主进程那边还有强杀兜底) */
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
@@ -20,46 +28,129 @@ const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
 const HTTP_EXIT_DELAY_MS = 200;
 
 let shuttingDown = false;
+let runtimeMastra: Mastra | undefined;
+let shutdownPromise: Promise<boolean> | undefined;
+const pendingRequests = new Set<Promise<void>>();
+const sessions = new Set<Session>();
+
+/** Track accepted HTTP work, excluding the control request that waits for its completion. */
+export async function shutdownRequestMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
+  if (c.req.path === "/work/shutdown") return next();
+  if (shuttingDown) return c.json({ error: "Service is shutting down" }, 503);
+  const pending = next();
+  pendingRequests.add(pending);
+  try {
+    await pending;
+  } finally {
+    pendingRequests.delete(pending);
+  }
+}
+
+async function drainRuns(mastra: Mastra, signal: AbortSignal): Promise<void> {
+  for (;;) {
+    signal.throwIfAborted();
+    let active = pendingRequests.size > 0;
+    for (const session of sessions) {
+      if (!session.run.isRunning() && !session.stream.isActive() && session.run.getRunId() === null)
+        continue;
+      active = true;
+      session.abort();
+    }
+    for (const agent of Object.values(mastra.listAgents())) {
+      for (const run of agent.listActiveThreadRuns()) {
+        active = true;
+        agent.abortThreadStream({ ...run, clearPendingSignals: true });
+      }
+    }
+    if (!active) return;
+    await delay(20, undefined, { signal });
+  }
+}
+
+async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void> {
+  workPollingSignals.stop();
+  workWebhookSignals.stop();
+  libraryIndexSignals.stop();
+  await Promise.all([
+    stopWorkspaceCleanup(),
+    mastra.stopWorkers({ drainTimeout: SHUTDOWN_FLUSH_TIMEOUT_MS }),
+    mastra.backgroundTaskManager?.shutdown({ deadline: Date.now() + SHUTDOWN_FLUSH_TIMEOUT_MS }),
+    ...Object.values(mastra.listAgentControllers()).map((controller) => controller.stopIntervals()),
+    workPollingSignals.settled(),
+    drainRuns(mastra, signal),
+  ]);
+  await libraryIndexSignals.settled();
+  // Worker/request preparation and pending notifications may have started a final run.
+  await drainRuns(mastra, signal);
+  await settleAllMemory();
+  signal.throwIfAborted();
+  await Promise.all([
+    closeMemoryVector(),
+    closeLibraryVector(),
+    closeAllBrowsers(),
+    closeWebSearchClients(),
+  ]);
+  signal.throwIfAborted();
+  await mastra.shutdown({ drainTimeout: 0 });
+}
 
 /**
  * 请求优雅退出:等后台写库落盘(带上限)后退出进程。
  * @param httpExitDelayMs 置 >0 时先延迟再 exit,供 HTTP 路由把响应写出去
  */
-export async function requestShutdown(httpExitDelayMs = 0): Promise<void> {
-  if (shuttingDown) return;
+export function requestShutdown(httpExitDelayMs = 0): Promise<boolean> {
+  if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
-  try {
-    await Promise.race([
-      Promise.allSettled([settleAllMemory(), closeAllBrowsers()]),
-      new Promise((resolve) => setTimeout(resolve, SHUTDOWN_FLUSH_TIMEOUT_MS)),
-    ]);
-  } catch {
-    // 落盘失败不应阻塞退出
-  }
-  setTimeout(() => process.exit(0), httpExitDelayMs).unref?.();
+  shutdownPromise = (async () => {
+    let complete = false;
+    const timeout = AbortSignal.timeout(SHUTDOWN_FLUSH_TIMEOUT_MS);
+    try {
+      if (!runtimeMastra) throw new Error("Mastra shutdown lifecycle is not registered");
+      await Promise.race([
+        drainAndClose(runtimeMastra, timeout),
+        new Promise<never>((_, reject) =>
+          timeout.addEventListener("abort", () => reject(timeout.reason), { once: true }),
+        ),
+      ]);
+      complete = true;
+    } catch (error) {
+      // A timeout exits without closing connections underneath work still in flight.
+      runtimeMastra?.getLogger().error("Graceful shutdown did not complete", { error });
+    }
+    setTimeout(() => process.exit(complete ? 0 : 1), httpExitDelayMs).unref();
+    return complete;
+  })();
+  return shutdownPromise;
 }
 
 /**
  * 安全:令牌由 Electron 主进程启动时随机生成、经环境变量注入子进程链
- * (MASTRA_SHUTDOWN_TOKEN),请求头不匹配一律 404。没有令牌(比如用户在
+ * (MASTRA_DESKTOP_CONTROL_TOKEN),请求头不匹配一律 404。没有令牌(比如用户在
  * 终端手动跑 mastra dev)时路由禁用,本地任意进程/浏览器页面都无法杀掉后端。
  */
 export const shutdownRoute = registerApiRoute("/work/shutdown", {
   method: "POST",
   handler: async (c) => {
-    const token = process.env.MASTRA_SHUTDOWN_TOKEN;
-    if (!token || c.req.header("x-shutdown-token") !== token) {
+    if (!isDesktopControlRequest(c.req.raw)) {
       // 令牌不匹配的伪装 404:刻意保持最简形状,不给探测方任何额外信息
       return c.json({ error: "not found" }, 404);
     }
-    // 先等 memory.settled() 落盘,响应写出后再延迟退出
-    await requestShutdown(HTTP_EXIT_DELAY_MS);
-    return c.json({ ok: true });
+    const complete = await requestShutdown(HTTP_EXIT_DELAY_MS);
+    return c.json({ ok: complete }, complete ? 200 : 503);
   },
 });
 
 /** Bind desktop process shutdown signals once at the composition root. */
-export function registerShutdownHandlers(): void {
+export function registerShutdownHandlers(mastra: Mastra): void {
+  runtimeMastra = mastra;
+  for (const controller of Object.values(mastra.listAgentControllers())) {
+    controller.onSessionCreated((session) => {
+      sessions.add(session);
+    });
+    controller.onSessionDeleted((session) => {
+      sessions.delete(session);
+    });
+  }
   process.on("message", (message: unknown) => {
     if (
       typeof message === "object" &&

@@ -1,9 +1,11 @@
 /**
  * 网络代理运行时路由(/work/proxy/*):查询当前生效代理、动态切换全局 Dispatcher、出站连通性测试。
  */
-import { registerApiRoute } from "@mastra/core/server";
-import { Agent, EnvHttpProxyAgent, ProxyAgent, setGlobalDispatcher } from "undici";
-import { errorText } from "../errors";
+import { createRoute } from "@mastra/server/server-adapter";
+import { Agent, EnvHttpProxyAgent, fetch, ProxyAgent, setGlobalDispatcher } from "undici";
+import { z } from "zod";
+import { TestProxyRequestSchema } from "../../shared/proxy-contract";
+import { errorText, workValidationError } from "../errors";
 
 let currentProxyUrl: string | undefined =
   process.env.HTTPS_PROXY ??
@@ -11,68 +13,71 @@ let currentProxyUrl: string | undefined =
   process.env.HTTP_PROXY ??
   process.env.http_proxy;
 
-export const proxyGetRoute = registerApiRoute("/work/proxy", {
+export const proxyGetRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/proxy",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    return c.json({
+  handler: async () => {
+    return {
       active: Boolean(currentProxyUrl),
       proxyUrl: currentProxyUrl ?? null,
-    });
+    };
   },
 });
 
-export const proxySetRoute = registerApiRoute("/work/proxy", {
+export const proxySetRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/proxy",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    const body = (await c.req.json()) as { mode?: "system" | "direct" | "manual"; url?: string };
-    const mode = body.mode ?? "system";
-    const url = body.url?.trim();
-
-    if (mode === "direct" || (!url && mode === "manual")) {
-      currentProxyUrl = undefined;
-      for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) {
-        delete process.env[key];
-      }
-      setGlobalDispatcher(new Agent());
-    } else if (url) {
-      currentProxyUrl = url;
-      process.env.HTTPS_PROXY = url;
-      process.env.HTTP_PROXY = url;
-      process.env.https_proxy = url;
-      process.env.http_proxy = url;
-      setGlobalDispatcher(new EnvHttpProxyAgent());
-    } else {
-      // system: EnvHttpProxyAgent 会自动根据环境中的系统代理配置分发
-      setGlobalDispatcher(new EnvHttpProxyAgent());
+  bodySchema: TestProxyRequestSchema,
+  handler: async (params) => {
+    // Electron resolves system/manual/direct mode to this effective proxy URL.
+    const { url } = params;
+    for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) {
+      if (url) process.env[key] = url;
+      else delete process.env[key];
     }
-    return c.json({
+    setGlobalDispatcher(url ? new EnvHttpProxyAgent() : new Agent());
+    currentProxyUrl = url;
+    return {
       ok: true,
       active: Boolean(currentProxyUrl),
       proxyUrl: currentProxyUrl ?? null,
-    });
+    };
   },
 });
 
-export const proxyTestRoute = registerApiRoute("/work/proxy/test", {
+export const proxyTestRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/proxy/test",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
-    const body = (await c.req.json()) as { url?: string };
-    const proxyUrl = body.url?.trim();
+  bodySchema: TestProxyRequestSchema,
+  handler: async (params) => {
+    const proxyUrl = params.url;
     const testUrl = "https://models.dev/api.json";
     const start = Date.now();
+    const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new EnvHttpProxyAgent();
     try {
-      const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new EnvHttpProxyAgent();
       const resp = await fetch(testUrl, {
         dispatcher,
         signal: AbortSignal.timeout(8_000),
-      } as RequestInit);
+      });
+      await resp.body?.cancel();
       const latencyMs = Date.now() - start;
       if (resp.ok || resp.status < 500) {
-        return c.json({ ok: true, latencyMs });
+        return { ok: true, latencyMs };
       }
-      return c.json({ ok: false, error: `HTTP ${resp.status} ${resp.statusText}` }, 400);
+      return { ok: false, error: `HTTP ${resp.status} ${resp.statusText}` };
     } catch (error) {
-      return c.json({ ok: false, error: errorText(error, "代理连通性测试失败") }, 400);
+      return { ok: false, error: errorText(error, "代理连通性测试失败") };
+    } finally {
+      await dispatcher.close();
     }
   },
 });

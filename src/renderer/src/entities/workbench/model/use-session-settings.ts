@@ -26,7 +26,13 @@ import {
   parsePermissionRules,
   type WorkModeId,
 } from "./session";
-import type { AgentProfile, ModelSelection, SearchSelection, WorkThread } from "./types";
+import type {
+  AgentProfile,
+  ModelSelection,
+  SearchSelection,
+  ThreadMetadata,
+  WorkThread,
+} from "./types";
 import { useWorkbenchStore } from "./workbench-store";
 
 function patchThreadInCache(
@@ -40,24 +46,29 @@ function patchThreadInCache(
   );
 }
 
-function snapshotToSelection(snapshot: {
-  providerId: string;
-  modelId: string;
-  modelName: string;
-  reasoningEffort: string;
-}): ModelSelection {
+function threadModelSelection(
+  metadata: ThreadMetadata,
+  modeId: WorkModeId,
+  providers: ProviderConfig[],
+): ModelSelection | null {
+  const id = metadata[`modeModelId_${modeId}`];
+  if (typeof id !== "string") return null;
+  const provider = providers.find((item) => id.startsWith(`${item.id}/`));
+  if (!provider || provider.disabled) return null;
+  const modelId = id.slice(`${provider.id}/`.length);
+  const model = provider.enabledModels.find((item) => item.id === modelId);
+  if (!model) return null;
   return {
-    providerId: snapshot.providerId,
-    modelId: snapshot.modelId,
-    modelName: snapshot.modelName,
-    reasoningEffort: snapshot.reasoningEffort as ReasoningEffort | "off",
+    providerId: provider.id,
+    modelId,
+    modelName: model.name,
+    reasoningEffort: (metadata.reasoningEffortByMode?.[modeId] ?? "off") as ReasoningEffort | "off",
   };
 }
-
 export interface SessionSettings {
   providers: ProviderConfig[];
   modelSelection: ModelSelection | null;
-  setModelSelection: (selection: ModelSelection | null) => void;
+  setModelSelection: (selection: ModelSelection) => void;
   agents: AgentProfile[];
   agentSelection: AgentProfile;
   setAgentSelection: (profile: AgentProfile) => Promise<void>;
@@ -102,21 +113,25 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
     );
   }, [agents, setAgentSelectionDraft]);
 
+  const activeThreadRef = useRef(activeThreadId);
+  activeThreadRef.current = activeThreadId;
+
   const setModelSelection = useCallback(
-    (selection: ModelSelection | null) => {
-      setModelSelectionDraft(selection);
-      void saveProviderConfig({ modelSelection: selection }).catch(() => undefined);
-      if (!activeThreadId) return;
-      patchThreadInCache(queryClient, userId, activeThreadId, (thread) => {
-        const modelSelectionByMode = { ...thread.metadata.modelSelectionByMode };
-        const currentMode = useWorkbenchStore.getState().modeId;
-        if (selection) modelSelectionByMode[currentMode] = selection;
-        else delete modelSelectionByMode[currentMode];
-        return { ...thread, metadata: { ...thread.metadata, modelSelectionByMode } };
-      });
-      void updateThreadModel(activeThreadId, userId, modeId, selection).catch(() => {
-        void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
-      });
+    (selection: ModelSelection) => {
+      if (!activeThreadId) {
+        setModelSelectionDraft(selection);
+        void saveProviderConfig({ modelSelection: selection }).catch(() => undefined);
+        return;
+      }
+      void updateThreadModel(activeThreadId, userId, modeId, selection)
+        .then((thread) => {
+          patchThreadInCache(queryClient, userId, activeThreadId, () => thread);
+          if (activeThreadRef.current === activeThreadId) setModelSelectionDraft(selection);
+          void saveProviderConfig({ modelSelection: selection }).catch(() => undefined);
+        })
+        .catch(() => {
+          void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
+        });
     },
     [activeThreadId, modeId, queryClient, setModelSelectionDraft, userId],
   );
@@ -137,17 +152,18 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
 
   const setModeId = useCallback(
     async (next: WorkModeId) => {
-      setModeIdDraft(next);
-      if (!activeThreadId) return;
-      // 切模式时优先恢复该模式在当前线程的模型快照
-      const thread = threads.find((item) => item.id === activeThreadId);
-      const snapshot = thread?.metadata.modelSelectionByMode?.[next];
-      if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
-        setModelSelectionDraft(snapshotToSelection(snapshot));
+      if (!activeThreadId) {
+        setModeIdDraft(next);
+        return;
       }
-      await updateThreadMode(activeThreadId, userId, next);
+      const thread = await updateThreadMode(activeThreadId, userId, next);
+      patchThreadInCache(queryClient, userId, activeThreadId, () => thread);
+      if (activeThreadRef.current === activeThreadId) {
+        setModeIdDraft(next);
+        setModelSelectionDraft(threadModelSelection(thread.metadata, next, providers));
+      }
     },
-    [activeThreadId, providers, setModeIdDraft, setModelSelectionDraft, threads, userId],
+    [activeThreadId, providers, queryClient, setModeIdDraft, setModelSelectionDraft, userId],
   );
 
   const setPermissionRules = useCallback(
@@ -179,17 +195,24 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
     await queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
   }, [queryClient, userId]);
 
-  // 从当前线程 metadata 采纳会话设置(每次线程切换仅一次;refreshThreadSettings 重置)
+  // Re-adopt native model changes, including transitions initiated by the Session.
   useEffect(() => {
     if (!activeThreadId) {
       adoptedThreadRef.current = null;
       return;
     }
-    if (adoptedThreadRef.current === activeThreadId) return;
     const thread = threads.find((item) => item.id === activeThreadId);
     if (!thread || agents.length === 0 || providers.length === 0) return;
-    adoptedThreadRef.current = activeThreadId;
     const metadata = thread.metadata;
+    const currentModeId = parseModeId(metadata.currentModeId);
+    const selectionKey = JSON.stringify([
+      activeThreadId,
+      currentModeId,
+      metadata[`modeModelId_${currentModeId}`],
+      metadata.reasoningEffortByMode?.[currentModeId],
+    ]);
+    if (adoptedThreadRef.current === selectionKey) return;
+    adoptedThreadRef.current = selectionKey;
     if (metadata.currentModeId !== undefined) setModeIdDraft(parseModeId(metadata.currentModeId));
     if (metadata.permissionRules !== undefined) {
       setPermissionRulesDraft(parsePermissionRules(metadata.permissionRules));
@@ -198,10 +221,9 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
       const profile = agents.find((item) => item.id === metadata.agentProfileId);
       if (profile) setAgentSelectionDraft(profile);
     }
-    const snapshot = metadata.modelSelectionByMode?.[parseModeId(metadata.currentModeId)];
-    if (snapshot && providers.some((provider) => provider.id === snapshot.providerId)) {
-      setModelSelectionDraft(snapshotToSelection(snapshot));
-    }
+    setModelSelectionDraft(
+      threadModelSelection(metadata, parseModeId(metadata.currentModeId), providers),
+    );
   }, [
     activeThreadId,
     agents,

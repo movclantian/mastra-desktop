@@ -1,7 +1,6 @@
 import { ChevronDownIcon, CircleHelpIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
-import type { ProviderConfig } from "@/entities/workbench";
 import { cn } from "@/shared/lib";
 import {
   AlertDialog,
@@ -238,17 +237,6 @@ export function DependencyGroup({
 // ---------------------------------------------------------------------------
 
 /** 当前对话所选模型的路由字符串(供"跟随当前模型"派生) */
-export function currentModelRouterString(
-  providers: ProviderConfig[],
-  modelSelection: { providerId: string; modelId: string } | null,
-): string {
-  if (!modelSelection) return "";
-  const provider = providers.find((p) => p.id === modelSelection.providerId);
-  if (!provider) return "";
-  return provider.registryId
-    ? `${provider.registryId}/${modelSelection.modelId}`
-    : `${provider.id}/${modelSelection.modelId}`;
-}
 
 /** scope 选择下拉(thread/resource) */
 export function ScopeSelect({

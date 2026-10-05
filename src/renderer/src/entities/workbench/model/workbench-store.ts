@@ -45,8 +45,8 @@ import {
   type PendingJump,
   type SearchSelection,
   type TerminalRequest,
-  type WorkThread,
   type WorkspacePanelMode,
+  type WorkThread,
 } from "./types";
 
 function isSamePanelTab(left: ActivePanelTab, right: ActivePanelTab): boolean {

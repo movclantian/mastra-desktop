@@ -218,12 +218,6 @@ function CodeEditor({
             position,
             Math.min(context.state.doc.length, position + 4_000),
           ),
-          modelSelection: modelSelectionRef.current
-            ? {
-                providerId: modelSelectionRef.current.providerId,
-                modelId: modelSelectionRef.current.modelId,
-              }
-            : undefined,
           signal: controller.signal,
         });
       } catch {
@@ -290,12 +284,6 @@ function CodeEditor({
             : "",
           instruction:
             requestedInstruction?.trim() || instruction.trim() || t("workspace:defaultInstruction"),
-          modelSelection: modelSelectionRef.current
-            ? {
-                providerId: modelSelectionRef.current.providerId,
-                modelId: modelSelectionRef.current.modelId,
-              }
-            : undefined,
           signal: controller.signal,
         });
         if (typeof payload?.text !== "string" || !payload.text.trim()) {

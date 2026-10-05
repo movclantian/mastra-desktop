@@ -13,6 +13,7 @@ export interface SkillMetadata {
   path: string;
   description: string;
   enabled?: boolean;
+  validationErrors?: string[];
   metadata?: Record<string, unknown>;
   origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
   marketplaceId?: string;

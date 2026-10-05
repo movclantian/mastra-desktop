@@ -2,12 +2,11 @@
  * MCP (Model Context Protocol) 连接模块。
  * 官方文档:docs/en/docs/connections/mcp.mdx(传输 / 工具审批 / 安全)、
  * docs/en/reference/tools/mcp-client.mdx(MCPClient API)。
- * 支持 HTTP (SSE) 与 Stdio (子进程) 双传输,配置存 app_config 表
+ * 支持 Streamable HTTP 与 Stdio (子进程) 双传输,配置存 app_config 表
  * (key = "mcp"),按配置哈希缓存 MCPClient,变更后重建并动态注入 Agent 工具集。
  */
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
-import type { StorageMCPServerConfig } from "@mastra/core/storage";
 import {
   getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
@@ -27,36 +26,61 @@ import {
   resolveCredential,
   storeCredential,
 } from "../credential-broker";
-import { appStorage, deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
+import { errorText, workError } from "../errors";
+import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage";
 
-type McpTransport = "http" | "stdio";
+export const mcpServerConfigSchema = z
+  .object({
+    id: z
+      .string()
+      .trim()
+      .regex(/^[a-zA-Z0-9_-]{1,64}$/),
+    name: z.string().trim().optional(),
+    enabled: z.boolean().default(true),
+    transport: z.enum(["http", "stdio"]),
+    url: z.url({ protocol: /^https?$/ }).optional(),
+    headerCredential: CredentialPointerSchema.optional(),
+    headerKeys: z.array(z.string()).optional(),
+    /** HTTP 传输重定向只允许落到这些主机。 */
+    allowedHosts: z.array(z.string().trim().min(1)).optional(),
+    command: z.string().trim().min(1).optional(),
+    args: z.array(z.string()).optional(),
+    envCredential: CredentialPointerSchema.optional(),
+    envKeys: z.array(z.string()).optional(),
+    inheritDefaultEnv: z.boolean().default(true),
+    /** 外部工具默认逐次审批。 */
+    requireToolApproval: z.boolean().default(true),
+    oauth: z
+      .object({
+        enabled: z.boolean(),
+        redirectUrl: z.url({ protocol: /^https?$/ }).optional(),
+        clientName: z.string().optional(),
+        clientId: z.string().trim().optional(),
+        clientSecretCredential: CredentialPointerSchema.optional(),
+        scopes: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((server, context) => {
+    if (server.transport === "http" && !server.url) {
+      context.addIssue({ code: "custom", path: ["url"], message: "HTTP MCP 必须填写 URL" });
+    }
+    if (server.transport === "stdio" && !server.command) {
+      context.addIssue({ code: "custom", path: ["command"], message: "Stdio MCP 必须填写命令" });
+    }
+    if (server.oauth?.enabled && !server.oauth.clientId) {
+      context.addIssue({
+        code: "custom",
+        path: ["oauth", "clientId"],
+        message: "启用 OAuth 必须填写已注册的 Client ID",
+      });
+    }
+  })
+  .transform((server) => ({ ...server, name: server.name || server.id }));
 
-export interface McpServerConfig {
-  id: string;
-  name: string;
-  enabled: boolean;
-  transport: McpTransport;
-  url?: string;
-  headerCredential?: CredentialPointer;
-  headerKeys?: string[];
-  /** HTTP 传输的 SSRF 防护:mcp.mdx「Security」,仅允许重定向落到这些主机 */
-  allowedHosts?: string[];
-  command?: string;
-  args?: string[];
-  envCredential?: CredentialPointer;
-  envKeys?: string[];
-  inheritDefaultEnv?: boolean;
-  /** mcp.mdx「Tool approval」:外部工具默认逐次审批 */
-  requireToolApproval?: boolean;
-  oauth?: {
-    enabled: boolean;
-    redirectUrl?: string;
-    clientName?: string;
-    clientId?: string;
-    clientSecretCredential?: CredentialPointer;
-    scopes?: string[];
-  };
-}
+export type McpServerConfig = z.infer<typeof mcpServerConfigSchema>;
 
 interface McpConfig {
   servers: McpServerConfig[];
@@ -69,23 +93,17 @@ interface McpServerSummary extends McpServerConfig {
 
 const MCP_CONFIG_KEY = "mcp";
 const EMPTY_CONFIG: McpConfig = { servers: [] };
-const STORED_MCP_PREFIX = "mastrawork-";
-const STORED_MCP_MARKER = "mastrawork-configured";
-const mcpSyncedScopes = new Set<string>();
-
-function storedMcpId(serverId: string, resourceId?: string): string {
-  const scope = storedMcpOwner(resourceId);
-  const digest = createHash("sha256").update(scope).digest("hex").slice(0, 12);
-  return `${STORED_MCP_PREFIX}${digest}-${serverId}`;
-}
 
 interface McpRuntime {
-  cachedHash: string;
-  cachedClient: MCPClient | null;
-  cachedTools: ToolsInput;
-  authorizationUrlPromise?: Promise<string>;
-  resolveAuthorizationUrl?: (url: string) => void;
-  authentication?: Promise<void>;
+  client?: { hash: string; promise: Promise<MCPClient | null> };
+  redirects: Map<
+    string,
+    {
+      client: MCPClient;
+      url: Promise<string>;
+      resolve: (url: string) => void;
+    }
+  >;
 }
 
 const runtimeByScope = new Map<string, McpRuntime>();
@@ -94,118 +112,23 @@ function getRuntime(resourceId?: string): McpRuntime {
   const key = resourceId?.trim() || "__system__";
   let runtime = runtimeByScope.get(key);
   if (!runtime) {
-    runtime = { cachedHash: "", cachedClient: null, cachedTools: {} };
+    runtime = { redirects: new Map() };
     runtimeByScope.set(key, runtime);
   }
   return runtime;
 }
 
-function normalizeServer(value: unknown): McpServerConfig | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  const id = typeof raw.id === "string" ? raw.id.trim() : "";
-  const name = typeof raw.name === "string" ? raw.name.trim() : id;
-  const transport = raw.transport === "stdio" ? "stdio" : raw.transport === "http" ? "http" : null;
-  if (!id || !/^[a-zA-Z0-9_-]{1,64}$/.test(id) || !transport) return null;
-  const server: McpServerConfig = {
-    id,
-    name: name || id,
-    enabled: raw.enabled !== false,
-    transport,
-    requireToolApproval: raw.requireToolApproval !== false,
-  };
-  if (transport === "http") {
-    if (typeof raw.url !== "string") return null;
-    try {
-      const url = new URL(raw.url);
-      if (!/^https?:$/.test(url.protocol)) return null;
-      server.url = url.toString();
-    } catch {
-      return null;
-    }
-    const headerCredential = CredentialPointerSchema.safeParse(raw.headerCredential);
-    if (headerCredential.success) server.headerCredential = headerCredential.data;
-    server.headerKeys = Array.isArray(raw.headerKeys)
-      ? raw.headerKeys.filter((item): item is string => typeof item === "string")
-      : [];
-    server.allowedHosts = Array.isArray(raw.allowedHosts)
-      ? raw.allowedHosts.filter(
-          (item): item is string => typeof item === "string" && item.trim().length > 0,
-        )
-      : [];
-    if (raw.oauth && typeof raw.oauth === "object" && !Array.isArray(raw.oauth)) {
-      const oauth = raw.oauth as Record<string, unknown>;
-      server.oauth = {
-        enabled: oauth.enabled === true,
-        ...(typeof oauth.redirectUrl === "string" ? { redirectUrl: oauth.redirectUrl } : {}),
-        ...(typeof oauth.clientName === "string" ? { clientName: oauth.clientName } : {}),
-        ...(typeof oauth.clientId === "string" ? { clientId: oauth.clientId } : {}),
-        ...(CredentialPointerSchema.safeParse(oauth.clientSecretCredential).success
-          ? {
-              clientSecretCredential: CredentialPointerSchema.parse(oauth.clientSecretCredential),
-            }
-          : {}),
-        ...(Array.isArray(oauth.scopes)
-          ? { scopes: oauth.scopes.filter((item): item is string => typeof item === "string") }
-          : {}),
-      };
-    }
-  } else {
-    const command = typeof raw.command === "string" ? raw.command.trim() : "";
-    if (!command) return null;
-    server.command = command;
-    server.args = Array.isArray(raw.args)
-      ? raw.args.filter((item): item is string => typeof item === "string")
-      : [];
-    const envCredential = CredentialPointerSchema.safeParse(raw.envCredential);
-    if (envCredential.success) server.envCredential = envCredential.data;
-    server.envKeys = Array.isArray(raw.envKeys)
-      ? raw.envKeys.filter((item): item is string => typeof item === "string")
-      : [];
-    server.inheritDefaultEnv = raw.inheritDefaultEnv !== false;
-  }
-  return server;
-}
-
-export function parseMcpServerConfig(value: unknown): McpServerConfig {
-  const server = normalizeServer(value);
-  if (!server) throw new Error("MCP 配置无效");
-  return server;
-}
-
 export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
   const raw = await getAppConfig(MCP_CONFIG_KEY, resourceId);
-  let config = EMPTY_CONFIG;
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as { servers?: unknown };
-      config = {
-        servers: Array.isArray(parsed.servers)
-          ? parsed.servers
-              .map(normalizeServer)
-              .filter((item): item is McpServerConfig => Boolean(item))
-          : [],
-      };
-    } catch {
-      config = EMPTY_CONFIG;
-    }
-  }
-  const scope = storedMcpOwner(resourceId);
-  if (!mcpSyncedScopes.has(scope)) {
-    await syncStoredMcpClients(config.servers, resourceId)
-      .then(() => mcpSyncedScopes.add(scope))
-      .catch(() => undefined);
-  }
-  return config;
+  return raw
+    ? z.object({ servers: z.array(mcpServerConfigSchema) }).parse(JSON.parse(raw))
+    : EMPTY_CONFIG;
 }
 
 export async function saveMcpConfig(config: McpConfig, resourceId?: string): Promise<void> {
-  const servers = config.servers
-    .map(normalizeServer)
-    .filter((item): item is McpServerConfig => Boolean(item));
-  if (servers.length !== config.servers.length) throw new Error("MCP 配置无效");
+  const servers = config.servers.map((server) => mcpServerConfigSchema.parse(server));
   if (new Set(servers.map((server) => server.id)).size !== servers.length)
-    throw new Error("MCP ID 不能重复");
+    throw workError("MCP_CONFIG_INVALID", { text: "MCP ID 不能重复" });
   await Promise.all(
     servers.flatMap((server) => [
       resolveSecretRecord(server.headerCredential, mcpCredentialPurpose(server.id, "headers")),
@@ -219,14 +142,12 @@ export async function saveMcpConfig(config: McpConfig, resourceId?: string): Pro
     ]),
   );
   const current = await getMcpConfig(resourceId);
-  await syncStoredMcpClients(servers, resourceId);
   await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2), resourceId);
-  mcpSyncedScopes.add(storedMcpOwner(resourceId));
   const runtime = getRuntime(resourceId);
-  await runtime.cachedClient?.disconnect().catch(() => undefined);
-  runtime.cachedHash = "";
-  runtime.cachedClient = null;
-  runtime.cachedTools = {};
+  const previous = runtime.client;
+  const client = await previous?.promise.catch(() => null);
+  await client?.disconnect();
+  if (runtime.client === previous) runtime.client = undefined;
   const nextById = new Map(servers.map((server) => [server.id, server]));
   await Promise.all(
     current.servers.flatMap((server) => {
@@ -269,86 +190,6 @@ export async function saveMcpConfig(config: McpConfig, resourceId?: string): Pro
       if (!next) stale.push(deleteOAuthCredentials(server.id, resourceId));
       return stale.map((operation) => operation.catch(() => undefined));
     }),
-  );
-}
-
-function storedMcpOwner(resourceId?: string): string {
-  return resourceId?.trim() || "__system__";
-}
-
-function storedMcpServer(server: McpServerConfig): StorageMCPServerConfig {
-  // Editor storage is returned to Studio; never copy app_config credentials or OAuth state there.
-  if (server.transport === "http") {
-    if (!server.url) throw new Error(`MCP 服务 ${server.id} 缺少 URL`);
-    return { type: "http", url: server.url };
-  }
-  if (!server.command) throw new Error(`MCP 服务 ${server.id} 缺少启动命令`);
-  return {
-    type: "stdio",
-    command: server.command,
-    args: server.args,
-  };
-}
-
-/** Mirror configured servers into the official Editor domain consumed by Studio /mcps. */
-async function syncStoredMcpClients(
-  servers: McpServerConfig[],
-  resourceId?: string,
-): Promise<void> {
-  const store = await appStorage.getStore("mcpClients");
-  if (!store) throw new Error("MCP clients storage domain is not available");
-  const owner = storedMcpOwner(resourceId);
-  const desiredIds = new Set<string>();
-
-  for (const server of servers) {
-    const id = storedMcpId(server.id, resourceId);
-    desiredIds.add(id);
-    const snapshot = {
-      name: server.name,
-      description: "MastraWork configured MCP server",
-      servers: { [server.id]: storedMcpServer(server) },
-    };
-    const metadata = {
-      mastrawork: STORED_MCP_MARKER,
-      mastraworkEnabled: server.enabled ? "true" : "false",
-      mastra_resource_id: owner,
-    };
-    const existing = await store.getById(id);
-    if (existing && existing.metadata?.mastrawork !== STORED_MCP_MARKER) continue;
-    if (!existing) {
-      await store.create({ mcpClient: { id, authorId: owner, metadata, ...snapshot } });
-    } else {
-      const latest = await store.getLatestVersion(id);
-      const unchanged =
-        latest?.name === snapshot.name &&
-        latest.description === snapshot.description &&
-        JSON.stringify(latest.servers) === JSON.stringify(snapshot.servers);
-      if (!unchanged) {
-        await store.createVersion({
-          id: randomUUID(),
-          mcpClientId: id,
-          versionNumber: (latest?.versionNumber ?? 0) + 1,
-          ...snapshot,
-          changedFields: ["name", "description", "servers"],
-          changeMessage: "MastraWork MCP configuration updated",
-        });
-      }
-      await store.update({ id, authorId: owner, metadata });
-    }
-    const current = await store.getLatestVersion(id);
-    if (current) await store.update({ id, status: "published", activeVersionId: current.id });
-  }
-
-  const published = await store.list({
-    perPage: false,
-    authorId: owner,
-    metadata: { mastrawork: STORED_MCP_MARKER, mastra_resource_id: owner },
-    status: "published",
-  });
-  await Promise.all(
-    published.mcpClients
-      .filter((client) => !desiredIds.has(client.id))
-      .map((client) => store.delete(client.id)),
   );
 }
 
@@ -429,6 +270,8 @@ async function oauthProvider(
   resourceId?: string,
 ): Promise<MCPOAuthClientProvider | undefined> {
   if (server.transport !== "http" || !server.oauth?.enabled) return undefined;
+  const clientId = server.oauth.clientId;
+  if (!clientId) throw new Error("启用 OAuth 必须填写已注册的 Client ID");
   const redirectUrl = server.oauth.redirectUrl ?? "http://127.0.0.1:4112/oauth/callback";
   const redirectUris = getCallbackUrlCandidates(redirectUrl).map((url) => url.toString());
   return new MCPOAuthClientProvider({
@@ -440,24 +283,20 @@ async function oauthProvider(
       response_types: ["code"],
       ...(server.oauth.scopes?.length ? { scope: server.oauth.scopes.join(" ") } : {}),
     },
-    ...(server.oauth.clientId
-      ? {
-          clientInformation: {
-            client_id: server.oauth.clientId,
-            ...(server.oauth.clientSecretCredential
-              ? {
-                  client_secret: await resolveCredential(
-                    server.oauth.clientSecretCredential.credentialRef,
-                    mcpCredentialPurpose(server.id, "client-secret"),
-                  ),
-                }
-              : {}),
-          },
-        }
-      : {}),
+    clientInformation: {
+      client_id: clientId,
+      ...(server.oauth.clientSecretCredential
+        ? {
+            client_secret: await resolveCredential(
+              server.oauth.clientSecretCredential.credentialRef,
+              mcpCredentialPurpose(server.id, "client-secret"),
+            ),
+          }
+        : {}),
+    },
     storage: new AppOAuthStorage(`mcp:oauth:${server.id}`, resourceId),
     onRedirectToAuthorization: async (url) => {
-      getRuntime(resourceId).resolveAuthorizationUrl?.(url.toString());
+      getRuntime(resourceId).redirects.get(server.id)?.resolve(url.toString());
     },
   });
 }
@@ -489,16 +328,9 @@ async function toDefinition(
       url: new URL(server.url),
       allowedHosts: server.allowedHosts,
       requestInit: { headers },
-      eventSourceInit: {
-        fetch(input: Request | URL | string, init?: RequestInit) {
-          const merged = new Headers(init?.headers);
-          for (const [key, value] of Object.entries(headers)) merged.set(key, value);
-          return fetch(input, { ...init, headers: merged });
-        },
-      },
       ...(authProvider ? { authProvider } : {}),
       requireToolApproval: server.requireToolApproval,
-    } as MastraMCPServerDefinition;
+    };
   }
   if (!server.command) throw new Error(`MCP 服务 ${server.id} 缺少启动命令`);
   const env = await resolveSecretRecord(
@@ -511,15 +343,17 @@ async function toDefinition(
     env,
     requireToolApproval: server.requireToolApproval,
     ...(server.inheritDefaultEnv === false ? { inheritDefaultEnv: false } : {}),
-  } as MastraMCPServerDefinition;
+  };
 }
 
 async function createClient(servers: McpServerConfig[], resourceId?: string): Promise<MCPClient> {
   const definitions = await Promise.all(
-    servers.map(async (server) => [server.id, await toDefinition(server, resourceId)] as const),
+    servers.map(
+      async (server) => [`mcp_${server.id}`, await toDefinition(server, resourceId)] as const,
+    ),
   );
   return new MCPClient({
-    id: "mastra-work-configured-mcp",
+    id: `mastra-work-configured-mcp-${randomUUID()}`,
     timeout: 30_000,
     servers: Object.fromEntries(definitions),
   });
@@ -528,36 +362,50 @@ async function createClient(servers: McpServerConfig[], resourceId?: string): Pr
 export async function testMcpServer(server: McpServerConfig, resourceId?: string) {
   const client = await createClient([server], resourceId);
   try {
-    const { toolsets, errors } = await client.listToolsetsWithErrors();
-    const tools = Object.values(toolsets).flatMap((toolset) => Object.keys(toolset));
-    const error = errors[server.id];
+    const result = await client.listToolsWithErrors();
+    const tools = Object.keys(result.tools);
+    const error = result.errors[`mcp_${server.id}`];
     return { ok: !error, toolCount: tools.length, tools, error };
+  } catch (error) {
+    throw workError("MCP_CONNECTION_FAILED", {
+      text: errorText(error, "连接测试失败"),
+      cause: error,
+    });
   } finally {
     await client.disconnect().catch(() => undefined);
   }
 }
 
-export async function getConfiguredMcpTools(resourceId?: string): Promise<ToolsInput> {
+async function getConfiguredMcpClient(resourceId?: string): Promise<MCPClient | null> {
   const config = await getMcpConfig(resourceId);
   const runtime = getRuntime(resourceId);
   const enabled = config.servers.filter((server) => server.enabled);
   const hash = JSON.stringify(enabled);
-  if (hash === runtime.cachedHash) return runtime.cachedTools;
-  if (runtime.cachedClient) await runtime.cachedClient.disconnect().catch(() => undefined);
-  runtime.cachedClient = null;
-  runtime.cachedTools = {};
-  runtime.cachedHash = hash;
-  if (enabled.length === 0) return runtime.cachedTools;
+  const previous = runtime.client;
+  if (previous?.hash === hash) return previous.promise;
+  const pending = {
+    hash,
+    promise: (async () => {
+      const client = await previous?.promise.catch(() => null);
+      await client?.disconnect();
+      return enabled.length ? createClient(enabled, resourceId) : null;
+    })(),
+  };
+  runtime.client = pending;
   try {
-    runtime.cachedClient = await createClient(enabled, resourceId);
-    const { toolsets } = await runtime.cachedClient.listToolsetsWithErrors();
-    runtime.cachedTools = Object.assign({}, ...Object.values(toolsets));
-  } catch {
-    await runtime.cachedClient?.disconnect().catch(() => undefined);
-    runtime.cachedClient = null;
-    runtime.cachedTools = {};
+    return await pending.promise;
+  } catch (error) {
+    if (runtime.client === pending) runtime.client = undefined;
+    throw error;
   }
-  return runtime.cachedTools;
+}
+
+export async function getConfiguredMcpTools(resourceId?: string): Promise<ToolsInput> {
+  const client = await getConfiguredMcpClient(resourceId);
+  if (!client) return {};
+  const { tools, errors } = await client.listToolsWithErrors();
+  if (Object.keys(errors).length) console.warn("MCP tool discovery failed", errors);
+  return tools;
 }
 
 /** Start the official MCPClient loopback OAuth flow and expose its redirect URL. */
@@ -567,33 +415,36 @@ export async function authenticateMcpServer(
 ): Promise<{ authorizationUrl?: string; authenticated: boolean }> {
   const config = await getMcpConfig(resourceId);
   const server = config.servers.find((item) => item.id === serverId);
-  if (!server) throw new Error(`MCP 服务 ${serverId} 不存在`);
-  if (!server.oauth?.enabled) throw new Error(`MCP 服务 ${serverId} 未启用 OAuth`);
+  if (!server) throw workError("MCP_SERVER_NOT_FOUND");
+  if (!server.oauth?.enabled)
+    throw workError("MCP_CONFIG_INVALID", { text: `MCP 服务 ${serverId} 未启用 OAuth` });
   const runtime = getRuntime(resourceId);
-  const enabled = config.servers.filter((item) => item.enabled);
-  const hash = JSON.stringify(enabled);
-  if (!runtime.cachedClient || runtime.cachedHash !== hash) {
-    await runtime.cachedClient?.disconnect().catch(() => undefined);
-    runtime.cachedClient = await createClient(enabled, resourceId);
-    runtime.cachedHash = hash;
-  }
-  if (!runtime.authentication) {
-    runtime.authorizationUrlPromise = new Promise<string>((resolve) => {
-      runtime.resolveAuthorizationUrl = resolve;
+  if (!server.enabled)
+    throw workError("MCP_CONFIG_INVALID", { text: `MCP 服务 ${serverId} 未启用` });
+  const client = await getConfiguredMcpClient(resourceId);
+  if (!client) throw workError("MCP_CONFIG_INVALID", { text: "没有启用的 MCP 服务" });
+  let redirect = runtime.redirects.get(serverId);
+  if (!redirect || redirect.client !== client) {
+    let resolveUrl!: (url: string) => void;
+    const url = new Promise<string>((resolve) => {
+      resolveUrl = resolve;
     });
-    runtime.authentication = runtime.cachedClient.authenticate(serverId).finally(() => {
-      runtime.authentication = undefined;
-      runtime.authorizationUrlPromise = undefined;
-      runtime.resolveAuthorizationUrl = undefined;
-      runtime.cachedHash = "";
-      runtime.cachedTools = {};
-    });
+    redirect = { client, url, resolve: resolveUrl };
+    runtime.redirects.set(serverId, redirect);
   }
-  const authentication = runtime.authentication;
-  const authorizationUrlPromise = runtime.authorizationUrlPromise;
-  if (!authentication || !authorizationUrlPromise) throw new Error("MCP OAuth 状态无效");
+  // SDK owns the per-server authentication task; this map only delivers its browser URL.
+  const authentication = client.authenticate(`mcp_${serverId}`).catch((error: unknown) => {
+    throw workError("MCP_CONNECTION_FAILED", {
+      text: errorText(error, "MCP OAuth 授权失败"),
+      cause: error,
+    });
+  });
+  const clearRedirect = () => {
+    if (runtime.redirects.get(serverId) === redirect) runtime.redirects.delete(serverId);
+  };
+  void authentication.then(clearRedirect, clearRedirect);
   return await Promise.race([
-    authorizationUrlPromise.then((authorizationUrl) => ({
+    redirect.url.then((authorizationUrl) => ({
       authorizationUrl,
       authenticated: false,
     })),

@@ -2,11 +2,12 @@ import { registerApiRoute } from "@mastra/core/server";
 import { generateText, type LanguageModel } from "ai";
 import { z } from "zod";
 import { getAgentProfile } from "../agents/custom";
-import { resolveMode } from "../agents/modes";
+import { resolveMode } from "../agents/permissions";
 import { workError } from "../errors";
-import { resolveConfiguredModel, resolveDefaultLanguageModel } from "../models";
-import { getOwnedThread, getWorkMemoryForThread } from "../routes/threads/shared";
-import type { ThreadMetadata } from "../routes/threads/types";
+import { resolveRequestModel } from "../models/providers";
+import { getWorkbenchSession } from "../routes/session";
+import type { ThreadMetadata } from "../routes/threads/shared";
+import { getOwnedThread, getWorkMemory } from "../routes/threads/shared";
 
 const inlineEditSchema = z.object({
   resourceId: z.string().min(1),
@@ -16,9 +17,6 @@ const inlineEditSchema = z.object({
   beforeContext: z.string().max(8_000).optional(),
   afterContext: z.string().max(8_000).optional(),
   instruction: z.string().max(2_000).optional(),
-  modelSelection: z
-    .object({ providerId: z.string().min(1), modelId: z.string().min(1) })
-    .optional(),
 });
 
 const inlineCompletionSchema = z.object({
@@ -28,9 +26,6 @@ const inlineCompletionSchema = z.object({
   prefix: z.string().max(1_000).optional(),
   beforeContext: z.string().max(12_000).optional(),
   afterContext: z.string().max(8_000).optional(),
-  modelSelection: z
-    .object({ providerId: z.string().min(1), modelId: z.string().min(1) })
-    .optional(),
 });
 
 function partText(message: { content?: { parts?: unknown[] } }): string {
@@ -63,25 +58,14 @@ export const inlineEditRoute = registerApiRoute("/work/workspace/threads/:thread
     }
 
     const input = parsed.data;
-    const memory = await getWorkMemoryForThread(
-      c.get("requestContext"),
-      threadId,
-      input.resourceId,
-    );
+    const memory = await getWorkMemory(c.get("requestContext"));
     const thread = await getOwnedThread(memory, threadId, input.resourceId);
     if (!thread) throw workError("THREAD_NOT_FOUND");
 
     const metadata = (thread.metadata ?? {}) as ThreadMetadata;
     const mode = resolveMode(metadata.currentModeId);
-    const snapshot = metadata.modelSelectionByMode?.[mode.id];
-    const selectedModel = input.modelSelection ?? snapshot;
-    const resolved = selectedModel
-      ? await resolveConfiguredModel(
-          selectedModel.providerId,
-          selectedModel.modelId,
-          input.resourceId,
-        )
-      : await resolveDefaultLanguageModel(input.resourceId);
+    const session = await getWorkbenchSession(c, threadId, input.resourceId);
+    const resolved = await resolveRequestModel({ id: session.model.get() }, input.resourceId);
     if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
     const recalled = await memory.recall({
@@ -148,25 +132,14 @@ export const inlineCompletionRoute = registerApiRoute(
       }
 
       const input = parsed.data;
-      const memory = await getWorkMemoryForThread(
-        c.get("requestContext"),
-        threadId,
-        input.resourceId,
-      );
+      const memory = await getWorkMemory(c.get("requestContext"));
       const thread = await getOwnedThread(memory, threadId, input.resourceId);
       if (!thread) throw workError("THREAD_NOT_FOUND");
 
       const metadata = (thread.metadata ?? {}) as ThreadMetadata;
       const mode = resolveMode(metadata.currentModeId);
-      const snapshot = metadata.modelSelectionByMode?.[mode.id];
-      const selectedModel = input.modelSelection ?? snapshot;
-      const resolved = selectedModel
-        ? await resolveConfiguredModel(
-            selectedModel.providerId,
-            selectedModel.modelId,
-            input.resourceId,
-          )
-        : await resolveDefaultLanguageModel(input.resourceId);
+      const session = await getWorkbenchSession(c, threadId, input.resourceId);
+      const resolved = await resolveRequestModel({ id: session.model.get() }, input.resourceId);
       if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
       const recalled = await memory.recall({

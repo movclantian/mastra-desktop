@@ -30,8 +30,8 @@ import {
   type LibraryFolder,
   type LibrarySettings,
   libraryAssetContentUrl,
-  referenceLibraryAssetInThread,
   type RenameTarget,
+  referenceLibraryAssetInThread,
   reindexFailedLibraryAssets,
   reindexLibraryAsset,
   renameLibraryTarget,
@@ -846,9 +846,7 @@ export function KnowledgeLibraryPage({
                   ) : null}
                   {!loading && view !== "documents" && visibleAssets.length === 0 ? (
                     <p className="p-3 text-xs text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                      {view === "search"
-                        ? t("library:noMatchingFiles")
-                        : t("library:emptyFiles")}
+                      {view === "search" ? t("library:noMatchingFiles") : t("library:emptyFiles")}
                     </p>
                   ) : null}
                   {!loading && view === "documents"
@@ -886,7 +884,11 @@ export function KnowledgeLibraryPage({
                                 <ContextMenuTrigger
                                   className="min-w-0 flex-1"
                                   onKeyDown={(event) => {
-                                    if (event.nativeEvent.isComposing || isEditableTarget(event.target)) return;
+                                    if (
+                                      event.nativeEvent.isComposing ||
+                                      isEditableTarget(event.target)
+                                    )
+                                      return;
                                     if (event.key === "F2") {
                                       event.preventDefault();
                                       openRename({
@@ -894,7 +896,10 @@ export function KnowledgeLibraryPage({
                                         id: entry.folder.id,
                                         name: entry.folder.name,
                                       });
-                                    } else if (event.key === "Delete" || (isMac && event.key === "Backspace")) {
+                                    } else if (
+                                      event.key === "Delete" ||
+                                      (isMac && event.key === "Backspace")
+                                    ) {
                                       event.preventDefault();
                                       void removeFolder(entry.folder);
                                     }
@@ -981,7 +986,9 @@ export function KnowledgeLibraryPage({
                                     >
                                       <Trash2Icon className="text-muted-foreground" />
                                       <span>{t("library:deleteFolder")}</span>
-                                      <ContextMenuShortcut>{isMac ? "⌫" : "Del"}</ContextMenuShortcut>
+                                      <ContextMenuShortcut>
+                                        {isMac ? "⌫" : "Del"}
+                                      </ContextMenuShortcut>
                                     </ContextMenuItem>
                                   </ContextMenuGroup>
                                 </ContextMenuContent>

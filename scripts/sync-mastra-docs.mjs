@@ -21,9 +21,13 @@ const FALLBACK_PROXY = "http://127.0.0.1:7890";
 function parseArgs(argv) {
   const options = { ref: DEFAULT_REF, proxy: undefined, keepTemp: false };
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--ref") options.ref = argv[(i += 1)];
-    else if (argv[i] === "--proxy") options.proxy = argv[(i += 1)];
-    else if (argv[i] === "--keep-temp") options.keepTemp = true;
+    if (argv[i] === "--ref") {
+      i += 1;
+      options.ref = argv[i];
+    } else if (argv[i] === "--proxy") {
+      i += 1;
+      options.proxy = argv[i];
+    } else if (argv[i] === "--keep-temp") options.keepTemp = true;
     else throw new Error(`未知参数: ${argv[i]}`);
   }
   return options;
@@ -50,7 +54,8 @@ function runGit(args, env) {
 // 用 blob 过滤 + 稀疏检出只拉取官方仓库的文档目录,远小于整包源码 zip。
 function fetchUpstreamDocs(options) {
   const attempts = [{ label: "直连", proxy: undefined }];
-  if (!options.proxy) attempts.push({ label: `代理 ${resolveProxy(options)}`, proxy: resolveProxy(options) });
+  if (!options.proxy)
+    attempts.push({ label: `代理 ${resolveProxy(options)}`, proxy: resolveProxy(options) });
   else attempts[0].proxy = options.proxy;
 
   const envBase = { ...process.env };
@@ -59,7 +64,8 @@ function fetchUpstreamDocs(options) {
   for (const attempt of attempts) {
     const env = { ...envBase };
     if (attempt.proxy) {
-      for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]) env[key] = attempt.proxy;
+      for (const key of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"])
+        env[key] = attempt.proxy;
     }
 
     const tmpRoot = fs.mkdtempSync(join(os.tmpdir(), "mastra-docs-"));
@@ -67,16 +73,29 @@ function fetchUpstreamDocs(options) {
     try {
       log(`${attempt.label}:浅克隆 ${UPSTREAM_REPO}(ref=${options.ref})`);
       const clone = runGit(
-        ["clone", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", options.ref, UPSTREAM_REPO, repoDir],
+        [
+          "clone",
+          "--depth",
+          "1",
+          "--filter=blob:none",
+          "--sparse",
+          "--branch",
+          options.ref,
+          UPSTREAM_REPO,
+          repoDir,
+        ],
         env,
       );
-      if (clone.status !== 0) throw new Error(clone.stderr.trim() || `git clone 退出码 ${clone.status}`);
+      if (clone.status !== 0)
+        throw new Error(clone.stderr.trim() || `git clone 退出码 ${clone.status}`);
 
       const sparse = runGit(["-C", repoDir, "sparse-checkout", "set", UPSTREAM_DOCS_DIR], env);
-      if (sparse.status !== 0) throw new Error(sparse.stderr.trim() || `sparse-checkout 退出码 ${sparse.status}`);
+      if (sparse.status !== 0)
+        throw new Error(sparse.stderr.trim() || `sparse-checkout 退出码 ${sparse.status}`);
 
       const upstreamDir = join(repoDir, ...UPSTREAM_DOCS_DIR.split("/"));
-      if (!fs.existsSync(upstreamDir)) throw new Error(`ref ${options.ref} 上不存在 ${UPSTREAM_DOCS_DIR}`);
+      if (!fs.existsSync(upstreamDir))
+        throw new Error(`ref ${options.ref} 上不存在 ${UPSTREAM_DOCS_DIR}`);
 
       const commit = runGit(["-C", repoDir, "rev-parse", "HEAD"], env);
       log(`已获取官方文档,commit ${commit.stdout.trim()}`);
@@ -152,7 +171,9 @@ try {
   const added = [...after.keys()].filter((file) => !before.has(file)).length;
   const removed = [...before.keys()].filter((file) => !after.has(file)).length;
   log(`同步完成:新增 ${added},更新 ${changed},删除 ${removed},共 ${after.size} 个文件`);
-  log(`来源 mastra-ai/mastra@${options.ref}(${commit.slice(0, 12)}),记录见 docs/.mastra-docs-sync.json`);
+  log(
+    `来源 mastra-ai/mastra@${options.ref}(${commit.slice(0, 12)}),记录见 docs/.mastra-docs-sync.json`,
+  );
 } finally {
   if (!options.keepTemp) removeTemp(tmpRoot);
   else console.warn(`[sync-mastra-docs] 保留临时目录: ${tmpRoot}`);

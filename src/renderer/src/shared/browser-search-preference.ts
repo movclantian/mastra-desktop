@@ -1,6 +1,6 @@
 import {
-  BrowserSearchEngineSchema,
   type BrowserSearchEngine,
+  BrowserSearchEngineSchema,
 } from "../../../shared/browser-contract";
 
 const STORAGE_KEY_PREFIX = "mastra-work:browser-search-engine";

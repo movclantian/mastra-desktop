@@ -11,13 +11,7 @@ import {
   deleteAgentProfileRoute,
   saveAgentProfileRoute,
 } from "./agents";
-import {
-  authLoginRoute,
-  authLogoutRoute,
-  authMeRoute,
-  authRegisterRoute,
-  workUsersRoute,
-} from "./auth";
+import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import {
@@ -33,13 +27,13 @@ import {
   deleteLibraryFolderRoute,
   libraryAssetContentRoute,
   libraryAssetsRoute,
-  promoteLibraryAssetRoute,
-  referenceLibraryAssetRoute,
   libraryFoldersRoute,
   librarySettingsRoute,
   libraryUploadChunkRoute,
   libraryUploadSessionRoute,
   libraryUploadSessionsRoute,
+  promoteLibraryAssetRoute,
+  referenceLibraryAssetRoute,
   reindexFailedLibraryAssetsRoute,
   reindexLibraryAssetRoute,
   renameLibraryAssetRoute,
@@ -97,7 +91,7 @@ import {
   uploadSkillRoute,
 } from "./skills";
 import { storageInfoRoute } from "./storage";
-import { threadRoutes } from "./threads";
+import { threadRoutes } from "./threads/threads";
 import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import { usageSummaryRoute } from "./usage";
 import {
@@ -120,7 +114,6 @@ export const workRoutes = [
   authRegisterRoute,
   authLogoutRoute,
   authMeRoute,
-  workUsersRoute,
   ...backgroundTaskRoutes,
   agentProfilesRoute,
   saveAgentProfileRoute,

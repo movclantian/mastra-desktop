@@ -256,10 +256,7 @@ export function useBrowserSession() {
               const payload = JSON.parse(data) as { reason?: unknown };
               const reason = payload.reason;
               const normalStop =
-                reason == null ||
-                reason === "closed" ||
-                reason === "stopped" ||
-                reason === "stop";
+                reason == null || reason === "closed" || reason === "stopped" || reason === "stop";
               if (!normalStop) {
                 setFrame(undefined);
                 setFrameState("error");
@@ -297,7 +294,18 @@ export function useBrowserSession() {
       }
       pendingFrameRef.current = undefined;
     };
-  }, [activeThreadId, clearFrame, invalidateFrame, nativeAvailable, refreshState, screencastAttempt, state.active, stateUrl, userId, viewActive]);
+  }, [
+    activeThreadId,
+    clearFrame,
+    invalidateFrame,
+    nativeAvailable,
+    refreshState,
+    screencastAttempt,
+    state.active,
+    stateUrl,
+    userId,
+    viewActive,
+  ]);
 
   const retryFrame = React.useCallback(() => {
     setFrame(undefined);
@@ -665,11 +673,13 @@ export function useBrowserSession() {
     const closePromise = nativeBrowser
       ? nativeBrowser.close({ resourceId: userId, threadId })
       : closeBrowserRequest(threadId, userId);
-    void closePromise.then(() => {
-      if (sessionEpochRef.current === epoch) {
-        void refreshState();
-      }
-    }).catch(() => {});
+    void closePromise
+      .then(() => {
+        if (sessionEpochRef.current === epoch) {
+          void refreshState();
+        }
+      })
+      .catch(() => {});
   }, [activeThreadId, nativeBrowser, refreshState, stateUrl, userId]);
 
   return {

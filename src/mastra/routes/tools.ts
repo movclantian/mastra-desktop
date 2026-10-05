@@ -1,3 +1,4 @@
+import { z } from "zod";
 /**
  * 工具路由:读写三个联网检索引擎(Tavily / Firecrawl / AnySearch)的 API Key。
  * 存数据库 app_config 表(key = "tools"),工具在每次请求时按当前配置实例化,
@@ -5,27 +6,36 @@
  */
 
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import { registerApiRoute } from "@mastra/core/server";
+import { createRoute } from "@mastra/server/server-adapter";
+import { workValidationError } from "../errors";
 import { getToolsConfig, saveToolsConfig } from "../tools";
+import { toolsConfigSchema } from "../tools/web-search";
 
 // GET /work/tools — 读取当前工具配置
-export const toolsConfigRoute = registerApiRoute("/work/tools", {
+export const toolsConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/tools",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "GET",
-  handler: async (c) => {
-    return c.json(
-      await getToolsConfig(c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string),
-    );
+  handler: async (params) => {
+    return await getToolsConfig(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
   },
 });
 
 // POST /work/tools — 写入工具配置
-export const saveToolsConfigRoute = registerApiRoute("/work/tools", {
+export const saveToolsConfigRoute = createRoute({
+  queryParamSchema: z.object({}).strict(),
+  path: "/work/tools",
+  responseType: "json",
+  onValidationError: workValidationError,
   method: "POST",
-  handler: async (c) => {
+  bodySchema: toolsConfigSchema.transform((config) => ({ config })),
+  handler: async (params) => {
     await saveToolsConfig(
-      await c.req.json(),
-      c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+      params.config,
+      params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
     );
-    return c.json({ ok: true });
+    return { ok: true };
   },
 });

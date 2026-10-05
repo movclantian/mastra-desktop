@@ -52,6 +52,7 @@ import {
   ResetAppDataRequestSchema,
   ResetAppDataResultSchema,
   STORAGE_CHANNELS,
+  StorageInfoResultSchema,
 } from "../shared/storage-contract";
 import {
   TERMINAL_CLOSE_CHANNEL,
@@ -92,11 +93,10 @@ const HEALTH_CHECK_TIMEOUT_MS = 120_000;
 
 const MASTRA_SHUTDOWN_ENDPOINT = `${MASTRA_SERVER_URL}/work/shutdown`;
 /**
- * 优雅退出令牌:每次启动随机生成,经环境变量随 spawn 链传给服务进程
- * (dev 态 mastra CLI 的服务孙进程会继承 env),/work/shutdown 按请求头校验。
- * 没有令牌随机进程/网页(服务开了 CORS)就杀不掉我们的后端。
+ * 每次启动随机生成的桌面管理令牌。服务只允许关机、代理更新和存储位置读取，
+ * 不授予线程、工具或其他业务 API 访问权。
  */
-const MASTRA_SHUTDOWN_TOKEN = randomUUID();
+const MASTRA_DESKTOP_CONTROL_TOKEN = randomUUID();
 /** 与服务端落盘上限(SHUTDOWN_FLUSH_TIMEOUT_MS=3s)+ 响应回写时间对应 */
 const HTTP_SHUTDOWN_TIMEOUT_MS = 4_500;
 /** 强杀(taskkill /T / SIGKILL)后等待进程树退出的上限 */
@@ -198,19 +198,16 @@ async function applySessionProxy(config: ProxyConfig): Promise<string | undefine
 
   // 若 Mastra 服务在线，同步通知动态变更 Dispatcher
   if (await isServerUp(300)) {
-    try {
-      await fetch(`${MASTRA_SERVER_URL}/work/proxy`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN,
-        },
-        body: JSON.stringify({ mode: config.mode, url: outboundProxy }),
-        signal: AbortSignal.timeout(1_500),
-      });
-    } catch {
-      /* 静默忽略通知失败 */
-    }
+    const response = await fetch(`${MASTRA_SERVER_URL}/work/proxy`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-mastra-desktop-token": MASTRA_DESKTOP_CONTROL_TOKEN,
+      },
+      body: JSON.stringify({ url: outboundProxy }),
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!response.ok) throw new Error(`Mastra 代理更新失败：HTTP ${response.status}`);
   }
   return outboundProxy;
 }
@@ -442,7 +439,7 @@ async function stopMastra(): Promise<void> {
   try {
     const resp = await fetch(MASTRA_SHUTDOWN_ENDPOINT, {
       method: "POST",
-      headers: { "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN },
+      headers: { "x-mastra-desktop-token": MASTRA_DESKTOP_CONTROL_TOKEN },
       signal: AbortSignal.timeout(HTTP_SHUTDOWN_TIMEOUT_MS),
     });
     if (!resp.ok) {
@@ -658,7 +655,7 @@ function ensureMastraRunning(): Promise<void> {
         // service entrypoint clears that CLI-only flag before constructing
         // Mastra. This keeps auth capability checks out of the EE dev path.
         MASTRA_DESKTOP_RUNTIME: "true",
-        MASTRA_SHUTDOWN_TOKEN,
+        MASTRA_DESKTOP_CONTROL_TOKEN,
         MASTRA_CREDENTIAL_BROKER_PATH: broker.endpoint,
         MASTRA_CREDENTIAL_BROKER_TOKEN: broker.token,
         ...(nativeBrowserAgentBroker
@@ -768,22 +765,16 @@ function ensureMastraRunning(): Promise<void> {
   return mastraStartPromise;
 }
 
-/** 数据落盘目录:优先在服务存活时问 /work/storage,拿不到再用默认位置推算 */
-function defaultMastraDataDir(): string {
-  try {
-    return join(homedir(), ".mastrawork");
-  } catch {
-    return "";
-  }
-}
-
-/** DuckDB observability 数据目录,与会话数据库分离且不属于 Mastra public 输出。 */
-function defaultMastraObservabilityDir(): string {
-  try {
-    return join(homedir(), ".mastrawork", "observability");
-  } catch {
-    return "";
-  }
+/** Destructive storage operations require the service's validated current directory. */
+async function readMastraStorageDirectory(): Promise<string> {
+  const response = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
+    headers: { "x-mastra-desktop-token": MASTRA_DESKTOP_CONTROL_TOKEN },
+    signal: AbortSignal.timeout(2_000),
+  });
+  if (!response.ok) throw new Error(`读取 Mastra 存储位置失败：HTTP ${response.status}`);
+  const info = StorageInfoResultSchema.parse(await response.json());
+  if (!info.url.startsWith("file:")) throw new Error("只能管理本机文件数据库的存储位置");
+  return info.directory;
 }
 
 function createWindow(): void {
@@ -1321,24 +1312,13 @@ function bootstrap(): void {
       assertTrustedIpcSender(event);
       const directory = MigrateStorageRequestSchema.parse(value);
       const targetDir = resolve(directory);
-      let oldDir = "";
-      try {
-        const resp = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
-          headers: { "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN },
-          signal: AbortSignal.timeout(2_000),
-        });
-        if (resp.ok) {
-          oldDir = ((await resp.json()) as { directory?: string }).directory ?? "";
-        }
-      } catch {
-        /* 服务未就绪时 oldDir 为空,跳过文件搬迁仅切换配置 */
-      }
+      const oldDir = await readMastraStorageDirectory();
       await stopMastra();
       isMastraStopping = false;
       mastraStartPromise = null;
       try {
-        if (oldDir && resolve(oldDir) !== targetDir) {
-          const entries = await readdir(oldDir).catch(() => [] as string[]);
+        if (resolve(oldDir) !== targetDir) {
+          const entries = await readdir(oldDir);
           await mkdir(targetDir, { recursive: true });
           for (const name of entries) {
             if (!/^mastra\.db/.test(name)) continue;
@@ -1375,27 +1355,12 @@ function bootstrap(): void {
     ipcMain.handle(STORAGE_CHANNELS.reset, async (event, value: unknown) => {
       assertTrustedIpcSender(event);
       ResetAppDataRequestSchema.parse(value);
-      let dataDir = "";
-      try {
-        const resp = await fetch(`${MASTRA_SERVER_URL}/work/storage`, {
-          headers: { "x-shutdown-token": MASTRA_SHUTDOWN_TOKEN },
-          signal: AbortSignal.timeout(2_000),
-        });
-        if (resp.ok) {
-          dataDir = ((await resp.json()) as { directory?: string }).directory ?? "";
-        }
-      } catch {
-        /* 服务未就绪时退回默认目录推算 */
-      }
+      const dataDir = await readMastraStorageDirectory();
       await stopMastra();
       await credentialBroker?.close();
       credentialBroker = null;
       credentialVault = null;
-      const dirsToClean = [
-        app.getPath("userData"),
-        dataDir || defaultMastraDataDir(),
-        defaultMastraObservabilityDir(),
-      ];
+      const dirsToClean = [app.getPath("userData"), dataDir];
       for (const dir of dirsToClean) {
         if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
       }
@@ -1418,8 +1383,8 @@ function bootstrap(): void {
     ipcMain.handle(PROXY_CHANNELS.set, async (event, value: unknown) => {
       assertTrustedIpcSender(event);
       const config = SetProxyRequestSchema.parse(value);
-      await writeAppProxyConfig(config);
       const effectiveProxy = await applySessionProxy(config);
+      await writeAppProxyConfig(config);
       return SetProxyResultSchema.parse({ ok: true, effectiveProxy });
     });
 

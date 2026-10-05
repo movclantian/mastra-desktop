@@ -5,8 +5,8 @@
  */
 import { registerApiRoute } from "@mastra/core/server";
 import { workError } from "../errors";
-import { workWebhookSignals } from "../harness";
-import { getOwnedThread, getWorkMemoryForThread } from "./threads/shared";
+import { workWebhookSignals } from "../harness/signals";
+import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
   method: "POST",
@@ -24,7 +24,7 @@ export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/sub
     }
     if (
       !(await getOwnedThread(
-        await getWorkMemoryForThread(c.get("requestContext"), body.threadId, body.resourceId),
+        await getWorkMemory(c.get("requestContext")),
         body.threadId,
         body.resourceId,
       ))
@@ -55,7 +55,7 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
     }
     if (
       !(await getOwnedThread(
-        await getWorkMemoryForThread(c.get("requestContext"), body.threadId, body.resourceId),
+        await getWorkMemory(c.get("requestContext")),
         body.threadId,
         body.resourceId,
       ))

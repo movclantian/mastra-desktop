@@ -4,22 +4,43 @@
  * 这样每次触发都能继承用户模型、Workspace 和护栏 RequestContext。
  */
 
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import type { Mastra } from "@mastra/core/mastra";
+import { MASTRA_RESOURCE_ID_KEY, RequestContext } from "@mastra/core/request-context";
 import type {
   AgentSchedule,
   CreateAgentScheduleInput,
+  SchedulePrepareContext,
+  SchedulePrepareResult,
   UpdateAgentScheduleInput,
 } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
+import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents";
 import {
+  AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
-  ensureProfileAgentsRegistered,
   listAgentProfiles,
 } from "../agents/custom";
-import { MODE_ID_CONTEXT_KEY } from "../agents/modes";
-import { errorText, workError } from "../errors";
 import {
+  MODE_ID_CONTEXT_KEY,
+  PERMISSION_RULES_CONTEXT_KEY,
+  parsePermissionRules,
+  resolveMode,
+} from "../agents/permissions";
+import { errorText, WorkApiError, workError } from "../errors";
+import {
+  getProvidersConfig,
+  REQUEST_MODEL_ID_CONTEXT_KEY,
+  resolveDefaultModelId,
+  splitRouterId,
+} from "../models/providers";
+import {
+  LIBRARY_ORIGIN_CONTEXT_KEY,
+  LIBRARY_RESOURCE_CONTEXT_KEY,
+  LIBRARY_THREAD_CONTEXT_KEY,
+} from "../rag/types";
+import {
+  deleteThreadWorkspace,
   ensureDirectory,
   implicitThreadWorkspacePath,
   SCHEDULE_RUN_CONTEXT_KEY,
@@ -27,7 +48,9 @@ import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace";
-import { getOwnedThread, getWorkMemoryForThread } from "./threads/shared";
+import { getWorkbenchSession } from "./session";
+import type { ThreadMetadata } from "./threads/shared";
+import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 const signalTypes = [
   "user",
@@ -65,9 +88,6 @@ const scheduleInputSchema = z.object({
     .object({
       behavior: z.enum(["discard", "persist", "wake"]).optional(),
       attributes: attributesSchema.optional(),
-      streamOptions: z
-        .object({ requestContext: z.record(z.string(), z.unknown()).optional() })
-        .optional(),
     })
     .optional(),
   status: z.enum(["active", "paused"]).optional(),
@@ -79,6 +99,78 @@ const updateScheduleSchema = scheduleInputSchema
 
 type ScheduleView = AgentSchedule;
 
+/** Resolve the current thread settings at fire time; persisted schedules contain no runtime handles. */
+export async function prepareScheduledRun({
+  mastra,
+  schedule,
+}: SchedulePrepareContext<Mastra>): Promise<SchedulePrepareResult | null | undefined> {
+  const stored = await mastra.schedules.get(schedule.id);
+  if (
+    !stored ||
+    stored.workflowId !== undefined ||
+    typeof stored.metadata?.profileId !== "string"
+  ) {
+    return undefined;
+  }
+  const { resourceId, threadId } = stored;
+  if (!resourceId || !threadId) return null;
+  const profileId = stored.metadata.profileId;
+  const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === profileId);
+  if (!profile) return null;
+  const requestContext = new RequestContext();
+  requestContext.set(MASTRA_RESOURCE_ID_KEY, resourceId);
+  const memory = await mastra.getAgentById(DEFAULT_AGENT_PROFILE_ID).getMemory({ requestContext });
+  const thread = await memory?.getThreadById({ threadId });
+  if (!thread || thread.resourceId !== resourceId) return null;
+  const metadata = (thread.metadata ?? {}) as ThreadMetadata;
+  const mode = resolveMode(metadata.currentModeId);
+  const modelId = metadata[`modeModelId_${mode.id}`] ?? (await resolveDefaultModelId(resourceId));
+  if (!modelId) throw workError("MODEL_NOT_CONFIGURED");
+  const { providerId } = splitRouterId(modelId);
+  const provider = (await getProvidersConfig(resourceId)).providers.find(
+    (item) => item.id === providerId,
+  );
+  const family = provider?.registryId ?? provider?.protocol;
+  const effort = metadata.reasoningEffortByMode?.[mode.id];
+  const reasoning = z
+    .enum(["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"])
+    .safeParse(effort);
+  const execution =
+    effort === "max"
+      ? family === "anthropic"
+        ? { providerOptions: { anthropic: { effort: "max" } } }
+        : family === "openai"
+          ? { providerOptions: { openai: { reasoningEffort: "max" } } }
+          : { modelSettings: { reasoning: "xhigh" } }
+      : reasoning.success
+        ? { modelSettings: { reasoning: reasoning.data } }
+        : {};
+  const workspacePath =
+    metadata.workspacePath ?? (await implicitThreadWorkspacePath(threadId, resourceId));
+  return {
+    ifIdle: {
+      ...stored.ifIdle,
+      streamOptions: {
+        requestContext: {
+          [MASTRA_RESOURCE_ID_KEY]: resourceId,
+          [AGENT_PROFILE_CONTEXT_KEY]: profile.id,
+          [REQUEST_MODEL_ID_CONTEXT_KEY]: modelId,
+          [MODE_ID_CONTEXT_KEY]: mode.id,
+          [PERMISSION_RULES_CONTEXT_KEY]: parsePermissionRules(metadata.permissionRules),
+          [WORKSPACE_PATH_CONTEXT_KEY]: workspacePath,
+          [WORKSPACE_THREAD_ID_CONTEXT_KEY]: threadId,
+          [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: resourceId,
+          [LIBRARY_RESOURCE_CONTEXT_KEY]: resourceId,
+          [LIBRARY_THREAD_CONTEXT_KEY]: threadId,
+          [LIBRARY_ORIGIN_CONTEXT_KEY]: `http://localhost:${mastra.getServer()?.port ?? 4111}`,
+          [SCHEDULE_RUN_CONTEXT_KEY]: true,
+          [SESSION_EXECUTION_CONTEXT_KEY]: execution,
+        },
+      },
+    },
+  };
+}
+
 function resourceIdFor(c: ContextWithMastra): string {
   const value = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY);
   if (typeof value !== "string" || !value.trim()) throw workError("AUTH_REQUIRED");
@@ -89,15 +181,6 @@ function isOwnedSchedule(schedule: unknown, resourceId: string): schedule is Sch
   if (!schedule || typeof schedule !== "object" || !("agentId" in schedule)) return false;
   const candidate = schedule as ScheduleView;
   return candidate.resourceId === resourceId;
-}
-
-async function resolveAgentId(c: ContextWithMastra, requestedId: string, resourceId: string) {
-  const mastra = c.get("mastra");
-  const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === requestedId);
-  if (!profile) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
-  if (profile.id === DEFAULT_AGENT_PROFILE_ID) return DEFAULT_AGENT_PROFILE_ID;
-  const registration = await ensureProfileAgentsRegistered(mastra, profile, resourceId);
-  return registration.profile.id;
 }
 
 async function ownedSchedule(c: ContextWithMastra, scheduleId: string): Promise<ScheduleView> {
@@ -124,68 +207,60 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     const parsed = scheduleInputSchema.safeParse(await c.req.json());
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
     const input = parsed.data;
-    const agentId = await resolveAgentId(c, input.agentId, resourceId);
-    const memory = await getWorkMemoryForThread(
-      c.get("requestContext"),
-      input.threadId ?? "",
-      resourceId,
-    );
-    let createdThread = false;
+    const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === input.agentId);
+    if (!profile) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
+    const memory = await getWorkMemory(c.get("requestContext"));
+    const createdThread = !input.threadId;
     const thread = input.threadId
       ? await getOwnedThread(memory, input.threadId, resourceId)
       : await memory.createThread({
           resourceId,
           title: input.name?.trim() || "已安排任务",
-          metadata: { draft: false },
+          metadata: { draft: false, currentModeId: "build", agentProfileId: input.agentId },
         });
-    createdThread = !input.threadId;
     if (!thread) throw workError("THREAD_NOT_FOUND");
     const threadId = thread.id;
-    const workspacePath =
-      typeof thread.metadata?.workspacePath === "string" && thread.metadata.workspacePath.trim()
-        ? thread.metadata.workspacePath.trim()
-        : implicitThreadWorkspacePath(threadId, resourceId);
-    ensureDirectory(workspacePath);
-    if (!thread.metadata?.workspacePath) {
-      await memory.updateThread({
-        id: threadId,
-        title: thread.title,
-        metadata: {
-          ...(thread.metadata ?? {}),
-          workspacePath,
-          workspaceExplicit: false,
-        },
-      });
-    }
-    const metadata = { profileId: input.agentId };
-    const ifIdle = {
-      ...(input.ifIdle ?? {}),
-      streamOptions: {
-        ...(input.ifIdle?.streamOptions ?? {}),
-        requestContext: {
-          ...(input.ifIdle?.streamOptions?.requestContext ?? {}),
-          [WORKSPACE_PATH_CONTEXT_KEY]: workspacePath,
-          [WORKSPACE_THREAD_ID_CONTEXT_KEY]: threadId,
-          [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: resourceId,
-          [MASTRA_RESOURCE_ID_KEY]: resourceId,
-          [MODE_ID_CONTEXT_KEY]: "build",
-          [SCHEDULE_RUN_CONTEXT_KEY]: true,
-        },
-      },
-    };
     try {
+      const workspacePath =
+        typeof thread.metadata?.workspacePath === "string" && thread.metadata.workspacePath.trim()
+          ? thread.metadata.workspacePath.trim()
+          : await implicitThreadWorkspacePath(threadId, resourceId);
+      ensureDirectory(workspacePath);
+      if (!thread.metadata?.workspacePath) {
+        await memory.updateThread({
+          id: threadId,
+          title: thread.title,
+          metadata: {
+            ...(thread.metadata ?? {}),
+            workspacePath,
+            workspaceExplicit: false,
+          },
+        });
+      }
+      await getWorkbenchSession(c, threadId, resourceId);
       const schedule = await c.get("mastra").schedules.create({
         ...input,
-        agentId,
+        // The registered workbench Agent resolves the current profile from RequestContext.
+        agentId: DEFAULT_AGENT_PROFILE_ID,
         threadId,
         resourceId,
-        metadata,
-        ...(input.ifActive ? { ifActive: input.ifActive } : {}),
-        ifIdle,
+        metadata: { profileId: profile.id },
       } satisfies CreateAgentScheduleInput);
       return c.json({ schedule }, 201);
     } catch (error) {
-      if (createdThread) await memory.deleteThread(thread.id).catch(() => undefined);
+      if (createdThread) {
+        await c
+          .get("mastra")
+          .getAgentController("workbench")
+          ?.deleteSession({
+            resourceId,
+            scope: JSON.stringify(["workbench", threadId]),
+          })
+          .catch(() => undefined);
+        await deleteThreadWorkspace(threadId, thread.metadata, resourceId).catch(() => undefined);
+        await memory.deleteThread(threadId).catch(() => undefined);
+      }
+      if (error instanceof WorkApiError) throw error;
       throw workError("SCHEDULE_INVALID", {
         text: errorText(error, "创建定时任务失败"),
         cause: error,
@@ -206,45 +281,6 @@ export const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleI
     const parsed = updateScheduleSchema.safeParse(await c.req.json());
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
     const patch = parsed.data;
-    if (current.threadId) {
-      const storedPath =
-        current.ifIdle?.streamOptions?.requestContext?.[WORKSPACE_PATH_CONTEXT_KEY];
-      const workspacePath =
-        typeof storedPath === "string" && storedPath.trim()
-          ? storedPath.trim()
-          : implicitThreadWorkspacePath(current.threadId, current.resourceId);
-      ensureDirectory(workspacePath);
-      const requestedIfIdle = patch.ifIdle ?? current.ifIdle ?? {};
-      // 存储侧 AgentSignalAttributes 的索引签名允许 undefined 值,更新契约
-      // (Record<string, string | number | boolean | null>)不接受 —— 剔除原键、
-      // 过滤掉 undefined 条目后重新合并,序列化语义完全一致
-      const { attributes: storedAttributes, ...restIfIdle } = requestedIfIdle;
-      patch.ifIdle = {
-        ...restIfIdle,
-        ...(storedAttributes !== undefined
-          ? {
-              attributes: Object.fromEntries(
-                Object.entries(storedAttributes).filter(
-                  (entry): entry is [string, string | number | boolean | null] =>
-                    entry[1] !== undefined,
-                ),
-              ),
-            }
-          : {}),
-        streamOptions: {
-          ...(requestedIfIdle.streamOptions ?? {}),
-          requestContext: {
-            ...(requestedIfIdle.streamOptions?.requestContext ?? {}),
-            [WORKSPACE_PATH_CONTEXT_KEY]: workspacePath,
-            [WORKSPACE_THREAD_ID_CONTEXT_KEY]: current.threadId,
-            [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: current.resourceId,
-            [MASTRA_RESOURCE_ID_KEY]: current.resourceId,
-            [MODE_ID_CONTEXT_KEY]: "build",
-            [SCHEDULE_RUN_CONTEXT_KEY]: true,
-          },
-        },
-      };
-    }
     try {
       const schedule = await c
         .get("mastra")

@@ -3,7 +3,6 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ArrowLeftIcon,
-  ArrowLeftRightIcon,
   ChevronRightIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -26,14 +25,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import type { TreeEntry } from "@/entities/workbench";
-import {
-  dirName,
-  fetchTree,
-  fetchWorkUsers,
-  openPathInApp,
-  type WorkThread,
-  type WorkUserOption,
-} from "@/entities/workbench";
+import { dirName, fetchTree, openPathInApp, type WorkThread } from "@/entities/workbench";
 import {
   useArchiveThreadMutation,
   useCloneThreadMutation,
@@ -43,7 +35,6 @@ import {
   useIsThreadBusy,
   usePinThreadMutation,
   useSelectThread,
-  useTransferThreadMutation,
 } from "@/entities/workbench/model/queries/threads";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
@@ -69,15 +60,6 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/ui/dialog";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import {
   DropdownMenu,
@@ -111,121 +93,14 @@ export function sortThreads(threads: WorkThread[]): WorkThread[] {
   });
 }
 
-/**
- * 会话所有权迁移对话框(官方 memory.updateThreadResourceId 的产品落点):
- * 选择目标账户后把线程及全部消息平滑转移过去。挂载在列表项层级而不是菜单内 ——
- * 菜单关闭即卸载,放在里面对话框会跟着消失。
- */
-function TransferThreadDialog({
-  thread,
-  open,
-  onOpenChange,
-}: {
-  thread: WorkThread;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { t } = useTranslation();
-  const { user } = useAuth();
-  const transferThreadMutation = useTransferThreadMutation(user?.id ?? "anonymous");
-  const transferThread = (threadId: string, targetResourceId: string) =>
-    transferThreadMutation.mutateAsync({ threadId, targetResourceId });
-  const userId = user?.id ?? "anonymous";
-  const [candidates, setCandidates] = React.useState<WorkUserOption[] | null>(null);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
-  const [transferring, setTransferring] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!open) return;
-    setCandidates(null);
-    setSelectedId(null);
-    let disposed = false;
-    void fetchWorkUsers()
-      .then((users) => {
-        if (!disposed) setCandidates(users.filter((candidate) => candidate.id !== userId));
-      })
-      .catch(() => {
-        if (!disposed) setCandidates([]);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [open, userId]);
-
-  const handleTransfer = async () => {
-    if (!selectedId || transferring) return;
-    setTransferring(true);
-    try {
-      await transferThread(thread.id, selectedId);
-      toast.success(t("sidebar:transferRequestSent"));
-      onOpenChange(false);
-    } catch {
-      toast.error(t("sidebar:transferError"));
-    } finally {
-      setTransferring(false);
-    }
-  };
-
-  return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t("sidebar:transferOwnership")}</DialogTitle>
-          <DialogDescription>
-            {t("sidebar:transferDesc", { title: thread.title })}
-          </DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="max-h-64">
-          <div className="flex flex-col gap-1 pr-2">
-            {candidates === null ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                {t("sidebar:loadingAccounts")}
-              </p>
-            ) : candidates.length === 0 ? (
-              <p className="py-6 text-center text-sm text-muted-foreground">
-                {t("sidebar:noOtherAccounts")}
-              </p>
-            ) : (
-              candidates.map((candidate) => (
-                <button
-                  aria-pressed={selectedId === candidate.id}
-                  className="flex min-w-0 items-center gap-3 rounded-lg border border-transparent px-3 py-2 text-left transition-colors hover:bg-accent aria-pressed:border-primary/40 aria-pressed:bg-accent"
-                  key={candidate.id}
-                  onClick={() => setSelectedId(candidate.id)}
-                  type="button"
-                >
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{candidate.name}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {candidate.email}
-                    </span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-        </ScrollArea>
-        <DialogFooter>
-          <DialogClose render={<Button variant="outline">{t("common:cancel")}</Button>} />
-          <Button disabled={!selectedId || transferring} onClick={() => void handleTransfer()}>
-            {transferring ? t("sidebar:transferring") : t("sidebar:transfer")}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function ThreadContextMenuItems({
   thread,
   onRename,
   onOpenFileManager,
-  onTransfer,
 }: {
   thread: WorkThread;
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
-  onTransfer: () => void;
 }) {
   const { t } = useTranslation();
   const { user } = useAuth();
@@ -393,12 +268,6 @@ function ThreadContextMenuItems({
             {thread.metadata.archivedAt ? t("sidebar:unarchiveThread") : t("sidebar:archiveThread")}
           </span>
         </ContextMenuItem>
-        {user?.role === "admin" ? (
-          <ContextMenuItem onClick={onTransfer}>
-            <ArrowLeftRightIcon className="text-muted-foreground" />
-            <span>{t("sidebar:transferThread")}</span>
-          </ContextMenuItem>
-        ) : null}
       </ContextMenuGroup>
 
       <ContextMenuSeparator />
@@ -418,13 +287,11 @@ function ThreadActionMenu({
   thread,
   onRename,
   onOpenFileManager,
-  onTransfer,
   sub = false,
 }: {
   thread: WorkThread;
   onRename: (thread: WorkThread) => void;
   onOpenFileManager: (threadId: string) => void;
-  onTransfer: () => void;
   sub?: boolean;
 }) {
   const { t } = useTranslation();
@@ -548,12 +415,6 @@ function ThreadActionMenu({
           )}
           <span>{thread.metadata.archivedAt ? t("sidebar:unarchive") : t("sidebar:archive")}</span>
         </DropdownMenuItem>
-        {user?.role === "admin" ? (
-          <DropdownMenuItem onClick={onTransfer}>
-            <ArrowLeftRightIcon className="text-muted-foreground" />
-            <span>{t("sidebar:transferThread")}</span>
-          </DropdownMenuItem>
-        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onClick={() => void deleteThread(thread.id)}>
           <Trash2Icon className="text-muted-foreground" />
@@ -583,7 +444,6 @@ export function DirectThreadItem({
   const setActiveThreadId = (id: string | null) => selectThread(id);
   const isThreadBusy = useIsThreadBusy(user?.id ?? "anonymous");
   const isWorking = isThreadBusy(thread.id);
-  const [transferOpen, setTransferOpen] = React.useState(false);
 
   return (
     <BlurFade duration={0.2} blur="3px">
@@ -630,7 +490,6 @@ export function DirectThreadItem({
             <ThreadContextMenuItems
               onOpenFileManager={onOpenFileManager}
               onRename={onRename}
-              onTransfer={() => setTransferOpen(true)}
               thread={thread}
             />
           </ContextMenuContent>
@@ -638,10 +497,8 @@ export function DirectThreadItem({
         <ThreadActionMenu
           onOpenFileManager={onOpenFileManager}
           onRename={onRename}
-          onTransfer={() => setTransferOpen(true)}
           thread={thread}
         />
-        <TransferThreadDialog onOpenChange={setTransferOpen} open={transferOpen} thread={thread} />
       </SidebarMenuItem>
     </BlurFade>
   );
@@ -667,7 +524,6 @@ function WorkspaceThreadItem({
   const isThreadBusy = useIsThreadBusy(user?.id ?? "anonymous");
   const isWorking = isThreadBusy(thread.id);
   const isActive = thread.id === activeThreadId;
-  const [transferOpen, setTransferOpen] = React.useState(false);
 
   return (
     <SidebarMenuSubItem>
@@ -712,7 +568,6 @@ function WorkspaceThreadItem({
           <ThreadContextMenuItems
             onOpenFileManager={onOpenFileManager}
             onRename={onRename}
-            onTransfer={() => setTransferOpen(true)}
             thread={thread}
           />
         </ContextMenuContent>
@@ -720,11 +575,9 @@ function WorkspaceThreadItem({
       <ThreadActionMenu
         onOpenFileManager={onOpenFileManager}
         onRename={onRename}
-        onTransfer={() => setTransferOpen(true)}
         sub
         thread={thread}
       />
-      <TransferThreadDialog onOpenChange={setTransferOpen} open={transferOpen} thread={thread} />
     </SidebarMenuSubItem>
   );
 }

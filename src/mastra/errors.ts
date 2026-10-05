@@ -1,19 +1,20 @@
 /**
  * 工作台统一错误注册表。
- * 官方文档:docs/en/reference/configuration.mdx「server.onError」(全局错误出站)、
- * @mastra/core/error 的 MastraError({ id, domain, category, text } + toJSON())。
+ * 官方文档:docs/en/reference/server/create-route.mdx「Error handling」。
  *
  * 约定:
  * - 路由与业务层只 throw workError("<CODE>") / WorkApiError,不再手写
  *   c.json({ error }, status);HTTP 状态与响应形状由 onError 统一决定:
- *   { error: message, code, domain, category, details? } —— error 字段保持
- *   旧契约(前端现有读取不受影响),code 供渲染层翻译成用户语言。
+ *   { error: message, code, domain, category, details? },code 供渲染层翻译。
  * - 错误码按模块分组命名:<模块>_<情况>;官方 ErrorDomain 对齐模块归属,
  *   ErrorCategory 对齐 USER(请求侧问题)/ SYSTEM(服务侧问题)/
  *   THIRD_PARTY(上游服务问题)。
  */
-import { ErrorCategory, ErrorDomain, getErrorFromUnknown, MastraError } from "@mastra/core/error";
-import type { ContextWithMastra } from "@mastra/core/server";
+import { ErrorCategory, ErrorDomain, getErrorFromUnknown } from "@mastra/core/error";
+import type { ContextWithMastra, ValidationErrorHook } from "@mastra/core/server";
+import { FilesystemError, WorkspaceReadOnlyError } from "@mastra/core/workspace";
+import { HTTPException, isZodError } from "@mastra/server/server-adapter";
+import { HTTPException as HonoHTTPException } from "hono/http-exception";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
 interface WorkErrorDefinition {
@@ -89,36 +90,6 @@ export const WORK_ERRORS = {
     status: 404,
     text: "Thread not found",
   },
-  THREAD_TRANSFER_ASSET_CONFLICT: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "线程包含共享资料库附件，无法安全转交；请先将附件复制或解除共享引用",
-  },
-  THREAD_TRANSFER_NOT_FOUND: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 404,
-    text: "会话转交申请不存在",
-  },
-  THREAD_TRANSFER_DECISION_CONFLICT: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "该转交申请已处理或状态已变化，请刷新后查看",
-  },
-  THREAD_TRANSFER_REQUEST_PENDING: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "该会话已有待处理的转交申请",
-  },
-  THREAD_TRANSFER_IN_PROGRESS: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "会话正在转交，请稍后重试",
-  },
   MESSAGE_NOT_FOUND: {
     domain: ErrorDomain.MASTRA_MEMORY,
     category: ErrorCategory.USER,
@@ -130,6 +101,12 @@ export const WORK_ERRORS = {
     category: ErrorCategory.USER,
     status: 400,
     text: "workingMemory is required",
+  },
+  OBSERVATIONAL_MEMORY_DISABLED: {
+    domain: ErrorDomain.MASTRA_MEMORY,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "Observational Memory is disabled",
   },
 
   // ---- 会话运行时(routes/session,harness agent-controller)-------------
@@ -218,6 +195,12 @@ export const WORK_ERRORS = {
     category: ErrorCategory.USER,
     status: 400,
     text: "selection is required",
+  },
+  MODEL_GENERATION_FAILED: {
+    domain: ErrorDomain.MODEL_ROUTER,
+    category: ErrorCategory.THIRD_PARTY,
+    status: 502,
+    text: "模型生成失败",
   },
   PROVIDER_MODELS_FETCH_FAILED: {
     domain: ErrorDomain.MODEL_ROUTER,
@@ -413,27 +396,27 @@ export const WORK_ERRORS = {
 export type WorkErrorCode = keyof typeof WORK_ERRORS;
 
 /**
- * 带 HTTP 状态的 MastraError:路由 throw,onError 统一序列化。
- * text/details 可覆盖默认文案,用于携带动态上下文(上游 URL、原因等)。
+ * The official schema-route adapter catches handler errors before server.onError.
+ * Its HTTPException response preserves the same structured body on both route types.
  */
-export class WorkApiError extends MastraError {
-  readonly status: ContentfulStatusCode;
+export class WorkApiError extends HTTPException {
   constructor(
     code: WorkErrorCode,
     options: { text?: string; details?: Record<string, unknown>; cause?: unknown } = {},
   ) {
     const definition = WORK_ERRORS[code];
-    super(
-      {
-        id: code,
-        domain: definition.domain,
-        category: definition.category,
-        text: options.text ?? definition.text,
-        ...(options.details ? { details: options.details as Record<string, never> } : {}),
-      },
-      options.cause,
-    );
-    this.status = definition.status;
+    const body = {
+      error: options.text ?? definition.text,
+      code,
+      domain: definition.domain,
+      category: definition.category,
+      ...(options.details ? { details: options.details } : {}),
+    };
+    super(definition.status, {
+      message: body.error,
+      cause: options.cause,
+      res: Response.json(body, { status: definition.status }),
+    });
   }
 }
 
@@ -452,18 +435,37 @@ export function workError(
   return new WorkApiError(code, options);
 }
 
+export const workValidationError: ValidationErrorHook = (error, context) => {
+  const { text, domain, category, status } = WORK_ERRORS.VALIDATION_FAILED;
+  return {
+    status,
+    body: {
+      error: text,
+      code: "VALIDATION_FAILED",
+      domain,
+      category,
+      details: { context, issues: error.issues },
+    },
+  };
+};
+
 export function handleWorkError(err: Error, c: ContextWithMastra) {
-  if (err instanceof WorkApiError) {
-    return c.json(
-      {
-        error: err.message,
-        code: err.id,
-        domain: err.domain,
-        category: err.category,
-        ...(err.details ? { details: err.details } : {}),
-      },
-      err.status,
-    );
+  if (err instanceof HTTPException || err instanceof HonoHTTPException) return err.getResponse();
+  if (isZodError(err))
+    return workError("VALIDATION_FAILED", { details: { issues: err.issues } }).getResponse();
+  if (err instanceof WorkspaceReadOnlyError)
+    return workError("WORKSPACE_READ_ONLY", { cause: err }).getResponse();
+  if (err instanceof FilesystemError) {
+    const codes: Partial<Record<string, WorkErrorCode>> = {
+      ENOENT: "WORKSPACE_FILE_NOT_FOUND",
+      EISDIR: "WORKSPACE_FILE_NOT_EDITABLE",
+      ENOTDIR: "WORKSPACE_PATH_INVALID",
+      EACCES: "WORKSPACE_PATH_INVALID",
+      EPERM: "WORKSPACE_PATH_INVALID",
+      EEXIST: "VALIDATION_FAILED",
+    };
+    const code = codes[err.code];
+    if (code) return workError(code, { cause: err }).getResponse();
   }
   const wrapped = getErrorFromUnknown(err);
   c.get("mastra").getLogger().error(`[work-api] ${c.req.method} ${c.req.path} 未处理错误`, {

@@ -62,8 +62,6 @@ export interface WorkspaceLogData {
   byteSize: number;
   contentType: string;
   encoding: string;
-  chunkSize: number;
-  chunkCount: number;
   storagePath: string;
   workspacePath: string;
   characterCount: number;
@@ -181,8 +179,6 @@ export interface QueuedRequest {
   files: FileUIPart[];
   skills?: string[];
   fileReferences?: MessageFileReference[];
-  /** Server session queue id; its run is consumed through AI SDK resumeStream(). */
-  queuedOnServer?: boolean;
 }
 
 export type LibraryFilePart = FileUIPart & { byteSize?: number };
@@ -209,8 +205,7 @@ export interface AgentInteraction {
   /**
    * 该工具的权限类别与生效策略,由服务端算好后随会话 display-state
    * 下发(类别映射只在 src/mastra/agents/permissions.ts 保留一份)。
-   * 流式期间出现的审批还没有这两个字段,等本轮结束读取挂起列表时合并进来 ——
-   * 审批按钮在流结束前本就是禁用态,不影响操作。
+   * 原生审批事件触发重新读取该快照，运行未结束时也可响应。
    */
   category?: ToolCategory;
   policy?: PermissionPolicy;

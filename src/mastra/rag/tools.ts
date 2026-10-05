@@ -4,19 +4,41 @@
  * - library_graph_search:GraphRAG 图谱随机游走检索
  * - library_document_chunker:MDocument 分块(调试 / 预处理用)
  */
+import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { resolveContextModel } from "../models/providers";
 import { chunkDocument, createDocument } from "./document/indexing";
 import { searchLibrary } from "./retrieval/search";
-import { getLibrarySettings } from "./settings";
+import { getLibrarySettings } from "./storage/db";
 import {
   LIBRARY_GRAPH_SEARCH_TOOL_ID,
+  LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
   LIBRARY_VECTOR_SEARCH_TOOL_ID,
   type LibrarySettings,
+  librarySearchResultSchema,
   VALID_CHUNK_STRATEGIES,
 } from "./types";
+
+async function requestLibraryScope(requestContext?: RequestContext) {
+  const scope = z
+    .object({
+      resourceId: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      origin: z.url({ protocol: /^https?$/ }),
+    })
+    .parse({
+      resourceId: requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY),
+      threadId: requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY),
+      origin: requestContext?.get(LIBRARY_ORIGIN_CONTEXT_KEY),
+    });
+  return {
+    ...scope,
+    rerankModel: await resolveContextModel(requestContext),
+  };
+}
 
 export function resolveChunkerSettings(
   defaults: LibrarySettings,
@@ -50,22 +72,14 @@ export const libraryVectorSearchTool = createTool({
     query: z.string().min(1).describe("检索查询词或自然语言问题"),
   }),
   outputSchema: z.object({
-    results: z.array(
-      z.object({
-        citationId: z.string(),
-        assetId: z.string(),
-        filename: z.string(),
-        text: z.string(),
-        score: z.number().optional(),
-      }),
-    ),
+    results: z.array(librarySearchResultSchema),
   }),
   execute: async ({ query }, context) => {
-    const resourceId =
-      (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
-    const threadIdValue = context?.requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY);
-    const threadId = typeof threadIdValue === "string" && threadIdValue ? threadIdValue : undefined;
-    const results = await searchLibrary({ resourceId, query, threadId, graphRag: false });
+    const results = await searchLibrary({
+      ...(await requestLibraryScope(context?.requestContext)),
+      query,
+      graphRag: false,
+    });
     return { results };
   },
 });
@@ -78,22 +92,14 @@ export const libraryGraphSearchTool = createTool({
     query: z.string().min(1).describe("关系检索或实体分析问题"),
   }),
   outputSchema: z.object({
-    results: z.array(
-      z.object({
-        citationId: z.string(),
-        assetId: z.string(),
-        filename: z.string(),
-        text: z.string(),
-        score: z.number().optional(),
-      }),
-    ),
+    results: z.array(librarySearchResultSchema),
   }),
   execute: async ({ query }, context) => {
-    const resourceId =
-      (context?.requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string) || "workbench";
-    const threadIdValue = context?.requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY);
-    const threadId = typeof threadIdValue === "string" && threadIdValue ? threadIdValue : undefined;
-    const results = await searchLibrary({ resourceId, query, threadId, graphRag: true });
+    const results = await searchLibrary({
+      ...(await requestLibraryScope(context?.requestContext)),
+      query,
+      graphRag: true,
+    });
     return { results };
   },
 });

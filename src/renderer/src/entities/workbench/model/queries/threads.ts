@@ -10,18 +10,16 @@ import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef } from "react";
 import { confirmWorkspaceDraftSwitch } from "@/shared/lib/workspace-drafts";
-import { closeDeletedThreadBrowserView } from "../close-deleted-thread-browser-view";
 import {
   cloneThreadRequest,
   createThreadRequest,
-  decideThreadTransferRequest,
   deleteThreadRequest,
   fetchThreads,
-  fetchThreadTransferHistory,
   generateThreadTitle as generateThreadTitleRequest,
-  transferThreadRequest,
   updateThread,
+  updateThreadModel,
 } from "../../api/workbench-api";
+import { closeDeletedThreadBrowserView } from "../close-deleted-thread-browser-view";
 import { qk } from "../query-keys";
 import type { WorkModeId } from "../session";
 import { ACTIVE_THREAD_KEY, userStorageKey } from "../storage";
@@ -145,13 +143,13 @@ export function useCreateThreadMutation(userId: string) {
   const queryClient = useQueryClient();
   const selectThread = useSelectThread();
   return useMutation({
-    mutationFn: (input?: string | CreateThreadOptions) => {
+    mutationFn: async (input?: string | CreateThreadOptions) => {
       const title = typeof input === "string" ? input : input?.title;
       const modeOverride = typeof input === "string" ? undefined : input?.modeId;
       const { agentSelection, modeId, permissionRules, modelSelection } =
         useWorkbenchStore.getState();
       const currentModeId = modeOverride ?? modeId;
-      return createThreadRequest(userId, {
+      const thread = await createThreadRequest(userId, {
         threadId: nanoid(),
         ...(title ? { title } : {}),
         metadata: {
@@ -159,11 +157,11 @@ export function useCreateThreadMutation(userId: string) {
           agentProfileId: agentSelection.id,
           currentModeId,
           permissionRules,
-          ...(modelSelection
-            ? { modelSelectionByMode: { [currentModeId]: modelSelection } }
-            : {}),
         },
       });
+      return modelSelection
+        ? updateThreadModel(thread.id, userId, currentModeId, modelSelection)
+        : thread;
     },
     onSuccess: (thread, input) => {
       void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
@@ -203,39 +201,6 @@ export function useCloneThreadMutation(userId: string) {
     onSuccess: (clone) => {
       void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
       selectThread(clone.id);
-    },
-  });
-}
-
-/** 所有权迁移(官方 updateThreadResourceId):移出列表,当前线程被迁走则清空选中 */
-export function useTransferThreadMutation(userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (options: { threadId: string; targetResourceId: string }) =>
-      transferThreadRequest(options.threadId, options.targetResourceId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.threadTransfers(userId) });
-    },
-  });
-}
-
-export function useThreadTransferHistoryQuery(userId: string, enabled = true) {
-  return useQuery({
-    queryKey: qk.threadTransfers(userId),
-    queryFn: fetchThreadTransferHistory,
-    enabled,
-    staleTime: 5_000,
-  });
-}
-
-export function useDecideThreadTransferMutation(userId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (options: { transferId: string; decision: "accept" | "reject" }) =>
-      decideThreadTransferRequest(options.transferId, options.decision),
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.threadTransfers(userId) });
-      void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
     },
   });
 }

@@ -3,6 +3,7 @@ import { type BrowserWindow, type WebContents, WebContentsView } from "electron"
 import {
   BrowserNavigateRequestSchema,
   type BrowserState,
+  MAX_NATIVE_BROWSER_TABS,
   NATIVE_BROWSER_VIEW_CHANNELS,
   NativeBrowserActionSchema,
   type NativeBrowserAgentOperation,
@@ -14,7 +15,6 @@ import {
   NativeBrowserNavigateSchema,
   type NativeBrowserSession,
   NativeBrowserSessionSchema,
-  MAX_NATIVE_BROWSER_TABS,
 } from "../shared/browser-contract";
 import { NativeBrowserAgentCommandError } from "./browser-target-broker";
 

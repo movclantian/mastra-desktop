@@ -4,12 +4,12 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import {
   type NativeBrowserAgentCommandFailure,
+  NativeBrowserAgentCommandRequestSchema,
   type NativeBrowserAgentCommandResponse,
+  NativeBrowserAgentCommandResponseSchema,
   type NativeBrowserAgentOperation,
   type NativeBrowserSession,
   type NativeBrowserTargetFailure,
-  NativeBrowserAgentCommandRequestSchema,
-  NativeBrowserAgentCommandResponseSchema,
   NativeBrowserTargetRequestSchema,
   NativeBrowserTargetResponseSchema,
 } from "../shared/browser-contract";

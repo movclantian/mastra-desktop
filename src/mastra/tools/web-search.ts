@@ -3,12 +3,17 @@
  * 官方文档:docs/en/integrations/tools/tavily.mdx(createTavilySearchTool /
  * createTavilyExtractTool)、firecrawl.mdx(Firecrawl SDK);provider 原生检索用
  * @mastra/core/tools 的 webSearchTool / webFetchTool(仅 OpenAI / Anthropic /
- * Google / xAI 家族可用)。AnySearch 为无官方集成的第三方 REST,走手写 fetch。
+ * Google / xAI 家族可用)。AnySearch 通过官方 MCPClient 发现和调用远程工具。
+ * MCP:docs/en/reference/tools/mcp-client.mdx；AnySearch 协议:
+ * https://github.com/anysearch-ai/anysearch-mcp-server#mcp-transport
  * 引擎 + 强度档(fast/balanced/deep)经 RequestContext 传入,由 Agent 的动态
  * tools / instructions 消费(见 src/mastra/agents/index.ts)。
  */
+import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
+import type { Processor } from "@mastra/core/processors";
 import { createTool, webFetchTool, webSearchTool } from "@mastra/core/tools";
+import { getMcpCallToolContent, MCPClient } from "@mastra/mcp";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
 import { z } from "zod";
@@ -32,8 +37,6 @@ export type SearchEngine = (typeof SEARCH_ENGINES)[number];
 /** provider 引擎支持的模型家族 */
 export const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "xai"] as const;
 
-export const MODEL_FAMILY_CONTEXT_KEY = "modelFamily";
-
 function supportsProviderSearch(family: unknown): boolean {
   if (typeof family !== "string") return false;
   const normalized = family === "gemini" ? "google" : family;
@@ -50,11 +53,7 @@ interface WebSearchSelection {
 
 export const WEB_SEARCH_CONTEXT_KEY = "webSearch";
 
-export interface ToolsUserConfig {
-  tavily: z.infer<typeof CredentialStateSchema>;
-  firecrawl: z.infer<typeof CredentialStateSchema> & { apiUrl: string };
-  anysearch: z.infer<typeof CredentialStateSchema>;
-}
+export type ToolsUserConfig = z.infer<typeof toolsConfigSchema>;
 
 const TOOLS_CONFIG_KEY = "tools";
 
@@ -64,7 +63,7 @@ const DEFAULT_TOOLS_CONFIG: ToolsUserConfig = {
   anysearch: { hasCredential: false },
 };
 
-const toolsConfigSchema = z
+export const toolsConfigSchema = z
   .object({
     tavily: CredentialStateSchema,
     firecrawl: z.union([
@@ -219,458 +218,157 @@ function createArchivedWebFetchTool() {
   });
 }
 
-function createArchivedTavilyExtractTool(apiKey: string) {
-  const sourceTool = createTavilyExtractTool({ apiKey });
-  return createTool({
-    id: "tavily_extract",
-    description: "Tavily 整页抓取。完整正文保存为当前用户内容对象，返回摘要和引用。",
-    inputSchema: z.object({
-      urls: z.array(z.url()).min(1).max(20),
-      extractDepth: z.enum(["basic", "advanced"]).optional(),
-      query: z.string().optional(),
-      includeImages: z.boolean().optional(),
-      format: z.enum(["markdown", "text"]).optional(),
-    }),
-    outputSchema: z.object({
-      results: z.array(
-        z.object({
-          url: z.string(),
-          rawContent: z.string(),
-          contentObject: z.object({
-            objectId: z.string(),
-            sha256: z.string(),
-            byteSize: z.number(),
-            workspacePath: z.string(),
-          }),
-          characterCount: z.number(),
-          readHint: z.string(),
-          images: z.array(z.string()).optional(),
-        }),
-      ),
-      failedResults: z.array(z.object({ url: z.string(), error: z.string() })),
-      responseTime: z.number(),
-    }),
-    execute: async (input, context) => {
-      if (!sourceTool.execute) throw new Error("Tavily extract tool is unavailable");
-      const result = (await sourceTool.execute(input, context)) as {
-        results: Array<{ url: string; rawContent: string; images?: string[] }>;
-        failedResults: Array<{ url: string; error: string }>;
-        responseTime: number;
-      };
-      return {
-        ...result,
-        results: await Promise.all(
-          result.results.map(async (item) => {
-            const archived = await archiveWebText(item.rawContent, context, {
-              source: item.url,
-              contentType:
-                input.format === "text"
-                  ? "text/plain; charset=utf-8"
-                  : "text/markdown; charset=utf-8",
-            });
-            return {
-              ...item,
-              rawContent: archived.summary,
-              contentObject: archived.contentObject,
-              characterCount: archived.characterCount,
-              readHint: archived.readHint,
-            };
-          }),
-        ),
-      };
-    },
-  });
-}
-
-function createArchivedTavilySearchTool(apiKey: string) {
-  const sourceTool = createTavilySearchTool({ apiKey });
-  return createTool({
-    id: "tavily_search",
-    description:
-      "Tavily 网页检索。检索摘要直接返回；如果请求原始正文，会先保存为当前用户内容对象并只返回摘要和引用。",
-    inputSchema: z.object({
-      query: z.string().min(1),
-      searchDepth: z.enum(["basic", "advanced", "fast", "ultra-fast"]).optional(),
-      maxResults: z.number().int().min(1).max(20).optional(),
-      includeAnswer: z.union([z.boolean(), z.enum(["basic", "advanced"])]).optional(),
-      includeImages: z.boolean().optional(),
-      includeImageDescriptions: z.boolean().optional(),
-      includeRawContent: z.union([z.literal(false), z.enum(["markdown", "text"])]).optional(),
-      includeDomains: z.array(z.string()).optional(),
-      excludeDomains: z.array(z.string()).optional(),
-      timeRange: z.enum(["day", "week", "month", "year"]).optional(),
-    }),
-    outputSchema: z.object({
-      query: z.string(),
-      results: z.array(
-        z.object({
-          title: z.string(),
-          url: z.string(),
-          content: z.string(),
-          score: z.number(),
-          rawContent: z.string().optional(),
-          contentObject: z
-            .object({
-              objectId: z.string(),
-              sha256: z.string(),
-              byteSize: z.number(),
-              workspacePath: z.string(),
-            })
-            .optional(),
-          readHint: z.string().optional(),
-        }),
-      ),
-      responseTime: z.number(),
-      answer: z.string().optional(),
-      images: z.array(z.object({ url: z.string(), description: z.string().optional() })).optional(),
-    }),
-    execute: async (input, context) => {
-      if (!sourceTool.execute) throw new Error("Tavily search tool is unavailable");
-      const result = (await sourceTool.execute(input, context)) as {
-        query: string;
-        results: Array<{
-          title: string;
-          url: string;
-          content: string;
-          score: number;
-          rawContent?: string;
-        }>;
-        responseTime: number;
-        answer?: string;
-        images?: Array<{ url: string; description?: string }>;
-      };
-      return {
-        ...result,
-        results: await Promise.all(
-          result.results.map(async (item) => {
-            if (!item.rawContent) return item;
-            const archived = await archiveWebText(item.rawContent, context, {
-              source: item.url,
-              contentType:
-                input.includeRawContent === "text"
-                  ? "text/plain; charset=utf-8"
-                  : "text/markdown; charset=utf-8",
-            });
-            return {
-              ...item,
-              rawContent: archived.summary,
-              contentObject: archived.contentObject,
-              readHint: archived.readHint,
-            };
-          }),
-        ),
-      };
-    },
-  });
-}
-
-const ANYSEARCH_API_BASE = "https://api.anysearch.com";
-
-const ANYSEARCH_DOMAINS = [
-  "general",
-  "resource",
-  "social_media",
-  "finance",
-  "academic",
-  "legal",
-  "health",
-  "business",
-  "security",
-  "ip",
-  "code",
-  "energy",
-  "environment",
-  "agriculture",
-  "travel",
-  "film",
-  "gaming",
-] as const;
-
-/** AnySearch 单次检索 / 子域查询超时(毫秒)。 */
-const anysearchSearchTimeoutMs = 30_000;
-/** AnySearch 批量检索 / 整页抓取超时(毫秒)——这两类调用耗时显著高于单次检索。 */
-const anysearchBatchTimeoutMs = 60_000;
-
-function anysearchError(status: number, message: string): Error {
-  if (status === 401) {
-    return new Error(
-      `AnySearch API Key 无效或已过期(${message})。让用户在 设置 → 工具 更换 Key,或清空 Key 改用匿名模式(限额更低)。`,
-    );
-  }
-  if (status === 402) {
-    return new Error(`AnySearch 配额已耗尽(${message})。让用户在控制台购买额度或等待额度重置。`);
-  }
-  if (status === 429) {
-    return new Error(`AnySearch 触发限流(${message})。稍后重试,或让用户配置 API Key 提升限额。`);
-  }
-  return new Error(`AnySearch 请求失败(HTTP ${status}):${message}`);
-}
-
-async function anysearchFetch(
-  path: string,
-  apiKey: string,
-  body: unknown,
-  timeoutMs: number,
-): Promise<unknown> {
-  const response = await fetch(`${ANYSEARCH_API_BASE}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Anysearch-Client": "mastra-desktop/1.0",
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const json: unknown = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message =
-      typeof json === "object" &&
-      json !== null &&
-      typeof (json as { message?: unknown }).message === "string"
-        ? (json as { message: string }).message
-        : "响应不是合法 JSON";
-    throw anysearchError(response.status, message);
-  }
-  return json;
-}
-
-interface AnySearchRestResponse {
-  code?: number;
-  message?: string;
-  data?: {
-    results?: Array<{ title?: string; url: string; snippet?: string; content?: string }>;
-  };
-}
-
-async function anysearchToolCall(
-  apiKey: string,
-  tool: string,
-  args: Record<string, unknown>,
-  timeoutMs: number,
-): Promise<string> {
-  const json = (await anysearchFetch(
-    "/mcp",
-    apiKey,
-    { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: tool, arguments: args } },
-    timeoutMs,
-  )) as {
-    error?: { message?: string };
-    result?: { content?: Array<{ type: string; text?: string }> };
-  } | null;
-  if (!json) throw new Error(`AnySearch ${tool} 返回了无法解析的内容`);
-  if (json.error) throw new Error(`AnySearch ${tool} 调用失败:${json.error.message ?? "未知错误"}`);
-  const text = json.result?.content?.find((part) => part.type === "text")?.text;
-  if (typeof text !== "string" || !text) throw new Error(`AnySearch ${tool} 未返回文本内容`);
-  return text;
-}
-
-function createAnySearchTools(apiKey: string, preset: DepthPreset): ToolsInput {
-  const search = createTool({
-    id: "anysearch-search",
-    description:
-      "AnySearch 统一检索:按查询意图自动路由数据源(通用网页 + 金融/学术/代码/法律等垂直域)并融合排序。垂直话题先调 anysearch_get_sub_domains 拿 tag 与必填 params,再带 tag+params 检索;通用查询只传 query 即可。",
-    inputSchema: z.object({
-      query: z.string().min(1).describe("检索关键词或自然语言问题"),
-      max_results: z
-        .number()
-        .int()
-        .min(1)
-        .max(20)
-        .optional()
-        .describe(`结果条数(1-20),不传时由当前强度档决定(${preset.maxResults})`),
-      tag: z
-        .string()
-        .optional()
-        .describe(
-          '垂直域标签 {domain}.{sub_domain},如 "finance.quote"、"code.doc";取自 anysearch_get_sub_domains 返回的 sub_domain 列',
-        ),
-      zone: z.enum(["cn", "intl"]).optional().describe("地区;中文/国内信息传 cn,国际信息传 intl"),
-      language: z.string().optional().describe("偏好语言,如 zh-CN 或 en"),
-      params: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe(
-          '垂直域扩展参数键值对,如 {"type":"stock","symbol":"AAPL"};tag 的必填参数见 anysearch_get_sub_domains',
-        ),
-    }),
-    outputSchema: z.object({ results: z.array(searchHitSchema) }),
-    execute: async ({ query, max_results, tag, zone, language, params }, context) => {
-      const json = (await anysearchFetch(
-        "/v1/search",
-        apiKey,
+/** Archive full pages before native tool results reach memory, streams, or the next model call. */
+export const webSearchArchiveProcessor = {
+  id: "web-search-content-archive",
+  async processToolResult({ toolName, toolCallId, args, result, messageList, requestContext }) {
+    if (toolName === "anysearch_extract" || toolName === "anysearch_batch_search") {
+      const content =
+        getMcpCallToolContent(result) ??
+        (result && typeof result === "object" && "content" in result ? result.content : undefined);
+      const text = Array.isArray(content)
+        ? content
+            .flatMap((part: unknown) =>
+              part &&
+              typeof part === "object" &&
+              "type" in part &&
+              part.type === "text" &&
+              "text" in part &&
+              typeof part.text === "string"
+                ? [part.text]
+                : [],
+            )
+            .join("\n")
+        : typeof result === "string"
+          ? result
+          : JSON.stringify(result);
+      if (!text) return;
+      const source =
+        args && typeof args === "object" && "url" in args && typeof args.url === "string"
+          ? args.url
+          : `anysearch:${toolName}`;
+      const archived = await archiveWebText(
+        text,
+        { requestContext },
         {
-          query,
-          max_results: max_results ?? preset.maxResults,
-          ...(tag ? { tag } : {}),
-          ...(zone ? { zone } : {}),
-          ...(language ? { language } : {}),
-          ...(params && Object.keys(params).length > 0 ? { params } : {}),
+          source,
+          contentType: "text/markdown; charset=utf-8",
         },
-        anysearchSearchTimeoutMs,
-      )) as AnySearchRestResponse | null;
-      if (json?.code !== 0) {
-        throw new Error(`AnySearch 检索失败:${json?.message ?? "响应不是合法 JSON"}`);
-      }
-      return {
-        results: await Promise.all(
-          (json.data?.results ?? []).map(async (item) => ({
-            title: item.title ?? item.url,
-            url: item.url,
-            snippet: clamp(item.snippet ?? ""),
-            ...(item.content
-              ? {
-                  content: contentSummary(item.content),
-                  contentObject: contentObjectReference(
-                    await archiveTextContent(item.content, context, {
-                      kind: "web",
-                      source: item.url,
-                      contentType: "text/plain; charset=utf-8",
-                    }),
-                  ),
-                }
-              : {}),
-          })),
-        ),
-      };
-    },
-  });
-
-  const getSubDomains = createTool({
-    id: "anysearch-get-sub-domains",
-    description:
-      "查询 AnySearch 垂直域目录:返回各子域的 tag、说明与参数 schema(Markdown 表格)。做垂直检索前先调用它,把返回的 sub_domain 作为 search 的 tag、必填参数作为 params 传入。",
-    inputSchema: z.object({
-      domains: z
-        .array(z.enum(ANYSEARCH_DOMAINS))
-        .min(1)
-        .max(5)
-        .describe("要查询的域(1-5 个),如 ['finance'] 或 ['code','academic']"),
-    }),
-    outputSchema: z.object({
-      report: z.string().describe("子域目录 Markdown 表格:sub_domain | description | params"),
-    }),
-    execute: async ({ domains }) => ({
-      report: await anysearchToolCall(
-        apiKey,
-        "get_sub_domains",
-        domains.length === 1 ? { domain: domains[0] } : { domains },
-        anysearchSearchTimeoutMs,
-      ),
-    }),
-  });
-
-  const base: ToolsInput = { anysearch_search: search, anysearch_get_sub_domains: getSubDomains };
-  if (!preset.allowDeepFetch) return base;
-
-  return {
-    ...base,
-    anysearch_batch_search: createTool({
-      id: "anysearch-batch-search",
-      description:
-        "AnySearch 并行批量检索:一次执行最多 5 条相互独立的查询,单条失败不影响其余。适合多意图问题或横向对比。",
-      inputSchema: z.object({
-        queries: z
-          .array(
-            z.object({
-              query: z.string().min(1).describe("单条查询语句"),
-              sub_domain: z
-                .string()
-                .optional()
-                .describe('垂直 tag(如 "finance.quote"),取自 anysearch_get_sub_domains'),
-              params: z
-                .record(z.string(), z.unknown())
-                .optional()
-                .describe("该条查询的垂直域参数键值对"),
-              max_results: z
-                .number()
-                .int()
-                .min(1)
-                .max(10)
-                .optional()
-                .describe("该条结果数上限(1-10)"),
-            }),
-          )
-          .min(1)
-          .max(5)
-          .describe("1-5 条相互独立的查询"),
-      }),
-      outputSchema: z.object({
-        report: z.string().describe("各查询结果的合并 Markdown 报告"),
-        contentObject: z.object({
-          objectId: z.string(),
-          sha256: z.string(),
-          byteSize: z.number(),
-          workspacePath: z.string(),
-        }),
-        readHint: z.string(),
-      }),
-      execute: async ({ queries }, context) => {
-        const items = queries.map(({ query, sub_domain, params, max_results }) => ({
-          query,
-          ...(sub_domain
-            ? {
-                domain: sub_domain.split(".")[0],
-                sub_domain,
-                ...(params ? { sub_domain_params: params } : {}),
-              }
-            : {}),
-          ...(max_results ? { max_results } : {}),
-        }));
-        const report = await anysearchToolCall(
-          apiKey,
-          "batch_search",
-          { queries: items },
-          anysearchBatchTimeoutMs,
+      );
+      messageList.updateToolInvocation({
+        type: "tool-invocation",
+        toolInvocation: {
+          state: "result",
+          toolCallId,
+          toolName,
+          args,
+          result: { content: [{ type: "text", text: archived.summary }], ...archived },
+        },
+      });
+      return;
+    }
+    if (toolName !== "tavily_search" && toolName !== "tavily_extract") return;
+    if (
+      !result ||
+      typeof result !== "object" ||
+      !("results" in result) ||
+      !Array.isArray(result.results)
+    )
+      return;
+    const plainText =
+      args &&
+      typeof args === "object" &&
+      (("format" in args && args.format === "text") ||
+        ("includeRawContent" in args && args.includeRawContent === "text"));
+    const results = await Promise.all(
+      result.results.map(async (item: unknown) => {
+        if (
+          !item ||
+          typeof item !== "object" ||
+          !("rawContent" in item) ||
+          typeof item.rawContent !== "string" ||
+          !("url" in item) ||
+          typeof item.url !== "string"
+        )
+          return item;
+        const archived = await archiveWebText(
+          item.rawContent,
+          { requestContext },
+          {
+            source: item.url,
+            contentType: plainText ? "text/plain; charset=utf-8" : "text/markdown; charset=utf-8",
+          },
         );
-        const metadata = await archiveTextContent(report, context, {
-          kind: "web",
-          source: "anysearch:batch_search",
-          contentType: "text/markdown; charset=utf-8",
-        });
         return {
-          report: contentSummary(report),
-          contentObject: contentObjectReference(metadata),
-          readHint: contentReferenceText(metadata),
+          ...item,
+          rawContent: archived.summary,
+          contentObject: archived.contentObject,
+          characterCount: archived.characterCount,
+          readHint: archived.readHint,
         };
-      },
-    }),
-    anysearch_extract: createTool({
-      id: "anysearch-extract",
-      description: "AnySearch 整页抓取:抓取单个 URL 的完整内容并转为 Markdown。",
-      inputSchema: z.object({ url: z.url().describe("待抓取的页面地址") }),
-      outputSchema: z.object({
-        markdown: z.string(),
-        contentObject: z.object({
-          objectId: z.string(),
-          sha256: z.string(),
-          byteSize: z.number(),
-          workspacePath: z.string(),
-        }),
-        characterCount: z.number(),
-        readHint: z.string(),
       }),
-      execute: async ({ url }, context) => {
-        const markdown = await anysearchToolCall(
-          apiKey,
-          "extract",
-          { url },
-          anysearchBatchTimeoutMs,
-        );
-        const metadata = await archiveTextContent(markdown, context, {
-          kind: "web",
-          source: url,
-          contentType: "text/markdown; charset=utf-8",
-        });
-        return {
-          markdown: contentSummary(markdown),
-          contentObject: contentObjectReference(metadata),
-          characterCount: metadata.characterCount ?? markdown.length,
-          readHint: contentReferenceText(metadata),
-        };
+    );
+    messageList.updateToolInvocation({
+      type: "tool-invocation",
+      toolInvocation: {
+        state: "result",
+        toolCallId,
+        toolName,
+        args,
+        result: { ...result, results },
       },
-    }),
-  };
+    });
+  },
+} satisfies Processor;
+
+// One authenticated native client per account; tool catalogs and errors are never cached here.
+const anysearchClients = new Map<string, { apiKey: string; client: MCPClient }>();
+
+export async function closeWebSearchClients(): Promise<void> {
+  const clients = [...anysearchClients.values()];
+  anysearchClients.clear();
+  await Promise.all(clients.map(({ client }) => client.disconnect()));
+}
+
+async function createAnySearchTools(
+  apiKey: string,
+  preset: DepthPreset,
+  resourceId?: string,
+): Promise<ToolsInput> {
+  const scope = resourceId ?? "__system__";
+  let runtime = anysearchClients.get(scope);
+  if (!runtime || runtime.apiKey !== apiKey) {
+    const previous = runtime;
+    runtime = {
+      apiKey,
+      client: new MCPClient({
+        id: `mastra-work-anysearch-${randomUUID()}`,
+        servers: {
+          anysearch: {
+            url: new URL("https://api.anysearch.com/mcp"),
+            allowedHosts: ["api.anysearch.com"],
+            requestInit: {
+              headers: {
+                "X-Anysearch-Client": "mastra-desktop/1.0",
+                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+              },
+            },
+            onToolError: "throw",
+          },
+        },
+      }),
+    };
+    anysearchClients.set(scope, runtime);
+    await previous?.client.disconnect();
+  }
+  const { tools, errors } = await runtime.client.listToolsWithErrors();
+  if (errors.anysearch) throw new Error(`AnySearch MCP: ${errors.anysearch}`);
+  const enabled = new Set([
+    "anysearch_search",
+    "anysearch_get_sub_domains",
+    ...(preset.allowDeepFetch ? ["anysearch_batch_search", "anysearch_extract"] : []),
+  ]);
+  return Object.fromEntries(Object.entries(tools).filter(([name]) => enabled.has(name)));
 }
 
 function createFirecrawlTools(
@@ -831,8 +529,8 @@ export async function resolveWebSearchTools(
     );
     return {
       web_fetch: createArchivedWebFetchTool(),
-      tavily_search: createArchivedTavilySearchTool(apiKey),
-      ...(preset.allowDeepFetch ? { tavily_extract: createArchivedTavilyExtractTool(apiKey) } : {}),
+      tavily_search: createTavilySearchTool({ apiKey }),
+      ...(preset.allowDeepFetch ? { tavily_extract: createTavilyExtractTool({ apiKey }) } : {}),
     };
   }
 
@@ -854,7 +552,7 @@ export async function resolveWebSearchTools(
 
   return {
     web_fetch: createArchivedWebFetchTool(),
-    ...createAnySearchTools(apiKey, preset),
+    ...(await createAnySearchTools(apiKey, preset, resourceId)),
   };
 }
 
@@ -880,10 +578,10 @@ export function webSearchInstructions(
     selection.engine === "provider"
       ? "Use web_search (your provider's native search). Result volume is decided by the provider, so make each query specific rather than asking for more results."
       : selection.engine === "tavily"
-        ? `Call tavily-search with searchDepth='${preset.tavilySearchDepth}' and maxResults=${preset.maxResults}.`
+        ? `Call tavily_search with searchDepth='${preset.tavilySearchDepth}' and maxResults=${preset.maxResults}.`
         : selection.engine === "firecrawl"
           ? `Call firecrawl-search with limit=${preset.maxResults} by default; narrow results with sources (news), categories (github/research/pdf/developer), tbs time filters or domain filters when the query calls for it.`
-          : "Prefer anysearch-search with a vertical domain for specialized queries; call anysearch_get_sub_domains first when unsure which domains exist.";
+          : `Call anysearch_search with max_results=${preset.maxResults}; for specialized queries, call anysearch_get_sub_domains first and use its domain, sub_domain and sub_domain_params.`;
   const deepHint =
     selection.engine === "provider"
       ? "Use web_fetch to archive the 1-3 most promising pages, then use the official mastra_workspace_read_file or mastra_workspace_grep with each returned workspacePath to inspect their full content."

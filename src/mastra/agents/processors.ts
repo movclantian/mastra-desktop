@@ -8,14 +8,13 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { AgentsMDInjector, type InputProcessor } from "@mastra/core/processors";
 import { z } from "zod";
+import { getAssetContext, getLibraryAssetId } from "../rag/storage/assets";
 import {
-  getAssetContext,
-  getLibraryAssetId,
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   MAX_LIBRARY_INLINE_MEDIA_BYTES,
-} from "../rag";
+} from "../rag/types";
 import { appStorage } from "../storage";
 
 /**

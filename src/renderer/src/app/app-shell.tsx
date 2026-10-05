@@ -20,11 +20,7 @@ import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
-function WorkspaceDrawerContainer({
-  open,
-}: {
-  open: boolean;
-}) {
+function WorkspaceDrawerContainer({ open }: { open: boolean }) {
   return (
     <div
       // The resizable panel owns the minimum width. Keeping a second
@@ -221,9 +217,7 @@ export function RootShell() {
                 : { overflow: "visible", ...(wantsWorkspace ? {} : { display: "none" }) }
             }
           >
-            <WorkspaceDrawerContainer
-              open={wantsWorkspace}
-            />
+            <WorkspaceDrawerContainer open={wantsWorkspace} />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

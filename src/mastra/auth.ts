@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type {
   ContextWithMastra,
@@ -7,19 +7,14 @@ import type {
   MastraAuthRequest,
 } from "@mastra/core/server";
 import { getRequestHeader, getWebRequest, MastraAuthProvider } from "@mastra/core/server";
-import { getGuardrailsConfig } from "./agents/guardrails";
-import { getMcpConfig } from "./connections/mcp";
+import { z } from "zod";
 import { workError } from "./errors";
-import { getMemoryConfig } from "./memory";
-import { getLibrarySettings } from "./rag/settings";
 import { getLibsqlClient } from "./storage";
-import { getWorkspaceConfig } from "./workspace";
 
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "user";
 }
 
 export interface AuthSession {
@@ -40,7 +35,6 @@ function ensureAuthSchema(): Promise<void> {
         email TEXT NOT NULL COLLATE NOCASE UNIQUE,
         name TEXT NOT NULL,
         password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'user',
         created_at INTEGER NOT NULL
       )
     `);
@@ -59,25 +53,23 @@ function ensureAuthSchema(): Promise<void> {
   return authSchemaReady;
 }
 
-function normalizeEmail(value: unknown): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
+export const authLoginSchema = z
+  .object({
+    email: z.string().trim().toLowerCase().max(200),
+    password: z.string().max(200),
+  })
+  .strict();
 
-function normalizeName(value: unknown): string {
-  return typeof value === "string" ? value.trim().slice(0, 80) : "";
-}
-
-function validateRegistration(name: string, email: string, password: string): void {
-  if (!name || name.length > 80) {
-    throw workError("AUTH_VALIDATION", { text: "请输入 1-80 个字符的名称" });
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 200) {
-    throw workError("AUTH_VALIDATION", { text: "请输入有效的邮箱地址" });
-  }
-  if (password.length < 8 || password.length > 200) {
-    throw workError("AUTH_VALIDATION", { text: "密码长度必须为 8-200 个字符" });
-  }
-}
+export const authRegistrationSchema = authLoginSchema.extend({
+  name: z.string().trim().min(1).max(80),
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .max(200)
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/),
+  password: z.string().min(8).max(200),
+});
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16).toString("hex");
@@ -101,12 +93,11 @@ function rowUser(row: Record<string, unknown>): AuthUser | null {
     id: row.id,
     name: row.name,
     email: row.email,
-    role: row.role === "admin" ? "admin" : "user",
   };
 }
 
 function hashToken(token: string): string {
-  return scryptSync(token, "mastra-work-session", 32).toString("hex");
+  return createHash("sha256").update(token).digest("hex");
 }
 
 function isUniqueConstraintError(error: unknown): boolean {
@@ -123,7 +114,7 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
   await ensureAuthSchema();
   const client = await getLibsqlClient();
   const result = await client.execute({
-    sql: `SELECT u.id, u.name, u.email, u.role
+    sql: `SELECT u.id, u.name, u.email
       FROM ${AUTH_SESSIONS_TABLE} s
       INNER JOIN ${AUTH_USERS_TABLE} u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ?`,
@@ -135,22 +126,10 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
 export async function findUserById(id: string): Promise<AuthUser | null> {
   await ensureAuthSchema();
   const result = await (await getLibsqlClient()).execute({
-    sql: `SELECT id, name, email, role FROM ${AUTH_USERS_TABLE} WHERE id = ? LIMIT 1`,
+    sql: `SELECT id, name, email FROM ${AUTH_USERS_TABLE} WHERE id = ? LIMIT 1`,
     args: [id],
   });
   return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
-}
-
-/** 列出全部注册账户(会话所有权迁移的目标候选,见 /work/threads/:id/transfer) */
-export async function listAuthUsers(): Promise<AuthUser[]> {
-  await ensureAuthSchema();
-  const result = await (await getLibsqlClient()).execute({
-    sql: `SELECT id, name, email, role FROM ${AUTH_USERS_TABLE} ORDER BY created_at ASC`,
-  });
-  return result.rows.flatMap((row) => {
-    const user = rowUser(row as Record<string, unknown>);
-    return user ? [user] : [];
-  });
 }
 
 async function findUserByEmail(email: string): Promise<{
@@ -159,7 +138,7 @@ async function findUserByEmail(email: string): Promise<{
 } | null> {
   await ensureAuthSchema();
   const result = await (await getLibsqlClient()).execute({
-    sql: `SELECT id, name, email, role, password_hash passwordHash
+    sql: `SELECT id, name, email, password_hash passwordHash
       FROM ${AUTH_USERS_TABLE} WHERE email = ? LIMIT 1`,
     args: [email],
   });
@@ -195,17 +174,14 @@ export async function registerAuthUser(input: {
   email: unknown;
   password: unknown;
 }): Promise<AuthSession> {
-  const name = normalizeName(input.name);
-  const email = normalizeEmail(input.email);
-  const password = typeof input.password === "string" ? input.password : "";
-  validateRegistration(name, email, password);
+  const { name, email, password } = authRegistrationSchema.parse(input);
   await ensureAuthSchema();
-  const user: AuthUser = { id: randomUUID(), name, email, role: "user" };
+  const user: AuthUser = { id: randomUUID(), name, email };
   try {
     await (await getLibsqlClient()).execute({
       sql: `INSERT INTO ${AUTH_USERS_TABLE}
-        (id, email, name, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [user.id, user.email, user.name, hashPassword(password), user.role, Date.now()],
+        (id, email, name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)`,
+      args: [user.id, user.email, user.name, hashPassword(password), Date.now()],
     });
   } catch (error) {
     if (isUniqueConstraintError(error)) {
@@ -220,8 +196,7 @@ export async function loginAuthUser(input: {
   email: unknown;
   password: unknown;
 }): Promise<AuthSession> {
-  const email = normalizeEmail(input.email);
-  const password = typeof input.password === "string" ? input.password : "";
+  const { email, password } = authLoginSchema.parse(input);
   const record = email ? await findUserByEmail(email) : null;
   if (!record || !verifyPassword(password, record.passwordHash)) {
     throw workError("AUTH_INVALID_CREDENTIALS", { text: "邮箱或密码错误" });
@@ -263,19 +238,20 @@ const systemUser: AuthUser = {
   id: "__system__",
   name: "Mastra system",
   email: "system@mastra-work.app",
-  role: "admin",
 };
 
-function isShutdownRequest(request: MastraAuthRequest): boolean {
-  const expected = process.env.MASTRA_SHUTDOWN_TOKEN;
-  const supplied = getRequestHeader(request, "x-shutdown-token");
+/** Desktop credentials authorize only these process-management operations. */
+export function isDesktopControlRequest(request: MastraAuthRequest): boolean {
+  const expected = process.env.MASTRA_DESKTOP_CONTROL_TOKEN;
+  const supplied = getRequestHeader(request, "x-mastra-desktop-token");
   const raw = getWebRequest(request);
   if (
     !expected ||
     !supplied ||
     !raw ||
-    raw.method !== "POST" ||
-    new URL(raw.url).pathname !== "/work/shutdown"
+    !["POST /work/shutdown", "POST /work/proxy", "GET /work/storage"].includes(
+      `${raw.method} ${new URL(raw.url).pathname}`,
+    )
   )
     return false;
   const actual = Buffer.from(supplied);
@@ -304,8 +280,8 @@ class DatabaseAuth
   }
 
   override async authenticateToken(token: string, request: MastraAuthRequest) {
-    if (getRequestHeader(request, "x-shutdown-token")) {
-      return isShutdownRequest(request) ? systemUser : null;
+    if (getRequestHeader(request, "x-mastra-desktop-token")) {
+      return isDesktopControlRequest(request) ? systemUser : null;
     }
     return findUserBySessionToken(tokenFromRequest(token, request));
   }
@@ -335,8 +311,8 @@ class DatabaseAuth
   }
 
   override async authorizeUser(user: AuthUser, request: MastraAuthRequest) {
-    if (user.id === systemUser.id) return isShutdownRequest(request);
-    if (getRequestHeader(request, "x-shutdown-token")) return false;
+    if (user.id === systemUser.id) return isDesktopControlRequest(request);
+    if (getRequestHeader(request, "x-mastra-desktop-token")) return false;
     return Boolean(await findUserById(user.id));
   }
 }
@@ -443,6 +419,12 @@ export async function workRequestContextMiddleware(
     return;
   }
 
+  if (user.id === systemUser.id) {
+    if (!isDesktopControlRequest(c.req.raw)) throw workError("AUTH_FORBIDDEN");
+    await next();
+    return;
+  }
+
   // The authenticated principal is the only tenant authority. Reject
   // client-supplied ids before any route can query storage with them.
   if (!(await assertResourceIdOwnership(c, user))) {
@@ -452,12 +434,5 @@ export async function workRequestContextMiddleware(
   requestContext.set("user", user);
   requestContext.set("userId", user.id);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
-  await Promise.all([
-    getWorkspaceConfig(user.id),
-    getMemoryConfig(user.id),
-    getGuardrailsConfig(user.id),
-    getMcpConfig(user.id),
-    getLibrarySettings(user.id),
-  ]);
   await next();
 }

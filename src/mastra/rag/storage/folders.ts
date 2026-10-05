@@ -51,9 +51,7 @@ export async function createFolder(input: {
         args: [parentId, input.resourceId],
       }),
     );
-    const parentThreadId = parent.rows[0]?.thread_id
-      ? String(parent.rows[0].thread_id)
-      : undefined;
+    const parentThreadId = parent.rows[0]?.thread_id ? String(parent.rows[0].thread_id) : undefined;
     if (!parent.rows[0]) throw new Error("父目录不存在或不属于当前账户");
     if ((parentThreadId ?? "") !== (input.threadId ?? "")) {
       throw new Error("不能把会话目录挂到其他作用域下");

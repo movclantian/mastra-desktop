@@ -14,7 +14,8 @@ import { z } from "zod";
 import { appStorage, getLibsqlClient } from "../storage";
 import { WORKSPACE_RESOURCE_ID_CONTEXT_KEY, WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace";
 
-// The database owns durable subscriptions; the official registry handles delivery.
+// SignalProvider.__registerMastra only stores a Mastra reference; its registry is an in-memory
+// Map (reference/signals/signal-provider.mdx). This table supplies restart persistence only.
 let subscriptionsReady: Promise<void> | undefined;
 async function subscriptionStore() {
   const client = await getLibsqlClient();
@@ -50,6 +51,7 @@ function publicSubscription(subscription: SignalSubscription): SignalSubscriptio
 export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
   private mutations: Promise<unknown> = Promise.resolve();
 
+  // ponytail: one mutation queue per provider; partition by account only if write volume demands it.
   // Serialize DB + registry changes together. A failed write must not poison later writes.
   private update<T>(operation: () => Promise<T>): Promise<T> {
     const next = this.mutations.then(operation);
@@ -79,6 +81,11 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
     metadata: Record<string, unknown> = {},
   ): Promise<SignalSubscription> {
     return this.update(async () => {
+      // Match native subscribe()'s metadata merge so a restart cannot erase retained fields.
+      const current = this.getSubscriptionsForThread(target).find(
+        (subscription) => subscription.externalResourceId === externalResourceId,
+      );
+      const nextMetadata = { ...current?.metadata, ...metadata };
       await (await subscriptionStore()).execute({
         sql: `INSERT INTO signal_subscriptions
           (provider_id, resource_id, thread_id, external_resource_id, metadata)
@@ -89,10 +96,10 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
           target.resourceId,
           target.threadId,
           externalResourceId,
-          JSON.stringify(metadata),
+          JSON.stringify(nextMetadata),
         ],
       });
-      return super.subscribeThread(target, externalResourceId, metadata);
+      return super.subscribeThread(target, externalResourceId, nextMetadata);
     });
   }
 
@@ -135,6 +142,8 @@ type PollingSubscriptionMetadata = { url: string; headers?: Record<string, strin
 export class PersistentPollingSignalProvider extends PersistentWebhookSignalProvider {
   readonly pollInterval = 30_000;
   private fingerprints = new Map<string, string>();
+  private stopController = new AbortController();
+  private pendingPolls = new Set<Promise<void>>();
 
   constructor() {
     super({ id: "mastra-polling-signals", name: "Mastra Polling Signals" });
@@ -155,26 +164,32 @@ export class PersistentPollingSignalProvider extends PersistentWebhookSignalProv
   }
 
   stop(): void {
+    this.stopController.abort();
     this.fingerprints.clear();
     super.stop();
   }
 
   async poll(subscriptions: SignalSubscription[]): Promise<void> {
+    if (this.stopController.signal.aborted) return;
     const active = new Set(subscriptions.map((subscription) => subscription.id));
     for (const id of this.fingerprints.keys()) {
       if (!active.has(id)) this.fingerprints.delete(id);
     }
-    await Promise.all(
+    const pending = Promise.all(
       subscriptions.map(async (subscription) => {
         const metadata = subscription.metadata as Partial<PollingSubscriptionMetadata>;
         if (typeof metadata.url !== "string") return;
         try {
           const response = await fetch(metadata.url, {
             headers: metadata.headers,
-            signal: AbortSignal.timeout(this.pollInterval),
+            signal: AbortSignal.any([
+              this.stopController.signal,
+              AbortSignal.timeout(this.pollInterval),
+            ]),
           });
           if (!response.ok) throw new Error(`Polling source returned ${response.status}`);
           const body = await response.text();
+          if (this.stopController.signal.aborted) return;
           const fingerprint = createHash("sha256").update(body).digest("hex");
           const key = subscription.id;
           const previous = this.fingerprints.get(key);
@@ -196,6 +211,7 @@ export class PersistentPollingSignalProvider extends PersistentWebhookSignalProv
           );
           this.fingerprints.set(key, fingerprint);
         } catch (error) {
+          if (this.stopController.signal.aborted) return;
           await this.notify(
             {
               source: "polling",
@@ -209,7 +225,17 @@ export class PersistentPollingSignalProvider extends PersistentWebhookSignalProv
           ).catch(() => undefined);
         }
       }),
-    );
+    ).then(() => undefined);
+    this.pendingPolls.add(pending);
+    try {
+      await pending;
+    } finally {
+      this.pendingPolls.delete(pending);
+    }
+  }
+
+  async settled(): Promise<void> {
+    await Promise.all(this.pendingPolls);
   }
 }
 

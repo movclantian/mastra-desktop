@@ -24,7 +24,6 @@ import {
   getModelContextWindow,
   getModelDisplayName,
   invalidateProviderModelsCache,
-  normalizeGatewayUrl,
   type ProviderConfig,
   qk,
   type RegistryProvider,
@@ -689,7 +688,7 @@ function ProviderConnectionDialog({
               ...credential,
               name: name.trim(),
               protocol,
-              baseUrl: normalizeGatewayUrl(baseUrl, protocol),
+              baseUrl: baseUrl.trim(),
               useResponses: protocol === "openai" ? useResponses : false,
             }
           : { ...mode.provider, ...credential };
@@ -713,7 +712,7 @@ function ProviderConnectionDialog({
         id,
         name: name.trim(),
         protocol,
-        baseUrl: normalizeGatewayUrl(baseUrl, protocol),
+        baseUrl: baseUrl.trim(),
         useResponses: protocol === "openai" ? useResponses : false,
         ...credential,
         enabledModels: [],
@@ -799,8 +798,6 @@ function ProviderConnectionDialog({
                     placeholder={t("settings:providers.serviceAddressPlaceholder")}
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
-                    // 失焦即归一化回显:裸域名在 openai 协议下自动补 /v1
-                    onBlur={() => setBaseUrl((current) => normalizeGatewayUrl(current, protocol))}
                   />
                   {protocol === "openai" ? (
                     <label

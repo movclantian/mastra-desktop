@@ -2,6 +2,49 @@
  * RAG 知识库共享类型与常量 (docs/en/reference/rag/):
  * 被 RAG 内全部模块及 chat 路由 / Agent 处理器引用。
  */
+import { z } from "zod";
+
+/** Retrieval results keep the authenticated asset URL through tools and message history. */
+export const librarySearchResultSchema = z.object({
+  citationId: z.string().min(1),
+  assetId: z.string().min(1),
+  filename: z.string().min(1),
+  url: z.url({ protocol: /^https?$/ }),
+  text: z.string(),
+  score: z.number(),
+});
+
+export type LibrarySearchResult = z.infer<typeof librarySearchResultSchema>;
+
+function libraryCitationSource(result: LibrarySearchResult) {
+  return {
+    id: result.citationId,
+    assetId: result.assetId,
+    filename: result.filename,
+    url: result.url,
+    snippet: result.text.slice(0, 280),
+    score: result.score,
+  };
+}
+
+export type LibraryCitationSource = ReturnType<typeof libraryCitationSource>;
+
+/** Shared projection for live tool output, automatic retrieval, and stored messages. */
+export function libraryCitationSources(output: unknown): LibraryCitationSource[] {
+  if (!output || typeof output !== "object" || !("results" in output)) return [];
+  if (!Array.isArray(output.results)) return [];
+  return output.results.flatMap((result) => {
+    const parsed = librarySearchResultSchema.safeParse(result);
+    if (!parsed.success) return [];
+    const url = new URL(parsed.data.url);
+    if (
+      url.pathname !== `/work/library/assets/${encodeURIComponent(parsed.data.assetId)}/content` ||
+      !url.searchParams.get("resourceId")
+    )
+      return [];
+    return [libraryCitationSource(parsed.data)];
+  });
+}
 
 export type LibraryIndexStage = "extract" | "chunk" | "embedding" | "vector" | "persist";
 export type LibraryIndexRunStatus = "running" | "succeeded" | "unsupported" | "failed";
@@ -20,12 +63,15 @@ export const VALID_CHUNK_STRATEGIES = [
 
 export const LIBRARY_VECTOR_SEARCH_TOOL_ID = "library_vector_search";
 export const LIBRARY_GRAPH_SEARCH_TOOL_ID = "library_graph_search";
+export const LIBRARY_SEARCH_TOOL_NAMES = new Set([
+  LIBRARY_VECTOR_SEARCH_TOOL_ID,
+  LIBRARY_GRAPH_SEARCH_TOOL_ID,
+]);
 
 // RequestContext 键(chat 路由写入,库内工具 / Agent 处理器读取)
 export const LIBRARY_RESOURCE_CONTEXT_KEY = "libraryResourceId";
 export const LIBRARY_THREAD_CONTEXT_KEY = "libraryThreadId";
 export const LIBRARY_ORIGIN_CONTEXT_KEY = "libraryOrigin";
-export const LIBRARY_RERANK_MODEL_CONTEXT_KEY = "libraryRerankModel";
 export const LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY = "libraryAttachmentTokenBudget";
 export const LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY = "libraryAttachmentCapabilities";
 export const LIBRARY_ATTACHMENTS_CONTEXT_KEY = "libraryAttachments";

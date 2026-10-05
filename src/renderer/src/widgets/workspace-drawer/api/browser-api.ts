@@ -3,9 +3,9 @@ import { i18n } from "@/shared/i18n";
 import {
   type BrowserAction,
   BrowserActionRequestSchema,
-  type BrowserKeyboardRequest,
   type BrowserKeyboardBatchRequest,
   BrowserKeyboardBatchRequestSchema,
+  type BrowserKeyboardRequest,
   BrowserKeyboardRequestSchema,
   type BrowserMouseRequest,
   BrowserMouseRequestSchema,
@@ -122,7 +122,12 @@ export function sendBrowserKeyboardBatch(
 
 async function assertBrowserResponse(response: Response): Promise<Response> {
   if (response.ok) return response;
-  const payload = BrowserResponseSchema.safeParse(await response.clone().json().catch(() => ({})));
+  const payload = BrowserResponseSchema.safeParse(
+    await response
+      .clone()
+      .json()
+      .catch(() => ({})),
+  );
   throw new Error(
     payload.success && (payload.data.message || payload.data.error)
       ? payload.data.message || payload.data.error

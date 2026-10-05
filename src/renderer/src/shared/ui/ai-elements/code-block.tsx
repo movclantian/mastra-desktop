@@ -12,6 +12,8 @@ import {
 } from "react";
 import type { BundledLanguage, BundledTheme, HighlighterGeneric, ThemedToken } from "shiki";
 import { createHighlighter } from "shiki";
+import { toast } from "sonner";
+import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -27,8 +29,6 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
-import { toast } from "sonner";
-import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -460,7 +460,9 @@ export const CodeBlock = ({
             <ContextMenuItem onClick={handleCopyCode}>
               <CopyIcon className="text-muted-foreground" />
               <span>{t("common:copyCode")}</span>
-              <ContextMenuShortcut>{formatShortcutDisplay(["Mod", "C"], isMac)}</ContextMenuShortcut>
+              <ContextMenuShortcut>
+                {formatShortcutDisplay(["Mod", "C"], isMac)}
+              </ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={handleCopyMarkdown}>
               <Code2Icon className="text-muted-foreground" />

@@ -15,33 +15,31 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { errorText, WorkApiError, workError } from "../errors";
-import { getOwnedThread, getWorkMemoryForThread } from "./threads/shared";
+import { reindexAsset } from "../rag/document/indexing";
+import {
+  attachAssetReference,
+  deleteAsset,
+  listAssets,
+  readAssetBytes,
+  renameAsset,
+  uploadAssetFromFile,
+} from "../rag/storage/assets";
+import { getLibrarySettings, saveLibrarySettings } from "../rag/storage/db";
+import { createFolder, deleteFolder, listFolders, renameFolder } from "../rag/storage/folders";
 import {
   cancelLibraryUploadSession,
   completeLibraryUploadSession,
-  createFolder,
   createLibraryUploadSession,
-  deleteAsset,
-  deleteFolder,
-  getLibrarySettings,
   getLibraryUploadSession,
+  saveLibraryUploadChunk,
+} from "../rag/storage/upload";
+import {
   LIBRARY_UPLOAD_CHUNK_BYTES,
-  listAssets,
-  listFolders,
   MAX_LIBRARY_FILE_BYTES,
   MAX_LIBRARY_FILES_PER_REQUEST,
   MAX_LIBRARY_TOTAL_BYTES_PER_REQUEST,
-  readAssetBytes,
-  reindexAsset,
-  renameAsset,
-  renameFolder,
-  saveLibrarySettings,
-  saveLibraryUploadChunk,
-  attachAssetReference,
-  isThreadAssetTransferWriteLocked,
-  uploadAssetFromFile,
-  withThreadAssetTransferLock,
-} from "../rag";
+} from "../rag/types";
+import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
 interface ParsedUpload {
   filename: string;
@@ -64,11 +62,7 @@ async function parseUploadChunk(
     transform(chunk: Buffer, _encoding, callback) {
       byteSize += chunk.byteLength;
       if (byteSize > LIBRARY_UPLOAD_CHUNK_BYTES) {
-        callback(
-          new Error(
-            `上传分片超过 ${LIBRARY_UPLOAD_CHUNK_BYTES / (1024 * 1024)} MB`,
-          ),
-        );
+        callback(new Error(`上传分片超过 ${LIBRARY_UPLOAD_CHUNK_BYTES / (1024 * 1024)} MB`));
         return;
       }
       hash.update(chunk);
@@ -211,31 +205,12 @@ async function ownedThreadId(
 ): Promise<string | undefined> {
   const threadId = requireResourceId(value);
   if (!threadId) return undefined;
-  const memory = await getWorkMemoryForThread(c.get("requestContext"), threadId, resourceId);
+  const memory = await getWorkMemory(c.get("requestContext"));
   await memory.settled();
   if (!(await getOwnedThread(memory, threadId, resourceId))) {
     throw workError("THREAD_NOT_FOUND");
   }
   return threadId;
-}
-
-/** Keep thread-scoped library writes behind the same owner-independent transfer barrier. */
-async function withOwnedThreadAssetWrite<T>(
-  c: ContextWithMastra,
-  resourceId: string,
-  value: unknown,
-  operation: (threadId?: string) => Promise<T>,
-): Promise<T> {
-  const threadId = requireResourceId(value);
-  if (!threadId) return operation(undefined);
-  return withThreadAssetTransferLock(threadId, async () => {
-    if (await isThreadAssetTransferWriteLocked(threadId)) {
-      throw workError("THREAD_TRANSFER_IN_PROGRESS");
-    }
-    const ownedId = await ownedThreadId(c, resourceId, threadId);
-    if (!ownedId) throw workError("THREAD_NOT_FOUND");
-    return operation(ownedId);
-  });
 }
 
 function throwUploadRouteError(error: unknown, fallback: string): never {
@@ -275,30 +250,23 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
       parsed = multipart;
       const resourceId = authenticatedResourceId(c);
       const folderId = requireResourceId(multipart.fields.folderId) ?? undefined;
-      const assets = await withOwnedThreadAssetWrite(
-        c,
-        resourceId,
-        multipart.fields.threadId,
-        async (threadId) => {
-          const uploaded = [];
-          for (const file of multipart.files) {
-            uploaded.push(
-              await uploadAssetFromFile({
-                resourceId,
-                folderId,
-                threadId,
-                filename: file.filename,
-                filePath: file.tempPath,
-                byteSize: file.byteSize,
-                sha256: file.sha256,
-                mediaType: file.mediaType,
-              }),
-            );
-            await rm(file.tempPath, { force: true }).catch(() => undefined);
-          }
-          return uploaded;
-        },
-      );
+      const threadId = await ownedThreadId(c, resourceId, multipart.fields.threadId);
+      const assets = [];
+      for (const file of multipart.files) {
+        assets.push(
+          await uploadAssetFromFile({
+            resourceId,
+            folderId,
+            threadId,
+            filename: file.filename,
+            filePath: file.tempPath,
+            byteSize: file.byteSize,
+            sha256: file.sha256,
+            mediaType: file.mediaType,
+          }),
+        );
+        await rm(file.tempPath, { force: true }).catch(() => undefined);
+      }
       return c.json({ assets });
     } catch (error) {
       if (parsed) {
@@ -312,34 +280,31 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
 });
 
 /** Explicit user action: attach an existing session asset to the global document library. */
-export const promoteLibraryAssetRoute = registerApiRoute(
-  "/work/library/assets/:assetId/promote",
-  {
-    method: "POST",
-    handler: async (c) => {
-      try {
-        const body = (await c.req.json()) as { resourceId?: string; folderId?: string };
-        const resourceId = authenticatedResourceId(c);
-        const asset = (await listAssets(resourceId)).find(
-          (candidate) => candidate.id === c.req.param("assetId"),
-        );
-        if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
-        if (asset.status === "unsupported") {
-          throw new Error("图片、音频、视频和当前格式只能作为会话附件保存");
-        }
-        await attachAssetReference(
-          resourceId,
-          asset.id,
-          requireResourceId(body.folderId) ?? undefined,
-        );
-        const updated = (await listAssets(resourceId)).find((candidate) => candidate.id === asset.id);
-        return c.json({ asset: updated ?? asset });
-      } catch (error) {
-        throwUploadRouteError(error, "保存到我的文档失败");
+export const promoteLibraryAssetRoute = registerApiRoute("/work/library/assets/:assetId/promote", {
+  method: "POST",
+  handler: async (c) => {
+    try {
+      const body = (await c.req.json()) as { resourceId?: string; folderId?: string };
+      const resourceId = authenticatedResourceId(c);
+      const asset = (await listAssets(resourceId)).find(
+        (candidate) => candidate.id === c.req.param("assetId"),
+      );
+      if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
+      if (asset.status === "unsupported") {
+        throw new Error("图片、音频、视频和当前格式只能作为会话附件保存");
       }
-    },
+      await attachAssetReference(
+        resourceId,
+        asset.id,
+        requireResourceId(body.folderId) ?? undefined,
+      );
+      const updated = (await listAssets(resourceId)).find((candidate) => candidate.id === asset.id);
+      return c.json({ asset: updated ?? asset });
+    } catch (error) {
+      throwUploadRouteError(error, "保存到我的文档失败");
+    }
   },
-);
+});
 
 /** Record that an existing library asset is referenced by a specific thread. */
 export const referenceLibraryAssetRoute = registerApiRoute(
@@ -349,24 +314,16 @@ export const referenceLibraryAssetRoute = registerApiRoute(
     handler: async (c) => {
       const body = z.object({ threadId: z.string().min(1) }).parse(await c.req.json());
       const resourceId = authenticatedResourceId(c);
-      const result = await withOwnedThreadAssetWrite(
-        c,
-        resourceId,
-        body.threadId,
-        async (threadId) => {
-          if (!threadId) throw workError("VALIDATION_FAILED");
-          const asset = (await listAssets(resourceId)).find(
-            (candidate) => candidate.id === c.req.param("assetId"),
-          );
-          if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
-          await attachAssetReference(resourceId, asset.id, undefined, threadId);
-          const updated = (await listAssets(resourceId, threadId)).find(
-            (candidate) => candidate.id === asset.id,
-          );
-          return updated ?? asset;
-        },
+      const threadId = await ownedThreadId(c, resourceId, body.threadId);
+      const asset = (await listAssets(resourceId)).find(
+        (candidate) => candidate.id === c.req.param("assetId"),
       );
-      return c.json({ asset: result });
+      if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
+      await attachAssetReference(resourceId, asset.id, undefined, threadId);
+      const updated = (await listAssets(resourceId, threadId)).find(
+        (candidate) => candidate.id === asset.id,
+      );
+      return c.json({ asset: updated ?? asset });
     },
   },
 );
@@ -391,20 +348,15 @@ export const libraryUploadSessionsRoute = registerApiRoute("/work/library/upload
         });
       }
       const folderId = requireResourceId(body.folderId) ?? undefined;
-      const session = await withOwnedThreadAssetWrite(
-        c,
+      const threadId = await ownedThreadId(c, resourceId, body.threadId);
+      const session = await createLibraryUploadSession({
         resourceId,
-        body.threadId,
-        (threadId) =>
-          createLibraryUploadSession({
-            resourceId,
-            filename,
-            mediaType: body.mediaType || "application/octet-stream",
-            byteSize,
-            folderId,
-            threadId,
-          }),
-      );
+        filename,
+        mediaType: body.mediaType || "application/octet-stream",
+        byteSize,
+        folderId,
+        threadId,
+      });
       return c.json({ session }, 201);
     } catch (error) {
       throwUploadRouteError(error, "创建上传会话失败");
@@ -442,24 +394,14 @@ export const libraryUploadChunkRoute = registerApiRoute(
         const uploadId = c.req.param("uploadId");
         const initialSession = await getLibraryUploadSession(resourceId, uploadId);
         if (!initialSession) throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
-        const session = await withOwnedThreadAssetWrite(
-          c,
+        await ownedThreadId(c, resourceId, initialSession.threadId);
+        const session = await saveLibraryUploadChunk({
           resourceId,
-          initialSession.threadId,
-          async (threadId) => {
-            const current = await getLibraryUploadSession(resourceId, uploadId);
-            if (!current || current.threadId !== threadId) {
-              throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
-            }
-            return saveLibraryUploadChunk({
-              resourceId,
-              sessionId: uploadId,
-              chunkIndex,
-              bytes,
-              expectedSha256: parsedChunk.sha256,
-            });
-          },
-        );
+          sessionId: uploadId,
+          chunkIndex,
+          bytes,
+          expectedSha256: parsedChunk.sha256,
+        });
         await rm(chunk.tempPath, { force: true }).catch(() => undefined);
         return c.json({ session });
       } catch (error) {
@@ -480,18 +422,8 @@ export const completeLibraryUploadRoute = registerApiRoute(
         const uploadId = c.req.param("uploadId");
         const session = await getLibraryUploadSession(resourceId, uploadId);
         if (!session) throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
-        const asset = await withOwnedThreadAssetWrite(
-          c,
-          resourceId,
-          session.threadId,
-          async (threadId) => {
-            const current = await getLibraryUploadSession(resourceId, uploadId);
-            if (!current || current.threadId !== threadId) {
-              throw workError("LIBRARY_UPLOAD_SESSION_NOT_FOUND");
-            }
-            return completeLibraryUploadSession(resourceId, uploadId);
-          },
-        );
+        await ownedThreadId(c, resourceId, session.threadId);
+        const asset = await completeLibraryUploadSession(resourceId, uploadId);
         return c.json({
           asset,
         });
@@ -611,8 +543,7 @@ export const createLibraryFolderRoute = registerApiRoute("/work/library/folders"
       threadId?: string;
     };
     const resourceId = authenticatedResourceId(c);
-    if (!body.name?.trim())
-      throw workError("VALIDATION_FAILED", { text: "name is required" });
+    if (!body.name?.trim()) throw workError("VALIDATION_FAILED", { text: "name is required" });
     return c.json(
       {
         folder: await createFolder({

@@ -1,2 +1,2 @@
-export * from "./shortcut-menu";
 export * from "./command-palette";
+export * from "./shortcut-menu";

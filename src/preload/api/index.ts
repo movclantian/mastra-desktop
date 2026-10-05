@@ -1,6 +1,6 @@
 import type { IpcRenderer } from "electron";
-import { createCredentialsApi } from "./credentials";
 import { createBrowserViewApi } from "./browser-view";
+import { createCredentialsApi } from "./credentials";
 import { createFilesystemApi } from "./filesystem";
 import { createProxyApi } from "./proxy";
 import { createStorageApi } from "./storage";
