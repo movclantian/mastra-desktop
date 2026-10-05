@@ -458,17 +458,3 @@ export async function resolveAgentModel({
   if (!model) throw new Error("尚未配置可用的模型供应商,请先在「模型供应商」中选择模型");
   return model;
 }
-
-/** Native mode transitions can change the provider after the HTTP request was prepared. */
-export async function resolveContextModelFamily(requestContext?: {
-  get(key: string): unknown;
-}): Promise<string | undefined> {
-  const resourceId = userIdFromContext(requestContext);
-  const controller = requestContext?.get("controller") as
-    | { session?: { modelId?: string } }
-    | undefined;
-  const modelId = controller?.session?.modelId ?? requestContext?.get(REQUEST_MODEL_ID_CONTEXT_KEY);
-  const selected =
-    typeof modelId === "string" && modelId ? modelId : await resolveDefaultModelId(resourceId);
-  return selected ? requestModelFamily({ id: selected }, resourceId) : undefined;
-}

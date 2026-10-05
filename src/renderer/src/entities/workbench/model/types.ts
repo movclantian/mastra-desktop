@@ -165,7 +165,7 @@ export interface BrowserRequest {
   newTab?: boolean;
 }
 
-export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
+export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];
 
 export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
@@ -180,6 +180,10 @@ export interface ToolsConfig {
   tavily: CredentialState;
   firecrawl: CredentialState & { apiUrl: string };
   anysearch: CredentialState;
+}
+
+export function isSearchEngineReady(engine: SearchEngine, config: ToolsConfig | null): boolean {
+  return engine === "anysearch" || Boolean(config?.[engine].hasCredential);
 }
 
 export interface WorkbenchStatePatch {

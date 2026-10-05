@@ -93,7 +93,6 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   skill_search: "read",
   skill_read: "read",
   // 联网检索(src/mastra/tools/web-search.ts 注入的全部名字)
-  web_search: "read",
   web_fetch: "read",
   tavily_search: "read",
   tavily_extract: "read",
@@ -192,8 +191,7 @@ const WORK_MODES: WorkMode[] = [
   {
     id: "plan",
     name: "计划",
-    description: "先调研、写计划文件并提交审批,批准后自动切到执行",
-    metadata: { default: true },
+    description: "先调研、写计划文件并提交审批,批准后自动切到构建",
     transitionsTo: "build",
     availableTools: PLAN_TOOL_NAMES,
     instructions: `MODE: PLAN.
@@ -204,12 +202,13 @@ You may not use task-state mutation, ordinary workspace write, delete, edit, exe
   },
   {
     id: "build",
-    name: "执行",
-    description: "执行已批准的计划,工具全量开放",
+    name: "构建",
+    metadata: { default: true },
+    description: "按用户要求执行任务，遵循工具权限",
     instructions: `MODE: BUILD.
-Carry out the approved plan. Keep the task list current with task_write / task_update / task_complete, with exactly one task in progress.
+Carry out the user's requested task, following an approved plan when one exists. Keep the task list current with task_write / task_update / task_complete, with exactly one task in progress.
 Prefer small verifiable steps: make a change, check it, then move to the next task. Report what you actually did, including anything you could not finish.
-Do not silently widen the scope beyond the approved plan — if new work is required, say so and ask before doing it.`,
+Stay within the user's requested scope. Ask when a decision changes that scope.`,
   },
   {
     id: "review",
@@ -228,7 +227,7 @@ export function listWorkModes(): WorkMode[] {
 }
 
 export const DEFAULT_MODE_ID: WorkModeId =
-  WORK_MODES.find((mode) => mode.metadata?.default)?.id ?? "plan";
+  WORK_MODES.find((mode) => mode.metadata?.default)?.id ?? "build";
 
 /** 会话与定时任务传给 Agent 动态 instructions/tools 的当前模式。 */
 export const MODE_ID_CONTEXT_KEY = "mastra-work:mode-id";

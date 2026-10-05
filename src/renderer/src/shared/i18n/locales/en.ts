@@ -1793,6 +1793,7 @@ export const en = {
       skillLimit: "Select up to 4 skills per message",
     },
     goal: {
+      cancelMode: "Cancel goal mode for this message",
       title: "Goal",
       sendAsGoal: "Send as a goal",
       sendHint: "Continue until complete or the evaluation budget is used",
@@ -1884,6 +1885,7 @@ export const en = {
     },
     modes: {
       title: "Session Mode",
+      resetToBuild: "Reset to Build mode",
       modeTitle: "Mode & Tool Approval",
       switchTo: "Switch to {{name}}",
       plan: {
@@ -1893,8 +1895,8 @@ export const en = {
       },
       build: {
         label: "Build",
-        desc: "Execute the approved plan with full tool access",
-        hint: "Write and execute operations still require confirmation",
+        desc: "Carry out your request using the configured tool permissions",
+        hint: "Write and execute operations follow your tool approval settings",
       },
       review: {
         label: "Review",
@@ -1950,20 +1952,9 @@ export const en = {
       switchTitle: "Web Search: {{label}}",
       openSearch: "Enable Web Search",
       closeSearch: "Disable Web Search",
-      needModel: "Need Model",
       needKey: "Need Key",
-      useEngine: "Use this engine",
-      searchDepth: "Search Depth",
-      providerHint:
-        "Result count is determined by provider with no depth tiers; web_fetch is used when reading full pages.",
-      unsupportedModel:
-        "Current model not supported: please switch to a built-in OpenAI / Anthropic / Google / xAI model in the model selector.",
       toSettings: "Configure API Key in Settings",
       engines: {
-        provider: {
-          label: "Provider Grounding",
-          desc: "Uses model native search grounding with zero config; OpenAI / Anthropic / Google / xAI only",
-        },
         tavily: {
           label: "Tavily",
           desc: "Search API optimized for LLMs with cleanest citation and summaries",
@@ -2375,7 +2366,6 @@ export const en = {
     statusUpdateFailed: "Failed to update skill status",
     statusEnabled: 'Skill "{{name}}" enabled',
     statusDisabled: 'Skill "{{name}}" disabled',
-    builtin: "Mastra Built-in",
     officialVerified: "Official",
     personalSkill: "Personal Skill",
     readInstalledSkillsFailed: "Failed to fetch installed skills",
@@ -2417,7 +2407,6 @@ export const en = {
     tabMcp: "MCP Tools",
     communityLeaderboard: "🔥 Community Leaderboard",
     officialCertified: "⭐ Official Verified",
-    mastraBuiltin: "✨ Mastra Built-in",
     githubMarketplace: "📦 GitHub Marketplace",
     allTimeRank: "All Time",
     trendingRank: "Trending 24h",

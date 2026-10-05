@@ -30,7 +30,7 @@ export interface SkillActionsState {
   uploading: boolean;
   uploadSkill: (file: File | undefined) => Promise<void>;
   importSkill: (source: string) => Promise<void>;
-  installBuiltin: (skill: SkillMetadata) => Promise<void>;
+  installRegistrySkill: (skill: SkillMetadata) => Promise<void>;
   removeSkill: (targetSkill?: SkillMetadata) => Promise<void>;
   updateSkill: (
     name: string,
@@ -100,7 +100,7 @@ export function useSkillActions({
     [loadInstalled, setActiveSkill, setAddSkillOpen, setSection, t],
   );
 
-  const installBuiltin = React.useCallback(
+  const installRegistrySkill = React.useCallback(
     async (skill: SkillMetadata) => {
       setInstalling(skill.name);
       try {
@@ -230,7 +230,7 @@ export function useSkillActions({
     uploading,
     uploadSkill,
     importSkill,
-    installBuiltin,
+    installRegistrySkill,
     removeSkill,
     updateSkill,
     toggleSkill,

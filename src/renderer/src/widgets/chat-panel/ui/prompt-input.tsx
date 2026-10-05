@@ -82,7 +82,6 @@ import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../
 import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
 import { ComposerMenu } from "./composer-menu";
 import { ChatContextUsage } from "./context-usage";
-import { ChatModeSelector } from "./mode-selector";
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
 
@@ -671,16 +670,7 @@ export function ChatPromptInput({
   const pendingPrompt = useWorkbenchStore((state) => state.pendingPrompt);
   const setPendingPrompt = useWorkbenchStore((state) => state.setPendingPrompt);
   const reportPromptMinWidth = useWorkbenchStore((state) => state.reportPromptMinWidth);
-  /**
-   * 实测输入区的最小边界并上报,由 AppShell 用来限制面板拖拽幅度与窗口最小宽度。
-   *
-   * 量的是「左组自然宽 + 右组自然宽 + footer 自身的左右内距与列间距」—— 也就是
-   * 两组控件都完整显示、中间弹性空白刚好为 0 时的宽度。这个数只有内容自己知道
-   * (控件增删、标签改名、换更长的模型名都会变),所以必须实测,不能写成常量。
-   *
-   * 要紧的是这个数必须只反映**内容**、绝不反映**当前容器有多宽**:一旦压缩值能
-   * 被报上去,下限就会随容器一起缩,约束越放越松,挤压于是被固化而不是被纠正。
-   */
+  // 工具组可以换行；面板最小宽度取较宽一组的自然宽度与内距。
   const footerRef = React.useRef<HTMLDivElement>(null);
   const lastReportedPromptWidthRef = React.useRef<number | null>(null);
   React.useEffect(() => {
@@ -689,14 +679,7 @@ export function ChatPromptInput({
     const right = footer?.lastElementChild;
     if (!footer || !(left instanceof HTMLElement) || !(right instanceof HTMLElement)) return;
     if (left === right) return;
-    /**
-     * 读一组在「不被 flex 压缩」时的宽度。
-     *
-     * 不能在 ResizeObserver 回调里给被观察的原节点写 min-width:那会同步改变
-     * 观察目标的盒模型,在窗口拖动/长任务刷新时形成 observer → setState → layout
-     * → observer 的反馈环,最终触发 "ResizeObserver loop completed" 并拖慢滚动。
-     * 改为测量脱离布局流的克隆节点,原节点不再被读-写-还原。
-     */
+    // 测量脱离布局流的克隆，避免修改观察节点导致 ResizeObserver 反馈循环。
     const naturalWidth = (element: HTMLElement) => {
       const clone = element.cloneNode(true) as HTMLElement;
       Object.assign(clone.style, {
@@ -718,23 +701,8 @@ export function ChatPromptInput({
     let frame: number | null = null;
     const measure = () => {
       const styles = getComputedStyle(footer);
-      // 列间距和内距一样是 footer 自己吃掉的固定宽度,少算它下限就偏小。
-      // 未设置 gap 时 computed 值是 "normal",parseFloat 得 NaN —— 归零。
-      const gap = Number.parseFloat(styles.columnGap);
-      const fixed =
-        Number.parseFloat(styles.paddingLeft) +
-        Number.parseFloat(styles.paddingRight) +
-        (Number.isFinite(gap) ? gap : 0);
-      /**
-       * 无条件顶开测量,不再先看中间还剩多少空白。
-       *
-       * 「有空白就说明没被压缩,可以直接量」只在 footer 的 gap 为 0 时成立:
-       * 一旦两组之间有固定 gap,压缩态下剩的那段空白恰好等于 gap 而不是 0,
-       * 判断于是永远走「直接量」—— 压缩值被报上去,下限随容器一起缩。
-       * 那次判断省下的是一次固有尺寸计算(浏览器本身有缓存),换来的却是
-       * 整条不变量失效,不值得。
-       */
-      const width = naturalWidth(left) + naturalWidth(right) + fixed;
+      const fixed = Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
+      const width = Math.max(naturalWidth(left), naturalWidth(right)) + fixed;
       if (lastReportedPromptWidthRef.current === Math.ceil(width)) return;
       lastReportedPromptWidthRef.current = Math.ceil(width);
       reportPromptMinWidth(width);
@@ -901,20 +869,6 @@ export function ChatPromptInput({
       >
         <PromptInputAttachments />
         <PromptInputBody>
-          {goalMode && (
-            <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
-              <span className="min-w-0 flex-1 break-words">{t("chat:goal.composerHint")}</span>
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label={t("common:cancel")}
-                onClick={() => setGoalMode(false)}
-              >
-                <XIcon />
-              </Button>
-            </div>
-          )}
           <SelectedFileReferenceBadges
             files={selectedFileReferences.filter((reference) =>
               controller.attachments.files.some((file) => file.url === reference.url),
@@ -935,16 +889,9 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* 会被消费的只有中间那段弹性空白(右组 ml-auto 提供);Footer 的 gap 与内距
-            是固定占用,已一并计入下面实测的最小边界。两组都完整显示、弹性空白刚好
-            为 0 时的宽度就是输入区真正的最小边界,由上面的 ResizeObserver 实测上报,
-            AppShell 用它去限制面板能拖多宽、以及窗口能缩多窄 —— 所以正常情况下根本
-            走不到「空白见底」这一步,两组控件既不换行也不溢出,更不需要滚动条,
-            而这个边界没有任何魔数。
-            万一约束还没到位(首帧、内容刚变长),两组的 min-w-0 会让模式/模型的标签
-            先截短兜底,而不是把发送按钮顶到容器外面去。 */}
+        {/* 两组控件各自保持完整，窄面板时换行；模式与功能标签紧跟 +。 */}
         <PromptInputFooter
-          className="flex-nowrap border-t border-border/40 px-2.5 pt-2 pb-2"
+          className="flex-wrap gap-2 border-t border-border/40 px-2.5 pt-2 pb-2"
           ref={footerRef}
         >
           <ComposerMenu
@@ -966,7 +913,6 @@ export function ChatPromptInput({
             <div className="shrink-0">
               <ChatContextUsage usage={usage} billingUsage={billingUsage} />
             </div>
-            <ChatModeSelector />
             <ChatModelSelector />
             <PromptInputSubmit className="shrink-0" onStop={() => void onStop()} status={status} />
           </div>

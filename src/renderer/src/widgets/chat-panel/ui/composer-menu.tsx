@@ -2,17 +2,30 @@ import { skipToken, useQuery } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import {
   BotIcon,
+  CheckIcon,
+  EyeIcon,
   FileIcon,
   FolderIcon,
+  GlobeIcon,
+  HammerIcon,
   LibraryIcon,
+  MapIcon,
   PlugIcon,
   PlusIcon,
+  ShieldIcon,
   SparklesIcon,
   TargetIcon,
+  XIcon,
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { fetchMcpServers } from "@/entities/skill/api/skill-api";
+import {
+  APPROVAL_PRESETS,
+  DEFAULT_MODE_ID,
+  matchApprovalPreset,
+  WORK_MODE_IDS,
+} from "@/entities/workbench";
 import { fetchTree, workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
@@ -24,21 +37,29 @@ import {
   PromptInputActionMenu,
   PromptInputActionMenuContent,
   PromptInputActionMenuTrigger,
+  PromptInputButton,
   PromptInputTools,
   usePromptInputAttachments,
 } from "@/shared/ui/ai-elements/prompt-input";
 import {
+  DropdownMenu,
   DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
 import type { MessageFileReference } from "../model/types";
-import { ChatSearchSelector } from "./search-selector";
+import { SearchMenuItems } from "./search-menu";
+
+const MODE_ICONS = { build: HammerIcon, plan: MapIcon, review: EyeIcon };
 
 export function ComposerMenu({
   screenshotEnabled,
@@ -66,7 +87,22 @@ export function ComposerMenu({
   const threadId = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
-  const { agents, agentSelection, setAgentSelection } = useSessionSettings(userId, threadId);
+  const {
+    agents,
+    agentSelection,
+    setAgentSelection,
+    modeId,
+    setModeId,
+    searchSelection,
+    setSearchSelection,
+    permissionRules,
+    setPermissionRules,
+  } = useSessionSettings(userId, threadId);
+  const ActiveModeIcon = MODE_ICONS[modeId];
+  const changeMode = (id: typeof modeId) =>
+    void setModeId(id).catch((error: unknown) =>
+      toast.error(error instanceof Error ? error.message : t("common:error")),
+    );
   const attachments = usePromptInputAttachments();
   const queueFiles = useWorkbenchStore((state) => state.queueLibraryFiles);
   const [open, setOpen] = React.useState(false);
@@ -104,7 +140,7 @@ export function ComposerMenu({
   );
 
   return (
-    <PromptInputTools>
+    <PromptInputTools className="flex-wrap">
       <PromptInputActionMenu open={open} onOpenChange={setOpen}>
         <PromptInputActionMenuTrigger
           aria-label={t("chat:composer.add")}
@@ -115,7 +151,7 @@ export function ComposerMenu({
           <PlusIcon />
         </PromptInputActionMenuTrigger>
         <PromptInputActionMenuContent side="top" className="w-60 overflow-hidden">
-          <ScrollArea className="max-h-[min(28rem,var(--available-height))]">
+          <ScrollArea className="max-h-[min(28rem,calc(var(--available-height)-0.5rem))]">
             <PromptInputActionAddAttachments label={t("chat:composer.localFiles")} />
             {screenshotEnabled && (
               <PromptInputActionAddScreenshot label={t("chat:prompt.takeScreenshot")} />
@@ -300,23 +336,147 @@ export function ComposerMenu({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSeparator />
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <GlobeIcon />
+                <span className="min-w-0 flex-1">{t("chat:search.title")}</span>
+                {searchSelection && <CheckIcon className="size-3.5" />}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-60 overflow-hidden">
+                <SearchMenuItems selection={searchSelection} onSelect={setSearchSelection} />
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <ActiveModeIcon />
+                <span className="min-w-0 flex-1">{t("chat:modes.title")}</span>
+                <span className="text-xs text-muted-foreground">
+                  {t(`chat:modes.${modeId}.label`)}
+                </span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-64 overflow-hidden">
+                <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">
+                  {WORK_MODE_IDS.map((id) => {
+                    const Icon = MODE_ICONS[id];
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={id}
+                        checked={modeId === id}
+                        disabled={busy}
+                        onCheckedChange={() => changeMode(id)}
+                      >
+                        <Icon />
+                        <span className="min-w-0">
+                          <span className="block">{t(`chat:modes.${id}.label`)}</span>
+                          <span className="block whitespace-normal break-words text-xs text-muted-foreground">
+                            {t(`chat:modes.${id}.desc`)}
+                          </span>
+                        </span>
+                      </DropdownMenuCheckboxItem>
+                    );
+                  })}
+                </ScrollArea>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <ShieldIcon />
+                {t("chat:approvals.title")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-64 overflow-hidden">
+                <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>{t("chat:approvals.title")}</DropdownMenuLabel>
+                    {APPROVAL_PRESETS.map((preset) => (
+                      <DropdownMenuItem
+                        key={preset.id}
+                        onClick={() =>
+                          void setPermissionRules(preset.rules).catch((error: unknown) =>
+                            toast.error(error instanceof Error ? error.message : t("common:error")),
+                          )
+                        }
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block">
+                            {t(
+                              preset.id === "standard"
+                                ? "chat:approvals.standard.label"
+                                : "chat:approvals.allowAll.label",
+                            )}
+                          </span>
+                          <span className="block whitespace-normal break-words text-xs text-muted-foreground">
+                            {t(
+                              preset.id === "standard"
+                                ? "chat:approvals.standard.desc"
+                                : modeId === "plan"
+                                  ? "chat:approvals.allowAll.planDesc"
+                                  : "chat:approvals.allowAll.desc",
+                            )}
+                          </span>
+                        </span>
+                        {matchApprovalPreset(permissionRules) === preset.id && <CheckIcon />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                </ScrollArea>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             <DropdownMenuCheckboxItem
               checked={goal}
               onCheckedChange={onGoalChange}
               disabled={!goalAvailable || busy}
             >
               <TargetIcon />
-              <span className="min-w-0">
-                <span className="block">{t("chat:goal.sendAsGoal")}</span>
-                <span className="block whitespace-normal text-xs text-muted-foreground">
-                  {t(goalAvailable ? "chat:goal.sendHint" : "chat:goal.workflowUnavailable")}
-                </span>
-              </span>
+              <span className="min-w-0">{t("chat:goal.title")}</span>
             </DropdownMenuCheckboxItem>
           </ScrollArea>
         </PromptInputActionMenuContent>
       </PromptInputActionMenu>
-      <ChatSearchSelector />
+      {modeId !== DEFAULT_MODE_ID && (
+        <PromptInputButton
+          aria-label={t("chat:modes.resetToBuild")}
+          title={t("chat:modes.resetToBuild")}
+          size="sm"
+          variant="secondary"
+          disabled={busy}
+          onClick={() => changeMode(DEFAULT_MODE_ID)}
+        >
+          <ActiveModeIcon />
+          <span className="max-w-20 truncate text-xs">{t(`chat:modes.${modeId}.label`)}</span>
+          <XIcon className="size-3" />
+        </PromptInputButton>
+      )}
+      {goal && (
+        <PromptInputButton
+          aria-label={t("chat:goal.cancelMode")}
+          title={t("chat:goal.composerHint")}
+          size="sm"
+          variant="secondary"
+          onClick={() => onGoalChange(false)}
+        >
+          <TargetIcon />
+          <span className="text-xs">{t("chat:goal.title")}</span>
+          <XIcon className="size-3" />
+        </PromptInputButton>
+      )}
+      {searchSelection && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <PromptInputButton aria-label={t("chat:search.title")} size="sm" variant="outline" />
+            }
+          >
+            <GlobeIcon />
+            <span className="max-w-28 truncate text-xs">
+              {t(`chat:search.engines.${searchSelection.engine}.label`)} ·{" "}
+              {t(`chat:search.depths.${searchSelection.depth}.label`)}
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" className="w-60 overflow-hidden">
+            <SearchMenuItems selection={searchSelection} onSelect={setSearchSelection} />
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </PromptInputTools>
   );
 }

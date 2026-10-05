@@ -13,7 +13,7 @@
  * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
  */
 import { mkdirSync } from "node:fs";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { Session } from "@mastra/core/agent-controller";
 import type { Mastra } from "@mastra/core/mastra";
@@ -521,26 +521,24 @@ export function getManagedSkillsDirectory(resourceId?: string): string {
 export async function getManagedSkillPaths(resourceId?: string): Promise<string[]> {
   const root = getManagedSkillsDirectory(resourceId);
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  return (
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map(async (entry) => {
-          const directory = join(root, entry.name);
-          try {
-            const content = await readFile(join(directory, "SKILL.md"), "utf8");
-            if (
-              !validateSkillContent({ content, directoryName: entry.name }).valid ||
-              matter(content).data.enabled === false
-            )
-              return undefined;
-            return directory;
-          } catch {
-            return undefined;
-          }
-        }),
-    )
-  ).filter((path): path is string => Boolean(path));
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const directory = join(root, entry.name);
+    try {
+      const skillFile = join(directory, "SKILL.md");
+      if ((await stat(skillFile)).size > 1024 * 1024) continue;
+      const content = await readFile(skillFile, "utf8");
+      if (
+        validateSkillContent({ content, directoryName: entry.name }).valid &&
+        matter(content, {}).data.enabled !== false
+      )
+        paths.push(directory);
+    } catch {
+      // Ignore missing or unreadable skills when resolving an agent's workspace.
+    }
+  }
+  return paths;
 }
 
 // Workspace 实例按路径缓存:BM25 索引 / LSP 客户端初始化昂贵,

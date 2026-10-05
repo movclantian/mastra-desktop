@@ -17,53 +17,10 @@
 
 import { i18n } from "@/shared/i18n";
 
-export const WORK_MODE_IDS = ["plan", "build", "review"] as const;
+export const WORK_MODE_IDS = ["build", "plan", "review"] as const;
 export type WorkModeId = (typeof WORK_MODE_IDS)[number];
 
-export const DEFAULT_MODE_ID: WorkModeId = "plan";
-
-export const WORK_MODE_META: Record<
-  WorkModeId,
-  {
-    label: string;
-    description: string;
-    hint: string;
-  }
-> = {
-  plan: {
-    get label() {
-      return i18n.t("chat:modes.plan.label");
-    },
-    get description() {
-      return i18n.t("chat:modes.plan.desc");
-    },
-    get hint() {
-      return i18n.t("chat:modes.plan.hint");
-    },
-  },
-  build: {
-    get label() {
-      return i18n.t("chat:modes.build.label");
-    },
-    get description() {
-      return i18n.t("chat:modes.build.desc");
-    },
-    get hint() {
-      return i18n.t("chat:modes.build.hint");
-    },
-  },
-  review: {
-    get label() {
-      return i18n.t("chat:modes.review.label");
-    },
-    get description() {
-      return i18n.t("chat:modes.review.desc");
-    },
-    get hint() {
-      return i18n.t("chat:modes.review.hint");
-    },
-  },
-};
+export const DEFAULT_MODE_ID: WorkModeId = "build";
 
 // ---------------------------------------------------------------------------
 // 工具审批(官方 ToolCategory / PermissionPolicy / PermissionRules)

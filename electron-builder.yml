@@ -12,7 +12,6 @@ files:
   # against the app-level production dependencies. Do not duplicate the
   # deployer's pnpm tree in app.asar.unpacked.
   - '!.mastra/output/node_modules/**'
-  - 'resources/builtin-skills/**'
   - '!**/.vscode/*'
   # Source maps are useful for development but are not loaded by the packaged
   # runtime. Keeping them duplicated across app.asar and Mastra deploy output
@@ -30,10 +29,7 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
-  # Only these directories are consumed through filesystem paths outside the
-  # asar. The icon is loaded from app.asar by the main-process asset import;
-  # keeping all of resources/** unpacked duplicated it in every installer.
-  - resources/builtin-skills/**
+  # Native terminals require unpacked executables.
   - 'node_modules/node-pty/**'
 win:
   executableName: mastra-desktop

@@ -19,11 +19,7 @@ import type { RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
-import {
-  REQUEST_MODEL_ID_CONTEXT_KEY,
-  resolveAgentModel,
-  resolveContextModelFamily,
-} from "../models/providers";
+import { REQUEST_MODEL_ID_CONTEXT_KEY, resolveAgentModel } from "../models/providers";
 import { libraryIndexSignals } from "../rag/document/indexing";
 import { userIdFromContext } from "../storage/database";
 import {
@@ -371,11 +367,7 @@ function createWorkAgent(
       // Do not add an instruction here until the tool field exists. Upgrade path: set it on
       // the LocalSandbox in workspace/index.ts, or upstream the tool parameter.
       if (selection) {
-        const tools = await resolveWebSearchTools(
-          selection,
-          await resolveContextModelFamily(requestContext),
-          userIdFromContext(requestContext),
-        );
+        const tools = await resolveWebSearchTools(selection, userIdFromContext(requestContext));
         const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
         instructions.push(webSearchInstructions(selection, searchAvailable));
       }

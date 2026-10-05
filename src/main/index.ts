@@ -509,12 +509,6 @@ function getPackagedMastraEntry(): string {
   return join(app.getAppPath(), ".mastra", "output", "index.mjs");
 }
 
-function getPackagedResourceDirectory(): string {
-  const appPath = app.getAppPath();
-  const unpackedRoot = appPath.endsWith(".asar") ? `${appPath}.unpacked` : appPath;
-  return join(unpackedRoot, "resources");
-}
-
 /** 按端口找 LISTENING 进程并整树强杀;平台分支只为调对系统命令,行为一致 */
 async function killProcessesOnPort(port: number): Promise<void> {
   try {
@@ -701,17 +695,12 @@ function ensureMastraRunning(): Promise<void> {
         args = [getMastraCliEntry(projectRoot), "dev"];
         cwd = projectRoot;
         env.FORCE_COLOR = "1";
-        env.MASTRA_BUILTIN_SKILLS_DIRECTORY = join(projectRoot, "resources", "builtin-skills");
       } else {
         command = process.execPath;
         args = [getPackagedMastraEntry()];
         cwd = process.resourcesPath;
         // 不要让 Mastra 又去走 dev 分支找 pnpm-lock.yaml
         env.NODE_ENV = "production";
-        env.MASTRA_BUILTIN_SKILLS_DIRECTORY = join(
-          getPackagedResourceDirectory(),
-          "builtin-skills",
-        );
       }
 
       let proc: ChildProcess;

@@ -65,18 +65,14 @@ export async function fetchSkillsShList(options: FetchSkillsShListOptions = {}):
   return await readPayload(response, i18n.t("skills:readLeaderboardFailed"));
 }
 
-export async function fetchRegistrySkills(
-  search: string,
-  force = false,
-): Promise<{ skills: SkillMetadata[]; skillsShError?: string }> {
+export async function fetchRegistrySkills(search: string): Promise<{ skills: SkillMetadata[] }> {
   const response = await apiFetch(
-    `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}${force ? "&refresh=1" : ""}`,
+    `${MASTRA_SERVER_URL}/work/skills/registry?query=${encodeURIComponent(search)}`,
   );
   const payload = await readPayload<{
     skills?: SkillMetadata[];
-    skillsShError?: string;
   }>(response, i18n.t("skills:marketplaceUnavailable"));
-  return { skills: payload.skills ?? [], skillsShError: payload.skillsShError };
+  return { skills: payload.skills ?? [] };
 }
 
 export async function fetchMcpServers(): Promise<McpSummary[]> {
@@ -101,9 +97,7 @@ export async function fetchSkillDetail(skill: SkillMetadata): Promise<SkillDetai
       ? `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/skill?path=${encodeURIComponent(skill.sourcePath)}`
       : skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug
         ? `${MASTRA_SERVER_URL}/work/skills/skills-sh/skill?source=${encodeURIComponent(skill.skillsShSource)}&slug=${encodeURIComponent(skill.skillsShSlug)}`
-        : skill.origin === "builtin"
-          ? `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(skill.sourcePath || skill.name)}`
-          : `${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(skill.name)}`;
+        : `${MASTRA_SERVER_URL}/work/skills/${encodeURIComponent(skill.name)}`;
   const payload = await readPayload<{ skill?: SkillDetail }>(
     await apiFetch(endpoint),
     i18n.t("skills:readSkillDetailFailed"),
@@ -136,21 +130,18 @@ export async function importSkill(source: string): Promise<SkillMetadata> {
 }
 
 export async function installSkill(skill: SkillMetadata): Promise<SkillMetadata> {
-  const response =
-    skill.origin === "marketplace" && skill.marketplaceId && skill.sourcePath
-      ? await apiFetch(
-          `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
-          { method: "POST", body: { path: skill.sourcePath } },
-        )
-      : skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug
-        ? await apiFetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/install`, {
-            method: "POST",
-            body: { source: skill.skillsShSource, slug: skill.skillsShSlug },
-          })
-        : await apiFetch(
-            `${MASTRA_SERVER_URL}/work/skills/registry/${encodeURIComponent(skill.sourcePath || skill.name)}/install`,
-            { method: "POST" },
-          );
+  let response: Response;
+  if (skill.origin === "marketplace" && skill.marketplaceId && skill.sourcePath) {
+    response = await apiFetch(
+      `${MASTRA_SERVER_URL}/work/skills/marketplaces/${encodeURIComponent(skill.marketplaceId)}/install`,
+      { method: "POST", body: { path: skill.sourcePath } },
+    );
+  } else if (skill.origin === "skills-sh" && skill.skillsShSource && skill.skillsShSlug) {
+    response = await apiFetch(`${MASTRA_SERVER_URL}/work/skills/skills-sh/install`, {
+      method: "POST",
+      body: { source: skill.skillsShSource, slug: skill.skillsShSlug },
+    });
+  } else throw new Error(i18n.t("skills:installFailed"));
   const payload = await readPayload<{ skill?: SkillMetadata }>(
     response,
     i18n.t("skills:installFailed"),

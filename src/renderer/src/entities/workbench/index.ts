@@ -6,7 +6,6 @@ export * from "./model/queries/schedules";
 export * from "./model/queries/threads";
 export * from "./model/queries/workspace";
 export * from "./model/query-keys";
-export * from "./model/search";
 export * from "./model/session";
 export * from "./model/storage";
 export * from "./model/terminal";

@@ -1758,6 +1758,7 @@ export const zh = {
       skillLimit: "每条消息最多选择 4 个技能",
     },
     goal: {
+      cancelMode: "取消本次目标模式",
       title: "目标",
       sendAsGoal: "作为目标发送",
       sendHint: "持续推进目标",
@@ -1845,17 +1846,18 @@ export const zh = {
     },
     modes: {
       title: "会话模式",
+      resetToBuild: "恢复构建模式",
       modeTitle: "模式与工具审批",
       switchTo: "切换到{{name}}",
       plan: {
         label: "计划",
         desc: "先调研、写计划文件并提交审批",
-        hint: "批准计划后自动切到「执行」",
+        hint: "批准计划后自动切到「构建」",
       },
       build: {
-        label: "执行",
-        desc: "执行已批准的计划,工具全量开放",
-        hint: "写入与命令执行仍按下方审批策略逐次确认",
+        label: "构建",
+        desc: "按要求执行任务，遵循工具审批设置",
+        hint: "写入与命令执行遵循工具审批设置",
       },
       review: {
         label: "复查",
@@ -1910,19 +1912,9 @@ export const zh = {
       switchTitle: "联网检索:{{label}}",
       openSearch: "开启联网检索",
       closeSearch: "关闭联网检索",
-      needModel: "需换模型",
       needKey: "需 Key",
-      useEngine: "使用此引擎",
-      searchDepth: "搜索强度",
-      providerHint: "结果数量由供应商决定,无强度档位;需要读全文时会调用 web_fetch。",
-      unsupportedModel:
-        "当前模型不支持:请在模型选择器换成 OpenAI / Anthropic / Google / xAI 的内置供应商模型(自定义网关不支持)。",
       toSettings: "去设置填写 API Key",
       engines: {
-        provider: {
-          label: "模型原生检索",
-          desc: "用模型自带的检索能力,零配置;仅 OpenAI / Anthropic / Google / xAI 模型可用",
-        },
         tavily: {
           label: "Tavily",
           desc: "为 LLM 优化的检索 API,答案摘要与引用质量最稳",
@@ -2311,7 +2303,6 @@ export const zh = {
     statusUpdateFailed: "更新技能状态失败",
     statusEnabled: "技能「{{name}}」已启用",
     statusDisabled: "技能「{{name}}」已停用",
-    builtin: "Mastra 内置",
     officialVerified: "官方认证",
     personalSkill: "个人技能",
     readInstalledSkillsFailed: "读取已安装技能失败",
@@ -2352,7 +2343,6 @@ export const zh = {
     tabMcp: "MCP 外部工具",
     communityLeaderboard: "🔥 社区排行榜",
     officialCertified: "⭐ 原厂认证",
-    mastraBuiltin: "✨ Mastra 内置",
     githubMarketplace: "📦 GitHub 市场",
     allTimeRank: "All Time (总榜)",
     trendingRank: "Trending 24h (飙升)",

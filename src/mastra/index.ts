@@ -110,7 +110,7 @@ const workAgentController = new AgentController({
   stateSchema: workbenchSessionStateSchema,
   agent: mastraWorkAgent,
   modes: listWorkModes(),
-  defaultModeId: "plan",
+  defaultModeId: "build",
   browser: ({ requestContext }) => getBrowserForRequest(requestContext),
   toolCategoryResolver: (toolName) => toolCategoryOf(toolName),
 });

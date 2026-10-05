@@ -15,7 +15,7 @@ export interface SkillMetadata {
   enabled?: boolean;
   validationErrors?: string[];
   metadata?: Record<string, unknown>;
-  origin?: "builtin" | "marketplace" | "skills-sh" | "installed";
+  origin?: "marketplace" | "skills-sh" | "installed";
   marketplaceId?: string;
   marketplaceName?: string;
   sourcePath?: string;
@@ -102,7 +102,7 @@ export interface SkillMarketplace {
 }
 
 export type SkillSection = "public" | "personal" | "mcp";
-export type MarketCategory = "official" | "leaderboard" | "builtin" | "marketplace";
+export type MarketCategory = "official" | "leaderboard" | "marketplace";
 export type LeaderboardView = "all-time" | "trending" | "hot";
 
 import type { CredentialPointer } from "../../../../../shared/credential-contract";

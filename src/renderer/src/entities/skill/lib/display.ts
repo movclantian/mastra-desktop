@@ -9,7 +9,6 @@ export function skillIcon(skill: SkillMetadata, index = 0) {
 }
 
 export function skillSourceLabel(skill?: SkillMetadata) {
-  if (skill?.origin === "builtin") return i18n.t("skills:builtin");
   if (skill?.isOfficial) return i18n.t("skills:officialVerified");
   if (skill?.origin === "skills-sh") return "skills.sh";
   return skill?.marketplaceName || i18n.t("skills:personalSkill");

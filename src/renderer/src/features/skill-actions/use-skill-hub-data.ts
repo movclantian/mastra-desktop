@@ -1,5 +1,4 @@
 import * as React from "react";
-import { toast } from "sonner";
 import type {
   CuratedOwner,
   LeaderboardView,
@@ -22,33 +21,8 @@ import {
 import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 
-const DEFAULT_OFFICIAL_MAKERS: CuratedOwner[] = [
-  { owner: "anthropics", totalInstalls: 2600000, featuredSkill: "frontend-design", skills: [] },
-  { owner: "vercel-labs", totalInstalls: 4500000, featuredSkill: "find-skills", skills: [] },
-  { owner: "microsoft", totalInstalls: 8500000, featuredSkill: "microsoft-foundry", skills: [] },
-  { owner: "open.feishu.cn", totalInstalls: 9800000, featuredSkill: "lark-doc", skills: [] },
-  {
-    owner: "supabase",
-    totalInstalls: 600000,
-    featuredSkill: "supabase-postgres-best-practices",
-    skills: [],
-  },
-  { owner: "prisma", totalInstalls: 300000, featuredSkill: "prisma-database-setup", skills: [] },
-  { owner: "cloudflare", totalInstalls: 250000, featuredSkill: "cloudflare-workers", skills: [] },
-  { owner: "expo", totalInstalls: 200000, featuredSkill: "expo-router", skills: [] },
-  {
-    owner: "remotion-dev",
-    totalInstalls: 500000,
-    featuredSkill: "remotion-best-practices",
-    skills: [],
-  },
-  { owner: "neondatabase", totalInstalls: 150000, featuredSkill: "neon-postgres", skills: [] },
-  { owner: "getsentry", totalInstalls: 100000, featuredSkill: "sentry-react-setup", skills: [] },
-  { owner: "heygen-com", totalInstalls: 1200000, featuredSkill: "hyperframes-cli", skills: [] },
-];
-
 let memRegistrySkills: SkillMetadata[] = [];
-let memCuratedOwners: CuratedOwner[] = DEFAULT_OFFICIAL_MAKERS;
+let memCuratedOwners: CuratedOwner[] = [];
 let memInstalledSkills: SkillMetadata[] = [];
 let memMcpServers: McpSummary[] = [];
 let memMarketplaces: SkillMarketplace[] = [];
@@ -82,7 +56,7 @@ export interface SkillHubDataState {
   curatedLoading: boolean;
   loadInstalled: () => Promise<void>;
   loadCurated: () => Promise<void>;
-  loadRegistry: (search: string, force?: boolean) => Promise<void>;
+  loadRegistry: (search: string) => Promise<void>;
   loadMcp: () => Promise<void>;
   loadMarketplaces: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -125,6 +99,7 @@ export function useSkillHubData({
   }, []);
 
   const loadCurated = React.useCallback(async () => {
+    setCuratedLoading(true);
     try {
       const nextOwners = await fetchCuratedSkillOwners();
       if (nextOwners && nextOwners.length > 0) {
@@ -138,13 +113,12 @@ export function useSkillHubData({
     }
   }, []);
 
-  const loadRegistry = React.useCallback(async (search: string, force = false) => {
+  const loadRegistry = React.useCallback(async (search: string) => {
     if (memRegistrySkills.length === 0) setRegistryLoading(true);
     try {
-      const { skills: nextSkills, skillsShError } = await fetchRegistrySkills(search, force);
+      const { skills: nextSkills } = await fetchRegistrySkills(search);
       if (!search) memRegistrySkills = nextSkills;
       setRegistrySkills(nextSkills);
-      if (skillsShError) toast.error(`skills.sh: ${skillsShError}`);
     } catch (error) {
       if (memRegistrySkills.length === 0) setRegistrySkills([]);
       toastError(error, i18n.t("skills:marketplaceUnavailable"));
@@ -171,22 +145,6 @@ export function useSkillHubData({
       if (section !== "public") return;
       setListLoading(true);
       try {
-        if (marketCategory === "builtin") {
-          const needle = query.trim().toLowerCase();
-          const builtinAll = registrySkills.filter((s) => s.origin === "builtin");
-          const filtered = needle
-            ? builtinAll.filter(
-                (s) =>
-                  s.name.toLowerCase().includes(needle) ||
-                  (s.description || "").toLowerCase().includes(needle),
-              )
-            : builtinAll;
-          setTotalSkillsCount(filtered.length);
-          const start = (page - 1) * pageSize;
-          setDisplaySkills(filtered.slice(start, start + pageSize));
-          return;
-        }
-
         if (marketCategory === "marketplace") {
           const needle = query.trim().toLowerCase();
           const mktAll = registrySkills.filter((s) => s.origin === "marketplace");
@@ -250,13 +208,20 @@ export function useSkillHubData({
   }, [loadCurated, loadInstalled, loadMarketplaces, loadMcp]);
 
   const refreshAll = React.useCallback(async () => {
-    await Promise.all([refresh(), loadRegistry(query, true), loadActiveList(true)]);
-  }, [loadActiveList, loadRegistry, query, refresh]);
+    await Promise.all([
+      refresh(),
+      marketCategory === "marketplace" ? loadRegistry("") : Promise.resolve(),
+      loadActiveList(true),
+    ]);
+  }, [loadActiveList, loadRegistry, marketCategory, refresh]);
 
   React.useEffect(() => {
     void refresh();
-    void loadRegistry("", false);
-  }, [loadRegistry, refresh]);
+  }, [refresh]);
+
+  React.useEffect(() => {
+    if (section === "public" && marketCategory === "marketplace") void loadRegistry("");
+  }, [section, marketCategory, loadRegistry]);
 
   // 依赖项变化时发起真实 API 列表查询
   React.useEffect(() => {

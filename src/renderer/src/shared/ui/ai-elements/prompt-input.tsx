@@ -569,7 +569,7 @@ export const PromptInputActionAddAttachments = ({
 
   return (
     <DropdownMenuItem {...props} onClick={handleClick}>
-      <ImageIcon className="mr-2 size-4" /> {label}
+      <ImageIcon className="size-4" /> {label}
     </DropdownMenuItem>
   );
 };
@@ -612,7 +612,7 @@ export const PromptInputActionAddScreenshot = ({
 
   return (
     <DropdownMenuItem {...props} onClick={handleClick}>
-      <Monitor className="mr-2 size-4" />
+      <Monitor className="size-4" />
       {label}
     </DropdownMenuItem>
   );
@@ -1308,9 +1308,6 @@ export const PromptInputHeader = ({ className, ...props }: PromptInputHeaderProp
 export type PromptInputFooterProps = Omit<ComponentProps<typeof InputGroupAddon>, "align">;
 
 export const PromptInputFooter = ({ className, ...props }: PromptInputFooterProps) => (
-  // 左右两组之间还有 gap-2 的固定间距,其余距离由右组的 ml-auto(弹性空白)提供。
-  // gap 属于「footer 自己吃掉的固定宽度」,ChatPromptInput 的实测已经把 column-gap
-  // 与内距一并算进最小边界 —— 所以这里改 gap 不会让那个下限失真。
   <InputGroupAddon
     align="block-end"
     className={cn("justify-between gap-2", className)}

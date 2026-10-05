@@ -7,7 +7,7 @@ import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
-import { resolveAgentModel, resolveContextModelFamily } from "../models/providers";
+import { resolveAgentModel } from "../models/providers";
 import {
   libraryDocumentChunkerTool,
   libraryGraphSearchTool,
@@ -157,7 +157,6 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
     notification_inbox: await getNotificationInboxTool(),
     ...(await resolveWebSearchTools(
       parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
-      await resolveContextModelFamily(requestContext),
       userIdFromContext(requestContext),
     )),
     ...(await getConfiguredMcpTools(userIdFromContext(requestContext))),

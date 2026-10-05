@@ -1,8 +1,8 @@
 /**
- * 技能路由(/work/skills/*):SKILL.md 上传导入、内置技能与市场技能安装。
+ * 技能路由(/work/skills/*):SKILL.md 上传导入与市场技能安装。
  * 官方文档:docs/en/docs/skills.mdx;市场实现见 src/mastra/skills/marketplaces.ts。
  */
-import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { registerApiRoute } from "@mastra/core/server";
 import { validateSkillContent } from "@mastra/core/skills";
@@ -21,11 +21,9 @@ import {
   installMarketplaceSkill,
   installSkillsShSkill,
   listMarketplaceSkills,
-  listSkillsShSkills,
   listSkillsShSkillsWithOptions,
   normalizeMarketplace,
   parseSkillMarkdown,
-  type SkillsShSkill,
   saveSkillMarketplaces,
 } from "../skills/marketplaces";
 import { userIdFromContext } from "../storage/database";
@@ -34,13 +32,6 @@ import { getManagedSkillsDirectory } from "../workspace/workspace-manager";
 const MAX_SKILL_ARCHIVE_BYTES = 25 * 1024 * 1024;
 const MAX_SKILL_UNPACKED_BYTES = 100 * 1024 * 1024;
 const MAX_SKILL_ENTRIES = 2_000;
-function builtinSkillsDirectory(): string {
-  // Built-ins are shipped from this repository. Do not reach into @mastra/editor/ee:
-  // that directory is covered by a separate Enterprise Edition license.
-  const configured = process.env.MASTRA_BUILTIN_SKILLS_DIRECTORY;
-  if (configured) return resolve(configured);
-  return resolve(process.cwd(), "resources", "builtin-skills");
-}
 
 function isWithin(root: string, target: string): boolean {
   const path = relative(root, target);
@@ -83,9 +74,21 @@ function skillArchiveData(entry: AdmZip.IZipEntry): Buffer {
   }
 }
 
-async function readLocalSkill(directory: string) {
-  const content = await readFile(resolve(directory, "SKILL.md"), "utf8");
+async function readLocalSkill(directory: string, detail = true) {
+  const path = resolve(directory, "SKILL.md");
+  if ((await stat(path)).size > 1024 * 1024)
+    throw workError("SKILL_PACKAGE_TOO_LARGE", { text: "SKILL.md 不能超过 1 MB" });
+  const content = await readFile(path, "utf8");
   const parsed = parseSkillMarkdown(content, basename(directory));
+  if (!detail)
+    return {
+      name: parsed.name,
+      description: parsed.description,
+      enabled: parsed.enabled,
+      path: directory,
+      license: parsed.license,
+      validationErrors: parsed.validationErrors,
+    };
   const relativeFiles = await getDirectoryRelativeFiles(directory);
   const { references, scripts, assets } = categorizeSkillResources(relativeFiles);
   return {
@@ -124,6 +127,8 @@ async function unpackSkillArchive(buffer: Buffer, resourceId?: string) {
     (entry) => entry.entryName.replaceAll("\\", "/") === skillFiles[0],
   );
   if (!skillEntry) throw workError("SKILL_PACKAGE_INVALID", { text: "未发现 SKILL.md" });
+  if (skillEntry.header.size > 1024 * 1024)
+    throw workError("SKILL_PACKAGE_TOO_LARGE", { text: "SKILL.md 不能超过 1 MB" });
   const content = skillArchiveData(skillEntry).toString("utf8");
   const validation = validateSkillContent({ content });
   if (!validation.valid || typeof validation.metadata?.name !== "string")
@@ -222,13 +227,12 @@ export const skillsRoute = createRoute({
   handler: async ({ requestContext }) => {
     const root = getManagedSkillsDirectory(userIdFromContext(requestContext));
     const entries = await readdir(root, { withFileTypes: true });
-    const skills = (
-      await Promise.all(
-        entries
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => readLocalSkill(resolve(root, entry.name)).catch(missingSkill)),
-      )
-    ).filter((skill): skill is NonNullable<typeof skill> => skill !== null);
+    const skills = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skill = await readLocalSkill(resolve(root, entry.name), false).catch(missingSkill);
+      if (skill) skills.push(skill);
+    }
     return { skills };
   },
 });
@@ -249,87 +253,25 @@ export const skillRoute = createRoute({
   },
 });
 
-export const builtinSkillsRoute = createRoute({
+export const skillRegistryRoute = createRoute({
   path: "/work/skills/registry",
   method: "GET",
   responseType: "json",
   onValidationError: workValidationError,
-  queryParamSchema: z.object({
-    query: z.string().trim().default(""),
-    refresh: z.enum(["0", "1"]).default("0"),
-  }),
-  handler: async ({ query: rawQuery, refresh, requestContext }) => {
-    const root = builtinSkillsDirectory();
-    const entries = await readdir(root, { withFileTypes: true });
-    const query = rawQuery.toLocaleLowerCase();
-    const builtinSkills = await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => readLocalSkill(resolve(root, entry.name)).catch(missingSkill)),
-    );
+  queryParamSchema: z.object({ query: z.string().trim().default("") }),
+  handler: async ({ query, requestContext }) => {
     const marketplaces = await getSkillMarketplaces(userIdFromContext(requestContext));
-    const externalSkills = (
-      await Promise.all(
-        marketplaces
-          .filter((marketplace) => marketplace.enabled)
-          .map((marketplace) => listMarketplaceSkills(marketplace, query)),
-      )
-    ).flat();
-    let skillsSh: SkillsShSkill[] = [];
-    let skillsShError: string | undefined;
-    // This combined catalogue deliberately displays the remaining sources with an explicit error.
-    try {
-      skillsSh = await listSkillsShSkills(query, refresh === "1");
-    } catch (error) {
-      skillsShError = errorText(error, "skills.sh 暂时不可用");
-    }
-    const skills = [
-      ...builtinSkills
-        .filter((skill): skill is NonNullable<typeof skill> => skill !== null)
-        .map((skill) => ({
+    const skills = [];
+    for (const marketplace of marketplaces) {
+      if (!marketplace.enabled) continue;
+      skills.push(
+        ...(await listMarketplaceSkills(marketplace, query)).map((skill) => ({
           ...skill,
-          origin: "builtin" as const,
-          marketplaceName: "Mastra 内置",
-          sourcePath: basename(skill.path),
+          origin: "marketplace" as const,
         })),
-      ...externalSkills.map((skill) => ({ ...skill, origin: "marketplace" as const })),
-      ...skillsSh.map((skill) => ({
-        ...skill,
-        path: `skills-sh:${skill.source}/${skill.slug}`,
-        description: skill.description || "来自 skills.sh 的社区技能",
-        origin: "skills-sh" as const,
-        marketplaceName: skill.isOfficial ? "skills.sh 官方认证" : "skills.sh",
-        sourcePath: skill.slug,
-        skillsShSource: skill.source,
-        skillsShSlug: skill.slug,
-        sourceUrl: skill.url || `https://skills.sh/${skill.source}/${skill.slug}`,
-      })),
-    ];
-    return {
-      skills: skills.filter(
-        (skill) =>
-          !query ||
-          skill.name.toLocaleLowerCase().includes(query) ||
-          skill.description.toLocaleLowerCase().includes(query),
-      ),
-      ...(skillsShError ? { skillsShError } : {}),
-    };
-  },
-});
-
-export const builtinSkillRoute = createRoute({
-  path: "/work/skills/registry/:name",
-  method: "GET",
-  responseType: "json",
-  onValidationError: workValidationError,
-  pathParamSchema: skillPathSchema,
-  queryParamSchema: z.object({}).strict(),
-  handler: async ({ name }) => {
-    const skill = await readLocalSkill(resolve(builtinSkillsDirectory(), name)).catch(missingSkill);
-    if (!skill) throw workError("SKILL_NOT_FOUND");
-    return {
-      skill: { ...skill, origin: "builtin", marketplaceName: "Mastra 内置", sourcePath: name },
-    };
+      );
+    }
+    return { skills };
   },
 });
 
@@ -366,7 +308,7 @@ export const skillsShSkillRoute = createRoute({
   onValidationError: workValidationError,
   queryParamSchema: skillsShIdentitySchema,
   handler: async ({ source, slug }) => {
-    const { files: _files, ...detail } = await getSkillsShSkillDetail(source, slug);
+    const detail = await getSkillsShSkillDetail(source, slug);
     return {
       skill: {
         ...detail,
@@ -497,33 +439,6 @@ export const installMarketplaceSkillRoute = createRoute({
   },
 });
 
-export const installBuiltinSkillRoute = createRoute({
-  path: "/work/skills/registry/:name/install",
-  method: "POST",
-  responseType: "json",
-  onValidationError: workValidationError,
-  pathParamSchema: skillPathSchema,
-  queryParamSchema: z.object({}).strict(),
-  bodySchema: z.object({}).strict().optional(),
-  handler: async ({ name, requestContext }) => {
-    const source = resolve(builtinSkillsDirectory(), name);
-    const content = await readFile(resolve(source, "SKILL.md"), "utf8").catch(missingSkill);
-    if (content === null) throw workError("SKILL_NOT_FOUND");
-    const validation = validateSkillContent({ content, directoryName: name });
-    if (!validation.valid)
-      throw workError("SKILL_PACKAGE_INVALID", { text: validation.errors.join("\n") });
-    const targetRoot = resolve(getManagedSkillsDirectory(userIdFromContext(requestContext)), name);
-    await mkdir(targetRoot).catch(installConflict);
-    try {
-      await cp(source, targetRoot, { recursive: true, errorOnExist: true, force: false });
-      return { skill: await readLocalSkill(targetRoot) };
-    } catch (error) {
-      await rm(targetRoot, { recursive: true, force: true });
-      throw error;
-    }
-  },
-});
-
 export const installSkillsShSkillRoute = createRoute({
   path: "/work/skills/skills-sh/install",
   method: "POST",
@@ -571,8 +486,19 @@ export const importSkillRoute = createRoute({
     const response = await fetch(url, { signal: abortSignal });
     if (!response.ok)
       throw new HTTPException(502, { message: `下载技能包失败（HTTP ${response.status}）` });
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
+    if (Number(response.headers.get("content-length")) > MAX_SKILL_ARCHIVE_BYTES) {
+      await response.body?.cancel();
+      throw workError("SKILL_PACKAGE_TOO_LARGE");
+    }
+    if (!response.body) throw workError("SKILL_PACKAGE_INVALID");
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.byteLength;
+      if (size > MAX_SKILL_ARCHIVE_BYTES) throw workError("SKILL_PACKAGE_TOO_LARGE");
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks, size);
     return { skill: await unpackSkillArchive(buffer, userIdFromContext(requestContext)) };
   },
 });
@@ -611,10 +537,12 @@ export const updateSkillRoute = createRoute({
     const skillMdPath = resolve(target, "SKILL.md");
     const existingContent = await readFile(skillMdPath, "utf8").catch(missingSkill);
     if (existingContent === null) throw workError("SKILL_NOT_FOUND");
-    const parsed = matter(existingContent);
+    const parsed = matter(existingContent, {});
     if (updates.description !== undefined) parsed.data.description = updates.description;
     if (updates.enabled !== undefined) parsed.data.enabled = updates.enabled;
     const content = matter.stringify(updates.instructions ?? parsed.content, parsed.data);
+    if (Buffer.byteLength(content, "utf8") > 1024 * 1024)
+      throw workError("SKILL_PACKAGE_TOO_LARGE", { text: "SKILL.md 不能超过 1 MB" });
     const validation = validateSkillContent({ content, directoryName: name });
     if (!validation.valid)
       throw workError("VALIDATION_FAILED", { text: validation.errors.join("\n") });

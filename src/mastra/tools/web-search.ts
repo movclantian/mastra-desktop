@@ -1,9 +1,8 @@
 /**
  * 联网检索工具模块。
  * 官方文档:docs/en/integrations/tools/tavily.mdx(createTavilySearchTool /
- * createTavilyExtractTool)、firecrawl.mdx(Firecrawl SDK);provider 原生检索用
- * @mastra/core/tools 的 webSearchTool / webFetchTool(仅 OpenAI / Anthropic /
- * Google / xAI 家族可用)。AnySearch 通过官方 MCPClient 发现和调用远程工具。
+ * createTavilyExtractTool)、firecrawl.mdx(Firecrawl SDK)。
+ * webFetchTool 负责网页读取；AnySearch 通过官方 MCPClient 发现和调用远程工具。
  * MCP:docs/en/reference/tools/mcp-client.mdx；AnySearch 协议:
  * https://github.com/anysearch-ai/anysearch-mcp-server#mcp-transport
  * 引擎 + 强度档(fast/balanced/deep)经 RequestContext 传入,由 Agent 的动态
@@ -12,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
-import { createTool, webFetchTool, webSearchTool } from "@mastra/core/tools";
+import { createTool, webFetchTool } from "@mastra/core/tools";
 import { getMcpCallToolContent, MCPClient } from "@mastra/mcp";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
@@ -31,17 +30,8 @@ import {
 } from "../storage/content-objects";
 import { getAppConfig, setAppConfig } from "../storage/database";
 
-export const SEARCH_ENGINES = ["provider", "tavily", "firecrawl", "anysearch"] as const;
+export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;
 export type SearchEngine = (typeof SEARCH_ENGINES)[number];
-
-/** provider 引擎支持的模型家族 */
-export const PROVIDER_SEARCH_FAMILIES = ["openai", "anthropic", "google", "xai"] as const;
-
-function supportsProviderSearch(family: unknown): boolean {
-  if (typeof family !== "string") return false;
-  const normalized = family === "gemini" ? "google" : family;
-  return (PROVIDER_SEARCH_FAMILIES as readonly string[]).includes(normalized);
-}
 
 export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
 export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
@@ -508,16 +498,10 @@ export function parseWebSearchSelection(value: unknown): WebSearchSelection | nu
 
 export async function resolveWebSearchTools(
   selection: WebSearchSelection | null,
-  modelFamily?: unknown,
   resourceId?: string,
 ): Promise<ToolsInput> {
   if (!selection) return {};
   const preset = DEPTH_PRESETS[selection.depth];
-
-  if (selection.engine === "provider") {
-    if (!supportsProviderSearch(modelFamily)) return {};
-    return { web_search: webSearchTool, web_fetch: createArchivedWebFetchTool() };
-  }
 
   const config = await getToolsConfig(resourceId);
 
@@ -557,7 +541,6 @@ export async function resolveWebSearchTools(
 }
 
 const ENGINE_LABELS: Record<SearchEngine, string> = {
-  provider: "模型原生检索",
   tavily: "Tavily",
   firecrawl: "Firecrawl",
   anysearch: "AnySearch",
@@ -569,27 +552,19 @@ export function webSearchInstructions(
 ): string {
   const preset = DEPTH_PRESETS[selection.depth];
   if (!toolsAvailable) {
-    if (selection.engine === "provider") {
-      return `Web search was requested using the model's own native search, but the active model is not from OpenAI, Anthropic, Google or xAI, so no search tool is available. Tell the user to either switch to a model from one of those providers or pick a different search engine in the search menu, then answer from your own knowledge and mark it as possibly outdated.`;
-    }
     return `Web search was requested (${ENGINE_LABELS[selection.engine]}) but its API key is missing, so no search tool is available. Tell the user to open Settings → 工具 and fill in the ${ENGINE_LABELS[selection.engine]} API key, then answer from your own knowledge and mark it as possibly outdated.`;
   }
   const engineHint =
-    selection.engine === "provider"
-      ? "Use web_search (your provider's native search). Result volume is decided by the provider, so make each query specific rather than asking for more results."
-      : selection.engine === "tavily"
-        ? `Call tavily_search with searchDepth='${preset.tavilySearchDepth}' and maxResults=${preset.maxResults}.`
-        : selection.engine === "firecrawl"
-          ? `Call firecrawl-search with limit=${preset.maxResults} by default; narrow results with sources (news), categories (github/research/pdf/developer), tbs time filters or domain filters when the query calls for it.`
-          : `Call anysearch_search with max_results=${preset.maxResults}; for specialized queries, call anysearch_get_sub_domains first and use its domain, sub_domain and sub_domain_params.`;
-  const deepHint =
-    selection.engine === "provider"
-      ? "Use web_fetch to archive the 1-3 most promising pages, then use the official mastra_workspace_read_file or mastra_workspace_grep with each returned workspacePath to inspect their full content."
-      : preset.allowDeepFetch
-        ? selection.engine === "anysearch"
-          ? "Use anysearch_batch_search to run up to 5 independent queries in parallel, and anysearch_extract to archive the 1-3 most promising pages as Markdown. Use the official workspace read_file or grep tool with the returned workspacePath when details are needed."
-          : "After searching, archive the 1-3 most promising pages with the engine's extract/scrape tool, then use the official workspace read_file or grep tool with the returned workspacePath when details are needed."
-        : "Rely on result snippets; do not fetch full pages at this strength.";
+    selection.engine === "tavily"
+      ? `Call tavily_search with searchDepth='${preset.tavilySearchDepth}' and maxResults=${preset.maxResults}.`
+      : selection.engine === "firecrawl"
+        ? `Call firecrawl-search with limit=${preset.maxResults} by default; narrow results with sources (news), categories (github/research/pdf/developer), tbs time filters or domain filters when the query calls for it.`
+        : `Call anysearch_search with max_results=${preset.maxResults}; for specialized queries, call anysearch_get_sub_domains first and use its domain, sub_domain and sub_domain_params.`;
+  const deepHint = preset.allowDeepFetch
+    ? selection.engine === "anysearch"
+      ? "Use anysearch_batch_search to run up to 5 independent queries in parallel, and anysearch_extract to archive the 1-3 most promising pages as Markdown. Use the official workspace read_file or grep tool with the returned workspacePath when details are needed."
+      : "After searching, archive the 1-3 most promising pages with the engine's extract/scrape tool, then use the official workspace read_file or grep tool with the returned workspacePath when details are needed."
+    : "Rely on result snippets; do not fetch full pages at this strength.";
   return `Web search is ON for this request (engine: ${ENGINE_LABELS[selection.engine]}, strength: ${selection.depth}).
 - Any question that depends on current facts, prices, releases, docs or news MUST be answered from search results, never from memory alone.
 - ${engineHint}

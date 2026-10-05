@@ -176,8 +176,6 @@ export interface SkillsShSkill {
 }
 
 export interface SkillsShSkillDetail extends SkillsShSkill {
-  hash?: string;
-  files: Array<{ path: string; contents: Buffer }>;
   instructions: string;
   references: string[];
   scripts: string[];
@@ -213,12 +211,14 @@ const DEFAULT_BRANCH = "main";
  *
  * 取 24 小时:社区技能目录不是高频变动的数据,而这份列表要打一次远端往返,
  * 短 TTL 只是在反复付延迟。代价是新技能上架当天可能看不到 —— 所以技能中心的
- * 刷新按钮走 force 路径直接穿透缓存(见 listSkillsShSkills 的 force 参数)。
+ * 刷新按钮走 force 路径直接穿透缓存(见 listSkillsShSkillsWithOptions 的 force 参数)。
  */
 const SKILLS_SH_CACHE_TTL = 24 * 60 * 60 * 1000;
 const SKILLS_SH_MAX_RETRIES = 3;
 const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
+
+type SkillFile = { path: string; contents: Buffer };
 
 interface CacheEntry<T> {
   expiresAt: number;
@@ -242,6 +242,15 @@ function createCachedFetcher<TInput, TResult>(
 
     const request = loader(input).then((value) => {
       const entry = { expiresAt: Date.now() + options.ttl, value };
+      for (const [key, cachedEntry] of cache) {
+        if (cachedEntry.expiresAt <= Date.now()) cache.delete(key);
+      }
+      cache.delete(cacheKey);
+      while (cache.size >= 32) {
+        const oldest = cache.keys().next().value;
+        if (oldest === undefined) break;
+        cache.delete(oldest);
+      }
       cache.set(cacheKey, entry);
       return value;
     });
@@ -376,7 +385,8 @@ export function parseSkillMarkdown(content: string, directoryName?: string) {
   return {
     name: typeof fields.name === "string" ? fields.name : (directoryName ?? ""),
     description: typeof fields.description === "string" ? fields.description : "未提供描述",
-    enabled: result.valid && matter(content).data.enabled !== false,
+    // Passing options disables gray-matter's unbounded cache of whole Markdown documents.
+    enabled: result.valid && matter(content, {}).data.enabled !== false,
     license: typeof fields.license === "string" ? fields.license : undefined,
     metadata:
       fields.metadata && typeof fields.metadata === "object" && !Array.isArray(fields.metadata)
@@ -438,19 +448,30 @@ async function fetchWithRetry<T>(url: string, options: FetchWithRetryOptions): P
       signal: AbortSignal.timeout(10_000),
     });
     if (response.ok) {
-      if (options.responseType === "bytes") {
-        const chunks: Uint8Array[] = [];
-        let size = 0;
-        if (!response.body) throw new Error("技能文件响应为空");
-        for await (const chunk of response.body) {
-          size += chunk.byteLength;
-          if (size > SKILLS_SH_MAX_BYTES) throw new Error("技能文件过大");
-          chunks.push(chunk);
-        }
-        return Buffer.concat(chunks) as T;
+      const limit =
+        options.responseType === "bytes"
+          ? SKILLS_SH_MAX_BYTES
+          : options.responseType === "json"
+            ? 8 * 1024 * 1024
+            : 1024 * 1024;
+      if (Number(response.headers.get("content-length")) > limit) {
+        await response.body?.cancel();
+        throw new Error("技能响应过大");
       }
-      return (options.responseType === "json" ? await response.json() : await response.text()) as T;
+      if (!response.body) throw new Error("技能响应为空");
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of response.body) {
+        size += chunk.byteLength;
+        if (size > limit) throw new Error("技能响应过大");
+        chunks.push(chunk);
+      }
+      const bytes = Buffer.concat(chunks, size);
+      if (options.responseType === "bytes") return bytes as T;
+      const text = bytes.toString("utf8");
+      return (options.responseType === "json" ? JSON.parse(text) : text) as T;
     }
+    await response.body?.cancel();
     if (!options.retryOn?.(response) || attempt === retries) {
       throw new Error(options.errorMessage(response.status));
     }
@@ -559,14 +580,7 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
   }
 }
 
-let curatedCacheData: CuratedResponse | null = null;
-let curatedCacheExpiresAt = 0;
-
-export async function getSkillsShCurated(force = false): Promise<CuratedResponse> {
-  if (!force && curatedCacheData && curatedCacheExpiresAt > Date.now()) {
-    return curatedCacheData;
-  }
-
+async function loadSkillsShCurated(): Promise<CuratedResponse> {
   // 1. 并发拉取前 4 页基础全时榜，筛选其中的官方技能与创作者
   const pages = await Promise.all(
     [0, 1, 2, 3].map((page) => fetchSkillsShLeaderboardPage("all-time", page, 50)),
@@ -616,9 +630,15 @@ export async function getSkillsShCurated(force = false): Promise<CuratedResponse
     generatedAt: new Date().toISOString(),
   };
 
-  curatedCacheData = result;
-  curatedCacheExpiresAt = Date.now() + SKILLS_SH_CACHE_TTL;
   return result;
+}
+
+const cachedSkillsShCurated = createCachedFetcher(loadSkillsShCurated, () => "curated", {
+  ttl: SKILLS_SH_CACHE_TTL,
+});
+
+export function getSkillsShCurated(force = false): Promise<CuratedResponse> {
+  return cachedSkillsShCurated(undefined, force);
 }
 
 export async function getSkillsShAudit(source: string, slug: string): Promise<SkillAuditItem[]> {
@@ -815,10 +835,6 @@ export async function listSkillsShSkillsWithOptions(
   return cachedSkillsShOptions(options, options.force);
 }
 
-export async function listSkillsShSkills(query = "", force = false): Promise<SkillsShSkill[]> {
-  return (await listSkillsShSkillsWithOptions({ query: query.trim(), perPage: 200, force })).skills;
-}
-
 function normalizeSkillsShFilePath(path: string): string {
   const normalized = path.trim().replaceAll("\\", "/");
   if (
@@ -836,144 +852,99 @@ function skillsShSourceUrl(source: string, slugValue: string): string {
   return `https://skills.sh/${source}/${slugValue}`;
 }
 
-function parseSkillsShSnapshot(
-  source: string,
-  slugValue: string,
-  payload: unknown,
-): SkillsShSkillDetail {
-  const base = normalizeSkillsShEntry({
-    ...(payload as Record<string, unknown>),
-    source,
-    slug: slugValue,
-  });
-  if (!base) throw new Error("skills.sh 技能元数据无效");
-  const raw = payload as Record<string, unknown>;
-  const files = Array.isArray(raw.files)
-    ? raw.files.flatMap((item) => {
-        if (!item || typeof item !== "object") return [];
-        const file = item as Record<string, unknown>;
-        if (
-          typeof file.path !== "string" ||
-          (!Buffer.isBuffer(file.contents) && typeof file.contents !== "string")
-        )
-          return [];
-        return [
-          {
-            path: normalizeSkillsShFilePath(file.path),
-            contents: Buffer.isBuffer(file.contents)
-              ? file.contents
-              : Buffer.from(file.contents, "utf8"),
-          },
-        ];
-      })
-    : [];
-  if (files.length === 0 || files.length > SKILLS_SH_MAX_FILES) {
-    throw new Error("skills.sh 技能文件数量无效");
-  }
-  const totalBytes = files.reduce((sum, file) => sum + file.contents.byteLength, 0);
-  if (totalBytes > SKILLS_SH_MAX_BYTES) throw new Error("skills.sh 技能包过大");
-  const skillFiles = files.filter((file) => basename(file.path).toUpperCase() === "SKILL.MD");
-  if (skillFiles.length !== 1) throw new Error("skills.sh 技能必须恰好包含一个 SKILL.md");
-  const skillFile = skillFiles[0];
-  const parent = dirname(skillFile.path).replaceAll("\\", "/");
-  const prefix = parent === "." ? "" : `${parent}/`;
-  const resources = files
-    .filter((file) => file.path !== skillFile.path && (!prefix || file.path.startsWith(prefix)))
-    .map((file) => file.path.slice(prefix.length))
-    .filter((file) => Boolean(file) && basename(file).toUpperCase() !== "SKILL.MD");
-  const markdown = skillFile.contents.toString("utf8");
-  const parsed = parseSkillMarkdown(markdown);
-  const { references, scripts, assets } = categorizeSkillResources(resources);
-  return {
-    ...base,
-    hash: typeof raw.hash === "string" ? raw.hash : undefined,
-    files,
-    references,
-    scripts,
-    assets,
-    sourceUrl: skillsShSourceUrl(source, slugValue),
-    ...parsed,
-  };
-}
-
-export async function getSkillsShSkillDetail(
-  source: string,
-  slugValue: string,
-): Promise<SkillsShSkillDetail> {
+/** Preview reads only SKILL.md and resource paths; binary files are downloaded on install. */
+async function loadSkillsShSkill(source: string, slugValue: string) {
   const normalizedSource = normalizeSkillsShCoordinate(source, "source");
   const normalizedSlug = normalizeSkillsShCoordinate(slugValue, "skill");
-  const auditsPromise = getSkillsShAudit(normalizedSource, normalizedSlug).catch(() => []);
-  if (!normalizedSource.includes("/")) {
-    const baseUrl = `https://${normalizedSource}`;
-    let instructions: string | undefined;
+  const base = normalizeSkillsShEntry({ source: normalizedSource, slug: normalizedSlug });
+  if (!base) throw new Error("skills.sh 技能元数据无效");
+  let content: string | undefined;
+  let resources: string[] = [];
+  let github:
+    | { owner: string; repo: string; branch: string; skillPath: string; tree: GitTreeItem[] }
+    | undefined;
+  if (base.sourceType === "well-known") {
     for (const path of [
       `/.well-known/agent-skills/${encodeURIComponent(normalizedSlug)}/SKILL.md`,
       `/.well-known/skills/${encodeURIComponent(normalizedSlug)}/SKILL.md`,
     ]) {
       try {
-        instructions = await fetchWithRetry<string>(`${baseUrl}${path}`, {
+        content = await fetchWithRetry<string>(`https://${normalizedSource}${path}`, {
           headers: PUBLIC_SKILL_HEADERS,
           responseType: "text",
           errorMessage: (status) => `读取远程技能文件失败（${status}）`,
         });
         break;
       } catch {
-        // Try the other well-known convention before reporting an unavailable skill.
+        // Both well-known skill discovery conventions are supported.
       }
     }
-    if (instructions === undefined) throw new Error("无法读取该 well-known 技能的 SKILL.md");
-    const detail = parseSkillsShSnapshot(normalizedSource, normalizedSlug, {
-      source: normalizedSource,
-      slug: normalizedSlug,
-      sourceType: "well-known",
-      installUrl: baseUrl,
-      files: [{ path: "SKILL.md", contents: instructions }],
-    });
-    detail.audits = await auditsPromise;
-    return detail;
+    if (content === undefined) throw new Error("无法读取该 well-known 技能的 SKILL.md");
+  } else {
+    const [owner, repo] = normalizedSource.split("/");
+    const { default_branch: branch } = await fetchWithRetry<{ default_branch: string }>(
+      `https://api.github.com/repos/${owner}/${repo}`,
+      {
+        headers: GITHUB_JSON_HEADERS,
+        responseType: "json",
+        errorMessage: (status) => `GitHub 请求失败（${status}）`,
+      },
+    );
+    const result = await fetchWithRetry<{ tree?: GitTreeItem[]; truncated?: boolean }>(
+      `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+      {
+        headers: GITHUB_JSON_HEADERS,
+        responseType: "json",
+        errorMessage: (status) => `GitHub 请求失败（${status}）`,
+      },
+    );
+    if (result.truncated) throw new Error("GitHub 技能目录不完整");
+    const tree = result.tree ?? [];
+    const candidates = tree.filter(
+      (item) => item.type === "blob" && /(^|\/)SKILL\.md$/i.test(item.path),
+    );
+    const matching = candidates.filter(
+      (item) => basename(dirname(item.path)).toLowerCase() === normalizedSlug.toLowerCase(),
+    );
+    const selected = matching.length
+      ? matching
+      : candidates.filter((item) => item.path.toUpperCase() === "SKILL.MD");
+    if (selected.length !== 1) throw new Error("无法唯一确定 GitHub 技能目录");
+    const skillPath = selected[0].path;
+    const prefix = skillPath.slice(0, -"SKILL.md".length);
+    resources = tree
+      .filter(
+        (item) => item.type === "blob" && item.path.startsWith(prefix) && item.path !== skillPath,
+      )
+      .map((item) => item.path.slice(prefix.length));
+    content = await fetchWithRetry<string>(
+      `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${skillPath.split("/").map(encodeURIComponent).join("/")}`,
+      {
+        headers: GITHUB_TEXT_HEADERS,
+        responseType: "text",
+        errorMessage: (status) => `读取技能文件失败（${status}）`,
+      },
+    );
+    github = { owner, repo, branch, skillPath, tree };
   }
-  if (normalizedSource.split("/").length !== 2) {
-    throw new Error("该 skills.sh 技能没有可用的公开 GitHub 快照");
-  }
-  const [owner, repo] = normalizedSource.split("/");
-  const { default_branch: branch } = await fetchWithRetry<{ default_branch: string }>(
-    `https://api.github.com/repos/${owner}/${repo}`,
-    {
-      headers: GITHUB_JSON_HEADERS,
-      responseType: "json",
-      errorMessage: (status) => `GitHub 请求失败（${status}）`,
-    },
-  );
-  const tree = await fetchWithRetry<{ tree?: GitTreeItem[]; truncated?: boolean }>(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    {
-      headers: GITHUB_JSON_HEADERS,
-      responseType: "json",
-      errorMessage: (status) => `GitHub 请求失败（${status}）`,
-    },
-  );
-  if (tree.truncated) throw new Error("GitHub 技能目录不完整，无法安装");
-  const candidates = (tree.tree ?? []).filter(
-    (item) => item.type === "blob" && /(^|\/)SKILL\.md$/i.test(item.path),
-  );
-  const matching = candidates.filter(
-    (item) => basename(dirname(item.path)).toLowerCase() === normalizedSlug.toLowerCase(),
-  );
-  const selected = matching.length
-    ? matching
-    : candidates.filter((item) => item.path.toUpperCase() === "SKILL.MD");
-  if (selected.length !== 1) throw new Error("无法唯一确定 GitHub 技能目录");
-  const skillPath = selected[0].path;
-  const files = await downloadGithubSkillFiles(owner, repo, branch, skillPath, tree.tree ?? []);
-  const detail = parseSkillsShSnapshot(normalizedSource, normalizedSlug, {
-    source: normalizedSource,
-    slug: normalizedSlug,
-    sourceType: "github",
-    installUrl: `https://github.com/${normalizedSource}`,
-    files,
-  });
-  detail.audits = await auditsPromise;
-  return detail;
+  const detail: SkillsShSkillDetail = {
+    ...base,
+    ...parseSkillMarkdown(content),
+    ...categorizeSkillResources(resources),
+    sourceUrl: skillsShSourceUrl(normalizedSource, normalizedSlug),
+  };
+  return { detail, content, github };
+}
+
+export async function getSkillsShSkillDetail(
+  source: string,
+  slugValue: string,
+): Promise<SkillsShSkillDetail> {
+  const [{ detail }, audits] = await Promise.all([
+    loadSkillsShSkill(source, slugValue),
+    getSkillsShAudit(source, slugValue).catch(() => []),
+  ]);
+  return { ...detail, audits };
 }
 
 export async function installSkillsShSkill(
@@ -981,19 +952,31 @@ export async function installSkillsShSkill(
   slugValue: string,
   resourceId?: string,
 ): Promise<string> {
-  const detail = await getSkillsShSkillDetail(source, slugValue);
-  return installSkillFiles(detail.name, detail.files, resourceId);
+  const { detail, content, github } = await loadSkillsShSkill(source, slugValue);
+  const files = github
+    ? await downloadGithubSkillFiles(
+        github.owner,
+        github.repo,
+        github.branch,
+        github.skillPath,
+        github.tree,
+      )
+    : [{ path: "SKILL.md", contents: Buffer.from(content, "utf8") }];
+  return installSkillFiles(detail.name, files, resourceId);
 }
 
 async function installSkillFiles(
   name: string,
-  files: SkillsShSkillDetail["files"],
+  files: SkillFile[],
   resourceId?: string,
 ): Promise<string> {
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64)
     throw new Error(`技能名称无效：${name}`);
+  if (files.filter((file) => basename(file.path).toUpperCase() === "SKILL.MD").length !== 1)
+    throw new Error("技能必须恰好包含一个 SKILL.md");
   const skillFile = files.find((file) => file.path.toUpperCase() === "SKILL.MD");
   if (!skillFile) throw new Error("未发现 SKILL.md");
+  if (skillFile.contents.byteLength > 1024 * 1024) throw new Error("SKILL.md 不能超过 1 MB");
   const validation = validateSkillContent({
     content: skillFile.contents.toString("utf8"),
     directoryName: name,
@@ -1027,11 +1010,11 @@ async function downloadGithubSkillFiles(
   branch: string,
   skillPath: string,
   tree: GitTreeItem[],
-): Promise<SkillsShSkillDetail["files"]> {
+): Promise<SkillFile[]> {
   const prefix = skillPath.slice(0, -"SKILL.md".length);
   const entries = tree.filter((item) => item.type === "blob" && item.path.startsWith(prefix));
   if (!entries.length || entries.length > SKILLS_SH_MAX_FILES) throw new Error("技能文件数量无效");
-  const files: SkillsShSkillDetail["files"] = [];
+  const files: SkillFile[] = [];
   let totalBytes = 0;
   for (const entry of entries) {
     const contents = await fetchWithRetry<Buffer>(
@@ -1076,30 +1059,38 @@ export async function listMarketplaceSkills(
       (!configuredPath || item.path.startsWith(`${configuredPath}/`)),
   );
   const needle = query.trim().toLocaleLowerCase();
-  const skills = await Promise.all(
-    skillFiles.map(async (file) => {
-      const parent = file.path.split("/").at(-2) || basename(file.path, ".md");
-      const sourcePath = validateSkillPath(file.path, configuredPath);
-      const raw = await fetchWithRetry<string>(
-        `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(effectiveBranch)}/${sourcePath.split("/").map(encodeURIComponent).join("/")}`,
-        {
-          headers: GITHUB_TEXT_HEADERS,
-          responseType: "text",
-          errorMessage: (status) => `读取技能文件失败（${status}）`,
-        },
-      );
-      const parsed = parseSkillMarkdown(raw, parent);
-      return {
-        ...parsed,
-        path: `marketplace:${marketplace.id}:${file.path}`,
-        marketplaceId: marketplace.id,
-        marketplaceName: marketplace.name,
-        sourceUrl: marketplace.url,
-        sourcePath,
-        branch: effectiveBranch,
-      } satisfies MarketplaceSkill;
-    }),
-  );
+  if (skillFiles.length > SKILLS_SH_MAX_FILES)
+    throw new Error("市场技能数量超过 2,000，请限定仓库目录");
+  const skills: MarketplaceSkill[] = [];
+  for (let offset = 0; offset < skillFiles.length; offset += 4) {
+    const batch = await Promise.all(
+      skillFiles.slice(offset, offset + 4).map(async (file) => {
+        const parent = file.path.split("/").at(-2) || basename(file.path, ".md");
+        const sourcePath = validateSkillPath(file.path, configuredPath);
+        const raw = await fetchWithRetry<string>(
+          `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(effectiveBranch)}/${sourcePath.split("/").map(encodeURIComponent).join("/")}`,
+          {
+            headers: GITHUB_TEXT_HEADERS,
+            responseType: "text",
+            errorMessage: (status) => `读取技能文件失败（${status}）`,
+          },
+        );
+        const parsed = parseSkillMarkdown(raw, parent);
+        return {
+          name: parsed.name,
+          description: parsed.description,
+          license: parsed.license,
+          path: `marketplace:${marketplace.id}:${file.path}`,
+          marketplaceId: marketplace.id,
+          marketplaceName: marketplace.name,
+          sourceUrl: marketplace.url,
+          sourcePath,
+          branch: effectiveBranch,
+        };
+      }),
+    );
+    skills.push(...batch);
+  }
   return skills.filter(
     (skill) =>
       !needle ||
@@ -1185,6 +1176,7 @@ export async function installMarketplaceSkill(
   const files = await downloadGithubSkillFiles(owner, repo, branch, sourcePath, tree.tree ?? []);
   const skillFile = files.find((file) => file.path.toUpperCase() === "SKILL.MD");
   if (!skillFile) throw new Error("未发现 SKILL.md");
+  if (skillFile.contents.byteLength > 1024 * 1024) throw new Error("SKILL.md 不能超过 1 MB");
   const metadata = parseSkillMarkdown(
     skillFile.contents.toString("utf8"),
     basename(dirname(sourcePath)),

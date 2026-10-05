@@ -34,7 +34,7 @@ const DEFAULT_TOOLS_CONFIG: ToolsConfig = {
   anysearch: { hasCredential: false },
 };
 
-type KeyedSearchEngine = Exclude<SearchEngine, "provider">;
+type KeyedSearchEngine = SearchEngine;
 
 const KEYED_ENGINES: KeyedSearchEngine[] = ["tavily", "firecrawl", "anysearch"];
 

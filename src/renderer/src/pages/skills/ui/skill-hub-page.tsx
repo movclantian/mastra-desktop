@@ -196,8 +196,22 @@ export function SkillHubPage() {
       setActiveSkillState(match);
       return;
     }
-    const name = decodeURIComponent(activeSkillPath.split("/").pop() || activeSkillPath);
-    setActiveSkillState({ name, path: activeSkillPath, description: "" });
+    const name = activeSkillPath.split("/").pop() || activeSkillPath;
+    const skill: SkillMetadata = { name, path: activeSkillPath, description: "" };
+    if (activeSkillPath.startsWith("skills-sh:")) {
+      const coordinate = activeSkillPath.slice("skills-sh:".length);
+      const separator = coordinate.lastIndexOf("/");
+      skill.origin = "skills-sh";
+      skill.skillsShSource = coordinate.slice(0, separator);
+      skill.skillsShSlug = coordinate.slice(separator + 1);
+    } else if (activeSkillPath.startsWith("marketplace:")) {
+      const coordinate = activeSkillPath.slice("marketplace:".length);
+      const separator = coordinate.indexOf(":");
+      skill.origin = "marketplace";
+      skill.marketplaceId = coordinate.slice(0, separator);
+      skill.sourcePath = coordinate.slice(separator + 1);
+    }
+    setActiveSkillState(skill);
   }, [activeSkill, activeSkillPath, displaySkills, registrySkills, skills]);
   const [addSkillOpen, setAddSkillOpen] = React.useState(false);
   const [mcpOpen, setMcpOpen] = React.useState(false);
@@ -210,7 +224,7 @@ export function SkillHubPage() {
     uploading,
     uploadSkill,
     importSkill,
-    installBuiltin,
+    installRegistrySkill,
     removeSkill,
     updateSkill,
     toggleSkill,
@@ -273,10 +287,7 @@ export function SkillHubPage() {
 
   const sourceCounts = React.useMemo(() => {
     return {
-      all: registrySkills.length,
-      official: officialSkills.length || 340,
-      skillsSh: registrySkills.filter((s) => s.origin === "skills-sh").length,
-      builtin: registrySkills.filter((s) => s.origin === "builtin").length,
+      official: officialSkills.length,
       marketplace: registrySkills.filter((s) => s.origin === "marketplace").length,
     };
   }, [officialSkills.length, registrySkills]);
@@ -289,7 +300,7 @@ export function SkillHubPage() {
           detailError={detailError}
           detailLoading={detailLoading}
           installed={skills.some((skill) => skill.name === activeSkill.name)}
-          onInstall={() => void installBuiltin(activeSkill)}
+          onInstall={() => void installRegistrySkill(activeSkill)}
           onRemove={() => void removeSkill()}
           onEdit={() => setEditingSkill(activeSkill)}
           onUsePrompt={(prompt) => {
@@ -499,7 +510,7 @@ export function SkillHubPage() {
             />
           ) : (
             <div className="mt-2 space-y-4">
-              {/* 1. 市场类目与厂商导航栏 (排版：社区排行榜 -> 原厂认证与各厂商标签 -> Mastra 内置 -> GitHub 市场) */}
+              {/* 1. 市场类目与厂商导航栏 (排版：社区排行榜、创作者与 GitHub 市场) */}
               <ScrollArea className="w-full whitespace-nowrap">
                 <div className="flex items-center gap-2 pb-1">
                   {/* 社区排行榜 */}
@@ -515,9 +526,6 @@ export function SkillHubPage() {
                   >
                     <FlameIcon className="size-3.5 text-rose-500" />
                     <span>{t("skills:communityLeaderboard")}</span>
-                    <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
-                      {sourceCounts.skillsSh}
-                    </Badge>
                   </Button>
 
                   {/* 官方原厂认证 */}
@@ -566,26 +574,8 @@ export function SkillHubPage() {
                     </Button>
                   ))}
 
-                  {/* Mastra 内置 */}
-                  <Button
-                    size="sm"
-                    variant={marketCategory === "builtin" ? "secondary" : "outline"}
-                    onClick={() => {
-                      setMarketCategory("builtin");
-                      setSelectedMaker(null);
-                      setPage(1);
-                    }}
-                    className="rounded-full text-xs font-medium gap-1.5 h-8 shrink-0"
-                  >
-                    <SparklesIcon className="size-3.5 text-blue-500" />
-                    <span>{t("skills:mastraBuiltin")}</span>
-                    <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 ml-0.5">
-                      {sourceCounts.builtin}
-                    </Badge>
-                  </Button>
-
                   {/* GitHub 市场 */}
-                  {sourceCounts.marketplace > 0 ? (
+                  {marketplaces.some((marketplace) => marketplace.enabled) ? (
                     <Button
                       size="sm"
                       variant={marketCategory === "marketplace" ? "secondary" : "outline"}
@@ -771,7 +761,7 @@ export function SkillHubPage() {
                         rank={rank}
                         installed={isInstalled}
                         installing={installing === skill.name}
-                        onInstall={(s) => void installBuiltin(s)}
+                        onInstall={(s) => void installRegistrySkill(s)}
                         onSelect={setActiveSkill}
                       />
                     );
@@ -877,7 +867,7 @@ export function SkillHubPage() {
       <MarketplacesDialog
         marketplaces={marketplaces}
         onOpenChange={setMarketplacesOpen}
-        onSaved={() => void Promise.all([loadMarketplaces(), loadRegistry(query)])}
+        onSaved={() => void Promise.all([loadMarketplaces(), loadRegistry("")])}
         open={marketplacesOpen}
       />
     </div>
