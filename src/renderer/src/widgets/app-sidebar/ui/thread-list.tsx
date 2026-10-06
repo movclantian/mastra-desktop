@@ -36,6 +36,7 @@ import {
   usePinThreadMutation,
   useSelectThread,
 } from "@/entities/workbench/model/queries/threads";
+import { threadActivityAt } from "@/entities/workbench/model/types";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
@@ -89,7 +90,7 @@ export function sortThreads(threads: WorkThread[]): WorkThread[] {
   return [...threads].sort((a, b) => {
     const pinned = Number(Boolean(b.metadata.pinned)) - Number(Boolean(a.metadata.pinned));
     if (pinned !== 0) return pinned;
-    return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    return threadActivityAt(b).localeCompare(threadActivityAt(a)) || a.id.localeCompare(b.id);
   });
 }
 
@@ -834,8 +835,6 @@ export function ThreadWorkspaceTree({
   const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
-  const fetchTreeEntries = (targetThreadId: string, path?: string) =>
-    fetchTree(targetThreadId, userId, path ?? "");
   const [entriesByPath, setEntriesByPath] = React.useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = React.useState(() => new Set<string>());
   const [creating, setCreating] = React.useState<{
@@ -851,14 +850,14 @@ export function ThreadWorkspaceTree({
       if (loadedPathsRef.current.has(path)) return;
       loadedPathsRef.current.add(path);
       try {
-        const entries = await fetchTreeEntries(threadId, path || undefined);
+        const entries = await fetchTree(threadId, userId, path);
         setEntriesByPath((current) => ({ ...current, [path]: entries }));
       } catch (error) {
         loadedPathsRef.current.delete(path);
         toast.error(error instanceof Error ? error.message : t("sidebar:readDirFailed"));
       }
     },
-    [fetchTreeEntries, t, threadId],
+    [t, threadId, userId],
   );
 
   const refreshTree = React.useCallback(async () => {
@@ -869,7 +868,7 @@ export function ThreadWorkspaceTree({
     setEntriesByPath({});
     loadedPathsRef.current.clear();
     try {
-      const entries = await fetchTreeEntries(threadId);
+      const entries = await fetchTree(threadId, userId);
       loadedPathsRef.current.add("");
       setEntriesByPath({ "": entries });
     } catch (error) {
@@ -877,7 +876,7 @@ export function ThreadWorkspaceTree({
     } finally {
       setLoading(false);
     }
-  }, [fetchTreeEntries, t, threadId]);
+  }, [t, threadId, userId]);
 
   React.useEffect(() => {
     void refreshTree();

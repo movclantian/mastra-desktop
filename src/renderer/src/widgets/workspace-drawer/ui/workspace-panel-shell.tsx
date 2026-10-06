@@ -18,7 +18,6 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
-import { toastError } from "@/shared/lib/errors";
 import { Button } from "@/shared/ui/button";
 import {
   ContextMenu,
@@ -125,6 +124,16 @@ export function WorkspacePanelShell() {
   const browserSession = useBrowserSession();
   const { action, closeBrowser, closeLastBrowserTab, state } = browserSession;
   const browserActive = activePanelTab.kind === "browser";
+  React.useEffect(() => {
+    if (
+      activePanelTab.kind === "browser" &&
+      !browserSession.busy &&
+      state.active &&
+      activePanelTab.index !== state.activeTabIndex
+    ) {
+      activatePanelTab({ kind: "browser", index: state.activeTabIndex });
+    }
+  }, [activePanelTab, activatePanelTab, browserSession.busy, state.active, state.activeTabIndex]);
   const draggedTabRef = React.useRef<string | null>(null);
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
@@ -137,31 +146,6 @@ export function WorkspacePanelShell() {
     void action("new-tab");
     activatePanelTab({ kind: "browser", index: state.tabs.length });
   };
-  const showNativeTabMenu = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    try {
-      const selected = await window.api.window.showMenu({
-        x: Math.max(0, rect.left),
-        y: Math.max(0, rect.bottom),
-        items: [
-          { id: "browser", label: t("workspace:newBrowserTab") },
-          { id: "terminal", label: t("workspace:newTerminal") },
-          { id: "files", label: t("workspace:newFileTree") },
-          { id: "changes", label: t("workspace:codeChanges") },
-        ],
-      });
-      if (
-        selected === "browser" ||
-        selected === "terminal" ||
-        selected === "files" ||
-        selected === "changes"
-      )
-        createPanelTab(selected);
-    } catch (error) {
-      toastError(error);
-    }
-  };
-
   const [floatingBounds, setFloatingBounds] =
     React.useState<FloatingBounds>(getInitialFloatingBounds);
   const floatingBoundsRef = React.useRef<FloatingBounds>(floatingBounds);
@@ -402,7 +386,7 @@ export function WorkspacePanelShell() {
         className={cn(
           workspacePanelMode === "floating" &&
             "fixed z-40 size-auto max-h-screen max-w-screen overflow-hidden rounded-xl border border-border/80 bg-background/95 shadow-2xl ring-1 ring-border/50 backdrop-blur-sm",
-          workspacePanelMode === "fullscreen" && "fixed inset-0 z-50 overflow-hidden bg-background",
+          workspacePanelMode === "fullscreen" && "fixed inset-0 z-40 overflow-hidden bg-background",
         )}
       >
         <PanelHeader
@@ -621,7 +605,7 @@ export function WorkspacePanelShell() {
                 activePanelTab.kind === "browser" && activePanelTab.index === index;
               return (
                 <button
-                  key={`${index}:${tab.url}:${tab.title ?? ""}`}
+                  key={tab.id ?? index}
                   className={cn(
                     "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
                     isSelected
@@ -664,53 +648,39 @@ export function WorkspacePanelShell() {
                 </button>
               );
             })}
-            {browserSession.native && browserActive ? (
-              <Button
-                aria-label={t("workspace:newTab")}
-                aria-haspopup="menu"
-                className="size-6 shrink-0"
-                size="icon-xs"
-                title={t("workspace:newTab")}
-                variant="ghost"
-                onClick={showNativeTabMenu}
-              >
-                <PlusIcon className="size-3.5" />
-              </Button>
-            ) : (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      aria-label={t("workspace:newTab")}
-                      className="size-6 shrink-0"
-                      size="icon-xs"
-                      title={t("workspace:newTab")}
-                      variant="ghost"
-                    >
-                      <PlusIcon className="size-3.5" />
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => createPanelTab("browser")}>
-                    <Globe2Icon />
-                    {t("workspace:newBrowserTab")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => createPanelTab("terminal")}>
-                    <TerminalIcon />
-                    {t("workspace:newTerminal")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => createPanelTab("files")}>
-                    <FolderTreeIcon />
-                    {t("workspace:newFileTree")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => createPanelTab("changes")}>
-                    <FileDiffIcon />
-                    {t("workspace:codeChanges")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    aria-label={t("workspace:newTab")}
+                    className="size-6 shrink-0"
+                    size="icon-xs"
+                    title={t("workspace:newTab")}
+                    variant="ghost"
+                  >
+                    <PlusIcon className="size-3.5" />
+                  </Button>
+                }
+              />
+              <DropdownMenuContent align="start">
+                <DropdownMenuItem onClick={() => createPanelTab("browser")}>
+                  <Globe2Icon />
+                  {t("workspace:newBrowserTab")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => createPanelTab("terminal")}>
+                  <TerminalIcon />
+                  {t("workspace:newTerminal")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => createPanelTab("files")}>
+                  <FolderTreeIcon />
+                  {t("workspace:newFileTree")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => createPanelTab("changes")}>
+                  <FileDiffIcon />
+                  {t("workspace:codeChanges")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           <Select
             value={workspacePanelMode}
@@ -780,7 +750,7 @@ export function WorkspacePanelShell() {
           </Button>
         </PanelHeader>
         {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
-          文件树卸载会丢展开层级。用户浏览器是每线程唯一的原生 WebContentsView,
+          文件树卸载会丢展开层级。浏览器网页由稳定挂载的隔离 guest 承载,
           Agent 通过命名管道 RPC 观察和操作它。 */}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {panelTabs.map((tab) => {

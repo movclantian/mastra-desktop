@@ -517,14 +517,11 @@ function createWorkAgent(
       const { maxProcessorRetries: retries } = await getGuardrailsConfig(
         userIdFromContext(requestContext),
       );
-      const processorRetries = {
+      return {
         ...(requestContext?.get(SESSION_EXECUTION_CONTEXT_KEY) as
           | AgentExecutionOptions<undefined>
           | undefined),
-        ...(retries > 0 ? { maxProcessorRetries: retries } : {}),
-      };
-      return {
-        ...processorRetries,
+        maxProcessorRetries: retries,
         untilIdle: true,
         delegation: WORK_DELEGATION,
         requireToolApproval:

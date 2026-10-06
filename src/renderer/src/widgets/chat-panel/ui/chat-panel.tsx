@@ -1,9 +1,7 @@
-import { arrayMove } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { type FileUIPart, isToolUIPart, type LanguageModelUsage } from "ai";
 import { GitBranchIcon } from "lucide-react";
-import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
 import type { AgentMemberDefinition, AgentProfile, ToolCategory } from "@/entities/workbench";
@@ -52,7 +50,6 @@ import { SparklesText } from "@/shared/ui/sparkles-text";
 import { TypingAnimation } from "@/shared/ui/typing-animation";
 import {
   abortThread,
-  enqueueFollowUp,
   fetchThreadMessagesPage,
   runWorkflowAction,
   toggleThreadMessageReaction,
@@ -77,11 +74,11 @@ import {
   getWorkflowStateFromMessages,
   type LibraryFilePart,
   type MessageFileReference,
+  type MessageQueueAction,
   type MessageReaction,
   mergeWorkflowRuntimeStates,
   normalizeAgentTasks,
   parseSuspendedRuns,
-  type QueuedRequest,
   toggleMessageReactions,
   type WorkDisplayState,
   type WorkflowRuntimeRun,
@@ -300,9 +297,6 @@ export function ChatPanel() {
   const [pendingWorkspacePath, setPendingWorkspacePath] = React.useState<string | null>(null);
   const [tasks, setTasks] = React.useState<AgentTask[]>([]);
   const [taskSnapshotLoaded, setTaskSnapshotLoaded] = React.useState(false);
-  const [queuedRequests, setQueuedRequests] = React.useState<QueuedRequest[]>([]);
-  const [queueDispatchVersion, setQueueDispatchVersion] = React.useState(0);
-  const [queueCanDispatch, setQueueCanDispatch] = React.useState(false);
   const [persistedInteractions, setPersistedInteractions] = React.useState<AgentInteraction[]>([]);
   const [objectiveSnapshot, setObjectiveSnapshot] = React.useState<{
     threadId: string;
@@ -372,7 +366,6 @@ export function ChatPanel() {
     [catalog, modelSelection, selectedProvider],
   );
   const attachmentTokenBudgetRef = React.useRef(selectedContextWindow ?? 32_000);
-  const selectedSkillNamesRef = React.useRef<string[]>([]);
 
   const persistAttachments = React.useCallback(
     async (files: FileUIPart[], threadId: string) => {
@@ -425,7 +418,6 @@ export function ChatPanel() {
       vision: selectedCapabilities?.vision === true,
       audio: selectedCapabilities?.audio === true,
     },
-    skillNames: selectedSkillNamesRef.current,
     agentProfileId: agentSelection.id,
     runWorkflow: agentSelection.workflow?.strategy === "workflow",
   });
@@ -437,7 +429,9 @@ export function ChatPanel() {
     (threadId) => reconcileSettledThreadRef.current(threadId),
   );
   const activeSession = activeThreadId ? getThreadSession(activeThreadId) : null;
-  const { messages, setMessages, status, native } = useSessionView(activeSession);
+  const [editingQueue, setEditingQueue] = React.useState(false);
+  React.useEffect(() => setEditingQueue(false), [activeThreadId]);
+  const { messages, setMessages, status, native, queuedRequests } = useSessionView(activeSession);
 
   // 历史分页(官方 message-scroller-load-history):每线程已加载页数与
   // “还有更早历史”只驱动命令式加载,不参与渲染,全部走 ref。
@@ -657,8 +651,7 @@ export function ChatPanel() {
     setTasks([]);
     setTaskSnapshotLoaded(false);
     displayStateRequestId.current += 1;
-    setQueuedRequests([]);
-    setQueueCanDispatch(false);
+
     setPersistedInteractions([]);
     setBackgroundTasks([]);
     setWorkflowRuns([]);
@@ -666,21 +659,9 @@ export function ChatPanel() {
     retainActive(activeThreadId);
   }, [activeSession, activeThreadId, reloadMessages, retainActive]);
 
-  const interactionReloadVersion = React.useRef(0);
-  // 任务和暂停交互都是服务端持久化状态;只在切线和一轮响应结束后读取,
-  // 避免流式 token 每次更新都触发额外请求。队列必须等待该读取完成,
-  // 否则 ask_user / submit_plan 刚挂起时会被下一条排队消息越过。
-  // messages.length 是故意的触发器:消息条数变化(新一轮完成)时重读,
-  // 而非每个流式 token 都触发
+  // Refresh suspended interactions after a run settles; native Agent owns queue draining.
   React.useEffect(() => {
-    if (status !== "ready" && status !== "error") return;
-    const version = ++interactionReloadVersion.current;
-    setQueueCanDispatch(false);
-    void reloadDisplayState().finally(() => {
-      if (interactionReloadVersion.current === version) {
-        setQueueCanDispatch(true);
-      }
-    });
+    if (status === "ready" || status === "error") void reloadDisplayState();
   }, [messages.length, reloadDisplayState, status]);
 
   /**
@@ -689,7 +670,6 @@ export function ChatPanel() {
    */
   const handleRetry = React.useCallback(
     (messageId: string) => {
-      setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
       void activeSession?.regenerate({ messageId }).catch(() => undefined);
     },
@@ -698,7 +678,6 @@ export function ChatPanel() {
 
   const handleEdit = React.useCallback(
     (messageId: string, text: string) => {
-      setQueueCanDispatch(false);
       rewriteRefreshRef.current = true;
       void activeSession?.send({ text, messageId }).catch(() => undefined);
     },
@@ -1163,7 +1142,7 @@ export function ChatPanel() {
 
         // HTTP 返回命令接收结果，后续输出由常驻 Session 订阅呈现。
         if (!interaction.toolCallId) throw new Error("Missing tool call ID");
-        setQueueCanDispatch(false);
+
         setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
         const resumeRequest = chat.respond(
           interaction.toolCallId,
@@ -1304,7 +1283,7 @@ export function ChatPanel() {
   const handleRetrySend = React.useCallback(() => {
     const failed = failedUserMessage;
     if (!failed) return;
-    setQueueCanDispatch(false);
+
     rewriteRefreshRef.current = true;
     const text = failed.parts
       .filter((part) => part.type === "text")
@@ -1359,6 +1338,7 @@ export function ChatPanel() {
     />
   );
 
+  const submittingRef = React.useRef(false);
   const handleSubmit = async (
     message: {
       text: string;
@@ -1369,279 +1349,156 @@ export function ChatPanel() {
     },
     clearPrompt: () => void,
   ) => {
-    const text = message.text.trim();
-    const files = message.files ?? [];
-    if (message.goal && (isBusy || !text || agentSelection.workflow?.strategy === "workflow")) {
-      toast.error(t("chat:goal.cannotStart"));
-      return;
-    }
-    if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      const text = message.text.trim();
+      const files = message.files ?? [];
+      if (
+        message.goal &&
+        (isBusy ||
+          queuedRequests.length > 0 ||
+          !text ||
+          agentSelection.workflow?.strategy === "workflow")
+      ) {
+        toast.error(t("chat:goal.cannotStart"));
+        return;
+      }
+      if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
+      const submittedOptions = buildRequestBodyRef.current(activeThreadIdRef.current ?? "");
 
-    if (isBusy) {
-      const threadId = activeThreadIdRef.current;
-      if (!threadId) return;
-      try {
-        const persistedFiles = await persistAttachments(files, threadId);
-        if (
-          agentSelection.workflow?.strategy !== "workflow" &&
-          text &&
-          persistedFiles.length === 0 &&
-          queuedRequests.length === 0
-        ) {
-          await enqueueFollowUp(threadId, user.id, {
-            content: text,
-            ...(selectedProvider && modelSelection
-              ? {
-                  ...(modelSelection.reasoningEffort !== "off"
-                    ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
-                    : {}),
-                }
-              : {}),
-            ...(searchSelection ? { webSearch: searchSelection } : {}),
-            agentProfileId: agentSelection.id,
+      if (isBusy || queuedRequests.length > 0) {
+        const threadId = activeThreadIdRef.current;
+        if (!threadId) return;
+        if (agentSelection.workflow?.strategy === "workflow") {
+          toast.error(t("chat:prompt.workflowQueueUnavailable"));
+          return;
+        }
+        try {
+          const persistedFiles = await persistAttachments(files, threadId);
+          await getThreadSession(threadId).enqueue({
+            options: submittedOptions,
+            text,
+            files: persistedFiles,
             metadata: {
               skillNames: message.skills ?? [],
               fileReferences: message.fileReferences ?? [],
             },
           });
-          clearPrompt();
+          // The upload may finish after navigation; never clear another thread's draft.
+          if (activeThreadIdRef.current === threadId) clearPrompt();
+        } catch (error) {
+          toastError(error, t("chat:welcome.toastQueueSendFailed"));
+        }
+        return;
+      }
+
+      // 未锁定线程的首条消息会消费工作区选定(workspaceLocked 在发送前快照)
+      const consumesWorkspaceSelection = !workspaceLocked;
+
+      // 无激活线程时先准备线程再发送。带附件时延后切路由，避免上传/预检
+      // 失败后用户被切到一个看起来像“刷新”的空白新页面。
+      const initialSend: { threadId: string | null } | null = activeThreadId
+        ? null
+        : { threadId: null };
+      if (initialSend) {
+        initialSendRef.current = initialSend;
+        const deferThreadSelection = files.length > 0;
+        // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
+        // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
+        const thread = await createThreadMutation
+          .mutateAsync({
+            modeId: useWorkbenchStore.getState().modeId,
+            ...(deferThreadSelection ? { deferSelection: true } : {}),
+          })
+          .catch(() => null);
+        if (!thread) {
+          if (initialSendRef.current === initialSend) initialSendRef.current = null;
+          toast.error(t("chat:welcome.toastCreateSessionFailed"));
           return;
         }
-        setQueuedRequests((current) => [
-          ...current,
-          {
-            id: nanoid(),
-            text,
-            files: persistedFiles,
-            skills: message.skills,
-            fileReferences: message.fileReferences,
-          },
-        ]);
+        initialSend.threadId = thread.id;
+        // 立即更新 ref:sendMessage 读到的是最新 threadId,不等 re-render
+        activeThreadIdRef.current = thread.id;
+      }
+
+      const targetThreadId = activeThreadIdRef.current;
+      if (!targetThreadId) {
+        if (initialSendRef.current === initialSend) initialSendRef.current = null;
+        return;
+      }
+      let persistedFiles: LibraryFilePart[];
+      try {
+        persistedFiles = await persistAttachments(files, targetThreadId);
       } catch (error) {
+        if (initialSendRef.current === initialSend) initialSendRef.current = null;
         toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
         return;
       }
-      clearPrompt();
-      return;
-    }
+      if (initialSend && !activeThreadId) {
+        // 只有附件已成功持久化，才把用户带到新线程；这样 401/上传失败
+        // 保留在当前页面，错误提示不会被路由切换掩盖。
+        selectThread(targetThreadId);
+      }
 
-    // 未锁定线程的首条消息会消费工作区选定(workspaceLocked 在发送前快照)
-    const consumesWorkspaceSelection = !workspaceLocked;
-
-    // 无激活线程时先准备线程再发送。带附件时延后切路由，避免上传/预检
-    // 失败后用户被切到一个看起来像“刷新”的空白新页面。
-    const initialSend: { threadId: string | null } | null = activeThreadId
-      ? null
-      : { threadId: null };
-    if (initialSend) {
-      initialSendRef.current = initialSend;
-      const deferThreadSelection = files.length > 0;
-      // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
-      // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
-      const thread = await createThreadMutation
-        .mutateAsync({
-          modeId: useWorkbenchStore.getState().modeId,
-          ...(deferThreadSelection ? { deferSelection: true } : {}),
+      // 显式发到目标线程自己的 Session 订阅:新建线程时渲染层还没切过去,
+      // 用渲染时绑定的实例会把消息发进上一条线程。
+      const sent = await getThreadSession(targetThreadId)
+        .send({
+          text,
+          options: submittedOptions,
+          files: persistedFiles,
+          metadata: {
+            goal: message.goal,
+            skillNames: message.skills ?? [],
+            fileReferences: message.fileReferences ?? [],
+          },
         })
-        .catch(() => null);
-      if (!thread) {
-        if (initialSendRef.current === initialSend) initialSendRef.current = null;
-        toast.error(t("chat:welcome.toastCreateSessionFailed"));
-        return;
-      }
-      initialSend.threadId = thread.id;
-      // 立即更新 ref:sendMessage 读到的是最新 threadId,不等 re-render
-      activeThreadIdRef.current = thread.id;
-    }
-
-    const targetThreadId = activeThreadIdRef.current;
-    if (!targetThreadId) {
-      if (initialSendRef.current === initialSend) initialSendRef.current = null;
-      return;
-    }
-    let persistedFiles: LibraryFilePart[];
-    try {
-      persistedFiles = await persistAttachments(files, targetThreadId);
-    } catch (error) {
-      if (initialSendRef.current === initialSend) initialSendRef.current = null;
-      toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
-      return;
-    }
-    if (initialSend && !activeThreadId) {
-      // 只有附件已成功持久化，才把用户带到新线程；这样 401/上传失败
-      // 保留在当前页面，错误提示不会被路由切换掩盖。
-      selectThread(targetThreadId);
-    }
-    setQueueCanDispatch(false);
-    selectedSkillNamesRef.current = message.skills ?? [];
-    // 显式发到目标线程自己的 Session 订阅:新建线程时渲染层还没切过去,
-    // 用渲染时绑定的实例会把消息发进上一条线程。
-    const sent = await getThreadSession(targetThreadId)
-      .send(
-        text
-          ? {
-              text,
-              files: persistedFiles,
-              metadata: {
-                goal: message.goal,
-                skillNames: message.skills ?? [],
-                fileReferences: message.fileReferences ?? [],
-              },
-            }
-          : {
-              files: persistedFiles,
-              metadata: {
-                goal: message.goal,
-                skillNames: message.skills ?? [],
-                fileReferences: message.fileReferences ?? [],
-              },
-            },
-      )
-      .then(
-        () => true,
-        () => false,
-      )
-      .finally(() => {
-        if (initialSendRef.current === initialSend) initialSendRef.current = null;
-        selectedSkillNamesRef.current = [];
-      });
-    if (!sent) return;
-    if (message.goal) {
-      // setObjective finishes before the message ACK. Read it now, independently of task events.
-      const currentGoal = await getWorkbenchClientSession(userId, targetThreadId)
-        .getGoal()
-        .catch((error: unknown) => {
-          toastError(error, t("chat:goal.actionFailed"));
-          return undefined;
+        .then(
+          () => true,
+          () => false,
+        )
+        .finally(() => {
+          if (initialSendRef.current === initialSend) initialSendRef.current = null;
         });
-      if (activeThreadIdRef.current === targetThreadId && currentGoal) {
-        setObjectiveSnapshot({ threadId: targetThreadId, objective: currentGoal });
+      if (!sent) return;
+      if (message.goal) {
+        // setObjective finishes before the message ACK. Read it now, independently of task events.
+        const currentGoal = await getWorkbenchClientSession(userId, targetThreadId)
+          .getGoal()
+          .catch((error: unknown) => {
+            toastError(error, t("chat:goal.actionFailed"));
+            return undefined;
+          });
+        if (activeThreadIdRef.current === targetThreadId && currentGoal) {
+          setObjectiveSnapshot({ threadId: targetThreadId, objective: currentGoal });
+        }
       }
+      if (activeThreadIdRef.current === targetThreadId) clearPrompt();
+      // 原生会话中间件已将首条消息携带的显式目录写入线程元数据;
+      // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
+      await invalidateThreads(userId);
+      // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
+      if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
+    } finally {
+      submittingRef.current = false;
     }
-    clearPrompt();
-    // 原生会话中间件已将首条消息携带的显式目录写入线程元数据;
-    // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
-    await invalidateThreads(userId);
-    // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
-    if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
   };
 
-  const removeQueuedRequest = React.useCallback((id: string) => {
-    setQueuedRequests((current) => current.filter((request) => request.id !== id));
-  }, []);
-
-  const reorderQueuedRequests = React.useCallback((activeId: string, overId: string) => {
-    setQueuedRequests((current) => {
-      const from = current.findIndex((request) => request.id === activeId);
-      const to = current.findIndex((request) => request.id === overId);
-      return from === -1 || to === -1 ? current : arrayMove(current, from, to);
-    });
-  }, []);
-
-  // 「立即转向」:打断当前回合,把指定排队请求直接发出(失败放回队首)。
-  //
-  // 仅操作尚未提交的本地请求；已接受的 follow-up 数量由原生 Session 展示。
-  const steerQueuedRequestNow = React.useCallback(
-    (request: QueuedRequest) => {
-      const targetThreadId = activeThreadIdRef.current;
-      if (!targetThreadId || sendingQueuedRequest.current) return;
-      if (request.files.length > 0) {
-        toast.error(t("chat:welcome.toastQueueWithAttachments"));
-        return;
-      }
-      sendingQueuedRequest.current = true;
-      setQueueCanDispatch(false);
-      setQueuedRequests((current) => current.filter((item) => item.id !== request.id));
-      void (async () => {
-        await getThreadSession(targetThreadId).steer({
-          text: request.text,
-          metadata: {
-            skillNames: request.skills ?? [],
-            fileReferences: request.fileReferences ?? [],
-          },
-        });
-      })()
-        .catch(() => {
-          setQueuedRequests((current) => [request, ...current]);
-          toast.error(t("chat:welcome.toastSteerFailed"));
-        })
-        .finally(() => {
-          sendingQueuedRequest.current = false;
-          setQueueDispatchVersion((version) => version + 1);
-        });
+  const actOnQueuedRequest = React.useCallback(
+    async (id: string, action: MessageQueueAction) => {
+      const session = activeSession;
+      if (!session) return;
+      await session.queueAction(id, action);
     },
-    [agentSelection.id, getThreadSession, t],
+    [activeSession],
   );
-
-  const sendingQueuedRequest = React.useRef(false);
-  const hasNativeInteraction =
-    Object.keys(native?.pendingApprovals ?? {}).length > 0 ||
-    Object.keys(native?.pendingSuspensions ?? {}).length > 0;
-  const queuedFollowUps = native?.queuedFollowUps ?? 0;
-  // queueDispatchVersion 是故意的重触发器:一条排队请求发送完毕后
-  // 立即重新评估队列,即使其余依赖未变化
-  React.useEffect(() => {
-    const workflowBlocksQueue = Boolean(workflow?.active);
-    if (
-      status !== "ready" ||
-      !activeThreadId ||
-      !queueCanDispatch ||
-      interactions.length > 0 ||
-      hasNativeInteraction ||
-      queuedFollowUps > 0 ||
-      workflowBlocksQueue ||
-      queuedRequests.length === 0 ||
-      sendingQueuedRequest.current
-    ) {
-      return;
-    }
-
-    const nextRequest = queuedRequests[0];
-    if (!nextRequest) return;
-    sendingQueuedRequest.current = true;
-    setQueueCanDispatch(false);
-    selectedSkillNamesRef.current = nextRequest.skills ?? [];
-    const request = getThreadSession(activeThreadId).send({
-      text: nextRequest.text,
-      files: nextRequest.files,
-      metadata: {
-        skillNames: nextRequest.skills ?? [],
-        fileReferences: nextRequest.fileReferences ?? [],
-      },
-    });
-    void request
-      .then(() => {
-        setQueuedRequests((current) => current.filter((queued) => queued.id !== nextRequest.id));
-      })
-      .catch(() => {
-        toast.error(t("chat:welcome.toastQueueSendFailed"));
-      })
-      .finally(() => {
-        selectedSkillNamesRef.current = [];
-        sendingQueuedRequest.current = false;
-        setQueueDispatchVersion((version) => version + 1);
-      });
-  }, [
-    activeThreadId,
-    getThreadSession,
-    hasNativeInteraction,
-    interactions.length,
-    queueCanDispatch,
-    queueDispatchVersion,
-    queuedRequests,
-    queuedFollowUps,
-    status,
-    workflow,
-  ]);
 
   // 输入区(Queue 卡片 + 工作区卡片 + 输入框):新会话时垂直居中展示,
   // 有消息后固定底部 —— 同一份 JSX,两种布局复用。
   const queueContentSignature = React.useMemo(
-    () =>
-      [visibleTasks.map((task) => `${task.id}:${task.status}`).join(","), queuedFollowUps].join(
-        "|",
-      ),
-    [queuedFollowUps, visibleTasks],
+    () => visibleTasks.map((task) => `${task.id}:${task.status}`).join(","),
+    [visibleTasks],
   );
   const showAgentQueue =
     !dismissedQueueSignature || dismissedQueueSignature !== queueContentSignature;
@@ -1657,9 +1514,10 @@ export function ChatPanel() {
   };
   const hasQueueCard =
     goalMode ||
+    editingQueue ||
     Boolean(objective) ||
     queuedRequests.length > 0 ||
-    (showAgentQueue && (visibleTasks.length > 0 || queuedFollowUps > 0));
+    (showAgentQueue && visibleTasks.length > 0);
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1707,14 +1565,15 @@ export function ChatPanel() {
               />
             ) : null}
             <UserRequestQueuePanel
-              onRemove={removeQueuedRequest}
-              onReorder={reorderQueuedRequests}
-              onSteerNow={steerQueuedRequestNow}
+              key={activeThreadId}
+              onAction={actOnQueuedRequest}
+              onEditingChange={(editing) => {
+                if (activeThreadIdRef.current === activeThreadId) setEditingQueue(editing);
+              }}
               requests={queuedRequests}
             />
             <AgentQueuePanel
               onClose={() => setDismissedQueueSignature(queueContentSignature)}
-              queuedFollowUps={queuedFollowUps}
               tasks={showAgentQueue ? visibleTasks : []}
             />
           </Queue>

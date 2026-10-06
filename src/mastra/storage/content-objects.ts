@@ -247,6 +247,9 @@ export function contentObjectReference(metadata: ContentObjectMetadata): {
   encoding: ContentEncoding;
   storagePath: string;
   workspacePath: string;
+  /** 取回路由 /work/contents/:objectId 需要的定位字段 */
+  kind: string;
+  threadId?: string;
 } {
   return {
     objectId: metadata.objectId,
@@ -256,6 +259,8 @@ export function contentObjectReference(metadata: ContentObjectMetadata): {
     encoding: metadata.encoding,
     storagePath: metadata.storagePath,
     workspacePath: join(contentRoot(metadata.userId), metadata.storagePath),
+    kind: metadata.kind,
+    ...(metadata.threadId ? { threadId: metadata.threadId } : {}),
   };
 }
 

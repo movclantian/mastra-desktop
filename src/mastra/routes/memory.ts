@@ -10,7 +10,7 @@ import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { workError, workValidationError } from "../errors";
 import { getMemoryConfig, memoryConfigSchema, saveMemoryConfig } from "../memory/memory-runtime";
-import { getOwnedThread, getWorkMemory } from "./threads/shared";
+import { getWorkMemory } from "./threads/shared";
 
 // GET /work/memory — 读取当前记忆配置
 export const memoryConfigRoute = createRoute({
@@ -114,79 +114,6 @@ export const memoryProfileRoute = createRoute({
       workingMemory,
       extractors: [...extracted.values()],
       threadCount: threads.length,
-    };
-  },
-});
-
-const threadOmConfigSchema = z
-  .object({
-    observation: z
-      .object({ messageTokens: z.number().int().min(1).max(250_000).optional() })
-      .optional(),
-    reflection: z
-      .object({ observationTokens: z.number().int().min(1).max(2_000_000).optional() })
-      .optional(),
-  })
-  .refine(
-    (config) =>
-      config.observation?.messageTokens !== undefined ||
-      config.reflection?.observationTokens !== undefined,
-  );
-
-export const observationalMemoryConfigRoute = createRoute({
-  queryParamSchema: z.object({}).strict(),
-  path: "/work/threads/:threadId/observational-memory-config",
-  responseType: "json",
-  onValidationError: workValidationError,
-  method: "GET",
-  pathParamSchema: z.object({ threadId: z.string().trim().min(1) }),
-  handler: async (params) => {
-    const threadId = params.threadId;
-    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    if (!resourceId) throw workError("AUTH_REQUIRED");
-    const memory = await getWorkMemory(params.requestContext);
-    if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
-    const om = await memory.omEngine;
-    if (!om) return { config: {} };
-    const status = await om.getStatus({ threadId, resourceId });
-    return {
-      config: {
-        observation: { messageTokens: status.threshold },
-        reflection: { observationTokens: status.effectiveObservationTokensThreshold },
-      },
-    };
-  },
-});
-
-export const updateObservationalMemoryConfigRoute = createRoute({
-  queryParamSchema: z.object({}).strict(),
-  path: "/work/threads/:threadId/observational-memory-config",
-  responseType: "json",
-  onValidationError: workValidationError,
-  method: "PUT",
-  pathParamSchema: z.object({ threadId: z.string().trim().min(1) }),
-  bodySchema: z.object({ config: threadOmConfigSchema }).strict(),
-  handler: async (params) => {
-    const threadId = params.threadId;
-    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    if (!resourceId) throw workError("AUTH_REQUIRED");
-    const memory = await getWorkMemory(params.requestContext);
-    if (!(await getOwnedThread(memory, threadId, resourceId))) throw workError("THREAD_NOT_FOUND");
-    const om = await memory.omEngine;
-    if (!om) throw workError("OBSERVATIONAL_MEMORY_DISABLED");
-    await om.getStatus({ threadId, resourceId });
-    await memory.updateObservationalMemoryConfig({
-      threadId,
-      resourceId,
-      config: params.config,
-    });
-    const status = await om.getStatus({ threadId, resourceId });
-    return {
-      ok: true,
-      config: {
-        observation: { messageTokens: status.threshold },
-        reflection: { observationTokens: status.effectiveObservationTokensThreshold },
-      },
     };
   },
 });

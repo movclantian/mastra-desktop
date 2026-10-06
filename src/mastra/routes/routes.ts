@@ -9,6 +9,7 @@ import { agentProfilesRoute, assistAgentProfileRoute, deleteAgentProfileRoute } 
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
+import { contentObjectRoute } from "./contents";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -44,13 +45,8 @@ import {
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
-import {
-  memoryConfigRoute,
-  memoryProfileRoute,
-  observationalMemoryConfigRoute,
-  saveMemoryConfigRoute,
-  updateObservationalMemoryConfigRoute,
-} from "./memory";
+import { memoryConfigRoute, memoryProfileRoute, saveMemoryConfigRoute } from "./memory";
+import { messageQueueRoutes } from "./message-queue";
 import {
   listProviderModelsRoute,
   modelsCatalogRoute,
@@ -103,6 +99,7 @@ import {
 
 export const workRoutes = [
   ...teamWorkflowRoutes,
+  contentObjectRoute,
   inlineCompletionRoute,
   inlineEditRoute,
   authLoginRoute,
@@ -118,6 +115,7 @@ export const workRoutes = [
   ...threadRoutes,
   ...signalRoutes,
   ...sessionRoutes,
+  ...messageQueueRoutes,
   ...scheduleRoutes,
   shutdownRoute,
   libraryAssetsRoute,
@@ -148,8 +146,6 @@ export const workRoutes = [
   saveProvidersConfigRoute,
   storageInfoRoute,
   memoryConfigRoute,
-  observationalMemoryConfigRoute,
-  updateObservationalMemoryConfigRoute,
   saveMemoryConfigRoute,
   memoryProfileRoute,
   mcpConfigRoute,

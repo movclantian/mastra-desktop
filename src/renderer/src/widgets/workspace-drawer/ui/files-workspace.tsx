@@ -946,11 +946,18 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     (path: string) => {
       if (!activeThreadId || loadedPathsRef.current.has(path)) return;
       loadedPathsRef.current.add(path);
-      void fetchTreeEntries(activeThreadId, path).then((next) =>
-        setChildrenByPath((current) => ({ ...current, [path]: next })),
-      );
+      void fetchTreeEntries(activeThreadId, path)
+        .then((next) => {
+          if (threadIdRef.current === activeThreadId)
+            setChildrenByPath((current) => ({ ...current, [path]: next }));
+        })
+        .catch((error) => {
+          if (threadIdRef.current !== activeThreadId) return;
+          loadedPathsRef.current.delete(path);
+          toastError(error, t("workspace:fetchTreeFailed"));
+        });
     },
-    [activeThreadId, fetchTreeEntries],
+    [activeThreadId, fetchTreeEntries, t],
   );
 
   const handleExpandedChange = React.useCallback(
@@ -1113,14 +1120,26 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     )
       return;
     clearWorkspaceFileRequest();
-    selectFile(request.path, undefined, true);
-    const parts = request.path.split("/").filter(Boolean);
+    let path = request.path.replaceAll("\\", "/");
+    const root = activeThread?.metadata.workspacePath?.replaceAll("\\", "/").replace(/\/$/, "");
+    if (root) {
+      const windows = /^[a-z]:\//i.test(root);
+      if (
+        (windows ? path.toLowerCase() : path).startsWith(`${windows ? root.toLowerCase() : root}/`)
+      )
+        path = path.slice(root.length + 1);
+    }
+    selectFile(path, undefined, true);
+    // External allowed files are previewable, but their drive/parents aren't tree roots.
+    if (/^(?:[a-z]:\/|\/)/i.test(path)) return;
+    const parts = path.split("/").filter(Boolean);
     const parents = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"));
     setExpanded((current) => new Set([...current, ...parents]));
     for (const path of parents) loadDirectory(path);
   }, [
     active,
     activeThreadId,
+    activeThread?.metadata.workspacePath,
     tabId,
     workspaceFileRequest,
     clearWorkspaceFileRequest,

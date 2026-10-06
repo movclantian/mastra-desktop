@@ -7,7 +7,6 @@ import { realpath } from "node:fs/promises";
 import { basename, dirname, relative, resolve } from "node:path";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { LocalFilesystem } from "@mastra/core/workspace";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { workError, workValidationError } from "../errors";
@@ -17,6 +16,7 @@ import {
   recordWorkspaceChange,
 } from "../workspace/changes";
 import {
+  createWorkspaceFilesystem,
   getWorkspaceConfig,
   listRecentWorkspaces,
   saveWorkspaceConfig,
@@ -145,11 +145,7 @@ async function ownedWorkspace(c: ContextWithMastra) {
     return {
       root,
       threadId,
-      filesystem: new LocalFilesystem({
-        basePath: root,
-        contained: true,
-        readOnly: config.readOnly,
-      }),
+      filesystem: createWorkspaceFilesystem(root, config, resourceId, threadId),
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

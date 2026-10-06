@@ -178,7 +178,7 @@ export function GoalPanel({
         <span className="ml-2 text-xs">{t(`chat:goal.${objective.status}`)}</span>
       </QueueSectionTrigger>
       <QueueSectionContent>
-        <div className="flex min-w-0 flex-col gap-1 px-3 py-2">
+        <div className="flex min-w-0 flex-col gap-1 px-2 py-1">
           <ScrollArea className="max-h-28">
             <p className="whitespace-pre-wrap break-words text-sm">{objective.objective}</p>
           </ScrollArea>

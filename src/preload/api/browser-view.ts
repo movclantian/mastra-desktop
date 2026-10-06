@@ -4,17 +4,44 @@ import {
   type BrowserState,
   NATIVE_BROWSER_VIEW_CHANNELS,
   NativeBrowserActionSchema,
+  NativeBrowserBindGuestSchema,
   type NativeBrowserBounds,
   NativeBrowserBoundsSchema,
+  type NativeBrowserConfig,
+  NativeBrowserConfigSchema,
   type NativeBrowserEvent,
   NativeBrowserEventSchema,
   NativeBrowserNavigateSchema,
   type NativeBrowserSession,
   NativeBrowserSessionSchema,
+  type NativeBrowserSurface,
+  NativeBrowserSurfacesSchema,
 } from "../../shared/browser-contract";
 
 export function createBrowserViewApi(ipcRenderer: IpcRenderer) {
   return {
+    configure: (config: NativeBrowserConfig): Promise<void> =>
+      ipcRenderer.invoke(
+        NATIVE_BROWSER_VIEW_CHANNELS.configure,
+        NativeBrowserConfigSchema.parse(config),
+      ),
+    bindGuest: (tabId: string, guestId: number): Promise<void> =>
+      ipcRenderer.invoke(
+        NATIVE_BROWSER_VIEW_CHANNELS.bindGuest,
+        NativeBrowserBindGuestSchema.parse({ tabId, guestId }),
+      ),
+    getSurfaces: async (): Promise<NativeBrowserSurface[]> =>
+      NativeBrowserSurfacesSchema.parse(
+        await ipcRenderer.invoke(NATIVE_BROWSER_VIEW_CHANNELS.getSurfaces),
+      ),
+    onSurfaces: (listener: (surfaces: NativeBrowserSurface[]) => void): (() => void) => {
+      const handler = (_event: IpcRendererEvent, value: unknown) => {
+        const parsed = NativeBrowserSurfacesSchema.safeParse(value);
+        if (parsed.success) listener(parsed.data);
+      };
+      ipcRenderer.on(NATIVE_BROWSER_VIEW_CHANNELS.surfaces, handler);
+      return () => ipcRenderer.removeListener(NATIVE_BROWSER_VIEW_CHANNELS.surfaces, handler);
+    },
     ensure: async (session: NativeBrowserSession): Promise<BrowserState> =>
       ipcRenderer.invoke(
         NATIVE_BROWSER_VIEW_CHANNELS.ensure,
@@ -36,11 +63,13 @@ export function createBrowserViewApi(ipcRenderer: IpcRenderer) {
       action: BrowserAction,
       index?: number,
       url?: string,
+      tabId?: string,
     ): Promise<BrowserState> =>
       ipcRenderer.invoke(
         NATIVE_BROWSER_VIEW_CHANNELS.action,
         NativeBrowserActionSchema.parse({
           ...session,
+          ...(tabId ? { tabId } : {}),
           request: {
             action,
             ...(index === undefined ? {} : { index }),

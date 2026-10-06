@@ -413,6 +413,12 @@ const SKILLS_SH_HEADERS = {
   Accept: "application/json",
   "User-Agent": "MastraWork-Skill-Marketplace",
 };
+/** 公共榜单页面(www.skills.sh)走浏览器 UA,避免被边缘 bot 策略拦。 */
+const SKILLS_SH_HTML_HEADERS = {
+  Accept: "text/html,application/xhtml+xml",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+};
 
 interface FetchWithRetryOptions {
   headers: Record<string, string>;
@@ -421,6 +427,7 @@ interface FetchWithRetryOptions {
   retryOn?: (response: Response) => boolean;
   retryDelay?: (response: Response, attempt: number) => number;
   errorMessage: (status: number) => string;
+  maxBytes?: number;
 }
 
 const SKILLS_SH_JSON_OPTIONS: FetchWithRetryOptions = {
@@ -440,6 +447,26 @@ const SKILLS_SH_JSON_OPTIONS: FetchWithRetryOptions = {
       : `skills.sh 公共目录请求失败（${status}）`,
 };
 
+/**
+ * skills.sh 自 2026-10 起对 /api/v1/* 全系端点强制 Vercel OIDC 鉴权
+ * (401 authentication_required,见 skills.sh/docs/api#authentication)。
+ * 桌面端正常拿不到该 token;保留 SKILLS_SH_OIDC_TOKEN / VERCEL_OIDC_TOKEN
+ * 环境变量通道,供部署在 Vercel 或本地 vercel link 的场景使用。
+ * 无 token 时:搜索走公开的 /api/search,榜单走官网页面内嵌的 initialSkills 数据。
+ */
+function skillsShOidcToken(): string | undefined {
+  const token = (process.env.SKILLS_SH_OIDC_TOKEN || process.env.VERCEL_OIDC_TOKEN)?.trim();
+  return token || undefined;
+}
+
+function skillsShJsonOptions(token?: string): FetchWithRetryOptions {
+  if (!token) return SKILLS_SH_JSON_OPTIONS;
+  return {
+    ...SKILLS_SH_JSON_OPTIONS,
+    headers: { ...SKILLS_SH_HEADERS, Authorization: `Bearer ${token}` },
+  };
+}
+
 async function fetchWithRetry<T>(url: string, options: FetchWithRetryOptions): Promise<T> {
   const retries = options.retries ?? 0;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -449,11 +476,12 @@ async function fetchWithRetry<T>(url: string, options: FetchWithRetryOptions): P
     });
     if (response.ok) {
       const limit =
-        options.responseType === "bytes"
+        options.maxBytes ??
+        (options.responseType === "bytes"
           ? SKILLS_SH_MAX_BYTES
           : options.responseType === "json"
             ? 8 * 1024 * 1024
-            : 1024 * 1024;
+            : 1024 * 1024);
       if (Number(response.headers.get("content-length")) > limit) {
         await response.body?.cancel();
         throw new Error("技能响应过大");
@@ -580,25 +608,49 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
   }
 }
 
-async function loadSkillsShCurated(): Promise<CuratedResponse> {
-  // 1. 并发拉取前 4 页基础全时榜，筛选其中的官方技能与创作者
-  const pages = await Promise.all(
-    [0, 1, 2, 3].map((page) => fetchSkillsShLeaderboardPage("all-time", page, 50)),
-  );
-  const baseSkills = pages.flatMap((page) => page.skills);
+/** 单次 fan-out 的并发上限:24 个 owner 全并行对单一源站不礼貌,分批打。 */
+const SKILLS_SH_CURATED_CONCURRENCY = 6;
 
-  // 2. 统计/聚合官方及知名厂商
-  const ownerMap = new Map<string, { totalInstalls: number; skills: SkillsShSkill[] }>();
-  for (const skill of baseSkills) {
-    const ownerName = skill.owner || skill.source.split("/")[0];
-    if (!ownerName) continue;
-    const entry = ownerMap.get(ownerName) || { totalInstalls: 0, skills: [] };
-    entry.totalInstalls += skill.installs || 0;
-    entry.skills.push(skill);
-    ownerMap.set(ownerName, entry);
+/**
+ * 拉取指定 owner 名下的全部技能(跨仓库)。
+ * 走公开的 /api/search(Algolia,免鉴权),q=owner 再按 owner 精确过滤 ——
+ * 与 skills.sh 官方 API 文档中 owner 参数的语义一致。
+ */
+async function fetchSkillsShOwnerSkills(owner: string): Promise<SkillsShSkill[]> {
+  const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(owner)}&limit=100`;
+  const payload = await fetchWithRetry<{ skills?: unknown[] }>(searchUrl, SKILLS_SH_JSON_OPTIONS);
+  return filterSkills(
+    (payload.skills ?? [])
+      .map(normalizeSkillsShEntry)
+      .filter((s): s is SkillsShSkill => Boolean(s)),
+    owner,
+  );
+}
+
+async function loadSkillsShCurated(): Promise<CuratedResponse> {
+  // skills.sh 已锁死 /api/v1 总榜(401),无法再"拉总榜筛官方";
+  // 改为按已知官方 owner 并发 fan-out 公共搜索接口,再按 owner 聚合。
+  // 单个 owner 失败(超时/限流)不拖垮整体,allSettled 容错。
+  const owners = Array.from(KNOWN_OFFICIAL_OWNERS);
+  const results: PromiseSettledResult<SkillsShSkill[]>[] = [];
+  for (let i = 0; i < owners.length; i += SKILLS_SH_CURATED_CONCURRENCY) {
+    const batch = owners.slice(i, i + SKILLS_SH_CURATED_CONCURRENCY);
+    results.push(...(await Promise.allSettled(batch.map(fetchSkillsShOwnerSkills))));
   }
 
-  const owners: CuratedOwner[] = Array.from(ownerMap.entries())
+  const ownerMap = new Map<string, { totalInstalls: number; skills: SkillsShSkill[] }>();
+  results.forEach((result, index) => {
+    if (result.status !== "fulfilled" || result.value.length === 0) return;
+    const ownerName = owners[index];
+    ownerMap.set(ownerName, {
+      totalInstalls: result.value.reduce((acc, skill) => acc + (skill.installs || 0), 0),
+      skills: result.value,
+    });
+  });
+
+  if (ownerMap.size === 0) throw new Error("skills.sh 官方目录请求失败");
+
+  const curatedOwners: CuratedOwner[] = Array.from(ownerMap.entries())
     .map(([owner, info]) => {
       const isOfficial = KNOWN_OFFICIAL_OWNERS.has(owner.toLowerCase());
       const sortedSkills = info.skills.sort((a, b) => b.installs - a.installs);
@@ -624,9 +676,9 @@ async function loadSkillsShCurated(): Promise<CuratedResponse> {
     });
 
   const result: CuratedResponse = {
-    data: owners,
-    totalOwners: owners.length,
-    totalSkills: owners.reduce((acc, o) => acc + o.skills.length, 0),
+    data: curatedOwners,
+    totalOwners: curatedOwners.length,
+    totalSkills: curatedOwners.reduce((acc, o) => acc + o.skills.length, 0),
     generatedAt: new Date().toISOString(),
   };
 
@@ -650,7 +702,10 @@ export async function getSkillsShAudit(source: string, slug: string): Promise<Sk
   ];
   for (const endpoint of endpoints) {
     try {
-      const res = await fetchWithRetry<SkillAuditResponse>(endpoint, SKILLS_SH_JSON_OPTIONS);
+      const res = await fetchWithRetry<SkillAuditResponse>(
+        endpoint,
+        skillsShJsonOptions(skillsShOidcToken()),
+      );
       if (res && Array.isArray(res.audits)) {
         return res.audits;
       }
@@ -727,24 +782,110 @@ interface SkillsShFetchedPage {
   hasMore?: boolean;
 }
 
+/**
+ * skills.sh 官网榜单页(SSR)在 RSC payload 里内嵌了完整的 initialSkills 数组
+ * (每视图 600 条,含 installs/weeklyInstalls/isOfficial/change/installsYesterday),
+ * 是当前唯一免鉴权的榜单数据源。字段与 normalizeSkillsShEntry 兼容。
+ */
+const SKILLS_SH_PUBLIC_BASE = "https://www.skills.sh";
+const SKILLS_SH_PUBLIC_LEADERBOARD_PATHS: Record<string, string> = {
+  "all-time": "/",
+  trending: "/trending",
+  hot: "/hot",
+};
+const SKILLS_SH_PUBLIC_PAGE_MAX_BYTES = 8 * 1024 * 1024;
+const SKILLS_SH_PUBLIC_SKILLS_KEY = 'initialSkills\\":[';
+
+/**
+ * 从 RSC HTML 中提取 initialSkills JSON 数组。
+ * 该数组里所有 JSON 引号都以 \" 转义、括号不转义,所以按 \" 配对切换字符串态、
+ * 非字符串态做括号深度匹配即可定位数组边界;取到原文后反转义再 JSON.parse。
+ */
+function extractInitialSkillsFromHtml(html: string): unknown[] {
+  const keyIndex = html.indexOf(SKILLS_SH_PUBLIC_SKILLS_KEY);
+  if (keyIndex < 0) throw new Error("skills.sh 公共榜单响应无效");
+  const arrayStart = keyIndex + SKILLS_SH_PUBLIC_SKILLS_KEY.length - 1; // 指向 '['
+  let depth = 0;
+  let inString = false;
+  for (let i = arrayStart; i < html.length; i += 1) {
+    const ch = html[i];
+    if (ch === "\\") {
+      if (html[i + 1] === '"') inString = !inString;
+      i += 1; // 跳过被转义字符
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "[") {
+      depth += 1;
+    } else if (ch === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        const raw = html
+          .slice(arrayStart, i + 1)
+          .replaceAll('\\"', '"')
+          .replaceAll("\\\\", "\\");
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error("skills.sh 公共榜单响应无效");
+        return parsed;
+      }
+    }
+  }
+  throw new Error("skills.sh 公共榜单响应无效");
+}
+
+/** 按视图缓存公共榜单整表(600 条),翻页在本地切片,避免每页重新抓 HTML。 */
+const cachedPublicLeaderboard = createCachedFetcher(
+  async (view: string): Promise<SkillsShSkill[]> => {
+    const path =
+      SKILLS_SH_PUBLIC_LEADERBOARD_PATHS[view] ?? SKILLS_SH_PUBLIC_LEADERBOARD_PATHS["all-time"];
+    const html = await fetchWithRetry<string>(`${SKILLS_SH_PUBLIC_BASE}${path}`, {
+      headers: SKILLS_SH_HTML_HEADERS,
+      responseType: "text",
+      maxBytes: SKILLS_SH_PUBLIC_PAGE_MAX_BYTES,
+      retries: SKILLS_SH_MAX_RETRIES,
+      retryOn: (response) => response.status === 429,
+      errorMessage: (status) => `skills.sh 公共榜单请求失败（${status}）`,
+    });
+    return extractInitialSkillsFromHtml(html)
+      .map(normalizeSkillsShEntry)
+      .filter((skill): skill is SkillsShSkill => Boolean(skill));
+  },
+  (view) => view,
+  { ttl: SKILLS_SH_CACHE_TTL },
+);
+
 async function fetchSkillsShLeaderboardPage(
   view: string,
   page: number,
   perPage: number,
+  force = false,
 ): Promise<SkillsShFetchedPage> {
-  const result = await fetchWithRetry<{
-    data?: unknown[];
-    pagination?: { page: number; perPage: number; total: number; hasMore: boolean };
-  }>(
-    `https://skills.sh/api/v1/skills?view=${view}&page=${page}&per_page=${perPage}`,
-    SKILLS_SH_JSON_OPTIONS,
-  );
-  if (!Array.isArray(result.data)) throw new Error("skills.sh 榜单响应无效");
+  const token = skillsShOidcToken();
+  if (token) {
+    const result = await fetchWithRetry<{
+      data?: unknown[];
+      pagination?: { page: number; perPage: number; total: number; hasMore: boolean };
+    }>(
+      `https://skills.sh/api/v1/skills?view=${view}&page=${page}&per_page=${perPage}`,
+      skillsShJsonOptions(token),
+    );
+    if (!Array.isArray(result.data)) throw new Error("skills.sh 榜单响应无效");
+    return {
+      skills: result.data
+        .map(normalizeSkillsShEntry)
+        .filter((skill): skill is SkillsShSkill => Boolean(skill)),
+      ...result.pagination,
+    };
+  }
+  // 无 OIDC token:/api/v1 必 401,改走官网页面内嵌的公共榜单数据。
+  const skills = await cachedPublicLeaderboard(view, force);
+  const start = page * perPage;
   return {
-    skills: result.data
-      .map(normalizeSkillsShEntry)
-      .filter((skill): skill is SkillsShSkill => Boolean(skill)),
-    ...result.pagination,
+    skills: skills.slice(start, start + perPage),
+    total: skills.length,
+    page,
+    perPage,
+    hasMore: start + perPage < skills.length,
   };
 }
 
@@ -758,17 +899,10 @@ async function executeListSkillsShSkillsWithOptions(
   // 1. 如果请求的是官方精选 (Curated / Official)
   if (curated) {
     if (owner) {
-      // 指定具体厂商: 优先走官方 search API 直接查询该厂商全量技能
-      const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(owner)}&limit=100`;
-      const payload = await fetchWithRetry<{ skills?: unknown[] }>(
-        searchUrl,
-        SKILLS_SH_JSON_OPTIONS,
-      );
+      // 指定具体厂商: 走公开 search API 拉取该厂商全量技能
       const skills = filterSkills(
-        (payload.skills ?? [])
-          .map(normalizeSkillsShEntry)
-          .filter((s): s is SkillsShSkill => Boolean(s)),
-        owner,
+        await fetchSkillsShOwnerSkills(owner),
+        undefined,
         normalizedQuery,
       );
       return paginateSkills(sortSkills("all-time", skills), page, perPage, "curated");
@@ -811,7 +945,7 @@ async function executeListSkillsShSkillsWithOptions(
 
   // 3. 榜单查询 (view: all-time | trending | hot)
   const viewPath = view === "trending" ? "trending" : view === "hot" ? "hot" : "all-time";
-  const fetchedPage = await fetchSkillsShLeaderboardPage(viewPath, page, perPage);
+  const fetchedPage = await fetchSkillsShLeaderboardPage(viewPath, page, perPage, options.force);
   const skills = filterSkills(fetchedPage.skills, owner, normalizedQuery);
   return {
     skills,

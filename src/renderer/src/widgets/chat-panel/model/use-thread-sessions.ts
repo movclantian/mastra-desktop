@@ -12,13 +12,19 @@ import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
-import type { WorkMessageMetadata, WorkUIMessage } from "./types";
+import type {
+  MessageQueueAction,
+  QueuedRequest,
+  WorkMessageMetadata,
+  WorkUIMessage,
+} from "./types";
 
 type NativeDisplayState = Extract<
   KnownAgentControllerEvent,
   { type: "display_state_changed" }
 >["displayState"];
 interface SessionView {
+  queuedRequests: QueuedRequest[];
   messages: WorkUIMessage[];
   status: "ready" | "submitted" | "streaming" | "error";
   native?: NativeDisplayState;
@@ -28,9 +34,14 @@ interface MessageInput {
   files?: FileUIPart[];
   metadata?: WorkMessageMetadata;
   messageId?: string;
+  options?: Record<string, unknown>;
 }
 type MessageUpdate = WorkUIMessage[] | ((messages: WorkUIMessage[]) => WorkUIMessage[]);
-const emptyStore = createStore<SessionView>(() => ({ messages: [], status: "ready" }));
+const emptyStore = createStore<SessionView>(() => ({
+  messages: [],
+  status: "ready",
+  queuedRequests: [],
+}));
 
 function createThreadSession(
   userId: string,
@@ -39,7 +50,11 @@ function createThreadSession(
   onBusy: (busy: boolean) => void,
   onSettled: () => void,
 ) {
-  const store = createStore<SessionView>(() => ({ messages: [], status: "ready" }));
+  const store = createStore<SessionView>(() => ({
+    messages: [],
+    status: "ready",
+    queuedRequests: [],
+  }));
   const client = getWorkbenchClientSession(userId, threadId);
   let subscription: AgentControllerSubscription | undefined;
   let connecting: Promise<void> | undefined;
@@ -49,6 +64,7 @@ function createThreadSession(
   let awaitingRun = false;
   let failed = false;
   let revision = 0;
+  let queueRevision = 0;
   let librarySources: unknown[] = [];
   const setMessages = (update: MessageUpdate) =>
     store.setState(({ messages }) => ({
@@ -148,13 +164,17 @@ function createThreadSession(
   };
   const refresh = async () => {
     const startedAt = revision;
+    const queueStartedAt = queueRevision;
     const payload = await requestJson<{
-      displayState: NativeDisplayState;
+      displayState: NativeDisplayState & { queuedRequests: QueuedRequest[] };
       messages: WorkUIMessage[];
     }>(
       `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/display-state?resourceId=${encodeURIComponent(userId)}&includeMessages=true`,
     );
     if (disposed) return;
+    if (queueStartedAt === queueRevision) {
+      store.setState({ queuedRequests: payload.displayState.queuedRequests });
+    }
     if (startedAt === revision) {
       setMessages(payload.messages);
       applyDisplay(payload.displayState);
@@ -172,6 +192,20 @@ function createThreadSession(
         ];
       });
     }
+  };
+  const refreshQueue = async () => {
+    const startedAt = ++queueRevision;
+    const payload = await requestJson<{ requests: QueuedRequest[] }>(
+      `/work/threads/${encodeURIComponent(threadId)}/message-queue`,
+    );
+    if (!disposed && startedAt === queueRevision)
+      store.setState({ queuedRequests: payload.requests });
+  };
+  const queueRefreshFailed = (error: unknown) => {
+    if (!disposed)
+      toast.error(i18n.t("chat:prompt.queueSyncFailed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
   };
   const connect = (): Promise<void> => {
     disposed = false;
@@ -191,7 +225,10 @@ function createThreadSession(
           fail(error);
         },
         onEvent: (event) => {
-          if (disposed || !isKnownAgentControllerEvent(event)) return;
+          if (disposed) return;
+          if (!isKnownAgentControllerEvent(event)) return;
+          if (event.type === "follow_up_queued") void refreshQueue().catch(queueRefreshFailed);
+          if (event.type === "agent_start") failed = false;
           if (event.type === "display_state_changed") applyDisplay(event.displayState);
           else if (event.type === "agent_end") {
             awaitingRun = false;
@@ -244,7 +281,7 @@ function createThreadSession(
     }
   };
   const messageOptions = (input?: MessageInput) => {
-    const { runWorkflow: _runWorkflow, ...body } = buildBody();
+    const { runWorkflow: _runWorkflow, ...body } = input?.options ?? buildBody();
     return {
       ...body,
       ...input?.metadata,
@@ -322,16 +359,18 @@ function createThreadSession(
     async send(input: MessageInput) {
       librarySources = [];
       if (input.messageId) return rewrite(input.messageId, "edit", input.text ?? "");
+      const options = messageOptions(input);
+      const runWorkflow = (input.options ?? buildBody()).runWorkflow === true;
       return request(() =>
-        buildBody().runWorkflow === true
+        runWorkflow
           ? streamWorkflow(
               `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/team-runs`,
               {
                 content: input.text?.trim() || "请处理附带的资料。",
-                options: messageOptions(input),
+                options,
               },
             )
-          : client.sendMessage(input.text ?? "", requestOptions(messageOptions(input))),
+          : client.sendMessage(input.text ?? "", requestOptions(options)),
       );
     },
     workflowAction(
@@ -352,9 +391,30 @@ function createThreadSession(
       librarySources = [];
       return rewrite(messageId, "regenerate");
     },
-    steer(input: MessageInput) {
-      librarySources = [];
-      return request(() => client.steer(input.text ?? "", requestOptions(messageOptions(input))));
+    async enqueue(input: MessageInput) {
+      const options = messageOptions(input);
+      await connect();
+      await requestJson(`/work/threads/${encodeURIComponent(threadId)}/message-queue`, {
+        method: "POST",
+        body: { text: input.text ?? "", options },
+      });
+      // Refresh is reconciliation, not submission: a failed GET must not undo the POST ACK.
+      void refreshQueue().catch(queueRefreshFailed);
+    },
+    async queueAction(id: string, action: MessageQueueAction) {
+      await connect();
+      try {
+        await requestJson(
+          `/work/threads/${encodeURIComponent(threadId)}/message-queue/${encodeURIComponent(id)}`,
+          {
+            method: "POST",
+            body: action,
+          },
+        );
+      } finally {
+        // Never remove a row optimistically: cancellation can lose to execution.
+        await refreshQueue().catch(queueRefreshFailed);
+      }
     },
     respond(
       toolCallId: string,
@@ -430,7 +490,12 @@ export function useThreadSessions(
     (activeThreadId: string | null) => {
       for (const [threadId, session] of sessions) {
         const status = session.store.getState().status;
-        if (threadId !== activeThreadId && status !== "submitted" && status !== "streaming") {
+        if (
+          threadId !== activeThreadId &&
+          status !== "submitted" &&
+          status !== "streaming" &&
+          session.store.getState().queuedRequests.length === 0
+        ) {
           session.dispose();
           sessions.delete(threadId);
         }

@@ -1,6 +1,7 @@
 import { MastraClient } from "@mastra/client-js";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload, type WorkErrorPayload } from "@/shared/lib";
+import { type BrowserConfig, BrowserConfigSchema } from "../../../../shared/browser-contract";
 
 export const MASTRA_SERVER_URL = import.meta.env.VITE_MASTRA_SERVER_URL ?? "http://localhost:4111";
 
@@ -61,6 +62,35 @@ export async function requestJson<T>(
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+async function applyBrowserConfig(resourceId: string, value: unknown): Promise<BrowserConfig> {
+  const config = BrowserConfigSchema.parse(value);
+  const { provider, scope, timeout, homeUrl } = config;
+  await window.api?.browserView?.configure({
+    resourceId,
+    provider,
+    scope,
+    timeout,
+    homeUrl,
+  });
+  return config;
+}
+
+export function browserConfigQueryOptions(resourceId: string) {
+  return {
+    queryKey: ["browser-config", resourceId] as const,
+    queryFn: async () => applyBrowserConfig(resourceId, await requestJson("/work/browser/config")),
+    staleTime: Infinity,
+  };
+}
+
+export async function saveBrowserConfig(
+  resourceId: string,
+  config: BrowserConfig,
+): Promise<BrowserConfig> {
+  const saved = await requestJson("/work/browser/config", { method: "POST", body: config });
+  return applyBrowserConfig(resourceId, saved);
 }
 
 export async function requestText(

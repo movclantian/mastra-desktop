@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import { browserConfigQueryOptions } from "@/shared/api";
 import {
   getBrowserSearchEnginePreference,
   subscribeBrowserSearchEnginePreference,
@@ -75,7 +77,10 @@ export function useBrowserSession() {
   const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
   const browserRequest = useWorkbenchStore((state) => state.browserRequest);
   const viewActive = workspacePanelOpen && activePanelTab.kind === "browser";
-  const nativeBrowser = typeof window !== "undefined" ? window.api?.browserView : undefined;
+  const configQuery = useQuery(browserConfigQueryOptions(userId));
+  const config = configQuery.data;
+  const configReady = configQuery.isSuccess;
+  const nativeBrowser = config?.provider === "agent" ? window.api?.browserView : undefined;
   const nativeAvailable = Boolean(nativeBrowser);
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
   const [searchEngine, setSearchEngine] = React.useState(() =>
@@ -95,6 +100,8 @@ export function useBrowserSession() {
   const pendingNavigationRef = React.useRef(false);
   const [busy, setBusy] = React.useState(false);
   const busyRef = React.useRef(false);
+  const actionQueueRef = React.useRef<Promise<void>>(Promise.resolve());
+  const stateRevisionRef = React.useRef(0);
   const sessionEpochRef = React.useRef(0);
   const [frameState, setFrameState] = React.useState<"idle" | "connecting" | "connected" | "error">(
     "idle",
@@ -127,22 +134,31 @@ export function useBrowserSession() {
   }, [clearFrame]);
 
   const refreshState = React.useCallback(async () => {
-    if (!activeThreadId) return setState(EMPTY_BROWSER_STATE);
+    if (!configReady || !activeThreadId) return setState(EMPTY_BROWSER_STATE);
     if (busyRef.current) return;
     const epoch = sessionEpochRef.current;
+    const revision = stateRevisionRef.current;
     try {
       const nextState = nativeBrowser
         ? await nativeBrowser.getState({ resourceId: userId, threadId: activeThreadId })
         : await fetchBrowserState(activeThreadId, userId);
-      if (sessionEpochRef.current === epoch && !busyRef.current) {
+      if (
+        sessionEpochRef.current === epoch &&
+        stateRevisionRef.current === revision &&
+        !busyRef.current
+      ) {
         setState(nextState ?? EMPTY_BROWSER_STATE);
       }
     } catch {
-      if (sessionEpochRef.current === epoch && !busyRef.current) {
+      if (
+        sessionEpochRef.current === epoch &&
+        stateRevisionRef.current === revision &&
+        !busyRef.current
+      ) {
         setState(EMPTY_BROWSER_STATE);
       }
     }
-  }, [activeThreadId, nativeBrowser, userId]);
+  }, [activeThreadId, nativeBrowser, userId, configReady, config?.scope]);
 
   React.useEffect(() => {
     if (!nativeBrowser || !activeThreadId || !viewActive) return;
@@ -161,19 +177,32 @@ export function useBrowserSession() {
     return () => {
       disposed = true;
     };
-  }, [activeThreadId, nativeBrowser, userId, viewActive]);
+  }, [activeThreadId, nativeBrowser, userId, viewActive, config?.scope]);
 
   React.useEffect(() => {
     if (!nativeBrowser) return;
     return nativeBrowser.onEvent((event) => {
-      if (event.threadId !== activeThreadId || event.resourceId !== userId) return;
+      if (event.type === "activate") {
+        if (event.resourceId === userId && event.threadId === activeThreadId)
+          useWorkbenchStore.getState().openWorkspacePanel("browser");
+        return;
+      }
+      if (
+        event.resourceId !== userId ||
+        (config?.scope !== "shared" && event.threadId !== activeThreadId)
+      )
+        return;
       if (event.type === "state") {
-        if (!busyRef.current) setState(event.state);
+        stateRevisionRef.current += 1;
+        stateRef.current = event.state;
+        setState(event.state);
+      } else if (event.type === "error") {
+        toastError(new Error(event.message), i18n.t("workspace:browserOpFailed"));
       } else if (event.type === "url") {
         setState((current) => ({ ...current, currentUrl: event.url }));
       }
     });
-  }, [activeThreadId, nativeBrowser, userId]);
+  }, [activeThreadId, nativeBrowser, userId, config?.scope]);
 
   React.useEffect(() => {
     // 浏览器状态属于当前线程;切换线程时先清空旧线程的乐观状态,
@@ -188,7 +217,7 @@ export function useBrowserSession() {
     setFrame(undefined);
     setFrameState("idle");
     void refreshState();
-    if (!stateUrl) return;
+    if (!stateUrl || nativeBrowser) return;
     const timer = window.setInterval(() => void refreshState(), 1_500);
     return () => {
       window.clearInterval(timer);
@@ -198,7 +227,7 @@ export function useBrowserSession() {
         keyboardFlushTimerRef.current = undefined;
       }
     };
-  }, [invalidateFrame, refreshState, stateUrl]);
+  }, [invalidateFrame, refreshState, stateUrl, nativeBrowser]);
 
   React.useEffect(() => {
     void screencastAttempt;
@@ -360,7 +389,8 @@ export function useBrowserSession() {
 
   const navigate = React.useCallback(
     async (url: string) => {
-      if (!stateUrl || !url.trim() || !activeThreadId || busyRef.current) return false;
+      if (!configReady || !stateUrl || !url.trim() || !activeThreadId || busyRef.current)
+        return false;
       const threadId = activeThreadId;
       const epoch = sessionEpochRef.current;
       pendingNavigationRef.current = true;
@@ -393,99 +423,82 @@ export function useBrowserSession() {
         }
       }
     },
-    [activeThreadId, clearFrame, nativeBrowser, refreshState, stateUrl, userId],
+    [activeThreadId, clearFrame, nativeBrowser, refreshState, stateUrl, userId, configReady],
   );
 
   const action = React.useCallback(
     async (name: BrowserAction, index?: number, url?: string) => {
-      if (!stateUrl || !activeThreadId || busyRef.current) return;
+      if (!configReady || !stateUrl || !activeThreadId) return;
       const threadId = activeThreadId;
       const epoch = sessionEpochRef.current;
-      pendingNavigationRef.current = true;
-      busyRef.current = true;
-      setBusy(true);
-      let succeeded = false;
+      const tabId = index === undefined ? undefined : stateRef.current.tabs[index]?.id;
       const requestUrl = name === "new-tab" && url !== "about:blank" ? url : undefined;
-      if (name === "new-tab") {
-        const newUrl = requestUrl ?? "about:blank";
-        setState((current) => {
-          const nextTabs = [...current.tabs, { url: newUrl, title: i18n.t("workspace:newTab") }];
-          return {
-            ...current,
-            active: true,
-            currentUrl: newUrl,
-            tabs: nextTabs,
-            activeTabIndex: nextTabs.length - 1,
-          };
-        });
-      } else if (name === "switch-tab" && typeof index === "number") {
-        setState((current) => ({
-          ...current,
-          activeTabIndex: index,
-          currentUrl: current.tabs[index]?.url ?? current.currentUrl,
-        }));
-      } else if (name === "close-tab" && typeof index === "number") {
-        setState((current) => {
-          const nextTabs = current.tabs.filter((_, i) => i !== index);
-          const nextIndex = Math.max(0, Math.min(nextTabs.length - 1, index - 1));
-          return {
-            ...current,
-            active: nextTabs.length > 0,
-            currentUrl: nextTabs[nextIndex]?.url ?? "",
-            tabs: nextTabs,
-            activeTabIndex: nextIndex,
-          };
-        });
-      }
-      try {
-        const payload = nativeBrowser
-          ? {
-              state: await nativeBrowser.action(
-                { resourceId: userId, threadId },
-                name,
-                index,
-                requestUrl,
-              ),
-            }
-          : await browserAction(threadId, userId, name, index, requestUrl);
-        if (sessionEpochRef.current === epoch && payload.state) setState(payload.state);
-        succeeded = true;
-      } catch (error) {
-        if (sessionEpochRef.current === epoch) {
-          toastError(error, i18n.t("workspace:browserOpFailed"));
-          void refreshState();
-        }
-      } finally {
-        if (sessionEpochRef.current === epoch) {
-          if (!succeeded) {
-            pendingNavigationRef.current = false;
-            clearFrame();
-            setScreencastAttempt((attempt) => attempt + 1);
+      const run = async () => {
+        if (sessionEpochRef.current !== epoch) return;
+        stateRevisionRef.current += 1;
+        pendingNavigationRef.current = true;
+        busyRef.current = true;
+        setBusy(true);
+        try {
+          const payload = nativeBrowser
+            ? {
+                state: await nativeBrowser.action(
+                  { resourceId: userId, threadId },
+                  name,
+                  index,
+                  requestUrl,
+                  tabId,
+                ),
+              }
+            : await browserAction(threadId, userId, name, index, requestUrl);
+          if (sessionEpochRef.current === epoch && payload.state) {
+            stateRef.current = payload.state;
+            setState(payload.state);
           }
-          busyRef.current = false;
-          setBusy(false);
-          void refreshState();
+        } catch (error) {
+          if (sessionEpochRef.current === epoch) {
+            pendingNavigationRef.current = false;
+            toastError(error, i18n.t("workspace:browserOpFailed"));
+          }
+        } finally {
+          if (sessionEpochRef.current === epoch) {
+            busyRef.current = false;
+            setBusy(false);
+            void refreshState();
+          }
         }
-      }
+      };
+      const queued = actionQueueRef.current.then(run, run);
+      actionQueueRef.current = queued;
+      return queued;
     },
-    [activeThreadId, clearFrame, nativeBrowser, refreshState, stateUrl, userId],
+    [activeThreadId, nativeBrowser, refreshState, stateUrl, userId, configReady],
   );
 
-  // 当处于浏览器面板且无标签时，自动拉起首个空白标签页（0ms 乐观上屏）。
+  // Ensure once when opening a cloud session, never in response to closing its last tab.
   React.useEffect(() => {
-    if (!viewActive || !activeThreadId || busyRef.current) return;
-    // The Electron-native path creates its initial about:blank tab in the
-    // main-process view manager.  Do not also issue the legacy new-tab action;
-    // doing both races the first open and leaves a duplicate hidden tab.
-    if (nativeAvailable) return;
-    if (state.tabs.length === 0 && state.status !== "closing") {
-      void action("new-tab");
-    }
-  }, [action, activeThreadId, nativeAvailable, state.status, state.tabs.length, viewActive]);
+    if (!configReady || !viewActive || !activeThreadId || nativeAvailable || busyRef.current)
+      return;
+    let disposed = false;
+    const revision = stateRevisionRef.current;
+    void fetchBrowserState(activeThreadId, userId)
+      .then((next) => {
+        if (disposed || busyRef.current || stateRevisionRef.current !== revision) return;
+        if (next?.active) setState(next);
+        else void action("new-tab");
+      })
+      .catch((error) => {
+        if (!disposed) toastError(error);
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [action, activeThreadId, nativeAvailable, userId, viewActive, configReady]);
 
   const consumedBrowserRequestRef = React.useRef(0);
   React.useEffect(() => {
-    if (!browserRequest || browserRequest.id === consumedBrowserRequestRef.current) return;
+    if (!configReady || !browserRequest || browserRequest.id === consumedBrowserRequestRef.current)
+      return;
     if (browserRequest.threadId !== activeThreadId) {
       consumedBrowserRequestRef.current = browserRequest.id;
       return;
@@ -497,7 +510,7 @@ export function useBrowserSession() {
     } else {
       void navigate(browserRequest.url);
     }
-  }, [action, activeThreadId, browserRequest, navigate, state.active]);
+  }, [action, activeThreadId, browserRequest, navigate, state.active, configReady]);
 
   const injectMouse = React.useCallback(
     (event: React.PointerEvent<HTMLImageElement>, type: "mousePressed" | "mouseReleased") => {
@@ -650,10 +663,6 @@ export function useBrowserSession() {
       window.clearTimeout(keyboardFlushTimerRef.current);
       keyboardFlushTimerRef.current = undefined;
     }
-    stateRef.current = EMPTY_BROWSER_STATE;
-    setState(EMPTY_BROWSER_STATE);
-    setFrame(undefined);
-    setFrameState("idle");
     if (activeThreadId && stateUrl) void action("close-tab", 0);
   }, [action, activeThreadId, stateUrl]);
 
@@ -702,5 +711,6 @@ export function useBrowserSession() {
     setBounds: setNativeBounds,
     state,
     threadKey: activeThreadId,
+    viewActive,
   };
 }

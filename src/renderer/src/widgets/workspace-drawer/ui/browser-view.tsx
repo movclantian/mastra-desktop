@@ -45,6 +45,7 @@ export interface BrowserSessionViewState {
   setBounds: (bounds: { x: number; y: number; width: number; height: number }) => void;
   state: BrowserState;
   threadKey: string | null;
+  viewActive: boolean;
 }
 
 function BrowserRefreshButton({
@@ -152,6 +153,7 @@ export function BrowserView({
     state,
     setBounds,
     threadKey,
+    viewActive,
   } = session;
   const nativeSurfaceRef = React.useRef<HTMLDivElement>(null);
 
@@ -161,31 +163,32 @@ export function BrowserView({
     if (!surface) return;
 
     let lastBounds = "";
+    let animationFrame = 0;
     const syncBounds = () => {
       const rect = surface.getBoundingClientRect();
       const next = {
         x: Math.max(0, Math.round(rect.left)),
         y: Math.max(0, Math.round(rect.top)),
-        width: Math.max(0, Math.round(rect.width)),
-        height: Math.max(0, Math.round(rect.height)),
+        width: viewActive
+          ? Math.max(0, Math.min(window.innerWidth - rect.left, Math.round(rect.width)))
+          : 0,
+        height: viewActive
+          ? Math.max(0, Math.min(window.innerHeight - rect.top, Math.round(rect.height)))
+          : 0,
       };
       const signature = `${next.x}:${next.y}:${next.width}:${next.height}`;
+      if (viewActive) animationFrame = window.requestAnimationFrame(syncBounds);
       if (signature === lastBounds) return;
       lastBounds = signature;
       setBounds(next);
     };
 
     syncBounds();
-    const resizeObserver =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(syncBounds) : undefined;
-    resizeObserver?.observe(surface);
-    window.addEventListener("resize", syncBounds);
     return () => {
-      resizeObserver?.disconnect();
-      window.removeEventListener("resize", syncBounds);
+      window.cancelAnimationFrame(animationFrame);
       setBounds({ x: 0, y: 0, width: 0, height: 0 });
     };
-  }, [native, setBounds, threadKey]);
+  }, [native, setBounds, threadKey, viewActive]);
 
   if (!hasThread) {
     return (

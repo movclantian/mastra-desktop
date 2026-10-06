@@ -27,7 +27,7 @@ import {
   useThreadsQuery,
 } from "@/entities/workbench/model/queries/threads";
 import type { MainView, WorkThread } from "@/entities/workbench/model/types";
-import { viewFromPath } from "@/entities/workbench/model/types";
+import { threadActivityAt, viewFromPath } from "@/entities/workbench/model/types";
 import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
@@ -351,17 +351,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     if (group) group.push(thread);
     else groupsByPath.set(path, [thread]);
   }
-  // 目录组按组内最近活动排序
+  // 目录组与线程列表都按最近用户请求排序。
   const workspaceGroups = [...groupsByPath.entries()]
     .map(([path, groupThreads]) => ({
       path,
       threads: groupThreads,
-      latestUpdatedAt: groupThreads.reduce(
-        (max, thread) => (thread.updatedAt > max ? thread.updatedAt : max),
+      latestRequestAt: groupThreads.reduce(
+        (max, thread) => (threadActivityAt(thread) > max ? threadActivityAt(thread) : max),
         "",
       ),
     }))
-    .sort((a, b) => b.latestUpdatedAt.localeCompare(a.latestUpdatedAt));
+    .sort(
+      (a, b) => b.latestRequestAt.localeCompare(a.latestRequestAt) || a.path.localeCompare(b.path),
+    );
 
   const openRename = (thread: WorkThread) => {
     setRenaming(thread);

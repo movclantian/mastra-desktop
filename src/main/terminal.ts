@@ -11,6 +11,7 @@ import type {
   TerminalCreateResult,
   TerminalEvent,
   TerminalResizeRequest,
+  TerminalThread,
   TerminalWriteRequest,
 } from "../shared/terminal-contract";
 
@@ -41,6 +42,8 @@ interface TerminalPtyModule {
 }
 
 interface OwnedTerminal {
+  readonly resourceId: string;
+  readonly threadId?: string;
   readonly process: PtyProcess;
   readonly data: Disposable;
   readonly exit: Disposable;
@@ -252,7 +255,13 @@ export class TerminalSessionRuntime {
         ...(result.signal ? { signal: result.signal } : {}),
       });
     });
-    this.#sessions.set(sessionId, { process: ptyProcess, data, exit });
+    this.#sessions.set(sessionId, {
+      resourceId: request.resourceId,
+      threadId: request.threadId,
+      process: ptyProcess,
+      data,
+      exit,
+    });
     return { sessionId };
   }
 
@@ -277,6 +286,37 @@ export class TerminalSessionRuntime {
 
   dispose(): void {
     for (const sessionId of [...this.#sessions.keys()]) this.close(sessionId);
+  }
+
+  /** Windows keeps a shell's current directory locked until the PTY has exited. */
+  async closeThread(thread: TerminalThread): Promise<void> {
+    await Promise.all(
+      [...this.#sessions.values()]
+        .filter(
+          (owned) => owned.resourceId === thread.resourceId && owned.threadId === thread.threadId,
+        )
+        .map(
+          (owned) =>
+            new Promise<void>((resolve, reject) => {
+              const timer = setTimeout(() => {
+                exit.dispose();
+                reject(new Error("Terminal did not exit; thread deletion was cancelled"));
+              }, 5_000);
+              const exit = owned.process.onExit(() => {
+                clearTimeout(timer);
+                exit.dispose();
+                resolve();
+              });
+              try {
+                owned.process.kill();
+              } catch (error) {
+                clearTimeout(timer);
+                exit.dispose();
+                reject(error);
+              }
+            }),
+        ),
+    );
   }
 
   #release(sessionId: string): void {

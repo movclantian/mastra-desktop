@@ -47,7 +47,14 @@ export interface WorkThread {
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** Derived from persisted user messages; opening a thread does not change it. */
+  lastUserRequestAt?: string | null;
   metadata: ThreadMetadata;
+}
+
+/** Empty threads use their creation time until the first user request is saved. */
+export function threadActivityAt(thread: WorkThread): string {
+  return thread.lastUserRequestAt ?? thread.createdAt;
 }
 
 export interface RecentWorkspace {

@@ -1,7 +1,6 @@
 import type { ToolsConfig } from "@/entities/workbench";
 import { requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
-import type { BrowserConfig } from "../../../../../shared/browser-contract";
 import { searchCredentialPurpose } from "../../../../../shared/credential-contract";
 import type {
   ProxyConfig,
@@ -10,23 +9,7 @@ import type {
   ProxyTestResult,
 } from "../../../../../shared/proxy-contract";
 
-export type { BrowserConfig, ProxyConfig, ProxyMode, ProxyTestResult };
-
-export function fetchBrowserConfig(): Promise<BrowserConfig> {
-  return requestJson<BrowserConfig>(
-    "/work/browser/config",
-    {},
-    i18n.t("settings:api.fetchBrowserFailed"),
-  );
-}
-
-export function saveBrowserConfig(config: BrowserConfig): Promise<BrowserConfig> {
-  return requestJson<BrowserConfig>(
-    "/work/browser/config",
-    { method: "POST", body: config },
-    i18n.t("settings:api.saveBrowserFailed"),
-  );
-}
+export type { ProxyConfig, ProxyMode, ProxyTestResult };
 
 export function fetchSettingsTools(): Promise<ToolsConfig> {
   return requestJson<ToolsConfig>("/work/tools", {}, i18n.t("settings:api.fetchToolsFailed"));
@@ -122,25 +105,6 @@ export function fetchMemoryProfile<T>(): Promise<T> {
     "/work/memory/profile",
     {},
     i18n.t("settings:api.fetchMemoryProfileFailed"),
-  );
-}
-
-export function fetchThreadObservationalMemory<T>(threadId: string): Promise<T> {
-  return requestJson<T>(
-    `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config`,
-    {},
-    i18n.t("settings:api.fetchThreadObservationalMemoryFailed"),
-  );
-}
-
-export function saveThreadObservationalMemory(
-  threadId: string,
-  config: Record<string, unknown>,
-): Promise<void> {
-  return requestJson<void>(
-    `/work/threads/${encodeURIComponent(threadId)}/observational-memory-config`,
-    { method: "PUT", body: { config } },
-    i18n.t("settings:api.saveThreadObservationalMemoryFailed"),
   );
 }
 

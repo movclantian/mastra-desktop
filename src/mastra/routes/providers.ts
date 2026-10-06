@@ -14,6 +14,7 @@ import { resolveCredential } from "../credential-broker";
 import { errorText, workError, workValidationError } from "../errors";
 import {
   createProviderModel,
+  fetchModelsDevCatalog,
   getProvidersConfig,
   providersPatchSchema,
   saveProvidersConfig,
@@ -60,51 +61,6 @@ export const providerRegistryRoute = createRoute({
   handler: async () => ({ providers: builtinProviderRegistry }),
 });
 
-// ---------------------------------------------------------------------------
-// models.dev 能力目录代理
-//
-// 这份目录只服务能力徽章与上下文窗口展示,不决定内置供应商是否可用。
-// 服务端做一小时内存缓存并合并并发请求；上游不可用时仅禁用能力徽章。
-// ---------------------------------------------------------------------------
-
-const MODELS_DEV_API = "https://models.dev/api.json";
-const CATALOG_TTL_MS = 60 * 60 * 1000;
-const CATALOG_TIMEOUT_MS = 30_000;
-
-type Catalog = Record<string, unknown>;
-
-let catalogCache: { fetchedAt: number; body: Catalog } | null = null;
-let catalogInflight: Promise<Catalog> | null = null;
-
-async function fetchModelsDevCatalog(): Promise<Catalog> {
-  if (catalogCache && Date.now() - catalogCache.fetchedAt < CATALOG_TTL_MS) {
-    return catalogCache.body;
-  }
-  catalogInflight ??= refreshModelsDevCatalog().finally(() => {
-    catalogInflight = null;
-  });
-  return catalogInflight;
-}
-
-async function refreshModelsDevCatalog(): Promise<Catalog> {
-  try {
-    const response = await fetch(MODELS_DEV_API, {
-      signal: AbortSignal.timeout(CATALOG_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      throw new Error(`models.dev 返回 HTTP ${response.status}`);
-    }
-    const body = (await response.json()) as Catalog;
-    if (Object.keys(body).length === 0) {
-      throw new Error("models.dev 返回了空目录");
-    }
-    catalogCache = { fetchedAt: Date.now(), body };
-    return body;
-  } catch (error) {
-    throw new Error(describeFetchError(error));
-  }
-}
-
 /**
  * Node fetch 的网络错误一律只说 "fetch failed",真实原因埋在 error.cause 里:
  * ECONNREFUSED = 代理端口没人监听(代理客户端没开)、ENOTFOUND = DNS 被污染或域名写错、
@@ -139,7 +95,7 @@ export const modelsCatalogRoute = createRoute({
       return await fetchModelsDevCatalog();
     } catch (error) {
       throw workError("PROVIDER_CATALOG_UNAVAILABLE", {
-        text: `模型能力目录不可用：${(error as Error).message}`,
+        text: `模型能力目录不可用：${describeFetchError(error)}`,
         cause: error,
       });
     }
@@ -231,7 +187,7 @@ export const listProviderModelsRoute = createRoute({
       data = (await response.json()) as typeof data;
     } catch (error) {
       throw workError("PROVIDER_MODELS_FETCH_FAILED", {
-        text: `解析 ${base}/models 的响应失败：${(error as Error).message}`,
+        text: `解析 ${base}/models 的响应失败：${describeFetchError(error)}`,
         cause: error,
       });
     }

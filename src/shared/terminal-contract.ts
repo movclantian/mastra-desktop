@@ -4,6 +4,7 @@ export const TERMINAL_CREATE_CHANNEL = "terminal:create";
 export const TERMINAL_WRITE_CHANNEL = "terminal:write";
 export const TERMINAL_RESIZE_CHANNEL = "terminal:resize";
 export const TERMINAL_CLOSE_CHANNEL = "terminal:close";
+export const TERMINAL_CLOSE_THREAD_CHANNEL = "terminal:close-thread";
 export const TERMINAL_EVENT_CHANNEL = "terminal:event";
 
 export const TerminalSessionIdSchema = z
@@ -15,6 +16,8 @@ const TerminalColsSchema = z.number().int().min(2).max(500);
 const TerminalRowsSchema = z.number().int().min(2).max(300);
 
 export const TerminalCreateRequestSchema = z.strictObject({
+  resourceId: z.string().trim().min(1).max(256),
+  threadId: z.string().trim().min(1).max(256).optional(),
   cwd: z
     .string()
     .min(1)
@@ -24,6 +27,11 @@ export const TerminalCreateRequestSchema = z.strictObject({
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
 });
+export const TerminalThreadSchema = z.strictObject({
+  resourceId: TerminalCreateRequestSchema.shape.resourceId,
+  threadId: z.string().trim().min(1).max(256),
+});
+export type TerminalThread = z.infer<typeof TerminalThreadSchema>;
 export const TerminalCreateResultSchema = z.strictObject({ sessionId: TerminalSessionIdSchema });
 export const TerminalWriteRequestSchema = z.strictObject({
   sessionId: TerminalSessionIdSchema,

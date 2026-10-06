@@ -13,7 +13,7 @@ import {
 
 const MAX_AGENT_REQUEST_BYTES = 64 * 1024;
 const MAX_AGENT_RESPONSE_BYTES = 8 * 1024 * 1024;
-const AGENT_COMMAND_TIMEOUT_MS = 65_000;
+const AGENT_COMMAND_TIMEOUT_MS = 305_000;
 
 export class NativeBrowserAgentCommandError extends Error {
   constructor(readonly reason: NativeBrowserAgentCommandFailure) {

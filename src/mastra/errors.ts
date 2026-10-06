@@ -102,12 +102,6 @@ export const WORK_ERRORS = {
     status: 400,
     text: "workingMemory is required",
   },
-  OBSERVATIONAL_MEMORY_DISABLED: {
-    domain: ErrorDomain.MASTRA_MEMORY,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "Observational Memory is disabled",
-  },
 
   // ---- 会话运行时(routes/session,harness agent-controller)-------------
   SESSION_INPUT_REQUIRED: {

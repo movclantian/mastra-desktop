@@ -87,7 +87,7 @@ const explorerAgent = new Agent({
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
       untilIdle: true,
-      ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
+      maxProcessorRetries,
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
@@ -118,7 +118,7 @@ const reviewerAgent = new Agent({
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
       untilIdle: true,
-      ...(maxProcessorRetries > 0 ? { maxProcessorRetries } : {}),
+      maxProcessorRetries,
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),

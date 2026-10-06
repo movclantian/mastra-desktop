@@ -63,9 +63,8 @@ export const Reasoning = memo(
     children,
     ...props
   }: ReasoningProps) => {
-    const resolvedDefaultOpen = defaultOpen ?? isStreaming;
-    // Track if defaultOpen was explicitly set to false (to prevent auto-open)
-    const isExplicitlyClosed = defaultOpen === false;
+    // 默认折叠:流式内容由触发行的单行尾巴承载,展开后才是全文(参考 zcode)
+    const resolvedDefaultOpen = defaultOpen ?? false;
 
     const [isOpen, setIsOpen] = useControllableState<boolean>({
       defaultProp: resolvedDefaultOpen,
@@ -94,13 +93,8 @@ export const Reasoning = memo(
       }
     }, [isStreaming, setDuration]);
 
-    // Auto-open when streaming starts (unless explicitly closed)
-    useEffect(() => {
-      if (isStreaming && !isOpen && !isExplicitlyClosed) {
-        setIsOpen(true);
-      }
-    }, [isStreaming, isOpen, setIsOpen, isExplicitlyClosed]);
-
+    // 流式期间不自动展开:默认保持折叠,由 ReasoningTrigger 的单行流式尾巴
+    // 展示最新内容(参考 zcode),用户点开才看全文。
     // Auto-close when streaming ends (once only, and only if it ever streamed)
     useEffect(() => {
       if (hasEverStreamedRef.current && !isStreaming && isOpen && !hasAutoClosed) {
@@ -143,6 +137,8 @@ export const Reasoning = memo(
 
 export type ReasoningTriggerProps = ComponentProps<typeof CollapsibleTrigger> & {
   getThinkingMessage?: (isStreaming: boolean, duration?: number) => ReactNode;
+  /** 流式中的推理全文;折叠态在触发行内单行滚动展示最新内容 */
+  streamingText?: string;
 };
 
 const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
@@ -155,14 +151,65 @@ const defaultGetThinkingMessage = (isStreaming: boolean, duration?: number) => {
   return <p>{i18n.t("common:thoughtDuration", { duration })}</p>;
 };
 
+/** 取最后一个非空行:折叠态摘要只跟最新思路走,历史行已在上文 */
+const resolveStreamingTail = (streamingText: string): { key: string; text: string } | null => {
+  const lines = streamingText.replace(/\r\n?/g, "\n").split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const text = lines[index]?.trim() ?? "";
+    if (text) return { key: String(index), text };
+  }
+  return null;
+};
+
+const TAIL_MASK =
+  "linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%)";
+
+/**
+ * 折叠态的单行流式尾巴:overflow-hidden 视口 + 内容 min-w-max,
+ * 每次内容增长把 scrollLeft 推到最右 —— 新 token 把旧文本向左推出,
+ * 视觉上永远停在最新一词;溢出后两端加渐隐 mask。
+ */
+const StreamingTail = memo(function StreamingTail({
+  lineKey,
+  text,
+}: {
+  lineKey: string;
+  text: string;
+}) {
+  const viewportRef = useRef<HTMLSpanElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollLeft = viewport.scrollWidth;
+    setOverflowing(viewport.scrollWidth > viewport.clientWidth + 1);
+  }, [text]);
+  return (
+    <>
+      <span className="shrink-0 text-muted-foreground/60">·</span>
+      <span
+        className="min-w-0 flex-1 overflow-hidden whitespace-nowrap text-muted-foreground"
+        ref={viewportRef}
+        style={overflowing ? { maskImage: TAIL_MASK, WebkitMaskImage: TAIL_MASK } : undefined}
+      >
+        <span className="inline-block min-w-max" key={lineKey}>
+          {text}
+        </span>
+      </span>
+    </>
+  );
+});
+
 export const ReasoningTrigger = memo(
   ({
     className,
     children,
     getThinkingMessage = defaultGetThinkingMessage,
+    streamingText = "",
     ...props
   }: ReasoningTriggerProps) => {
     const { isStreaming, isOpen, duration } = useReasoning();
+    const tail = isStreaming && !isOpen ? resolveStreamingTail(streamingText) : null;
 
     return (
       <CollapsibleTrigger
@@ -176,8 +223,12 @@ export const ReasoningTrigger = memo(
           <>
             <BrainIcon className="size-4" />
             {getThinkingMessage(isStreaming, duration)}
+            {tail ? <StreamingTail key={tail.key} lineKey={tail.key} text={tail.text} /> : null}
             <ChevronDownIcon
-              className={cn("size-4 transition-transform", isOpen ? "rotate-180" : "rotate-0")}
+              className={cn(
+                "size-4 shrink-0 transition-transform",
+                isOpen ? "rotate-180" : "rotate-0",
+              )}
             />
           </>
         )}

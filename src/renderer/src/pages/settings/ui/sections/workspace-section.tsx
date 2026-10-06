@@ -17,7 +17,7 @@ import { Switch } from "@/shared/ui/switch";
 import { fetchWorkspaceSettings, saveWorkspaceSettings } from "../../api/settings-api";
 import {
   AdvancedSection,
-  ConfirmDialog,
+  ConfirmSwitch,
   NumberRow,
   SettingCard,
   SettingGrid,
@@ -561,20 +561,15 @@ export function WorkspaceSection() {
           description={t("settings:workspace.readOnlyDesc")}
           title={t("settings:workspace.readOnlyTitle")}
         >
-          {draft.readOnly ? (
-            <Switch checked onCheckedChange={(readOnly) => patch({ readOnly })} />
-          ) : (
-            <ConfirmDialog
-              cancelLabel={t("common:cancel")}
-              confirmLabel={t("settings:workspace.confirmReadOnlyAction")}
-              description={t("settings:workspace.confirmReadOnlyDesc")}
-              onConfirm={() => patch({ readOnly: true })}
-              title={t("settings:workspace.confirmReadOnlyTitle")}
-              trigger={
-                <Switch checked={false} aria-label={t("settings:workspace.readOnlyTitle")} />
-              }
-            />
-          )}
+          <ConfirmSwitch
+            checked={draft.readOnly}
+            label={t("settings:workspace.readOnlyTitle")}
+            cancelLabel={t("common:cancel")}
+            confirmLabel={t("settings:workspace.confirmReadOnlyAction")}
+            description={t("settings:workspace.confirmReadOnlyDesc")}
+            onCheckedChange={(readOnly) => patch({ readOnly })}
+            title={t("settings:workspace.confirmReadOnlyTitle")}
+          />
         </SettingRow>
         <AllowedPathsList
           description={t("settings:workspace.allowedPathsDesc")}

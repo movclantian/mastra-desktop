@@ -23,7 +23,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { fetchMemoryConfig, saveMemoryConfig } from "../../api/settings-api";
 import {
   AdvancedSection,
-  ConfirmDialog,
+  ConfirmSwitch,
   NumberRow,
   ScopeSelect,
   SelectRow,
@@ -33,7 +33,6 @@ import {
   TextAreaRow,
 } from "../controls";
 
-const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
 const PROFILE_TEMPLATE =
   "# User Profile\n- **Name**:\n- **Location**:\n- **Interests**:\n- **Preferences**:\n- **Long-term Goals**:\n";
 const PROJECT_TEMPLATE =
@@ -69,20 +68,14 @@ export interface MemoryDraft {
   workingMemorySchema: string;
   generateTitle: boolean;
   observationalMemory: boolean;
-  omScope: "thread" | "resource";
   omTemporalMarkers: boolean;
   omObserverInstruction: string;
   omReflectionInstruction: string;
   omThreadTitle: boolean;
   omManageWorkingMemory: boolean;
   omObserveAttachments: "auto" | "on" | "off";
-  omMessageTokens: number;
-  omMaxTokensPerBatch: number;
   omTemperature: number;
-  omMaxOutputTokens: number;
-  omBufferTokens: number;
   omBufferEnabled: boolean;
-  omObservationTokens: number;
   omRetrieval: boolean;
   omRetrievalVector: boolean;
   omRetrievalScope: "thread" | "resource";
@@ -118,20 +111,14 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
     '{\n  "type": "object",\n  "properties": {\n    "name": { "type": "string" },\n    "location": { "type": "string" },\n    "timezone": { "type": "string" },\n    "preferences": {\n      "type": "object",\n      "properties": {\n        "communicationStyle": { "type": "string" },\n        "projectGoal": { "type": "string" },\n        "deadlines": { "type": "array", "items": { "type": "string" } }\n      }\n    }\n  }\n}\n',
   generateTitle: true,
   observationalMemory: true,
-  omScope: "thread",
   omTemporalMarkers: true,
   omObserverInstruction: "",
   omReflectionInstruction: "",
   omThreadTitle: false,
   omManageWorkingMemory: false,
   omObserveAttachments: "auto",
-  omMessageTokens: DEFAULT_OM_MESSAGE_TOKENS,
-  omMaxTokensPerBatch: 0,
   omTemperature: 0.3,
-  omMaxOutputTokens: 0,
-  omBufferTokens: 0.2,
   omBufferEnabled: true,
-  omObservationTokens: 0,
   omRetrieval: false,
   omRetrievalVector: false,
   omRetrievalScope: "resource",
@@ -608,10 +595,7 @@ export function MemorySection() {
   React.useEffect(() => {
     if (!loaded) return;
     const timer = window.setTimeout(() => {
-      void saveMemoryConfig({
-        ...draft,
-        omMessageTokens: draft.omMessageTokens,
-      })
+      void saveMemoryConfig({ ...draft })
         .then(() => {
           const before = prevSavedRef.current;
           prevSavedRef.current = draft;
@@ -672,18 +656,15 @@ export function MemorySection() {
           description={t("settings:memory.readOnlyDesc")}
           title={t("settings:memory.readOnlyTitle")}
         >
-          {draft.readOnly ? (
-            <Switch checked onCheckedChange={(readOnly) => setDraft({ ...draft, readOnly })} />
-          ) : (
-            <ConfirmDialog
-              cancelLabel={t("common:cancel")}
-              confirmLabel={t("settings:memory.confirmReadOnlyAction")}
-              description={t("settings:memory.confirmReadOnlyDesc")}
-              onConfirm={() => setDraft({ ...draft, readOnly: true })}
-              title={t("settings:memory.confirmReadOnlyTitle")}
-              trigger={<Switch checked={false} aria-label={t("settings:memory.readOnlyTitle")} />}
-            />
-          )}
+          <ConfirmSwitch
+            checked={draft.readOnly}
+            label={t("settings:memory.readOnlyTitle")}
+            cancelLabel={t("common:cancel")}
+            confirmLabel={t("settings:memory.confirmReadOnlyAction")}
+            description={t("settings:memory.confirmReadOnlyDesc")}
+            onCheckedChange={(readOnly) => setDraft({ ...draft, readOnly })}
+            title={t("settings:memory.confirmReadOnlyTitle")}
+          />
         </SettingRow>
       </SettingCard>
 
@@ -879,20 +860,14 @@ export function MemorySection() {
         onReset={() =>
           restore(
             "observationalMemory",
-            "omScope",
             "omTemporalMarkers",
             "omObserverInstruction",
             "omReflectionInstruction",
             "omThreadTitle",
             "omManageWorkingMemory",
             "omObserveAttachments",
-            "omMessageTokens",
-            "omMaxTokensPerBatch",
             "omTemperature",
-            "omMaxOutputTokens",
-            "omBufferTokens",
             "omBufferEnabled",
-            "omObservationTokens",
             "omRetrieval",
             "omRetrievalVector",
             "omRetrievalScope",
@@ -920,15 +895,9 @@ export function MemorySection() {
                 {t("settings:memory.followCurrentModel")}
               </span>
             </SettingRow>
-            <NumberRow
-              description={t("settings:memory.messageTokensDesc")}
-              max={250_000}
-              min={1_000}
-              onChange={(v) => setDraft({ ...draft, omMessageTokens: v })}
-              suffix={t("settings:memory.tokenUnit")}
-              hint={t("settings:memory.messageTokensHint")}
-              title={t("settings:memory.messageTokensTitle")}
-              value={draft.omMessageTokens}
+            <SettingRow
+              title={t("settings:memory.automaticBudgetTitle")}
+              description={t("settings:memory.automaticBudgetDesc")}
             />
             <SettingRow
               description={t("settings:memory.temporalMarkersDesc")}
@@ -943,17 +912,6 @@ export function MemorySection() {
               title={t("settings:memory.advancedTitle")}
               description={t("settings:memory.observationAdvancedDesc")}
             >
-              <SettingRow
-                description={t("settings:memory.omScopeDesc")}
-                title={t("settings:memory.omScopeTitle")}
-              >
-                <ScopeSelect
-                  onChange={(v) => setDraft({ ...draft, omScope: v })}
-                  resourceLabel={t("settings:memory.scopeResource")}
-                  threadLabel={t("settings:memory.omScopeCurrentThread")}
-                  value={draft.omScope}
-                />
-              </SettingRow>
               <SettingRow
                 description={t("settings:memory.omThreadTitleDesc")}
                 title={t("settings:memory.omThreadTitleTitle")}
@@ -984,18 +942,6 @@ export function MemorySection() {
                 value={draft.omObserveAttachments}
               />
               <NumberRow
-                description={t("settings:memory.maxTokensPerBatchDesc")}
-                max={2_000_000}
-                min={0}
-                onChange={(v) => setDraft({ ...draft, omMaxTokensPerBatch: v })}
-                emptyValue={0}
-                placeholder={t("settings:memory.recommendedPlaceholder")}
-                suffix={t("settings:memory.tokenUnit")}
-                hint={t("settings:memory.maxTokensPerBatchHint")}
-                title={t("settings:memory.maxTokensPerBatchTitle")}
-                value={draft.omMaxTokensPerBatch}
-              />
-              <NumberRow
                 description={t("settings:memory.temperatureDesc")}
                 max={2}
                 min={0}
@@ -1004,28 +950,6 @@ export function MemorySection() {
                 step={0.1}
                 title={t("settings:memory.temperatureTitle")}
                 value={draft.omTemperature}
-              />
-              <NumberRow
-                description={t("settings:memory.maxOutputTokensDesc")}
-                max={500_000}
-                min={0}
-                onChange={(v) => setDraft({ ...draft, omMaxOutputTokens: v })}
-                emptyValue={0}
-                placeholder={t("settings:memory.recommendedPlaceholder")}
-                suffix={t("settings:memory.tokenUnit")}
-                hint={t("settings:memory.maxOutputTokensHint")}
-                title={t("settings:memory.maxOutputTokensTitle")}
-                value={draft.omMaxOutputTokens}
-              />
-              <NumberRow
-                description={t("settings:memory.bufferTokensDesc")}
-                max={500_000}
-                min={0}
-                onChange={(v) => setDraft({ ...draft, omBufferTokens: v })}
-                hint={t("settings:memory.bufferTokensHint")}
-                step={0.1}
-                title={t("settings:memory.bufferTokensTitle")}
-                value={draft.omBufferTokens}
               />
               <SettingRow
                 description={t("settings:memory.bufferEnabledDesc")}
@@ -1036,18 +960,6 @@ export function MemorySection() {
                   onCheckedChange={(v) => setDraft({ ...draft, omBufferEnabled: v })}
                 />
               </SettingRow>
-              <NumberRow
-                description={t("settings:memory.observationTokensDesc")}
-                max={2_000_000}
-                min={0}
-                onChange={(v) => setDraft({ ...draft, omObservationTokens: v })}
-                emptyValue={0}
-                placeholder={t("settings:memory.recommendedPlaceholder")}
-                suffix={t("settings:memory.tokenUnit")}
-                hint={t("settings:memory.observationTokensHint")}
-                title={t("settings:memory.observationTokensTitle")}
-                value={draft.omObservationTokens}
-              />
               <TextAreaRow
                 description={t("settings:memory.observerInstructionDesc")}
                 onChange={(omObserverInstruction) => setDraft({ ...draft, omObserverInstruction })}

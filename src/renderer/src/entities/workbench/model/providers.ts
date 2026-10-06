@@ -601,23 +601,8 @@ export function getModelContextWindow(
   const contextWindows = matchingModels
     .map((model) => model.contextWindow)
     .filter((contextWindow) => contextWindow > 0);
-  if (contextWindows.length === 0) {
-    return undefined;
-  }
-
-  // 同一模型 ID 可能有多个供应商记录,取出现次数最多的窗口作为模型级映射。
-  const counts = new Map<number, number>();
-  let selectedWindow: number | undefined;
-  let selectedCount = 0;
-  for (const contextWindow of contextWindows) {
-    const count = (counts.get(contextWindow) ?? 0) + 1;
-    counts.set(contextWindow, count);
-    if (count > selectedCount) {
-      selectedWindow = contextWindow;
-      selectedCount = count;
-    }
-  }
-  return selectedWindow;
+  // Match the server budget: ambiguous gateway IDs must not overstate capacity.
+  return contextWindows.length ? Math.min(...contextWindows) : undefined;
 }
 
 /** 将 models.dev 的 token 数量格式化为模型列表可读的 K/M/B 标签。 */

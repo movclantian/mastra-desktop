@@ -2,6 +2,7 @@
 import type { MastraDBMessage } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
+import { TABLE_MESSAGES } from "@mastra/core/storage";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { closeBrowserThreadSessions } from "../../agents/browser";
@@ -10,7 +11,7 @@ import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
 import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models/providers";
-import { appStorage } from "../../storage/database";
+import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
 import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
 import { abortWorkbenchSession, observeSessionWork } from "../session";
@@ -715,6 +716,25 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     const payload = (await c.res.clone().json()) as {
       threads: Array<{ id: string; metadata?: Record<string, unknown> }>;
     };
+    // Derive activity from persisted user turns, not settings writes to thread.updatedAt.
+    // Aggregate timestamps in SQL so listing threads never loads message bodies into memory.
+    const lastUserRequests = new Map<string, string>();
+    if (payload.threads.length) {
+      const client = await getLibsqlClient();
+      const result = await client.execute({
+        sql: `SELECT thread_id, strftime('%Y-%m-%dT%H:%M:%fZ', MAX("createdAt")) AS requested_at
+              FROM "${TABLE_MESSAGES}"
+              WHERE "resourceId" = ? AND thread_id IN (${payload.threads.map(() => "?").join(",")})
+                AND (role = 'user' OR (role = 'signal' AND type = 'user'))
+              GROUP BY thread_id`,
+        args: [resourceId, ...payload.threads.map((thread) => thread.id)],
+      });
+      for (const row of result.rows) {
+        if (typeof row.thread_id === "string" && typeof row.requested_at === "string") {
+          lastUserRequests.set(row.thread_id, row.requested_at);
+        }
+      }
+    }
     const runs = Object.values(c.get("mastra").listAgents()).flatMap((agent) =>
       agent.listActiveThreadRuns(),
     );
@@ -725,6 +745,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
       ...payload,
       threads: payload.threads.map((item: { id: string; metadata?: Record<string, unknown> }) => ({
         ...item,
+        lastUserRequestAt: lastUserRequests.get(item.id) ?? null,
         metadata: {
           ...item.metadata,
           isWorking: active.has(item.id),

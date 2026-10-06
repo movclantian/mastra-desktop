@@ -525,12 +525,20 @@
 }
 
 /* 动态边框宽度与粗野主义硬阴影适配 */
-.border,
-.border-t,
-.border-b,
-.border-l,
-.border-r {
+.border {
   border-width: var(--theme-border-width, 1px);
+}
+.border-t {
+  border-top-width: var(--theme-border-width, 1px);
+}
+.border-b {
+  border-bottom-width: var(--theme-border-width, 1px);
+}
+.border-l {
+  border-left-width: var(--theme-border-width, 1px);
+}
+.border-r {
+  border-right-width: var(--theme-border-width, 1px);
 }
 
 .border-0 {

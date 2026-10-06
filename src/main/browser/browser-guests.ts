@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { type BrowserWindow, type WebContents, WebContentsView } from "electron";
+import { EventEmitter, once } from "node:events";
+import {
+  type BrowserWindow,
+  session as electronSession,
+  type WebContents,
+  type WebPreferences,
+  webContents,
+} from "electron";
 import {
   BrowserNavigateRequestSchema,
   type BrowserState,
@@ -8,27 +15,19 @@ import {
   NativeBrowserActionSchema,
   type NativeBrowserAgentOperation,
   NativeBrowserAgentOperationSchema,
+  NativeBrowserBindGuestSchema,
   type NativeBrowserBounds,
   NativeBrowserBoundsSchema,
+  type NativeBrowserConfig,
+  NativeBrowserConfigSchema,
   type NativeBrowserEvent,
   NativeBrowserEventSchema,
   NativeBrowserNavigateSchema,
   type NativeBrowserSession,
   NativeBrowserSessionSchema,
+  type NativeBrowserSurface,
 } from "../../shared/browser-contract";
 import { NativeBrowserAgentCommandError } from "./agent-command-broker";
-
-type BrowserViewFactory = () => WebContentsView;
-
-class NativeBrowserOperationError extends Error {
-  constructor(
-    readonly stage: string,
-    cause: unknown,
-  ) {
-    super("Native browser operation failed", { cause });
-    this.name = "NativeBrowserOperationError";
-  }
-}
 
 class NativeBrowserAgentOperationTimeoutError extends Error {
   constructor(message: string) {
@@ -39,7 +38,7 @@ class NativeBrowserAgentOperationTimeoutError extends Error {
 
 interface NativeTab {
   id: string;
-  view: WebContentsView;
+  contents?: WebContents;
   url: string;
   title: string;
   refs: Set<string>;
@@ -58,6 +57,7 @@ interface NativeSession {
   tabs: NativeTab[];
   activeTabIndex: number;
   bounds: NativeBrowserBounds;
+  partition: string;
   agentGeneration: number;
   operationQueue: Promise<void>;
 }
@@ -364,10 +364,6 @@ function normalizeTabTitle(title: string | null | undefined): string {
     : `${value.slice(0, MAX_TAB_TITLE_LENGTH - 1)}…`;
 }
 
-function sessionKey(session: NativeBrowserSession): string {
-  return JSON.stringify([session.resourceId, session.threadId]);
-}
-
 function isWebUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
@@ -377,57 +373,183 @@ function isWebUrl(url: string): boolean {
   }
 }
 
-/**
- * Owns the human-visible browser surface. The page is a real Electron
- * WebContentsView; no screenshot, base64 frame or pointer replay is involved.
- */
-export class NativeBrowserViewManager {
+/** Manages isolated Electron guests; the renderer owns their DOM composition. */
+export class NativeBrowserGuestManager {
   private readonly sessions = new Map<string, NativeSession>();
-  private readonly createView: BrowserViewFactory;
+  private readonly configs = new Map<string, NativeBrowserConfig>();
+  private readonly unboundGuests = new Set<WebContents>();
+  private readonly surfaceChanges = new EventEmitter();
 
   constructor(
     private readonly window: BrowserWindow,
-    createView?: BrowserViewFactory,
+    private proxy: Electron.ProxyConfig,
   ) {
-    this.createView =
-      createView ??
-      (() =>
-        new WebContentsView({
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-          },
-        }));
+    window.webContents.on("will-attach-webview", (event, preferences, params) => {
+      if (!this.secureGuest(preferences, params)) event.preventDefault();
+    });
+    window.webContents.on("did-attach-webview", (_event, guest) => {
+      if (guest.getType() !== "webview" || guest.hostWebContents !== window.webContents) {
+        guest.close({ waitForBeforeUnload: false });
+        return;
+      }
+      this.unboundGuests.add(guest);
+      guest.setWindowOpenHandler(() => ({ action: "deny" }));
+      const timer = setTimeout(() => {
+        if (this.unboundGuests.delete(guest) && !guest.isDestroyed())
+          guest.close({ waitForBeforeUnload: false });
+      }, 15_000);
+      guest.once("destroyed", () => {
+        clearTimeout(timer);
+        this.unboundGuests.delete(guest);
+      });
+    });
+  }
+
+  async setProxy(proxy: Electron.ProxyConfig): Promise<void> {
+    this.proxy = proxy;
+    await Promise.all(
+      [...this.sessions.values()].map((current) =>
+        electronSession.fromPartition(current.partition).setProxy(proxy),
+      ),
+    );
+  }
+
+  configure(rawConfig: unknown): void {
+    const config = NativeBrowserConfigSchema.parse(rawConfig);
+    const previous = this.configs.get(config.resourceId);
+    if (previous && (previous.scope !== config.scope || previous.provider !== config.provider)) {
+      for (const current of this.sessions.values()) {
+        if (current.session.resourceId === config.resourceId) this.close(current.session);
+      }
+    }
+    this.configs.set(config.resourceId, config);
+    this.emitSurfaces();
+  }
+
+  private sessionKey(session: NativeBrowserSession): string {
+    const scope = this.configs.get(session.resourceId)?.scope;
+    return JSON.stringify([session.resourceId, scope === "shared" ? null : session.threadId]);
+  }
+
+  private homeUrl(current: NativeSession): string {
+    return this.configs.get(current.session.resourceId)?.homeUrl || ABOUT_BLANK;
+  }
+
+  getSurfaces(): NativeBrowserSurface[] {
+    return [...this.sessions.values()].map((current) => ({
+      ...current.session,
+      partition: current.partition,
+      bounds: current.bounds,
+      activeTabId: current.tabs[current.activeTabIndex]?.id ?? null,
+      tabs: current.tabs.map(({ id, title }) => ({ id, title })),
+    }));
+  }
+
+  private emitSurfaces(): void {
+    if (!this.window.isDestroyed() && !this.window.webContents.isDestroyed())
+      this.window.webContents.send(NATIVE_BROWSER_VIEW_CHANNELS.surfaces, this.getSurfaces());
+    this.surfaceChanges.emit("change");
+  }
+
+  private secureGuest(preferences: WebPreferences, params: Record<string, string>): boolean {
+    const current = [...this.sessions.values()].find((s) => s.partition === params.partition);
+    const tab = current?.tabs.find((t) => params.src === `about:blank#${t.id}` && !t.contents);
+    if (!current || !tab) return false;
+    delete params.preload;
+    delete params.webpreferences;
+    delete preferences.preload;
+    Object.assign(preferences, {
+      partition: current.partition,
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInWorker: false,
+      nodeIntegrationInSubFrames: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
+      navigateOnDragDrop: false,
+    });
+    return true;
+  }
+
+  bindGuest(rawRequest: unknown): void {
+    const { tabId, guestId } = NativeBrowserBindGuestSchema.parse(rawRequest);
+    const current = [...this.sessions.values()].find((s) => s.tabs.some((t) => t.id === tabId));
+    const tab = current?.tabs.find((t) => t.id === tabId);
+    const guest = webContents.fromId(guestId);
+    if (
+      !current ||
+      !tab ||
+      !guest ||
+      guest.isDestroyed() ||
+      !this.unboundGuests.has(guest) ||
+      tab.contents ||
+      guest.getType() !== "webview" ||
+      guest.hostWebContents !== this.window.webContents ||
+      guest.session !== electronSession.fromPartition(current.partition) ||
+      guest.getURL() !== `about:blank#${tabId}`
+    ) {
+      throw new Error("Invalid browser guest binding");
+    }
+    this.unboundGuests.delete(guest);
+    tab.contents = guest;
+    this.attachTabEvents(current, tab);
+    guest.once("destroyed", () => {
+      if (this.sessions.get(current.key) !== current || !current.tabs.includes(tab)) return;
+      this.invalidateAgentCommands(current, false);
+      current.tabs = current.tabs.filter((t) => t !== tab);
+      current.activeTabIndex = Math.max(
+        0,
+        Math.min(current.activeTabIndex, current.tabs.length - 1),
+      );
+      this.emitState(current);
+    });
+    if (tab.url !== ABOUT_BLANK) this.loadTab(current, tab, tab.url);
+    this.emitState(current);
+  }
+
+  private loadTab(current: NativeSession, tab: NativeTab, url: string): void {
+    tab.url = url;
+    if (!tab.contents || tab.contents.isDestroyed()) return;
+    void tab.contents.loadURL(url).catch((error: unknown) => {
+      this.emitEvent({
+        type: "error",
+        ...current.session,
+        message: (error instanceof Error ? error.message : String(error)).slice(0, 4096),
+      });
+    });
   }
 
   async ensure(rawSession: unknown): Promise<BrowserState> {
     const session = NativeBrowserSessionSchema.parse(rawSession);
     const current = this.getOrCreate(session);
     return this.enqueueAgentCommand(current, async () => {
-      if (current.tabs.length === 0) await this.createTab(current, ABOUT_BLANK);
-      this.applyBounds(current);
+      if (current.tabs.length === 0) await this.createTab(current, this.homeUrl(current));
+      this.emitSurfaces();
       return this.state(current);
     });
   }
 
   async setBounds(rawBounds: unknown): Promise<void> {
     const bounds = NativeBrowserBoundsSchema.parse(rawBounds);
-    // Keep geometry before the first page exists; mounting a surface never opens a tab.
-    const current = this.getOrCreate({ resourceId: bounds.resourceId, threadId: bounds.threadId });
+    if (this.configs.get(bounds.resourceId)?.provider !== "agent") return;
+    const session = { resourceId: bounds.resourceId, threadId: bounds.threadId };
+    const current =
+      this.sessions.get(this.sessionKey(session)) ??
+      (bounds.width > 0 && bounds.height > 0 ? this.getOrCreate(session) : undefined);
+    if (!current) return;
     const wasVisible = current.bounds.width > 0 && current.bounds.height > 0;
     const willBeHidden = bounds.width <= 0 || bounds.height <= 0;
     if (wasVisible && willBeHidden) {
-      // Mark the Agent operation stale immediately, but do not hide the
-      // WebContents until any already-dispatched page script has settled.
-      // This linearizes renderer visibility changes with Agent operations.
+      // Hidden pages invalidate in-flight automation before the next command.
       this.invalidateAgentCommands(current, true);
       current.bounds = bounds;
-      await this.enqueueAgentCommand(current, async () => this.applyBounds(current));
+      await this.enqueueAgentCommand(current, async () => this.emitSurfaces());
       return;
     }
     current.bounds = bounds;
-    this.applyBounds(current);
+    this.emitSurfaces();
   }
 
   async navigate(rawRequest: unknown): Promise<BrowserState> {
@@ -445,17 +567,8 @@ export class NativeBrowserViewManager {
       const tab = this.activeTab(current);
       tab.url = request.url;
       this.emitState(current);
-      // loadURL resolves only after the navigation finishes. Returning that
-      // promise made the renderer disable the address bar for the whole network
-      // round-trip, unlike a normal browser. Native WebContentsView renders the
-      // request immediately; loading/error state is reported by events below.
-      void tab.view.webContents.loadURL(request.url).catch((error: unknown) => {
-        this.emitEvent({
-          type: "error",
-          ...current.session,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
+      // Navigation remains asynchronous; load events report progress.
+      this.loadTab(current, tab, request.url);
       return this.state(current);
     });
   }
@@ -479,32 +592,40 @@ export class NativeBrowserViewManager {
         return this.state(current);
       switch (request.action) {
         case "back":
-          if (this.activeTab(current).view.webContents.navigationHistory.canGoBack()) {
-            this.activeTab(current).view.webContents.navigationHistory.goBack();
+          if (this.contents(this.activeTab(current)).navigationHistory.canGoBack()) {
+            this.contents(this.activeTab(current)).navigationHistory.goBack();
           }
           break;
         case "forward":
-          if (this.activeTab(current).view.webContents.navigationHistory.canGoForward()) {
-            this.activeTab(current).view.webContents.navigationHistory.goForward();
+          if (this.contents(this.activeTab(current)).navigationHistory.canGoForward()) {
+            this.contents(this.activeTab(current)).navigationHistory.goForward();
           }
           break;
         case "reload":
-          this.activeTab(current).view.webContents.reload();
+          this.contents(this.activeTab(current)).reload();
           break;
         case "new-tab":
-          await this.createTab(current, request.url ?? ABOUT_BLANK);
+          await this.createTab(current, request.url ?? this.homeUrl(current));
           break;
-        case "switch-tab":
-          if (request.index < current.tabs.length) {
-            current.activeTabIndex = request.index;
+        case "switch-tab": {
+          const index = parsed.tabId
+            ? current.tabs.findIndex((tab) => tab.id === parsed.tabId)
+            : request.index;
+          if (index >= 0 && index < current.tabs.length) {
+            current.activeTabIndex = index;
             this.invalidateAgentRefs(current);
-            this.applyBounds(current);
+            this.emitSurfaces();
             this.emitState(current);
           }
           break;
-        case "close-tab":
-          await this.closeTab(current, request.index);
+        }
+        case "close-tab": {
+          const index = parsed.tabId
+            ? current.tabs.findIndex((tab) => tab.id === parsed.tabId)
+            : request.index;
+          await this.closeTab(current, index);
           break;
+        }
         case "reset-tabs":
           await this.resetTabs(current);
           break;
@@ -517,7 +638,7 @@ export class NativeBrowserViewManager {
 
   getState(rawSession: unknown): BrowserState | null {
     const session = NativeBrowserSessionSchema.parse(rawSession);
-    const current = this.sessions.get(sessionKey(session));
+    const current = this.sessions.get(this.sessionKey(session));
     if (!current?.tabs[current.activeTabIndex]) return null;
     return this.state(current);
   }
@@ -529,7 +650,9 @@ export class NativeBrowserViewManager {
   ): Promise<unknown> {
     const session = NativeBrowserSessionSchema.parse(rawSession);
     const operation = NativeBrowserAgentOperationSchema.parse(rawOperation);
-    const current = this.sessions.get(sessionKey(session));
+    const current =
+      this.sessions.get(this.sessionKey(session)) ??
+      (operation === "goto" ? this.getOrCreate(session) : undefined);
     if (!current) {
       if (operation === "state") return Promise.resolve({ state: null, visible: false });
       throw new NativeBrowserAgentCommandError("session_not_found");
@@ -543,12 +666,34 @@ export class NativeBrowserViewManager {
     const input = rawInput ?? {};
     let timeout: number;
     try {
-      timeout = this.numberInput(input.timeout, 30_000, 1, 60_000);
+      timeout = this.numberInput(
+        input.timeout,
+        this.configs.get(current.session.resourceId)?.timeout ?? 30_000,
+        1,
+        300_000,
+      );
     } catch {
       return Promise.reject(new NativeBrowserAgentCommandError("operation_failed"));
     }
     const deadline = Date.now() + timeout;
     return this.enqueueAgentCommand(current, async () => {
+      if (operation === "goto" && current.tabs.length === 0) {
+        BrowserNavigateRequestSchema.parse({ url: input.url });
+        await this.createTab(current, ABOUT_BLANK);
+      }
+      if (!this.isActiveViewVisible(current) || current.bounds.threadId !== session.threadId) {
+        this.emitEvent({ type: "activate", ...session });
+        const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+        while (!this.isActiveViewVisible(current) || current.bounds.threadId !== session.threadId) {
+          if (this.sessions.get(current.key) !== current)
+            throw new NativeBrowserAgentCommandError("session_not_found");
+          try {
+            await once(this.surfaceChanges, "change", { signal });
+          } catch {
+            throw new NativeBrowserAgentCommandError("session_not_visible");
+          }
+        }
+      }
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new NativeBrowserAgentCommandError("operation_failed");
       try {
@@ -590,9 +735,7 @@ export class NativeBrowserViewManager {
       return false;
     }
     const tab = current.tabs[current.activeTabIndex];
-    if (!tab || tab.view.webContents.isDestroyed()) return false;
-    const bounds = tab.view.getBounds();
-    return bounds.width > 0 && bounds.height > 0;
+    return Boolean(tab?.contents && !tab.contents.isDestroyed());
   }
 
   private requireVisibleAgentTab(current: NativeSession): NativeTab {
@@ -608,7 +751,7 @@ export class NativeBrowserViewManager {
     if (
       this.sessions.get(current.key) !== current ||
       current.agentGeneration !== generation ||
-      tab.view.webContents.isDestroyed() ||
+      this.contents(tab).isDestroyed() ||
       !this.isTabStillActive(current, tab)
     ) {
       throw new NativeBrowserAgentCommandError("session_not_visible");
@@ -620,8 +763,8 @@ export class NativeBrowserViewManager {
     this.invalidateAgentRefs(current);
     if (stopLoading) {
       const active = current.tabs[current.activeTabIndex];
-      if (active && !active.view.webContents.isDestroyed() && active.view.webContents.isLoading()) {
-        active.view.webContents.stop();
+      if (active?.contents && !active.contents.isDestroyed() && active.contents.isLoading()) {
+        this.contents(active).stop();
       }
     }
   }
@@ -640,7 +783,7 @@ export class NativeBrowserViewManager {
   ): Promise<unknown> {
     try {
       const tab = this.requireVisibleAgentTab(current);
-      const contents = tab.view.webContents;
+      const contents = this.contents(tab);
       const generation = current.agentGeneration;
       let documentGeneration = tab.documentGeneration;
       const assertCurrent = (allowDocumentNavigation = false) => {
@@ -652,7 +795,12 @@ export class NativeBrowserViewManager {
           documentGeneration = tab.documentGeneration;
         }
       };
-      const timeout = this.numberInput(input.timeout, 30_000, 1, 60_000);
+      const timeout = this.numberInput(
+        input.timeout,
+        this.configs.get(current.session.resourceId)?.timeout ?? 30_000,
+        1,
+        300_000,
+      );
       const currentUrl = () => contents.getURL() || ABOUT_BLANK;
       const title = () => normalizeTabTitle(contents.getTitle());
       const hint = (text: string) => text;
@@ -1276,7 +1424,7 @@ export class NativeBrowserViewManager {
           throw new Error("Tab index is out of range");
         current.activeTabIndex = index;
         this.invalidateAgentRefs(current);
-        this.applyBounds(current);
+        this.emitState(current);
         const tab = this.activeTab(current);
         return {
           success: true,
@@ -1420,45 +1568,39 @@ export class NativeBrowserViewManager {
     });
   }
 
-  async close(rawSession: unknown): Promise<void> {
+  close(rawSession: unknown): void {
     const session = NativeBrowserSessionSchema.parse(rawSession);
-    const key = sessionKey(session);
+    const key = this.sessionKey(session);
     const current = this.sessions.get(key);
     if (!current) return;
-    this.invalidateAgentCommands(current, true);
     this.sessions.delete(key);
-    for (const tab of current.tabs) {
-      this.window.contentView.removeChildView(tab.view);
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
-    }
+    this.invalidateAgentCommands(current, true);
+    this.disposeTabs(current);
+    this.emitState(current);
   }
 
   dispose(): void {
-    const windowDestroyed = this.window.isDestroyed();
-    for (const current of this.sessions.values()) {
-      this.invalidateAgentCommands(current, true);
-      for (const tab of current.tabs) {
-        if (!windowDestroyed) this.window.contentView.removeChildView(tab.view);
-        if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
-      }
+    for (const current of [...this.sessions.values()]) this.close(current.session);
+    for (const guest of this.unboundGuests) {
+      if (!guest.isDestroyed()) guest.close({ waitForBeforeUnload: false });
     }
-    this.sessions.clear();
+    this.unboundGuests.clear();
   }
 
   private getOrCreate(session: NativeBrowserSession): NativeSession {
-    const key = sessionKey(session);
+    const key = this.sessionKey(session);
     const current = this.sessions.get(key);
-    if (current) {
-      // Recover a closed WebContents without allocating another page until requested.
-      if (current.tabs[current.activeTabIndex]?.view.webContents.isDestroyed()) {
-        this.invalidateAgentCommands(current, true);
-        this.disposeSessionViews(current);
-      }
-      return current;
-    }
+    if (current) return current;
+    const config = this.configs.get(session.resourceId);
+    if (config?.provider !== "agent") throw new Error("Native browser is not configured");
+    const partition = `mastra-browser-${randomUUID()}`;
+    const isolated = electronSession.fromPartition(partition);
+    isolated.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+    isolated.setPermissionCheckHandler(() => false);
     const created: NativeSession = {
       key,
       session,
+      partition,
       tabs: [],
       activeTabIndex: 0,
       bounds: { ...session, ...EMPTY_BOUNDS },
@@ -1471,134 +1613,105 @@ export class NativeBrowserViewManager {
 
   private activeTab(current: NativeSession): NativeTab {
     const tab = current.tabs[current.activeTabIndex];
-    if (!tab) throw new Error("native browser has no active tab");
+    if (!tab) throw new Error("Native browser has no active tab");
     return tab;
   }
 
-  private async createTab(current: NativeSession, url: string): Promise<void> {
-    if (current.tabs.length >= MAX_NATIVE_BROWSER_TABS) {
-      throw new NativeBrowserAgentCommandError("tab_limit_reached");
-    }
-    let stage = "create-view";
-    let view: WebContentsView | undefined;
-    let tab: NativeTab | undefined;
-    let attached = false;
-    const previousActiveTabIndex = current.activeTabIndex;
-    try {
-      view = this.createView();
-      stage = "register-tab";
-      tab = {
-        id: randomUUID(),
-        view,
-        url: ABOUT_BLANK,
-        title: "New tab",
-        refs: new Set(),
-        nextAgentRefIndex: 1,
-        documentGeneration: 0,
-      };
-      current.tabs.push(tab);
-      current.activeTabIndex = current.tabs.length - 1;
-      this.invalidateAgentRefs(current);
-      stage = "attach-view";
-      this.window.contentView.addChildView(view);
-      attached = true;
-      stage = "attach-events";
-      this.attachTabEvents(current, tab);
-      stage = "set-bounds";
-      this.applyBounds(current);
-      stage = "load-initial-page";
-      const normalized =
-        url === ABOUT_BLANK ? ABOUT_BLANK : BrowserNavigateRequestSchema.parse({ url }).url;
-      tab.url = normalized;
-      void view.webContents.loadURL(normalized).catch((error: unknown) => {
-        this.emitEvent({
-          type: "error",
-          ...current.session,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      });
-      stage = "publish-state";
-      this.emitState(current);
-    } catch (error) {
-      if (tab) current.tabs = current.tabs.filter((candidate) => candidate !== tab);
-      current.activeTabIndex = current.tabs.length
-        ? Math.min(previousActiveTabIndex, current.tabs.length - 1)
-        : 0;
-      if (view) {
-        if (attached && !this.window.isDestroyed()) {
-          try {
-            this.window.contentView.removeChildView(view);
-          } catch {
-            // Continue rollback if Electron already detached the view.
-          }
-        }
-        try {
-          if (!view.webContents.isDestroyed()) view.webContents.close();
-        } catch {
-          // Preserve the original creation error.
-        }
-      }
-      if (current.tabs.length > 0) {
-        try {
-          this.applyBounds(current);
-        } catch {
-          // Preserve the original creation error.
-        }
-      }
-      throw new NativeBrowserOperationError(`create-tab:${stage}`, error);
-    }
+  private contents(tab: NativeTab): WebContents {
+    if (!tab.contents || tab.contents.isDestroyed())
+      throw new NativeBrowserAgentCommandError("session_not_visible");
+    return tab.contents;
   }
 
-  private disposeSessionViews(current: NativeSession): void {
-    const windowDestroyed = this.window.isDestroyed();
-    for (const tab of current.tabs) {
-      if (!windowDestroyed) {
-        try {
-          this.window.contentView.removeChildView(tab.view);
-        } catch {
-          // The view may not have been attached if creation failed partway through.
-        }
-      }
-      try {
-        if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
-      } catch {
-        // Best-effort rollback must not hide the original creation error.
-      }
-    }
-    current.tabs = [];
+  private async createTab(current: NativeSession, url: string): Promise<void> {
+    if (current.tabs.length >= MAX_NATIVE_BROWSER_TABS)
+      throw new NativeBrowserAgentCommandError("tab_limit_reached");
+    const normalized = url === ABOUT_BLANK ? url : BrowserNavigateRequestSchema.parse({ url }).url;
+    await electronSession.fromPartition(current.partition).setProxy(this.proxy);
+    if (this.sessions.get(current.key) !== current)
+      throw new NativeBrowserAgentCommandError("session_not_found");
+    current.tabs.push({
+      id: randomUUID(),
+      url: normalized,
+      title: "New tab",
+      refs: new Set(),
+      nextAgentRefIndex: 1,
+      documentGeneration: 0,
+    });
+    current.activeTabIndex = current.tabs.length - 1;
+    this.invalidateAgentRefs(current);
+    this.emitState(current);
+  }
+
+  private disposeTabs(current: NativeSession): void {
+    const tabs = current.tabs.splice(0);
     current.activeTabIndex = 0;
+    for (const tab of tabs) {
+      if (tab.contents && !tab.contents.isDestroyed())
+        tab.contents.close({ waitForBeforeUnload: false });
+    }
   }
 
   private attachTabEvents(current: NativeSession, tab: NativeTab): void {
+    const contents = this.contents(tab);
+    // Guest keyboard events do not bubble into the host DOM.
+    contents.on("before-input-event", (event, input) => {
+      const modifier = process.platform === "darwin" ? input.meta : input.control;
+      if (
+        input.type !== "keyDown" ||
+        !modifier ||
+        input.alt ||
+        input.shift ||
+        input.key.toLowerCase() !== "k"
+      )
+        return;
+      event.preventDefault();
+      this.window.webContents.focus();
+      this.window.webContents.sendInputEvent({
+        type: "keyDown",
+        keyCode: "K",
+        modifiers: [process.platform === "darwin" ? "meta" : "control"],
+      });
+    });
+    contents.on("will-navigate", (event, url) => {
+      if (url !== ABOUT_BLANK && !isWebUrl(url)) event.preventDefault();
+    });
+    contents.on("will-redirect", (event, url) => {
+      if (!isWebUrl(url)) event.preventDefault();
+    });
+    contents.on("will-frame-navigate", (event) => {
+      if (event.url !== ABOUT_BLANK && !isWebUrl(event.url)) event.preventDefault();
+    });
+
     const emit = () => {
       this.invalidateAgentRefs(current);
-      tab.url = tab.view.webContents.getURL() || ABOUT_BLANK;
-      tab.title = normalizeTabTitle(tab.view.webContents.getTitle());
+      tab.url = this.contents(tab).getURL() || ABOUT_BLANK;
+      tab.title = normalizeTabTitle(this.contents(tab).getTitle());
       this.emitState(current);
     };
-    tab.view.webContents.on("did-start-loading", () =>
+    this.contents(tab).on("did-start-loading", () =>
       this.emitEvent({ type: "loading", ...current.session, loading: true }),
     );
-    tab.view.webContents.on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
+    this.contents(tab).on("did-start-navigation", (_event, _url, _inPlace, isMainFrame) => {
       if (!isMainFrame) return;
       tab.documentGeneration += 1;
       tab.refs.clear();
     });
-    tab.view.webContents.on("did-stop-loading", () => {
+    this.contents(tab).on("did-stop-loading", () => {
       emit();
       this.emitEvent({ type: "loading", ...current.session, loading: false });
     });
-    tab.view.webContents.on("did-navigate", emit);
-    tab.view.webContents.on("did-navigate-in-page", () => {
+    this.contents(tab).on("did-navigate", emit);
+    this.contents(tab).on("did-navigate-in-page", () => {
       tab.documentGeneration += 1;
       emit();
     });
-    tab.view.webContents.on("page-title-updated", (_event, title) => {
+    this.contents(tab).on("page-title-updated", (_event, title) => {
       tab.title = normalizeTabTitle(title);
       this.emitEvent({ type: "title", ...current.session, title: tab.title });
       this.emitState(current);
     });
-    tab.view.webContents.on(
+    this.contents(tab).on(
       "did-fail-load",
       (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
         if (!isMainFrame || errorCode === -3) return;
@@ -1609,7 +1722,7 @@ export class NativeBrowserViewManager {
         });
       },
     );
-    tab.view.webContents.on("render-process-gone", (_event, details) => {
+    this.contents(tab).on("render-process-gone", (_event, details) => {
       if (details.reason === "clean-exit" || this.window.isDestroyed()) return;
       this.emitEvent({
         type: "error",
@@ -1617,7 +1730,7 @@ export class NativeBrowserViewManager {
         message: `Browser page process exited (${details.reason}, exit code ${details.exitCode})`,
       });
     });
-    tab.view.webContents.setWindowOpenHandler(({ url }) => {
+    this.contents(tab).setWindowOpenHandler(({ url }) => {
       if (isWebUrl(url)) {
         void this.enqueueAgentCommand(current, () => this.createTab(current, url)).catch(
           (error: unknown) => {
@@ -1637,53 +1750,33 @@ export class NativeBrowserViewManager {
     if (index < 0 || index >= current.tabs.length) return;
     const [removed] = current.tabs.splice(index, 1);
     this.invalidateAgentRefs(current);
-    this.window.contentView.removeChildView(removed.view);
-    if (!removed.view.webContents.isDestroyed()) removed.view.webContents.close();
+    if (removed.contents && !removed.contents.isDestroyed())
+      removed.contents.close({ waitForBeforeUnload: false });
     current.activeTabIndex = Math.max(
       0,
       current.activeTabIndex - (index <= current.activeTabIndex ? 1 : 0),
     );
-    this.applyBounds(current);
+    this.emitState(current);
   }
 
   private async resetTabs(current: NativeSession): Promise<void> {
-    for (const tab of current.tabs) {
-      this.window.contentView.removeChildView(tab.view);
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
-    }
-    current.tabs = [];
-    current.activeTabIndex = 0;
-    await this.createTab(current, ABOUT_BLANK);
-  }
-
-  private applyBounds(current: NativeSession): void {
-    const active = current.tabs[current.activeTabIndex];
-    for (const tab of current.tabs) {
-      tab.view.setBounds(
-        tab === active
-          ? {
-              x: current.bounds.x,
-              y: current.bounds.y,
-              width: current.bounds.width,
-              height: current.bounds.height,
-            }
-          : EMPTY_BOUNDS,
-      );
-    }
+    this.disposeTabs(current);
+    await this.createTab(current, this.homeUrl(current));
   }
 
   private state(current: NativeSession): BrowserState {
     const active = current.tabs[current.activeTabIndex];
     return {
       active: Boolean(active),
-      status: active ? "ready" : "closed",
+      status: active ? (active.contents ? "ready" : "starting") : "closed",
       currentUrl: active && active.url !== ABOUT_BLANK ? active.url : null,
-      tabs: current.tabs.map((tab) => ({ url: tab.url, title: tab.title })),
+      tabs: current.tabs.map((tab) => ({ id: tab.id, url: tab.url, title: tab.title })),
       activeTabIndex: current.activeTabIndex,
     };
   }
 
   private emitState(current: NativeSession): void {
+    this.emitSurfaces();
     const event: NativeBrowserEvent = {
       type: "state",
       ...current.session,

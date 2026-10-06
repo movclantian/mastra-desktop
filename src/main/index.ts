@@ -12,17 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import {
-  app,
-  BrowserWindow,
-  dialog,
-  ipcMain,
-  Menu,
-  safeStorage,
-  screen,
-  session,
-  shell,
-} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
 import icon from "../../build/icon.png?asset";
 import {
   NATIVE_BROWSER_VIEW_CHANNELS,
@@ -66,6 +56,7 @@ import {
 } from "../shared/storage-contract";
 import {
   TERMINAL_CLOSE_CHANNEL,
+  TERMINAL_CLOSE_THREAD_CHANNEL,
   TERMINAL_CREATE_CHANNEL,
   TERMINAL_EVENT_CHANNEL,
   TERMINAL_RESIZE_CHANNEL,
@@ -74,13 +65,10 @@ import {
   TerminalCreateResultSchema,
   TerminalResizeRequestSchema,
   TerminalSessionIdSchema,
+  TerminalThreadSchema,
   TerminalWriteRequestSchema,
 } from "../shared/terminal-contract";
-import {
-  SetMinimumWidthRequestSchema,
-  ShowWindowMenuRequestSchema,
-  WINDOW_CHANNELS,
-} from "../shared/window-contract";
+import { SetMinimumWidthRequestSchema, WINDOW_CHANNELS } from "../shared/window-contract";
 import {
   type DetectedIde,
   DetectIdesRequestSchema,
@@ -96,7 +84,7 @@ import {
   NativeBrowserAgentCommandBroker,
   NativeBrowserAgentCommandError,
 } from "./browser/agent-command-broker";
-import { NativeBrowserViewManager } from "./browser/native-browser-views";
+import { NativeBrowserGuestManager } from "./browser/browser-guests";
 import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
@@ -175,8 +163,12 @@ async function resolveOutboundProxyUrl(): Promise<string | undefined> {
   return resolveSystemProxyUrl();
 }
 
+let browserProxy: Electron.ProxyConfig = { mode: "system" };
+
 async function applySessionProxy(config: ProxyConfig): Promise<string | undefined> {
   await app.whenReady();
+  browserProxy = config.mode === "manual" ? { proxyRules: config.url } : { mode: config.mode };
+  await nativeBrowserViews?.setProxy(browserProxy);
   let outboundProxy: string | undefined;
   if (config.mode === "direct") {
     await session.defaultSession.setProxy({ mode: "direct" });
@@ -294,7 +286,7 @@ let mastraProcess: ChildProcess | null = null;
 let mastraStartPromise: Promise<void> | null = null;
 let isMastraStopping = false;
 let mainWindow: BrowserWindow | null = null;
-let nativeBrowserViews: NativeBrowserViewManager | null = null;
+let nativeBrowserViews: NativeBrowserGuestManager | null = null;
 let credentialVault: CredentialVault | null = null;
 let credentialBroker: CredentialBroker | null = null;
 let nativeBrowserAgentBroker: NativeBrowserAgentCommandBroker | null = null;
@@ -797,11 +789,24 @@ function createWindow(): void {
     ...(process.platform !== "darwin" ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
+      webviewTag: true,
     },
   });
 
-  const nativeBrowser = new NativeBrowserViewManager(mainWindow);
+  const nativeBrowser = new NativeBrowserGuestManager(mainWindow, browserProxy);
   nativeBrowserViews = nativeBrowser;
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.configure, (event, value: unknown) => {
+    assertTrustedIpcSender(event);
+    nativeBrowser.configure(value);
+  });
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.getSurfaces, (event) => {
+    assertTrustedIpcSender(event);
+    return nativeBrowser.getSurfaces();
+  });
+  ipcMain.handle(NATIVE_BROWSER_VIEW_CHANNELS.bindGuest, (event, value: unknown) => {
+    assertTrustedIpcSender(event);
+    nativeBrowser.bindGuest(value);
+  });
   const handleNativeBrowserEnsure = async (event: Electron.IpcMainInvokeEvent, value: unknown) => {
     assertTrustedIpcSender(event);
     return nativeBrowser.ensure(NativeBrowserSessionSchema.parse(value));
@@ -915,10 +920,17 @@ function createWindow(): void {
   ipcMain.on(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
   ipcMain.on(TERMINAL_RESIZE_CHANNEL, handleTerminalResize);
   ipcMain.on(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
+  ipcMain.handle(TERMINAL_CLOSE_THREAD_CHANNEL, (event, request: unknown) => {
+    assertTrustedIpcSender(event);
+    return terminal.closeThread(TerminalThreadSchema.parse(request));
+  });
 
   mainWindow.on("closed", () => {
     nativeBrowser.dispose();
     if (nativeBrowserViews === nativeBrowser) nativeBrowserViews = null;
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.configure);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.getSurfaces);
+    ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.bindGuest);
     ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.ensure);
     ipcMain.removeListener(NATIVE_BROWSER_VIEW_CHANNELS.setBounds, handleNativeBrowserBounds);
     ipcMain.removeHandler(NATIVE_BROWSER_VIEW_CHANNELS.navigate);
@@ -931,6 +943,7 @@ function createWindow(): void {
     ipcMain.removeListener(TERMINAL_WRITE_CHANNEL, handleTerminalWrite);
     ipcMain.removeListener(TERMINAL_RESIZE_CHANNEL, handleTerminalResize);
     ipcMain.removeListener(TERMINAL_CLOSE_CHANNEL, handleTerminalClose);
+    ipcMain.removeHandler(TERMINAL_CLOSE_THREAD_CHANNEL);
     terminal.dispose();
     mainWindow = null;
   });
@@ -1160,27 +1173,6 @@ function bootstrap(): void {
       optimizer.watchWindowShortcuts(window);
     });
 
-    ipcMain.handle(WINDOW_CHANNELS.showMenu, (event, value: unknown) => {
-      assertTrustedIpcSender(event);
-      const request = ShowWindowMenuRequestSchema.parse(value);
-      const target = mainWindow;
-      if (!target || target.isDestroyed()) return null;
-      const zoom = event.sender.getZoomFactor();
-      // Native menus render above WebContentsView without resizing or hiding its page.
-      return new Promise<string | null>((resolve) => {
-        Menu.buildFromTemplate(
-          request.items.map((item) => ({
-            label: item.label,
-            click: () => resolve(item.id),
-          })),
-        ).popup({
-          window: target,
-          x: Math.round(request.x * zoom),
-          y: Math.round(request.y * zoom),
-          callback: () => resolve(null),
-        });
-      });
-    });
     // The renderer reports the required content width; convert it to window width.
     ipcMain.on(WINDOW_CHANNELS.setMinimumWidth, (event, value: unknown) => {
       if (!isTrustedIpcSender(event)) return;

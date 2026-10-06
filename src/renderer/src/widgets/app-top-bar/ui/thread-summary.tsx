@@ -4,12 +4,17 @@ import {
   CopyIcon,
   FileIcon,
   GlobeIcon,
+  GripHorizontalIcon,
   Loader2Icon,
   NotebookPenIcon,
   PackageIcon,
+  PinIcon,
+  PinOffIcon,
   PlugIcon,
   SquareCheckIcon,
+  XIcon,
 } from "lucide-react";
+import * as React from "react";
 import { toast } from "sonner";
 import { buildRequestModel, summarizeThreadRequest } from "@/entities/workbench";
 import {
@@ -28,15 +33,9 @@ import {
   QueueSectionTrigger,
 } from "@/shared/ui/ai-elements/queue";
 import { Button } from "@/shared/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/shared/ui/dialog";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+
+const PANEL_WIDTH = 384; // w-96,与样式保持一致,用于视口内取位
 
 export function ThreadSummaryButton() {
   const { t } = useTranslation();
@@ -64,6 +63,64 @@ export function ThreadSummaryButton() {
     enabled: false,
     retry: false,
   });
+
+  // 固定模式下锚定在按钮正下方;拖拽模式(header 手柄)后自由放置,可再切回固定吸附。
+  const buttonRef = React.useRef<HTMLButtonElement>(null);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+  const [mode, setMode] = React.useState<"docked" | "floating">("docked");
+  const [pos, setPos] = React.useState({ x: 0, y: 0 });
+  const dockBelow = React.useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPos({
+      x: Math.min(Math.max(rect.right - PANEL_WIDTH, 8), window.innerWidth - PANEL_WIDTH - 8),
+      y: Math.min(rect.bottom + 6, window.innerHeight - 80),
+    });
+  }, []);
+  React.useEffect(() => {
+    if (!open || mode !== "docked") return;
+    dockBelow();
+    window.addEventListener("resize", dockBelow);
+    return () => window.removeEventListener("resize", dockBelow);
+  }, [dockBelow, mode, open]);
+
+  const dragRef = React.useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  const onHandlePointerDown = (event: React.PointerEvent) => {
+    if (mode !== "floating") return;
+    dragRef.current = { px: event.clientX, py: event.clientY, x: pos.x, y: pos.y };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onHandlePointerMove = (event: React.PointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    setPos({
+      x: Math.min(Math.max(drag.x + event.clientX - drag.px, 8), window.innerWidth - 80),
+      y: Math.min(Math.max(drag.y + event.clientY - drag.py, 8), window.innerHeight - 48),
+    });
+  };
+  const onHandlePointerUp = () => {
+    dragRef.current = null;
+  };
+
+  // 悬浮面板:点外部/Escape 关闭
+  React.useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, setOpen]);
+
   const groups = [
     { key: "capabilities", kinds: ["skill", "mcp"], icon: <PlugIcon className="size-3.5" /> },
     { key: "artifacts", kinds: ["artifact"], icon: <PackageIcon className="size-3.5" /> },
@@ -91,6 +148,7 @@ export function ThreadSummaryButton() {
   return (
     <>
       <Button
+        ref={buttonRef}
         aria-label={t("topbar:btnAriaLabel")}
         title={t("topbar:btnTitle")}
         disabled={!threadId}
@@ -100,21 +158,58 @@ export function ThreadSummaryButton() {
       >
         <NotebookPenIcon />
       </Button>
-      <Dialog open={open && Boolean(threadId)} onOpenChange={setOpen}>
-        <DialogContent className="flex max-h-[min(85vh,44rem)] flex-col sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t("topbar:summaryTitle")}</DialogTitle>
-            <DialogDescription>{t("topbar:contextDesc")}</DialogDescription>
-          </DialogHeader>
+      {open && threadId ? (
+        <div
+          className="fixed z-50 flex max-h-[min(70vh,40rem)] w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-lg"
+          ref={panelRef}
+          style={{ left: pos.x, top: pos.y }}
+        >
+          <div
+            className={`flex items-center gap-1 border-b px-2 py-1.5 ${
+              mode === "floating" ? "cursor-grab active:cursor-grabbing" : ""
+            }`}
+            onPointerDown={onHandlePointerDown}
+            onPointerMove={onHandlePointerMove}
+            onPointerUp={onHandlePointerUp}
+          >
+            {mode === "floating" ? (
+              <GripHorizontalIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            ) : null}
+            <span className="min-w-0 flex-1 truncate font-medium text-sm">
+              {t("topbar:summaryTitle")}
+            </span>
+            <Button
+              aria-label={mode === "docked" ? t("topbar:dragMode") : t("topbar:dockMode")}
+              onClick={() => {
+                if (mode === "docked") setMode("floating");
+                else {
+                  setMode("docked");
+                }
+              }}
+              size="icon-xs"
+              title={mode === "docked" ? t("topbar:dragMode") : t("topbar:dockMode")}
+              variant="ghost"
+            >
+              {mode === "docked" ? <PinOffIcon /> : <PinIcon />}
+            </Button>
+            <Button
+              aria-label={t("common:close")}
+              onClick={() => setOpen(false)}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <XIcon />
+            </Button>
+          </div>
           <ScrollArea className="min-h-0 flex-1">
-            <div className="flex min-w-0 flex-col gap-3 pr-2 text-sm">
+            <div className="flex min-w-0 flex-col gap-3 px-3 py-2 text-sm">
               {context.isPending ? (
                 <p className="flex items-center gap-2 text-muted-foreground">
                   <Loader2Icon className="size-4 animate-spin" />
                   {t("common:loading")}
                 </p>
               ) : context.isError ? (
-                <Button variant="outline" size="sm" onClick={() => void context.refetch()}>
+                <Button onClick={() => void context.refetch()} size="sm" variant="outline">
                   {t("common:refresh")}
                 </Button>
               ) : (
@@ -144,7 +239,7 @@ export function ThreadSummaryButton() {
                           {items.length ? (
                             <ul className="flex flex-col gap-1 py-1">
                               {items.map((item) => (
-                                <li key={`${item.kind}:${item.id}`} className="min-w-0">
+                                <li className="min-w-0" key={`${item.kind}:${item.id}`}>
                                   {item.kind === "skill" || item.kind === "mcp" ? (
                                     <span className="flex min-w-0 items-start gap-2 px-3 py-1 text-xs">
                                       <span className="shrink-0 text-muted-foreground">
@@ -154,10 +249,10 @@ export function ThreadSummaryButton() {
                                     </span>
                                   ) : (
                                     <Button
-                                      variant="ghost"
-                                      size="sm"
                                       className="h-auto w-full justify-start gap-2 px-3 py-1.5 text-left"
                                       onClick={() => preview(item)}
+                                      size="sm"
+                                      variant="ghost"
                                     >
                                       {group.icon}
                                       <span className="min-w-0 flex-1">
@@ -219,12 +314,12 @@ export function ThreadSummaryButton() {
               )}
             </div>
           </ScrollArea>
-          <DialogFooter>
+          <div className="flex items-center justify-end gap-2 border-t px-2 py-1.5">
             <Button
-              variant="outline"
-              size="sm"
               disabled={summary.isFetching}
               onClick={() => void summary.refetch()}
+              size="sm"
+              variant="outline"
             >
               {t(summary.data ? "topbar:regenerate" : "topbar:generateSummary")}
             </Button>
@@ -247,9 +342,9 @@ export function ThreadSummaryButton() {
                 {t("topbar:copyAll")}
               </Button>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

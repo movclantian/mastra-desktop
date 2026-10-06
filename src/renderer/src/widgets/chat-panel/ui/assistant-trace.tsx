@@ -60,6 +60,7 @@ import { DotmHex1 } from "@/shared/ui/dotm-hex-1";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
 import { DotmTriangle2 } from "@/shared/ui/dotm-triangle-2";
 import { getTraceStepStatus, type TracePart } from "../model/types";
+import { getToolUI } from "./tool-registry-ui";
 
 // ---------------------------------------------------------------------------
 // 执行轨迹:推理步骤走官方 ChainOfThought 渲染;工具步骤按 docs/aielements/
@@ -105,9 +106,11 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
 
   return (
     <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
-      <Reasoning className="mb-0" defaultOpen={partStreaming} isStreaming={partStreaming}>
+      {/* 默认折叠:流式期间触发行内滚出最新一行推理(点开展示全文) */}
+      <Reasoning className="mb-0" isStreaming={partStreaming}>
         <div className="flex min-w-0 items-center gap-2">
-          <ReasoningTrigger />
+          {/* 折叠态也把最新一行推理流式滚进触发行(仅一行,不展开正文) */}
+          <ReasoningTrigger className="min-w-0" streamingText={part.text} />
           {/* 三角波点阵 = 模型正在思考,与工具执行态的点阵形态明确区分 */}
           {partStreaming ? (
             <DotmTriangle2 size={14} dotSize={1.8} colorPreset="solid-theme" />
@@ -171,6 +174,14 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
   const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
   const hasDetails = hasInput || output !== undefined;
 
+  // 专属 UI 注册表:命中则用本地化标签 + 精选参数摘要,详情可整体替换;
+  // 未命中的工具保持通用展示(原始名 + 自动参数提示 + JSON 详情)。
+  const ui = getToolUI(name);
+  const customSummary = ui?.summarize?.(input, output, name);
+  const chips = customSummary ? (customSummary.chips ?? []) : hintLabel ? [hintLabel] : [];
+  const files = customSummary ? (customSummary.files ?? []) : filePaths;
+  const customDetail = ui?.detail?.({ input, output });
+
   const sandboxOutput = React.useMemo(() => {
     if (!sandboxTool) return "";
     if (failed) return errorText ?? t("chat:trace.executionFailed");
@@ -198,20 +209,31 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
 
   const summary = (
     <div className="min-w-0 space-y-1">
-      <div className="break-words">
-        {name}
-        {hintLabel ? <span className="text-muted-foreground/70"> · {hintLabel}</span> : null}
+      {/* 标签、文件徽章、参数 chips 同处一个可换行 flex 行:放得下就同行,
+          放不下才折行 —— 之前徽章单独一行,工具只有一个路径参数时必然换行 */}
+      <div
+        className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 break-words"
+        title={ui ? name : undefined}
+      >
+        <span className="shrink-0">
+          {ui ? (
+            <ui.icon className="mr-1 inline size-3.5 text-muted-foreground align-[-2px]" />
+          ) : null}
+          {ui ? t(`chat:trace.toolNames.${ui.labelKey}`) : name}
+        </span>
+        {files.map((path) => (
+          <TaskItemFile className="max-w-full" key={path} title={path}>
+            <FileIcon className="size-3 shrink-0" />
+            <span className="truncate">{path}</span>
+          </TaskItemFile>
+        ))}
+        {chips.map((chip, index) => (
+          <span className="text-muted-foreground/70" key={`${index}:${chip}`}>
+            {" · "}
+            {chip}
+          </span>
+        ))}
       </div>
-      {filePaths.length > 0 ? (
-        <div className="flex min-w-0 flex-wrap gap-1">
-          {filePaths.map((path) => (
-            <TaskItemFile className="max-w-full" key={path} title={path}>
-              <FileIcon className="size-3 shrink-0" />
-              <span className="truncate">{path}</span>
-            </TaskItemFile>
-          ))}
-        </div>
-      ) : null}
       {failed ? (
         <span className="block text-destructive text-xs">
           {errorText ?? t("chat:trace.callFailed")}
@@ -341,6 +363,8 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
                   </SandboxTabs>
                 </SandboxContent>
               </Sandbox>
+            ) : customDetail ? (
+              customDetail
             ) : (
               <>
                 {hasInput ? <ToolInput input={part.input} /> : null}

@@ -251,28 +251,35 @@ export function TerminalSession({
         return;
       }
       if (activeRef.current) fit.fit();
-      void api.create({ cwd: workingDirectory, ...terminalSize(term) }).then(
-        ({ sessionId: id }) => {
-          if (disposed) {
-            api.close(id);
-            return;
-          }
-          createdId = id;
-          ptyIdRef.current = id;
-          creating = false;
-          setStatus("ready");
-          for (const event of earlyEvents) receive(event);
-          earlyEvents.length = 0;
-          fitTerminal();
-        },
-        (error: unknown) => {
-          if (disposed) return;
-          creating = false;
-          earlyEvents.length = 0;
-          term.writeln(String(error));
-          setStatus("error");
-        },
-      );
+      void api
+        .create({
+          resourceId: userId,
+          ...(targetThreadId ? { threadId: targetThreadId } : {}),
+          cwd: workingDirectory,
+          ...terminalSize(term),
+        })
+        .then(
+          ({ sessionId: id }) => {
+            if (disposed) {
+              api.close(id);
+              return;
+            }
+            createdId = id;
+            ptyIdRef.current = id;
+            creating = false;
+            setStatus("ready");
+            for (const event of earlyEvents) receive(event);
+            earlyEvents.length = 0;
+            fitTerminal();
+          },
+          (error: unknown) => {
+            if (disposed) return;
+            creating = false;
+            earlyEvents.length = 0;
+            term.writeln(String(error));
+            setStatus("error");
+          },
+        );
     });
 
     return () => {

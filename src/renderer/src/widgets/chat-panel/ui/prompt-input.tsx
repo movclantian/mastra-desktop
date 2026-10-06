@@ -1,29 +1,14 @@
-import {
-  closestCenter,
-  DndContext,
-  type DragEndEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { useQuery } from "@tanstack/react-query";
 import type { FileUIPart, LanguageModelUsage } from "ai";
 import {
+  ArrowUpFromLineIcon,
+  CopyIcon,
   FileIcon,
-  GripVerticalIcon,
   ListTodoIcon,
   PencilIcon,
+  RotateCcwIcon,
   SparklesIcon,
   Trash2Icon,
-  WaypointsIcon,
   XIcon,
 } from "lucide-react";
 import * as React from "react";
@@ -78,8 +63,14 @@ import {
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
+import { Textarea } from "@/shared/ui/textarea";
 import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
-import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
+import {
+  type MessageFileReference,
+  type MessageQueueAction,
+  type QueuedRequest,
+  referenceBadgeClass,
+} from "../model/types";
 import { ComposerMenu } from "./composer-menu";
 import { ChatContextUsage } from "./context-usage";
 import { MessageQuoteCards, quotedPrompt, useMessageQuotes } from "./message-selection";
@@ -468,96 +459,199 @@ function QueuedFilePreview({ file }: { file: QueuedRequest["files"][number] }) {
   );
 }
 
-function SortableRequestItem({
+function QueuedRequestItem({
   request,
+  onAction,
   onEdit,
-  onRemove,
-  onSteerNow,
+  editing,
+  onCancelEdit,
+  available = true,
 }: {
   request: QueuedRequest;
+  onAction: (id: string, action: MessageQueueAction) => Promise<void>;
   onEdit: (request: QueuedRequest) => void;
-  onRemove: (id: string) => void;
-  onSteerNow?: (request: QueuedRequest) => void;
+  editing: boolean;
+  onCancelEdit: () => void;
+  available?: boolean;
 }) {
   const { t } = useTranslation();
-  const {
-    attributes,
-    isDragging,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-  } = useSortable({ id: request.id });
-
+  const [text, setText] = React.useState(request.text);
+  const [pending, setPending] = React.useState(false);
+  const pendingRef = React.useRef(false);
+  const locked = pending || request.busy || request.status === "sending";
+  const act = async (action: MessageQueueAction) => {
+    if (pendingRef.current || locked || !available) return;
+    pendingRef.current = true;
+    setPending(true);
+    try {
+      await onAction(request.id, action);
+      if (editing) onCancelEdit();
+    } catch (error) {
+      toast.error(t("chat:prompt.queueActionFailed"), {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  };
+  const save = () => void act({ action: "edit", text });
   return (
-    <QueueItem
-      className={isDragging ? "relative z-10 bg-muted shadow-sm" : undefined}
-      ref={setNodeRef}
-      style={{ transform: CSS.Translate.toString(transform), transition }}
-    >
-      <div className="flex min-w-0 items-start gap-1">
-        <Button
-          aria-label={t("chat:dragToReorder")}
-          className="mt-0.5 shrink-0 text-muted-foreground"
-          ref={setActivatorNodeRef}
-          size="icon-xs"
-          type="button"
-          variant="ghost"
-          {...attributes}
-          {...listeners}
-        >
-          <GripVerticalIcon />
-        </Button>
-        <div className="min-w-0 flex-1">
-          <QueueItemContent className="line-clamp-2 whitespace-pre-wrap">
-            {request.text ||
-              (request.skills?.length
-                ? t("chat:prompt.skillRef", { skills: request.skills.join(", ") })
-                : t("chat:prompt.attachmentRequest"))}
+    <QueueItem className="min-w-0 px-2 py-1.5" aria-busy={locked}>
+      <div className="flex min-w-0 flex-wrap items-start gap-2">
+        <div className="min-w-0 flex-1 basis-40">
+          <QueueItemContent className="block line-clamp-2 whitespace-pre-wrap break-words">
+            {request.text || t("chat:prompt.attachmentRequest")}
           </QueueItemContent>
-          {request.files.length > 0 ? (
-            <QueueItemDescription>
-              {t("chat:prompt.filesCount", { count: request.files.length })}
-            </QueueItemDescription>
-          ) : null}
+          <QueueItemDescription className="ml-0">
+            {t(
+              request.status === "failed"
+                ? "chat:prompt.queueFailed"
+                : request.status === "sending"
+                  ? "chat:prompt.queueSending"
+                  : "chat:prompt.queuePending",
+            )}
+          </QueueItemDescription>
         </div>
-        <QueueItemActions className="shrink-0">
-          {onSteerNow ? (
-            <QueueItemAction
-              aria-label={t("chat:prompt.steerNow")}
-              className="opacity-100"
-              onClick={() => onSteerNow(request)}
+        {!editing ? (
+          <QueueItemActions className="ml-auto shrink-0 items-center">
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              disabled={locked}
               title={t("chat:prompt.steerNowTitle")}
+              onClick={() => void act({ action: "steer" })}
             >
-              <WaypointsIcon />
+              <ArrowUpFromLineIcon />
+              {t("chat:prompt.steerNow")}
+            </Button>
+            {request.status === "failed" ? (
+              <QueueItemAction
+                className="opacity-100"
+                disabled={locked}
+                aria-label={t("common:retry")}
+                title={t("common:retry")}
+                onClick={() => void act({ action: "retry" })}
+              >
+                <RotateCcwIcon />
+              </QueueItemAction>
+            ) : null}
+            <QueueItemAction
+              className="opacity-100"
+              disabled={locked}
+              aria-label={t("chat:prompt.editQueued")}
+              title={t("chat:prompt.editQueued")}
+              onClick={() => {
+                setText(request.text);
+                onEdit(request);
+              }}
+            >
+              <PencilIcon />
             </QueueItemAction>
-          ) : null}
-          <QueueItemAction
-            aria-label={t("chat:prompt.editQueued")}
-            className="opacity-100"
-            onClick={() => onEdit(request)}
-          >
-            <PencilIcon />
-          </QueueItemAction>
-          <QueueItemAction
-            aria-label={t("chat:prompt.removeQueued")}
-            className="opacity-100"
-            onClick={() => onRemove(request.id)}
-          >
-            <Trash2Icon />
-          </QueueItemAction>
-        </QueueItemActions>
+            <QueueItemAction
+              className="opacity-100"
+              disabled={locked}
+              aria-label={t("chat:prompt.removeQueued")}
+              title={t("chat:prompt.removeQueued")}
+              onClick={() => void act({ action: "remove" })}
+            >
+              <Trash2Icon />
+            </QueueItemAction>
+          </QueueItemActions>
+        ) : null}
       </div>
-      {request.files.length > 0 ? (
-        <QueueItemAttachment className="ml-8">
+      {request.files.length || request.skills.length || request.fileReferences.length ? (
+        <QueueItemAttachment className="mt-0 min-w-0 gap-1">
           {request.files.map((file) => (
-            <QueuedFilePreview
-              file={file}
-              key={`${file.url}:${file.filename ?? file.mediaType ?? "file"}`}
-            />
+            <QueuedFilePreview file={file} key={file.url} />
+          ))}
+          {request.skills.map((name) => (
+            <Badge
+              key={name}
+              variant="secondary"
+              className="max-w-full break-all whitespace-normal"
+            >
+              /{name}
+            </Badge>
+          ))}
+          {request.fileReferences.map((file) => (
+            <Badge
+              key={file.id}
+              variant="outline"
+              className="max-w-full break-all whitespace-normal"
+            >
+              @{file.filename}
+            </Badge>
           ))}
         </QueueItemAttachment>
+      ) : null}
+      {request.error ? (
+        <p role="alert" className="text-xs text-destructive break-words">
+          {request.error}
+        </p>
+      ) : null}
+      {editing ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <Textarea
+            autoFocus
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            aria-label={t("chat:prompt.editQueued")}
+            disabled={locked}
+            maxLength={100_000}
+            className="min-h-20 max-h-40 text-sm"
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Escape") {
+                event.preventDefault();
+                onCancelEdit();
+              }
+              if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                event.preventDefault();
+                if (text.trim() || request.files.length || request.skills.length) save();
+              }
+            }}
+          />
+          <p className="text-xs text-muted-foreground break-words">
+            {t(available ? "chat:prompt.queueEditHint" : "chat:prompt.queueAlreadyStarted")}
+          </p>
+          <div className="flex flex-wrap justify-end gap-1">
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={locked}
+              onClick={onCancelEdit}
+            >
+              {t("common:cancel")}
+            </Button>
+            {available ? (
+              <Button
+                type="button"
+                size="xs"
+                disabled={locked || !(text.trim() || request.files.length || request.skills.length)}
+                onClick={save}
+              >
+                {t("chat:prompt.queueSaveAtEnd")}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="xs"
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(text)
+                    .catch((error: unknown) => toast.error(String(error)));
+                }}
+              >
+                <CopyIcon />
+                {t("common:copy")}
+              </Button>
+            )}
+          </div>
+        </div>
       ) : null}
     </QueueItem>
   );
@@ -565,36 +659,25 @@ function SortableRequestItem({
 
 export function UserRequestQueuePanel({
   requests,
-  onRemove,
-  onReorder,
-  onSteerNow,
+  onAction,
+  onEditingChange,
 }: {
   requests: QueuedRequest[];
-  onRemove: (id: string) => void;
-  onReorder: (activeId: string, overId: string) => void;
-  onSteerNow?: (request: QueuedRequest) => void;
+  onAction: (id: string, action: MessageQueueAction) => Promise<void>;
+  onEditingChange: (editing: boolean) => void;
 }) {
   const { t } = useTranslation();
-  const controller = usePromptInputController();
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  if (requests.length === 0) return null;
-
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (over && active.id !== over.id) {
-      onReorder(String(active.id), String(over.id));
-    }
+  const [editing, setEditing] = React.useState<QueuedRequest | null>(null);
+  const edit = (request: QueuedRequest | null) => {
+    setEditing(request);
+    onEditingChange(Boolean(request));
   };
-
-  const handleEdit = (request: QueuedRequest) => {
-    controller.textInput.setInput(request.text);
-    controller.attachments.restore(request.files);
-    onRemove(request.id);
-  };
-
+  // Keep an in-progress edit visible if the original starts running while the user types.
+  const visible =
+    editing && !requests.some((request) => request.id === editing.id)
+      ? [...requests, editing]
+      : requests;
+  if (!visible.length) return null;
   return (
     <QueueSection defaultOpen>
       <QueueSectionTrigger className="px-2 py-1">
@@ -605,24 +688,24 @@ export function UserRequestQueuePanel({
         />
       </QueueSectionTrigger>
       <QueueSectionContent>
-        <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
-          <SortableContext
-            items={requests.map((request) => request.id)}
-            strategy={verticalListSortingStrategy}
-          >
-            <QueueList className="mt-1">
-              {requests.map((request) => (
-                <SortableRequestItem
-                  key={request.id}
-                  onEdit={handleEdit}
-                  onRemove={onRemove}
-                  onSteerNow={onSteerNow}
-                  request={request}
-                />
-              ))}
-            </QueueList>
-          </SortableContext>
-        </DndContext>
+        <p className="px-2 py-1 text-xs text-muted-foreground break-words">
+          {t("chat:prompt.queueDescription")}
+        </p>
+        <ScrollArea className="max-h-64 min-w-0">
+          <QueueList className="mt-0 mb-0">
+            {visible.map((request) => (
+              <QueuedRequestItem
+                key={request.id}
+                request={request}
+                onAction={onAction}
+                onEdit={edit}
+                editing={editing?.id === request.id}
+                onCancelEdit={() => edit(null)}
+                available={requests.some((item) => item.id === request.id)}
+              />
+            ))}
+          </QueueList>
+        </ScrollArea>
       </QueueSectionContent>
     </QueueSection>
   );
@@ -802,6 +885,8 @@ export function ChatPromptInput({
     estimateAttachmentTokens,
     pendingLibraryFiles,
   ]);
+  const currentDraft = React.useRef({ controller, goalMode });
+  currentDraft.current = { controller, goalMode };
   const acceptedFileTypes = [
     ".txt",
     ".md",
@@ -853,8 +938,9 @@ export function ChatPromptInput({
         maxTotalFileTokens={attachmentTokenBudget}
         estimateFileTokens={estimateAttachmentTokens}
         onError={(error) => toast.error(error.message)}
-        onSubmit={(message) =>
-          onSubmit(
+        onSubmit={(message) => {
+          const attachmentIds = controller.attachments.files.map((file) => file.id);
+          return onSubmit(
             {
               ...message,
               text: quotedPrompt(message.text, quotes),
@@ -870,14 +956,22 @@ export function ChatPromptInput({
                   threadId,
                   quotes.map((quote) => quote.id),
                 );
-              controller.textInput.clear();
-              controller.attachments.clear();
-              setSelectedSkills([]);
-              onGoalModeChange(false);
-              setSelectedFileReferences([]);
+              const latest = currentDraft.current;
+              if (latest.controller.textInput.value === message.text)
+                latest.controller.textInput.clear();
+              for (const id of attachmentIds) latest.controller.attachments.remove(id);
+              setSelectedSkills((current) =>
+                current.filter((name) => !selectedSkills.includes(name)),
+              );
+              if (latest.goalMode === goalMode) onGoalModeChange(false);
+              setSelectedFileReferences((current) =>
+                current.filter(
+                  (file) => !selectedFileReferences.some((sent) => sent.id === file.id),
+                ),
+              );
             },
-          )
-        }
+          );
+        }}
       >
         <MessageQuoteCards
           quotes={quotes}

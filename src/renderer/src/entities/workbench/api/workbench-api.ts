@@ -415,6 +415,21 @@ export function workspaceRawFileUrl(threadId: string, resourceId: string, path: 
   return `${MASTRA_SERVER_URL}/work/threads/${encodeURIComponent(threadId)}/raw?${new URLSearchParams({ resourceId, path })}`;
 }
 
+/** 用户内容对象(截图等归档)取回地址;定位字段来自工具输出里的 contentObject 引用 */
+export function contentObjectUrl(
+  userId: string,
+  ref: { objectId: string; kind: string; threadId?: string; contentType?: string },
+): string {
+  return `${MASTRA_SERVER_URL}/work/contents/${encodeURIComponent(ref.objectId)}?${new URLSearchParams(
+    {
+      resourceId: userId,
+      kind: ref.kind,
+      ...(ref.threadId ? { threadId: ref.threadId } : {}),
+      ...(ref.contentType ? { type: ref.contentType } : {}),
+    },
+  )}`;
+}
+
 export async function createWorkspaceEntry(
   threadId: string,
   resourceId: string,

@@ -31,6 +31,74 @@ import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/databa
 const REGISTRY_GATEWAY = new ModelsDevGateway();
 type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
+// One catalog serves both model discovery and runtime memory budgets.
+type Catalog = Record<string, unknown>;
+let catalogCache: { fetchedAt: number; body: Catalog } | undefined;
+let catalogInflight: Promise<Catalog> | undefined;
+let catalogRetryAfter = 0;
+
+export async function fetchModelsDevCatalog(): Promise<Catalog> {
+  if (catalogCache && Date.now() - catalogCache.fetchedAt < 3_600_000) return catalogCache.body;
+  if (Date.now() < catalogRetryAfter) {
+    if (catalogCache) return catalogCache.body;
+    throw new Error("Model catalog is temporarily unavailable");
+  }
+  catalogInflight ??= (async () => {
+    try {
+      const response = await fetch("https://models.dev/api.json", {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`);
+      const body = z.record(z.string(), z.unknown()).parse(await response.json());
+      if (!Object.keys(body).length) throw new Error("Empty model catalog");
+      catalogCache = { fetchedAt: Date.now(), body };
+      return body;
+    } catch (error) {
+      catalogRetryAfter = Date.now() + 60_000;
+      if (catalogCache) return catalogCache.body;
+      throw error;
+    } finally {
+      catalogInflight = undefined;
+    }
+  })();
+  return catalogInflight;
+}
+
+const modelLimitsSchema = z.object({
+  limit: z.object({
+    context: z.number().int().positive(),
+    input: z.number().int().positive().optional(),
+    output: z.number().int().positive().optional(),
+  }),
+});
+
+/** Prefer the selected provider; gateways with the same model ID use the smallest known limits. */
+export async function getModelTokenLimits(requestContext?: { get(key: string): unknown }) {
+  const routerId = await resolveContextModelId(requestContext);
+  if (!routerId) return undefined;
+  const { providerId, modelId } = splitRouterId(routerId);
+  const { providers } = await getProvidersConfig(userIdFromContext(requestContext));
+  const provider = providers.find((item) => item.id === providerId);
+  const catalog = await fetchModelsDevCatalog().catch(() => undefined);
+  if (!catalog) return undefined;
+  const readLimits = (entry: unknown) => {
+    const models = (entry as { models?: Record<string, unknown> } | undefined)?.models;
+    return modelLimitsSchema.safeParse(models?.[modelId]).data?.limit;
+  };
+  const exact = provider?.registryId ? readLimits(catalog[provider.registryId]) : undefined;
+  if (exact) return exact;
+  const matches = Object.values(catalog).flatMap((entry) => {
+    const limits = readLimits(entry);
+    return limits ? [limits] : [];
+  });
+  if (!matches.length) return undefined;
+  return {
+    context: Math.min(...matches.map((limits) => limits.context)),
+    input: Math.min(...matches.map((limits) => limits.input ?? limits.context)),
+    output: Math.min(...matches.map((limits) => limits.output ?? 4_096)),
+  };
+}
+
 /** Keep authenticated library URLs intact until the attachment input processor resolves them. */
 const libraryAttachmentMiddleware: LanguageModelMiddleware = {
   async overrideSupportedUrls({ model }) {
@@ -432,20 +500,25 @@ export async function resolveDefaultLanguageModel(
 }
 
 /** Agent、子 Agent 与 OM 从同一个原生 Session 模型选择解析租户凭据。 */
-export async function resolveContextModel(requestContext?: {
+async function resolveContextModelId(requestContext?: {
   get(key: string): unknown;
-}): Promise<GatewayLanguageModel | undefined> {
+}): Promise<string | undefined> {
   const resourceId = userIdFromContext(requestContext);
   const controller = requestContext?.get("controller") as
     | { session?: { modelId?: string } }
     | undefined;
   if (controller?.session?.modelId) {
-    return resolveRequestModel({ id: controller.session.modelId }, resourceId);
+    return controller.session.modelId;
   }
   const modelId = requestContext?.get(REQUEST_MODEL_ID_CONTEXT_KEY);
-  return typeof modelId === "string" && modelId
-    ? resolveRequestModel({ id: modelId }, resourceId)
-    : resolveDefaultLanguageModel(resourceId);
+  return typeof modelId === "string" && modelId ? modelId : resolveDefaultModelId(resourceId);
+}
+
+export async function resolveContextModel(requestContext?: {
+  get(key: string): unknown;
+}): Promise<GatewayLanguageModel | undefined> {
+  const id = await resolveContextModelId(requestContext);
+  return id ? resolveRequestModel({ id }, userIdFromContext(requestContext)) : undefined;
 }
 
 /** Shared dynamic model for primary agents, delegated agents and observational memory. */

@@ -356,25 +356,15 @@ export function WorkflowRunPanel({
   );
 }
 
-export function AgentQueuePanel({
-  tasks,
-  queuedFollowUps = 0,
-  onClose,
-}: {
-  tasks: AgentTask[];
-  queuedFollowUps?: number;
-  onClose?: () => void;
-}) {
+export function AgentQueuePanel({ tasks, onClose }: { tasks: AgentTask[]; onClose?: () => void }) {
   const { t } = useTranslation();
   // This is the last rendering boundary. Do not assume upstream message or
   // display-state projections were the only producers: reconnects and queued
   // snapshots can still replay the same id directly into this component.
   const visibleTasks = React.useMemo(() => normalizeAgentTasks(tasks), [tasks]);
-  if (visibleTasks.length === 0 && queuedFollowUps === 0) return null;
+  if (visibleTasks.length === 0) return null;
   const completed =
-    visibleTasks.length > 0 &&
-    visibleTasks.every((task) => task.status === "completed") &&
-    queuedFollowUps === 0;
+    visibleTasks.length > 0 && visibleTasks.every((task) => task.status === "completed");
 
   return (
     <>
@@ -435,17 +425,6 @@ export function AgentQueuePanel({
               })}
             </QueueList>
           </QueueSectionContent>
-        </QueueSection>
-      ) : null}
-      {queuedFollowUps > 0 ? (
-        <QueueSection defaultOpen>
-          <QueueSectionTrigger className="px-2 py-1">
-            <QueueSectionLabel
-              count={queuedFollowUps}
-              label={t("chat:panels.followUp")}
-              icon={<SparklesIcon className="size-4" />}
-            />
-          </QueueSectionTrigger>
         </QueueSection>
       ) : null}
     </>

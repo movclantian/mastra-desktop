@@ -544,13 +544,26 @@ export async function getManagedSkillPaths(resourceId?: string): Promise<string[
   return paths;
 }
 
-// Workspace 实例按路径缓存:BM25 索引 / LSP 客户端初始化昂贵,
-// 同一线程多次请求必须复用同一实例(workspace-class.mdx 单实例语义)。
-/**
- * 获取(或创建并缓存)指定目录的 Workspace 实例。
- * Agent 的动态 workspace 函数按 requestContext 里的线程工作区路径调用;
- * 每个实例的 filesystem/sandbox 都 contained 在该目录内。
- */
+/** Agent tools and the editor share the same tenant-scoped filesystem access. */
+export function createWorkspaceFilesystem(
+  workspacePath: string,
+  config: WorkspaceUserConfig,
+  resourceId?: string,
+  threadId?: string,
+): LocalFilesystem {
+  return new LocalFilesystem({
+    basePath: workspacePath,
+    contained: true,
+    readOnly: config.readOnly,
+    allowedPaths: [
+      ...config.allowedPaths,
+      ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
+      getManagedSkillsDirectory(resourceId),
+    ],
+  });
+}
+
+/** Reuse each thread's Workspace, including its BM25 index and LSP clients. */
 export async function getThreadWorkspace(
   workspacePath: string,
   threadId?: string,
@@ -576,17 +589,7 @@ export async function getThreadWorkspace(
       }
     }
 
-    const managedSkillsDirectory = getManagedSkillsDirectory(resourceId);
-    const allowedPaths = [
-      ...config.allowedPaths,
-      ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
-      managedSkillsDirectory,
-    ];
-    const filesystem = new LocalFilesystem({
-      basePath: workspacePath,
-      ...(allowedPaths.length ? { allowedPaths } : {}),
-      ...(config.readOnly ? { readOnly: true } : {}),
-    });
+    const filesystem = createWorkspaceFilesystem(workspacePath, config, resourceId, threadId);
     const changeHooks = createWorkspaceChangeHooks(filesystem);
     const outputArchive = createWorkspaceOutputArchiveHooks();
     // Keep Mastra's tools, read-before-write tracking and locking; enforce mode scope in its hook.

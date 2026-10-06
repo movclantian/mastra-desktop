@@ -17,6 +17,7 @@ import { errorText, workError } from "../errors";
 import { resolveConfiguredModel, splitRouterId } from "../models/providers";
 import { appStorage } from "../storage/database";
 import { ensureTaskExecutorAvailable } from "./background-tasks";
+import { getSessionMessageQueue } from "./message-queue";
 import {
   prepareWorkbenchMessage,
   type SessionRouteResult,
@@ -338,6 +339,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   const objective = await agent.getObjective({ threadId: result.threadId });
   return {
     ...displayState,
+    queuedRequests: getSessionMessageQueue(result.controllerSession),
     activeTools: Object.fromEntries(displayState.activeTools),
     toolInputBuffers: Object.fromEntries(displayState.toolInputBuffers),
     pendingSuspensions: Object.fromEntries(displayState.pendingSuspensions),

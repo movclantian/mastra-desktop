@@ -11,10 +11,9 @@
  * - generateTitle                               → message-history.mdx
  * - observationalMemory(顶层 + observation/reflection 深层子项)
  *   → observational-memory.mdx:
- *   模型跟随当前请求、scope、temporalMarkers、
+ *   模型跟随当前请求，OM 固定使用官方推荐的 thread scope、temporalMarkers、
  *   retrieval{vector,scope};observation.instruction/threadTitle/manageWorkingMemory/
- *   observeAttachments/messageTokens/maxTokensPerBatch/modelSettings{temperature,
- *   maxOutputTokens}/bufferTokens;reflection.instruction/observationTokens。
+ *   observeAttachments/modelSettings.temperature；token 预算自动按当前模型派生。
  *   observation.extract(Extractor[])与 reflection.extract(Extractor[]) 可由设置面板配置；
  *   任意 schema/hook 仍保留为代码级扩展点,不允许普通 JSON 设置执行任意代码。
  */
@@ -24,7 +23,7 @@ import { fastembed } from "@mastra/fastembed";
 import { LibSQLVector } from "@mastra/libsql";
 import { Extractor, Memory } from "@mastra/memory";
 import { z } from "zod";
-import { resolveAgentModel } from "../models/providers";
+import { getModelTokenLimits, resolveAgentModel } from "../models/providers";
 import {
   appStorage,
   getAppConfig,
@@ -35,7 +34,6 @@ import {
 } from "../storage/database";
 
 const MEMORY_CONFIG_KEY = "memory";
-const DEFAULT_OM_MESSAGE_TOKENS = 16_000;
 // OM's main output is XML; only its subsequent structured extraction requests JSON.
 // The same instruction is retained by the native observer/reflector extraction agents.
 const OM_STRUCTURED_OUTPUT_INSTRUCTION =
@@ -99,8 +97,6 @@ export const memoryConfigSchema = z
     generateTitle: z.boolean(),
     /** options.observationalMemory — 观察记忆(长上下文自动观察/反思) */
     observationalMemory: z.boolean(),
-    /** options.observationalMemory.scope — thread / resource(跨线程共享) */
-    omScope: z.enum(["thread", "resource"]),
     /** options.observationalMemory.temporalMarkers — ≥10min 间隔插入时间标记 */
     omTemporalMarkers: z.boolean(),
     /** observation.instruction — 追加到 Observer 系统提示的自定义指令 */
@@ -113,20 +109,10 @@ export const memoryConfigSchema = z
     omManageWorkingMemory: z.boolean(),
     /** observation.observeAttachments — 附件转发给 Observer:on / off / auto(按模型多模态能力) */
     omObserveAttachments: z.enum(["auto", "on", "off"]),
-    /** observation.messageTokens — 触发观察的 token 阈值(默认 16K;设置页按模型派生) */
-    omMessageTokens: z.number().int().min(0).max(250000),
-    /** observation.maxTokensPerBatch — resource 侧多线程批量观察的批大小(0 = 库默认 10000) */
-    omMaxTokensPerBatch: z.number().int().min(0).max(2000000),
     /** observation.modelSettings.temperature — Observer 温度(库默认 0.3) */
     omTemperature: z.number().min(0).max(2),
-    /** observation.modelSettings.maxOutputTokens — Observer 输出上限(0 = 库默认) */
-    omMaxOutputTokens: z.number().int().min(0).max(500000),
-    /** observation.bufferTokens — 异步缓冲频率(<1 为 messageTokens 比例,≥1 为绝对值) */
-    omBufferTokens: z.number().min(0).max(500000),
     /** 关闭 observation.bufferTokens(官方 false = 禁用全部异步缓冲) */
     omBufferEnabled: z.boolean(),
-    /** reflection.observationTokens — 触发反思的观察 token 阈值(0 = 库默认 40000) */
-    omObservationTokens: z.number().int().min(0).max(2000000),
     /** options.observationalMemory.retrieval — 注册 recall 工具回查原始消息 */
     omRetrieval: z.boolean(),
     /** retrieval.vector — recall 同时启用语义检索(用 Memory 的 vector + embedder) */
@@ -195,9 +181,8 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   workingMemorySchema: DEFAULT_WORKING_MEMORY_SCHEMA,
   // 标题是独立的异步调用,默认开启以便线程列表可读。
   generateTitle: true,
-  // 长对话默认启用 OM;由设置页按当前模型写入 messageTokens。
+  // 长对话默认启用 OM；预算由当前请求模型的上下文容量决定。
   observationalMemory: true,
-  omScope: "thread",
   // 长时间间隔的时间标记成本很低,默认开启以避免跨天对话失去时间感。
   omTemporalMarkers: true,
   omObserverInstruction: "",
@@ -205,16 +190,9 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   omThreadTitle: false,
   omManageWorkingMemory: false,
   omObserveAttachments: "auto",
-  // 已知模型时由前端按最小模型窗口派生约 50%;未知模型先使用安全的 16K 回退。
-  omMessageTokens: DEFAULT_OM_MESSAGE_TOKENS,
-  omMaxTokensPerBatch: 0,
   // omTemperature:0.3 为官方默认值(observational-memory.mdx: observation.modelSettings.temperature defaultValue='0.3')。
   omTemperature: 0.3,
-  omMaxOutputTokens: 0,
-  // omBufferTokens:0.2 为官方默认值(observational-memory.mdx: bufferTokens defaultValue='0.2')。
-  omBufferTokens: 0.2,
   omBufferEnabled: true,
-  omObservationTokens: 0,
   omRetrieval: false,
   omRetrievalVector: false,
   omRetrievalScope: "resource",
@@ -270,14 +248,12 @@ export async function saveMemoryConfig(next: MemoryUserConfig, resourceId?: stri
   await setAppConfig(MEMORY_CONFIG_KEY, JSON.stringify(normalized, null, 2), resourceId);
   memoryConfigByScope.set(memoryScopeKey(resourceId), normalized);
   const runtime = getMemoryRuntime(resourceId);
-  if (runtime.cachedMemory) retiredMemories.add(runtime.cachedMemory);
-  for (const memory of runtime.memoryByScope.values()) retiredMemories.add(memory);
-  runtime.cachedMemory = null;
-  runtime.memoryByScope.clear();
+  for (const memory of runtime.memoryByBudget.values()) retiredMemories.add(memory);
+  runtime.memoryByBudget.clear();
 }
 
 function normalizeMemoryConfig(input: Partial<MemoryUserConfig>): MemoryUserConfig {
-  return memoryConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
+  return memoryConfigSchema.strip().parse({ ...DEFAULT_CONFIG, ...input });
 }
 
 /** 解析 schema 文本为 JSON Schema 对象;非法 JSON 或非对象时返回 undefined */
@@ -322,8 +298,7 @@ function dedupeExtractors(
 }
 
 interface MemoryRuntime {
-  cachedMemory: Memory | null;
-  memoryByScope: Map<string, Memory>;
+  memoryByBudget: Map<string, Memory>;
 }
 
 const memoryRuntimeByScope = new Map<string, MemoryRuntime>();
@@ -337,7 +312,7 @@ function getMemoryRuntime(resourceId?: string): MemoryRuntime {
   const scope = memoryScopeKey(resourceId);
   let runtime = memoryRuntimeByScope.get(scope);
   if (!runtime) {
-    runtime = { cachedMemory: null, memoryByScope: new Map() };
+    runtime = { memoryByBudget: new Map() };
     memoryRuntimeByScope.set(scope, runtime);
   }
   return runtime;
@@ -345,6 +320,23 @@ function getMemoryRuntime(resourceId?: string): MemoryRuntime {
 
 interface MemoryBuildOverrides {
   memoryScope?: "thread" | "resource";
+  budget: { messageTokens: number; observationTokens: number; maxOutputTokens: number };
+}
+
+/** Leave room for model output, system/tools and OM's default 1.2× buffering headroom. */
+function memoryTokenBudget(limits: Awaited<ReturnType<typeof getModelTokenLimits>>) {
+  // An unlisted model has no discoverable capacity; use a conservative 32K planning window.
+  const context = limits?.context ?? 32_768;
+  const outputReserve = Math.min(limits?.output ?? context / 4, context / 2);
+  const input = Math.min(limits?.input ?? context, context - outputReserve);
+  return {
+    messageTokens: Math.max(1, Math.floor(input * 0.4)),
+    observationTokens: Math.max(1, Math.floor(input * 0.2)),
+    maxOutputTokens: Math.max(
+      1,
+      Math.floor(Math.min(limits?.output ?? 8_192, input * 0.1, 16_384)),
+    ),
+  };
 }
 
 /**
@@ -358,23 +350,24 @@ export async function getMemory(options?: {
   const resourceId = userIdFromContext(options?.requestContext as RequestContextLike);
   const config = await getMemoryConfig(resourceId);
   const runtime = getMemoryRuntime(resourceId);
-  if (options?.memoryScope) {
-    const existing = runtime.memoryByScope.get(options.memoryScope);
-    if (existing) return existing;
-    const memory = buildMemory(config, { memoryScope: options.memoryScope });
-    runtime.memoryByScope.set(options.memoryScope, memory);
-    return memory;
+  const budget = memoryTokenBudget(
+    config.observationalMemory ? await getModelTokenLimits(options?.requestContext) : undefined,
+  );
+  // Share by capacity, not thread/model identity; two simultaneous models retain their own budgets.
+  const key = JSON.stringify([options?.memoryScope ?? "default", budget]);
+  let memory = runtime.memoryByBudget.get(key);
+  if (!memory) {
+    memory = buildMemory(config, { memoryScope: options?.memoryScope, budget });
+    runtime.memoryByBudget.set(key, memory);
   }
-  if (!runtime.cachedMemory) runtime.cachedMemory = buildMemory(config, {});
-  return runtime.cachedMemory;
+  return memory;
 }
 
 /** Call only after the relevant runs return; includes every retired configuration. */
 export async function settleAllMemory(): Promise<void> {
   const instances = new Set(retiredMemories);
   for (const runtime of memoryRuntimeByScope.values()) {
-    if (runtime.cachedMemory) instances.add(runtime.cachedMemory);
-    for (const memory of runtime.memoryByScope.values()) instances.add(memory);
+    for (const memory of runtime.memoryByBudget.values()) instances.add(memory);
   }
   await Promise.all([...instances].map((memory) => memory.settled()));
 }
@@ -387,7 +380,7 @@ export async function closeMemoryVector(): Promise<void> {
 function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides): Memory {
   const semanticRecallScope = overrides.memoryScope ?? config.semanticRecallScope;
   const workingMemoryScope = overrides.memoryScope ?? config.workingMemoryScope;
-  const observationalMemoryScope = overrides.memoryScope ?? config.omScope;
+  const { budget } = overrides;
   // 自定义抽取器(observational-memory.mdx「Extractor API」):schema 省略 =
   // 内联字符串抽取,Observer/Reflector 主输出顺带产出,无额外结构化调用。
   // 同批 name 去重(官方按 name 生成 slug,重名会在运行时报冲突)。
@@ -471,10 +464,10 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
         ? {
             observationalMemory: {
               model: resolveAgentModel,
-              scope: observationalMemoryScope,
+              scope: "thread",
               // 压缩时机对齐前缀缓存的生命周期:'auto' 用供应商的 prompt cache TTL 作为
               // 空闲阈值,让"折叠旧消息"发生在缓存本来就已过期之后,而不是在缓存还热的时候
-              // 把前缀砸掉。本 App 允许同线程中途换模型(见 agents/index.ts 的动态 model),
+              // 把前缀砸掉。本 App 允许同线程中途换模型(见 agents/work-agent.ts 的动态 model),
               // 换模型时缓存必然失效 —— activateOnProviderChange 让压缩正好搭这趟车。
               activateAfterIdle: "auto" as const,
               activateOnProviderChange: true,
@@ -500,20 +493,13 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
                   config.omObserveAttachments === "auto"
                     ? ("auto" as const)
                     : config.omObserveAttachments === "on",
-                ...(config.omMessageTokens > 0 ? { messageTokens: config.omMessageTokens } : {}),
-                ...(config.omMaxTokensPerBatch > 0
-                  ? { maxTokensPerBatch: config.omMaxTokensPerBatch }
-                  : {}),
+                messageTokens: budget.messageTokens,
                 modelSettings: {
                   temperature: config.omTemperature,
-                  ...(config.omMaxOutputTokens > 0
-                    ? { maxOutputTokens: config.omMaxOutputTokens }
-                    : {}),
+                  maxOutputTokens: budget.maxOutputTokens,
                 },
-                // 官方默认 0.2(messageTokens 的 20%);关闭时显式传 false
-                ...(config.omBufferEnabled
-                  ? { bufferTokens: config.omBufferTokens }
-                  : { bufferTokens: false }),
+                // Official relative buffering scales with this instance's model budget.
+                bufferTokens: config.omBufferEnabled ? 0.2 : false,
                 ...(observationExtract.length > 0 ? { extract: observationExtract } : {}),
               },
               reflection: {
@@ -524,9 +510,8 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
                 ]
                   .filter(Boolean)
                   .join("\n\n"),
-                ...(config.omObservationTokens > 0
-                  ? { observationTokens: config.omObservationTokens }
-                  : {}),
+                observationTokens: budget.observationTokens,
+                modelSettings: { maxOutputTokens: budget.maxOutputTokens },
                 ...(reflectionExtract.length > 0 ? { extract: reflectionExtract } : {}),
               },
             },

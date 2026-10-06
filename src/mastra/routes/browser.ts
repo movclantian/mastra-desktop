@@ -5,6 +5,7 @@
  */
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
+import { z } from "zod";
 import {
   BrowserActionRequestSchema,
   BrowserKeyboardBatchRequestSchema,
@@ -215,9 +216,6 @@ export const browserScreencastRoute = registerApiRoute(
       const owned = await ownedBrowserThread(c);
       if (!owned) throw workError("THREAD_NOT_FOUND");
       const { browser, threadId, resourceId } = owned;
-      const browserConfig = await getBrowserConfig(resourceId);
-      const frameViewport =
-        browserConfig.viewport === "window" ? { width: 1280, height: 720 } : browserConfig.viewport;
       let screencast: Awaited<ReturnType<typeof browser.startScreencast>>;
       try {
         await ensureBrowserTab(browser, resourceId, threadId);
@@ -316,10 +314,23 @@ export const browserScreencastRoute = registerApiRoute(
             try {
               const snapshot = await browser.screenshot({ fullPage: false }, threadId);
               if (disposed || stopped || !("base64" in snapshot)) return;
+              const size = await browser.evaluate(
+                {
+                  script: "({ width: window.innerWidth, height: window.innerHeight })",
+                },
+                threadId,
+              );
+              if (disposed || stopped || !("result" in size)) return;
+              const viewport = z
+                .object({
+                  width: z.number().positive(),
+                  height: z.number().positive(),
+                })
+                .parse(size.result);
               send("frame", {
                 data: snapshot.base64,
                 timestamp: Date.now(),
-                viewport: frameViewport,
+                viewport,
               });
             } catch {
               // The live screencast remains the primary source. A snapshot

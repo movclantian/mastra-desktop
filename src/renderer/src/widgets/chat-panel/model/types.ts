@@ -176,13 +176,10 @@ export interface AgentTask {
   status: "pending" | "in_progress" | "completed";
 }
 
-export interface QueuedRequest {
-  id: string;
-  text: string;
-  files: FileUIPart[];
-  skills?: string[];
-  fileReferences?: MessageFileReference[];
-}
+export type {
+  MessageQueueAction,
+  QueuedMessage as QueuedRequest,
+} from "../../../../../shared/agent-contract";
 
 export type LibraryFilePart = FileUIPart & { byteSize?: number };
 

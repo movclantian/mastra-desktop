@@ -11,7 +11,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -93,34 +92,51 @@ export function HelpTooltip({ content, label }: { content: string; label: string
   );
 }
 
-export function ConfirmDialog({
-  trigger,
+/** 开启前确认，关闭直接生效；保持开关挂载以便弹窗关闭后恢复焦点。 */
+export function ConfirmSwitch({
+  checked,
+  label,
   title,
   description,
   cancelLabel,
   confirmLabel,
-  onConfirm,
-  destructive = false,
+  onCheckedChange,
 }: {
-  trigger: React.ReactElement;
+  checked: boolean;
+  label: string;
   title: string;
   description: string;
   cancelLabel: string;
   confirmLabel: string;
-  onConfirm: () => void;
-  destructive?: boolean;
+  onCheckedChange: (checked: boolean) => void;
 }) {
+  const [open, setOpen] = React.useState(false);
+  const switchRef = React.useRef<HTMLSpanElement>(null);
+
   return (
-    <AlertDialog>
-      <AlertDialogTrigger render={trigger} />
-      <AlertDialogContent>
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Switch
+        ref={switchRef}
+        checked={checked}
+        aria-label={label}
+        onCheckedChange={(nextChecked) => {
+          if (nextChecked) setOpen(true);
+          else onCheckedChange(false);
+        }}
+      />
+      <AlertDialogContent finalFocus={switchRef}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>{cancelLabel}</AlertDialogCancel>
-          <AlertDialogAction variant={destructive ? "destructive" : "default"} onClick={onConfirm}>
+          <AlertDialogAction
+            onClick={() => {
+              onCheckedChange(true);
+              setOpen(false);
+            }}
+          >
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

@@ -1,5 +1,24 @@
 import { z } from "zod";
 
+/** Workbench projection of pending native Agent signals, never a second execution queue. */
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  files: Array<{ type: "file"; url: string; mediaType: string; filename?: string }>;
+  skills: string[];
+  fileReferences: Array<{ id: string; filename: string; url: string; mediaType?: string }>;
+  status: "queued" | "sending" | "failed";
+  busy: boolean;
+  error?: string;
+}
+export const messageQueueActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("remove") }).strict(),
+  z.object({ action: z.literal("steer") }).strict(),
+  z.object({ action: z.literal("retry") }).strict(),
+  z.object({ action: z.literal("edit"), text: z.string().trim().max(100_000) }).strict(),
+]);
+export type MessageQueueAction = z.infer<typeof messageQueueActionSchema>;
+
 const identifier = z
   .string()
   .trim()

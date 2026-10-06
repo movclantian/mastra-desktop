@@ -23,7 +23,7 @@ import { closeDeletedThreadBrowserView } from "../close-deleted-thread-browser-v
 import { qk } from "../query-keys";
 import type { WorkModeId } from "../session";
 import { ACTIVE_THREAD_KEY, userStorageKey } from "../storage";
-import type { WorkThread } from "../types";
+import { threadActivityAt, type WorkThread } from "../types";
 import { useWorkbenchStore } from "../workbench-store";
 
 export function useThreadsQuery(userId: string) {
@@ -176,7 +176,10 @@ export function useDeleteThreadMutation(userId: string) {
   const queryClient = useQueryClient();
   const selectThread = useSelectThread();
   return useMutation({
-    mutationFn: (threadId: string) => deleteThreadRequest(threadId, userId),
+    mutationFn: async (threadId: string) => {
+      await window.api?.terminal?.closeThread({ resourceId: userId, threadId });
+      return deleteThreadRequest(threadId, userId);
+    },
     onSuccess: async (_data, threadId) => {
       await closeDeletedThreadBrowserView(window.api?.browserView, {
         resourceId: userId,
@@ -268,7 +271,7 @@ export function useSyncThreadToStore(threadId: string | null): void {
 
 /**
  * 首屏兜底解析(原 refreshThreads 的 resolve 语义):线程列表首次到位后,
- * 若既无 URL thread 也无有效 localStorage thread,选中最近更新的线程。
+ * 若既无 URL thread 也无有效 localStorage thread,选中最近发起请求的线程。
  * 仅触发一次;之后的失效刷新不会误切线程。
  */
 export function useActiveThreadResolver(threads: WorkThread[]): void {
@@ -282,8 +285,10 @@ export function useActiveThreadResolver(threads: WorkThread[]): void {
     resolvedRef.current = true;
     const current = urlThread ?? useWorkbenchStore.getState().lastKnownThreadId;
     if (current && threads.some((thread) => thread.id === current)) return;
-    const latest = [...threads].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt),
+    const latest = [...threads].sort(
+      (left, right) =>
+        threadActivityAt(right).localeCompare(threadActivityAt(left)) ||
+        left.id.localeCompare(right.id),
     )[0];
     if (latest) selectThread(latest.id);
   }, [selectThread, threads, urlThread]);

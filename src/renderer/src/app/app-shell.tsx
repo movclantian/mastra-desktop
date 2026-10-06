@@ -20,6 +20,7 @@ import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
 import { warmChatAvatars } from "@/widgets/chat-panel/ui/avatars";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
+import { BrowserGuestLayer } from "@/widgets/workspace-drawer/ui/browser-guest-layer";
 
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
   return (
@@ -93,6 +94,15 @@ function drawerHandleProps(open: boolean) {
  * hash 路由刷新/崩溃恢复后仍能还原当前视图;客户端 UI 态来自 zustand store。
  */
 export function RootShell() {
+  return (
+    <>
+      <WorkbenchShell />
+      <BrowserGuestLayer />
+    </>
+  );
+}
+
+function WorkbenchShell() {
   const { user } = useAuth();
   const location = useLocation();
   const activeView = viewFromPath(location.pathname);

@@ -42,7 +42,7 @@ function patchThreadInCache(
   updater: (thread: WorkThread) => WorkThread,
 ): void {
   queryClient.setQueryData<WorkThread[]>(qk.threads(userId), (current) =>
-    current?.map((thread) => (thread.id === threadId ? updater(thread) : thread)),
+    current?.map((thread) => (thread.id === threadId ? { ...thread, ...updater(thread) } : thread)),
   );
 }
 

@@ -25,6 +25,7 @@ import type {
   ScreencastOptions,
   ScreencastStream,
 } from "@mastra/core/browser";
+import { createTool } from "@mastra/core/tools";
 import {
   type BrowserConfig,
   BrowserConfigSchema,
@@ -53,53 +54,55 @@ export async function mergeBrowserToolsForThread<T extends object>(
   if (typeof threadId !== "string" || !threadId.trim()) return tools;
   const browser = await resolveBrowser();
   const browserTools = browser.getTools();
-  // Memory threads of team members differ from the visible workspace thread.
-  for (const tool of Object.values(browserTools)) {
+  // createTool supplies the public, organized context before we bind the page.
+  // Replacing Tool.execute directly intercepts the framework's internal flat context.
+  for (const [name, tool] of Object.entries(browserTools)) {
     const execute = tool.execute;
-    if (execute)
-      tool.execute = (input, context) =>
-        execute(input, {
+    if (!execute) continue;
+    browserTools[name] = createTool({
+      ...tool,
+      execute: async (input, context) => {
+        const result = await execute(input, {
           ...context,
           agent: context?.agent ? { ...context.agent, threadId } : undefined,
         });
-  }
-  const screenshot = browserTools.browser_screenshot;
-  const capture = screenshot?.execute;
-  if (screenshot && capture) {
-    const errorOutput = screenshot.toModelOutput;
-    screenshot.execute = async (input, context) => {
-      const result = await capture(input, context);
-      if (
-        !result ||
-        typeof result !== "object" ||
-        !("base64" in result) ||
-        typeof result.base64 !== "string"
-      )
-        return result;
-      const { base64, ...metadata } = result;
-      const userId = userIdFromContext(context?.requestContext);
-      if (!userId) throw new Error("Screenshot storage requires an authenticated user");
-      const image = await putContentObject(Buffer.from(base64, "base64"), {
-        userId,
-        threadId,
-        kind: "screenshot",
-        contentType: "image/png",
-        encoding: "binary",
-      });
-      return {
-        ...metadata,
-        imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${image.objectId}`,
-        contentObject: contentObjectReference(image),
-      };
-    };
-    screenshot.toModelOutput = (output) => {
-      if (!output || typeof output !== "object" || !("imageUrl" in output))
-        return errorOutput?.(output);
-      return {
-        type: "content",
-        value: [{ type: "image-url", url: output.imageUrl, mediaType: "image/png" }],
-      };
-    };
+        if (
+          name !== "browser_screenshot" ||
+          !result ||
+          typeof result !== "object" ||
+          !("base64" in result) ||
+          typeof result.base64 !== "string"
+        )
+          return result;
+        const { base64, ...metadata } = result;
+        const userId = userIdFromContext(context?.requestContext);
+        if (!userId) throw new Error("Screenshot storage requires an authenticated user");
+        const image = await putContentObject(Buffer.from(base64, "base64"), {
+          userId,
+          threadId,
+          kind: "screenshot",
+          contentType: "image/png",
+          encoding: "binary",
+        });
+        return {
+          ...metadata,
+          imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${image.objectId}`,
+          contentObject: contentObjectReference(image),
+        };
+      },
+      ...(name === "browser_screenshot"
+        ? {
+            toModelOutput: (output: unknown) => {
+              if (!output || typeof output !== "object" || !("imageUrl" in output))
+                return tool.toModelOutput?.(output);
+              return {
+                type: "content",
+                value: [{ type: "image-url", url: output.imageUrl, mediaType: "image/png" }],
+              };
+            },
+          }
+        : {}),
+    });
   }
   Object.assign(tools, browserTools);
   return tools;
@@ -146,7 +149,7 @@ export async function saveBrowserConfig(
 function commonOptions(config: BrowserConfig) {
   return {
     scope: config.scope,
-    viewport: config.viewport,
+    viewport: "window" as const,
     timeout: config.timeout,
     screencast: {
       format: "jpeg" as const,
@@ -163,6 +166,7 @@ const HAS_NATIVE_BROWSER_AGENT_BRIDGE = Boolean(
 );
 
 export class NativeElectronAgentBrowser extends AgentBrowser {
+  private readonly operationTimeout: number;
   private readonly knownThreads = new Set<string>();
   private readonly states = new Map<string, MastraBrowserState>();
 
@@ -172,6 +176,7 @@ export class NativeElectronAgentBrowser extends AgentBrowser {
     threadId: string,
   ) {
     super({ ...options, scope: "shared" });
+    this.operationTimeout = options.timeout ?? 30_000;
     this.setCurrentThread(threadId);
     this.status = "ready";
   }
@@ -330,11 +335,10 @@ export class NativeElectronAgentBrowser extends AgentBrowser {
     operation: NativeBrowserAgentOperation,
     input?: Record<string, unknown>,
   ): Promise<T> {
-    return executeNativeBrowserCommand<T>(
-      { resourceId: this.resourceId, threadId },
-      operation,
-      input,
-    );
+    return executeNativeBrowserCommand<T>({ resourceId: this.resourceId, threadId }, operation, {
+      timeout: this.operationTimeout,
+      ...input,
+    });
   }
 
   private async invoke<K extends Exclude<NativeBrowserAgentOperation, "state">>(
@@ -553,7 +557,7 @@ async function executeNativeBrowserCommand<T = unknown>(
       reject(error);
     };
     socket.setEncoding("utf8");
-    socket.setTimeout(65_000, () => socket.destroy(new Error("Native browser command timed out")));
+    socket.setTimeout(305_000, () => socket.destroy(new Error("Native browser command timed out")));
     socket.once("connect", () => socket.write(payload));
     socket.on("data", (chunk: string) => {
       response += chunk;

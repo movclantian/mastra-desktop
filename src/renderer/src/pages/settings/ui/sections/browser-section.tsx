@@ -1,6 +1,8 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth";
+import { browserConfigQueryOptions, saveBrowserConfig } from "@/shared/api";
 import {
   getBrowserSearchEnginePreference,
   setBrowserSearchEnginePreference,
@@ -15,7 +17,6 @@ import {
   DEFAULT_BROWSER_CONFIG,
 } from "../../../../../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../../../../../shared/credential-contract";
-import { fetchBrowserConfig, saveBrowserConfig } from "../../api/settings-api";
 import { SettingCard, SettingRow } from "../controls";
 
 export function BrowserSection() {
@@ -27,23 +28,26 @@ export function BrowserSection() {
   );
   const [draft, setDraft] = React.useState(DEFAULT_BROWSER_CONFIG);
   const [firecrawlKey, setFirecrawlKey] = React.useState("");
-  const [loaded, setLoaded] = React.useState(false);
+  const queryClient = useQueryClient();
+  const configQuery = useQuery(browserConfigQueryOptions(userId));
+  const loaded = configQuery.isSuccess;
+  const [saving, setSaving] = React.useState(false);
+  const draftRef = React.useRef(draft);
+  draftRef.current = draft;
   const [dirty, setDirty] = React.useState(false);
 
   React.useEffect(() => {
-    void fetchBrowserConfig()
-      .then((config) => setDraft(config))
-      .catch(() => toast.error(t("settings:browser.loadFailed")))
-      .finally(() => setLoaded(true));
-  }, [t]);
+    if (configQuery.data && !dirty) setDraft(configQuery.data);
+  }, [configQuery.data, dirty]);
 
   React.useEffect(() => {
     setSearchEngine(getBrowserSearchEnginePreference(userId));
   }, [userId]);
 
   React.useEffect(() => {
-    if (!loaded || !dirty) return;
+    if (!loaded || !dirty || saving) return;
     const timer = window.setTimeout(() => {
+      setSaving(true);
       void (async () => {
         let next = draft;
         const value = firecrawlKey.trim();
@@ -54,14 +58,22 @@ export function BrowserSection() {
           });
           next = { ...next, firecrawl: { ...next.firecrawl, credential } };
         }
-        const saved = await saveBrowserConfig(next);
-        setDraft(saved);
-        setFirecrawlKey("");
-        setDirty(false);
-      })().catch(() => toast.error(t("settings:browser.saveFailed")));
+        const saved = await saveBrowserConfig(userId, next);
+        queryClient.setQueryData(browserConfigQueryOptions(userId).queryKey, saved);
+        if (draftRef.current === draft) {
+          setDraft(saved);
+          setFirecrawlKey("");
+          setDirty(false);
+        }
+      })()
+        .catch(() => {
+          setDirty(false);
+          toast.error(t("settings:browser.saveFailed"));
+        })
+        .finally(() => setSaving(false));
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [dirty, draft, firecrawlKey, loaded, t]);
+  }, [dirty, draft, firecrawlKey, loaded, saving, t, userId, queryClient]);
 
   const update = (change: (current: BrowserConfig) => BrowserConfig) => {
     setDraft(change);
@@ -109,58 +121,6 @@ export function BrowserSection() {
               <SelectItem value="shared">{t("settings:browser.scopeShared")}</SelectItem>
             </SelectContent>
           </Select>
-        </SettingRow>
-        <SettingRow title={t("settings:browser.viewport")}>
-          <Select
-            value={draft.viewport === "window" ? "window" : "fixed"}
-            onValueChange={(value) =>
-              value &&
-              update((current) => ({
-                ...current,
-                viewport: value === "window" ? "window" : { width: 1280, height: 720 },
-              }))
-            }
-          >
-            <SelectTrigger className="min-w-28">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="fixed">{t("settings:browser.viewportFixed")}</SelectItem>
-              <SelectItem value="window">{t("settings:browser.viewportWindow")}</SelectItem>
-            </SelectContent>
-          </Select>
-          {draft.viewport !== "window" ? (
-            <>
-              <Input
-                className="w-24"
-                type="number"
-                value={draft.viewport.width}
-                onChange={(event) =>
-                  update((current) => ({
-                    ...current,
-                    viewport: {
-                      ...(current.viewport as { width: number; height: number }),
-                      width: Number(event.target.value),
-                    },
-                  }))
-                }
-              />
-              <Input
-                className="w-24"
-                type="number"
-                value={draft.viewport.height}
-                onChange={(event) =>
-                  update((current) => ({
-                    ...current,
-                    viewport: {
-                      ...(current.viewport as { width: number; height: number }),
-                      height: Number(event.target.value),
-                    },
-                  }))
-                }
-              />
-            </>
-          ) : null}
         </SettingRow>
         <SettingRow title={t("settings:browser.timeout")}>
           <Input

@@ -1,6 +1,7 @@
 import type { IpcRenderer } from "electron";
 import {
   TERMINAL_CLOSE_CHANNEL,
+  TERMINAL_CLOSE_THREAD_CHANNEL,
   TERMINAL_CREATE_CHANNEL,
   TERMINAL_EVENT_CHANNEL,
   TERMINAL_RESIZE_CHANNEL,
@@ -13,6 +14,8 @@ import {
   type TerminalResizeRequest,
   TerminalResizeRequestSchema,
   TerminalSessionIdSchema,
+  type TerminalThread,
+  TerminalThreadSchema,
   type TerminalWriteRequest,
   TerminalWriteRequestSchema,
 } from "../../shared/terminal-contract";
@@ -32,6 +35,8 @@ export function createTerminalApi(ipcRenderer: IpcRenderer) {
       ipcRenderer.send(TERMINAL_RESIZE_CHANNEL, TerminalResizeRequestSchema.parse(request)),
     close: (sessionId: string) =>
       ipcRenderer.send(TERMINAL_CLOSE_CHANNEL, TerminalSessionIdSchema.parse(sessionId)),
+    closeThread: (thread: TerminalThread): Promise<void> =>
+      ipcRenderer.invoke(TERMINAL_CLOSE_THREAD_CHANNEL, TerminalThreadSchema.parse(thread)),
     subscribe: (listener: (event: TerminalEvent) => void) => {
       const wrapped = (_event: unknown, value: unknown) => {
         try {

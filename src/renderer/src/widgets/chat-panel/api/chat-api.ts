@@ -1,10 +1,9 @@
 import type { FileUIPart } from "ai";
-import { apiFetch, getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import type {
   BackgroundTaskState,
   LibraryFilePart,
-  MessageFileReference,
   MessageReaction,
   WorkDisplayState,
   WorkUIMessage,
@@ -185,23 +184,5 @@ export async function runWorkflowAction(
   return apiFetch(endpoint, {
     method: "POST",
     ...(action === "resume" ? { body: { resumeData } } : {}),
-  });
-}
-
-export async function enqueueFollowUp(
-  threadId: string,
-  resourceId: string,
-  body: {
-    content: string;
-    modelSettings?: unknown;
-    providerOptions?: unknown;
-    webSearch?: unknown;
-    agentProfileId: string;
-    metadata: { skillNames: string[]; fileReferences: MessageFileReference[] };
-  },
-): Promise<void> {
-  const { content, metadata, ...options } = body;
-  await getWorkbenchClientSession(resourceId, threadId).followUp(content, {
-    requestContext: { "mastra-work:message-options": { ...options, ...metadata } },
   });
 }

@@ -173,7 +173,7 @@ export const FileTreeFolder = ({
             </button>
           </div>
           <CollapsibleContent>
-            <div className="ml-2 border-l">{children}</div>
+            <div className="ml-2">{children}</div>
           </CollapsibleContent>
         </div>
       </Collapsible>
