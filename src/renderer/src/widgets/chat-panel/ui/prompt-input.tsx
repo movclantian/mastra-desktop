@@ -82,6 +82,7 @@ import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../
 import { type MessageFileReference, type QueuedRequest, referenceBadgeClass } from "../model/types";
 import { ComposerMenu } from "./composer-menu";
 import { ChatContextUsage } from "./context-usage";
+import { MessageQuoteCards, quotedPrompt, useMessageQuotes } from "./message-selection";
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
 
@@ -637,9 +638,13 @@ export function ChatPromptInput({
   attachmentTokenBudget,
   attachmentCapabilities,
   goalAvailable,
+  goalMode,
+  onGoalModeChange,
 }: {
   activeThread: boolean;
   goalAvailable: boolean;
+  goalMode: boolean;
+  onGoalModeChange: (enabled: boolean) => void;
   usage: LanguageModelUsage | undefined;
   billingUsage?: LanguageModelUsage;
   onSubmit: (
@@ -670,6 +675,12 @@ export function ChatPromptInput({
   const pendingPrompt = useWorkbenchStore((state) => state.pendingPrompt);
   const setPendingPrompt = useWorkbenchStore((state) => state.setPendingPrompt);
   const reportPromptMinWidth = useWorkbenchStore((state) => state.reportPromptMinWidth);
+  const threadId = useWorkbenchStore((state) => state.lastKnownThreadId);
+  const quotes = useMessageQuotes(threadId);
+  const removeQuotes = useWorkbenchStore((state) => state.removeMessageQuotes);
+  React.useEffect(() => {
+    if (quotes.length) footerRef.current?.closest("form")?.querySelector("textarea")?.focus();
+  }, [quotes]);
   // 工具组可以换行；面板最小宽度取较宽一组的自然宽度与内距。
   const footerRef = React.useRef<HTMLDivElement>(null);
   const lastReportedPromptWidthRef = React.useRef<number | null>(null);
@@ -725,10 +736,6 @@ export function ChatPromptInput({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [reportPromptMinWidth]);
-  const [goalMode, setGoalMode] = React.useState(false);
-  React.useEffect(() => {
-    if (!goalAvailable) setGoalMode(false);
-  }, [goalAvailable]);
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<
     MessageFileReference[]
@@ -850,7 +857,7 @@ export function ChatPromptInput({
           onSubmit(
             {
               ...message,
-              text: message.text,
+              text: quotedPrompt(message.text, quotes),
               skills: selectedSkills,
               goal: goalMode,
               fileReferences: selectedFileReferences
@@ -858,15 +865,26 @@ export function ChatPromptInput({
                 .map(({ id, filename, url }) => ({ id, filename, url })),
             },
             () => {
+              if (threadId)
+                removeQuotes(
+                  threadId,
+                  quotes.map((quote) => quote.id),
+                );
               controller.textInput.clear();
               controller.attachments.clear();
               setSelectedSkills([]);
-              setGoalMode(false);
+              onGoalModeChange(false);
               setSelectedFileReferences([]);
             },
           )
         }
       >
+        <MessageQuoteCards
+          quotes={quotes}
+          onRemove={(id) => {
+            if (threadId) removeQuotes(threadId, [id]);
+          }}
+        />
         <PromptInputAttachments />
         <PromptInputBody>
           <SelectedFileReferenceBadges
@@ -904,7 +922,7 @@ export function ChatPromptInput({
               )
             }
             goal={goalMode}
-            onGoalChange={setGoalMode}
+            onGoalChange={onGoalModeChange}
             goalAvailable={goalAvailable}
             busy={status === "submitted" || status === "streaming"}
           />

@@ -41,6 +41,7 @@ import {
   type BrowserRequest,
   DEFAULT_AGENT_PROFILE,
   type LocalPanelTab,
+  type MessageQuote,
   type ModelSelection,
   type PendingJump,
   type SearchSelection,
@@ -59,12 +60,14 @@ function isSamePanelTab(left: ActivePanelTab, right: ActivePanelTab): boolean {
   return left.kind === right.kind && left.id === right.id;
 }
 
-function panelLabel(kind: "files" | "terminal" | "changes"): string {
+function panelLabel(kind: "files" | "terminal" | "changes" | "chat"): string {
   return kind === "files"
     ? i18n.t("workspace:files")
     : kind === "terminal"
       ? i18n.t("workspace:terminal")
-      : i18n.t("workspace:codeChanges");
+      : kind === "chat"
+        ? i18n.t("chat:selection.auxiliary")
+        : i18n.t("workspace:codeChanges");
 }
 
 function confirmTerminalSessionClose(session: TerminalSessionInfo | undefined): boolean {
@@ -130,6 +133,10 @@ export interface WorkbenchStore {
   workspaceByThread: Record<string, ThreadWorkspaceState>;
   pendingJump: PendingJump | null;
   setPendingJump: (jump: PendingJump | null) => void;
+  messageQuotes: Record<string, MessageQuote[]>;
+  addMessageQuote: (targetThreadId: string, quote: MessageQuote) => void;
+  removeMessageQuotes: (targetThreadId: string, ids: string[]) => void;
+  openAuxiliaryChat: (threadId: string) => void;
   pendingPrompt: string | null;
   setPendingPrompt: (prompt: string | null) => void;
   pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
@@ -163,6 +170,9 @@ export interface WorkbenchStore {
     asset: NonNullable<WorkbenchStore["filePreview"]>["asset"],
   ) => void;
   clearFilePreview: () => void;
+  workspaceFileRequest: { threadId: string; tabId: string; path: string } | null;
+  requestWorkspaceFile: (threadId: string, path: string) => void;
+  clearWorkspaceFileRequest: () => void;
   workspacePanelOpen: boolean;
   setWorkspacePanelOpen: (open: boolean) => void;
   workspacePanelMode: WorkspacePanelMode;
@@ -174,7 +184,7 @@ export interface WorkbenchStore {
   addPanelTab: (kind: "files" | "terminal" | "changes") => string;
   closePanelTab: (id: string) => boolean;
   reorderPanelTab: (id: string, overId: string) => void;
-  openWorkspacePanel: (kind?: ActivePanelTab["kind"]) => void;
+  openWorkspacePanel: (kind?: Exclude<ActivePanelTab["kind"], "chat">) => void;
   terminalPanelOpen: boolean;
   setTerminalPanelOpen: (open: boolean) => void;
   terminalDrawerSessionIds: string[];
@@ -234,6 +244,7 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       return {
         lastKnownThreadId: id,
         filePreview: null,
+        workspaceFileRequest: null,
         workspaceByThread: {
           ...state.workspaceByThread,
           [currentKey]: snapshotThreadWorkspace(state),
@@ -255,6 +266,38 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     }),
   pendingJump: null,
   setPendingJump: (jump) => set({ pendingJump: jump }),
+  messageQuotes: {},
+  addMessageQuote: (targetThreadId, quote) =>
+    set((state) => {
+      const current = state.messageQuotes[targetThreadId] ?? [];
+      if (
+        current.some(
+          (item) =>
+            item.threadId === quote.threadId &&
+            item.messageId === quote.messageId &&
+            item.text === quote.text,
+        )
+      )
+        return state;
+      return { messageQuotes: { ...state.messageQuotes, [targetThreadId]: [...current, quote] } };
+    }),
+  removeMessageQuotes: (targetThreadId, ids) =>
+    set((state) => ({
+      messageQuotes: {
+        ...state.messageQuotes,
+        [targetThreadId]: (state.messageQuotes[targetThreadId] ?? []).filter(
+          (quote) => !ids.includes(quote.id),
+        ),
+      },
+    })),
+  openAuxiliaryChat: (threadId) =>
+    set((state) => ({
+      panelTabs: state.panelTabs.some((tab) => tab.id === threadId)
+        ? state.panelTabs
+        : [...state.panelTabs, { id: threadId, kind: "chat", title: panelLabel("chat") }],
+      activePanelTab: { kind: "chat", id: threadId },
+      workspacePanelOpen: true,
+    })),
   pendingPrompt: null,
   setPendingPrompt: (prompt) => set({ pendingPrompt: prompt }),
   pendingLibraryFiles: [],
@@ -354,7 +397,12 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
                 ? { kind: neighbor.kind, id: neighbor.id }
                 : { kind: "welcome" as const, id: "welcome" };
             })();
-      return { panelTabs: next, activePanelTab: nextActive };
+      return {
+        panelTabs: next,
+        activePanelTab: nextActive,
+        workspaceFileRequest:
+          state.workspaceFileRequest?.tabId === id ? null : state.workspaceFileRequest,
+      };
     });
     return true;
   },
@@ -565,12 +613,26 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       terminalRequestId: state.terminalRequestId + 1,
     })),
   filePreview: null,
+  workspaceFileRequest: null,
+  requestWorkspaceFile: (threadId, path) => {
+    if (get().lastKnownThreadId !== threadId || !path.trim()) return;
+    get().openWorkspacePanel("files");
+    const tab = get().activePanelTab;
+    if (tab.kind === "files") {
+      set({
+        filePreview: null,
+        workspaceFileRequest: { threadId, tabId: tab.id, path: path.trim().replace(/\\/g, "/") },
+      });
+    }
+  },
+  clearWorkspaceFileRequest: () => set({ workspaceFileRequest: null }),
   browserRequest: null,
   requestFilePreview: (threadId, asset) => {
     if (get().lastKnownThreadId !== threadId) return;
     get().openWorkspacePanel("files");
     const tab = get().activePanelTab;
-    if (tab.kind === "files") set({ filePreview: { threadId, tabId: tab.id, asset } });
+    if (tab.kind === "files")
+      set({ filePreview: { threadId, tabId: tab.id, asset }, workspaceFileRequest: null });
   },
   clearFilePreview: () => set({ filePreview: null }),
   browserRequestId: 0,
@@ -637,6 +699,7 @@ export function hydrateWorkbenchStore(userId: string): void {
   const freshWorkspace = createThreadWorkspaceState();
   useWorkbenchStore.setState({
     userId,
+    messageQuotes: {},
     workspaceByThread: {},
     lastKnownThreadId:
       readThreadFromHash() ??
@@ -652,6 +715,7 @@ export function hydrateWorkbenchStore(userId: string): void {
     terminalSessionsVersion: 0,
     terminalRequest: null,
     filePreview: null,
+    workspaceFileRequest: null,
     browserRequest: null,
     workspacePanelMode: (() => {
       const stored = localStorage.getItem(`mastra-workspace-panel-mode:${userId}`);
@@ -689,6 +753,7 @@ export function resetWorkbenchStore(): void {
     workspaceByThread: {},
     pendingJump: null,
     pendingPrompt: null,
+    messageQuotes: {},
     pendingLibraryFiles: [],
     busyThreadIds: {},
     agentBusyFlag: false,
@@ -706,6 +771,7 @@ export function resetWorkbenchStore(): void {
     terminalRequest: null,
     terminalRequestId: 0,
     filePreview: null,
+    workspaceFileRequest: null,
     browserRequest: null,
     browserRequestId: 0,
     modeId: DEFAULT_MODE_ID,

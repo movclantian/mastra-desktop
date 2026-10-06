@@ -821,6 +821,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   const threads = useThreadsQuery(userId).data ?? [];
   const modelSelection = useWorkbenchStore((state) => state.modelSelection);
   const requestTerminalCommand = useWorkbenchStore((state) => state.requestTerminalCommand);
+  const workspaceFileRequest = useWorkbenchStore((state) => state.workspaceFileRequest);
+  const clearWorkspaceFileRequest = useWorkbenchStore((state) => state.clearWorkspaceFileRequest);
   const fetchTreeEntries = React.useCallback(
     (threadId: string, path?: string) =>
       queryClient.fetchQuery({
@@ -846,6 +848,9 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   const loadedPathsRef = React.useRef(new Set<string>());
   const treeRefreshRequestRef = React.useRef(0);
   const openFilesRef = React.useRef(openFiles);
+  const fileSelectionIdRef = React.useRef(0);
+  const threadIdRef = React.useRef(activeThreadId);
+  threadIdRef.current = activeThreadId;
   const activeFile = openFiles.find((item) => item.path === activeFilePath);
   const dirty = activeFile ? activeFile.draft !== activeFile.content : false;
   const [treeOpen, setTreeOpen] = React.useState(true);
@@ -905,9 +910,11 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   }, [activeThreadId, fetchTreeEntries]);
 
   React.useEffect(() => {
+    fileSelectionIdRef.current++;
     setSelectedPath(undefined);
     setOpenFiles([]);
     setActiveFilePath(undefined);
+    setLoadingPaths(new Set());
     void refreshTree();
   }, [refreshTree]);
 
@@ -1035,7 +1042,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   }, [active, activeThreadId, refreshVisibleTree]);
 
   const selectFile = React.useCallback(
-    (path: string, initialMode?: "edit" | "preview") => {
+    (path: string, initialMode?: "edit" | "preview", reload = false) => {
       const selectedEntry = allEntries.find((entry) => entry.path === path);
       setSelectedPath(path);
       if (selectedEntry?.type === "dir") {
@@ -1047,7 +1054,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
 
       const openFile = openFilesRef.current.find((item) => item.path === path);
       if (loadingPaths.has(path)) return;
-      if (openFile) {
+      const selectionId = ++fileSelectionIdRef.current;
+      if (openFile && (!reload || openFile.draft !== openFile.content)) {
         setActiveFilePath(path);
         setOpenFiles((current) =>
           current.map((item) =>
@@ -1060,15 +1068,30 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
       setLoadingPaths((current) => new Set(current).add(path));
       fetchWorkspaceFile(activeThreadId, user.id, path)
         .then((payload) => {
-          const mode = payload.isBinary ? "preview" : (initialMode ?? "edit");
-          setOpenFiles((current) => [
-            ...current,
-            { ...payload, draft: payload.content, viewMode: mode },
-          ]);
-          setActiveFilePath(payload.path);
+          if (threadIdRef.current !== activeThreadId) return;
+          setOpenFiles((current) => {
+            const existing = current.find((item) => item.path === payload.path);
+            // A tool refresh must also preserve edits made while this read was in flight.
+            if (existing && existing.draft !== existing.content) return current;
+            const next: OpenWorkspaceFile = {
+              ...payload,
+              draft: payload.content,
+              viewMode: payload.isBinary
+                ? "preview"
+                : (initialMode ?? existing?.viewMode ?? "edit"),
+            };
+            return existing
+              ? current.map((item) => (item.path === payload.path ? next : item))
+              : [...current, next];
+          });
+          if (fileSelectionIdRef.current === selectionId) setActiveFilePath(payload.path);
         })
-        .catch((error) => toastError(error, t("workspace:readFileFailed")))
+        .catch((error) => {
+          if (threadIdRef.current === activeThreadId)
+            toastError(error, t("workspace:readFileFailed"));
+        })
         .finally(() => {
+          if (threadIdRef.current !== activeThreadId) return;
           setLoadingPaths((current) => {
             const next = new Set(current);
             next.delete(path);
@@ -1078,6 +1101,33 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     },
     [activeThreadId, allEntries, loadDirectory, loadingPaths, user.id, t],
   );
+
+  React.useEffect(() => {
+    const request = workspaceFileRequest;
+    if (
+      !active ||
+      !request ||
+      request.threadId !== activeThreadId ||
+      request.tabId !== tabId ||
+      loadingPaths.has(request.path)
+    )
+      return;
+    clearWorkspaceFileRequest();
+    selectFile(request.path, undefined, true);
+    const parts = request.path.split("/").filter(Boolean);
+    const parents = parts.slice(0, -1).map((_, index) => parts.slice(0, index + 1).join("/"));
+    setExpanded((current) => new Set([...current, ...parents]));
+    for (const path of parents) loadDirectory(path);
+  }, [
+    active,
+    activeThreadId,
+    tabId,
+    workspaceFileRequest,
+    clearWorkspaceFileRequest,
+    loadingPaths,
+    selectFile,
+    loadDirectory,
+  ]);
 
   const rawFileUrl = React.useMemo(() => {
     if (!activeThreadId || !activeFile?.path) return undefined;

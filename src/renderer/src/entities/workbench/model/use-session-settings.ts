@@ -168,12 +168,15 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
 
   const setPermissionRules = useCallback(
     async (rules: PermissionRules) => {
-      setPermissionRulesDraft(rules);
-      if (!activeThreadId) return;
+      if (!activeThreadId) {
+        setPermissionRulesDraft(rules);
+        return;
+      }
       await updateThreadPermissions(activeThreadId, userId, {
         categories: { ...rules.categories },
         tools: { ...rules.tools },
       });
+      if (activeThreadRef.current === activeThreadId) setPermissionRulesDraft(rules);
       await queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
     },
     [activeThreadId, queryClient, setPermissionRulesDraft, userId],

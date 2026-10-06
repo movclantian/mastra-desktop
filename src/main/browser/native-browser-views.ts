@@ -383,7 +383,6 @@ function isWebUrl(url: string): boolean {
  */
 export class NativeBrowserViewManager {
   private readonly sessions = new Map<string, NativeSession>();
-  private readonly ensurePromises = new Map<string, Promise<NativeSession>>();
   private readonly createView: BrowserViewFactory;
 
   constructor(
@@ -404,61 +403,18 @@ export class NativeBrowserViewManager {
 
   async ensure(rawSession: unknown): Promise<BrowserState> {
     const session = NativeBrowserSessionSchema.parse(rawSession);
-    const key = sessionKey(session);
-    const pending = this.ensurePromises.get(key);
-    if (pending) return this.state(await pending);
-
-    const current = this.sessions.get(key);
-    if (current) {
-      const active = current.tabs[current.activeTabIndex];
-      if (active && !active.view.webContents.isDestroyed()) {
-        this.applyBounds(current);
-        return this.state(current);
-      }
-
-      // A failed/closed WebContents must not poison this session indefinitely.
-      this.sessions.delete(key);
-      this.invalidateAgentCommands(current, true);
-      this.disposeSessionViews(current);
-    }
-
-    const creation = (async () => {
-      const created: NativeSession = {
-        key,
-        session,
-        tabs: [],
-        activeTabIndex: 0,
-        bounds: { ...session, ...EMPTY_BOUNDS },
-        agentGeneration: 0,
-        operationQueue: Promise.resolve(),
-      };
-      let stage = "create-tab";
-      try {
-        await this.createTab(created, ABOUT_BLANK, false);
-        stage = "set-bounds";
-        this.applyBounds(created);
-        stage = "commit-session";
-        this.sessions.set(created.key, created);
-        this.emitState(created);
-        return created;
-      } catch (error) {
-        if (this.sessions.get(created.key) === created) this.sessions.delete(created.key);
-        this.disposeSessionViews(created);
-        throw new NativeBrowserOperationError(`ensure:${stage}`, error);
-      }
-    })();
-    this.ensurePromises.set(key, creation);
-    try {
-      return this.state(await creation);
-    } finally {
-      if (this.ensurePromises.get(key) === creation) this.ensurePromises.delete(key);
-    }
+    const current = this.getOrCreate(session);
+    return this.enqueueAgentCommand(current, async () => {
+      if (current.tabs.length === 0) await this.createTab(current, ABOUT_BLANK);
+      this.applyBounds(current);
+      return this.state(current);
+    });
   }
 
   async setBounds(rawBounds: unknown): Promise<void> {
     const bounds = NativeBrowserBoundsSchema.parse(rawBounds);
-    const current = this.sessions.get(sessionKey(bounds));
-    if (!current) return;
+    // Keep geometry before the first page exists; mounting a surface never opens a tab.
+    const current = this.getOrCreate({ resourceId: bounds.resourceId, threadId: bounds.threadId });
     const wasVisible = current.bounds.width > 0 && current.bounds.height > 0;
     const willBeHidden = bounds.width <= 0 || bounds.height <= 0;
     if (wasVisible && willBeHidden) {
@@ -476,12 +432,16 @@ export class NativeBrowserViewManager {
 
   async navigate(rawRequest: unknown): Promise<BrowserState> {
     const request = NativeBrowserNavigateSchema.parse(rawRequest);
-    const current = await this.getOrCreate({
+    const current = this.getOrCreate({
       resourceId: request.resourceId,
       threadId: request.threadId,
     });
     this.invalidateAgentCommands(current, true);
     return this.enqueueAgentCommand(current, async () => {
+      if (current.tabs.length === 0) {
+        await this.createTab(current, request.url);
+        return this.state(current);
+      }
       const tab = this.activeTab(current);
       tab.url = request.url;
       this.emitState(current);
@@ -507,10 +467,16 @@ export class NativeBrowserViewManager {
       resourceId: parsed.resourceId,
       threadId: parsed.threadId,
     });
-    const current = await this.getOrCreate(session);
+    const current = this.getOrCreate(session);
     this.invalidateAgentCommands(current, true);
 
     return this.enqueueAgentCommand(current, async () => {
+      if (
+        current.tabs.length === 0 &&
+        request.action !== "new-tab" &&
+        request.action !== "reset-tabs"
+      )
+        return this.state(current);
       switch (request.action) {
         case "back":
           if (this.activeTab(current).view.webContents.navigationHistory.canGoBack()) {
@@ -1461,7 +1427,6 @@ export class NativeBrowserViewManager {
     if (!current) return;
     this.invalidateAgentCommands(current, true);
     this.sessions.delete(key);
-    this.ensurePromises.delete(key);
     for (const tab of current.tabs) {
       this.window.contentView.removeChildView(tab.view);
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
@@ -1478,12 +1443,30 @@ export class NativeBrowserViewManager {
       }
     }
     this.sessions.clear();
-    this.ensurePromises.clear();
   }
 
-  private async getOrCreate(session: NativeBrowserSession): Promise<NativeSession> {
-    await this.ensure(session);
-    return this.sessions.get(sessionKey(session)) as NativeSession;
+  private getOrCreate(session: NativeBrowserSession): NativeSession {
+    const key = sessionKey(session);
+    const current = this.sessions.get(key);
+    if (current) {
+      // Recover a closed WebContents without allocating another page until requested.
+      if (current.tabs[current.activeTabIndex]?.view.webContents.isDestroyed()) {
+        this.invalidateAgentCommands(current, true);
+        this.disposeSessionViews(current);
+      }
+      return current;
+    }
+    const created: NativeSession = {
+      key,
+      session,
+      tabs: [],
+      activeTabIndex: 0,
+      bounds: { ...session, ...EMPTY_BOUNDS },
+      agentGeneration: 0,
+      operationQueue: Promise.resolve(),
+    };
+    this.sessions.set(key, created);
+    return created;
   }
 
   private activeTab(current: NativeSession): NativeTab {
@@ -1492,7 +1475,7 @@ export class NativeBrowserViewManager {
     return tab;
   }
 
-  private async createTab(current: NativeSession, url: string, publishState = true): Promise<void> {
+  private async createTab(current: NativeSession, url: string): Promise<void> {
     if (current.tabs.length >= MAX_NATIVE_BROWSER_TABS) {
       throw new NativeBrowserAgentCommandError("tab_limit_reached");
     }
@@ -1535,7 +1518,7 @@ export class NativeBrowserViewManager {
         });
       });
       stage = "publish-state";
-      if (publishState) this.emitState(current);
+      this.emitState(current);
     } catch (error) {
       if (tab) current.tabs = current.tabs.filter((candidate) => candidate !== tab);
       current.activeTabIndex = current.tabs.length
@@ -1656,11 +1639,10 @@ export class NativeBrowserViewManager {
     this.invalidateAgentRefs(current);
     this.window.contentView.removeChildView(removed.view);
     if (!removed.view.webContents.isDestroyed()) removed.view.webContents.close();
-    if (current.tabs.length === 0) {
-      await this.createTab(current, ABOUT_BLANK);
-      return;
-    }
-    current.activeTabIndex = Math.min(current.activeTabIndex, current.tabs.length - 1);
+    current.activeTabIndex = Math.max(
+      0,
+      current.activeTabIndex - (index <= current.activeTabIndex ? 1 : 0),
+    );
     this.applyBounds(current);
   }
 
@@ -1675,7 +1657,7 @@ export class NativeBrowserViewManager {
   }
 
   private applyBounds(current: NativeSession): void {
-    const active = this.activeTab(current);
+    const active = current.tabs[current.activeTabIndex];
     for (const tab of current.tabs) {
       tab.view.setBounds(
         tab === active
@@ -1691,10 +1673,11 @@ export class NativeBrowserViewManager {
   }
 
   private state(current: NativeSession): BrowserState {
+    const active = current.tabs[current.activeTabIndex];
     return {
-      active: current.tabs.length > 0,
-      status: "ready",
-      currentUrl: this.activeTab(current).url === ABOUT_BLANK ? null : this.activeTab(current).url,
+      active: Boolean(active),
+      status: active ? "ready" : "closed",
+      currentUrl: active && active.url !== ABOUT_BLANK ? active.url : null,
       tabs: current.tabs.map((tab) => ({ url: tab.url, title: tab.title })),
       activeTabIndex: current.activeTabIndex,
     };

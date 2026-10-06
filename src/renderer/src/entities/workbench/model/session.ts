@@ -109,13 +109,7 @@ export const POLICY_META: Record<PermissionPolicy, { label: string; description:
 
 export const DEFAULT_PERMISSION_RULES: PermissionRules = {
   categories: { read: "allow", edit: "allow", execute: "allow", mcp: "allow", other: "allow" },
-  tools: {},
-};
-
-/** 全部免审(官方 yolo 等价形态) */
-const ALLOW_ALL_RULES: PermissionRules = {
-  categories: { read: "allow", edit: "allow", execute: "allow", mcp: "allow", other: "allow" },
-  tools: {},
+  tools: { ask_user: "allow", submit_plan: "allow" },
 };
 
 export interface ApprovalPreset {
@@ -136,7 +130,7 @@ export const APPROVAL_PRESETS: ApprovalPreset[] = [
     },
     rules: {
       categories: { read: "allow", edit: "ask", execute: "ask", mcp: "ask", other: "ask" },
-      tools: {},
+      tools: { ...DEFAULT_PERMISSION_RULES.tools },
     },
   },
   {
@@ -147,7 +141,7 @@ export const APPROVAL_PRESETS: ApprovalPreset[] = [
     get description() {
       return i18n.t("chat:approvals.allowAll.desc");
     },
-    rules: ALLOW_ALL_RULES,
+    rules: DEFAULT_PERMISSION_RULES,
   },
 ];
 
@@ -155,13 +149,21 @@ export type ApprovalPresetId = ApprovalPreset["id"] | "custom";
 
 function sameCategories(left: PermissionRules, right: PermissionRules): boolean {
   return TOOL_CATEGORIES.every(
-    (category) => (left.categories[category] ?? "ask") === (right.categories[category] ?? "ask"),
+    (category) =>
+      (left.categories[category] ?? DEFAULT_PERMISSION_RULES.categories[category]) ===
+      (right.categories[category] ?? DEFAULT_PERMISSION_RULES.categories[category]),
   );
 }
 
 /** 当前规则命中哪个预设(都不命中即「自定义」) */
 export function matchApprovalPreset(rules: PermissionRules): ApprovalPresetId {
-  if (Object.keys(rules.tools).length > 0) return "custom";
+  // 交互工具的固定允许规则由服务端补齐，不代表用户设置了自定义审批。
+  if (
+    Object.entries(rules.tools).some(
+      ([name, policy]) => policy !== DEFAULT_PERMISSION_RULES.tools[name],
+    )
+  )
+    return "custom";
   return APPROVAL_PRESETS.find((preset) => sameCategories(rules, preset.rules))?.id ?? "custom";
 }
 
@@ -190,7 +192,7 @@ export function withCategoryPolicy(
   return { ...rules, categories: { ...rules.categories, [category]: policy } };
 }
 
-/** 从 thread.metadata 读回规则:非法字段丢弃,缺失回落默认(与服务端 parsePermissionRules 同构) */
+/** 解析会话规则:非法字段丢弃,缺失回落默认(与服务端 parsePermissionRules 同构) */
 export function parsePermissionRules(value: unknown): PermissionRules {
   if (typeof value !== "object" || value === null) return DEFAULT_PERMISSION_RULES;
   const raw = value as { categories?: unknown; tools?: unknown };
@@ -203,7 +205,7 @@ export function parsePermissionRules(value: unknown): PermissionRules {
       }
     }
   }
-  const tools: PermissionRules["tools"] = {};
+  const tools: PermissionRules["tools"] = { ...DEFAULT_PERMISSION_RULES.tools };
   if (typeof raw.tools === "object" && raw.tools !== null) {
     for (const [toolName, policy] of Object.entries(raw.tools as Record<string, unknown>)) {
       if ((PERMISSION_POLICIES as readonly string[]).includes(policy as string)) {

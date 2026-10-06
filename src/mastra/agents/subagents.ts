@@ -14,7 +14,6 @@ import {
   libraryVectorSearchTool,
 } from "../rag/tools";
 import { userIdFromContext } from "../storage/database";
-import { writePlanDraftTool } from "../tools/plan-draft";
 import {
   CODE_MODE_EXTERNAL_TOOL_NAMES,
   codeMode,
@@ -145,11 +144,9 @@ export function isCodeModeAvailable(requestContext?: RequestContextLike): boolea
 
 /** Tools available to both the primary agent and its built-in subagents. */
 export async function resolveSharedTools(requestContext?: RequestContextLike): Promise<ToolsInput> {
-  const planDraft = requestContext?.get(MODE_ID_CONTEXT_KEY) === "plan";
   return {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
-    ...(planDraft ? { write_plan_draft: writePlanDraftTool } : {}),
     ...(isCodeModeAvailable(requestContext) ? { execute_typescript: codeMode.tool } : {}),
     library_vector_search: libraryVectorSearchTool,
     library_graph_search: libraryGraphSearchTool,

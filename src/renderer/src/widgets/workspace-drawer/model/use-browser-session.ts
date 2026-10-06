@@ -72,8 +72,9 @@ export function useBrowserSession() {
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const activePanelTab = useWorkbenchStore((state) => state.activePanelTab);
+  const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
   const browserRequest = useWorkbenchStore((state) => state.browserRequest);
-  const viewActive = activePanelTab.kind === "browser";
+  const viewActive = workspacePanelOpen && activePanelTab.kind === "browser";
   const nativeBrowser = typeof window !== "undefined" ? window.api?.browserView : undefined;
   const nativeAvailable = Boolean(nativeBrowser);
   const [state, setState] = React.useState<BrowserState>(EMPTY_BROWSER_STATE);
@@ -144,20 +145,23 @@ export function useBrowserSession() {
   }, [activeThreadId, nativeBrowser, userId]);
 
   React.useEffect(() => {
-    if (!nativeBrowser || !activeThreadId) return;
+    if (!nativeBrowser || !activeThreadId || !viewActive) return;
     let disposed = false;
     void nativeBrowser
       .ensure({ resourceId: userId, threadId: activeThreadId })
       .then((nextState) => {
         if (!disposed && !busyRef.current) setState(nextState);
       })
-      .catch(() => {
-        if (!disposed) setState(EMPTY_BROWSER_STATE);
+      .catch((error) => {
+        if (!disposed) {
+          setState(EMPTY_BROWSER_STATE);
+          toastError(error, i18n.t("workspace:browserOpFailed"));
+        }
       });
     return () => {
       disposed = true;
     };
-  }, [activeThreadId, nativeBrowser, userId]);
+  }, [activeThreadId, nativeBrowser, userId, viewActive]);
 
   React.useEffect(() => {
     if (!nativeBrowser) return;
@@ -639,10 +643,7 @@ export function useBrowserSession() {
     [activeThreadId, nativeBrowser, userId],
   );
 
-  /**
-   * 关闭唯一/最后一个标签页：
-   * 立即从前端清空标签状态，并让服务端导航到空白页以保留已启动的 Chromium 会话。
-   */
+  /** 关闭最后一个标签页，清空视图且不再补建空白页。 */
   const closeLastBrowserTab = React.useCallback(() => {
     keyboardQueueRef.current = [];
     if (keyboardFlushTimerRef.current !== undefined) {

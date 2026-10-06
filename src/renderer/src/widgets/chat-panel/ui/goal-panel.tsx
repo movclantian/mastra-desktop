@@ -2,6 +2,7 @@ import { CheckCircle2Icon, PauseIcon, PencilIcon, PlayIcon, TargetIcon, XIcon } 
 import * as React from "react";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
+import { usePromptInputController } from "@/shared/ui/ai-elements/prompt-input";
 import {
   QueueSection,
   QueueSectionContent,
@@ -27,6 +28,50 @@ export interface GoalAction {
   action: "pause" | "resume" | "clear" | "update";
   objective?: string;
   maxRuns?: number;
+}
+
+export function GoalDraftPanel({
+  starting,
+  onCancel,
+}: {
+  starting: boolean;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const { textInput } = usePromptInputController();
+  return (
+    <QueueSection data-slot="goal-draft-panel">
+      <QueueSectionTrigger
+        action={
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            disabled={starting}
+            aria-label={t("chat:goal.cancelMode")}
+            onClick={onCancel}
+          >
+            <XIcon />
+          </Button>
+        }
+      >
+        <QueueSectionLabel
+          label={t("chat:goal.title")}
+          icon={<TargetIcon className="size-3.5" />}
+        />
+        <span className="ml-2 shrink-0 text-xs" role="status">
+          {t(starting ? "chat:goal.starting" : "chat:goal.draft")}
+        </span>
+      </QueueSectionTrigger>
+      <QueueSectionContent>
+        <ScrollArea className="max-h-28">
+          <p className="whitespace-pre-wrap break-words px-3 py-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {textInput.value.trim() || t("chat:goal.composerHint")}
+          </p>
+        </ScrollArea>
+      </QueueSectionContent>
+    </QueueSection>
+  );
 }
 
 export function GoalPanel({
@@ -138,7 +183,7 @@ export function GoalPanel({
             <p className="whitespace-pre-wrap break-words text-sm">{objective.objective}</p>
           </ScrollArea>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-            <span>
+            <span title={t("chat:goal.evaluationsHint")}>
               {t("chat:goal.evaluations", {
                 used: objective.runsUsed,
                 total: objective.maxRuns ?? 50,

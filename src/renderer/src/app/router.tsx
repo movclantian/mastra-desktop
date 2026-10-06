@@ -13,6 +13,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  type ErrorComponentProps,
   redirect,
 } from "@tanstack/react-router";
 import * as React from "react";
@@ -22,7 +23,10 @@ import { ChatPage } from "@/pages/chat";
 import { SchedulesPage } from "@/pages/schedules";
 import { SkillHubPage } from "@/pages/skills";
 import { useTranslation } from "@/shared/i18n";
+import { describeError } from "@/shared/lib/errors";
 import { BlurFade } from "@/shared/ui/blur-fade";
+import { Button } from "@/shared/ui/button";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { RootShell } from "./app-shell";
 
 const KnowledgeLibraryPage = React.lazy(() =>
@@ -45,8 +49,31 @@ function RootRouteShell() {
   return <RootShell />;
 }
 
+function RouteError({ error, reset }: ErrorComponentProps) {
+  const { t } = useTranslation();
+  const described = describeError(error);
+  return (
+    <ScrollArea className="h-dvh w-full bg-background text-foreground">
+      <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-3 p-4">
+        <h1 className="text-base font-medium">{t("common:pageError")}</h1>
+        <p className="text-sm text-muted-foreground">{t("common:pageErrorHint")}</p>
+        <pre className="whitespace-pre-wrap break-words rounded-lg border bg-muted/50 p-3 text-xs">
+          {described.detail ?? described.title}
+        </pre>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={reset}>{t("common:retry")}</Button>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            {t("common:reloadPage")}
+          </Button>
+        </div>
+      </div>
+    </ScrollArea>
+  );
+}
+
 const rootRoute = createRootRoute({
   component: RootRouteShell,
+  errorComponent: RouteError,
   // thread 挂在 root:任何视图都能读到当前线程,跨视图导航自动保留
   validateSearch: (search: Record<string, unknown>): { thread?: string } => ({
     ...(typeof search.thread === "string" && search.thread ? { thread: search.thread } : {}),

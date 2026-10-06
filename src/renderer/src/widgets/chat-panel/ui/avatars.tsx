@@ -1,6 +1,5 @@
 import { WaypointsIcon } from "lucide-react";
 import * as React from "react";
-import { preload } from "react-dom";
 import { apiFetch } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { Avatar, AvatarFallback, AvatarImage } from "@/shared/ui/avatar";
@@ -69,13 +68,17 @@ function fetchRandomHeadUrl(cacheKey: string): Promise<string | null> {
 }
 
 /** 登录后就准备两张头像,消息首次出现时复用浏览器图片缓存。 */
-export function preloadChatAvatars(userId: string) {
+export function warmChatAvatars(userId: string) {
   for (const cacheKey of [
     "mastra-work:assistant-head-url",
     `mastra-work:user-head-url:${userId}`,
   ]) {
     void fetchRandomHeadUrl(cacheKey).then((url) => {
-      if (url) preload(url, { as: "image" });
+      if (!url) return;
+      const image = new Image();
+      image.decoding = "async";
+      image.fetchPriority = "low";
+      image.src = url;
     });
   }
 }

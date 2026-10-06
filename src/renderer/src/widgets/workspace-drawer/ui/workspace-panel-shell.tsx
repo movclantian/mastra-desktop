@@ -5,6 +5,7 @@ import {
   Globe2Icon,
   LayersIcon,
   Maximize2Icon,
+  MessageSquareIcon,
   PanelBottomOpenIcon,
   PanelRightCloseIcon,
   PlusIcon,
@@ -17,6 +18,7 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
+import { toastError } from "@/shared/lib/errors";
 import { Button } from "@/shared/ui/button";
 import {
   ContextMenu,
@@ -48,7 +50,7 @@ import {
 } from "@/shared/ui/item";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
-
+import { AuxiliaryChat } from "@/widgets/chat-panel/ui/auxiliary-chat";
 import { useBrowserSession } from "../model/use-browser-session";
 import { BrowserView } from "./browser-view";
 import { ChangesWorkspace } from "./changes-workspace";
@@ -60,9 +62,6 @@ const TAB_DND_TYPE = "application/x-mastra-tab";
 const STORAGE_KEY_FLOATING_BOUNDS = "mastra-workspace:floating-bounds";
 const MIN_FLOATING_WIDTH = 440;
 const MIN_FLOATING_HEIGHT = 300;
-// The native WebContentsView starts below the browser toolbar. Reserve only
-// the part covered by the React menu, so opening + does not reflow the page.
-const NEW_TAB_MENU_OVERLAY_INSET = 64;
 
 interface FloatingBounds {
   x: number;
@@ -129,7 +128,39 @@ export function WorkspacePanelShell() {
   const draggedTabRef = React.useRef<string | null>(null);
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
-  const [newTabMenuOpen, setNewTabMenuOpen] = React.useState(false);
+  const createPanelTab = (kind: "browser" | "terminal" | "files" | "changes") => {
+    if (kind !== "browser") {
+      addPanelTab(kind);
+      return;
+    }
+    // Dispatch creation before revealing the surface; ensure() then reuses this first tab.
+    void action("new-tab");
+    activatePanelTab({ kind: "browser", index: state.tabs.length });
+  };
+  const showNativeTabMenu = async (event: React.MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    try {
+      const selected = await window.api.window.showMenu({
+        x: Math.max(0, rect.left),
+        y: Math.max(0, rect.bottom),
+        items: [
+          { id: "browser", label: t("workspace:newBrowserTab") },
+          { id: "terminal", label: t("workspace:newTerminal") },
+          { id: "files", label: t("workspace:newFileTree") },
+          { id: "changes", label: t("workspace:codeChanges") },
+        ],
+      });
+      if (
+        selected === "browser" ||
+        selected === "terminal" ||
+        selected === "files" ||
+        selected === "changes"
+      )
+        createPanelTab(selected);
+    } catch (error) {
+      toastError(error);
+    }
+  };
 
   const [floatingBounds, setFloatingBounds] =
     React.useState<FloatingBounds>(getInitialFloatingBounds);
@@ -484,6 +515,8 @@ export function WorkspacePanelShell() {
                             isSelected ? "text-primary" : "text-muted-foreground",
                           )}
                         />
+                      ) : tab.kind === "chat" ? (
+                        <MessageSquareIcon className="size-3 shrink-0" />
                       ) : tab.kind === "terminal" ? (
                         <TerminalIcon
                           className={cn(
@@ -571,16 +604,7 @@ export function WorkspacePanelShell() {
                               <FileDiffIcon className="text-muted-foreground" />
                               <span>{t("workspace:codeChanges")}</span>
                             </ContextMenuItem>
-                            <ContextMenuItem
-                              onClick={() => {
-                                activatePanelTab({
-                                  kind: "browser",
-                                  index: state.tabs.length,
-                                });
-                                if (!browserSession.native || state.tabs.length > 0)
-                                  void action("new-tab");
-                              }}
-                            >
+                            <ContextMenuItem onClick={() => createPanelTab("browser")}>
                               <Globe2Icon className="text-muted-foreground" />
                               <span>{t("workspace:browsePage")}</span>
                             </ContextMenuItem>
@@ -605,7 +629,7 @@ export function WorkspacePanelShell() {
                       : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                   onClick={() => openBrowserTab(index)}
-                  title={tab.title || tab.url}
+                  title={tab.url === "about:blank" ? t("workspace:newTab") : tab.title || tab.url}
                   type="button"
                 >
                   <Globe2Icon
@@ -614,7 +638,11 @@ export function WorkspacePanelShell() {
                       isSelected ? "text-primary" : "text-muted-foreground",
                     )}
                   />
-                  <span className="truncate">{tab.title || tab.url || t("workspace:newTab")}</span>
+                  <span className="truncate">
+                    {tab.url === "about:blank"
+                      ? t("workspace:newTab")
+                      : tab.title || tab.url || t("workspace:newTab")}
+                  </span>
                   <span
                     role="button"
                     tabIndex={0}
@@ -636,47 +664,53 @@ export function WorkspacePanelShell() {
                 </button>
               );
             })}
-            <DropdownMenu onOpenChange={setNewTabMenuOpen}>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    aria-label={t("workspace:newTab")}
-                    className="size-6 shrink-0"
-                    size="icon-xs"
-                    title={t("workspace:newTab")}
-                    variant="ghost"
-                  >
-                    <PlusIcon className="size-3.5" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem
-                  onClick={() => {
-                    activatePanelTab({
-                      kind: "browser",
-                      index: state.tabs.length,
-                    });
-                    if (!browserSession.native || state.tabs.length > 0) void action("new-tab");
-                  }}
-                >
-                  <Globe2Icon />
-                  {t("workspace:newBrowserTab")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => addPanelTab("terminal")}>
-                  <TerminalIcon />
-                  {t("workspace:newTerminal")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => addPanelTab("files")}>
-                  <FolderTreeIcon />
-                  {t("workspace:newFileTree")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => addPanelTab("changes")}>
-                  <FileDiffIcon />
-                  {t("workspace:codeChanges")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {browserSession.native && browserActive ? (
+              <Button
+                aria-label={t("workspace:newTab")}
+                aria-haspopup="menu"
+                className="size-6 shrink-0"
+                size="icon-xs"
+                title={t("workspace:newTab")}
+                variant="ghost"
+                onClick={showNativeTabMenu}
+              >
+                <PlusIcon className="size-3.5" />
+              </Button>
+            ) : (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      aria-label={t("workspace:newTab")}
+                      className="size-6 shrink-0"
+                      size="icon-xs"
+                      title={t("workspace:newTab")}
+                      variant="ghost"
+                    >
+                      <PlusIcon className="size-3.5" />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => createPanelTab("browser")}>
+                    <Globe2Icon />
+                    {t("workspace:newBrowserTab")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("terminal")}>
+                    <TerminalIcon />
+                    {t("workspace:newTerminal")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("files")}>
+                    <FolderTreeIcon />
+                    {t("workspace:newFileTree")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("changes")}>
+                    <FileDiffIcon />
+                    {t("workspace:codeChanges")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
           <Select
             value={workspacePanelMode}
@@ -807,6 +841,8 @@ export function WorkspacePanelShell() {
                       </div>
                     )}
                   </div>
+                ) : tab.kind === "chat" ? (
+                  <AuxiliaryChat threadId={tab.id} active={selected} />
                 ) : tab.kind === "changes" ? (
                   <ChangesWorkspace active={selected} />
                 ) : (
@@ -819,9 +855,6 @@ export function WorkspacePanelShell() {
           })}
           <div className={cn("size-full", !isWelcomeActive && browserActive ? "block" : "hidden")}>
             <BrowserView
-              nativeOverlayInsetTop={
-                newTabMenuOpen && browserActive ? NEW_TAB_MENU_OVERLAY_INSET : 0
-              }
               onCloseBrowser={closeBrowserAndReturnToLocalTab}
               session={browserSession}
             />
@@ -862,18 +895,7 @@ export function WorkspacePanelShell() {
                       variant="outline"
                       size="sm"
                       className="cursor-pointer transition-colors hover:bg-muted/70"
-                      render={
-                        <button
-                          type="button"
-                          onClick={() => {
-                            activatePanelTab({
-                              kind: "browser",
-                              index: state.tabs.length,
-                            });
-                            if (!browserSession.native) void action("new-tab");
-                          }}
-                        />
-                      }
+                      render={<button type="button" onClick={() => createPanelTab("browser")} />}
                     >
                       <ItemMedia variant="icon">
                         <Globe2Icon className="size-4 text-foreground" />

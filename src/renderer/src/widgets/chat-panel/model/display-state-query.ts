@@ -1,6 +1,6 @@
 /**
  * 产品任务/工作流面板的持久化快照；原生 Session 事件触发刷新，
- * 独立运行的工作流仍定期读取状态。
+ * 活跃目标的实时耗时、独立运行的工作流定期读取状态。
  * 命令式读取(如 resume 前的过期预检)用 fetchDisplayStateQuery。
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,7 +9,7 @@ import { qk } from "@/entities/workbench/model/query-keys";
 import { fetchDisplayState } from "../api/chat-api";
 
 export interface DisplayStateQueryOptions {
-  refetchInterval?: number;
+  refetchInterval?: number | false;
   enabled?: boolean;
 }
 

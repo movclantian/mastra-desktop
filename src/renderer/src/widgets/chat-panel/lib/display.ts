@@ -10,6 +10,7 @@ import type { WorkUIMessage } from "../model/types";
 export interface DisplayMessage {
   message: WorkUIMessage;
   sourceIds: string[];
+  key: string;
 }
 
 /**
@@ -18,11 +19,13 @@ export interface DisplayMessage {
  * not a conversation turn for the user. Keep all parts in order while making
  * consecutive assistant rows one visual message.
  */
-export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[] {
+export function buildDisplayMessages(messages: WorkUIMessage[], pending = false): DisplayMessage[] {
   const display: DisplayMessage[] = [];
   let toolPositions = new Map<string, number>();
 
+  let turnId = "initial";
   for (const message of messages) {
+    if (message.role !== "assistant") turnId = message.id;
     const previous = display.at(-1);
     const previousMessage = previous?.message;
     let entry: DisplayMessage;
@@ -30,7 +33,11 @@ export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[
       entry = previous;
       entry.sourceIds.push(message.id);
     } else {
-      entry = { message: { ...message, parts: [] }, sourceIds: [message.id] };
+      entry = {
+        message: { ...message, parts: [] },
+        sourceIds: [message.id],
+        key: message.role === "assistant" ? `reply-${turnId}` : message.id,
+      };
       display.push(entry);
       toolPositions = new Map();
     }
@@ -50,5 +57,9 @@ export function buildDisplayMessages(messages: WorkUIMessage[]): DisplayMessage[
     }
   }
 
+  if (pending && display.at(-1)?.message.role !== "assistant") {
+    const id = `reply-${turnId}`;
+    display.push({ key: id, sourceIds: [], message: { id, role: "assistant", parts: [] } });
+  }
   return display;
 }

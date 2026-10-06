@@ -13,7 +13,6 @@
       "!dist",
       "!resources",
       "!docs",
-      "!.agent/core-patch",
       "!.agent/runtime-evidence",
       "!dist-review-*",
       "!**/*.config.*",

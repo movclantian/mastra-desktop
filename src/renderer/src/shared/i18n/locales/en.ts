@@ -37,6 +37,9 @@ export const en = {
     collapse: "Collapse",
     all: "All",
     retry: "Retry",
+    pageError: "This page could not be displayed",
+    pageErrorHint: "Try again. If the error persists, reload the page.",
+    reloadPage: "Reload page",
     open: "Open",
     codeBlock: "Code Block",
     copyCode: "Copy Code Content",
@@ -1781,6 +1784,21 @@ export const en = {
     fetchDiffFailed: "Failed to load workspace diff content",
   },
   chat: {
+    selection: {
+      actions: "Selected text actions",
+      quote: "Quote in composer",
+      ask: "Side chat",
+      auxiliary: "Side chat",
+      removeQuote: "Remove quote",
+      outsideWorkspace: "This file is outside the current workspace and cannot be previewed.",
+      sideHint:
+        "Your selection is attached as a quote. Ask a question to start an independent conversation without adding replies to the original thread.",
+      sidePlaceholder: "Ask about the quoted content…",
+      independentThread: "Independent thread · Reopen from sidebar",
+      sideError: "The request failed. Your draft is saved; try sending again.",
+      stop: "Stop generating",
+      send: "Send",
+    },
     composer: {
       add: "Add files and capabilities",
       localFiles: "Upload local files",
@@ -1793,6 +1811,10 @@ export const en = {
       skillLimit: "Select up to 4 skills per message",
     },
     goal: {
+      evaluationsHint:
+        "Evaluated after a candidate answer. Tool calls and background tasks do not count as evaluations.",
+      draft: "Ready to send",
+      starting: "Starting",
       cancelMode: "Cancel goal mode for this message",
       title: "Goal",
       sendAsGoal: "Send as a goal",

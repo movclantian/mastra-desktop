@@ -12,7 +12,17 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  safeStorage,
+  screen,
+  session,
+  shell,
+} from "electron";
 import icon from "../../build/icon.png?asset";
 import {
   NATIVE_BROWSER_VIEW_CHANNELS,
@@ -66,7 +76,11 @@ import {
   TerminalSessionIdSchema,
   TerminalWriteRequestSchema,
 } from "../shared/terminal-contract";
-import { SetMinimumWidthRequestSchema, WINDOW_CHANNELS } from "../shared/window-contract";
+import {
+  SetMinimumWidthRequestSchema,
+  ShowWindowMenuRequestSchema,
+  WINDOW_CHANNELS,
+} from "../shared/window-contract";
 import {
   type DetectedIde,
   DetectIdesRequestSchema,
@@ -1146,14 +1160,28 @@ function bootstrap(): void {
       optimizer.watchWindowShortcuts(window);
     });
 
-    // 窗口最小宽度由渲染进程实测的布局需求决定(见 App.tsx 的 chatMinWidth)——
-    // 写死一个数必然要么挡住用户缩窗口、要么挡不住布局被压坏。高度下限保持不变。
-    //
-    // 传进来的已经含「面板开着时它当前的宽度」,所以这一个值同时充当两个角色:
-    // 窗口能缩到的最窄宽度,以及面板展不开时窗口该长到的宽度 —— 不多也不少。
-    //
-    // 它是**内容区**宽度(渲染进程用 window.innerWidth 度量),而 setMinimumSize 与
-    // getBounds 走的是外框,Win11 上两者差十几像素 —— 所以这里换算一次再用。
+    ipcMain.handle(WINDOW_CHANNELS.showMenu, (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const request = ShowWindowMenuRequestSchema.parse(value);
+      const target = mainWindow;
+      if (!target || target.isDestroyed()) return null;
+      const zoom = event.sender.getZoomFactor();
+      // Native menus render above WebContentsView without resizing or hiding its page.
+      return new Promise<string | null>((resolve) => {
+        Menu.buildFromTemplate(
+          request.items.map((item) => ({
+            label: item.label,
+            click: () => resolve(item.id),
+          })),
+        ).popup({
+          window: target,
+          x: Math.round(request.x * zoom),
+          y: Math.round(request.y * zoom),
+          callback: () => resolve(null),
+        });
+      });
+    });
+    // The renderer reports the required content width; convert it to window width.
     ipcMain.on(WINDOW_CHANNELS.setMinimumWidth, (event, value: unknown) => {
       if (!isTrustedIpcSender(event)) return;
       const request = SetMinimumWidthRequestSchema.safeParse(value);

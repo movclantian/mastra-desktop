@@ -210,6 +210,75 @@ function rehypeMergeFootnoteRefs() {
  * 纯 Markdown 工具配置。通过工厂函数返回新数组,避免把可变插件数组作为
  * 组件模块导出,也避免 Fast Refresh 把它误判成组件导出。
  */
+// Turn local references into inert fragment links before the standard sanitizer/hardener.
+// Only the renderer's workspace action consumes these; file: never becomes navigation.
+export const WORKSPACE_FILE_FRAGMENT = "#workspace-file=";
+function rehypeWorkspaceLinks() {
+  return (tree: HastElement) => {
+    const visit = (node: HastElement) => {
+      const href = node.properties?.href;
+      if (node.tagName === "a" && typeof href === "string") {
+        const value = href.trim();
+        const local =
+          /^(?:file:\/\/\/|[a-z]:[\\/])/i.test(value) ||
+          (value.length > 0 && !/^(?:#|\/\/|[a-z][a-z\d+.-]*:)/i.test(value));
+        if (local && ![...value].some((character) => character.charCodeAt(0) < 32)) {
+          node.properties = {
+            ...node.properties,
+            href: WORKSPACE_FILE_FRAGMENT + encodeURIComponent(value),
+          };
+        }
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+export function workspacePathFromLink(href: string, workspacePath?: string): string | null {
+  try {
+    let path = href.replace(/[?#].*$/, "");
+    if (/^file:/i.test(path)) {
+      const url = new URL(path);
+      if (url.hostname) return null;
+      path = url.pathname.replace(/^\/([a-z]:)/i, "$1");
+    }
+    path = decodeURIComponent(path)
+      .replace(/\\/g, "/")
+      .replace(/:\d+(?::\d+)?$/, "");
+    if (/^[a-z]:\//i.test(path) || path.startsWith("/")) {
+      if (!workspacePath) return null;
+      const root = `${workspacePath.replace(/\\/g, "/").replace(/\/$/, "")}/`;
+      const windows = /^[a-z]:\//i.test(root);
+      if (!(windows ? path.toLowerCase().startsWith(root.toLowerCase()) : path.startsWith(root)))
+        return null;
+      path = path.slice(root.length);
+    }
+    const segments: string[] = [];
+    for (const segment of path.split("/")) {
+      if (!segment || segment === ".") continue;
+      if (segment === "..") {
+        if (!segments.length) return null;
+        segments.pop();
+      } else {
+        if (segment.includes(":") || [...segment].some((character) => character.charCodeAt(0) < 32))
+          return null;
+        segments.push(segment);
+      }
+    }
+    return segments.length ? segments.join("/") : null;
+  } catch {
+    return null;
+  }
+}
+
 export function createCitationRehypePlugins(): NonNullable<StreamdownProps["rehypePlugins"]> {
-  return [...Object.values(defaultRehypePlugins), rehypeMergeFootnoteRefs];
+  return [
+    defaultRehypePlugins.raw,
+    rehypeWorkspaceLinks,
+    ...Object.entries(defaultRehypePlugins)
+      .filter(([name]) => name !== "raw")
+      .map(([, plugin]) => plugin),
+    rehypeMergeFootnoteRefs,
+  ];
 }

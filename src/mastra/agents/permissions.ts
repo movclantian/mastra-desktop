@@ -142,9 +142,12 @@ export const READ_ONLY_TOOL_NAMES = [
   "ask_user",
 ];
 
-/** Plan 模式允许的唯一写入能力:只能生成 plans/ 下的计划草稿。 */
-export const PLAN_DRAFT_TOOL_NAME = "write_plan_draft";
-export const PLAN_TOOL_NAMES = [...READ_ONLY_TOOL_NAMES, "submit_plan", PLAN_DRAFT_TOOL_NAME];
+/** Workspace's beforeToolCall hook limits Plan writes to plans/*.md. */
+export const PLAN_TOOL_NAMES = [
+  ...READ_ONLY_TOOL_NAMES,
+  "submit_plan",
+  WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
+];
 
 export function toolCategoryOf(toolName: string): ToolCategory {
   const explicit = CATEGORY_BY_TOOL[toolName];
@@ -197,8 +200,8 @@ const WORK_MODES: WorkMode[] = [
     instructions: `MODE: PLAN.
 Investigate before proposing anything. Read relevant files and use read-only tools. Ask the user with ask_user when a missing decision blocks reliable planning.
 Do not carry out the work in this mode. Your deliverable is a plan, not a change.
-Write the complete Markdown plan to a file under the plans/ directory of the workspace with write_plan_draft, then call submit_plan with that file path and wait for the user's decision. If the plan is rejected, revise the file and submit it again.
-You may not use task-state mutation, ordinary workspace write, delete, edit, execute, browser mutation, MCP, or external side-effect tools in this mode.`,
+Write the complete Markdown plan to plans/<name>.md with mastra_workspace_write_file, then call submit_plan with that workspace-relative path and wait for the user's decision. Parent directories are created automatically. If revising an existing plan, read it with mastra_workspace_read_file before overwriting and submitting it again.
+Only Markdown files directly inside plans/ may be written in this mode. You may not use task-state mutation, delete, edit, execute, browser mutation, MCP, or external side-effect tools in this mode.`,
   },
   {
     id: "build",

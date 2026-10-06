@@ -13,22 +13,25 @@
  * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
  */
 import { mkdirSync } from "node:fs";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
-import type { Session } from "@mastra/core/agent-controller";
+import { lstat, readdir, readFile, rm, stat } from "node:fs/promises";
+import { join, relative, resolve, sep } from "node:path";
+import type { AgentControllerRequestContext, Session } from "@mastra/core/agent-controller";
 import type { Mastra } from "@mastra/core/mastra";
 import { validateSkillContent } from "@mastra/core/skills";
+import type { ToolExecutionContext } from "@mastra/core/tools";
 import {
   LocalFilesystem,
   LocalSandbox,
   LocalSkillSource,
   type ToolConfigWithArgsContext,
+  WORKSPACE_TOOLS,
   Workspace,
   type WorkspaceToolConfig,
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
 import matter from "gray-matter";
 import { z } from "zod";
+import { MODE_ID_CONTEXT_KEY } from "../agents/permissions";
 import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
   clampInt,
@@ -586,7 +589,7 @@ export async function getThreadWorkspace(
     });
     const changeHooks = createWorkspaceChangeHooks(filesystem);
     const outputArchive = createWorkspaceOutputArchiveHooks();
-    // Keep Mastra's auto-injected tools; these hooks only observe and archive output.
+    // Keep Mastra's tools, read-before-write tracking and locking; enforce mode scope in its hook.
     const workspaceTools = getWorkspaceToolsConfig(resourceId);
     const executeConfig = workspaceTools.mastra_workspace_execute_command;
     workspaceTools.mastra_workspace_execute_command = {
@@ -601,6 +604,27 @@ export async function getThreadWorkspace(
     };
     workspaceTools.hooks = {
       beforeToolCall: async (params) => {
+        const context = params.context as ToolExecutionContext | undefined;
+        const controller = context?.requestContext?.get("controller") as
+          | AgentControllerRequestContext
+          | undefined;
+        const mode =
+          controller?.session.modeId ?? context?.requestContext?.get(MODE_ID_CONTEXT_KEY);
+        if (mode === "plan" && params.workspaceToolName === WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE) {
+          const { path } = z.object({ path: z.string() }).parse(params.input);
+          const target = resolve(workspacePath, path);
+          if (!/^plans[\\/][^\\/:]+\.md$/i.test(relative(resolve(workspacePath), target))) {
+            throw new Error("Plan mode may only write Markdown files directly inside plans/.");
+          }
+          // Reject junctions and dangling links too; the built-in tool owns the actual write.
+          for (const entry of [resolve(workspacePath, "plans"), target]) {
+            const info = await lstat(entry).catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") throw error;
+              return undefined;
+            });
+            if (info?.isSymbolicLink()) throw new Error("Plan files must not use symbolic links.");
+          }
+        }
         await changeHooks.beforeToolCall?.(params);
         await outputArchive.hooks.beforeToolCall?.(params);
       },

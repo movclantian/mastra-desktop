@@ -129,11 +129,9 @@ const BrowserLiveFrame = React.memo(function BrowserLiveFrame({
 
 export function BrowserView({
   onCloseBrowser,
-  nativeOverlayInsetTop = 0,
   session,
 }: {
   onCloseBrowser: () => void;
-  nativeOverlayInsetTop?: number;
   session: BrowserSessionViewState;
 }) {
   const { t } = useTranslation();
@@ -254,9 +252,6 @@ export function BrowserView({
           "relative flex min-h-0 flex-1 items-start justify-center overflow-hidden bg-muted/30 pt-2",
           native && "bg-background p-0",
         )}
-        style={
-          native && nativeOverlayInsetTop > 0 ? { marginTop: nativeOverlayInsetTop } : undefined
-        }
         onKeyDown={native ? undefined : injectKey}
         ref={nativeSurfaceRef}
         role="application"

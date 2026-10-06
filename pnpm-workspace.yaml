@@ -25,3 +25,6 @@ peerDependencyRules:
   ignoreMissing: []
   allowedVersions:
     typescript-paths>typescript: "7"
+patchedDependencies:
+  # Prevent recursive untilIdle defaults: https://github.com/mastra-ai/mastra/issues/26043
+  '@mastra/core@1.74.0': patches/@mastra__core@1.74.0.patch

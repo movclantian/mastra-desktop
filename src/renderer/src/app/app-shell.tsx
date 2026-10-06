@@ -18,7 +18,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/u
 import { SidebarInset, SidebarProvider, useSidebar } from "@/shared/ui/sidebar";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
-import { preloadChatAvatars } from "@/widgets/chat-panel/ui/avatars";
+import { warmChatAvatars } from "@/widgets/chat-panel/ui/avatars";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
@@ -109,7 +109,7 @@ export function RootShell() {
   React.useEffect(() => {
     if (user) {
       hydrateWorkbenchStore(user.id);
-      preloadChatAvatars(user.id);
+      warmChatAvatars(user.id);
     }
   }, [user]);
 

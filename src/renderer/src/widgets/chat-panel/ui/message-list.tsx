@@ -65,9 +65,7 @@ import {
   withResolvedFootnotes,
 } from "../lib/citation-utils";
 import {
-  asString,
   getAssistantSegments,
-  getPlanDraft,
   getTraceStepStatus,
   type MessageFileReference,
   type MessageReaction,
@@ -82,6 +80,7 @@ import {
 } from "./";
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
+import { MessageLink } from "./message-selection";
 
 function AssistantPendingIndicator({
   variant = "initial",
@@ -112,7 +111,11 @@ function AssistantPendingIndicator({
   );
 }
 
-const CITATION_MARKDOWN_COMPONENTS = { section: MarkdownSection, sup: FootnoteCitation };
+const CITATION_MARKDOWN_COMPONENTS = {
+  section: MarkdownSection,
+  sup: FootnoteCitation,
+  a: MessageLink,
+};
 const CITATION_REHYPE_PLUGINS = createCitationRehypePlugins();
 function MessageAttachments({
   files,
@@ -603,7 +606,8 @@ export const MessageItem = React.memo(function MessageItem({
                   {text ? (
                     <ContextMenu>
                       <ContextMenuTrigger
-                        className="max-w-full"
+                        data-message-text={message.id}
+                        className="max-w-full select-text"
                         onKeyDown={handleUserBubbleKeyDown}
                       >
                         <Bubble
@@ -737,23 +741,14 @@ export const MessageItem = React.memo(function MessageItem({
                     parts={segment.parts}
                   />
                 ) : segment.type === "interaction" ? (
-                  <AgentInteractionHistory
-                    interaction={
-                      segment.interaction.toolName === "submit_plan"
-                        ? {
-                            ...segment.interaction,
-                            plan: getPlanDraft(
-                              [message],
-                              asString(segment.interaction.suspendPayload?.path),
-                            ),
-                          }
-                        : segment.interaction
-                    }
-                    key={segment.key}
-                  />
+                  <AgentInteractionHistory interaction={segment.interaction} key={segment.key} />
                 ) : (
                   <ContextMenu key={segment.key}>
-                    <ContextMenuTrigger className="w-full" onKeyDown={handleAssistantBubbleKeyDown}>
+                    <ContextMenuTrigger
+                      data-message-text={message.id}
+                      className="w-full select-text"
+                      onKeyDown={handleAssistantBubbleKeyDown}
+                    >
                       <Bubble variant="ghost">
                         <BubbleContent>
                           <MessageResponse

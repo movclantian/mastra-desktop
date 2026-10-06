@@ -137,17 +137,24 @@ export interface PendingJump {
   messageId: string;
 }
 
-export type PanelTabKind = "files" | "terminal" | "changes" | "browser" | "welcome";
+export interface MessageQuote {
+  id: string;
+  threadId: string;
+  messageId: string;
+  text: string;
+}
+
+export type PanelTabKind = "files" | "terminal" | "changes" | "chat" | "browser" | "welcome";
 
 export interface LocalPanelTab {
   id: string;
-  kind: "files" | "terminal" | "changes";
+  kind: "files" | "terminal" | "changes" | "chat";
   title: string;
 }
 
 export type ActivePanelTab =
   | { kind: "welcome"; id?: string }
-  | { kind: "files" | "terminal" | "changes"; id: string }
+  | { kind: "files" | "terminal" | "changes" | "chat"; id: string }
   | { kind: "browser"; index: number };
 
 export type WorkspacePanelMode = "docked" | "floating" | "fullscreen";

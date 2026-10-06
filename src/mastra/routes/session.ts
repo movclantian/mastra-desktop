@@ -3,6 +3,7 @@
  * 工作区绑定、持久权限、历史恢复、模型偏好、工作流和工作台状态。
  * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
  */
+import { getGoalActivityDurationMs } from "@mastra/core/agent";
 import type { Session as ControllerSession, TokenUsage } from "@mastra/core/agent-controller";
 import type { Mastra } from "@mastra/core/mastra";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
@@ -334,6 +335,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       ],
     });
   }
+  const objective = await agent.getObjective({ threadId: result.threadId });
   return {
     ...displayState,
     activeTools: Object.fromEntries(displayState.activeTools),
@@ -355,7 +357,17 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
           ? "running"
           : "idle",
     tasks: Array.isArray(tasks) ? tasks : [],
-    objective: (await result.agent.getObjective({ threadId: result.threadId })) ?? null,
+    objective: objective
+      ? {
+          ...objective,
+          activeDurationMs: getGoalActivityDurationMs({
+            agentId: agent.id,
+            threadId: result.threadId,
+            objectiveId: objective.id ?? objective.objective,
+            activeDurationMs: objective.activeDurationMs,
+          }),
+        }
+      : null,
     suspendedRuns,
     backgroundTasks,
     workflowRuns,
@@ -567,10 +579,21 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
       for (const [id, value] of Object.entries(parsed.data)) {
         if (value === undefined) continue;
         const contents = JSON.stringify(value);
-        await result.agent.sendStateSignal(
+        const delivery = await result.agent.sendStateSignal(
           { id, mode: "snapshot", cacheKey: contents, contents, value },
-          { threadId: result.threadId, resourceId: result.resourceId },
+          {
+            threadId: result.threadId,
+            resourceId: result.resourceId,
+            ifIdle: {
+              behavior: "persist",
+              streamOptions: { requestContext: c.get("requestContext") },
+            },
+          },
         );
+        if (!delivery.skipped) {
+          await delivery.accepted;
+          await delivery.persisted;
+        }
       }
       return c.json({ state: parsed.data });
     },

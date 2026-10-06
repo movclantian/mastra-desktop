@@ -1,4 +1,4 @@
-import type { UIMessage } from "ai";
+import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2Icon,
   CircleAlertIcon,
@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { CATEGORY_META, type ToolCategory } from "@/entities/workbench";
+import { fetchWorkspaceFile } from "@/entities/workbench/api/workbench-api";
+import { useAuth } from "@/features/auth";
 import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
@@ -68,12 +70,9 @@ import { Textarea } from "@/shared/ui/textarea";
 import {
   type AgentInteraction,
   type AgentTask,
-  type AgentToolState,
   asRecord,
   asString,
-  getPlanDraft,
   normalizeAgentTasks,
-  normalizeAgentTools,
   type WorkflowRuntimeRun,
   type WorkflowRuntimeState,
 } from "../model/types";
@@ -359,12 +358,10 @@ export function WorkflowRunPanel({
 
 export function AgentQueuePanel({
   tasks,
-  activeTools = [],
   queuedFollowUps = 0,
   onClose,
 }: {
   tasks: AgentTask[];
-  activeTools?: AgentToolState[];
   queuedFollowUps?: number;
   onClose?: () => void;
 }) {
@@ -373,12 +370,10 @@ export function AgentQueuePanel({
   // display-state projections were the only producers: reconnects and queued
   // snapshots can still replay the same id directly into this component.
   const visibleTasks = React.useMemo(() => normalizeAgentTasks(tasks), [tasks]);
-  const visibleTools = React.useMemo(() => normalizeAgentTools(activeTools), [activeTools]);
-  if (visibleTasks.length === 0 && visibleTools.length === 0 && queuedFollowUps === 0) return null;
+  if (visibleTasks.length === 0 && queuedFollowUps === 0) return null;
   const completed =
     visibleTasks.length > 0 &&
     visibleTasks.every((task) => task.status === "completed") &&
-    visibleTools.length === 0 &&
     queuedFollowUps === 0;
 
   return (
@@ -438,36 +433,6 @@ export function AgentQueuePanel({
                   </QueueItem>
                 );
               })}
-            </QueueList>
-          </QueueSectionContent>
-        </QueueSection>
-      ) : null}
-      {visibleTools.length > 0 ? (
-        <QueueSection defaultOpen>
-          <QueueSectionTrigger className="px-2 py-1">
-            <QueueSectionLabel
-              count={visibleTools.length}
-              label={t("chat:panels.tool")}
-              icon={<SparklesIcon className="size-4" />}
-            />
-          </QueueSectionTrigger>
-          <QueueSectionContent>
-            <QueueList className="mt-1">
-              {visibleTools.map((tool, index) => (
-                <QueueItem className="px-2 py-1" key={`${tool.toolCallId}:${index}`}>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <QueueItemIndicator completed={tool.status === "completed"} />
-                    <QueueItemContent className="line-clamp-2">{tool.name}</QueueItemContent>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {tool.status === "error"
-                        ? t("chat:panels.failed")
-                        : tool.status === "completed"
-                          ? t("chat:panels.completed")
-                          : t("chat:panels.inProgress")}
-                    </span>
-                  </div>
-                </QueueItem>
-              ))}
             </QueueList>
           </QueueSectionContent>
         </QueueSection>
@@ -623,19 +588,35 @@ export function AgentPlanPanel({
   busy,
   onResume,
   completed = false,
+  threadId,
 }: {
   interaction: AgentInteraction;
   busy: boolean;
   onResume: (resumeData: unknown) => void;
   completed?: boolean;
+  threadId?: string | null;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
   const [feedback, setFeedback] = React.useState("");
   const payload = interaction.suspendPayload ?? {};
-  const draft = interaction.plan;
-  const title = draft?.title ?? asString(payload.title) ?? t("chat:panels.implementationPlan");
-  const plan = draft?.plan ?? asString(payload.plan);
-  const path = draft?.path ?? asString(payload.path);
+  const path = asString(payload.path);
+  // submit_plan suspends with a path; the host reads the file and echoes the reviewed snapshot on resume.
+  const planQuery = useQuery({
+    queryKey: ["plan-file", user?.id, threadId, interaction.toolCallId, path],
+    enabled: !completed && Boolean(user && threadId && path),
+    queryFn: async () => {
+      if (!user || !threadId || !path) throw new Error(t("workspace:readFileFailed"));
+      const file = await fetchWorkspaceFile(threadId, user.id, path);
+      if (file.isBinary || !file.content.trim()) throw new Error(t("workspace:readFileFailed"));
+      return file.content;
+    },
+  });
+  const plan = completed ? asString(payload.plan) : planQuery.data;
+  const title =
+    asString(payload.title) ??
+    plan?.match(/^#\s+(.+)$/m)?.[1] ??
+    t("chat:panels.implementationPlan");
 
   if (completed) {
     return (
@@ -703,7 +684,8 @@ export function AgentPlanPanel({
             <MessageResponse>{plan}</MessageResponse>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {t("chat:panels.planNotLoaded", { path: path ?? t("chat:panels.unknown") })}
+              {planQuery.error?.message ??
+                t("chat:panels.planNotLoaded", { path: path ?? t("chat:panels.unknown") })}
             </p>
           )}
         </ScrollArea>
@@ -722,7 +704,11 @@ export function AgentPlanPanel({
           </Button>
         </PlanAction>
         <PlanAction>
-          <Button disabled={busy} onClick={() => resume("approved")} size="sm">
+          <Button
+            disabled={busy || !plan || planQuery.isError || planQuery.isFetching}
+            onClick={() => resume("approved")}
+            size="sm"
+          >
             {t("chat:panels.approveExecution")}
           </Button>
         </PlanAction>
@@ -865,14 +851,12 @@ export function AgentInteractionPanel({
   busyKeys,
   onResume,
   onAlwaysAllow,
-  messages,
   threadId,
 }: {
   interactions: AgentInteraction[];
   busyKeys: ReadonlySet<string>;
   onResume: (interaction: AgentInteraction, resumeData: unknown) => void;
   onAlwaysAllow?: (category: ToolCategory) => Promise<void> | void;
-  messages: UIMessage[];
   threadId: string | null;
 }) {
   if (interactions.length === 0) return null;
@@ -880,22 +864,13 @@ export function AgentInteractionPanel({
   return (
     <div className="min-w-0">
       {interactions.map((interaction) => {
-        const enriched =
-          interaction.toolName === "submit_plan"
-            ? {
-                ...interaction,
-                plan:
-                  interaction.plan ??
-                  getPlanDraft(messages, asString(interaction.suspendPayload?.path)),
-              }
-            : interaction;
-        const resume = (resumeData: unknown) => onResume(enriched, resumeData);
+        const resume = (resumeData: unknown) => onResume(interaction, resumeData);
         const busy = threadId !== null && busyKeys.has(`${threadId}:${interaction.key}`);
         if (interaction.toolName === "ask_user") {
           return (
             <AgentQuestionnairePanel
               busy={busy}
-              interaction={enriched}
+              interaction={interaction}
               key={interaction.key}
               onResume={resume}
             />
@@ -905,7 +880,8 @@ export function AgentInteractionPanel({
           return (
             <AgentPlanPanel
               busy={busy}
-              interaction={enriched}
+              interaction={interaction}
+              threadId={threadId}
               key={interaction.key}
               onResume={resume}
             />
@@ -914,7 +890,7 @@ export function AgentInteractionPanel({
         return (
           <AgentApprovalPanel
             busy={busy}
-            interaction={enriched}
+            interaction={interaction}
             key={interaction.key}
             onAlwaysAllow={onAlwaysAllow}
             onResume={resume}

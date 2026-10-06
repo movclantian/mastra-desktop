@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { fetchMcpServers } from "@/entities/skill/api/skill-api";
 import {
   APPROVAL_PRESETS,
+  approvalSummary,
   DEFAULT_MODE_ID,
   matchApprovalPreset,
   WORK_MODE_IDS,
@@ -48,6 +49,8 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -95,8 +98,6 @@ export function ComposerMenu({
     setModeId,
     searchSelection,
     setSearchSelection,
-    permissionRules,
-    setPermissionRules,
   } = useSessionSettings(userId, threadId);
   const ActiveModeIcon = MODE_ICONS[modeId];
   const changeMode = (id: typeof modeId) =>
@@ -378,49 +379,6 @@ export function ComposerMenu({
                 </ScrollArea>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <ShieldIcon />
-                {t("chat:approvals.title")}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-64 overflow-hidden">
-                <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>{t("chat:approvals.title")}</DropdownMenuLabel>
-                    {APPROVAL_PRESETS.map((preset) => (
-                      <DropdownMenuItem
-                        key={preset.id}
-                        onClick={() =>
-                          void setPermissionRules(preset.rules).catch((error: unknown) =>
-                            toast.error(error instanceof Error ? error.message : t("common:error")),
-                          )
-                        }
-                      >
-                        <span className="min-w-0 flex-1">
-                          <span className="block">
-                            {t(
-                              preset.id === "standard"
-                                ? "chat:approvals.standard.label"
-                                : "chat:approvals.allowAll.label",
-                            )}
-                          </span>
-                          <span className="block whitespace-normal break-words text-xs text-muted-foreground">
-                            {t(
-                              preset.id === "standard"
-                                ? "chat:approvals.standard.desc"
-                                : modeId === "plan"
-                                  ? "chat:approvals.allowAll.planDesc"
-                                  : "chat:approvals.allowAll.desc",
-                            )}
-                          </span>
-                        </span>
-                        {matchApprovalPreset(permissionRules) === preset.id && <CheckIcon />}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuGroup>
-                </ScrollArea>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
             <DropdownMenuCheckboxItem
               checked={goal}
               onCheckedChange={onGoalChange}
@@ -432,6 +390,7 @@ export function ComposerMenu({
           </ScrollArea>
         </PromptInputActionMenuContent>
       </PromptInputActionMenu>
+      <ChatApprovalSelector />
       {modeId !== DEFAULT_MODE_ID && (
         <PromptInputButton
           aria-label={t("chat:modes.resetToBuild")}
@@ -452,6 +411,7 @@ export function ComposerMenu({
           title={t("chat:goal.composerHint")}
           size="sm"
           variant="secondary"
+          disabled={busy}
           onClick={() => onGoalChange(false)}
         >
           <TargetIcon />
@@ -478,5 +438,77 @@ export function ComposerMenu({
         </DropdownMenu>
       )}
     </PromptInputTools>
+  );
+}
+
+/** 审批始终显示在输入工具栏，预设之外的规则明确标记为自定义。 */
+export function ChatApprovalSelector() {
+  const { t } = useTranslation();
+  const { user } = useAuth();
+  const threadId = useRouterState({
+    select: (state) => (state.location.search as { thread?: string }).thread ?? null,
+  });
+  const { permissionRules, setPermissionRules, modeId } = useSessionSettings(
+    user?.id ?? "anonymous",
+    threadId,
+  );
+  const [saving, setSaving] = React.useState(false);
+  const selected = matchApprovalPreset(permissionRules);
+  const label = approvalSummary(permissionRules);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <PromptInputButton
+            size="sm"
+            variant="ghost"
+            disabled={saving}
+            aria-label={`${t("chat:approvals.title")}: ${label}`}
+            title={`${t("chat:approvals.title")}: ${label}`}
+          />
+        }
+      >
+        <ShieldIcon />
+        <span className="max-w-24 truncate text-xs">{label}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="top" align="end" className="w-64 overflow-hidden">
+        <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>{t("chat:approvals.title")}</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={selected}
+              onValueChange={(value) => {
+                const preset = APPROVAL_PRESETS.find((item) => item.id === value);
+                if (!preset || saving) return;
+                setSaving(true);
+                void setPermissionRules(preset.rules)
+                  .catch((error: unknown) =>
+                    toast.error(error instanceof Error ? error.message : t("common:error")),
+                  )
+                  .finally(() => setSaving(false));
+              }}
+            >
+              {APPROVAL_PRESETS.map((preset) => (
+                <DropdownMenuRadioItem key={preset.id} value={preset.id}>
+                  <span className="min-w-0">
+                    <span className="block">{preset.label}</span>
+                    <span className="block whitespace-normal break-words text-xs text-muted-foreground">
+                      {preset.id === "allow-all" && modeId === "plan"
+                        ? t("chat:approvals.allowAll.planDesc")
+                        : preset.description}
+                    </span>
+                  </span>
+                </DropdownMenuRadioItem>
+              ))}
+              {selected === "custom" && (
+                <DropdownMenuRadioItem value="custom" disabled>
+                  <span className="min-w-0 whitespace-normal break-words">{label}</span>
+                </DropdownMenuRadioItem>
+              )}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuGroup>
+        </ScrollArea>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

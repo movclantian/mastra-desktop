@@ -115,27 +115,30 @@ export interface AgentSubagentState {
   textDelta?: string;
 }
 
-export interface AgentToolState {
-  toolCallId: string;
-  name: string;
-  status: "streaming_input" | "running" | "completed" | "error";
-}
-
 export type MessagePart = UIMessage["parts"][number];
 export type TracePart = Extract<MessagePart, { type: "reasoning" }> | ToolPart;
 
 /**
  * A reconnect can replay several snapshots of one tool invocation into the
  * same assistant message. Keep the first position (so reasoning order stays
- * stable), but render only the latest snapshot for each toolCallId. Parts
- * without a tool id are never coalesced.
+ * stable), but render only the latest snapshot for each toolCallId. Adjacent
+ * reasoning chunks share one step; a tool invocation always separates them.
  */
 export function normalizeTraceParts(parts: TracePart[]): TracePart[] {
   const result: TracePart[] = [];
   const toolPositions = new Map<string, number>();
   for (const part of parts) {
     if (!isToolUIPart(part)) {
-      result.push(part);
+      const previous = result.at(-1);
+      if (previous?.type === "reasoning" && part.type === "reasoning") {
+        result[result.length - 1] = {
+          ...previous,
+          text: [previous.text, part.text].filter(Boolean).join("\n\n"),
+          state: part.state,
+        };
+      } else {
+        result.push(part);
+      }
       continue;
     }
     const toolCallId =
@@ -183,12 +186,6 @@ export interface QueuedRequest {
 
 export type LibraryFilePart = FileUIPart & { byteSize?: number };
 
-export interface PlanDraft {
-  path?: string;
-  title: string;
-  plan: string;
-}
-
 export interface AgentInteraction {
   key: string;
   runId: string;
@@ -199,7 +196,6 @@ export interface AgentInteraction {
   output?: unknown;
   requiresApproval: boolean;
   suspendPayload?: JsonRecord;
-  plan?: PlanDraft;
   completed?: boolean;
   planDecision?: "approved" | "rejected" | "revision" | "unknown";
   /**
@@ -796,7 +792,7 @@ export const TASK_TOOL_NAMES = new Set([
   "task_complete",
   "task_check",
 ]);
-export const PROMPT_MANAGED_TOOL_NAMES = new Set(["ask_user", "submit_plan", "write_plan_draft"]);
+export const PROMPT_MANAGED_TOOL_NAMES = new Set(["ask_user", "submit_plan"]);
 
 export function isTaskToolName(toolName: string | undefined): boolean {
   return toolName !== undefined && TASK_TOOL_NAMES.has(toolName);
@@ -848,22 +844,6 @@ export function getToolName(part: MessagePart): string | undefined {
   return isToolUIPart(part) ? getAISDKToolName(part) : undefined;
 }
 
-export function getPlanDraft(messages: UIMessage[], path?: string): PlanDraft | undefined {
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (!isToolUIPart(part) || getToolName(part) !== "write_plan_draft") continue;
-      const output = asRecord("output" in part ? part.output : undefined);
-      if (!output) continue;
-      const outputPath = asString(output.path);
-      if (path && outputPath && outputPath !== path) continue;
-      const title = asString(output.title);
-      const plan = asString(output.plan);
-      if (title && plan) return { path: outputPath, title, plan };
-    }
-  }
-  return undefined;
-}
-
 export function hasPendingInteraction(
   messages: UIMessage[],
   interaction: AgentInteraction,
@@ -910,24 +890,6 @@ export function normalizeAgentTasks(tasks: AgentTask[]): AgentTask[] {
   return order.flatMap((id) => {
     const task = latest.get(id);
     return task ? [task] : [];
-  });
-}
-
-/**
- * Queue inputs are external snapshots too. A reconnect can replay the same
- * toolCallId, so the queue owns a final normalization boundary as well as the
- * message projection that feeds it.
- */
-export function normalizeAgentTools(tools: AgentToolState[]): AgentToolState[] {
-  const latest = new Map<string, AgentToolState>();
-  const order: string[] = [];
-  for (const tool of tools) {
-    if (!latest.has(tool.toolCallId)) order.push(tool.toolCallId);
-    latest.set(tool.toolCallId, tool);
-  }
-  return order.flatMap((toolCallId) => {
-    const tool = latest.get(toolCallId);
-    return tool ? [tool] : [];
   });
 }
 
@@ -1007,38 +969,6 @@ export function getTasksFromMessages(messages: UIMessage[]): AgentTask[] | undef
   }
 
   return latestTasks;
-}
-
-export function getActiveToolsFromMessages(messages: UIMessage[]): AgentToolState[] {
-  const tools = new Map<string, AgentToolState>();
-  // Interrupted historical turns can retain input-only tool parts. They are
-  // not evidence of work running in the current user turn.
-  let start = messages.length - 1;
-  while (start >= 0 && messages[start].role !== "user") start--;
-  for (let index = start + 1; index < messages.length; index++) {
-    const message = messages[index];
-    for (const part of message.parts) {
-      if (!isToolUIPart(part)) continue;
-      const toolName = getToolName(part);
-      if (!toolName || toolName.startsWith("agent-")) continue;
-      if (part.state === "input-streaming") {
-        tools.set(part.toolCallId, {
-          toolCallId: part.toolCallId,
-          name: toolName,
-          status: "streaming_input",
-        });
-      } else if (part.state === "input-available" || part.state === "approval-requested") {
-        tools.set(part.toolCallId, {
-          toolCallId: part.toolCallId,
-          name: toolName,
-          status: "running",
-        });
-      } else {
-        tools.delete(part.toolCallId);
-      }
-    }
-  }
-  return [...tools.values()];
 }
 
 /** 子 Agent 展示名:派发工具名与 data 部分里的 agentType 共用同一映射 */
@@ -1238,8 +1168,8 @@ export function getAssistantSegments(
     }
 
     if (part.type === "text") {
-      flushTrace();
       if (part.text) {
+        flushTrace();
         segments.push({ key: `text-${index}`, text: part.text, type: "text" });
       }
       return;
@@ -1267,14 +1197,9 @@ export function getAssistantSegments(
       }
     }
 
-    // task_* 的结果已经实时显示在 PromptInput 上方的 Queue 中,
-    // 不再重复塞进消息里的 ChainOfThoughtStep;已完成的 ask_user / submit_plan
-    // 通过上方的 interaction segment 在当前助手消息中只读回显。
-    if (
-      isToolUIPart(part) &&
-      !isTaskToolName(getToolName(part)) &&
-      !isPromptManagedToolName(getToolName(part))
-    ) {
+    // Queue shows current task state; the trace retains the calls that changed it.
+    // Completed prompt interactions are rendered separately above.
+    if (isToolUIPart(part) && !isPromptManagedToolName(getToolName(part))) {
       traceParts.push(part);
     }
   });

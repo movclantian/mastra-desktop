@@ -26,7 +26,7 @@ import {
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
-import { requestJson } from "@/shared/api";
+import { getWorkbenchClientSession, requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { readErrorPayload, toastError } from "@/shared/lib";
 import { PromptInputProvider } from "@/shared/ui/ai-elements/prompt-input";
@@ -35,15 +35,12 @@ import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
 import { BlurFade } from "@/shared/ui/blur-fade";
 import { Button } from "@/shared/ui/button";
 import { DotPattern } from "@/shared/ui/dot-pattern";
-import { DotmSquare3 } from "@/shared/ui/dotm-square-3";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/shared/ui/item";
-import { Message, MessageAvatar, MessageContent, MessageHeader } from "@/shared/ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
-  MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
   useMessageScroller,
@@ -53,7 +50,6 @@ import { Meteors } from "@/shared/ui/meteors";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SparklesText } from "@/shared/ui/sparkles-text";
 import { TypingAnimation } from "@/shared/ui/typing-animation";
-import { WordRotate } from "@/shared/ui/word-rotate";
 import {
   abortThread,
   enqueueFollowUp,
@@ -64,7 +60,7 @@ import {
 import { persistAttachments as uploadAttachments } from "../lib/attachments";
 import { buildDisplayMessages, type DisplayMessage } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
-import { useFetchDisplayStateQuery } from "../model/display-state-query";
+import { useDisplayStateQuery, useFetchDisplayStateQuery } from "../model/display-state-query";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -73,7 +69,6 @@ import {
   asString,
   type BackgroundTaskState,
   type GoalObjective,
-  getActiveToolsFromMessages,
   getBackgroundTasksFromMessages,
   getSubagentsFromMessages,
   getTasksFromMessages,
@@ -97,7 +92,6 @@ import {
   AgentMemberMessageView,
   AgentMemberSwitcher,
   AgentQueuePanel,
-  AssistantAvatar,
   ChatPromptInput,
   ChatWorkspaceSelector,
   getAgentMemberRuntimes,
@@ -106,7 +100,8 @@ import {
   WorkflowRunPanel,
 } from "./";
 import type { WorkflowRunAction } from "./agent-panels";
-import { type GoalAction, GoalPanel } from "./goal-panel";
+import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
+import { MessageSelectionScope } from "./message-selection";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
   "completed",
@@ -296,6 +291,7 @@ export function ChatPanel() {
   const setThreadBusy = useWorkbenchStore((state) => state.setThreadBusy);
   const setAgentBusy = useWorkbenchStore((state) => state.setAgentBusy);
   const openWorkspacePanel = useWorkbenchStore((state) => state.openWorkspacePanel);
+  const requestWorkspaceFile = useWorkbenchStore((state) => state.requestWorkspaceFile);
   const cloneThreadAsync = cloneThreadMutation.mutateAsync;
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -314,6 +310,8 @@ export function ChatPanel() {
   } | null>(null);
   const objective =
     objectiveSnapshot?.threadId === activeThreadId ? objectiveSnapshot.objective : null;
+  const [goalMode, setGoalMode] = React.useState(false);
+  const goalAvailable = agentSelection.workflow?.strategy !== "workflow";
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
   const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
   const [activeMemberId, setActiveMemberId] = React.useState<string | null>(null);
@@ -392,6 +390,10 @@ export function ChatPanel() {
   // 新线程首条消息发送期间,路由会先切到新线程。此时不能用尚为空的
   // 服务端历史覆盖 会话即将写入的乐观用户消息。
   const initialSendRef = React.useRef<{ threadId: string | null } | null>(null);
+  React.useEffect(() => {
+    // Keep the draft while its first send creates/selects a thread; ordinary navigation resets it.
+    if (!goalAvailable || !initialSendRef.current) setGoalMode(false);
+  }, [activeThreadId, goalAvailable]);
   // 工作区路径/锁定状态同样经 ref 透传给 请求回调
   const pendingWorkspacePathRef = React.useRef(pendingWorkspacePath);
   pendingWorkspacePathRef.current = pendingWorkspacePath;
@@ -751,6 +753,31 @@ export function ChatPanel() {
   }, [user.id]);
 
   const isBusy = status === "submitted" || status === "streaming";
+  const monitorGoal = Boolean(activeThreadId && objective?.status === "active" && isBusy);
+  const goalProgress = useDisplayStateQuery(userId, activeThreadId, {
+    enabled: monitorGoal,
+    refetchInterval: monitorGoal ? 1000 : false,
+  });
+  React.useEffect(() => {
+    if (
+      !monitorGoal ||
+      !activeThreadId ||
+      goalProgress.isFetching ||
+      goalProgress.isError ||
+      !goalProgress.data?.displayState
+    )
+      return;
+    setObjectiveSnapshot({
+      threadId: activeThreadId,
+      objective: goalProgress.data.displayState.objective ?? null,
+    });
+  }, [
+    activeThreadId,
+    monitorGoal,
+    goalProgress.data,
+    goalProgress.isFetching,
+    goalProgress.isError,
+  ]);
   const hasLiveWorkflow = (workflowRuns ?? []).some((run) =>
     ["pending", "running", "waiting"].includes(run.status ?? ""),
   );
@@ -839,38 +866,46 @@ export function ChatPanel() {
       : undefined;
   }, [isBusy, messages]);
   const visibleTasks = streamingTasks ?? (taskSnapshotLoaded ? tasks : (liveTasks ?? tasks));
-  const activeTools = React.useMemo(
-    () =>
-      native
-        ? Object.entries(native.activeTools).map(([toolCallId, tool]) => ({
-            toolCallId,
-            name: tool.name,
-            status: tool.status,
-          }))
-        : getActiveToolsFromMessages(messages),
-    [native, messages],
-  );
-  const handledPanelToolCallsRef = React.useRef(new Set<string>());
+  const handledPanelToolCallsRef = React.useRef(new Map<string, string>());
   React.useEffect(() => {
     const handled = handledPanelToolCallsRef.current;
-    for (const message of messages) {
+    const turnStart = messages.findLastIndex((message) => message.role === "user");
+    for (const [index, message] of messages.entries()) {
       for (const part of message.parts) {
-        if (!isToolUIPart(part) || handled.has(part.toolCallId)) continue;
-        handled.add(part.toolCallId);
-        if (!isBusy) continue;
+        if (!isToolUIPart(part) || part.state === "input-streaming") continue;
+        const key = `${activeThreadId}:${part.toolCallId}`;
+        const previousState = handled.get(key);
+        if (previousState === part.state) continue;
+        handled.set(key, part.state);
+        // History is inert. A call observed live may finish in the same update
+        // that makes the session idle, so still reveal its completed file.
+        if (index <= turnStart || (!isBusy && previousState !== "input-available")) continue;
         const toolName = getToolName(part);
         if (!toolName) continue;
         if (toolName.startsWith("browser_")) {
-          openWorkspacePanel("browser");
+          if (!previousState) openWorkspacePanel("browser");
         } else if (
           toolName.startsWith("mastra_workspace_") &&
           toolName !== "mastra_workspace_execute_command"
         ) {
-          openWorkspacePanel("files");
+          if (!previousState) openWorkspacePanel("files");
+          const path = asString(asRecord(part.input)?.path);
+          if (
+            activeThreadId &&
+            path &&
+            part.state === "output-available" &&
+            [
+              "mastra_workspace_read_file",
+              "mastra_workspace_write_file",
+              "mastra_workspace_edit_file",
+            ].includes(toolName)
+          ) {
+            requestWorkspaceFile(activeThreadId, path);
+          }
         }
       }
     }
-  }, [isBusy, messages, openWorkspacePanel]);
+  }, [activeThreadId, isBusy, messages, openWorkspacePanel, requestWorkspaceFile]);
   const streamedBackgroundTasks = React.useMemo(
     () => getBackgroundTasksFromMessages(messages),
     [messages],
@@ -1069,7 +1104,10 @@ export function ChatPanel() {
     [persistedInteractions, resolvedInteractionKeys],
   );
   const visibleInteractions = interactions;
-  const displayMessages = React.useMemo(() => buildDisplayMessages(messages), [messages]);
+  const displayMessages = React.useMemo(
+    () => buildDisplayMessages(messages, isBusy),
+    [messages, isBusy],
+  );
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
   const outlineEntries = React.useMemo(
@@ -1303,8 +1341,10 @@ export function ChatPanel() {
   const renderMessageItem = (entry: DisplayMessage, showAvatar = true) => (
     <MessageItem
       isGenerating={isBusy}
-      isStreaming={entry.sourceIds.includes(streamingMessageId ?? "")}
-      key={entry.sourceIds[0]}
+      isStreaming={
+        entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? "")
+      }
+      key={entry.key}
       message={entry.message}
       onEdit={handleEdit}
       onForkFromMessage={handleForkFromMessage}
@@ -1466,6 +1506,18 @@ export function ChatPanel() {
         selectedSkillNamesRef.current = [];
       });
     if (!sent) return;
+    if (message.goal) {
+      // setObjective finishes before the message ACK. Read it now, independently of task events.
+      const currentGoal = await getWorkbenchClientSession(userId, targetThreadId)
+        .getGoal()
+        .catch((error: unknown) => {
+          toastError(error, t("chat:goal.actionFailed"));
+          return undefined;
+        });
+      if (activeThreadIdRef.current === targetThreadId && currentGoal) {
+        setObjectiveSnapshot({ threadId: targetThreadId, objective: currentGoal });
+      }
+    }
     clearPrompt();
     // 原生会话中间件已将首条消息携带的显式目录写入线程元数据;
     // 立即同步线程列表,避免右侧工作区继续显示“未绑定”。
@@ -1586,12 +1638,10 @@ export function ChatPanel() {
   // 有消息后固定底部 —— 同一份 JSX,两种布局复用。
   const queueContentSignature = React.useMemo(
     () =>
-      [
-        visibleTasks.map((task) => `${task.id}:${task.status}`).join(","),
-        activeTools.map((tool) => `${tool.toolCallId}:${tool.status}`).join(","),
-        queuedFollowUps,
-      ].join("|"),
-    [activeTools, queuedFollowUps, visibleTasks],
+      [visibleTasks.map((task) => `${task.id}:${task.status}`).join(","), queuedFollowUps].join(
+        "|",
+      ),
+    [queuedFollowUps, visibleTasks],
   );
   const showAgentQueue =
     !dismissedQueueSignature || dismissedQueueSignature !== queueContentSignature;
@@ -1606,9 +1656,10 @@ export function ChatPanel() {
     if (activeThreadIdRef.current === threadId) await reloadDisplayState();
   };
   const hasQueueCard =
+    goalMode ||
     Boolean(objective) ||
     queuedRequests.length > 0 ||
-    (showAgentQueue && (visibleTasks.length > 0 || activeTools.length > 0 || queuedFollowUps > 0));
+    (showAgentQueue && (visibleTasks.length > 0 || queuedFollowUps > 0));
   const promptArea = (
     <PromptInputProvider
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
@@ -1641,7 +1692,9 @@ export function ChatPanel() {
       {hasQueueCard ? (
         <div className="mx-auto w-full max-w-3xl">
           <Queue className="mx-auto w-[96%] rounded-b-none border-b-0 px-2 pt-1 pb-1">
-            {objective && (
+            {goalMode ? (
+              <GoalDraftPanel starting={isBusy} onCancel={() => setGoalMode(false)} />
+            ) : objective ? (
               <GoalPanel
                 key={activeThreadId}
                 objective={objective}
@@ -1652,7 +1705,7 @@ export function ChatPanel() {
                 }
                 onAction={handleGoalAction}
               />
-            )}
+            ) : null}
             <UserRequestQueuePanel
               onRemove={removeQueuedRequest}
               onReorder={reorderQueuedRequests}
@@ -1660,7 +1713,6 @@ export function ChatPanel() {
               requests={queuedRequests}
             />
             <AgentQueuePanel
-              activeTools={activeTools}
               onClose={() => setDismissedQueueSignature(queueContentSignature)}
               queuedFollowUps={queuedFollowUps}
               tasks={showAgentQueue ? visibleTasks : []}
@@ -1675,7 +1727,6 @@ export function ChatPanel() {
         <AgentInteractionPanel
           busyKeys={resumingKeys}
           interactions={visibleInteractions}
-          messages={messages}
           onAlwaysAllow={handleAlwaysAllowCategory}
           onResume={handleResumeInteraction}
           threadId={activeThreadId}
@@ -1692,7 +1743,9 @@ export function ChatPanel() {
             ) : null}
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
-              goalAvailable={agentSelection.workflow?.strategy !== "workflow"}
+              goalAvailable={goalAvailable}
+              goalMode={goalMode}
+              onGoalModeChange={setGoalMode}
               usage={latestUsage}
               billingUsage={billingUsage}
               onSubmit={handleSubmit}
@@ -1857,79 +1910,56 @@ export function ChatPanel() {
                 ) : null}
               </div>
             ) : null}
-            <MessageScroller className="flex-1">
-              <MessageScrollerViewport
-                onScroll={(event) => {
-                  // 官方 message-scroller-load-history:接近顶部时加载更早历史
-                  if (event.currentTarget.scrollTop <= 64) loadEarlierHistory();
-                }}
-              >
-                <MessageScrollerContent
-                  aria-busy={isBusy}
-                  className="mx-auto w-full max-w-3xl px-4 py-6"
+            <MessageSelectionScope
+              thread={threads.find((thread) => thread.id === activeThreadId)}
+              userId={user.id}
+            >
+              <MessageScroller className="flex-1">
+                <MessageScrollerViewport
+                  onScroll={(event) => {
+                    // 官方 message-scroller-load-history:接近顶部时加载更早历史
+                    if (event.currentTarget.scrollTop <= 64) loadEarlierHistory();
+                  }}
                 >
-                  {activeMember ? (
-                    <AgentMemberMessageView
-                      isBusy={isBusy}
-                      member={activeMember}
-                      messages={messages}
-                      runtime={
-                        agentMemberRuntimes[activeMember.id] ?? { status: "idle", entries: [] }
-                      }
-                    />
-                  ) : (
-                    // key 取合并消息的**首条**源消息 id:每跨一个工具/推理边界,Mastra 就再封
-                    // 一条 assistant 行并被合并进同一组(见 buildDisplayMessages),sourceIds
-                    // 因此在流式途中不断增长。用全量拼接当 key 会让 key 每次都变,React 于是
-                    // 销毁重建整条消息的 DOM —— 既白扔掉工具卡片的展开态,又让 MessageScroller
-                    // 把全新元素当成没锚定过的新锚点反复重锚,滚动状态store 每轮同步翻新一次,
-                    // 嵌套更新计数一路累加到上限。组的起点一旦建立就不再变,是唯一稳定的身份。
-                    displayMessages.map((entry, index) =>
-                      renderMessageItem(
-                        entry,
-                        entry.message.role !== "user" ||
-                          displayMessages[index + 1]?.message.role !== "user",
-                      ),
-                    )
-                  )}
-                  {!activeMember && isBusy && lastMessage?.role !== "assistant" ? (
-                    <MessageScrollerItem messageId="typing-indicator">
-                      <Message>
-                        <MessageAvatar className="self-start">
-                          <AssistantAvatar />
-                        </MessageAvatar>
-                        <MessageContent>
-                          <MessageHeader className="px-0">MastraWork</MessageHeader>
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
-                            <DotmSquare3 size={15} dotSize={2} colorPreset="solid-theme" />
-                            <WordRotate
-                              words={
-                                t("chat:welcome.deepThinkingRotations", {
-                                  returnObjects: true,
-                                }) as string[]
-                              }
-                              duration={6000}
-                              className="text-xs text-primary"
-                            />
-                          </div>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  ) : null}
-                  {/* 压缩进行中 Marker(marker-status / marker-shimmer):仅压缩期间显示。
+                  <MessageScrollerContent
+                    aria-busy={isBusy}
+                    className="mx-auto w-full max-w-3xl px-4 py-6"
+                  >
+                    {activeMember ? (
+                      <AgentMemberMessageView
+                        isBusy={isBusy}
+                        member={activeMember}
+                        messages={messages}
+                        runtime={
+                          agentMemberRuntimes[activeMember.id] ?? { status: "idle", entries: [] }
+                        }
+                      />
+                    ) : (
+                      // Waiting and streamed replies share a turn key, so the scroller sees
+                      // a growing row rather than a removed placeholder plus a new sibling.
+                      displayMessages.map((entry, index) =>
+                        renderMessageItem(
+                          entry,
+                          entry.message.role !== "user" ||
+                            displayMessages[index + 1]?.message.role !== "user",
+                        ),
+                      )
+                    )}
+                    {/* 压缩进行中 Marker(marker-status / marker-shimmer):仅压缩期间显示。
                       完成态不再在此渲染 —— 摘要消息已位于线程头部,由消息流中的
                       CompactedMessageCard 展示(分隔线 + 摘要 + 可展开折叠历史)。 */}
-                </MessageScrollerContent>
-              </MessageScrollerViewport>
-              <MessageScrollerButton />
-              {/* 官方 message-scroller-visibility:右侧会话大纲(≥2 个提问轮次才出现)。
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton />
+                {/* 官方 message-scroller-visibility:右侧会话大纲(≥2 个提问轮次才出现)。
                   容器 pointer-events-none 防挡住消息区滚动,触发按钮自身恢复交互。 */}
-              {outlineEntries.length >= 2 ? (
-                <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
-                  <TranscriptOutline entries={outlineEntries} />
-                </div>
-              ) : null}
-            </MessageScroller>
+                {outlineEntries.length >= 2 ? (
+                  <div className="pointer-events-none absolute inset-y-0 right-2 flex items-center">
+                    <TranscriptOutline entries={outlineEntries} />
+                  </div>
+                ) : null}
+              </MessageScroller>
+            </MessageSelectionScope>
             <div className="relative z-10 shrink-0 bg-background px-4 pb-4">{promptArea}</div>
           </>
         )}

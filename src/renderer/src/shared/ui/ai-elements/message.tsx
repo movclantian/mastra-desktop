@@ -91,18 +91,14 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
-export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      // space-y-0 覆盖 Streamdown 内部默认的 space-y-4(cn 合并时后写的生效)
-      className={cn("size-full space-y-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
-      plugins={streamdownPlugins}
-      {...props}
-    />
-  ),
-  (prevProps, nextProps) =>
-    prevProps.children === nextProps.children && nextProps.isAnimating === prevProps.isAnimating,
-);
+export const MessageResponse = memo(({ className, ...props }: MessageResponseProps) => (
+  <Streamdown
+    // space-y-0 覆盖 Streamdown 内部默认的 space-y-4(cn 合并时后写的生效)
+    className={cn("size-full space-y-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+    plugins={streamdownPlugins}
+    {...props}
+  />
+));
 
 MessageResponse.displayName = "MessageResponse";
 
