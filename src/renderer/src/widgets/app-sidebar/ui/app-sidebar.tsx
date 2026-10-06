@@ -334,7 +334,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
 
   const openFileManager = (threadId: string) => {
     setFileManagerThreadId(threadId);
-    setActiveView("chat");
   };
 
   // 显式绑定且已开始工作的线程按目录归组;草稿线程始终平铺
@@ -463,6 +462,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <SidebarGroup className="min-h-0 flex-1">
                 <SidebarGroupContent className="min-h-0 h-full">
                   <ThreadWorkspaceTree
+                    key={`${userId}:${fileManagerThread.id}`}
                     threadId={fileManagerThread.id}
                     onBack={() => setFileManagerThreadId(null)}
                   />

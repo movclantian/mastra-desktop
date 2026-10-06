@@ -10,11 +10,16 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import {
+  useDesktopSettingsQuery,
+  useUpdateDesktopSettings,
+} from "@/entities/workbench/model/queries/config";
 import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { Switch } from "@/shared/ui/switch";
 import {
   fetchProxySettings,
   type ProxyConfig,
@@ -23,10 +28,12 @@ import {
   saveProxySettings,
   testProxyConnectivity,
 } from "../../api/settings-api";
-import { SettingCard } from "../controls";
+import { SettingCard, SettingRow } from "../controls";
 
 export function GeneralSection() {
   const { t, i18n } = useTranslation();
+  const desktopSettings = useDesktopSettingsQuery();
+  const updateDesktopSettings = useUpdateDesktopSettings();
   const [loading, setLoading] = React.useState(true);
   const [applying, setApplying] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
@@ -133,6 +140,57 @@ export function GeneralSection() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <SettingCard
+        title={t("settings:general.behaviorTitle")}
+        description={t("settings:general.behaviorDesc")}
+      >
+        {desktopSettings.isError ? (
+          <Button onClick={() => void desktopSettings.refetch()} variant="outline" size="sm">
+            {t("common:retry")}
+          </Button>
+        ) : desktopSettings.data ? (
+          (
+            [
+              "showWorkDetails",
+              "scheduledTaskNotifications",
+              "desktopNotifications",
+              "launchAtLogin",
+              "openLocalLinksInBrowser",
+            ] as const
+          ).map((key) => (
+            <SettingRow
+              key={key}
+              title={t(`settings:general.${key}`)}
+              description={t(
+                key === "launchAtLogin" && !desktopSettings.data.launchAtLoginSupported
+                  ? "settings:general.launchAtLoginUnavailable"
+                  : `settings:general.${key}Desc`,
+              )}
+            >
+              <Switch
+                aria-label={t(`settings:general.${key}`)}
+                checked={desktopSettings.data[key]}
+                disabled={
+                  updateDesktopSettings.isPending ||
+                  (key === "launchAtLogin" && !desktopSettings.data.launchAtLoginSupported) ||
+                  ((key === "desktopNotifications" || key === "scheduledTaskNotifications") &&
+                    !desktopSettings.data.notificationsSupported)
+                }
+                onCheckedChange={(checked) =>
+                  updateDesktopSettings.mutate(
+                    { [key]: checked },
+                    {
+                      onError: (error) => toastError(error, t("common:error")),
+                    },
+                  )
+                }
+              />
+            </SettingRow>
+          ))
+        ) : (
+          <p className="text-xs text-muted-foreground">{t("common:loading")}</p>
+        )}
+      </SettingCard>
       {/* 界面语言 */}
       <SettingCard
         title={t("settings:general.languageTitle")}

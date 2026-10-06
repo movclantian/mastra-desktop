@@ -1,4 +1,4 @@
-import type { IpcRenderer } from "electron";
+import { type IpcRenderer, webUtils } from "electron";
 import {
   FILESYSTEM_CHANNELS,
   OpenDirectoryRequestSchema,
@@ -8,6 +8,7 @@ import {
 
 export function createFilesystemApi(ipcRenderer: IpcRenderer) {
   return {
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
     openDirectory: async (directory: string) =>
       OpenDirectoryResultSchema.parse(
         await ipcRenderer.invoke(

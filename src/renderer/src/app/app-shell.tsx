@@ -1,3 +1,4 @@
+import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { Outlet, useLocation, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useDefaultLayout, useGroupRef } from "react-resizable-panels";
@@ -7,20 +8,23 @@ import {
   useWorkbenchStateReporter,
   useWorkbenchStore,
 } from "@/entities/workbench";
-import { useSyncThreadToStore } from "@/entities/workbench/model/queries/threads";
+import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
+import { useSelectThread, useSyncThreadToStore } from "@/entities/workbench/model/queries/threads";
 import { viewFromPath } from "@/entities/workbench/model/types";
 import { useAuth } from "@/features/auth";
 import { GlobalCommandPalette } from "@/features/command-palette";
 import { SettingsPage } from "@/pages/settings";
+import { MASTRA_SERVER_URL } from "@/shared/api";
 import { CHAT_HORIZONTAL_PADDING, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
+import { useTranslation } from "@/shared/i18n";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/shared/ui/sidebar";
 import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar } from "@/widgets/app-top-bar";
-import { warmChatAvatars } from "@/widgets/chat-panel/ui/avatars";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 import { BrowserGuestLayer } from "@/widgets/workspace-drawer/ui/browser-guest-layer";
+import { DesktopNotificationSchema } from "../../../shared/window-contract";
 
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
   return (
@@ -94,12 +98,78 @@ function drawerHandleProps(open: boolean) {
  * hash 路由刷新/崩溃恢复后仍能还原当前视图;客户端 UI 态来自 zustand store。
  */
 export function RootShell() {
+  useDesktopNotifications();
   return (
     <>
       <WorkbenchShell />
       <BrowserGuestLayer />
     </>
   );
+}
+
+function useDesktopNotifications() {
+  const { user, token } = useAuth();
+  const { t } = useTranslation();
+  const settings = useDesktopSettingsQuery().data;
+  const selectThread = useSelectThread();
+  const desktopEnabled = settings?.desktopNotifications === true;
+  const scheduleEnabled = settings?.scheduledTaskNotifications === true;
+  React.useEffect(
+    () =>
+      window.api.window.onNotificationClick((notification) => {
+        if (notification.resourceId === user?.id) selectThread(notification.threadId);
+      }),
+    [selectThread, user?.id],
+  );
+  React.useEffect(() => {
+    if (!user || !token || (!desktopEnabled && !scheduleEnabled)) return;
+    const controller = new AbortController();
+    const seen = new Set<string>();
+    void fetchEventSource(`${MASTRA_SERVER_URL}/work/desktop-notifications`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      openWhenHidden: true,
+      async onopen(response) {
+        if (response.status === 401 || response.status === 403) controller.abort();
+        if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream"))
+          throw new Error(`Notification subscription failed: ${response.status}`);
+      },
+      onmessage(event) {
+        if (event.event !== "notification") return;
+        const parsed = DesktopNotificationSchema.safeParse(JSON.parse(event.data));
+        if (!parsed.success || parsed.data.resourceId !== user.id) return;
+        const notification = parsed.data;
+        if (
+          !(notification.kind === "schedule" ? scheduleEnabled : desktopEnabled) ||
+          seen.has(notification.id)
+        )
+          return;
+        seen.add(notification.id);
+        if (seen.size > 200) seen.delete(seen.values().next().value as string);
+        void window.api.window
+          .notify({
+            ...notification,
+            body:
+              notification.body ||
+              t(
+                notification.kind === "schedule"
+                  ? "settings:general.scheduledTaskReady"
+                  : "settings:general.taskReady",
+              ),
+          })
+          .catch((error) => console.error("Desktop notification failed", error));
+      },
+      onclose() {
+        throw new Error("Notification subscription closed");
+      },
+      onerror() {
+        return 2_000;
+      },
+    }).catch((error) => {
+      if (!controller.signal.aborted) console.error("Notification subscription failed", error);
+    });
+    return () => controller.abort();
+  }, [user?.id, token, desktopEnabled, scheduleEnabled, t]);
 }
 
 function WorkbenchShell() {
@@ -119,7 +189,6 @@ function WorkbenchShell() {
   React.useEffect(() => {
     if (user) {
       hydrateWorkbenchStore(user.id);
-      warmChatAvatars(user.id);
     }
   }, [user]);
 

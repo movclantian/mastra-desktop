@@ -1,3 +1,4 @@
+import { cleanupOrphanedLibraryAssets } from "./rag/storage/assets";
 /**
  * Mastra 实例入口:注册 Agent / 网关 / 存储 / 观测 / 编辑器与 /work/* 路由,
  * 并完成进程级初始化(出站代理、处理器登记、索引恢复、优雅退出)。
@@ -29,6 +30,7 @@ import { workSubagents } from "./agents/subagents";
 import { mastraWorkAgent } from "./agents/work-agent";
 import { workAuth, workRequestContextMiddleware } from "./auth";
 import { handleWorkError } from "./errors";
+import { publishDesktopNotification } from "./harness/signals";
 import { failInterruptedBackgroundTasksOnStartup } from "./routes/background-tasks";
 import { workRoutes } from "./routes/routes";
 import { prepareScheduledRun } from "./routes/schedules";
@@ -91,6 +93,10 @@ if (
 ) {
   setGlobalDispatcher(new EnvHttpProxyAgent());
 }
+
+// Complete GC before accepting requests or starting index recovery.
+await appStorage.init();
+await cleanupOrphanedLibraryAssets();
 
 const configuredProcessorRegistry = await getConfiguredProcessorRegistry();
 const processorRegistry = {
@@ -168,7 +174,7 @@ export const mastra = new Mastra({
   },
   schedules: {
     prepare: prepareScheduledRun,
-    onFinish: ({ agentId, schedule, trigger, outcome, runId }) => {
+    onFinish: ({ agentId, schedule, trigger, outcome, runId, result, effective }) => {
       logger.info("Scheduled agent run finished", {
         agentId,
         scheduleId: schedule.id,
@@ -176,6 +182,24 @@ export const mastra = new Mastra({
         outcome,
         runId,
       });
+      if (
+        (outcome === "succeeded" || outcome === "delivered") &&
+        runId &&
+        effective.resourceId &&
+        effective.threadId
+      ) {
+        publishDesktopNotification(
+          {
+            id: `${schedule.id}:${runId}`,
+            resourceId: effective.resourceId,
+            threadId: effective.threadId,
+            kind: "schedule",
+            title: (schedule.name || "Mastra").slice(0, 256),
+            body: result?.text?.slice(0, 500) ?? "",
+          },
+          outcome === "delivered" ? runId : undefined,
+        );
+      }
       scheduleIdleWorkspaceCleanup();
     },
     onError: ({ agentId, schedule, trigger, phase, error }) => {
@@ -211,7 +235,8 @@ export const mastra = new Mastra({
     cors: {
       origin: rendererCorsOrigin,
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowHeaders: ["Authorization", "Content-Type"],
+      // SSE 客户端重连会携带 Last-Event-ID，必须允许它通过跨域预检。
+      allowHeaders: ["Authorization", "Content-Type", "Last-Event-ID"],
     },
     apiRoutes: workRoutes,
   },

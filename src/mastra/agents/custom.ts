@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename } from "node:path";
+import * as bottts from "@dicebear/bottts";
+import { createAvatar } from "@dicebear/core";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
@@ -10,6 +12,7 @@ import {
   type AgentProfile,
   agentMemberSchema,
   agentWorkflowSchema,
+  DEFAULT_AGENT_PROFILE_ID,
   validateAgentTeam,
 } from "../../shared/agent-contract";
 import { workError } from "../errors";
@@ -18,7 +21,8 @@ import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace/wo
 import { compileTeamWorkflow, TEAM_PROFILE_CONTEXT_KEY } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
-export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
+export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
+
 const CONFIG_KEY = "agent-profiles";
 
 export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
@@ -151,6 +155,11 @@ export async function createAgentProfile(
 ): Promise<AgentProfile> {
   const current = await listAgentProfiles(resourceId);
   const profile = normalizeProfile({ ...input, id: randomUUID() });
+  profile.avatar = createAvatar(bottts, { seed: profile.id }).toDataUri();
+  profile.members = profile.members.map((member) => ({
+    ...member,
+    avatar: createAvatar(bottts, { seed: `${profile.id}:${member.id}` }).toDataUri(),
+  }));
   try {
     validateAgentTeam(profile);
   } catch (cause) {

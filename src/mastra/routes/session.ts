@@ -9,11 +9,28 @@ import type { Mastra } from "@mastra/core/mastra";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
+import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import type { DesktopNotification } from "../../shared/window-contract";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { parsePermissionRules, TOOL_CATEGORIES, toolCategoryOf } from "../agents/permissions";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workbenchStateSchema } from "../agents/processors";
+import {
+  finishTeamInvocation,
+  getTeamInvocationDetail,
+  listTeamInvocations,
+} from "../agents/team-activity";
+import {
+  getTeamHandoffState,
+  handoffInputSchema,
+  transferTeamHandoff,
+} from "../agents/team-handoff";
 import { errorText, workError } from "../errors";
+import {
+  desktopEvents,
+  publishDesktopNotification,
+  scheduledDesktopNotifications,
+} from "../harness/signals";
 import { resolveConfiguredModel, splitRouterId } from "../models/providers";
 import { appStorage } from "../storage/database";
 import { ensureTaskExecutorAvailable } from "./background-tasks";
@@ -24,9 +41,46 @@ import {
   sessionFor,
   workbenchMessageOptionsSchema,
 } from "./session-context";
-import { assertNoActiveTeamRun, cancelTeamRuns, listTeamWorkflowRuns } from "./team-runs";
+import {
+  activeTeamWorkflow,
+  assertNoActiveTeamRun,
+  cancelTeamRuns,
+  listTeamWorkflowRuns,
+} from "./team-runs";
 import { workbenchMessages } from "./threads/messages";
 import type { ThreadMetadata } from "./threads/shared";
+
+/** One authenticated subscription covers all of the user's threads, including scheduled runs. */
+const desktopNotificationsRoute = registerApiRoute("/work/desktop-notifications", {
+  method: "GET",
+  handler: async (c) => {
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) throw workError("AUTH_REQUIRED");
+    return streamSSE(c, async (stream) => {
+      const send = (notification: DesktopNotification) => {
+        void stream
+          .writeSSE({
+            event: "notification",
+            id: notification.id,
+            data: JSON.stringify(notification),
+          })
+          .catch(() => stream.abort());
+      };
+      desktopEvents.on(resourceId, send);
+      stream.onAbort(() => {
+        desktopEvents.off(resourceId, send);
+      });
+      try {
+        while (!stream.aborted) {
+          await stream.writeSSE({ event: "ping", data: "" });
+          await stream.sleep(30_000);
+        }
+      } finally {
+        desktopEvents.off(resourceId, send);
+      }
+    });
+  },
+});
 
 /** Match the official Controller routes: acknowledge work while its outcome arrives over SSE. */
 export function observeSessionWork(
@@ -48,6 +102,23 @@ export function registerWorkbenchSessionLifecycle(mastra: Mastra): void {
     session.subscribe((event) => {
       if (event.type === "agent_start") lastStepUsage = undefined;
       if (event.type === "usage_update") lastStepUsage = event.usage;
+    });
+    session.onBeforeAgentEnd((event) => {
+      const runId = session.getCurrentRunId();
+      const scheduled = runId ? scheduledDesktopNotifications.get(runId) : undefined;
+      if (runId) scheduledDesktopNotifications.delete(runId);
+      if (event.reason && event.reason !== "complete") return;
+      const threadId = session.thread.getId();
+      if (!threadId) return;
+      publishDesktopNotification({
+        id: runId ?? crypto.randomUUID(),
+        resourceId: session.identity.getResourceId(),
+        threadId,
+        kind: "task",
+        title: "Mastra",
+        body: "",
+      });
+      for (const notification of scheduled ?? []) publishDesktopNotification(notification);
     });
     session.onBeforeAgentEnd(async () => {
       if (!lastStepUsage || !session.thread.getId()) return;
@@ -337,6 +408,63 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     });
   }
   const objective = await agent.getObjective({ threadId: result.threadId });
+  const teamInvocations = await listTeamInvocations(result.resourceId, result.threadId);
+  const registeredAgents = [result.agent, ...Object.values(c.get("mastra").listAgents())];
+  const parentActive = Boolean(
+    result.agent.getActiveThreadRunId(result) ||
+      result.controllerSession.stream.isActive() ||
+      result.controllerSession.run.getRunId(),
+  );
+  await Promise.all(
+    teamInvocations
+      .filter((call) => call.status === "running" || call.status === "suspended")
+      .map(async (call) => {
+        const previousStatus = call.status;
+        const member = registeredAgents.find((candidate) => candidate.id === call.agentId);
+        const parked =
+          member && call.memoryThreadId && call.memoryResourceId
+            ? (
+                await member.listSuspendedRuns({
+                  threadId: call.memoryThreadId,
+                  resourceId: call.memoryResourceId,
+                })
+              ).runs.length > 0
+            : false;
+        const task = backgroundTasks.find((task) => task.toolCallId === call.toolCallId);
+        const waiting =
+          parked ||
+          task?.status === "suspended" ||
+          suspendedRuns.some((run) =>
+            run.toolCalls.some((tool) => tool.toolCallId === call.toolCallId),
+          );
+        if (waiting) {
+          call.status = "suspended";
+          await finishTeamInvocation(
+            call.id,
+            { status: "suspended" },
+            undefined,
+            undefined,
+            previousStatus,
+          );
+        } else if (
+          parentActive ||
+          workflowRunning ||
+          backgroundTasks.some((task) => task.status === "pending" || task.status === "running")
+        ) {
+          call.status = "running";
+        } else {
+          call.status = "error";
+          call.error = "Execution stopped before an invocation result was recorded";
+          await finishTeamInvocation(
+            call.id,
+            { status: call.status, error: call.error, endedAt: new Date().toISOString() },
+            undefined,
+            undefined,
+            previousStatus,
+          );
+        }
+      }),
+  );
   return {
     ...displayState,
     queuedRequests: getSessionMessageQueue(result.controllerSession),
@@ -373,6 +501,16 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     suspendedRuns,
     backgroundTasks,
     workflowRuns,
+    teamInvocations,
+    handoff: await getTeamHandoffState(
+      await getAgentProfile(
+        result.thread.metadata?.agentProfileId as string | undefined,
+        result.resourceId,
+      ),
+      result.resourceId,
+      result.threadId,
+    ),
+    activeWorkflow: activeTeamWorkflow(result.resourceId, result.threadId),
   };
 }
 
@@ -563,7 +701,8 @@ export const sessionDisplayStateRoute = registerApiRoute(
  *
  * 渲染进程各面板把自己那一份 PUT 上来 —— 编辑器打开了什么、终端跑完了什么、
  * 哪些面板可见。官方 sendStateSignal 持久化并按 cacheKey 去重，
- * 在下一次模型推理时投影状态，不唤醒空闲 Agent，也不重复写入对话历史。
+ * 活跃与空闲分支都只持久化，留给后续正常请求读取。
+ * 活跃分支若使用默认 deliver，未消费的状态会在本轮结束后触发新一轮回复。
  */
 export const updateSessionWorkbenchStateRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workbench-state",
@@ -586,6 +725,7 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
           {
             threadId: result.threadId,
             resourceId: result.resourceId,
+            ifActive: { behavior: "persist" },
             ifIdle: {
               behavior: "persist",
               streamOptions: { requestContext: c.get("requestContext") },
@@ -603,8 +743,7 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
 );
 
 /**
- * 外部事件 → 通知收件箱。前端用它投递自己那侧才知道的事件(终端里跑完的长
- * 命令等);服务端侧的后台任务走 src/mastra/index.ts 注册的索引完成回调。
+ * 需要 Agent 处理的外部事件 → 通知收件箱。普通面板和终端生命周期仅走状态上报。
  * 投递时机与是否攒成 summary 由 agent 的默认投递策略决定,这里只负责落库。
  */
 export const sessionNotificationRoute = registerApiRoute(
@@ -709,7 +848,71 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
   },
 });
 
+const teamInvocationDetailRoute = registerApiRoute(
+  "/work/sessions/:scope/threads/:threadId/invocations/:invocationId",
+  {
+    method: "GET",
+    handler: async (c) => {
+      const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+      const result = await sessionFor(c, {
+        threadId: c.req.param("threadId"),
+        resourceId,
+        scope: "workbench",
+      });
+      const detail = await getTeamInvocationDetail(
+        resourceId,
+        result.threadId,
+        c.req.param("invocationId"),
+      );
+      if (!detail) throw workError("MESSAGE_NOT_FOUND");
+      const { memoryThreadId, memoryResourceId } = detail.invocation;
+      if (memoryThreadId && memoryResourceId && memoryThreadId !== result.threadId) {
+        const recalled = await result.memory.recall({
+          threadId: memoryThreadId,
+          resourceId: memoryResourceId,
+          perPage: false,
+        });
+        if (recalled.messages.length) detail.messages = recalled.messages;
+      }
+      return c.json({ ...detail, messages: workbenchMessages(detail.messages) });
+    },
+  },
+);
+
+const sessionHandoffRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/handoff", {
+  method: "POST",
+  handler: async (c) => {
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    const result = await sessionFor(c, {
+      threadId: c.req.param("threadId"),
+      resourceId,
+      scope: "workbench",
+    });
+    const body = handoffInputSchema.parse(await c.req.json());
+    const state = await persistentDisplayState(c, result);
+    if (
+      state.status !== "idle" ||
+      result.controllerSession.stream.isActive() ||
+      result.controllerSession.run.getRunId()
+    )
+      throw workError("VALIDATION_FAILED", { text: "请等待当前运行或审批结束后交接" });
+    const profile = await getAgentProfile(
+      result.thread.metadata?.agentProfileId as string | undefined,
+      resourceId,
+    );
+    try {
+      await transferTeamHandoff(profile, resourceId, result.threadId, body);
+    } catch (cause) {
+      throw workError("VALIDATION_FAILED", { text: errorText(cause), cause });
+    }
+    return c.json({ handoff: await getTeamHandoffState(profile, resourceId, result.threadId) });
+  },
+});
+
 export const sessionRoutes = [
+  sessionHandoffRoute,
+  teamInvocationDetailRoute,
+  desktopNotificationsRoute,
   sessionGoalRoute,
   sessionAbortRoute,
   declineSessionToolRoute,

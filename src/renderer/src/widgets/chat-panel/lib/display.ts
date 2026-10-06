@@ -1,6 +1,30 @@
 import { isToolUIPart } from "ai";
-
+import type { TeamHandoff } from "../../../../../shared/agent-contract";
 import type { WorkUIMessage } from "../model/types";
+
+/** Handoffs are presentation events; they never become synthetic model messages. */
+export function withHandoffMessages(
+  messages: WorkUIMessage[],
+  history: TeamHandoff[],
+): WorkUIMessage[] {
+  if (!history.length) return messages;
+  const result = [...messages];
+  for (const handoff of history) {
+    const message: WorkUIMessage = {
+      id: `handoff-${handoff.id}`,
+      role: "assistant",
+      parts: [],
+      metadata: { handoff, createdAt: handoff.createdAt },
+    };
+    const index = result.findIndex(
+      (entry) =>
+        entry.metadata?.createdAt &&
+        Date.parse(entry.metadata.createdAt) > Date.parse(handoff.createdAt),
+    );
+    result.splice(index < 0 ? result.length : index, 0, message);
+  }
+  return result;
+}
 
 // ---------------------------------------------------------------------------
 // 消息流展示层纯函数:把服务端按 response-boundary 拆分的助手行合并为用户视角
@@ -25,18 +49,34 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
 
   let turnId = "initial";
   for (const message of messages) {
+    if (message.metadata?.handoff) {
+      display.push({ message, sourceIds: [], key: message.id });
+      turnId = message.id;
+      toolPositions = new Map();
+      continue;
+    }
     if (message.role !== "assistant") turnId = message.id;
     const previous = display.at(-1);
     const previousMessage = previous?.message;
     let entry: DisplayMessage;
-    if (previous && previousMessage?.role === "assistant" && message.role === "assistant") {
+    if (
+      previous &&
+      previousMessage?.role === "assistant" &&
+      !previousMessage.metadata?.handoff &&
+      message.role === "assistant" &&
+      previousMessage.metadata?.teamMemberId === message.metadata?.teamMemberId &&
+      previousMessage.metadata?.agentProfileId === message.metadata?.agentProfileId
+    ) {
       entry = previous;
       entry.sourceIds.push(message.id);
     } else {
       entry = {
         message: { ...message, parts: [] },
         sourceIds: [message.id],
-        key: message.role === "assistant" ? `reply-${turnId}` : message.id,
+        key:
+          message.role === "assistant"
+            ? `reply-${turnId}-${message.metadata?.agentProfileId ?? "default"}-${message.metadata?.teamMemberId ?? "main"}`
+            : message.id,
       };
       display.push(entry);
       toolPositions = new Map();
@@ -57,8 +97,11 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
     }
   }
 
-  if (pending && display.at(-1)?.message.role !== "assistant") {
-    const id = `reply-${turnId}`;
+  if (
+    pending &&
+    (display.at(-1)?.message.role !== "assistant" || display.at(-1)?.message.metadata?.handoff)
+  ) {
+    const id = `reply-${turnId}-default-main`;
     display.push({ key: id, sourceIds: [], message: { id, role: "assistant", parts: [] } });
   }
   return display;

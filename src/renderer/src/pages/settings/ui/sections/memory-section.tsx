@@ -104,7 +104,7 @@ export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
   semanticRecallThreshold: 0,
   semanticRecallIndexName: "",
   workingMemory: true,
-  workingMemoryScope: "resource",
+  workingMemoryScope: "thread",
   workingMemoryFormat: "template",
   workingMemoryTemplate: PROFILE_TEMPLATE,
   workingMemorySchema:

@@ -4,10 +4,27 @@
  * providers 的编辑草稿与防抖保存在 settings 的 providers-section 组件层,
  * 保存成功后 setQueryData 更新缓存(不 invalidate,避免覆盖编辑)。
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { DesktopSettingsPatch } from "../../../../../../shared/window-contract";
 import { fetchAgents, fetchProviderConfig, fetchToolsConfig } from "../../api/workbench-api";
 import { loadModelCatalog } from "../providers";
 import { qk } from "../query-keys";
+
+export function useDesktopSettingsQuery() {
+  return useQuery({
+    queryKey: qk.desktopSettings(),
+    queryFn: () => window.api.window.getSettings(),
+    staleTime: Infinity,
+  });
+}
+
+export function useUpdateDesktopSettings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: DesktopSettingsPatch) => window.api.window.updateSettings(patch),
+    onSuccess: (settings) => queryClient.setQueryData(qk.desktopSettings(), settings),
+  });
+}
 
 export function useProviderConfigQuery() {
   return useQuery({

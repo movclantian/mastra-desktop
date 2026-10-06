@@ -1,5 +1,6 @@
-/** Durable webhook/polling signal providers and the notification inbox tool. */
+/** Durable signal providers, desktop notifications, and the notification inbox tool. */
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   createNotificationInboxTool,
   type SendNotificationSignalInput,
@@ -11,11 +12,24 @@ import {
 } from "@mastra/core/signals";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import type { DesktopNotification } from "../../shared/window-contract";
 import { appStorage, getLibsqlClient } from "../storage/database";
 import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
+
+export const desktopEvents = new EventEmitter();
+export const scheduledDesktopNotifications = new Map<string, DesktopNotification[]>();
+
+export function publishDesktopNotification(notification: DesktopNotification, afterRun?: string) {
+  if (afterRun)
+    scheduledDesktopNotifications.set(afterRun, [
+      ...(scheduledDesktopNotifications.get(afterRun) ?? []),
+      notification,
+    ]);
+  else desktopEvents.emit(notification.resourceId, notification);
+}
 
 // SignalProvider.__registerMastra only stores a Mastra reference; its registry is an in-memory
 // Map (reference/signals/signal-provider.mdx). This table supplies restart persistence only.

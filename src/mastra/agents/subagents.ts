@@ -4,6 +4,7 @@ import { Agent } from "@mastra/core/agent";
 import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
+import type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
@@ -35,20 +36,20 @@ import {
   getGuardrailsConfig,
 } from "./guardrails";
 import {
-  MODE_ID_CONTEXT_KEY,
   PERMISSION_RULES_CONTEXT_KEY,
   type PermissionPolicy,
   parsePermissionRules,
-  resolveMode,
+  READ_ONLY_EXPERT_CONTEXT_KEY,
+  resolveAgentActiveTools,
+  resolveRequestMode,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
-  toolCategoryOf,
 } from "./permissions";
 import {
   agentsMdProcessor,
   libraryAttachmentProcessor,
   libraryContextProcessor,
 } from "./processors";
-import { TEAM_WORKFLOW_CONTEXT_KEY } from "./team-workflow";
+import { teamInvocationProcessor } from "./team-activity";
 
 function resolveSubagentWorkspace(requestContext: RequestContextLike) {
   const resourceId = userIdFromContext(requestContext);
@@ -77,6 +78,7 @@ const explorerAgent = new Agent({
   memory: ({ requestContext }) => getMemory({ requestContext }),
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
   outputProcessors: async ({ requestContext }) => [
+    teamInvocationProcessor,
     webSearchArchiveProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
   ],
@@ -108,6 +110,7 @@ const reviewerAgent = new Agent({
   memory: ({ requestContext }) => getMemory({ requestContext }),
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
   outputProcessors: async ({ requestContext }) => [
+    teamInvocationProcessor,
     webSearchArchiveProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
   ],
@@ -161,32 +164,39 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
 }
 
 /** An unattended run exposes only tools authorized by its persisted mode and permission rules. */
-const scopedToolPolicy = {
-  id: "scoped-tool-policy",
-  processInputStep({ requestContext, tools, activeTools }) {
-    const scheduled = requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true;
-    if (!scheduled && requestContext?.get(TEAM_WORKFLOW_CONTEXT_KEY) !== true) return;
-    const rules = parsePermissionRules(requestContext.get(PERMISSION_RULES_CONTEXT_KEY));
-    const mode = resolveMode(requestContext.get(MODE_ID_CONTEXT_KEY));
-    return {
-      activeTools: (activeTools ?? Object.keys(tools ?? {})).filter(
-        (name) =>
-          (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
-          (!mode.availableTools || mode.availableTools.includes(name)) &&
-          (scheduled
-            ? (rules.tools[name] ?? rules.categories[toolCategoryOf(name)]) === "allow"
-            : (rules.tools[name] ?? rules.categories[toolCategoryOf(name)]) !== "deny"),
-      ),
-    };
-  },
-} satisfies Processor;
+function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition) {
+  return {
+    id: "scoped-tool-policy",
+    processInputStep({ requestContext, tools, activeTools }) {
+      const scheduled = requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true;
+      if (!requestContext) return;
+      const rules = parsePermissionRules(requestContext.get(PERMISSION_RULES_CONTEXT_KEY));
+      const mode = resolveRequestMode(requestContext);
+      return {
+        activeTools: resolveAgentActiveTools({
+          tools: Object.keys(tools ?? {}),
+          activeTools,
+          mode,
+          rules,
+          profile,
+          member,
+          scheduled,
+          readOnlyExpert: requestContext.get(READ_ONLY_EXPERT_CONTEXT_KEY) === true,
+        }),
+      };
+    },
+  } satisfies Processor;
+}
 
 /** Resolve attachments before processing model input. */
 export async function buildInputPipeline(
   requestContext?: RequestContextLike,
+  profile?: AgentProfile,
+  member?: AgentMemberDefinition,
 ): Promise<InputProcessorOrWorkflow[]> {
   return [
-    scopedToolPolicy,
+    teamInvocationProcessor,
+    scopedToolPolicy(profile, member),
     libraryContextProcessor,
     libraryAttachmentProcessor,
     agentsMdProcessor,

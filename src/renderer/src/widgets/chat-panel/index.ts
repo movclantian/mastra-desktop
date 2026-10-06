@@ -1,5 +1,4 @@
 export * from "./api/chat-api";
-export * from "./lib/attachments";
 export * from "./lib/citation-utils";
 export * from "./lib/display";
 export * from "./model/background-task-stream";

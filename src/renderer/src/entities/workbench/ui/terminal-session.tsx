@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal as XtermTerminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
@@ -12,7 +13,6 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
-import { reportWorkbenchNotification } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import {
@@ -26,11 +26,13 @@ import {
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
+import { isLocalWebUrl } from "../../../../../shared/window-contract";
+import { useDesktopSettingsQuery } from "../model/queries/config";
 import { useThreadsQuery } from "../model/queries/threads";
 import type { TerminalEvent, TerminalStatus } from "../model/terminal";
 import { getTerminalApi } from "../model/terminal";
 import type { TerminalRequest } from "../model/types";
-import { useWorkbenchStore } from "../model/workbench-store";
+import { useOpenBrowserUrl, useWorkbenchStore } from "../model/workbench-store";
 
 function cssColor(name: string, fallback: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -87,7 +89,6 @@ export function commandForFile(path: string): string | undefined {
   return undefined;
 }
 
-const LONG_SESSION_MS = 10_000;
 const TERMINAL_DEFAULT_COLS = 80;
 const TERMINAL_DEFAULT_ROWS = 24;
 
@@ -122,6 +123,20 @@ export function TerminalSession({
   const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
+  const desktopSettings = useDesktopSettingsQuery().data;
+  const openBrowser = useOpenBrowserUrl();
+  const openLinkRef = React.useRef<(uri: string) => void>(() => undefined);
+  openLinkRef.current = (uri) => {
+    const url = URL.parse(uri);
+    if (!url || (url.protocol !== "http:" && url.protocol !== "https:")) return;
+    if ((desktopSettings?.openLocalLinksInBrowser ?? true) && isLocalWebUrl(uri)) {
+      if (url.hostname === "0.0.0.0") url.hostname = "localhost";
+      openBrowser(url.href);
+    } else
+      void window.api.workspace
+        .openExternal(url.href)
+        .catch((error) => toastError(error, t("common:error")));
+  };
   const threads = useThreadsQuery(userId).data ?? [];
   const activeThreadId = useWorkbenchStore((state) => state.lastKnownThreadId);
   const reportTerminalSession = useWorkbenchStore((state) => state.reportTerminalSession);
@@ -171,7 +186,6 @@ export function TerminalSession({
     let createdId: string | undefined;
     let creating = true;
     const earlyEvents: TerminalEvent[] = [];
-    const startedAt = Date.now();
     setStatus("connecting");
     setTitle("Terminal");
     setLastCommand(undefined);
@@ -183,9 +197,21 @@ export function TerminalSession({
       fontSize: 12,
       lineHeight: 1.25,
       theme: readTerminalTheme(),
+      linkHandler: {
+        activate: (event, uri) => {
+          event.preventDefault();
+          openLinkRef.current(uri);
+        },
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
+    term.loadAddon(
+      new WebLinksAddon((event, uri) => {
+        event.preventDefault();
+        openLinkRef.current(uri);
+      }),
+    );
     term.open(el);
     xtermRef.current = term;
     fitRef.current = fit;
@@ -212,14 +238,6 @@ export function TerminalSession({
         setStatus("exited");
         setLastExitCode(event.exitCode);
         setSettledAt(Date.now());
-        if (targetThreadId && Date.now() - startedAt >= LONG_SESSION_MS) {
-          reportWorkbenchNotification(targetThreadId, userId, {
-            source: "terminal",
-            kind: "session-exited",
-            summary: "Terminal session exited",
-            payload: { sessionId: createdId, exitCode: event.exitCode },
-          });
-        }
       }
     };
     // Subscribe before creation so fast shell output is retained until IPC returns its ID.

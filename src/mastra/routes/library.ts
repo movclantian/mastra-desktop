@@ -3,10 +3,10 @@
  * RAG 主体见 src/mastra/rag/(docs/en/reference/rag/overview.mdx)。
  */
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import Busboy from "@fastify/busboy";
@@ -19,12 +19,13 @@ import { reindexAsset } from "../rag/document/indexing";
 import {
   attachAssetReference,
   deleteAsset,
+  getAssetFile,
+  getLibraryAsset,
   listAssets,
-  readAssetBytes,
   renameAsset,
   uploadAssetFromFile,
 } from "../rag/storage/assets";
-import { getLibrarySettings, saveLibrarySettings } from "../rag/storage/db";
+import { getLibrarySettings, saveLibrarySettings, withClient } from "../rag/storage/db";
 import { createFolder, deleteFolder, listFolders, renameFolder } from "../rag/storage/folders";
 import {
   cancelLibraryUploadSession,
@@ -258,6 +259,9 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
             resourceId,
             folderId,
             threadId,
+            draftId: multipart.fields.draftId
+              ? z.string().min(1).max(300).parse(multipart.fields.draftId)
+              : undefined,
             filename: file.filename,
             filePath: file.tempPath,
             byteSize: file.byteSize,
@@ -279,6 +283,41 @@ export const uploadLibraryAssetsRoute = registerApiRoute("/work/library/assets",
   },
 });
 
+/** Desktop-selected files stay at their original location; no multipart or server-side copy. */
+export const localLibraryAssetRoute = registerApiRoute("/work/library/local", {
+  method: "POST",
+  handler: async (c) => {
+    if (process.env.MASTRA_DESKTOP_RUNTIME !== "true")
+      throw workError("VALIDATION_FAILED", {
+        text: "Local attachments require the desktop runtime",
+      });
+    const body = z
+      .object({
+        path: z
+          .string()
+          .min(1)
+          .max(32767)
+          .refine((path) => isAbsolute(path) && !path.includes("\0")),
+        draftId: z.string().min(1).max(300),
+      })
+      .strict()
+      .parse(await c.req.json());
+    const path = await realpath(body.path);
+    const details = await stat(path);
+    if (!details.isFile())
+      throw workError("VALIDATION_FAILED", { text: "Attachment must be a regular file" });
+    const asset = await uploadAssetFromFile({
+      resourceId: authenticatedResourceId(c),
+      filename: basename(path),
+      filePath: path,
+      byteSize: details.size,
+      local: true,
+      draftId: body.draftId,
+    });
+    return c.json({ assets: [asset] });
+  },
+});
+
 /** Explicit user action: attach an existing session asset to the global document library. */
 export const promoteLibraryAssetRoute = registerApiRoute("/work/library/assets/:assetId/promote", {
   method: "POST",
@@ -286,12 +325,22 @@ export const promoteLibraryAssetRoute = registerApiRoute("/work/library/assets/:
     try {
       const body = (await c.req.json()) as { resourceId?: string; folderId?: string };
       const resourceId = authenticatedResourceId(c);
-      const asset = (await listAssets(resourceId)).find(
-        (candidate) => candidate.id === c.req.param("assetId"),
-      );
+      const asset = await getLibraryAsset(resourceId, c.req.param("assetId"));
       if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
       if (asset.status === "unsupported") {
         throw new Error("图片、音频、视频和当前格式只能作为会话附件保存");
+      }
+      if (asset.localPath) {
+        const source = await getAssetFile(resourceId, asset.id);
+        if (!source) throw workError("LIBRARY_ASSET_NOT_FOUND");
+        const durable = await uploadAssetFromFile({
+          resourceId,
+          filename: asset.filename,
+          filePath: source.path,
+          byteSize: asset.byteSize,
+          folderId: requireResourceId(body.folderId) ?? undefined,
+        });
+        return c.json({ asset: durable });
       }
       await attachAssetReference(
         resourceId,
@@ -312,14 +361,33 @@ export const referenceLibraryAssetRoute = registerApiRoute(
   {
     method: "POST",
     handler: async (c) => {
-      const body = z.object({ threadId: z.string().min(1) }).parse(await c.req.json());
+      const body = z
+        .object({
+          threadId: z.string().min(1).optional(),
+          draftId: z.string().min(1).max(300).optional(),
+        })
+        .refine((value) => value.threadId || value.draftId)
+        .parse(await c.req.json());
       const resourceId = authenticatedResourceId(c);
       const threadId = await ownedThreadId(c, resourceId, body.threadId);
-      const asset = (await listAssets(resourceId)).find(
-        (candidate) => candidate.id === c.req.param("assetId"),
-      );
+      const file = await getAssetFile(resourceId, c.req.param("assetId"));
+      const asset = file?.asset;
       if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
-      await attachAssetReference(resourceId, asset.id, undefined, threadId);
+      await attachAssetReference(
+        resourceId,
+        asset.id,
+        undefined,
+        threadId,
+        threadId ? undefined : body.draftId,
+      );
+      const draftId = body.draftId;
+      if (threadId && draftId)
+        await withClient((client) =>
+          client.execute({
+            sql: "DELETE FROM library_asset_refs WHERE asset_id = ? AND resource_id = ? AND draft_id = ?",
+            args: [asset.id, resourceId, draftId],
+          }),
+        );
       const updated = (await listAssets(resourceId, threadId)).find(
         (candidate) => candidate.id === asset.id,
       );
@@ -449,13 +517,22 @@ export const libraryAssetContentRoute = registerApiRoute("/work/library/assets/:
   handler: async (c) => {
     const resourceId = authenticatedResourceId(c);
     const assetId = c.req.param("assetId");
-    const result = await readAssetBytes(resourceId, assetId);
+    const result = await getAssetFile(resourceId, assetId);
     if (!result) throw workError("LIBRARY_ASSET_NOT_FOUND");
-    return c.body(Buffer.from(result.bytes) as never, 200, {
-      "Content-Type": result.asset.mediaType,
-      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(result.asset.filename)}`,
-      "Cache-Control": "private, max-age=3600",
-    });
+    return c.body(
+      c.req.method === "HEAD" ? null : (Readable.toWeb(createReadStream(result.path)) as never),
+      200,
+      {
+        "Content-Type":
+          result.asset.mediaType === "text/html"
+            ? "text/plain; charset=utf-8"
+            : result.asset.mediaType,
+        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(result.asset.filename)}`,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "sandbox",
+      },
+    );
   },
 });
 
@@ -488,9 +565,7 @@ export const reindexLibraryAssetRoute = registerApiRoute("/work/library/assets/:
   handler: async (c) => {
     try {
       const resourceId = authenticatedResourceId(c);
-      const asset = (await listAssets(resourceId)).find(
-        (candidate) => candidate.id === c.req.param("assetId"),
-      );
+      const asset = await getLibraryAsset(resourceId, c.req.param("assetId"));
       if (!asset) throw workError("LIBRARY_ASSET_NOT_FOUND");
       const settings = await getLibrarySettings(resourceId);
       void reindexAsset(resourceId, c.req.param("assetId"), settings).catch(() => undefined);

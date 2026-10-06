@@ -7,10 +7,18 @@ import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { closeBrowserThreadSessions } from "../../agents/browser";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
+import { deleteTeamInvocations } from "../../agents/team-activity";
+import { deleteTeamHandoffs } from "../../agents/team-handoff";
 import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
 import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models/providers";
+import {
+  attachAssetReference,
+  getLibraryAsset,
+  getLibraryAssetId,
+  releaseThreadAssets,
+} from "../../rag/storage/assets";
 import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
 import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
@@ -366,6 +374,14 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
       ...(options ? { options } : {}),
     });
     await memory.settled();
+    const copied = await memory.recall({ threadId: clone.id, resourceId, perPage: false });
+    for (const message of workbenchMessages(copied.messages)) {
+      for (const part of message.parts) {
+        const assetId = part.type === "file" ? getLibraryAssetId(part.url) : null;
+        if (assetId && (await getLibraryAsset(resourceId, assetId)))
+          await attachAssetReference(resourceId, assetId, undefined, clone.id);
+      }
+    }
     return c.json({ thread: clone });
   },
 });
@@ -440,7 +456,7 @@ const threadTodosExtractor = new Extractor({
   metadataKeyPath: false,
 });
 
-/** Facts come from persisted messages, never from generated summary text. */
+/** Read persisted conversation facts and the working memory used by this thread. */
 const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
   method: "GET",
   handler: async (c) => {
@@ -449,10 +465,13 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
     const memory = await getWorkMemory(c.get("requestContext"));
     const thread = await getOwnedThread(memory, threadId, resourceId);
     if (!thread) throw workError("THREAD_NOT_FOUND");
-    const [{ messages }, mcp, changes] = await Promise.all([
+    const memoryConfig = memory.getMergedThreadConfig().workingMemory;
+    const [{ messages }, mcp, changes, workingMemory, workingMemoryTemplate] = await Promise.all([
       memory.recall({ threadId, resourceId, perPage: false }),
       getMcpConfig(resourceId),
       listWorkspaceChanges(threadId, resourceId),
+      memory.getWorkingMemory({ threadId, resourceId }),
+      memory.getWorkingMemoryTemplate({}),
     ]);
     type Item = {
       id: string;
@@ -564,7 +583,18 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
           mediaType: change.after?.contentType,
         });
     }
-    return c.json({ threadId, title: thread.title, latestRequest, items: [...items.values()] });
+    return c.json({
+      threadId,
+      title: thread.title,
+      latestRequest,
+      items: [...items.values()],
+      workingMemory: {
+        content: workingMemory,
+        enabled: memoryConfig?.enabled === true,
+        scope: memoryConfig?.scope ?? "resource",
+        format: workingMemoryTemplate?.format ?? "markdown",
+      },
+    });
   },
 });
 
@@ -710,6 +740,9 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
       workWebhookSignals.removeThread({ threadId, resourceId }),
       workPollingSignals.removeThread({ threadId, resourceId }),
       deleteThreadWorkspace(threadId, thread.metadata, resourceId),
+      releaseThreadAssets(resourceId, threadId),
+      deleteTeamInvocations(resourceId, threadId),
+      deleteTeamHandoffs(resourceId, threadId),
     ]);
   }
   if (!threadId && c.req.method === "GET") {

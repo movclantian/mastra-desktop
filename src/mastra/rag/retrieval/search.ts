@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 /**
  * 资料库语义检索:允许的就绪资产 → LibSQLVector 过滤召回 → 可选重排 / GraphRAG。
  * 官方文档:docs/en/reference/rag/retrieval.mdx、rerank.mdx、rerankWithScorer.mdx、
@@ -36,16 +37,28 @@ export async function searchLibrary(options: {
   if (!indexes.includes(indexName)) return [];
   const refs = await withClient((client) =>
     client.execute({
-      sql: `SELECT DISTINCT r.asset_id
+      sql: `SELECT DISTINCT r.asset_id, a.local_path, a.local_mtime, a.byte_size
         FROM library_asset_refs r
         JOIN library_assets a ON a.id = r.asset_id AND a.resource_id = r.resource_id
         WHERE r.resource_id = ?
-          AND a.status = 'ready'
+          AND a.status = 'ready' AND r.draft_id = ''
           AND (r.thread_id = '' OR r.thread_id = ?)`,
       args: [resourceId, threadId ?? ""],
     }),
   );
-  const allowedAssetIds = refs.rows.map((row) => String(row.asset_id));
+  const allowedAssetIds: string[] = [];
+  for (const row of refs.rows) {
+    if (row.local_path) {
+      const file = await stat(String(row.local_path)).catch(() => null);
+      if (
+        !file?.isFile() ||
+        file.mtimeMs !== Number(row.local_mtime) ||
+        file.size !== Number(row.byte_size)
+      )
+        continue;
+    }
+    allowedAssetIds.push(String(row.asset_id));
+  }
   if (allowedAssetIds.length === 0) return [];
   let allowed = await vector.query({
     indexName,

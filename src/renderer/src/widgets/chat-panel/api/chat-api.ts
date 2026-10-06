@@ -1,6 +1,8 @@
 import type { FileUIPart } from "ai";
 import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
+import { apiError, readErrorPayload } from "@/shared/lib";
+import type { PromptAttachment } from "@/shared/ui/ai-elements/prompt-input";
 import type {
   BackgroundTaskState,
   LibraryFilePart,
@@ -48,50 +50,109 @@ export function fetchChatLibraryAssets(resourceId: string): Promise<ChatLibraryA
 
 export async function fetchChatAssetBlob(url: string): Promise<Blob> {
   const response = await apiFetch(url);
-  if (!response.ok) throw new Error(i18n.t("chat:api.loadAttachmentFailed"));
+  if (!response.ok)
+    throw Object.assign(new Error(i18n.t("chat:api.loadAttachmentFailed")), {
+      status: response.status,
+    });
   return response.blob();
 }
 
-export async function uploadChatAttachments(
-  files: FileUIPart[],
+export const chatAssetId = (url: string) => {
+  const parsed = new URL(url, MASTRA_SERVER_URL);
+  if (parsed.origin !== new URL(MASTRA_SERVER_URL).origin) return null;
+  return parsed.pathname.match(/^\/work\/library\/assets\/([^/]+)\/content$/)?.[1] ?? null;
+};
+
+/** Each chip starts immediately; only transport/temporary HTTP errors retry once. */
+export async function uploadChatAttachment(
+  file: PromptAttachment,
   userId: string,
-  threadId: string,
-): Promise<LibraryFilePart[]> {
-  const isPersisted = (file: FileUIPart) =>
-    /\/work\/library\/assets\/[^/]+\/content/.test(file.url);
-  const pending = files.filter((file) => !isPersisted(file));
-  if (pending.length === 0) return files as LibraryFilePart[];
-  const form = new FormData();
-  form.set("resourceId", userId);
-  form.set("threadId", threadId);
-  // Chat attachments are session-scoped by default. Promotion to "My documents"
-  // is an explicit library action, never an implicit side effect of sending a chat.
-  for (const file of pending) {
-    const source =
-      "file" in file && file.file instanceof File ? file.file : await fetchChatAssetBlob(file.url);
+  draftId: string,
+  signal: AbortSignal,
+): Promise<LibraryFilePart & { draftId: string; localPath?: string }> {
+  const assetId = !file.localPath ? chatAssetId(file.url) : null;
+  let body: FormData | { path: string; draftId: string } | { draftId: string };
+  if (assetId) body = { draftId };
+  else if (file.localPath) body = { path: file.localPath, draftId };
+  else {
+    const source = file.file ?? (await fetchChatAssetBlob(file.url));
+    const form = new FormData();
+    form.set("draftId", draftId);
     form.append("files", source, file.filename ?? i18n.t("chat:messages.untitledAttachment"));
+    body = form;
   }
-  const payload = await requestJson<{
-    assets?: Array<{ id: string; filename: string; mediaType: string; byteSize: number }>;
-  }>(
-    "/work/library/assets",
-    { method: "POST", body: form },
-    i18n.t("chat:api.saveAttachmentFailed"),
-  );
-  if (!payload.assets) throw new Error(i18n.t("chat:api.attachmentIncomplete"));
-  let uploadedIndex = 0;
-  return files.map((file) => {
-    if (isPersisted(file)) return file as LibraryFilePart;
-    const asset = payload.assets?.[uploadedIndex++];
+  const endpoint = assetId
+    ? `/work/library/assets/${assetId}/reference`
+    : file.localPath
+      ? "/work/library/local"
+      : "/work/library/assets";
+  for (let attempt = 0; ; attempt++) {
+    let response: Response;
+    try {
+      response = await apiFetch(endpoint, {
+        method: "POST",
+        body,
+        signal,
+      });
+    } catch (error) {
+      if (attempt === 0 && error instanceof TypeError && !signal.aborted) continue;
+      throw error;
+    }
+    if (!response.ok) {
+      if (attempt === 0 && [408, 429, 500, 502, 503, 504].includes(response.status)) {
+        await response.body?.cancel();
+        continue;
+      }
+      throw apiError(
+        await readErrorPayload(response, i18n.t("chat:api.saveAttachmentFailed")),
+        i18n.t("chat:api.saveAttachmentFailed"),
+      );
+    }
+    type UploadedAsset = {
+      id: string;
+      filename: string;
+      mediaType: string;
+      byteSize: number;
+      localPath?: string | null;
+    };
+    const payload = (await response.json()) as { assets?: UploadedAsset[]; asset?: UploadedAsset };
+    const asset = assetId ? payload.asset : payload.assets?.[0];
     if (!asset) throw new Error(i18n.t("chat:api.attachmentIncomplete"));
     return {
       type: "file",
+      draftId,
+      localPath: asset.localPath ?? undefined,
       byteSize: asset.byteSize,
       filename: asset.filename,
       mediaType: asset.mediaType,
       url: `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(asset.id)}/content?${resourceQuery(userId)}`,
-    } as LibraryFilePart;
-  });
+    };
+  }
+}
+
+/** Sending binds ready assets to the destination thread; bytes have already been uploaded. */
+export async function referenceChatAttachments(
+  files: FileUIPart[],
+  threadId: string,
+): Promise<LibraryFilePart[]> {
+  for (const file of files) {
+    const assetId = chatAssetId(file.url);
+    if (!assetId) throw new Error(i18n.t("chat:prompt.attachmentsNotReady"));
+    await requestJson(`/work/library/assets/${assetId}/reference`, {
+      method: "POST",
+      body: {
+        threadId,
+        ...("draftId" in file && typeof file.draftId === "string" ? { draftId: file.draftId } : {}),
+      },
+    });
+  }
+  return files.map(({ type, url, mediaType, filename, ...file }) => ({
+    type,
+    url,
+    mediaType,
+    filename,
+    ...("byteSize" in file && typeof file.byteSize === "number" ? { byteSize: file.byteSize } : {}),
+  }));
 }
 
 export interface ThreadMessagesPage {

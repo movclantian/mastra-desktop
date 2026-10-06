@@ -835,8 +835,11 @@ export function ThreadWorkspaceTree({
   const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
+  const selectThread = useSelectThread();
+  const requestWorkspaceFile = useWorkbenchStore((state) => state.requestWorkspaceFile);
   const [entriesByPath, setEntriesByPath] = React.useState<Record<string, TreeEntry[]>>({});
   const [expanded, setExpanded] = React.useState(() => new Set<string>());
+  const [selectedPath, setSelectedPath] = React.useState<string>();
   const [creating, setCreating] = React.useState<{
     parent: string;
     kind: "file" | "dir";
@@ -865,6 +868,7 @@ export function ThreadWorkspaceTree({
     setCreating(null);
     setCreateName("");
     setExpanded(new Set());
+    setSelectedPath(undefined);
     setEntriesByPath({});
     loadedPathsRef.current.clear();
     try {
@@ -889,6 +893,21 @@ export function ThreadWorkspaceTree({
     },
     [loadDirectory],
   );
+
+  const handleSelect = (path: string) => {
+    const entry = Object.values(entriesByPath)
+      .flat()
+      .find((entry) => entry.path === path);
+    if (!entry) return;
+    setSelectedPath(path);
+    if (entry.type === "dir") {
+      setExpanded((current) => new Set(current).add(path));
+      void loadDirectory(path);
+      return;
+    }
+    selectThread(threadId);
+    requestWorkspaceFile(threadId, path);
+  };
 
   const cancelCreate = React.useCallback(() => {
     setCreating(null);
@@ -1072,6 +1091,8 @@ export function ThreadWorkspaceTree({
           className="min-h-full rounded-none border-0 bg-transparent text-xs"
           expanded={expanded}
           onExpandedChange={handleExpandedChange}
+          onSelect={handleSelect}
+          selectedPath={selectedPath}
         >
           {creating?.parent === "" ? (
             <InlineCreateRow

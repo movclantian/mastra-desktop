@@ -15,13 +15,17 @@ import type {
 import { userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 import {
-  MODE_ID_CONTEXT_KEY,
   PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
-  resolveMode,
+  resolveRequestMode,
   toolCategoryOf,
 } from "./permissions";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workMessageMetadataSchema } from "./processors";
+import {
+  finishTeamInvocation,
+  saveTeamInvocation,
+  TEAM_INVOCATION_CONTEXT_KEY,
+} from "./team-activity";
 
 export const TEAM_WORKFLOW_CONTEXT_KEY = "mastra-work:team-workflow";
 export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";
@@ -114,81 +118,132 @@ export function compileTeamWorkflow(
         ]
           .filter(Boolean)
           .join("\n\n");
-        const files =
-          workMessageMetadataSchema.parse(context.get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY) ?? {})
-            .files ?? [];
-        const pending =
-          suspendData?.agentRunId && suspendData.toolCallId
-            ? {
-                ...options,
-                runId: suspendData.agentRunId,
-                toolCallId: suspendData.toolCallId,
-              }
-            : undefined;
-        const mode = resolveMode(context.get(MODE_ID_CONTEXT_KEY));
-        if (
-          pending &&
-          suspendData &&
-          ((mode.availableTools && !mode.availableTools.includes(suspendData.title)) ||
-            (rules.tools[suspendData.title] ??
-              rules.categories[toolCategoryOf(suspendData.title)]) === "deny")
-        )
-          throw new Error("当前权限或模式禁止恢复此工具");
-        const approval =
-          pending && suspendData?.requiresApproval ? approvalSchema.parse(resumeData) : undefined;
-        const output = pending
-          ? approval
-            ? approval.approved
-              ? await member.approveToolCall(pending)
-              : await member.declineToolCall({ ...pending, reason: approval.feedback })
-            : await member.resumeStream(resumeData, pending)
-          : await member.stream(
-              [
-                {
-                  role: "user",
-                  content: [
-                    { type: "text", text: prompt },
-                    ...files.map((file) => ({
-                      type: "file" as const,
-                      data: file.url,
-                      mimeType: file.mediaType,
-                    })),
-                  ],
-                },
-              ],
-              options,
+        const invocationId = thread;
+        const parentInvocationId = context.get(TEAM_INVOCATION_CONTEXT_KEY);
+        await saveTeamInvocation(context, {
+          id: invocationId,
+          profileId: profile.id,
+          memberId,
+          agentId: member.id,
+          ...(typeof parentInvocationId === "string" ? { parentInvocationId } : {}),
+          runId,
+          toolCallId: id,
+          workflowRunId: runId,
+          stepId: id,
+          prompt,
+          status: "running",
+          startedAt: new Date().toISOString(),
+          memoryThreadId: thread,
+          memoryResourceId: resource,
+        });
+        context.set(TEAM_INVOCATION_CONTEXT_KEY, invocationId);
+        const toolResults: unknown[] = [];
+        try {
+          const files =
+            workMessageMetadataSchema.parse(context.get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY) ?? {})
+              .files ?? [];
+          const pending =
+            suspendData?.agentRunId && suspendData.toolCallId
+              ? {
+                  ...options,
+                  runId: suspendData.agentRunId,
+                  toolCallId: suspendData.toolCallId,
+                }
+              : undefined;
+          const mode = resolveRequestMode(context);
+          if (
+            pending &&
+            suspendData &&
+            ((mode.availableTools && !mode.availableTools.includes(suspendData.title)) ||
+              (rules.tools[suspendData.title] ??
+                rules.categories[toolCategoryOf(suspendData.title)]) === "deny")
+          )
+            throw new Error("当前权限或模式禁止恢复此工具");
+          const approval =
+            pending && suspendData?.requiresApproval ? approvalSchema.parse(resumeData) : undefined;
+          const output = pending
+            ? approval
+              ? approval.approved
+                ? await member.approveToolCall(pending)
+                : await member.declineToolCall({ ...pending, reason: approval.feedback })
+              : await member.resumeStream(resumeData, pending)
+            : await member.stream(
+                [
+                  {
+                    role: "user",
+                    content: [
+                      { type: "text", text: prompt },
+                      ...files.map((file) => ({
+                        type: "file" as const,
+                        data: file.url,
+                        mimeType: file.mediaType,
+                      })),
+                    ],
+                  },
+                ],
+                options,
+              );
+          for await (const chunk of output.fullStream) {
+            if (chunk.type === "tool-call" || chunk.type === "tool-result") toolResults.push(chunk);
+            // 成员原始 fullStream(含 reasoning/step/tool 噪声)仅用于父级实时展示,成员的
+            // 权威结果由工作流另行汇总。按官方文档标记 transient,使其实时下发但不落库,
+            // 避免冗长中间块撑爆存储。
+            await writer.write({ ...chunk, transient: true } as typeof chunk);
+            if (chunk.type === "error") throw chunk.payload.error;
+            if (chunk.type === "tripwire") throw new Error(chunk.payload.reason);
+          }
+          abortSignal?.throwIfAborted();
+          // Discover all remaining calls from the native snapshot, including calls
+          // that did not emit a new chunk while another call was being resumed.
+          const { runs } = await member.listSuspendedRuns({
+            threadId: thread,
+            resourceId: resource,
+          });
+          const suspendedRun = runs[0];
+          const parked = suspendedRun?.toolCalls[0];
+          if (parked?.toolCallId && parked.toolName) {
+            await finishTeamInvocation(
+              invocationId,
+              { status: "suspended" },
+              (await output.getFullOutput()).messages,
+              toolResults,
             );
-        for await (const chunk of output.fullStream) {
-          // 成员原始 fullStream(含 reasoning/step/tool 噪声)仅用于父级实时展示,成员的
-          // 权威结果由工作流另行汇总。按官方文档标记 transient,使其实时下发但不落库,
-          // 避免冗长中间块撑爆存储。
-          await writer.write({ ...chunk, transient: true } as typeof chunk);
-          if (chunk.type === "error") throw chunk.payload.error;
-          if (chunk.type === "tripwire") throw new Error(chunk.payload.reason);
-        }
-        abortSignal?.throwIfAborted();
-        // Discover all remaining calls from the native snapshot, including calls
-        // that did not emit a new chunk while another call was being resumed.
-        const { runs } = await member.listSuspendedRuns({ threadId: thread, resourceId: resource });
-        const suspendedRun = runs[0];
-        const parked = suspendedRun?.toolCalls[0];
-        if (parked?.toolCallId && parked.toolName) {
-          const resumeLabel = `${id}:${parked.toolCallId}`;
-          return await suspend(
-            {
-              title: parked.toolName,
-              description: JSON.stringify(parked, null, 2),
-              agentRunId: suspendedRun.runId,
-              toolCallId: parked.toolCallId,
-              memoryThread: thread,
-              requiresApproval: parked.requiresApproval,
-              resumeLabel,
-            },
-            { resumeLabel },
+            const resumeLabel = `${id}:${parked.toolCallId}`;
+            return await suspend(
+              {
+                title: parked.toolName,
+                description: JSON.stringify(parked, null, 2),
+                agentRunId: suspendedRun.runId,
+                toolCallId: parked.toolCallId,
+                memoryThread: thread,
+                requiresApproval: parked.requiresApproval,
+                resumeLabel,
+              },
+              { resumeLabel },
+            );
+          }
+          if (suspendedRun) throw new Error("Suspended member run has no resumable tool call");
+          const complete = await output.getFullOutput();
+          await finishTeamInvocation(
+            invocationId,
+            { status: "completed", text: complete.text, endedAt: new Date().toISOString() },
+            complete.messages,
+            toolResults,
           );
+          return { request: inputData.request, text: complete.text };
+        } catch (error) {
+          await finishTeamInvocation(
+            invocationId,
+            {
+              status: "error",
+              error: error instanceof Error ? error.message : String(error),
+              endedAt: new Date().toISOString(),
+            },
+            [],
+            toolResults,
+          );
+          throw error;
         }
-        if (suspendedRun) throw new Error("Suspended member run has no resumable tool call");
-        return { request: inputData.request, text: await output.text };
       },
     });
   };

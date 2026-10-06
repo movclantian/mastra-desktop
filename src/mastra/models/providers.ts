@@ -33,18 +33,36 @@ type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 // One catalog serves both model discovery and runtime memory budgets.
 type Catalog = Record<string, unknown>;
+const catalogCacheSchema = z.object({
+  fetchedAt: z.number().finite().nonnegative(),
+  body: z.record(z.string(), z.unknown()).refine((body) => Object.keys(body).length > 0),
+});
 let catalogCache: { fetchedAt: number; body: Catalog } | undefined;
 let catalogInflight: Promise<Catalog> | undefined;
 let catalogRetryAfter = 0;
+let catalogLoaded = false;
 
 export async function fetchModelsDevCatalog(): Promise<Catalog> {
   if (catalogCache && Date.now() - catalogCache.fetchedAt < 3_600_000) return catalogCache.body;
-  if (Date.now() < catalogRetryAfter) {
-    if (catalogCache) return catalogCache.body;
-    throw new Error("Model catalog is temporarily unavailable");
-  }
   catalogInflight ??= (async () => {
     try {
+      // 成功目录持久化到现有配置表，服务重启后也能在离线时使用。
+      if (!catalogLoaded) {
+        const saved = await getAppConfig("models-dev-catalog");
+        if (saved) {
+          try {
+            catalogCache = catalogCacheSchema.parse(JSON.parse(saved));
+          } catch (error) {
+            console.warn("Ignoring invalid persisted model catalog", error);
+          }
+        }
+        catalogLoaded = true;
+      }
+      if (catalogCache && Date.now() - catalogCache.fetchedAt < 3_600_000) return catalogCache.body;
+      if (Date.now() < catalogRetryAfter) {
+        if (catalogCache) return catalogCache.body;
+        throw new Error("Model catalog is temporarily unavailable");
+      }
       const response = await fetch("https://models.dev/api.json", {
         signal: AbortSignal.timeout(5_000),
       });
@@ -52,15 +70,19 @@ export async function fetchModelsDevCatalog(): Promise<Catalog> {
       const body = z.record(z.string(), z.unknown()).parse(await response.json());
       if (!Object.keys(body).length) throw new Error("Empty model catalog");
       catalogCache = { fetchedAt: Date.now(), body };
+      catalogRetryAfter = 0;
+      await setAppConfig("models-dev-catalog", JSON.stringify(catalogCache)).catch((error) => {
+        console.warn("Failed to persist model catalog", error);
+      });
       return body;
     } catch (error) {
-      catalogRetryAfter = Date.now() + 60_000;
+      if (Date.now() >= catalogRetryAfter) catalogRetryAfter = Date.now() + 60_000;
       if (catalogCache) return catalogCache.body;
       throw error;
-    } finally {
-      catalogInflight = undefined;
     }
-  })();
+  })().finally(() => {
+    catalogInflight = undefined;
+  });
   return catalogInflight;
 }
 

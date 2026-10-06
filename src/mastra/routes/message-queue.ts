@@ -16,10 +16,11 @@ type Options = z.infer<typeof workbenchMessageOptionsSchema>;
 interface QueueEntry {
   view: QueuedMessage;
   options: Options;
+  unsubscribe?: () => void;
 }
 
-// Mastra owns FIFO ordering, activation and cancellation. Retain only the editable
-// payload while its native acceptance promise is pending. Same lifetime as Session.
+// Mastra owns FIFO ordering, activation and cancellation. Editable rows follow its
+// pending count, not acceptance: accepted resolves while a message is still queued.
 const queues = new WeakMap<Session, Map<string, QueueEntry>>();
 function queueFor(session: Session) {
   let queue = queues.get(session);
@@ -63,12 +64,15 @@ function watchAcceptance(session: Session, entry: QueueEntry, accepted: Promise<
   void accepted.then(
     () => {
       if (queue.get(entry.view.id) !== entry) return;
+      if (entry.view.status === "queued") return;
       queue.delete(entry.view.id);
     },
     (error: unknown) => {
       // Cancel/edit/steer already removed the old identity. Never resurrect it.
       if (queue.get(entry.view.id) !== entry) return;
+      entry.unsubscribe?.();
       entry.view = { ...entry.view, status: "failed", busy: false, error: errorText(error) };
+      session.emit({ type: "follow_up_queued", count: session.displayState.get().queuedFollowUps });
     },
   );
 }
@@ -82,9 +86,11 @@ function enqueue(result: Awaited<ReturnType<typeof prepareQueueMessage>>, text: 
     streamOptions,
     options,
   } = result;
+  const queueOwnerId = crypto.randomUUID();
   const queued = agent.queueMessage(text.trim() || "请处理附带的资料。", {
     resourceId,
     threadId,
+    queueOwnerId,
     ifIdle: { streamOptions },
   });
   const entry: QueueEntry = {
@@ -99,7 +105,19 @@ function enqueue(result: Awaited<ReturnType<typeof prepareQueueMessage>>, text: 
       busy: false,
     },
   };
-  queueFor(session).set(entry.view.id, entry);
+  const queue = queueFor(session);
+  queue.set(entry.view.id, entry);
+  // 每条消息独立观察原生待执行数量；执行交接或取消后才从展示队列移除。
+  entry.unsubscribe = agent.subscribeThreadEvents(
+    { resourceId, threadId, queueOwnerId },
+    (event) => {
+      if (event.type !== "queue-count-changed" || event.count !== 0) return;
+      if (queue.get(entry.view.id) === entry) queue.delete(entry.view.id);
+      entry.unsubscribe?.();
+    },
+  );
+  // 官方订阅会同步发出基线；空闲线程立即执行时，基线已经是 0。
+  if (!queue.has(entry.view.id)) entry.unsubscribe();
   watchAcceptance(session, entry, queued.accepted);
 }
 
@@ -117,7 +135,7 @@ const queueMessageRoute = registerApiRoute("/work/threads/:threadId/message-queu
     if (queueFor(result.controllerSession).size >= 50)
       throw workError("VALIDATION_FAILED", { text: "最多可保留 50 条排队消息" });
     enqueue(result, body.text);
-    return c.json({ ok: true });
+    return c.json({ requests: getSessionMessageQueue(result.controllerSession) });
   },
 });
 

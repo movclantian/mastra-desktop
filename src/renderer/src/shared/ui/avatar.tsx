@@ -1,5 +1,8 @@
 import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar";
+import * as bottts from "@dicebear/bottts";
+import { createAvatar } from "@dicebear/core";
 import type * as React from "react";
+import { useMemo } from "react";
 
 import { cn } from "@/shared/lib";
 
@@ -30,6 +33,24 @@ function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
       className={cn("aspect-square size-full rounded-full object-cover", className)}
       {...props}
     />
+  );
+}
+
+/** Stable per identity, generated locally without HTTP requests or persistent caches. */
+export function GeneratedAvatar({
+  seed,
+  name,
+  src,
+  children,
+  ...props
+}: React.ComponentProps<typeof Avatar> & { seed: string; name: string; src?: string }) {
+  const image = useMemo(() => src ?? createAvatar(bottts, { seed }).toDataUri(), [src, seed]);
+  return (
+    <Avatar {...props}>
+      <AvatarImage src={image} alt={name} />
+      <AvatarFallback>{[...name].slice(0, 2).join("")}</AvatarFallback>
+      {children}
+    </Avatar>
   );
 }
 

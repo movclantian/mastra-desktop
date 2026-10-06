@@ -4,7 +4,10 @@
  * providerConfig/agents 等由后端按认证用户隐式区分,无需显式 userId。
  */
 export const qk = {
+  desktopSettings: () => ["desktop-settings"] as const,
   threads: (userId: string) => ["threads", userId] as const,
+  threadContext: (userId: string, threadId: string | null) =>
+    ["thread-context", userId, threadId] as const,
   providerConfig: () => ["provider-config"] as const,
   catalog: () => ["catalog"] as const,
   agents: () => ["agents"] as const,

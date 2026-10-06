@@ -11,6 +11,7 @@ import {
   PinIcon,
   PinOffIcon,
   PlugIcon,
+  RefreshCwIcon,
   SquareCheckIcon,
   XIcon,
 } from "lucide-react";
@@ -23,9 +24,11 @@ import {
   workspaceRawFileUrl,
 } from "@/entities/workbench/api/workbench-api";
 import { useProviderConfigQuery } from "@/entities/workbench/model/queries/config";
+import { qk } from "@/entities/workbench/model/query-keys";
 import { useOpenBrowserUrl, useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
+import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import {
   QueueSection,
   QueueSectionContent,
@@ -36,6 +39,14 @@ import { Button } from "@/shared/ui/button";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 
 const PANEL_WIDTH = 384; // w-96,与样式保持一致,用于视口内取位
+
+function clampPanelPosition(x: number, y: number) {
+  const width = Math.min(PANEL_WIDTH, window.innerWidth - 16);
+  return {
+    x: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+    y: Math.max(8, Math.min(y, window.innerHeight - 160)),
+  };
+}
 
 export function ThreadSummaryButton() {
   const { t } = useTranslation();
@@ -53,9 +64,10 @@ export function ThreadSummaryButton() {
   const provider = providers.find((item) => item.id === selection?.providerId);
   const model = provider && selection ? buildRequestModel(provider, selection.modelId) : undefined;
   const context = useQuery({
-    queryKey: ["thread-context", userId, threadId],
+    queryKey: qk.threadContext(userId, threadId),
     queryFn: threadId ? () => fetchThreadContext(threadId) : skipToken,
     enabled: open && Boolean(threadId),
+    staleTime: 0,
   });
   const summary = useQuery({
     queryKey: ["thread-summary", userId, threadId, model],
@@ -72,31 +84,30 @@ export function ThreadSummaryButton() {
   const dockBelow = React.useCallback(() => {
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
-    setPos({
-      x: Math.min(Math.max(rect.right - PANEL_WIDTH, 8), window.innerWidth - PANEL_WIDTH - 8),
-      y: Math.min(rect.bottom + 6, window.innerHeight - 80),
-    });
+    const width = Math.min(PANEL_WIDTH, window.innerWidth - 16);
+    setPos(clampPanelPosition(rect.right - width, rect.bottom + 6));
   }, []);
   React.useEffect(() => {
-    if (!open || mode !== "docked") return;
-    dockBelow();
-    window.addEventListener("resize", dockBelow);
-    return () => window.removeEventListener("resize", dockBelow);
+    if (!open) return;
+    const reposition = () => {
+      if (mode === "docked") dockBelow();
+      else setPos((current) => clampPanelPosition(current.x, current.y));
+    };
+    reposition();
+    window.addEventListener("resize", reposition);
+    return () => window.removeEventListener("resize", reposition);
   }, [dockBelow, mode, open]);
 
   const dragRef = React.useRef<{ px: number; py: number; x: number; y: number } | null>(null);
   const onHandlePointerDown = (event: React.PointerEvent) => {
-    if (mode !== "floating") return;
+    if (mode !== "floating" || (event.target as HTMLElement).closest("button")) return;
     dragRef.current = { px: event.clientX, py: event.clientY, x: pos.x, y: pos.y };
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onHandlePointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag) return;
-    setPos({
-      x: Math.min(Math.max(drag.x + event.clientX - drag.px, 8), window.innerWidth - 80),
-      y: Math.min(Math.max(drag.y + event.clientY - drag.py, 8), window.innerHeight - 48),
-    });
+    setPos(clampPanelPosition(drag.x + event.clientX - drag.px, drag.y + event.clientY - drag.py));
   };
   const onHandlePointerUp = () => {
     dragRef.current = null;
@@ -145,6 +156,14 @@ export function ThreadSummaryButton() {
       });
     }
   };
+  const workingMemory = context.data?.workingMemory;
+  const copyContent = [
+    workingMemory?.content,
+    summary.data?.summary,
+    ...(summary.data?.todos.map((todo) => `- ${todo}`) ?? []),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   return (
     <>
       <Button
@@ -160,17 +179,22 @@ export function ThreadSummaryButton() {
       </Button>
       {open && threadId ? (
         <div
-          className="fixed z-50 flex max-h-[min(70vh,40rem)] w-96 flex-col overflow-hidden rounded-lg border bg-background shadow-lg"
+          className="fixed z-50 flex min-h-0 w-96 max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-lg border bg-background shadow-lg"
           ref={panelRef}
-          style={{ left: pos.x, top: pos.y }}
+          style={{
+            left: pos.x,
+            top: pos.y,
+            maxHeight: `min(70dvh, 40rem, calc(100dvh - ${pos.y + 8}px))`,
+          }}
         >
           <div
-            className={`flex items-center gap-1 border-b px-2 py-1.5 ${
+            className={`flex shrink-0 items-center gap-1 border-b px-2 py-1.5 ${
               mode === "floating" ? "cursor-grab active:cursor-grabbing" : ""
             }`}
             onPointerDown={onHandlePointerDown}
             onPointerMove={onHandlePointerMove}
             onPointerUp={onHandlePointerUp}
+            onPointerCancel={onHandlePointerUp}
           >
             {mode === "floating" ? (
               <GripHorizontalIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -178,6 +202,16 @@ export function ThreadSummaryButton() {
             <span className="min-w-0 flex-1 truncate font-medium text-sm">
               {t("topbar:summaryTitle")}
             </span>
+            <Button
+              aria-label={t("common:refresh")}
+              title={t("common:refresh")}
+              disabled={context.isFetching}
+              onClick={() => void context.refetch()}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <RefreshCwIcon className={context.isFetching ? "animate-spin" : undefined} />
+            </Button>
             <Button
               aria-label={mode === "docked" ? t("topbar:dragMode") : t("topbar:dockMode")}
               onClick={() => {
@@ -201,7 +235,7 @@ export function ThreadSummaryButton() {
               <XIcon />
             </Button>
           </div>
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea className="min-h-0 min-w-0 flex-1">
             <div className="flex min-w-0 flex-col gap-3 px-3 py-2 text-sm">
               {context.isPending ? (
                 <p className="flex items-center gap-2 text-muted-foreground">
@@ -214,6 +248,40 @@ export function ThreadSummaryButton() {
                 </Button>
               ) : (
                 <>
+                  <section className="flex min-w-0 flex-col gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-xs text-muted-foreground">
+                      <h3>{t("settings:memory.workingMemoryTitle")}</h3>
+                      <span>
+                        {t(
+                          context.data.workingMemory.scope === "thread"
+                            ? "settings:memory.scopeThread"
+                            : "settings:memory.scopeResource",
+                        )}
+                      </span>
+                    </div>
+                    {context.data.workingMemory.content ? (
+                      context.data.workingMemory.format === "json" ? (
+                        <pre className="whitespace-pre-wrap break-all font-mono text-xs">
+                          {context.data.workingMemory.content}
+                        </pre>
+                      ) : (
+                        <MessageResponse
+                          mode="static"
+                          className="h-auto min-w-0 text-xs [overflow-wrap:anywhere] [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs"
+                        >
+                          {context.data.workingMemory.content}
+                        </MessageResponse>
+                      )
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        {t(
+                          context.data.workingMemory.enabled
+                            ? "topbar:workingMemoryEmpty"
+                            : "topbar:workingMemoryDisabled",
+                        )}
+                      </p>
+                    )}
+                  </section>
                   {context.data.latestRequest && (
                     <section className="flex min-w-0 flex-col gap-1">
                       <h3 className="text-xs text-muted-foreground">{t("topbar:latestRequest")}</h3>
@@ -314,7 +382,7 @@ export function ThreadSummaryButton() {
               )}
             </div>
           </ScrollArea>
-          <div className="flex items-center justify-end gap-2 border-t px-2 py-1.5">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-2 py-1.5">
             <Button
               disabled={summary.isFetching}
               onClick={() => void summary.refetch()}
@@ -323,17 +391,12 @@ export function ThreadSummaryButton() {
             >
               {t(summary.data ? "topbar:regenerate" : "topbar:generateSummary")}
             </Button>
-            {summary.data && (
+            {copyContent && (
               <Button
                 size="sm"
                 onClick={() => {
-                  if (!summary.data) return;
                   void navigator.clipboard
-                    .writeText(
-                      [summary.data.summary, ...summary.data.todos.map((todo) => `- ${todo}`)].join(
-                        "\n\n",
-                      ),
-                    )
+                    .writeText(copyContent)
                     .then(() => toast.success(t("topbar:copiedSummary")))
                     .catch(() => toast.error(t("common:error")));
                 }}

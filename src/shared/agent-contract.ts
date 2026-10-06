@@ -1,5 +1,19 @@
 import { z } from "zod";
 
+export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
+
+/** The same roster drives native agent tools, prompts and mode visibility. */
+export function delegationMemberIds(
+  profile: AgentProfile,
+  member?: AgentMemberDefinition,
+): string[] {
+  if (member) return member.delegates;
+  if (profile.id === DEFAULT_AGENT_PROFILE_ID) return ["explorer", "reviewer"];
+  return profile.type === "team" && profile.workflow?.strategy === "supervisor"
+    ? profile.members.map((candidate) => candidate.id)
+    : [];
+}
+
 /** Workbench projection of pending native Agent signals, never a second execution queue. */
 export interface QueuedMessage {
   id: string;
@@ -40,6 +54,7 @@ export const agentMemberSchema = z
     skills: z.array(z.string()).default([]),
     memoryScope: z.enum(["thread", "resource"]).default("thread"),
     delegates: z.array(identifier).default([]),
+    avatar: z.string().optional(),
   })
   .strict();
 
@@ -102,7 +117,8 @@ export const agentWorkflowStepSchema = z.discriminatedUnion("kind", [
 // Strategy selects the entry point. Councils and supervisors compose inside the graph.
 export const agentWorkflowSchema = z
   .object({
-    strategy: z.enum(["supervisor", "workflow"]),
+    strategy: z.enum(["supervisor", "workflow", "handoff"]),
+    entryMemberId: identifier.optional(),
     steps: z.array(agentWorkflowStepSchema),
   })
   .strict();
@@ -133,6 +149,44 @@ export interface AgentProfile {
   updatedAt: string;
 }
 
+/** Display names never identify an invocation: all links use these persisted IDs. */
+export interface TeamInvocation {
+  id: string;
+  profileId: string;
+  memberId: string;
+  agentId: string;
+  parentMemberId?: string;
+  parentInvocationId?: string;
+  runId: string;
+  toolCallId: string;
+  workflowRunId?: string;
+  stepId?: string;
+  prompt: string;
+  status: "running" | "suspended" | "completed" | "error";
+  startedAt: string;
+  endedAt?: string;
+  text?: string;
+  error?: string;
+  memoryThreadId?: string;
+  memoryResourceId?: string;
+}
+
+export interface TeamHandoff {
+  id: number;
+  profileId: string;
+  fromMemberId: string;
+  toMemberId: string;
+  reason: string;
+  context: string;
+  createdAt: string;
+}
+
+export interface TeamHandoffState {
+  profileId: string;
+  activeMemberId: string;
+  history: TeamHandoff[];
+}
+
 export function validateAgentTeam(
   profile: Pick<AgentProfile, "type" | "members" | "workflow">,
 ): void {
@@ -156,6 +210,13 @@ export function validateAgentTeam(
   for (const id of members.keys()) visit(id, []);
   const definition = profile.workflow;
   if (!definition) throw new Error("团队必须选择执行方式");
+  if (definition.strategy === "handoff") {
+    if (!definition.entryMemberId || !members.has(definition.entryMemberId))
+      throw new Error("交接团队必须指定有效的初始专家");
+    if (definition.steps.length || profile.members.some((member) => member.delegates.length))
+      throw new Error("交接团队由当前专家负责，不能配置主管委派或显式流程步骤");
+    if (members.size < 2) throw new Error("交接团队至少需要两位专家");
+  } else if (definition.entryMemberId) throw new Error("仅交接团队可指定初始专家");
   if (definition.strategy === "workflow" && !definition.steps.length)
     throw new Error("显式流程至少需要一个步骤");
   const ids = new Set<string>();

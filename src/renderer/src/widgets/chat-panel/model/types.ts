@@ -14,6 +14,12 @@ import type { ToolPart } from "@/shared/ui/ai-elements/tool";
  * 助手用量由原生 Session 与历史投影恢复。
  */
 export interface WorkMessageMetadata {
+  agentProfileId?: string;
+  agentDisplayName?: string;
+  agentAvatar?: string;
+  createdAt?: string;
+  handoff?: import("../../../../../shared/agent-contract").TeamHandoff;
+  teamMemberId?: string;
   goal?: boolean;
   /** 本轮各步累计用量，仅用于计费，不是当前上下文水位。 */
   usage?: LanguageModelUsage;
@@ -107,14 +113,6 @@ export type WorkUIMessage = UIMessage<
   }
 >;
 
-export interface AgentSubagentState {
-  agentType: string;
-  displayName?: string;
-  task: string;
-  status: "running" | "completed" | "error";
-  textDelta?: string;
-}
-
 export type MessagePart = UIMessage["parts"][number];
 export type TracePart = Extract<MessagePart, { type: "reasoning" }> | ToolPart;
 
@@ -163,9 +161,8 @@ export function normalizeTraceParts(parts: TracePart[]): TracePart[] {
 export type AssistantSegment =
   | { key: string; text: string; type: "text" }
   | { key: string; parts: TracePart[]; type: "trace" }
-  | { key: string; interaction: AgentInteraction; type: "interaction" }
-  /** 子 Agent 派发/状态转场事件,渲染为 Marker 分隔行(官方 group-chat 模式) */
-  | { key: string; text: string; type: "event" };
+  | { key: string; interaction: AgentInteraction; type: "interaction" };
+/** 子 Agent 派发/状态转场事件,渲染为 Marker 分隔行(官方 group-chat 模式) */
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -217,6 +214,8 @@ export interface GoalObjective {
 }
 
 export interface WorkDisplayState {
+  handoff?: import("../../../../../shared/agent-contract").TeamHandoffState | null;
+  teamInvocations?: import("../../../../../shared/agent-contract").TeamInvocation[];
   objective?: GoalObjective | null;
   status: "idle" | "running" | "suspended";
   threadId: string;
@@ -291,6 +290,7 @@ export interface WorkflowRuntimeEvent {
 }
 
 export interface WorkflowRuntimeRun {
+  profile?: import("../../../../../shared/agent-contract").AgentProfile;
   runId: string;
   workflowId: string;
   threadId: string;
@@ -434,6 +434,7 @@ function workflowSnapshotToRuntime(run: WorkflowRunSummaryState): WorkflowRuntim
     events,
     output: snapshot?.result,
     controlledByAgent: asRecord(profile?.workflow)?.strategy === "supervisor",
+    profile: profile as unknown as WorkflowRuntimeRun["profile"],
     ...(error ? { error } : {}),
     ...(!["pending", "running", "waiting", "suspended", "paused"].includes(status)
       ? { finishedAt: updatedAt }
@@ -968,88 +969,6 @@ export function getTasksFromMessages(messages: UIMessage[]): AgentTask[] | undef
   return latestTasks;
 }
 
-/** 子 Agent 展示名:派发工具名与 data 部分里的 agentType 共用同一映射 */
-function subagentDisplayName(agentType: string): string {
-  return agentType === "explorer" ? "Explorer" : agentType === "reviewer" ? "Reviewer" : agentType;
-}
-
-function normalizeSubagentType(value: string | undefined): string | undefined {
-  const trimmed = value?.trim();
-  if (!trimmed) return undefined;
-  return trimmed.replace(/^mastra-work-/, "").replace(/^agent-/, "");
-}
-
-export function getSubagentsFromMessages(messages: UIMessage[]): AgentSubagentState[] {
-  const runs = new Map<string, AgentSubagentState>();
-  for (const message of messages) {
-    const delegations = new Map<
-      string,
-      {
-        agentType: string;
-        displayName: string;
-        task: string;
-      }
-    >();
-    let latestDelegation:
-      | {
-          agentType: string;
-          displayName: string;
-          task: string;
-        }
-      | undefined;
-    for (const part of message.parts) {
-      if (isToolUIPart(part)) {
-        const toolName = getToolName(part);
-        if (toolName?.startsWith("agent-")) {
-          const agentType = toolName.slice("agent-".length);
-          const input = asRecord("input" in part ? part.input : undefined);
-          latestDelegation = {
-            agentType,
-            displayName: subagentDisplayName(agentType),
-            task: asString(input?.prompt) ?? i18n.t("chat:panels.delegatedTask"),
-          };
-          delegations.set(agentType, latestDelegation);
-        }
-        continue;
-      }
-
-      const raw = part as unknown as JsonRecord;
-      if (raw.type !== "data-tool-agent" && raw.type !== "data-tool-agent-step") continue;
-      const data = asRecord(raw.data);
-      const step = asRecord(data?.step);
-      const partAgentId = asString(raw.id);
-      const dataAgentId = asString(data?.id);
-      const agentType =
-        normalizeSubagentType(partAgentId) ??
-        normalizeSubagentType(dataAgentId) ??
-        latestDelegation?.agentType ??
-        "subagent";
-      const runId =
-        asString(data?.runId) ?? partAgentId ?? dataAgentId ?? `${message.id}:${agentType}`;
-      const previous = runs.get(runId);
-      const delegation = delegations.get(agentType) ?? latestDelegation;
-      const status = raw.type === "data-tool-agent-step" ? step?.status : data?.status;
-      const textDelta = asString(data?.text) ?? asString(step?.text) ?? previous?.textDelta;
-      runs.set(runId, {
-        ...previous,
-        agentType,
-        displayName: previous?.displayName ?? delegation?.displayName,
-        task: delegation?.task ?? previous?.task ?? i18n.t("chat:panels.delegatedTask"),
-        status:
-          status === "finished"
-            ? "completed"
-            : status === "error" || data?.finishReason === "error"
-              ? "error"
-              : previous?.status === "completed" || previous?.status === "error"
-                ? previous.status
-                : "running",
-        ...(textDelta ? { textDelta } : {}),
-      });
-    }
-  }
-  return [...runs.values()];
-}
-
 export function areTasksEqual(left: AgentTask[], right: AgentTask[]): boolean {
   if (left.length !== right.length) return false;
   return left.every((task, index) => {
@@ -1125,7 +1044,6 @@ export function getAssistantSegments(
 ): AssistantSegment[] {
   const segments: AssistantSegment[] = [];
   let traceParts: TracePart[] = [];
-  let delegation: { agentType: string; displayName: string } | undefined;
 
   const flushTrace = () => {
     if (traceParts.length > 0) {
@@ -1139,31 +1057,6 @@ export function getAssistantSegments(
   };
 
   parts.forEach((part, index) => {
-    const raw = part as unknown as JsonRecord;
-    // data-structured-output(联网检索报告)已随服务端 structuredOutput 一并移除,
-    // 旧消息里残留的该类 part 直接忽略
-    if (raw.type === "data-structured-output") return;
-
-    if (raw.type === "data-tool-agent") {
-      const data = asRecord(raw.data);
-      const agentId = asString(raw.id) ?? asString(data?.id);
-      const agentType = normalizeSubagentType(agentId) ?? delegation?.agentType ?? "subagent";
-      const displayName =
-        delegation?.agentType === agentType
-          ? delegation.displayName
-          : subagentDisplayName(agentType);
-      const status = data?.status;
-      const text =
-        status === "finished"
-          ? i18n.t("chat:memberStream.memberCompletedTask", { name: displayName })
-          : status === "error" || data?.finishReason === "error"
-            ? i18n.t("chat:memberStream.memberExecutionError", { name: displayName })
-            : i18n.t("chat:memberStream.memberJoinedCollaboration", { name: displayName });
-      flushTrace();
-      segments.push({ key: `event-${index}`, text, type: "event" });
-      return;
-    }
-
     if (part.type === "text") {
       if (part.text) {
         flushTrace();
@@ -1181,11 +1074,6 @@ export function getAssistantSegments(
     }
 
     if (isToolUIPart(part)) {
-      const toolName = getToolName(part);
-      if (toolName?.startsWith("agent-")) {
-        const agentType = toolName.slice("agent-".length);
-        delegation = { agentType, displayName: subagentDisplayName(agentType) };
-      }
       const interaction = getCompletedInteraction(messageId, part);
       if (interaction) {
         flushTrace();

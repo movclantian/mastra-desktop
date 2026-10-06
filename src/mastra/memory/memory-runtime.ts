@@ -175,7 +175,7 @@ const DEFAULT_CONFIG: MemoryUserConfig = {
   semanticRecallIndexName: "",
   // 工作记忆适合保存小型稳定状态,默认开启。
   workingMemory: true,
-  workingMemoryScope: "resource",
+  workingMemoryScope: "thread",
   workingMemoryFormat: "template",
   workingMemoryTemplate: DEFAULT_WORKING_MEMORY_TEMPLATE,
   workingMemorySchema: DEFAULT_WORKING_MEMORY_SCHEMA,

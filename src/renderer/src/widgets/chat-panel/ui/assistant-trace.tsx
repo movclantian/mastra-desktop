@@ -7,6 +7,7 @@ import {
   XIcon,
 } from "lucide-react";
 import * as React from "react";
+import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
 import { useTranslation } from "@/shared/i18n";
 import {
   ChainOfThought,
@@ -22,7 +23,12 @@ import {
   CodeBlockHeader,
   CodeBlockTitle,
 } from "@/shared/ui/ai-elements/code-block";
-import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/shared/ui/ai-elements/reasoning";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningStreamingPreview,
+  ReasoningTrigger,
+} from "@/shared/ui/ai-elements/reasoning";
 import {
   Sandbox,
   SandboxContent,
@@ -62,6 +68,12 @@ import { DotmTriangle2 } from "@/shared/ui/dotm-triangle-2";
 import { getTraceStepStatus, type TracePart } from "../model/types";
 import { getToolUI } from "./tool-registry-ui";
 
+function useTraceDisclosure(showDetails: boolean) {
+  const [open, setOpen] = React.useState(showDetails);
+  React.useEffect(() => setOpen(showDetails), [showDetails]);
+  return [open, setOpen] as const;
+}
+
 // ---------------------------------------------------------------------------
 // 执行轨迹:推理步骤走官方 ChainOfThought 渲染;工具步骤按 docs/aielements/
 // task.tsx 的 Task 模式 —— 连续的工具 part 归为一组,整组渲染成一个 Task
@@ -96,18 +108,21 @@ function ToolRunningMatrix({ name }: { name: string }) {
 const ReasoningStepItem = React.memo(function ReasoningStepItem({
   part,
   isStreaming,
+  showDetails,
 }: {
   part: Extract<TracePart, { type: "reasoning" }>;
   isStreaming: boolean;
+  showDetails: boolean;
 }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useTraceDisclosure(showDetails);
   const active = getTraceStepStatus(part) === "active";
   const partStreaming = isStreaming && active;
 
   return (
     <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
       {/* 默认折叠:流式期间触发行内滚出最新一行推理(点开展示全文) */}
-      <Reasoning className="mb-0" isStreaming={partStreaming}>
+      <Reasoning className="mb-0" isStreaming={partStreaming} open={open} onOpenChange={setOpen}>
         <div className="flex min-w-0 items-center gap-2">
           {/* 折叠态也把最新一行推理流式滚进触发行(仅一行,不展开正文) */}
           <ReasoningTrigger className="min-w-0" streamingText={part.text} />
@@ -133,24 +148,20 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
  * 有参数或输出时整行可点,展开显示 ToolInput/ToolOutput 的 JSON 详情
  * (默认收起,需要时再看,不再无条件倾倒原始数据)。
  */
-const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart }) {
+const ToolStepItem = React.memo(function ToolStepItem({
+  part,
+  showDetails,
+}: {
+  part: ToolPart;
+  showDetails: boolean;
+}) {
   const { t } = useTranslation();
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
   const typescriptSandbox = name === "execute_typescript";
   const commandSandbox = name === "mastra_workspace_execute_command";
   const sandboxTool = typescriptSandbox || commandSandbox;
   const active = getTraceStepStatus(part) === "active";
-  // Keep a live command visible while it is running, but do not mount every
-  // completed command's code editor and output log in a long tool chain.
-  // Details remain available through the existing collapsible trigger.
-  const [open, setOpen] = React.useState(() => sandboxTool && active);
-  const wasActiveRef = React.useRef(active);
-  React.useEffect(() => {
-    if (!sandboxTool) return;
-    if (active) setOpen(true);
-    else if (wasActiveRef.current) setOpen(false);
-    wasActiveRef.current = active;
-  }, [active, sandboxTool]);
+  const [open, setOpen] = useTraceDisclosure(showDetails);
   const failed = part.state === "output-error";
   const errorText = "errorText" in part ? part.errorText : undefined;
   const hasInput = part.input !== undefined;
@@ -384,8 +395,9 @@ const ToolStepItem = React.memo(function ToolStepItem({ part }: { part: ToolPart
  * (圆点 + absolute 竖线)就是左侧时间线;少了它,工具组会贴到最左与 Header 平齐,
  * 和推理步骤错开一个图标列的宽度,层级就断了。
  */
-function ToolGroup({ tools }: { tools: ToolPart[] }) {
+function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boolean }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useTraceDisclosure(showDetails);
   const active = tools.some((tool) => getTraceStepStatus(tool) === "active");
   const toolTitle = t("chat:trace.toolCallsCount", {
     count: tools.length,
@@ -393,7 +405,7 @@ function ToolGroup({ tools }: { tools: ToolPart[] }) {
 
   return (
     <ChainOfThoughtStep label="" status={active ? "active" : "complete"}>
-      <Task className="w-full">
+      <Task className="w-full" open={open} onOpenChange={setOpen}>
         {/* w-full:折叠头占满整行,chevron 与外层 Header 的一样右对齐 */}
         <TaskTrigger className="w-full" title={toolTitle}>
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
@@ -404,7 +416,11 @@ function ToolGroup({ tools }: { tools: ToolPart[] }) {
         </TaskTrigger>
         <TaskContent>
           {tools.map((tool, index) => (
-            <ToolStepItem key={`${tool.toolCallId}:${index}`} part={tool} />
+            <ToolStepItem
+              key={`${tool.toolCallId}:${index}`}
+              part={tool}
+              showDetails={showDetails}
+            />
           ))}
         </TaskContent>
       </Task>
@@ -420,28 +436,22 @@ export function AssistantTrace({
   isStreaming: boolean;
 }) {
   const { t } = useTranslation();
+  const showDetails = useDesktopSettingsQuery().data?.showWorkDetails ?? false;
+  const [open, setOpen] = useTraceDisclosure(showDetails);
   const reasoningCount = parts.filter((part) => part.type === "reasoning").length;
   const toolCount = parts.length - reasoningCount;
-  const active = parts.some((part) => getTraceStepStatus(part) === "active");
+  const active = isStreaming && parts.some((part) => getTraceStepStatus(part) === "active");
+  const reasoningPart = parts.findLast(
+    (part) => part.type === "reasoning" && getTraceStepStatus(part) === "active",
+  );
+  const streamingText =
+    isStreaming && reasoningPart?.type === "reasoning" ? reasoningPart.text : "";
   const summary = [
     reasoningCount ? t("chat:trace.thinking") : null,
     toolCount ? t("chat:trace.toolCall") : null,
   ]
     .filter(Boolean)
     .join(t("chat:trace.and"));
-  const [open, setOpen] = React.useState(isStreaming && active);
-  const wasStreaming = React.useRef(isStreaming);
-
-  React.useEffect(() => {
-    if (isStreaming && active && !wasStreaming.current) {
-      setOpen(true);
-    }
-    if (!isStreaming && wasStreaming.current) {
-      setOpen(false);
-    }
-    wasStreaming.current = isStreaming;
-  }, [active, isStreaming]);
-
   // 按原始顺序铺开:推理步骤原位渲染,连续工具 part 聚成一个 Task 组
   const items: Array<{ key: string; node: React.ReactNode }> = [];
   let toolRun: ToolPart[] = [];
@@ -452,7 +462,7 @@ export function AssistantTrace({
     toolRun = [];
     items.push({
       key: `tools-${toolGroupIndex++}-${tools[0].toolCallId}`,
-      node: <ToolGroup tools={tools} />,
+      node: <ToolGroup tools={tools} showDetails={showDetails} />,
     });
   };
   parts.forEach((part, index) => {
@@ -462,7 +472,7 @@ export function AssistantTrace({
         // Provider reasoning ids are not guaranteed to be unique within one message.
         // Keep the source index in the React key so repeated ids cannot merge steps.
         key: `reasoning-${index}-${part.id ?? "part"}`,
-        node: <ReasoningStepItem isStreaming={isStreaming} part={part} />,
+        node: <ReasoningStepItem isStreaming={isStreaming} part={part} showDetails={showDetails} />,
       });
       return;
     }
@@ -473,12 +483,17 @@ export function AssistantTrace({
   return (
     <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
       <ChainOfThoughtHeader>
-        {active
-          ? t("chat:trace.processing")
-          : t("chat:trace.stepsCount", {
-              count: parts.length,
-              summary: summary || t("chat:trace.executionTrace"),
-            })}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0">
+            {active
+              ? t("chat:trace.processing")
+              : t("chat:trace.stepsCount", {
+                  count: parts.length,
+                  summary: summary || t("chat:trace.executionTrace"),
+                })}
+          </span>
+          {!open && streamingText ? <ReasoningStreamingPreview text={streamingText} /> : null}
+        </span>
       </ChainOfThoughtHeader>
       {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
           Header 的 BrainIcon 那一列,步骤正文与 Header 文字起点对齐;

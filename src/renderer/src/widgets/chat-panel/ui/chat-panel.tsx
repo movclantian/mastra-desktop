@@ -51,11 +51,12 @@ import { TypingAnimation } from "@/shared/ui/typing-animation";
 import {
   abortThread,
   fetchThreadMessagesPage,
+  referenceChatAttachments,
   runWorkflowAction,
   toggleThreadMessageReaction,
+  uploadChatAttachment,
 } from "../api/chat-api";
-import { persistAttachments as uploadAttachments } from "../lib/attachments";
-import { buildDisplayMessages, type DisplayMessage } from "../lib/display";
+import { buildDisplayMessages, type DisplayMessage, withHandoffMessages } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import { useDisplayStateQuery, useFetchDisplayStateQuery } from "../model/display-state-query";
 import {
@@ -67,7 +68,6 @@ import {
   type BackgroundTaskState,
   type GoalObjective,
   getBackgroundTasksFromMessages,
-  getSubagentsFromMessages,
   getTasksFromMessages,
   getToolName,
   getWorkflowStateFromDisplayState,
@@ -99,6 +99,7 @@ import {
 import type { WorkflowRunAction } from "./agent-panels";
 import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
 import { MessageSelectionScope } from "./message-selection";
+import { HandoffPanel, HandoffRecord, SupervisorDelegations } from "./team-collaboration";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
   "completed",
@@ -308,6 +309,10 @@ export function ChatPanel() {
   const goalAvailable = agentSelection.workflow?.strategy !== "workflow";
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
   const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
+  const [handoff, setHandoff] = React.useState<WorkDisplayState["handoff"]>(null);
+  const [teamInvocations, setTeamInvocations] = React.useState<
+    NonNullable<WorkDisplayState["teamInvocations"]>
+  >([]);
   const [activeMemberId, setActiveMemberId] = React.useState<string | null>(null);
   const [dismissedMemberActivitySignature, setDismissedMemberActivitySignature] = React.useState<
     string | null
@@ -367,9 +372,20 @@ export function ChatPanel() {
   );
   const attachmentTokenBudgetRef = React.useRef(selectedContextWindow ?? 32_000);
 
+  const prepareAttachment = React.useCallback(
+    (file: Parameters<typeof uploadChatAttachment>[0], signal: AbortSignal) =>
+      uploadChatAttachment(
+        file,
+        user.id,
+        `mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`,
+        signal,
+      ),
+    [user.id, activeThreadId],
+  );
+
   const persistAttachments = React.useCallback(
     async (files: FileUIPart[], threadId: string) => {
-      const persisted = await uploadAttachments(files, user.id, threadId);
+      const persisted = await referenceChatAttachments(files, threadId);
       await queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
       return persisted;
     },
@@ -431,7 +447,8 @@ export function ChatPanel() {
   const activeSession = activeThreadId ? getThreadSession(activeThreadId) : null;
   const [editingQueue, setEditingQueue] = React.useState(false);
   React.useEffect(() => setEditingQueue(false), [activeThreadId]);
-  const { messages, setMessages, status, native, queuedRequests } = useSessionView(activeSession);
+  const { messages, setMessages, status, native, queuedRequests, connection, connectionError } =
+    useSessionView(activeSession);
 
   // 历史分页(官方 message-scroller-load-history):每线程已加载页数与
   // “还有更早历史”只驱动命令式加载,不参与渲染,全部走 ref。
@@ -593,6 +610,8 @@ export function ChatPanel() {
         mergeBackgroundTaskSnapshot(current, displayState?.backgroundTasks ?? []),
       );
       setWorkflowRuns(displayState?.workflowRuns ?? []);
+      setHandoff(displayState?.handoff ?? null);
+      setTeamInvocations(displayState?.teamInvocations ?? []);
       setObjectiveSnapshot({
         threadId: activeThreadId,
         objective: displayState?.objective ?? null,
@@ -601,11 +620,7 @@ export function ChatPanel() {
       return displayState;
     } catch {
       if (requestId !== displayStateRequestId.current) return;
-      setTasks((current) => (current.length === 0 ? current : []));
-      setPersistedInteractions([]);
-      setBackgroundTasks([]);
-      setWorkflowRuns([]);
-      setObjectiveSnapshot(null);
+      // A transport outage does not erase the last confirmed task/approval state.
       return undefined;
     }
   }, [activeThreadId, fetchDisplayState]);
@@ -615,11 +630,12 @@ export function ChatPanel() {
     reconcileSettledThreadRef.current = (threadId) => {
       if (activeThreadIdRef.current === threadId) void reloadDisplayState();
       void invalidateThreads(userId);
+      void queryClient.invalidateQueries({ queryKey: qk.threadContext(userId, threadId) });
     };
     return () => {
       reconcileSettledThreadRef.current = () => undefined;
     };
-  }, [invalidateThreads, reloadDisplayState, userId]);
+  }, [invalidateThreads, queryClient, reloadDisplayState, userId]);
 
   /**
    * 读取本线程原生 Session 和持久化快照中仍在等待的工具交互。
@@ -655,6 +671,8 @@ export function ChatPanel() {
     setPersistedInteractions([]);
     setBackgroundTasks([]);
     setWorkflowRuns([]);
+    setHandoff(null);
+    setTeamInvocations([]);
     setResolvedInteractionKeys(new Set());
     retainActive(activeThreadId);
   }, [activeSession, activeThreadId, reloadMessages, retainActive]);
@@ -773,12 +791,24 @@ export function ChatPanel() {
     setThreadBusy(activeThreadId, isBusy || hasLiveBackgroundWork);
   }, [activeThreadId, hasLiveBackgroundWork, isBusy, setThreadBusy]);
   React.useEffect(() => {
-    if (!hasLiveWorkflow || !activeThreadId) return;
+    if (
+      !(hasLiveWorkflow || isBusy || hasLiveBackgroundWork) ||
+      !activeThreadId ||
+      connection !== "connected"
+    )
+      return;
     const timer = window.setInterval(() => {
       void reloadDisplayState();
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [activeThreadId, hasLiveWorkflow, reloadDisplayState]);
+  }, [
+    activeThreadId,
+    hasLiveWorkflow,
+    isBusy,
+    hasLiveBackgroundWork,
+    reloadDisplayState,
+    connection,
+  ]);
 
   // Keep the queue current after the agent stream closes. The official
   // BackgroundTaskManager stream emits lifecycle events for tasks that finish
@@ -900,14 +930,10 @@ export function ChatPanel() {
     }
     return [...merged.values()];
   }, [backgroundTasks, streamedBackgroundTasks]);
-  const subagents = React.useMemo(() => {
-    const merged = new Map(
-      getSubagentsFromMessages(messages).map((agent) => [agent.agentType, agent]),
-    );
-    for (const agent of Object.values(native?.activeSubagents ?? {}))
-      merged.set(agent.agentType, agent);
-    return [...merged.values()];
-  }, [native, messages]);
+  const subagents = React.useMemo(
+    () => teamInvocations.filter((call) => call.profileId === agentSelection.id),
+    [teamInvocations, agentSelection.id],
+  );
   const streamedWorkflow = React.useMemo(() => getWorkflowStateFromMessages(messages), [messages]);
   const persistedWorkflow = React.useMemo(
     () => getWorkflowStateFromDisplayState(workflowRuns),
@@ -917,62 +943,22 @@ export function ChatPanel() {
     () => mergeWorkflowRuntimeStates(streamedWorkflow, persistedWorkflow),
     [persistedWorkflow, streamedWorkflow],
   );
-  const runtimeMembers = React.useMemo<AgentMemberDefinition[]>(() => {
-    const members = new Map<string, AgentMemberDefinition>();
-    const addMember = (member: AgentMemberDefinition) => {
-      if (!members.has(member.id)) members.set(member.id, member);
-    };
-
-    for (const [index, subagent] of subagents.entries()) {
-      addMember({
-        id: `runtime-${subagent.agentType || index + 1}`,
-        name: subagent.displayName ?? subagent.agentType,
+  const runtimeMembers = React.useMemo<AgentMemberDefinition[]>(
+    () =>
+      [...new Set(subagents.map((call) => call.memberId))].map((id) => ({
+        id: `runtime-${id}`,
+        name: id === "explorer" ? "Explorer" : id === "reviewer" ? "Reviewer" : id,
         profession: t("chat:agents.subagent"),
-        description: subagent.task,
-        instructions: subagent.task,
+        description: "",
+        instructions: "",
         skills: [],
         memoryScope: "thread",
         delegates: [],
-      });
-    }
-
-    for (const task of visibleBackgroundTasks) {
-      const source = (task.agentId || task.toolName).trim();
-      if (!source) continue;
-      const agentType = source.replace(/^agent-/, "").replace(/^mastra-work-/, "");
-      if (!agentType) continue;
-      const displayName =
-        agentType === "explorer" ? "Explorer" : agentType === "reviewer" ? "Reviewer" : agentType;
-      addMember({
-        id: `runtime-${agentType}`,
-        name: displayName,
-        profession: t("chat:agents.subagent"),
-        description: t("chat:panels.backgroundTaskDescription", { name: task.toolName }),
-        instructions: t("chat:panels.backgroundTaskDescription", { name: task.toolName }),
-        skills: [],
-        memoryScope: "thread",
-        delegates: [],
-      });
-    }
-
-    return [...members.values()];
-  }, [subagents, t, visibleBackgroundTasks]);
+      })),
+    [subagents, t],
+  );
   const multiAgentProfile = React.useMemo<AgentProfile | null>(() => {
-    if (agentSelection.type === "team") {
-      const knownMemberIds = new Set(agentSelection.members.map((member) => member.id));
-      const runtimeOnlyMembers = runtimeMembers.filter(
-        (member) =>
-          !knownMemberIds.has(member.id) &&
-          !agentSelection.members.some(
-            (existing) =>
-              existing.id === member.id.replace(/^runtime-/, "") ||
-              existing.name.toLocaleLowerCase() === member.name.toLocaleLowerCase(),
-          ),
-      );
-      return runtimeOnlyMembers.length > 0
-        ? { ...agentSelection, members: [...agentSelection.members, ...runtimeOnlyMembers] }
-        : agentSelection;
-    }
+    if (agentSelection.type === "team") return agentSelection;
     if (runtimeMembers.length === 0) return null;
     const rootMember: AgentMemberDefinition = {
       id: agentSelection.id,
@@ -995,20 +981,27 @@ export function ChatPanel() {
   const agentMemberRuntimes = React.useMemo(
     () =>
       multiAgentProfile
-        ? getAgentMemberRuntimes(multiAgentProfile, subagents, workflow, visibleBackgroundTasks)
+        ? getAgentMemberRuntimes(
+            multiAgentProfile,
+
+            teamInvocations,
+          )
         : {},
-    [multiAgentProfile, subagents, visibleBackgroundTasks, workflow],
+    [multiAgentProfile, teamInvocations],
   );
-  // 成员头像条只属于当前线程已经发生的团队协作。仅选择一个团队、尚未
-  // 产生任何委派或 Workflow 运行时，不提前占用输入区空间。
+  // Selected teams expose their members immediately; single agents expose actual specialists.
   const hasMultiAgentActivity =
-    multiAgentMembers.length > 1 &&
-    (subagents.length > 0 || workflow !== null || visibleBackgroundTasks.length > 0);
+    multiAgentMembers.length > 0 &&
+    (agentSelection.type === "team" ||
+      subagents.length > 0 ||
+      workflow !== null ||
+      visibleBackgroundTasks.length > 0 ||
+      teamInvocations.length > 0);
   const memberActivitySignature = React.useMemo(
     () =>
       [
         multiAgentMembers.map((member) => member.id).join(","),
-        subagents.map((subagent) => `${subagent.agentType}:${subagent.status}`).join(","),
+        subagents.map((subagent) => `${subagent.id}:${subagent.status}`).join(","),
         visibleBackgroundTasks.map((task) => `${task.id}:${task.status}`).join(","),
         workflow?.runs.map((run) => `${run.runId}:${run.status}`).join(",") ?? "",
       ].join("|"),
@@ -1084,8 +1077,8 @@ export function ChatPanel() {
   );
   const visibleInteractions = interactions;
   const displayMessages = React.useMemo(
-    () => buildDisplayMessages(messages, isBusy),
-    [messages, isBusy],
+    () => buildDisplayMessages(withHandoffMessages(messages, handoff?.history ?? []), isBusy),
+    [messages, isBusy, handoff],
   );
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
@@ -1317,26 +1310,33 @@ export function ChatPanel() {
 
   // 始终返回同一层级的 MessageScrollerItem,避免相邻用户消息出现时因增加
   // Fragment/分组父节点而重建旧锚点。showAvatar 只控制视觉,不改变 DOM 身份。
-  const renderMessageItem = (entry: DisplayMessage, showAvatar = true) => (
-    <MessageItem
-      isGenerating={isBusy}
-      isStreaming={
-        entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? "")
-      }
-      key={entry.key}
-      message={entry.message}
-      onEdit={handleEdit}
-      onForkFromMessage={handleForkFromMessage}
-      onRetry={handleRetry}
-      onRetrySend={handleRetrySend}
-      onToggleReaction={handleToggleReaction}
-      showAvatar={showAvatar}
-      sendFailed={
-        sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id
-      }
-      userId={user.id}
-    />
-  );
+  const renderMessageItem = (entry: DisplayMessage, showAvatar = true) =>
+    entry.message.metadata?.handoff ? (
+      <HandoffRecord
+        key={entry.key}
+        handoff={entry.message.metadata.handoff}
+        profile={agentSelection}
+      />
+    ) : (
+      <MessageItem
+        isGenerating={isBusy}
+        isStreaming={
+          entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? "")
+        }
+        key={entry.key}
+        message={entry.message}
+        onEdit={handleEdit}
+        onForkFromMessage={handleForkFromMessage}
+        onRetry={handleRetry}
+        onRetrySend={handleRetrySend}
+        onToggleReaction={handleToggleReaction}
+        showAvatar={showAvatar}
+        sendFailed={
+          sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id
+        }
+        userId={user.id}
+      />
+    );
 
   const submittingRef = React.useRef(false);
   const handleSubmit = async (
@@ -1520,6 +1520,7 @@ export function ChatPanel() {
     (showAgentQueue && visibleTasks.length > 0);
   const promptArea = (
     <PromptInputProvider
+      uploadAttachment={prepareAttachment}
       persistenceKey={`mastra-work:prompt:${user.id}:${activeThreadId ?? "new"}`}
     >
       {/* 排队请求与任务共用一张 Queue 卡片(各自渲染内部 section,空态自渲染
@@ -1554,7 +1555,7 @@ export function ChatPanel() {
               <GoalDraftPanel starting={isBusy} onCancel={() => setGoalMode(false)} />
             ) : objective ? (
               <GoalPanel
-                key={activeThreadId}
+                key={`goal:${activeThreadId}`}
                 objective={objective}
                 running={isBusy || visibleInteractions.length > 0}
                 canResume={
@@ -1565,7 +1566,7 @@ export function ChatPanel() {
               />
             ) : null}
             <UserRequestQueuePanel
-              key={activeThreadId}
+              key={`requests:${activeThreadId}`}
               onAction={actOnQueuedRequest}
               onEditingChange={(editing) => {
                 if (activeThreadIdRef.current === activeThreadId) setEditingQueue(editing);
@@ -1580,8 +1581,16 @@ export function ChatPanel() {
         </div>
       ) : null}
 
-      <WorkflowRunPanel onAction={handleWorkflowAction} workflow={workflow} />
-
+      <WorkflowRunPanel
+        onAction={handleWorkflowAction}
+        workflow={workflow}
+        invocations={teamInvocations}
+      />
+      <SupervisorDelegations
+        profile={agentSelection}
+        invocations={teamInvocations}
+        onSelect={setActiveMemberId}
+      />
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
           busyKeys={resumingKeys}
@@ -1636,10 +1645,44 @@ export function ChatPanel() {
         onClearPendingJump={() => setPendingJump(null)}
       />
       <div className="flex size-full min-h-0 flex-col">
+        {activeSession && connection !== "connected" && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-1.5 text-xs">
+            <span
+              role="status"
+              aria-live="polite"
+              className="min-w-0 flex-1 break-words text-muted-foreground"
+            >
+              {connectionError ? t("chat:connection.failed") : t(`chat:connection.${connection}`)}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 text-xs"
+              onClick={() => void activeSession.reconnect().catch(() => undefined)}
+            >
+              {t("chat:connection.retry")}
+            </Button>
+          </div>
+        )}
         {/* 空态判定必须同步:切到有历史的线程时,messages 在历史 fetch 完成前
             是空数组,仅凭 messages.length===0 判空会先闪一帧居中的新会话布局。
             用 draft 区分 —— 新建会话创建的是 draft 线程(服务端保证无历史消息,
             一有往来即失效),有历史的线程非 draft,加载期间稳定走聊天布局。 */}
+        <HandoffPanel
+          key={`${activeThreadId}:${agentSelection.id}`}
+          profile={agentSelection}
+          state={handoff ?? null}
+          busy={isBusy || visibleInteractions.length > 0}
+          onTransfer={async (input) => {
+            if (!activeThreadId) return;
+            await requestJson(
+              `/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/handoff`,
+              { method: "POST", body: input },
+            );
+            await reloadDisplayState();
+          }}
+        />
+
         {messages.length === 0 &&
         !isBusy &&
         (!activeThread || activeThread.metadata.draft === true) ? (
@@ -1786,9 +1829,8 @@ export function ChatPanel() {
                   >
                     {activeMember ? (
                       <AgentMemberMessageView
-                        isBusy={isBusy}
                         member={activeMember}
-                        messages={messages}
+                        threadId={activeThreadId}
                         runtime={
                           agentMemberRuntimes[activeMember.id] ?? { status: "idle", entries: [] }
                         }

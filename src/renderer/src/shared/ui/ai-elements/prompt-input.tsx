@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import {
@@ -57,6 +58,54 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** Bound both image dimensions and the eventual provider base64 payload. */
+export async function prepareAttachmentImage(file: File): Promise<File> {
+  if (!file.type.startsWith("image/")) return file;
+  const bitmap = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+    const maxBytes = Math.floor((5 * 1024 * 1024 - 64) / 4) * 3;
+    if (scale === 1 && file.size <= maxBytes && /image\/(png|jpeg|webp)/.test(file.type))
+      return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error(i18n.t("chat:prompt.imagePreparationFailed"));
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const encode = (type: string, quality?: number) =>
+      new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (blob) =>
+            blob ? resolve(blob) : reject(new Error(i18n.t("chat:prompt.imagePreparationFailed"))),
+          type,
+          quality,
+        );
+      });
+    let blob = await encode(file.type === "image/jpeg" ? "image/jpeg" : "image/png", 0.85);
+    if (blob.size > maxBytes) {
+      context.globalCompositeOperation = "destination-over";
+      context.fillStyle = "white";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      for (const quality of [0.85, 0.65, 0.45]) {
+        blob = await encode("image/jpeg", quality);
+        if (blob.size <= maxBytes) break;
+      }
+    }
+    if (blob.size > maxBytes) throw new Error(i18n.t("chat:prompt.imagePreparationFailed"));
+    return new File(
+      [blob],
+      `${file.name.replace(/\.[^.]+$/, "")}.${blob.type === "image/png" ? "png" : "jpg"}`,
+      {
+        type: blob.type,
+        lastModified: file.lastModified,
+      },
+    );
+  } finally {
+    bitmap.close();
+  }
+}
 
 const captureScreenshot = async (): Promise<File | null> => {
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
@@ -136,11 +185,14 @@ const captureScreenshot = async (): Promise<File | null> => {
 // Provider Context & Types
 // ============================================================================
 
-type PromptAttachment = FileUIPart & {
+export type PromptAttachment = FileUIPart & {
   id: string;
   byteSize?: number;
   fingerprint?: string;
   file?: File;
+  localPath?: string;
+  uploadState?: "uploading" | "ready" | "error";
+  uploadError?: string;
 };
 
 function attachmentKey(file: PromptAttachment | FileUIPart): string {
@@ -158,6 +210,7 @@ export interface AttachmentsContext {
   clear: () => void;
   openFileDialog: () => void;
   fileInputRef: RefObject<HTMLInputElement | null>;
+  retry: (id: string) => void;
 }
 
 export interface TextInputContext {
@@ -171,6 +224,8 @@ export interface PromptInputControllerProps {
   attachments: AttachmentsContext;
   /** Draft persistence has finished loading for the active persistence key. */
   ready: boolean;
+  persistenceKey?: string;
+  uploadsEnabled: boolean;
   /** INTERNAL: Allows PromptInput to register its file textInput + "open" callback */
   __registerFileInput: (ref: RefObject<HTMLInputElement | null>, open: () => void) => void;
 }
@@ -206,6 +261,10 @@ const useOptionalProviderAttachments = () => useContext(ProviderAttachmentsConte
 export type PromptInputProviderProps = PropsWithChildren<{
   initialInput?: string;
   persistenceKey?: string;
+  uploadAttachment?: (
+    file: PromptAttachment,
+    signal: AbortSignal,
+  ) => Promise<FileUIPart & { byteSize?: number }>;
 }>;
 
 interface PersistedPromptAttachment {
@@ -214,6 +273,7 @@ interface PersistedPromptAttachment {
   byteSize?: number;
   fingerprint?: string;
   file?: File;
+  localPath?: string;
   url?: string;
 }
 
@@ -255,6 +315,7 @@ function withPromptDraftStore<T>(
 export const PromptInputProvider = ({
   initialInput: initialTextInput = "",
   persistenceKey,
+  uploadAttachment,
   children,
 }: PromptInputProviderProps) => {
   // ----- textInput state
@@ -269,6 +330,80 @@ export const PromptInputProvider = ({
   const loadedPersistenceKeyRef = useRef<string | undefined>(undefined);
   const previousPersistenceKeyRef = useRef<string | undefined>(undefined);
   const draftRevisionRef = useRef(0);
+  const uploadsRef = useRef(new Map<string, AbortController>());
+
+  useEffect(() => {
+    const uploads = uploadsRef.current;
+    return () => {
+      for (const upload of uploads.values()) upload.abort();
+      uploads.clear();
+    };
+  }, [persistenceKey]);
+
+  useEffect(() => {
+    if (!ready || !uploadAttachment) return;
+    const uploads = uploadsRef.current;
+    for (const [id, upload] of uploads) {
+      if (!attachmentFiles.some((file) => file.id === id)) {
+        upload.abort();
+        uploads.delete(id);
+      }
+    }
+    for (const file of attachmentFiles) {
+      if (file.uploadState || uploads.has(file.id)) continue;
+      const abort = new AbortController();
+      uploads.set(file.id, abort);
+      setAttachmentFiles((current) =>
+        current.map((item) => (item.id === file.id ? { ...item, uploadState: "uploading" } : item)),
+      );
+      void uploadAttachment(file, abort.signal)
+        .then((uploaded) => {
+          if (abort.signal.aborted) return;
+          setAttachmentFiles((current) =>
+            current.map((item) =>
+              item.id === file.id
+                ? { ...item, ...uploaded, uploadState: "ready", uploadError: undefined }
+                : item,
+            ),
+          );
+          if (file.url.startsWith("blob:")) URL.revokeObjectURL(file.url);
+        })
+        .catch((error: unknown) => {
+          if (abort.signal.aborted) return;
+          setAttachmentFiles((current) =>
+            current.map((item) =>
+              item.id === file.id
+                ? {
+                    ...item,
+                    uploadState: "error",
+                    uploadError:
+                      error instanceof Error
+                        ? error.message
+                        : i18n.t("chat:api.saveAttachmentFailed"),
+                  }
+                : item,
+            ),
+          );
+        })
+        .finally(() => {
+          if (uploads.get(file.id) === abort) uploads.delete(file.id);
+        });
+    }
+  }, [attachmentFiles, ready, uploadAttachment]);
+
+  const retry = useCallback((id: string) => {
+    setAttachmentFiles((current) =>
+      current.map((file) =>
+        file.id === id && file.uploadState === "error"
+          ? {
+              ...file,
+              uploadState: undefined,
+              uploadError: undefined,
+            }
+          : file,
+      ),
+    );
+  }, []);
 
   const clearPersistedDraft = useCallback(() => {
     draftRevisionRef.current += 1;
@@ -314,7 +449,11 @@ export const PromptInputProvider = ({
         setTextInput(draft.text || "");
         setAttachmentFiles(
           draft.attachments.flatMap((file) => {
-            const url = file.file ? URL.createObjectURL(file.file) : file.url;
+            const url = file.localPath
+              ? "local-attachment:pending"
+              : file.file
+                ? URL.createObjectURL(file.file)
+                : file.url;
             return url
               ? [
                   {
@@ -359,7 +498,8 @@ export const PromptInputProvider = ({
           mediaType: file.mediaType,
           byteSize: file.byteSize,
           fingerprint: file.fingerprint,
-          file: file.file,
+          file: file.localPath ? undefined : file.file,
+          localPath: file.localPath,
           ...(!file.url.startsWith("blob:") ? { url: file.url } : {}),
         })),
       };
@@ -472,8 +612,9 @@ export const PromptInputProvider = ({
       openFileDialog,
       remove,
       restore,
+      retry,
     }),
-    [attachmentFiles, add, remove, restore, clear, openFileDialog],
+    [attachmentFiles, add, remove, restore, retry, clear, openFileDialog],
   );
 
   const __registerFileInput = useCallback(
@@ -489,13 +630,23 @@ export const PromptInputProvider = ({
       __registerFileInput,
       attachments,
       ready,
+      persistenceKey,
+      uploadsEnabled: Boolean(uploadAttachment),
       textInput: {
         clear: clearInput,
         setInput: setTextInput,
         value: textInput,
       },
     }),
-    [textInput, clearInput, attachments, __registerFileInput, ready],
+    [
+      textInput,
+      clearInput,
+      attachments,
+      __registerFileInput,
+      ready,
+      persistenceKey,
+      uploadAttachment,
+    ],
   );
 
   return (
@@ -655,6 +806,8 @@ export type PromptInputProps = Omit<HTMLAttributes<HTMLFormElement>, "onSubmit" 
   ) => void | Promise<void>;
 };
 
+const uploadPending = (file: PromptAttachment) => file.uploadState !== "ready";
+
 export const PromptInput = ({
   className,
   accept,
@@ -725,115 +878,6 @@ export const PromptInput = ({
     [accept],
   );
 
-  const addLocal = useCallback(
-    (fileList: File[] | FileList) => {
-      const incoming = [...fileList];
-      const accepted = incoming.filter((f) => matchesAccept(f));
-      const rejected = incoming.filter((f) => !matchesAccept(f));
-      if (rejected.length > 0) {
-        onError?.({
-          code: "accept",
-          message: `${i18n.t("chat:prompt.unsupportedFileTypes")}: ${rejected
-            .map((file) => file.name)
-            .join(", ")}`,
-        });
-      }
-      if (incoming.length && accepted.length === 0) {
-        return;
-      }
-      const withinSize = (f: File) => (maxFileSize ? f.size <= maxFileSize : true);
-      const sized = accepted.filter(withinSize);
-      if (accepted.length > 0 && sized.length === 0) {
-        onError?.({
-          code: "max_file_size",
-          message: i18n.t("chat:prompt.fileExceedsLimit"),
-        });
-        return;
-      }
-
-      setItems((prev) => {
-        const fingerprints = new Set(
-          prev.map((file) => file.fingerprint).filter((value): value is string => Boolean(value)),
-        );
-        let totalBytes = prev.reduce((sum, file) => sum + (file.byteSize ?? 0), 0);
-        let totalTokens = prev.reduce(
-          (sum, file) =>
-            sum +
-            (estimateFileTokens?.({
-              name: file.filename ?? i18n.t("chat:messages.untitledAttachment"),
-              size: file.byteSize ?? 0,
-              type: file.mediaType ?? "",
-              lastModified: file.file?.lastModified ?? 0,
-            }) ?? 0),
-          0,
-        );
-        const unique = sized.filter((file) => {
-          const fingerprint = `${file.name}:${file.size}:${file.lastModified}`;
-          if (fingerprints.has(fingerprint)) return false;
-          fingerprints.add(fingerprint);
-          return true;
-        });
-        if (unique.length < sized.length) {
-          onError?.({ code: "duplicate", message: i18n.t("chat:prompt.duplicateAttachment") });
-        }
-        const withinTotal = unique.filter((file) => {
-          if (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize)
-            return false;
-          const fileTokens =
-            estimateFileTokens?.({
-              name: file.name,
-              size: file.size,
-              type: file.type,
-              lastModified: file.lastModified,
-            }) ?? 0;
-          if (maxTotalFileTokens !== undefined && totalTokens + fileTokens > maxTotalFileTokens)
-            return false;
-          totalBytes += file.size;
-          totalTokens += fileTokens;
-          return true;
-        });
-        if (withinTotal.length < unique.length) {
-          onError?.({
-            code: "max_total_file_size",
-            message: i18n.t("chat:prompt.maxTotalFileSize"),
-          });
-        }
-        const capacity =
-          typeof maxFiles === "number" ? Math.max(0, maxFiles - prev.length) : undefined;
-        const capped = typeof capacity === "number" ? withinTotal.slice(0, capacity) : withinTotal;
-        if (typeof capacity === "number" && withinTotal.length > capacity) {
-          onError?.({
-            code: "max_files",
-            message: i18n.t("chat:prompt.attachmentCountExceeded"),
-          });
-        }
-        const next: PromptAttachment[] = [];
-        for (const file of capped) {
-          next.push({
-            filename: file.name,
-            byteSize: file.size,
-            fingerprint: `${file.name}:${file.size}:${file.lastModified}`,
-            file,
-            id: nanoid(),
-            mediaType: file.type,
-            type: "file",
-            url: URL.createObjectURL(file),
-          });
-        }
-        return [...prev, ...next];
-      });
-    },
-    [
-      estimateFileTokens,
-      matchesAccept,
-      maxFiles,
-      maxFileSize,
-      maxTotalFileSize,
-      maxTotalFileTokens,
-      onError,
-    ],
-  );
-
   const removeLocal = useCallback(
     (id: string) =>
       setItems((prev) => {
@@ -851,104 +895,116 @@ export const PromptInput = ({
     setItems((prev) => [...prev, ...incoming.map((file) => ({ ...file, id: nanoid() }))]);
   }, []);
 
-  // Wrapper that validates files before calling provider's add
-  const addWithProviderValidation = useCallback(
+  // Serialize preparation so rapid paste/drop batches share the same limits.
+  const preparationQueue = useRef(Promise.resolve());
+  const preparationRevision = useRef(0);
+  useEffect(() => {
+    preparationRevision.current += 1;
+    setPreparing(false);
+    return () => {
+      preparationRevision.current += 1;
+    };
+  }, [controller?.persistenceKey]);
+  const [preparing, setPreparing] = useState(false);
+  const add = useCallback(
     (fileList: File[] | FileList) => {
       const incoming = [...fileList];
-      const accepted = incoming.filter((f) => matchesAccept(f));
-      const rejected = incoming.filter((f) => !matchesAccept(f));
-      if (rejected.length > 0) {
-        onError?.({
-          code: "accept",
-          message: `${i18n.t("chat:prompt.unsupportedFileTypes")}: ${rejected
-            .map((file) => file.name)
-            .join(", ")}`,
-        });
-      }
-      if (incoming.length && accepted.length === 0) {
-        return;
-      }
-      const withinSize = (f: File) => (maxFileSize ? f.size <= maxFileSize : true);
-      const sized = accepted.filter(withinSize);
-      if (accepted.length > 0 && sized.length === 0) {
-        onError?.({
-          code: "max_file_size",
-          message: i18n.t("chat:prompt.fileExceedsLimit"),
-        });
-        return;
-      }
-
-      const existingFingerprints = new Set(
-        files.map((file) =>
-          "fingerprint" in file && typeof file.fingerprint === "string"
-            ? file.fingerprint
-            : `${file.filename ?? ""}:${"byteSize" in file ? String(file.byteSize) : ""}`,
-        ),
-      );
-      const unique = sized.filter(
-        (file) => !existingFingerprints.has(`${file.name}:${file.size}:${file.lastModified}`),
-      );
-      if (unique.length < sized.length) {
-        onError?.({ code: "duplicate", message: i18n.t("chat:prompt.duplicateAttachment") });
-      }
-      let totalBytes = files.reduce(
-        (sum, file) =>
-          sum + ("byteSize" in file && typeof file.byteSize === "number" ? file.byteSize : 0),
-        0,
-      );
-      let totalTokens = files.reduce(
-        (sum, file) =>
-          sum +
-          (estimateFileTokens?.({
-            name: file.filename ?? i18n.t("chat:messages.untitledAttachment"),
-            size: "byteSize" in file && typeof file.byteSize === "number" ? file.byteSize : 0,
-            type: file.mediaType ?? "",
-            lastModified: "file" in file && file.file instanceof File ? file.file.lastModified : 0,
-          }) ?? 0),
-        0,
-      );
-      const withinTotal = unique.filter((file) => {
-        if (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize)
-          return false;
-        const fileTokens =
-          estimateFileTokens?.({
-            name: file.name,
-            size: file.size,
-            type: file.type,
-            lastModified: file.lastModified,
-          }) ?? 0;
-        if (maxTotalFileTokens !== undefined && totalTokens + fileTokens > maxTotalFileTokens)
-          return false;
-        totalBytes += file.size;
-        totalTokens += fileTokens;
-        return true;
+      const revision = preparationRevision.current;
+      setPreparing(true);
+      preparationQueue.current = preparationQueue.current
+        .then(async () => {
+          const next: PromptAttachment[] = [];
+          if (revision !== preparationRevision.current) return;
+          const current = filesRef.current;
+          const fingerprints = new Set(current.map((file) => file.fingerprint));
+          let totalBytes = current.reduce((sum, file) => sum + (file.byteSize ?? 0), 0);
+          let totalTokens = current.reduce(
+            (sum, file) =>
+              sum +
+              (estimateFileTokens?.({
+                name: file.filename ?? "",
+                size: file.byteSize ?? 0,
+                type: file.mediaType,
+                lastModified: file.file?.lastModified ?? 0,
+              }) ?? 0),
+            0,
+          );
+          for (const source of incoming) {
+            if (!matchesAccept(source)) {
+              onError?.({
+                code: "accept",
+                message: `${i18n.t("chat:prompt.unsupportedFileTypes")}: ${source.name}`,
+              });
+              continue;
+            }
+            if (maxFileSize !== undefined && source.size > maxFileSize) {
+              onError?.({ code: "max_file_size", message: i18n.t("chat:prompt.fileExceedsLimit") });
+              continue;
+            }
+            let file: File;
+            try {
+              file = await prepareAttachmentImage(source);
+            } catch {
+              onError?.({ code: "accept", message: i18n.t("chat:prompt.imagePreparationFailed") });
+              continue;
+            }
+            if (revision !== preparationRevision.current) {
+              for (const item of next) URL.revokeObjectURL(item.url);
+              return;
+            }
+            const fingerprint = `${file.name}:${file.size}:${file.lastModified}`;
+            if (fingerprints.has(fingerprint)) {
+              onError?.({ code: "duplicate", message: i18n.t("chat:prompt.duplicateAttachment") });
+              continue;
+            }
+            if (maxFiles !== undefined && current.length + next.length >= maxFiles) {
+              onError?.({
+                code: "max_files",
+                message: i18n.t("chat:prompt.attachmentCountExceeded"),
+              });
+              break;
+            }
+            const tokens = estimateFileTokens?.(file) ?? 0;
+            if (
+              (maxTotalFileSize !== undefined && totalBytes + file.size > maxTotalFileSize) ||
+              (maxTotalFileTokens !== undefined && totalTokens + tokens > maxTotalFileTokens)
+            ) {
+              onError?.({
+                code: "max_total_file_size",
+                message: i18n.t("chat:prompt.budgetExceeded"),
+              });
+              continue;
+            }
+            totalBytes += file.size;
+            totalTokens += tokens;
+            fingerprints.add(fingerprint);
+            next.push({
+              type: "file",
+              id: nanoid(),
+              file,
+              localPath: window.api?.filesystem.getPathForFile(file) || undefined,
+              fingerprint,
+              filename: file.name,
+              mediaType: file.type,
+              byteSize: file.size,
+              url: URL.createObjectURL(file),
+            });
+          }
+          filesRef.current = [...current, ...next];
+          if (controller) controller.attachments.restore(next);
+          else setItems((previous) => [...previous, ...next]);
+        })
+        .catch(() =>
+          onError?.({ code: "accept", message: i18n.t("chat:prompt.imagePreparationFailed") }),
+        );
+      const queued = preparationQueue.current;
+      void queued.finally(() => {
+        if (preparationQueue.current === queued) setPreparing(false);
       });
-      if (withinTotal.length < unique.length) {
-        onError?.({
-          code: "max_total_file_size",
-          message: i18n.t("chat:prompt.budgetExceeded"),
-        });
-      }
-
-      const currentCount = files.length;
-      const capacity =
-        typeof maxFiles === "number" ? Math.max(0, maxFiles - currentCount) : undefined;
-      const capped = typeof capacity === "number" ? withinTotal.slice(0, capacity) : withinTotal;
-      if (typeof capacity === "number" && withinTotal.length > capacity) {
-        onError?.({
-          code: "max_files",
-          message: i18n.t("chat:prompt.attachmentCountExceeded"),
-        });
-      }
-
-      if (capped.length > 0) {
-        controller?.attachments.add(capped);
-      }
     },
     [
       controller,
       estimateFileTokens,
-      files,
       matchesAccept,
       maxFileSize,
       maxFiles,
@@ -975,7 +1031,6 @@ export const PromptInput = ({
 
   const clearReferencedSources = useCallback(() => setReferencedSources([]), []);
 
-  const add = usingProvider ? addWithProviderValidation : addLocal;
   const restore = usingProvider ? controller.attachments.restore : restoreLocal;
   const remove = usingProvider ? controller.attachments.remove : removeLocal;
   const openFileDialog = usingProvider
@@ -1003,61 +1058,50 @@ export const PromptInput = ({
     }
   }, [files, syncHiddenInput]);
 
-  // Attach drop handlers on nearest form and document (opt-in)
+  const [dragging, setDragging] = useState(false);
   useEffect(() => {
-    const form = formRef.current;
-    if (!form) {
-      return;
-    }
-    if (globalDrop) {
-      // when global drop is on, let the document-level handler own drops
-      return;
-    }
-
-    const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
-        e.preventDefault();
-      }
+    const target = globalDrop ? document : formRef.current;
+    if (!target) return;
+    let depth = 0;
+    const onDragEnter = (event: Event) => {
+      const e = event as DragEvent;
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+      depth += 1;
+      setDragging(true);
     };
-    const onDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
-        e.preventDefault();
-      }
-      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-        add(e.dataTransfer.files);
-      }
+    const onDragLeave = () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) setDragging(false);
     };
-    form.addEventListener("dragover", onDragOver);
-    form.addEventListener("drop", onDrop);
+    const onDragOver = (event: Event) => {
+      const e = event as DragEvent;
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const reset = () => {
+      depth = 0;
+      setDragging(false);
+    };
+    const onDrop = (event: Event) => {
+      const e = event as DragEvent;
+      reset();
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+      if (e.dataTransfer.files.length) add(e.dataTransfer.files);
+    };
+    target.addEventListener("dragenter", onDragEnter);
+    target.addEventListener("dragleave", onDragLeave);
+    target.addEventListener("dragover", onDragOver);
+    target.addEventListener("drop", onDrop);
+    window.addEventListener("blur", reset);
+    window.addEventListener("dragend", reset);
     return () => {
-      form.removeEventListener("dragover", onDragOver);
-      form.removeEventListener("drop", onDrop);
-    };
-  }, [add, globalDrop]);
-
-  useEffect(() => {
-    if (!globalDrop) {
-      return;
-    }
-
-    const onDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
-        e.preventDefault();
-      }
-    };
-    const onDrop = (e: DragEvent) => {
-      if (e.dataTransfer?.types?.includes("Files")) {
-        e.preventDefault();
-      }
-      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
-        add(e.dataTransfer.files);
-      }
-    };
-    document.addEventListener("dragover", onDragOver);
-    document.addEventListener("drop", onDrop);
-    return () => {
-      document.removeEventListener("dragover", onDragOver);
-      document.removeEventListener("drop", onDrop);
+      target.removeEventListener("dragenter", onDragEnter);
+      target.removeEventListener("dragleave", onDragLeave);
+      target.removeEventListener("dragover", onDragOver);
+      target.removeEventListener("drop", onDrop);
+      window.removeEventListener("blur", reset);
+      window.removeEventListener("dragend", reset);
     };
   }, [add, globalDrop]);
 
@@ -1094,6 +1138,7 @@ export const PromptInput = ({
       openFileDialog,
       remove,
       restore,
+      retry: controller?.attachments.retry ?? (() => undefined),
     }),
     [files, add, remove, restore, clearAttachments, openFileDialog],
   );
@@ -1116,6 +1161,16 @@ export const PromptInput = ({
   const handleSubmit: FormEventHandler<HTMLFormElement> = useCallback(
     async (event) => {
       event.preventDefault();
+      if (
+        preparing ||
+        files.some(
+          (file) =>
+            file.uploadState === "uploading" ||
+            file.uploadState === "error" ||
+            (controller?.uploadsEnabled && uploadPending(file)),
+        )
+      )
+        return;
 
       const form = event.currentTarget;
       const text = usingProvider
@@ -1138,12 +1193,23 @@ export const PromptInput = ({
         // Keep the draft available for retry.
       }
     },
-    [usingProvider, controller, files, onSubmit, clear],
+    [usingProvider, controller, files, onSubmit, clear, preparing],
   );
 
   // Render with or without local provider
   const inner = (
     <>
+      {dragging
+        ? createPortal(
+            <div
+              role="status"
+              className="pointer-events-none fixed inset-2 z-50 flex items-center justify-center rounded-xl border-2 border-dashed border-primary bg-background/85 p-4 text-center text-sm font-medium backdrop-blur-sm"
+            >
+              {i18n.t("chat:prompt.dropAttachments")}
+            </div>,
+            document.body,
+          )
+        : null}
       <input
         accept={accept}
         aria-label="Upload files"
@@ -1260,6 +1326,12 @@ export const PromptInputTextarea = ({
       if (files.length > 0) {
         event.preventDefault();
         attachments.add(files);
+      } else {
+        const text = event.clipboardData.getData("text/plain");
+        if (new TextEncoder().encode(text).byteLength >= 15 * 1024) {
+          event.preventDefault();
+          attachments.add([new File([text], `pasted-${Date.now()}.txt`, { type: "text/plain" })]);
+        }
       }
     },
     [attachments],
@@ -1299,7 +1371,7 @@ export type PromptInputHeaderProps = Omit<ComponentProps<typeof InputGroupAddon>
 
 export const PromptInputHeader = ({ className, ...props }: PromptInputHeaderProps) => (
   <InputGroupAddon
-    align="block-end"
+    align="block-start"
     className={cn("order-first flex-wrap gap-1", className)}
     {...props}
   />

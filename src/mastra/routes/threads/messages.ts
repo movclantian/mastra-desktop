@@ -94,7 +94,14 @@ function restoreFileFilenames(
 
 export function workbenchMessages(messages: MastraDBMessage[]) {
   const history = normalizeChatHistoryMessages(messages);
+  const timestamps = new Map(history.map((message) => [message.id, message.createdAt]));
   return appendLibrarySourceParts(
     restoreFileFilenames(toAISdkMessages(history, { version: "v7" }), history),
-  );
+  ).map((message) => ({
+    ...message,
+    metadata: {
+      ...(message.metadata && typeof message.metadata === "object" ? message.metadata : {}),
+      createdAt: timestamps.get(message.id),
+    },
+  }));
 }

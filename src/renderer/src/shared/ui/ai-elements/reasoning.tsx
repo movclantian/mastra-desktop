@@ -49,7 +49,6 @@ export type ReasoningProps = ComponentProps<typeof Collapsible> & {
   duration?: number;
 };
 
-const AUTO_CLOSE_DELAY = 1000;
 const MS_IN_S = 1000;
 
 export const Reasoning = memo(
@@ -76,14 +75,11 @@ export const Reasoning = memo(
       prop: durationProp,
     });
 
-    const hasEverStreamedRef = useRef(isStreaming);
-    const [hasAutoClosed, setHasAutoClosed] = useState(false);
     const startTimeRef = useRef<number | null>(null);
 
     // Track when streaming starts and compute duration
     useEffect(() => {
       if (isStreaming) {
-        hasEverStreamedRef.current = true;
         if (startTimeRef.current === null) {
           startTimeRef.current = Date.now();
         }
@@ -92,21 +88,6 @@ export const Reasoning = memo(
         startTimeRef.current = null;
       }
     }, [isStreaming, setDuration]);
-
-    // 流式期间不自动展开:默认保持折叠,由 ReasoningTrigger 的单行流式尾巴
-    // 展示最新内容(参考 zcode),用户点开才看全文。
-    // Auto-close when streaming ends (once only, and only if it ever streamed)
-    useEffect(() => {
-      if (hasEverStreamedRef.current && !isStreaming && isOpen && !hasAutoClosed) {
-        const timer = setTimeout(() => {
-          setIsOpen(false);
-          setHasAutoClosed(true);
-        }, AUTO_CLOSE_DELAY);
-
-        return () => clearTimeout(timer);
-      }
-      return undefined;
-    }, [isStreaming, isOpen, setIsOpen, hasAutoClosed]);
 
     const handleOpenChange = useCallback(
       (newOpen: boolean) => {
@@ -200,6 +181,11 @@ const StreamingTail = memo(function StreamingTail({
   );
 });
 
+export function ReasoningStreamingPreview({ text }: { text: string }) {
+  const tail = resolveStreamingTail(text);
+  return tail ? <StreamingTail key={tail.key} lineKey={tail.key} text={tail.text} /> : null;
+}
+
 export const ReasoningTrigger = memo(
   ({
     className,
@@ -209,7 +195,6 @@ export const ReasoningTrigger = memo(
     ...props
   }: ReasoningTriggerProps) => {
     const { isStreaming, isOpen, duration } = useReasoning();
-    const tail = isStreaming && !isOpen ? resolveStreamingTail(streamingText) : null;
 
     return (
       <CollapsibleTrigger
@@ -221,9 +206,9 @@ export const ReasoningTrigger = memo(
       >
         {children ?? (
           <>
-            <BrainIcon className="size-4" />
-            {getThinkingMessage(isStreaming, duration)}
-            {tail ? <StreamingTail key={tail.key} lineKey={tail.key} text={tail.text} /> : null}
+            <BrainIcon className="size-4 shrink-0" />
+            <span className="shrink-0">{getThinkingMessage(isStreaming, duration)}</span>
+            {isStreaming && !isOpen ? <ReasoningStreamingPreview text={streamingText} /> : null}
             <ChevronDownIcon
               className={cn(
                 "size-4 shrink-0 transition-transform",

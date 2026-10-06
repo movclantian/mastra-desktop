@@ -3,7 +3,7 @@
  * 官方文档:docs/en/reference/rag/chunking-and-embedding.mdx、embeddings.mdx、
  * vector-databases.mdx;索引终态经 onLibraryIndexSettled 回调对外广播。
  */
-import { readFile } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { MastraLanguageModel } from "@mastra/core/agent";
 import { SignalProvider } from "@mastra/core/signals";
@@ -11,6 +11,7 @@ import { fastembed } from "@mastra/fastembed";
 import { LibSQLVector } from "@mastra/libsql";
 import { MDocument } from "@mastra/rag";
 import { embedMany } from "ai";
+import { fileTypeFromFile } from "file-type";
 import { errorText } from "../../errors";
 import { resolveDefaultLanguageModel } from "../../models/providers";
 import { getStorageDirectory, getStorageUrl } from "../../storage/database";
@@ -25,7 +26,13 @@ import {
   withClient,
   withLibraryAssetLock,
 } from "../storage/db";
-import type { LibraryAsset, LibraryIndexStage, LibrarySettings } from "../types";
+import {
+  type LibraryAsset,
+  type LibraryIndexStage,
+  type LibrarySettings,
+  MAX_LIBRARY_EXTRACT_BYTES,
+  MAX_LIBRARY_EXTRACT_CHARACTERS,
+} from "../types";
 
 /**
  * 文件名规范、媒体类型推断与文本抽取 (docs/en/reference/rag/extract-params.mdx):
@@ -41,16 +48,98 @@ export function normalizeFilename(filename: string): string {
 }
 
 function isTextLike(filename: string, mediaType: string): boolean {
-  if (mediaType.startsWith("text/")) return true;
+  if (
+    mediaType.startsWith("text/") ||
+    ["application/json", "application/xml", "application/yaml"].includes(mediaType)
+  )
+    return true;
+  if (mediaType && mediaType !== "application/octet-stream") return false;
   return /\.(txt|md|markdown|json|csv|tsv|xml|yaml|yml|html|htm|js|jsx|ts|tsx|css|scss|less|py|go|rs|java|c|cpp|h|hpp|sql|sh|ps1|log)$/i.test(
     filename,
   );
 }
 
-export function isExtractable(filename: string, mediaType: string): boolean {
-  if (isTextLike(filename, mediaType)) return true;
-  if (mediaType === "application/pdf") return true;
-  return [".docx", ".xlsx", ".xls", ".csv", ".pdf"].includes(extname(filename).toLowerCase());
+export function isExtractable(_filename: string, mediaType: string): boolean {
+  return (
+    mediaType.startsWith("text/") ||
+    [
+      "application/json",
+      "application/xml",
+      "application/yaml",
+      "application/pdf",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ].includes(mediaType)
+  );
+}
+
+/** Magic numbers win over client MIME/extension; unknown binary is never decoded as text. */
+export async function detectMediaType(filePath: string, filename: string): Promise<string> {
+  const detected = await fileTypeFromFile(filePath);
+  if (detected) {
+    if (detected.mime === "application/x-cfb" && extname(filename).toLowerCase() === ".xls")
+      return "application/vnd.ms-excel";
+    return detected.mime;
+  }
+  const file = await open(filePath, "r");
+  try {
+    const sample = Buffer.alloc(8192);
+    const { bytesRead } = await file.read(sample, 0, sample.length, 0);
+    const bytes = sample.subarray(0, bytesRead);
+    let controls = 0;
+    for (const byte of bytes) {
+      if (byte === 0) return "application/octet-stream";
+      if (byte < 32 && ![9, 10, 12, 13].includes(byte)) controls++;
+    }
+    if (!bytesRead || controls / bytesRead > 0.05) return "application/octet-stream";
+    try {
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: true });
+    } catch {
+      return "application/octet-stream";
+    }
+    const inferred = resolveMediaType(filename, "");
+    return isTextLike(filename, inferred)
+      ? inferred === "application/octet-stream"
+        ? "text/plain"
+        : inferred
+      : "text/plain";
+  } finally {
+    await file.close();
+  }
+}
+
+/** Read through one handle with a hard ceiling, including files changed during the read. */
+export async function readBoundedFile(filePath: string, limit: number): Promise<Buffer> {
+  const file = await open(filePath, "r");
+  try {
+    const details = await file.stat();
+    if (!details.isFile() || details.size > limit) throw new Error("附件超过内容读取上限");
+    const bytes = Buffer.alloc(Math.min(details.size + 1, limit + 1));
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await file.read(bytes, offset, bytes.length - offset, offset);
+      if (!result.bytesRead) break;
+      offset += result.bytesRead;
+    }
+    if (offset !== details.size || offset > limit) throw new Error("附件读取期间大小发生变化");
+    return bytes.subarray(0, offset);
+  } finally {
+    await file.close();
+  }
+}
+
+export async function extractFileText(
+  filePath: string,
+  filename: string,
+  mediaType: string,
+): Promise<string | null> {
+  const bytes = await readBoundedFile(filePath, MAX_LIBRARY_EXTRACT_BYTES);
+  const text = await extractText(bytes, filename, mediaType);
+  if (!text) return null;
+  return text.length > MAX_LIBRARY_EXTRACT_CHARACTERS
+    ? `${text.slice(0, MAX_LIBRARY_EXTRACT_CHARACTERS)}\n[附件文本超过提取上限，后续内容未提取]`
+    : text;
 }
 
 export function resolveMediaType(filename: string, supplied: string): string {
@@ -94,21 +183,26 @@ export async function extractText(
   filename: string,
   mediaType: string,
 ): Promise<string | null> {
-  if (isTextLike(filename, mediaType)) return Buffer.from(bytes).toString("utf8");
-  const extension = extname(filename).toLowerCase();
-  if (extension === ".docx") {
+  if (isExtractable(filename, mediaType) && isTextLike(filename, mediaType))
+    return Buffer.from(bytes).toString("utf8");
+  if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") {
     const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ buffer: Buffer.from(bytes) });
     return result.value;
   }
-  if ([".xlsx", ".xls", ".csv"].includes(extension)) {
+  if (
+    [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.ms-excel",
+    ].includes(mediaType)
+  ) {
     const XLSX = await import("xlsx");
     const workbook = XLSX.read(bytes, { type: "array" });
     return workbook.SheetNames.map(
       (sheet) => `# ${sheet}\n${XLSX.utils.sheet_to_csv(workbook.Sheets[sheet])}`,
     ).join("\n\n");
   }
-  if (extension === ".pdf" || mediaType === "application/pdf") {
+  if (mediaType === "application/pdf") {
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: bytes });
     try {
@@ -352,13 +446,18 @@ export function queueAssetIndex(
           args: [now(), asset.id, asset.resourceId],
         }),
       );
-      let text = isExtractable(asset.filename, asset.mediaType) ? asset.extractedText : null;
-      if (!text && isExtractable(asset.filename, asset.mediaType)) {
-        text = await extractText(
-          await readFile(join(getStorageDirectory(), String(row.storage_path))),
-          asset.filename,
-          asset.mediaType,
-        );
+      const extractable =
+        asset.byteSize <= MAX_LIBRARY_EXTRACT_BYTES &&
+        isExtractable(asset.filename, asset.mediaType);
+      const path = asset.localPath ?? join(getStorageDirectory(), String(row.storage_path));
+      if (asset.localPath) {
+        const details = await stat(path);
+        if (details.mtimeMs !== Number(row.local_mtime) || details.size !== asset.byteSize)
+          throw new Error("本地附件已修改，请重新添加");
+      }
+      let text = extractable ? asset.extractedText : null;
+      if (!text && extractable) {
+        text = await extractFileText(path, asset.filename, asset.mediaType);
       }
       await withClient((client) =>
         client.execute({

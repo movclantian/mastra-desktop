@@ -193,11 +193,13 @@ export async function ensureLibrarySchema(): Promise<void> {
             byte_size INTEGER NOT NULL,
             sha256 TEXT NOT NULL,
             storage_path TEXT NOT NULL,
+            local_path TEXT NOT NULL DEFAULT '',
+            local_mtime REAL NOT NULL DEFAULT 0,
             status TEXT NOT NULL,
             extracted_text TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            UNIQUE(resource_id, sha256)
+            UNIQUE(resource_id, sha256, local_path)
           )`,
           args: [],
         },
@@ -207,8 +209,9 @@ export async function ensureLibrarySchema(): Promise<void> {
             resource_id TEXT NOT NULL,
             folder_id TEXT NOT NULL DEFAULT '',
             thread_id TEXT NOT NULL DEFAULT '',
+            draft_id TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
-            PRIMARY KEY(asset_id, folder_id, thread_id)
+            PRIMARY KEY(asset_id, folder_id, thread_id, draft_id)
           )`,
           args: [],
         },
@@ -291,6 +294,7 @@ export function rowToAsset(row: Record<string, unknown>): LibraryAsset {
     folderIds: [],
     threadIds: [],
     hasLibraryReference: false,
+    localPath: row.local_path ? String(row.local_path) : null,
     filename: String(row.filename),
     mediaType: String(row.media_type),
     byteSize: Number(row.byte_size),

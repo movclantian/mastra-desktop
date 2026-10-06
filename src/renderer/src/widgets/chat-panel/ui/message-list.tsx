@@ -17,7 +17,7 @@ import {
 import { search as searchEmojis } from "node-emoji";
 import * as React from "react";
 import { toast } from "sonner";
-import { MASTRA_SERVER_URL } from "@/shared/api";
+import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
@@ -32,6 +32,7 @@ import {
   AttachmentTitle,
   AttachmentTrigger,
 } from "@/shared/ui/attachment";
+import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { BlurFade } from "@/shared/ui/blur-fade";
 import { Bubble, BubbleContent, BubbleReactions } from "@/shared/ui/bubble";
@@ -144,7 +145,28 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
   const isImage = file.mediaType?.startsWith("image/") ?? false;
   const title = file.filename ?? t("chat:messages.untitledAttachment");
   const [resolvedUrl, setResolvedUrl] = React.useState(file.url);
-  const [loadState, setLoadState] = React.useState<"processing" | "error" | "done">("done");
+  const [loadState, setLoadState] = React.useState<"processing" | "error" | "deleted" | "done">(
+    "done",
+  );
+
+  const downloadUrl = React.useRef<string | undefined>(undefined);
+  const openAttachment = async (event: React.MouseEvent<HTMLAnchorElement>, download = false) => {
+    if (isImage || file.url.startsWith("blob:") || file.url.startsWith("data:")) return;
+    event.preventDefault();
+    try {
+      downloadUrl.current ??= URL.createObjectURL(await fetchChatAssetBlob(file.url));
+      const link = document.createElement("a");
+      link.href = downloadUrl.current;
+      if (download) link.download = title;
+      else {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      link.click();
+    } catch {
+      toast.error(t("chat:messages.loadFailed"));
+    }
+  };
 
   React.useEffect(() => {
     let disposed = false;
@@ -162,8 +184,19 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
       return () => undefined;
     }
     setLoadState("processing");
-    void fetchChatAssetBlob(file.url)
+    const load = isImage
+      ? fetchChatAssetBlob(file.url)
+      : apiFetch(file.url, { method: "HEAD", cache: "no-store" }).then((response) => {
+          if (!response.ok)
+            throw Object.assign(new Error("Attachment unavailable"), { status: response.status });
+          return null;
+        });
+    void load
       .then((blob) => {
+        if (!blob) {
+          if (!disposed) setLoadState("done");
+          return;
+        }
         objectUrl = URL.createObjectURL(blob);
         if (disposed) {
           URL.revokeObjectURL(objectUrl);
@@ -172,17 +205,31 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
           setLoadState("done");
         }
       })
-      .catch(() => {
-        if (!disposed) setLoadState("error");
+      .catch((error: unknown) => {
+        if (!disposed)
+          setLoadState(
+            error &&
+              typeof error === "object" &&
+              "status" in error &&
+              [404, 410].includes(Number(error.status))
+              ? "deleted"
+              : "error",
+          );
       });
     return () => {
       disposed = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
+      downloadUrl.current = undefined;
     };
-  }, [file.url]);
+  }, [file.url, isImage]);
 
   return (
-    <Attachment size="sm" state={loadState} className="max-w-[min(100%,18rem)]">
+    <Attachment
+      size="sm"
+      state={loadState === "deleted" ? "error" : loadState}
+      className="max-w-[min(100%,18rem)]"
+    >
       <AttachmentMedia variant={isImage ? "image" : "icon"}>
         {isImage && loadState === "done" && resolvedUrl ? (
           <img src={resolvedUrl} alt={title} />
@@ -193,11 +240,13 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
       <AttachmentContent>
         <AttachmentTitle>{title}</AttachmentTitle>
         <AttachmentDescription>
-          {loadState === "error"
-            ? t("chat:messages.loadFailed")
-            : loadState === "processing"
-              ? t("chat:messages.loading")
-              : file.mediaType || t("chat:messages.file")}
+          {loadState === "deleted"
+            ? t("chat:messages.attachmentDeleted")
+            : loadState === "error"
+              ? t("chat:messages.loadFailed")
+              : loadState === "processing"
+                ? t("chat:messages.loading")
+                : file.mediaType || t("chat:messages.file")}
         </AttachmentDescription>
       </AttachmentContent>
       {loadState === "done" && resolvedUrl ? (
@@ -205,14 +254,27 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
           <AttachmentActions>
             <AttachmentAction
               aria-label={t("chat:messages.openAttachment", { title })}
-              render={<a href={resolvedUrl} rel="noreferrer" target="_blank" />}
+              render={
+                <a
+                  href={resolvedUrl}
+                  onClick={(event) => void openAttachment(event)}
+                  rel="noreferrer"
+                  target="_blank"
+                />
+              }
               title={t("chat:messages.openAttachment", { title })}
             >
               <ExternalLinkIcon />
             </AttachmentAction>
             <AttachmentAction
               aria-label={t("chat:messages.downloadAttachment", { title })}
-              render={<a download={title} href={resolvedUrl} />}
+              render={
+                <a
+                  download={title}
+                  href={resolvedUrl}
+                  onClick={(event) => void openAttachment(event, true)}
+                />
+              }
               title={t("chat:messages.downloadAttachment", { title })}
             >
               <DownloadIcon />
@@ -232,6 +294,7 @@ function MessageAttachment({ file }: { file: FileUIPart }) {
             render={
               <a
                 href={resolvedUrl}
+                onClick={(event) => void openAttachment(event)}
                 target="_blank"
                 rel="noreferrer"
                 aria-label={t("chat:messages.openAttachment", {
@@ -478,6 +541,7 @@ export const MessageItem = React.memo(function MessageItem({
   const [editing, setEditing] = React.useState(false);
   const [editText, setEditText] = React.useState("");
   const isUser = message.role === "user";
+  const speaker = message.metadata as import("../model/types").WorkMessageMetadata | undefined;
   const text = message.parts
     .filter((part) => part.type === "text")
     .map((part) => part.text)
@@ -720,21 +784,31 @@ export const MessageItem = React.memo(function MessageItem({
       <BlurFade duration={0.2} blur="3px">
         <Message>
           <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-            <AssistantAvatar />
+            {speaker?.agentProfileId ? (
+              <GeneratedAvatar
+                seed={
+                  speaker.teamMemberId
+                    ? `${speaker.agentProfileId}:${speaker.teamMemberId}`
+                    : speaker.agentProfileId
+                }
+                name={speaker.agentDisplayName ?? speaker.agentProfileId}
+                src={speaker.agentAvatar}
+              />
+            ) : (
+              <AssistantAvatar />
+            )}
           </MessageAvatar>
           <MessageContent>
-            <MessageHeader className="px-0">MastraWork</MessageHeader>
+            <MessageHeader className="px-0">
+              {speaker?.agentDisplayName ?? "MastraWork"}
+            </MessageHeader>
             <MessageAttachments files={files} messageId={message.id} />
             {isStreaming && assistantSegments.length === 0 ? (
               <AssistantPendingIndicator variant="initial" />
             ) : null}
             <CitationProvider entries={citationEntries}>
               {assistantSegments.map((segment) =>
-                segment.type === "event" ? (
-                  <Bubble className="max-w-full" key={segment.key} variant="tinted">
-                    <BubbleContent className="text-xs">{segment.text}</BubbleContent>
-                  </Bubble>
-                ) : segment.type === "trace" ? (
+                segment.type === "trace" ? (
                   <AssistantTrace
                     key={segment.key}
                     isStreaming={isStreaming}

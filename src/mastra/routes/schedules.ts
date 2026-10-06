@@ -26,6 +26,8 @@ import {
   parsePermissionRules,
   resolveMode,
 } from "../agents/permissions";
+import { getTeamHandoffState, TEAM_HANDOFF_CONTEXT_KEY } from "../agents/team-handoff";
+import { TEAM_PROFILE_CONTEXT_KEY } from "../agents/team-workflow";
 import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents/work-agent";
 import { errorText, WorkApiError, workError } from "../errors";
 import {
@@ -161,6 +163,8 @@ export async function prepareScheduledRun({
           [AUTHENTICATED_USER_ID_CONTEXT_KEY]: resourceId,
           [MASTRA_RESOURCE_ID_KEY]: resourceId,
           [AGENT_PROFILE_CONTEXT_KEY]: profile.id,
+          [TEAM_PROFILE_CONTEXT_KEY]: profile,
+          [TEAM_HANDOFF_CONTEXT_KEY]: await getTeamHandoffState(profile, resourceId, threadId),
           [REQUEST_MODEL_ID_CONTEXT_KEY]: modelId,
           [MODE_ID_CONTEXT_KEY]: mode.id,
           [PERMISSION_RULES_CONTEXT_KEY]: parsePermissionRules(metadata.permissionRules),

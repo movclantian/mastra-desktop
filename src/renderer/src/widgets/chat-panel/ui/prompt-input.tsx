@@ -2,9 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { FileUIPart, LanguageModelUsage } from "ai";
 import {
   ArrowUpFromLineIcon,
+  CheckIcon,
   CopyIcon,
   FileIcon,
   ListTodoIcon,
+  LoaderCircleIcon,
   PencilIcon,
   RotateCcwIcon,
   SparklesIcon,
@@ -83,19 +85,47 @@ function PromptInputAttachments() {
   if (attachments.files.length === 0) return null;
 
   return (
-    <PromptInputHeader className="bg-muted/40 px-2 pt-2 pb-1 border-b border-border">
+    <div className="min-w-0 w-full">
       {/* 横向滚动胶囊(inline variant),超出输入框宽度时左右滚动 */}
-      <ScrollArea className="w-full">
+      <ScrollArea className="w-full" orientation="horizontal">
         <Attachments className="w-max gap-1.5 pb-1" variant="inline">
           {attachments.files.map((file) => (
             <Attachment
               className="max-w-64"
+              title={
+                file.localPath
+                  ? `${t("chat:prompt.localAttachment")}: ${file.localPath}`
+                  : undefined
+              }
               data={file}
               key={file.id}
               onRemove={() => attachments.remove(file.id)}
             >
               <AttachmentPreview />
               <AttachmentInfo className="text-xs" />
+              <span
+                className="shrink-0 text-xs text-muted-foreground"
+                role="status"
+                title={file.uploadError}
+              >
+                {file.uploadState === "ready" ? (
+                  <CheckIcon className="size-3" aria-label={t("chat:prompt.attachmentReady")} />
+                ) : file.uploadState === "error" ? (
+                  <button
+                    type="button"
+                    className="text-destructive underline"
+                    onClick={() => attachments.retry(file.id)}
+                    aria-label={t("chat:prompt.retryAttachment")}
+                  >
+                    {t("chat:prompt.retryAttachment")}
+                  </button>
+                ) : (
+                  <LoaderCircleIcon
+                    className="size-3 animate-spin"
+                    aria-label={t("chat:prompt.attachmentUploading")}
+                  />
+                )}
+              </span>
               <AttachmentRemove
                 label={t("chat:prompt.removeAttachment", {
                   filename: file.filename ?? t("chat:file"),
@@ -106,7 +136,7 @@ function PromptInputAttachments() {
         </Attachments>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
-    </PromptInputHeader>
+    </div>
   );
 }
 
@@ -930,6 +960,7 @@ export function ChatPromptInput({
     // 结束后内建淡出;常驻挂载避免输入框 remount 丢焦点,空闲零视觉残留
     <PromptInputGlow status={status}>
       <PromptInput
+        globalDrop
         multiple
         accept={acceptedFileTypes}
         maxFiles={10}
@@ -939,6 +970,10 @@ export function ChatPromptInput({
         estimateFileTokens={estimateAttachmentTokens}
         onError={(error) => toast.error(error.message)}
         onSubmit={(message) => {
+          if (controller.attachments.files.some((file) => file.uploadState !== "ready")) {
+            toast.error(t("chat:prompt.attachmentsNotReady"));
+            return;
+          }
           const attachmentIds = controller.attachments.files.map((file) => file.id);
           return onSubmit(
             {
@@ -973,26 +1008,32 @@ export function ChatPromptInput({
           );
         }}
       >
-        <MessageQuoteCards
-          quotes={quotes}
-          onRemove={(id) => {
-            if (threadId) removeQuotes(threadId, [id]);
-          }}
-        />
-        <PromptInputAttachments />
+        {quotes.length > 0 || controller.attachments.files.length > 0 ? (
+          <PromptInputHeader className="min-w-0 flex-col items-stretch gap-1 border-b border-border/40 px-2 py-2">
+            <MessageQuoteCards
+              quotes={quotes}
+              onRemove={(id) => {
+                if (threadId) removeQuotes(threadId, [id]);
+              }}
+            />
+            <PromptInputAttachments />
+            <SelectedFileReferenceBadges
+              files={selectedFileReferences.filter((reference) =>
+                controller.attachments.files.some((file) => file.url === reference.url),
+              )}
+              onRemove={(file) => {
+                const attachment = controller.attachments.files.find(
+                  (item) => item.url === file.url,
+                );
+                if (attachment) controller.attachments.remove(attachment.id);
+                setSelectedFileReferences((current) =>
+                  current.filter((item) => item.url !== file.url),
+                );
+              }}
+            />
+          </PromptInputHeader>
+        ) : null}
         <PromptInputBody>
-          <SelectedFileReferenceBadges
-            files={selectedFileReferences.filter((reference) =>
-              controller.attachments.files.some((file) => file.url === reference.url),
-            )}
-            onRemove={(file) => {
-              const attachment = controller.attachments.files.find((item) => item.url === file.url);
-              if (attachment) controller.attachments.remove(attachment.id);
-              setSelectedFileReferences((current) =>
-                current.filter((item) => item.url !== file.url),
-              );
-            }}
-          />
           <SkillAwareTextarea
             onChangeFileReferences={setSelectedFileReferences}
             onChangeSkills={setSelectedSkills}
@@ -1026,7 +1067,16 @@ export function ChatPromptInput({
               <ChatContextUsage usage={usage} billingUsage={billingUsage} />
             </div>
             <ChatModelSelector />
-            <PromptInputSubmit className="shrink-0" onStop={() => void onStop()} status={status} />
+            <PromptInputSubmit
+              disabled={
+                status !== "streaming" &&
+                status !== "submitted" &&
+                controller.attachments.files.some((file) => file.uploadState !== "ready")
+              }
+              className="shrink-0"
+              onStop={() => void onStop()}
+              status={status}
+            />
           </div>
         </PromptInputFooter>
       </PromptInput>

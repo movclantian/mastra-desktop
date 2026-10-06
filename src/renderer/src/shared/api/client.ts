@@ -1,4 +1,4 @@
-import { MastraClient } from "@mastra/client-js";
+import { type ClientOptions, MastraClient } from "@mastra/client-js";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload, type WorkErrorPayload } from "@/shared/lib";
 import { type BrowserConfig, BrowserConfigSchema } from "../../../../shared/browser-contract";
@@ -11,8 +11,20 @@ const mastraClient = new MastraClient({
   credentials: "include",
 });
 
-export function getWorkbenchClientSession(resourceId: string, threadId: string) {
-  return mastraClient
+export function getWorkbenchClientSession(
+  resourceId: string,
+  threadId: string,
+  options?: Pick<ClientOptions, "abortSignal" | "fetch">,
+) {
+  const client = options
+    ? new MastraClient({
+        baseUrl: MASTRA_SERVER_URL,
+        retries: 0,
+        credentials: "include",
+        ...options,
+      })
+    : mastraClient;
+  return client
     .getAgentController("workbench")
     .session(resourceId, JSON.stringify(["workbench", threadId]));
 }
@@ -58,7 +70,7 @@ export async function requestJson<T>(
   const response = await apiFetch(path, init);
   if (!response.ok) {
     const payload = await readErrorPayload(response, fallbackMessage);
-    throw apiError(payload, fallbackMessage);
+    throw Object.assign(apiError(payload, fallbackMessage), { status: response.status });
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;

@@ -22,6 +22,7 @@ import {
   useAgentsQuery,
   useSessionSettings,
 } from "@/entities/workbench";
+import { AgentProfileDetails, ProfileAvatar } from "@/entities/workbench/ui/agent-profile-details";
 import { useAuth } from "@/features/auth";
 import { isEditableTarget, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
@@ -105,6 +106,7 @@ export function AgentHubPage() {
   const [assistType, setAssistType] = React.useState<AgentProfile["type"]>("agent");
   const [assistDescription, setAssistDescription] = React.useState("");
   const [assisting, setAssisting] = React.useState(false);
+  const [inspected, setInspected] = React.useState<AgentProfile | null>(null);
 
   React.useEffect(() => {
     setPage(1);
@@ -146,6 +148,7 @@ export function AgentHubPage() {
       setAssistOpen(false);
       toast.success(t("agentHub:aiCreateSuccess"));
       await setAgentSelection(agent);
+      setInspected(agent);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("agentHub:aiCreateFailed"));
     } finally {
@@ -157,6 +160,7 @@ export function AgentHubPage() {
     if (profile.id === DEFAULT_AGENT_PROFILE.id) return;
     try {
       await deleteAgent(profile.id);
+      if (inspected?.id === profile.id) setInspected(null);
       await queryClient.invalidateQueries({ queryKey: qk.agents() });
       toast.success(t("agentHub:deleted"));
     } catch {
@@ -177,13 +181,9 @@ export function AgentHubPage() {
             placeholder={t("agentHub:searchPlaceholder")}
           />
         </InputGroup>
-        <RainbowButton variant="outline" onClick={() => openAssist("agent")}>
+        <RainbowButton onClick={() => openAssist(tab === "team" ? "team" : "agent")}>
           <SparklesIcon />
-          {t("agentHub:aiCreateAgent")}
-        </RainbowButton>
-        <RainbowButton onClick={() => openAssist("team")}>
-          <SparklesIcon />
-          {t("agentHub:aiCreateTeam")}
+          {t("agentHub:aiCreate")}
         </RainbowButton>
       </div>
 
@@ -267,7 +267,7 @@ export function AgentHubPage() {
               </Empty>
             </div>
           ) : viewMode === "grid" ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3.5 p-5">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3.5 p-5">
               {paginated.map((profile) => (
                 <AgentGridCard
                   key={profile.id}
@@ -278,6 +278,7 @@ export function AgentHubPage() {
                     setActiveView("chat");
                   }}
                   onDelete={() => void remove(profile)}
+                  onInspect={() => setInspected(profile)}
                 />
               ))}
             </div>
@@ -293,6 +294,7 @@ export function AgentHubPage() {
                     setActiveView("chat");
                   }}
                   onDelete={() => void remove(profile)}
+                  onInspect={() => setInspected(profile)}
                 />
               ))}
             </div>
@@ -362,6 +364,59 @@ export function AgentHubPage() {
         ) : null}
       </div>
 
+      <Dialog
+        open={Boolean(inspected)}
+        onOpenChange={(open) => {
+          if (!open) setInspected(null);
+        }}
+      >
+        <DialogContent className="flex h-[min(48rem,calc(100dvh-2rem))] max-w-5xl flex-col overflow-hidden sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>{t("agentHub:profileDetails")}</DialogTitle>
+            <DialogDescription>{t("agentHub:profileDetailsDescription")}</DialogDescription>
+          </DialogHeader>
+          {inspected ? (
+            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[minmax(10rem,1fr)_minmax(0,3fr)]">
+              <ScrollArea className="min-h-0 max-h-36 rounded-md border md:max-h-none">
+                <div className="grid gap-1 p-1">
+                  {agents
+                    .filter((profile) => profile.type === inspected.type)
+                    .map((profile) => (
+                      <button
+                        type="button"
+                        key={profile.id}
+                        onClick={() => setInspected(profile)}
+                        aria-pressed={profile.id === inspected.id}
+                        className={cn(
+                          "flex min-w-0 items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted",
+                          profile.id === inspected.id && "bg-muted",
+                        )}
+                      >
+                        <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
+                        <span className="min-w-0 break-words">{profile.displayName}</span>
+                      </button>
+                    ))}
+                </div>
+              </ScrollArea>
+              <ScrollArea className="min-h-0 min-w-0">
+                <AgentProfileDetails profile={inspected} />
+              </ScrollArea>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button
+              onClick={async () => {
+                if (!inspected) return;
+                await setAgentSelection(inspected);
+                setInspected(null);
+                setActiveView("chat");
+              }}
+            >
+              {t("agentHub:useExpertNow")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={assistOpen}
         onOpenChange={(open) => {
@@ -536,14 +591,16 @@ function AgentGridCard({
   active,
   onUse,
   onDelete,
+  onInspect,
 }: {
   profile: AgentProfile;
   active: boolean;
   onUse: () => void;
   onDelete: () => void;
+  onInspect: () => void;
 }) {
   const { t } = useTranslation();
-  const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
+
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
   const isTeam = profile.type === "team";
 
@@ -564,7 +621,7 @@ function AgentGridCard({
                   active && "border-primary/30 bg-primary/10 text-primary",
                 )}
               >
-                <Icon className="size-5" />
+                <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
               </div>
               <div className="min-w-0">
                 <CardTitle className="truncate text-sm font-semibold tracking-tight">
@@ -615,6 +672,9 @@ function AgentGridCard({
         </CardContent>
 
         <CardFooter className="gap-1.5 border-t bg-muted/20 p-3">
+          <Button size="sm" variant="ghost" onClick={onInspect}>
+            {t("agentHub:profileDetails")}
+          </Button>
           <Button
             size="sm"
             variant={active ? "outline" : "default"}
@@ -656,14 +716,16 @@ function AgentListItem({
   active,
   onUse,
   onDelete,
+  onInspect,
 }: {
   profile: AgentProfile;
   active: boolean;
   onUse: () => void;
   onDelete: () => void;
+  onInspect: () => void;
 }) {
   const { t } = useTranslation();
-  const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
+
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
   const isTeam = profile.type === "team";
 
@@ -671,7 +733,7 @@ function AgentListItem({
     <AgentContextMenuWrapper profile={profile} onUse={onUse} onDelete={onDelete}>
       <div
         className={cn(
-          "group flex items-center justify-between gap-4 rounded-xl border bg-card p-3 px-4 transition-all duration-150 hover:border-primary/40 hover:bg-muted/30",
+          "group flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3 px-4 transition-all duration-150 hover:border-primary/40 hover:bg-muted/30",
           active && "border-primary/60 ring-2 ring-primary/15 bg-primary/[0.015]",
         )}
       >
@@ -682,10 +744,10 @@ function AgentListItem({
               active && "border-primary/30 bg-primary/10 text-primary",
             )}
           >
-            <Icon className="size-4" />
+            <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
           </div>
 
-          <div className="w-48 min-w-0 shrink-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="truncate text-sm font-medium">{profile.displayName}</span>
               {active ? (
@@ -724,6 +786,9 @@ function AgentListItem({
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          <Button size="sm" variant="ghost" onClick={onInspect}>
+            {t("agentHub:profileDetails")}
+          </Button>
           <Button
             size="sm"
             variant={active ? "outline" : "default"}

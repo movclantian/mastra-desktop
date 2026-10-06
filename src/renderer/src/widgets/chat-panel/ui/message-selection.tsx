@@ -46,7 +46,7 @@ export function MessageQuoteCards({
   const navigate = useNavigate();
   if (!quotes.length) return null;
   return (
-    <ScrollArea className="max-h-32 min-w-0" data-slot="message-quotes">
+    <ScrollArea className="max-h-32 min-w-0 w-full" data-slot="message-quotes">
       <div className="flex flex-col gap-1 p-2">
         {quotes.map((quote) => (
           <div

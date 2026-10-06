@@ -76,9 +76,10 @@ import {
   type WorkflowRuntimeRun,
   type WorkflowRuntimeState,
 } from "../model/types";
+import { WorkflowSteps } from "./team-collaboration";
 
 function workflowStatusLabel(status: string, t?: (key: string) => string): string {
-  const key = `chat.panels.workflowStatus.${status}`;
+  const key = `chat:panels.workflowStatus.${status}`;
   return t ? t(key) : i18n.t(key);
 }
 
@@ -118,10 +119,12 @@ export type WorkflowRunAction = "resume" | "rerun" | "cancel";
 
 function WorkflowRunCard({
   run,
+  invocations,
   onAction,
   onResume,
 }: {
   run: WorkflowRuntimeRun;
+  invocations: import("../../../../../shared/agent-contract").TeamInvocation[];
   onAction?: (run: WorkflowRuntimeRun, action: WorkflowRunAction) => void;
   onResume?: (run: WorkflowRuntimeRun) => void;
 }) {
@@ -185,25 +188,8 @@ function WorkflowRunCard({
           ) : null}
         </div>
       ) : null}
-      <div className="mt-2 grid gap-1">
-        {run.steps.map((step) => (
-          <div className="min-w-0" key={step.id}>
-            <div className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="shrink-0">{workflowStepIcon(step.status)}</span>
-              <span className="min-w-0 flex-1 truncate">{step.label || step.id}</span>
-              {step.progress ? (
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {step.progress.completedCount}/{step.progress.totalCount}
-                </span>
-              ) : null}
-            </div>
-            {step.error ? (
-              <p className="truncate pl-6 text-[10px] text-destructive" title={step.error}>
-                {step.error}
-              </p>
-            ) : null}
-          </div>
-        ))}
+      <div className="mt-2">
+        <WorkflowSteps run={run} invocations={invocations} />
       </div>
       {workflowTimeLabel(run.startedAt) || workflowTimeLabel(run.finishedAt ?? run.updatedAt) ? (
         <p className="mt-2 truncate border-t pt-2 text-[10px] text-muted-foreground">
@@ -249,19 +235,28 @@ function WorkflowRunCard({
 
 export function WorkflowRunPanel({
   workflow,
+  invocations,
   onAction,
 }: {
   workflow: WorkflowRuntimeState | null;
+  invocations: import("../../../../../shared/agent-contract").TeamInvocation[];
   onAction?: (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => void;
 }) {
   const { t } = useTranslation();
   const [resumeRun, setResumeRun] = React.useState<WorkflowRuntimeRun | null>(null);
   const [resumeText, setResumeText] = React.useState('{\n  "approved": true\n}');
   const [resumeError, setResumeError] = React.useState<string | null>(null);
+  const [feedback, setFeedback] = React.useState("");
   if (!workflow || workflow.runs.length === 0) return null;
-  const visibleRuns = workflow.runs.slice(0, 3);
+  const visibleRuns = workflow.runs;
   const active = workflow.active;
   const badgeRun = active ?? visibleRuns[0];
+  const suspension = asRecord(
+    resumeRun?.steps.find((step) => step.status === "suspended")?.suspendPayload,
+  );
+  const needsApproval = Boolean(
+    suspension && (!suspension.agentRunId || suspension.requiresApproval === true),
+  );
   const resumeDescription = asString(
     asRecord(resumeRun?.steps.find((step) => step.status === "suspended")?.suspendPayload)
       ?.description,
@@ -292,11 +287,13 @@ export function WorkflowRunPanel({
                 onAction
                   ? (run) => {
                       setResumeError(null);
+                      setFeedback("");
                       setResumeRun(run);
                     }
                   : undefined
               }
               run={run}
+              invocations={invocations}
             />
           ))}
         </ScrollArea>
@@ -313,23 +310,46 @@ export function WorkflowRunPanel({
         <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>{t("chat:panels.resumeWorkflow")}</DialogTitle>
-            <DialogDescription>{t("chat:panels.resumeDesc")}</DialogDescription>
+            <DialogDescription>
+              {needsApproval ? t("agentHub:approvalDescription") : t("chat:panels.resumeDesc")}
+            </DialogDescription>
           </DialogHeader>
           <ScrollArea className="min-h-0 flex-1">
             <div className="grid min-w-0 gap-3">
               {resumeDescription ? (
                 <pre className="whitespace-pre-wrap break-words text-xs">{resumeDescription}</pre>
               ) : null}
-              <Textarea
-                aria-label={t("chat:panels.resumeWorkflow")}
-                className="min-h-32 max-h-64 whitespace-pre-wrap break-words font-mono text-xs"
-                onChange={(event) => setResumeText(event.target.value)}
-                value={resumeText}
-              />
+              {needsApproval ? (
+                <Textarea
+                  aria-label={t("agentHub:feedback")}
+                  placeholder={t("agentHub:feedback")}
+                  value={feedback}
+                  onChange={(event) => setFeedback(event.target.value)}
+                />
+              ) : (
+                <Textarea
+                  aria-label={t("chat:panels.resumeWorkflow")}
+                  className="min-h-32 max-h-64 whitespace-pre-wrap break-words font-mono text-xs"
+                  onChange={(event) => setResumeText(event.target.value)}
+                  value={resumeText}
+                />
+              )}
             </div>
           </ScrollArea>
           {resumeError ? <p className="text-xs text-destructive">{resumeError}</p> : null}
           <DialogFooter>
+            {needsApproval ? (
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (!resumeRun || !onAction) return;
+                  onAction(resumeRun, "resume", { approved: false, feedback });
+                  setResumeRun(null);
+                }}
+              >
+                {t("agentHub:decline")}
+              </Button>
+            ) : null}
             <Button onClick={() => setResumeRun(null)} variant="ghost">
               {t("common:cancel")}
             </Button>
@@ -337,7 +357,9 @@ export function WorkflowRunPanel({
               onClick={() => {
                 if (!resumeRun || !onAction) return;
                 try {
-                  const parsed = JSON.parse(resumeText);
+                  const parsed = needsApproval
+                    ? { approved: true, feedback }
+                    : JSON.parse(resumeText);
                   onAction(resumeRun, "resume", parsed);
                   setResumeError(null);
                   setResumeRun(null);

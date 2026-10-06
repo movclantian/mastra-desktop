@@ -5,6 +5,11 @@ import type {
 } from "@mastra/core/agent-controller";
 import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace";
 import { z } from "zod";
+import {
+  type AgentMemberDefinition,
+  type AgentProfile,
+  delegationMemberIds,
+} from "../../shared/agent-contract.ts";
 
 /** Workbench category catalog and persisted native Controller permission rules. */
 const DEFAULT_CATEGORY_POLICIES = {
@@ -42,6 +47,7 @@ export type { PermissionPolicy, PermissionRules, ToolCategory };
 /** 已认证会话与定时任务传给 Agent 的当前线程权限规则。 */
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
+export const READ_ONLY_EXPERT_CONTEXT_KEY = "mastra-work:read-only-expert";
 
 /**
  * 默认策略:工作台默认完全访问;交互型工具仍显式允许,避免进入审批门。
@@ -149,6 +155,67 @@ export const PLAN_TOOL_NAMES = [
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
 ];
 
+const COORDINATOR_TOOL_NAMES = new Set([
+  ...WORKSPACE_READ_TOOLS,
+  "ask_user",
+  "submit_plan",
+  "task_write",
+  "task_update",
+  "task_complete",
+  "task_check",
+  "skill",
+  "skill_search",
+  "skill_read",
+  "notification_inbox",
+]);
+
+/** Native mode allowlists must retain the configured delegation tools, not every agent-shaped name. */
+export function resolveAgentActiveTools({
+  tools,
+  activeTools,
+  mode,
+  rules,
+  profile,
+  member,
+  scheduled,
+  readOnlyExpert,
+}: {
+  tools: string[];
+  activeTools?: string[];
+  mode: WorkMode;
+  rules: PermissionRules;
+  profile?: AgentProfile;
+  member?: AgentMemberDefinition;
+  scheduled: boolean;
+  readOnlyExpert: boolean;
+}): string[] {
+  const coordinationTools = new Set(
+    profile ? delegationMemberIds(profile, member).map((id) => `agent-${id}`) : [],
+  );
+  const supervisor = !member && profile?.workflow?.strategy === "supervisor";
+  if (supervisor && profile?.workflow?.steps.length) coordinationTools.add("workflow-teamWorkflow");
+  if (!member && profile?.workflow?.strategy === "handoff") coordinationTools.add("handoff");
+  const enabled = new Set(activeTools ?? tools);
+  for (const name of coordinationTools) enabled.add(name);
+  return tools.filter((name) => {
+    const policy = rules.tools[name] ?? rules.categories[toolCategoryOf(name)];
+    const collaboration =
+      name.startsWith("agent-") || name.startsWith("workflow-") || name === "handoff";
+    return (
+      enabled.has(name) &&
+      (!collaboration || coordinationTools.has(name)) &&
+      (!mode.availableTools || mode.availableTools.includes(name) || coordinationTools.has(name)) &&
+      (!readOnlyExpert || READ_ONLY_TOOL_NAMES.includes(name)) &&
+      (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
+      (scheduled ? policy === "allow" : policy !== "deny") &&
+      (!supervisor ||
+        coordinationTools.has(name) ||
+        COORDINATOR_TOOL_NAMES.has(name) ||
+        (mode.id === "plan" && name === WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE))
+    );
+  });
+}
+
 export function toolCategoryOf(toolName: string): ToolCategory {
   const explicit = CATEGORY_BY_TOOL[toolName];
   if (explicit) return explicit;
@@ -209,8 +276,8 @@ Only Markdown files directly inside plans/ may be written in this mode. You may 
     metadata: { default: true },
     description: "按用户要求执行任务，遵循工具权限",
     instructions: `MODE: BUILD.
-Carry out the user's requested task, following an approved plan when one exists. Keep the task list current with task_write / task_update / task_complete, with exactly one task in progress.
-Prefer small verifiable steps: make a change, check it, then move to the next task. Report what you actually did, including anything you could not finish.
+Carry out the user's request according to your configured role, following an approved plan when one exists. A supervisor coordinates execution through its members.
+Report actual results and unresolved issues; use tools only when the task requires them.
 Stay within the user's requested scope. Ask when a decision changes that scope.`,
   },
   {
@@ -219,8 +286,8 @@ Stay within the user's requested scope. Ask when a decision changes that scope.`
     description: "只读复查已有变更并报告问题,写入与执行类工具被收回",
     availableTools: READ_ONLY_TOOL_NAMES,
     instructions: `MODE: REVIEW.
-Inspect the current state of the workspace and report findings. You have no write, task-state mutation, or command-execution tools in this mode — do not claim to have changed anything.
-Ground every finding in a file and line you actually read. Order findings by severity and state, for each one, the concrete input or state that would make it fail.
+Review the available evidence according to your configured role. You and your delegated members have no write, task-state mutation, or command-execution tools in this mode — do not claim to have changed anything.
+Ground findings in evidence you actually inspected; cite file and line when reviewing code. State concrete issues and their impact.
 If a finding needs a change, describe the change; the user will switch to another mode to apply it.`,
   },
 ];
@@ -239,4 +306,10 @@ export const MODE_ID_CONTEXT_KEY = "mastra-work:mode-id";
 export function resolveMode(modeId: unknown): WorkMode {
   const found = WORK_MODES.find((mode) => mode.id === modeId);
   return found ?? WORK_MODES.find((mode) => mode.id === DEFAULT_MODE_ID) ?? WORK_MODES[0];
+}
+
+/** Controller transitions (for example plan approval) take effect before a request is recreated. */
+export function resolveRequestMode(context?: { get: (key: string) => unknown }): WorkMode {
+  const controller = context?.get("controller") as { session?: { modeId?: unknown } } | undefined;
+  return resolveMode(controller?.session?.modeId ?? context?.get(MODE_ID_CONTEXT_KEY));
 }

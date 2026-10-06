@@ -319,9 +319,8 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
     catalogCache = providers;
     catalogFetchedAt = Date.now();
     return providers;
-  })().catch((error: unknown) => {
-    catalogPromise = null; // 失败不缓存,允许下次重试
-    throw error;
+  })().finally(() => {
+    catalogPromise = null; // 只复用进行中的请求，成功后仍由目录 TTL 决定是否刷新。
   });
   return catalogPromise;
 }

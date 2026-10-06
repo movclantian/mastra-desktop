@@ -6,13 +6,23 @@ import type { ChildProcess } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Notification,
+  safeStorage,
+  screen,
+  session,
+  shell,
+} from "electron";
 import icon from "../../build/icon.png?asset";
 import {
   NATIVE_BROWSER_VIEW_CHANNELS,
@@ -68,7 +78,14 @@ import {
   TerminalThreadSchema,
   TerminalWriteRequestSchema,
 } from "../shared/terminal-contract";
-import { SetMinimumWidthRequestSchema, WINDOW_CHANNELS } from "../shared/window-contract";
+import {
+  DEFAULT_DESKTOP_PREFERENCES,
+  DesktopNotificationSchema,
+  DesktopPreferencesSchema,
+  DesktopSettingsPatchSchema,
+  SetMinimumWidthRequestSchema,
+  WINDOW_CHANNELS,
+} from "../shared/window-contract";
 import {
   type DetectedIde,
   DetectIdesRequestSchema,
@@ -114,6 +131,30 @@ const MASTRA_SHUTDOWN_MESSAGE = "mastra-work:shutdown";
 
 const execFileAsync = promisify(execFile);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function readDesktopPreferences() {
+  try {
+    return DesktopPreferencesSchema.parse(
+      JSON.parse(await readFile(join(app.getPath("userData"), "desktop-preferences.json"), "utf8")),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return DEFAULT_DESKTOP_PREFERENCES;
+    throw error;
+  }
+}
+
+async function readDesktopSettings() {
+  const launchAtLoginSupported = app.isPackaged && ["win32", "darwin"].includes(process.platform);
+  return {
+    ...(await readDesktopPreferences()),
+    launchAtLogin: launchAtLoginSupported && app.getLoginItemSettings().openAtLogin,
+    launchAtLoginSupported,
+    notificationsSupported: Notification.isSupported(),
+  };
+}
+
+const desktopNotifications = new Set<Notification>();
+let desktopSettingsWrite: Promise<unknown> = Promise.resolve();
 
 /**
  * 解析服务进程的出站代理地址(供 spawn 时以环境变量注入)。
@@ -327,10 +368,10 @@ function rendererContentSecurityPolicy(): string {
     : "'self' 'wasm-unsafe-eval'";
   return [
     "default-src 'self'",
-    `connect-src 'self' blob: ${MASTRA_SERVER_URL}${devConnectSources} https://v2.xxapi.cn`,
+    `connect-src 'self' blob: ${MASTRA_SERVER_URL}${devConnectSources}`,
     `script-src ${scriptSources}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    `img-src 'self' data: blob: ${MASTRA_SERVER_URL} https://images.xxapi.cn https://models.dev`,
+    `img-src 'self' data: blob: ${MASTRA_SERVER_URL} https://models.dev`,
     `media-src 'self' data: blob: ${MASTRA_SERVER_URL}`,
     "worker-src 'self' blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
@@ -1115,6 +1156,57 @@ function bootstrap(): void {
   app.whenReady().then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId("com.mastra.desktop");
+
+    ipcMain.handle(WINDOW_CHANNELS.getSettings, async (event) => {
+      assertTrustedIpcSender(event);
+      return readDesktopSettings();
+    });
+    ipcMain.handle(WINDOW_CHANNELS.updateSettings, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const { launchAtLogin, ...patch } = DesktopSettingsPatchSchema.parse(value);
+      const operation = desktopSettingsWrite.then(async () => {
+        const current = await readDesktopSettings();
+        if (launchAtLogin !== undefined && !current.launchAtLoginSupported)
+          throw new Error("开机启动仅在已安装的 Windows/macOS 应用中可用");
+        const preferences = DesktopPreferencesSchema.parse({
+          ...(await readDesktopPreferences()),
+          ...patch,
+        });
+        const target = join(app.getPath("userData"), "desktop-preferences.json");
+        await writeFile(`${target}.tmp`, JSON.stringify(preferences, null, 2));
+        await rename(`${target}.tmp`, target);
+        if (launchAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: launchAtLogin });
+        return readDesktopSettings();
+      });
+      desktopSettingsWrite = operation.catch(() => undefined);
+      return operation;
+    });
+    ipcMain.handle(WINDOW_CHANNELS.notify, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const message = DesktopNotificationSchema.parse(value);
+      const preferences = await readDesktopPreferences();
+      const enabled =
+        message.kind === "schedule"
+          ? preferences.scheduledTaskNotifications
+          : preferences.desktopNotifications;
+      if (!enabled || !Notification.isSupported()) return false;
+      const notification = new Notification({ title: message.title, body: message.body, icon });
+      desktopNotifications.add(notification);
+      notification.once("close", () => desktopNotifications.delete(notification));
+      notification.once("failed", (_event, error) => {
+        desktopNotifications.delete(notification);
+        console.warn("Desktop notification failed", error);
+      });
+      notification.once("click", () => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send(WINDOW_CHANNELS.notificationClick, message);
+      });
+      notification.show();
+      return true;
+    });
 
     try {
       const vaultDirectory = join(app.getPath("userData"), "credential-vault");

@@ -203,6 +203,12 @@ export interface ThreadContextSnapshot {
   title: string;
   latestRequest: string;
   items: ThreadContextItem[];
+  workingMemory: {
+    content: string | null;
+    enabled: boolean;
+    scope: "thread" | "resource";
+    format: "markdown" | "json";
+  };
 }
 export function fetchThreadContext(threadId: string): Promise<ThreadContextSnapshot> {
   return requestJson(`/work/threads/${encodeURIComponent(threadId)}/context`);
