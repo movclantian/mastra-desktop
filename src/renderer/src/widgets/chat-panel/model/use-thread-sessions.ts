@@ -36,6 +36,7 @@ interface SessionView {
   status: "ready" | "submitted" | "streaming" | "error";
   connection: ConnectionState;
   connectionError?: string;
+  runError?: string;
   native?: NativeDisplayState;
 }
 interface MessageInput {
@@ -86,6 +87,12 @@ function createThreadSession(
   let librarySources: unknown[] = [];
   const pendingMessages = new Map<string, WorkUIMessage>();
   let submittedMessageId: string | undefined;
+  const setQueue = (requests: QueuedRequest[]) =>
+    store.setState(({ messages }) => ({
+      queuedRequests: requests.filter(
+        (request) => !messages.some((message) => message.id === request.id),
+      ),
+    }));
   const setMessages = (update: MessageUpdate) =>
     store.setState(({ messages }) => {
       const next = [...(typeof update === "function" ? update(messages) : update)];
@@ -110,13 +117,10 @@ function createThreadSession(
     awaitingRun = false;
     setStatus("error");
     const detail = error instanceof Error ? error.message : String(error);
+    store.setState({ runError: detail.split("\n")[0] });
     toast.error(i18n.t("chat:messages.turnFailed", { detail }));
   };
-  const applyDisplay = (native: NativeDisplayState) => {
-    if (native.isRunning) awaitingRun = false;
-    revision++;
-    store.setState({ native });
-    const current = native.currentMessage;
+  const applyMessage = (current: NativeDisplayState["currentMessage"], isRunning: boolean) => {
     const signal =
       current?.role === "signal"
         ? mastraDBMessageToSignal({ ...current, createdAt: new Date(current.createdAt) })
@@ -152,7 +156,7 @@ function createThreadSession(
         for (const ui of converted) {
           const index = next.findIndex((item) => item.id === ui.id);
           // Final persisted messages contain stop/error metadata absent from display snapshots.
-          if (!native.isRunning && index >= 0) continue;
+          if (!isRunning && index >= 0) continue;
           const previous = next[index];
           const parts: WorkUIMessage["parts"] = ui.parts.map((part, partIndex) => {
             // DB-message conversion marks reasoning as done; the live trailing part is still streaming.
@@ -160,7 +164,7 @@ function createThreadSession(
               return {
                 ...part,
                 state:
-                  native.isRunning && partIndex === ui.parts.length - 1
+                  isRunning && partIndex === ui.parts.length - 1
                     ? ("streaming" as const)
                     : ("done" as const),
               };
@@ -198,6 +202,12 @@ function createThreadSession(
         return next;
       });
     }
+  };
+  const applyDisplay = (native: NativeDisplayState) => {
+    if (native.isRunning) awaitingRun = false;
+    revision++;
+    store.setState({ native });
+    applyMessage(native.currentMessage, native.isRunning);
     setStatus(
       failed
         ? "error"
@@ -237,7 +247,7 @@ function createThreadSession(
     const target = payload.displayState.activeWorkflow ?? workflowTarget;
     if (target && signal && !workflowObserver) followWorkflow(target, signal);
     if (queueStartedAt === queueRevision) {
-      store.setState({ queuedRequests: payload.displayState.queuedRequests });
+      setQueue(payload.displayState.queuedRequests);
     }
     if (startedAt === revision) {
       setMessages((current) => {
@@ -278,8 +288,7 @@ function createThreadSession(
       { signal },
     );
     signal?.throwIfAborted();
-    if (!disposed && startedAt === queueRevision)
-      store.setState({ queuedRequests: payload.requests });
+    if (!disposed && startedAt === queueRevision) setQueue(payload.requests);
   };
   const queueRefreshFailed = (error: unknown) => {
     if (!disposed)
@@ -337,8 +346,33 @@ function createThreadSession(
           onEvent: (event) => {
             if (disposed || signal.aborted) return;
             if (!isKnownAgentControllerEvent(event)) return;
+            if (event.type === "message_start") {
+              revision++;
+              applyMessage(
+                { ...event.message, createdAt: new Date(event.message.createdAt).toISOString() },
+                true,
+              );
+              const message = store
+                .getState()
+                .messages.find((item) => item.id === event.message.id);
+              if (message?.role === "user") {
+                pendingMessages.set(message.id, message);
+                submittedMessageId = message.id;
+                queueRevision++;
+                store.setState(({ queuedRequests }) => ({
+                  queuedRequests: queuedRequests.filter((item) => item.id !== message.id),
+                  runError: undefined,
+                }));
+                failed = false;
+                awaitingRun = true;
+                setStatus(store.getState().native?.isRunning ? "streaming" : "submitted");
+              }
+            }
             if (event.type === "follow_up_queued") void refreshQueue().catch(queueRefreshFailed);
-            if (event.type === "agent_start") failed = false;
+            if (event.type === "agent_start") {
+              failed = false;
+              store.setState({ runError: undefined });
+            }
             if (event.type === "display_state_changed") applyDisplay(event.displayState);
             else if (event.type === "agent_end") {
               awaitingRun = false;
@@ -382,6 +416,7 @@ function createThreadSession(
     let submitted = false;
     failed = false;
     commandPending = true;
+    store.setState({ runError: undefined });
     // Connecting and its initial idle snapshot are part of the pending command.
     setStatus("submitted");
     try {
@@ -619,8 +654,7 @@ function createThreadSession(
         { method: "POST", body: { text: input.text ?? "", options } },
       );
       // POST ACK carries the queue; newer SSE reconciliation takes precedence if dispatch raced it.
-      if (!disposed && startedAt === queueRevision)
-        store.setState({ queuedRequests: payload.requests });
+      if (!disposed && startedAt === queueRevision) setQueue(payload.requests);
     },
     async queueAction(id: string, action: MessageQueueAction) {
       await connect();

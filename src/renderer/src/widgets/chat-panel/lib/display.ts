@@ -75,7 +75,9 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
         sourceIds: [message.id],
         key:
           message.role === "assistant"
-            ? `reply-${turnId}-${message.metadata?.agentProfileId ?? "default"}-${message.metadata?.teamMemberId ?? "main"}`
+            ? previousMessage?.role === "assistant" && !previousMessage.metadata?.handoff
+              ? `reply-${turnId}-${message.id}`
+              : `reply-${turnId}`
             : message.id,
       };
       display.push(entry);
@@ -98,10 +100,11 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
   }
 
   if (
-    pending &&
+    (pending || display.at(-1)?.message.role === "user") &&
     (display.at(-1)?.message.role !== "assistant" || display.at(-1)?.message.metadata?.handoff)
   ) {
-    const id = `reply-${turnId}-default-main`;
+    // Preserve the reply row through pending, failure and idle snapshots.
+    const id = `reply-${turnId}`;
     display.push({ key: id, sourceIds: [], message: { id, role: "assistant", parts: [] } });
   }
   return display;

@@ -505,14 +505,8 @@ const ENGINE_LABELS: Record<SearchEngine, string> = {
   anysearch: "AnySearch",
 };
 
-export function webSearchInstructions(
-  selection: WebSearchSelection,
-  toolsAvailable: boolean,
-): string {
+export function webSearchInstructions(selection: WebSearchSelection): string {
   const preset = DEPTH_PRESETS[selection.depth];
-  if (!toolsAvailable) {
-    return `Web search was requested (${ENGINE_LABELS[selection.engine]}) but the connection is unavailable, so no search tool is available. Tell the user to check ${selection.engine === "anysearch" ? "MCP management → AnySearch" : "Settings → 工具"}, then answer from your own knowledge and mark it as possibly outdated.`;
-  }
   const engineHint =
     selection.engine === "tavily"
       ? `Call tavily_search with searchDepth='${preset.tavilySearchDepth}' and maxResults=${preset.maxResults}.`
@@ -525,6 +519,7 @@ export function webSearchInstructions(
       : "After searching, archive the 1-3 most promising pages with the engine's extract/scrape tool, then use the official workspace read_file or grep tool with the returned workspacePath when details are needed."
     : "Rely on result snippets; do not fetch full pages at this strength.";
   return `Web search is ON for this request (engine: ${ENGINE_LABELS[selection.engine]}, strength: ${selection.depth}).
+- Only use tools exposed for this run. If the selected search service is unavailable and the request requires search, clearly report that limitation; do not claim to have searched or substitute remembered facts for current evidence. Requests that do not require search can proceed normally.
 - Any question that depends on current facts, prices, releases, docs or news MUST be answered from search results, never from memory alone.
 - ${engineHint}
 - ${deepHint}

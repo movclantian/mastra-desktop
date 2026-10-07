@@ -509,6 +509,8 @@ export const MessageItem = React.memo(function MessageItem({
   readOnly = false,
   showAvatar = true,
   sendFailed = false,
+  emptyReply = false,
+  replyError,
   onRetrySend,
   onToggleReaction,
   onForkFromMessage,
@@ -525,6 +527,8 @@ export const MessageItem = React.memo(function MessageItem({
   showAvatar?: boolean;
   /** 用户消息发送失败:常驻"发送失败 + 行内重试"(官方 message-actions) */
   sendFailed?: boolean;
+  emptyReply?: boolean;
+  replyError?: string;
   onRetrySend?: () => void;
   /** 表情反应切换(官方 BubbleReactions 业务对接) */
   onToggleReaction?: (messageId: string, emoji: string) => void;
@@ -566,7 +570,7 @@ export const MessageItem = React.memo(function MessageItem({
     "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
   const bubbleActionFooterClassName =
     "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/actions:pointer-events-auto group-hover/actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
-  const hideActions = isStreaming || isGenerating;
+  const hideActions = isStreaming || isGenerating || emptyReply;
   const canReact = !hideActions && onToggleReaction !== undefined;
   const isMac = React.useMemo(() => isMacPlatform(), []);
 
@@ -799,7 +803,22 @@ export const MessageItem = React.memo(function MessageItem({
               {speaker?.agentDisplayName ?? "MastraWork"}
             </MessageHeader>
             <MessageAttachments files={files} messageId={message.id} />
-            {isStreaming && assistantSegments.length === 0 ? (
+            {emptyReply && replyError ? (
+              <div className="flex min-w-0 flex-wrap items-start gap-2 text-sm text-muted-foreground">
+                <p
+                  className="min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]"
+                  role="status"
+                >
+                  {t("chat:messages.turnFailed", { detail: replyError })}
+                </p>
+                {!readOnly && onRetrySend ? (
+                  <Button size="sm" variant="outline" onClick={onRetrySend} disabled={isGenerating}>
+                    <RefreshCcwIcon /> {t("chat:messages.retrySend")}
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {(isStreaming || emptyReply) && !replyError && assistantSegments.length === 0 ? (
               <AssistantPendingIndicator variant="initial" />
             ) : null}
             <CitationProvider entries={citationEntries}>

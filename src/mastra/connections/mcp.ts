@@ -902,6 +902,7 @@ async function toDefinition(
       allowedHosts: server.allowedHosts,
       requestInit: { headers: requestHeaders },
       timeout: server.timeout,
+      connectTimeout: server.timeout ?? 30_000,
       onToolError: "throw",
       ...(authProvider ? { authProvider } : {}),
       requireToolApproval: server.requireToolApproval,
@@ -1224,7 +1225,6 @@ export async function getConfiguredMcpTools(
   for (const [index, outcome] of outcomes.entries()) {
     if (outcome.status === "fulfilled") Object.assign(tools, outcome.value);
     else {
-      if (builtin) throw outcome.reason;
       console.warn(
         `MCP connection ${selected[index].name} is unavailable`,
         errorText(outcome.reason),

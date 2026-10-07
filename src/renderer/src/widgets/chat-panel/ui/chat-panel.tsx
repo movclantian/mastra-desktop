@@ -456,6 +456,7 @@ export function ChatPanel() {
     queuedRequests,
     connection,
     connectionError,
+    runError,
   } = useSessionView(activeSession);
   const messages = !activeThreadId && draftSubmission ? [draftSubmission] : sessionMessages;
   const status = !activeThreadId && draftSubmission ? "submitted" : sessionStatus;
@@ -1293,7 +1294,8 @@ export function ChatPanel() {
   // 行内重试:同 messageId 的 sendMessage 会替换该用户消息并重新触发请求
   // 服务端 chat 路由按 submit-message + messageId 截断重跑。
   const handleRetrySend = React.useCallback(() => {
-    const failed = failedUserMessage;
+    const failed =
+      failedUserMessage ?? messagesRef.current.findLast((message) => message.role === "user");
     if (!failed) return;
 
     rewriteRefreshRef.current = true;
@@ -1340,8 +1342,11 @@ export function ChatPanel() {
       <MessageItem
         isGenerating={isBusy}
         isStreaming={
-          entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? "")
+          isBusy &&
+          (entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? ""))
         }
+        emptyReply={entry.sourceIds.length === 0}
+        replyError={entry.sourceIds.length === 0 ? runError : undefined}
         key={entry.key}
         message={entry.message}
         onEdit={handleEdit}

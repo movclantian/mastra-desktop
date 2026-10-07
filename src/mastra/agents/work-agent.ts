@@ -375,9 +375,7 @@ function createWorkAgent(
       // Do not add an instruction here until the tool field exists. Upgrade path: set it on
       // the LocalSandbox in workspace/index.ts, or upstream the tool parameter.
       if (selection && !supervisor) {
-        const tools = await resolveWebSearchTools(selection, userIdFromContext(requestContext));
-        const searchAvailable = Object.keys(tools).some((name) => name !== "web_fetch");
-        instructions.push(webSearchInstructions(selection, searchAvailable));
+        instructions.push(webSearchInstructions(selection));
       }
       const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
       if (

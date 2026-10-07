@@ -73,7 +73,7 @@ function AuxiliaryThreadChat({
     },
   );
   const session = getThreadSession(threadId);
-  const { messages, status } = useSessionView(session);
+  const { messages, status, runError } = useSessionView(session);
   const busy = status === "submitted" || status === "streaming";
   const interactions = interactionsQuery.data ?? [];
   const display = React.useMemo(() => buildDisplayMessages(messages, busy), [messages, busy]);
@@ -149,6 +149,8 @@ function AuxiliaryThreadChat({
                       readOnly
                       isGenerating={busy}
                       isStreaming={busy && index === display.length - 1}
+                      emptyReply={entry.sourceIds.length === 0}
+                      replyError={entry.sourceIds.length === 0 ? runError : undefined}
                       onEdit={() => undefined}
                       onRetry={() => undefined}
                     />
