@@ -22,11 +22,7 @@ import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 import { getBrowserConfig, getBrowserForRequest, getBrowserForResource } from "./agents/browser";
 import { getConfiguredProcessorRegistry } from "./agents/guardrails";
 import { listWorkModes, toolCategoryOf, workbenchSessionStateSchema } from "./agents/permissions";
-import {
-  agentsMdProcessor,
-  libraryAttachmentProcessor,
-  libraryContextProcessor,
-} from "./agents/processors";
+import { agentsMdProcessor, libraryAttachmentProcessor } from "./agents/processors";
 import { workSubagents } from "./agents/subagents";
 import { mastraWorkAgent } from "./agents/work-agent";
 import { workAuth, workRequestContextMiddleware } from "./auth";
@@ -101,7 +97,6 @@ await cleanupOrphanedLibraryAssets();
 
 const configuredProcessorRegistry = await getConfiguredProcessorRegistry();
 const processorRegistry = {
-  "library-context": libraryContextProcessor,
   "library-attachments": libraryAttachmentProcessor,
   "agents-md-injector": agentsMdProcessor as Processor,
   ...configuredProcessorRegistry.processors,

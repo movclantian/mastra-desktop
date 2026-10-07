@@ -65,7 +65,7 @@ export function GoalDraftPanel({
       </QueueSectionTrigger>
       <QueueSectionContent>
         <ScrollArea className="max-h-28">
-          <p className="whitespace-pre-wrap break-words px-3 py-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+          <p className="whitespace-pre-wrap break-words px-1 py-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
             {textInput.value.trim() || t("chat:goal.composerHint")}
           </p>
         </ScrollArea>

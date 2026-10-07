@@ -7,6 +7,11 @@ import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { closeBrowserThreadSessions } from "../../agents/browser";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
+import {
+  createWorkMessageSignal,
+  WORK_MESSAGE_OPTIONS_CONTEXT_KEY,
+  workMessageMetadataSchema,
+} from "../../agents/processors";
 import { deleteTeamInvocations } from "../../agents/team-activity";
 import { deleteTeamHandoffs } from "../../agents/team-handoff";
 import { closeComputerConnections } from "../../connections/computer";
@@ -113,7 +118,15 @@ const rewriteThreadMessageRoute = registerApiRoute(
       observeSessionWork(
         c,
         result.controllerSession,
-        result.controllerSession.sendMessage({ content, requestContext: c.get("requestContext") }),
+        result.controllerSession.sendSignal(
+          createWorkMessageSignal(
+            content,
+            workMessageMetadataSchema.parse(
+              c.get("requestContext").get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY),
+            ),
+          ),
+          { requestContext: c.get("requestContext"), requireDelivery: true },
+        ).accepted,
       );
       return c.json({ ok: true });
     },

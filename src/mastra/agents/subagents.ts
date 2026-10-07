@@ -49,11 +49,7 @@ import {
   resolveRequestMode,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
 } from "./permissions";
-import {
-  agentsMdProcessor,
-  libraryAttachmentProcessor,
-  libraryContextProcessor,
-} from "./processors";
+import { agentsMdProcessor, libraryAttachmentProcessor } from "./processors";
 import { teamInvocationProcessor } from "./team-activity";
 
 function resolveSubagentWorkspace(requestContext: RequestContextLike) {
@@ -265,7 +261,6 @@ export async function buildInputPipeline(
   return [
     teamInvocationProcessor,
     scopedToolPolicy(profile, member),
-    libraryContextProcessor,
     libraryAttachmentProcessor,
     agentsMdProcessor,
     ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),

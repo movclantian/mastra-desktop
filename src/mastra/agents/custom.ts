@@ -467,6 +467,9 @@ export async function loadManagedSkill(name: string, resourceId?: string) {
   const skill = (await listPluginSkills(resourceId)).find(
     (item) => item.id === name && item.enabled,
   );
-  if (!skill) return undefined;
-  return (await resolveAgentSkills([skill.path]).get(skill.name)) ?? undefined;
+  if (!skill) throw workError("VALIDATION_FAILED", { text: "所选技能不存在或已停用，请重新选择" });
+  const resolved = await resolveAgentSkills([skill.path]).get(skill.name);
+  if (!resolved)
+    throw workError("VALIDATION_FAILED", { text: `无法读取所选技能：${skill.displayName}` });
+  return { ...resolved, displayName: skill.displayName };
 }

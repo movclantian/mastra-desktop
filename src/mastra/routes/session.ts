@@ -14,7 +14,11 @@ import { z } from "zod";
 import type { DesktopNotification } from "../../shared/window-contract";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { parsePermissionRules, TOOL_CATEGORIES, toolCategoryOf } from "../agents/permissions";
-import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workbenchStateSchema } from "../agents/processors";
+import {
+  createWorkMessageSignal,
+  WORK_MESSAGE_OPTIONS_CONTEXT_KEY,
+  workbenchStateSchema,
+} from "../agents/processors";
 import {
   finishTeamInvocation,
   getTeamInvocationDetail,
@@ -209,6 +213,19 @@ export async function workbenchControllerMiddleware(
   ) {
     const objective = z.string().trim().min(1).max(20_000).parse(body?.message);
     await result.agent.setObjective(objective, { threadId, resourceId });
+  }
+  if (operation === "/messages" && c.req.method === "POST") {
+    const text = z.string().max(100_000).parse(body?.message);
+    const options = messageContext[WORK_MESSAGE_OPTIONS_CONTEXT_KEY] ?? {};
+    if (!(text.trim() || options.files?.length || options.skillNames?.length))
+      throw workError("SESSION_INPUT_REQUIRED");
+    const sent = result.controllerSession.sendSignal(createWorkMessageSignal(text, options), {
+      requestContext: c.get("requestContext"),
+      requireDelivery: true,
+    });
+    observeSessionWork(c, result.controllerSession, sent.accepted);
+    c.res = c.json({ ok: true, messageId: sent.id });
+    return;
   }
   if (operation === "/model" && c.req.method === "POST") {
     const selection = z

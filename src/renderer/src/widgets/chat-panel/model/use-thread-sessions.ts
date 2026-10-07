@@ -44,6 +44,7 @@ interface MessageInput {
   metadata?: WorkMessageMetadata;
   messageId?: string;
   options?: Record<string, unknown>;
+  prepareFiles?: () => Promise<FileUIPart[]>;
 }
 type MessageUpdate = WorkUIMessage[] | ((messages: WorkUIMessage[]) => WorkUIMessage[]);
 const emptyStore = createStore<SessionView>(() => ({
@@ -83,10 +84,21 @@ function createThreadSession(
   let revision = 0;
   let queueRevision = 0;
   let librarySources: unknown[] = [];
+  const pendingMessages = new Map<string, WorkUIMessage>();
+  let submittedMessageId: string | undefined;
   const setMessages = (update: MessageUpdate) =>
-    store.setState(({ messages }) => ({
-      messages: typeof update === "function" ? update(messages) : update,
-    }));
+    store.setState(({ messages }) => {
+      const next = [...(typeof update === "function" ? update(messages) : update)];
+      for (const pending of pendingMessages.values()) {
+        if (next.some((message) => message.id === pending.id)) continue;
+        const at = Date.parse(pending.metadata?.createdAt ?? "");
+        const index = next.findIndex(
+          (message) => Date.parse(message.metadata?.createdAt ?? "") > at,
+        );
+        next.splice(index < 0 ? next.length : index, 0, pending);
+      }
+      return { messages: next };
+    });
   const setStatus = (status: SessionView["status"]) => {
     if (store.getState().status === status) return;
     store.setState({ status });
@@ -171,7 +183,15 @@ function createThreadSession(
           }
           if (ui.role === "assistant" && librarySources.length)
             parts.push({ type: "data-library-sources", data: librarySources });
-          const updated = { ...ui, metadata: { ...previous?.metadata, ...ui.metadata }, parts };
+          const updated = {
+            ...ui,
+            metadata: {
+              ...previous?.metadata,
+              ...ui.metadata,
+              createdAt: new Date(current.createdAt).toISOString(),
+            },
+            parts,
+          };
           if (index < 0) next.push(updated);
           else next[index] = updated;
         }
@@ -204,7 +224,16 @@ function createThreadSession(
     signal?.throwIfAborted();
     if (disposed || signal !== observationSignal) return;
     if (payload.displayState.activeWorkflow) failed = false;
-    if (!commandPending) awaitingRun = false;
+    for (const message of payload.messages) pendingMessages.delete(message.id);
+    const submittedIndex = payload.messages.findIndex(
+      (message) => message.id === submittedMessageId,
+    );
+    if (
+      submittedIndex >= 0 &&
+      !payload.displayState.isRunning &&
+      payload.messages.slice(submittedIndex + 1).some((message) => message.role === "assistant")
+    )
+      awaitingRun = false;
     const target = payload.displayState.activeWorkflow ?? workflowTarget;
     if (target && signal && !workflowObserver) followWorkflow(target, signal);
     if (queueStartedAt === queueRevision) {
@@ -388,7 +417,10 @@ function createThreadSession(
     const { runWorkflow: _runWorkflow, ...body } = input?.options ?? buildBody();
     return {
       ...body,
-      ...input?.metadata,
+      clientMessageId: input?.metadata?.clientMessageId,
+      skillNames: input?.metadata?.skillNames,
+      fileReferences: input?.metadata?.fileReferences,
+      goal: input?.metadata?.goal,
       ...(input?.files
         ? {
             files: input.files.map(({ url, mediaType, filename }) => ({
@@ -512,6 +544,7 @@ function createThreadSession(
     });
   return {
     store,
+    hasPendingMessages: () => pendingMessages.size > 0,
     connect,
     reconnect: () => {
       disposed = false;
@@ -522,11 +555,33 @@ function createThreadSession(
     setMessages,
     async send(input: MessageInput) {
       librarySources = [];
-      if (input.messageId) return rewrite(input.messageId, "edit", input.text ?? "");
-      const options = messageOptions(input);
+      if (input.messageId && pendingMessages.has(input.messageId)) await refresh();
+      if (input.messageId && !pendingMessages.has(input.messageId))
+        return rewrite(input.messageId, "edit", input.text ?? "");
+      const id = input.messageId ?? input.metadata?.clientMessageId ?? crypto.randomUUID();
+      const metadata = {
+        ...input.metadata,
+        clientMessageId: id,
+        createdAt: new Date().toISOString(),
+      };
+      pendingMessages.set(id, {
+        id,
+        role: "user",
+        metadata,
+        parts: [{ type: "text", text: input.text ?? "" }, ...(input.files ?? [])],
+      });
+      submittedMessageId = id;
+      revision++;
+      setMessages((messages) => messages);
       const runWorkflow = (input.options ?? buildBody()).runWorkflow === true;
-      return request(() =>
-        runWorkflow
+      return request(async () => {
+        const files = input.prepareFiles ? await input.prepareFiles() : input.files;
+        const options = messageOptions({
+          ...input,
+          files,
+          metadata: { ...input.metadata, clientMessageId: id },
+        });
+        return runWorkflow
           ? streamWorkflow(
               `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/team-runs`,
               {
@@ -534,8 +589,8 @@ function createThreadSession(
                 options,
               },
             )
-          : client.sendMessage(input.text ?? "", requestOptions(options)),
-      );
+          : client.sendMessage(input.text ?? "", requestOptions(options));
+      });
     },
     workflowAction(
       workflowId: string,
@@ -674,6 +729,7 @@ export function useThreadSessions(
           threadId !== activeThreadId &&
           status !== "submitted" &&
           status !== "streaming" &&
+          !session.hasPendingMessages() &&
           session.store.getState().queuedRequests.length === 0
         ) {
           session.dispose();

@@ -259,7 +259,7 @@ export async function startTeamWorkflow(
     await result.memory.saveMessages({
       messages: [
         {
-          id: randomUUID(),
+          id: options.clientMessageId ?? randomUUID(),
           role: "user",
           createdAt: new Date(),
           threadId,
@@ -275,7 +275,11 @@ export async function startTeamWorkflow(
                 filename: file.filename,
               })),
             ],
-            metadata: { skillNames: options.skillNames, fileReferences: options.fileReferences },
+            metadata: {
+              clientMessageId: options.clientMessageId,
+              skillNames: options.skillNames,
+              fileReferences: options.fileReferences,
+            },
           },
         },
       ],

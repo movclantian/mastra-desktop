@@ -4,28 +4,21 @@
  * - agentsMdProcessor:工作区 AGENTS.md 的自动加载与去重
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { isUserAuthoredMessage } from "@mastra/core/agent";
-import { MessageMerger } from "@mastra/core/agent/message-list";
 import { AgentsMDInjector, type InputProcessor } from "@mastra/core/processors";
-import { MASTRA_THREAD_ID_KEY } from "@mastra/core/request-context";
-import { createSignal, mastraDBMessageToSignal } from "@mastra/core/signals";
+import { createSignal } from "@mastra/core/signals";
 import { z } from "zod";
-import { resolveContextModel } from "../models/providers";
-import { searchLibrary } from "../rag/retrieval/search";
 import { getAssetContext, getLibraryAssetId } from "../rag/storage/assets";
 import {
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
-  LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
-  LIBRARY_THREAD_CONTEXT_KEY,
-  libraryCitationSources,
   MAX_LIBRARY_INLINE_MEDIA_BYTES,
   MAX_LIBRARY_INLINE_TOTAL_MEDIA_BYTES,
 } from "../rag/types";
 
 export const WORK_MESSAGE_OPTIONS_CONTEXT_KEY = "mastra-work:message-options";
 export const workMessageMetadataSchema = z.object({
+  clientMessageId: z.string().uuid().optional(),
   goal: z.boolean().optional(),
   skillNames: z.array(z.string()).max(4).optional(),
   fileReferences: z
@@ -53,116 +46,36 @@ export const workMessageMetadataSchema = z.object({
     .optional(),
 });
 
-/** Enrich native user signals; retrieval text exists only in the outgoing prompt. */
-export const libraryContextProcessor: InputProcessor = {
-  id: "library-context",
-  async processInputStep({ messageList, requestContext, state, writer }) {
-    const messages = messageList.get.all.db();
-    const message = messages.findLast(isUserAuthoredMessage);
-    if (!message || state.messageId === message.id) return;
-    state.context = undefined;
-    const resourceId = requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY) as string | undefined;
-    const threadId = requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY) as string | undefined;
-    const origin = requestContext?.get(LIBRARY_ORIGIN_CONTEXT_KEY) as string | undefined;
-    const signal = message.role === "signal" ? mastraDBMessageToSignal(message) : undefined;
-    const businessMetadata = signal ? signal.metadata : message.content.metadata;
-    // Saving drains get.input, while getPersisted.input retains this run's input identities.
-    // Replacing an observed message would make MessageList append a new ID instead.
-    const canEnrich =
-      !Object.hasOwn(businessMetadata ?? {}, "librarySources") &&
-      messageList.getPersisted.input.db().some((input) => input.id === message.id) &&
-      messages.indexOf(message) > messages.findLastIndex(MessageMerger.isSealed);
-    // Delegation copies request context; parent attachments belong only to the parent turn.
-    const options =
-      canEnrich &&
-      !state.optionsApplied &&
-      threadId &&
-      requestContext?.get(MASTRA_THREAD_ID_KEY) === threadId
-        ? workMessageMetadataSchema.parse(
-            requestContext?.get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY) ?? {},
-          )
-        : {};
-    const contents = signal
-      ? typeof signal.contents === "string"
-        ? [{ type: "text" as const, text: signal.contents }]
-        : signal.contents
-      : message.content.parts.filter((part) => part.type === "text");
-    const query = contents
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join(" ")
-      .trim();
-    const hits =
-      resourceId && origin && query
-        ? await searchLibrary({
-            resourceId,
-            origin,
-            threadId,
-            query,
-            rerankModel: await resolveContextModel(requestContext),
-          })
-        : [];
-    const librarySources = libraryCitationSources({ results: hits });
-    if (hits.length) {
-      state.context = untrustedAttachment(
-        "资料库检索结果",
-        JSON.stringify({ hits, librarySources }),
-      );
-    }
-    if (!canEnrich) {
-      state.messageId = message.id;
-      state.optionsApplied = true;
-      return;
-    }
-    const metadata = {
-      ...businessMetadata,
-      ...(options.skillNames ? { skillNames: options.skillNames } : {}),
-      ...(options.fileReferences ? { fileReferences: options.fileReferences } : {}),
-      librarySources,
-    };
-    if (signal) {
-      const updated = createSignal({
-        ...signal,
-        metadata,
-        contents: [
-          ...contents,
-          ...(options.files ?? [])
-            .filter(
-              (file) => !contents.some((part) => part.type === "file" && part.data === file.url),
-            )
-            .map((file) => ({
-              type: "file" as const,
-              data: file.url,
-              mediaType: file.mediaType,
-              filename: file.filename,
-            })),
-        ],
-      });
-      messageList.add(
-        updated.toDBMessage({ threadId: message.threadId, resourceId: message.resourceId }),
-        "input",
-      );
-      // Native Controller understands this signal event and updates the same server-generated id.
-      await writer?.custom(updated.toDataPart());
-    } else {
-      messageList.add({ ...message, content: { ...message.content, metadata } }, "input");
-    }
-    state.messageId = message.id;
-    state.optionsApplied = true;
-  },
-  processLLMRequest({ prompt, state }) {
-    if (typeof state.context !== "string") return;
-    const index = prompt.findLastIndex((message) => message.role === "user");
-    const position = index < 0 ? prompt.length : index;
-    return {
-      prompt: [
-        ...prompt.slice(0, position),
-        { role: "user", content: [{ type: "text", text: state.context }] },
-        ...prompt.slice(position),
-      ],
-    };
-  },
-};
+/** Capture references on the native signal before persistence and model processing. */
+export function createWorkMessageSignal(
+  text: string,
+  options: z.infer<typeof workMessageMetadataSchema>,
+) {
+  return createSignal({
+    id: options.clientMessageId,
+    type: "user",
+    tagName: "user",
+    contents: [
+      {
+        type: "text",
+        text:
+          text.trim() ||
+          (options.skillNames?.length ? "请使用我选择的技能处理本次请求。" : "请处理附带的资料。"),
+      },
+      ...(options.files ?? []).map((file) => ({
+        type: "file" as const,
+        data: file.url,
+        mediaType: file.mediaType,
+        filename: file.filename,
+      })),
+    ],
+    metadata: {
+      clientMessageId: options.clientMessageId,
+      skillNames: options.skillNames ?? [],
+      fileReferences: options.fileReferences ?? [],
+    },
+  });
+}
 
 /**
  * 资料库附件输入处理器 (docs/en/docs/agents/processors.mdx):

@@ -72,7 +72,6 @@ import {
   getToolName,
   getWorkflowStateFromDisplayState,
   getWorkflowStateFromMessages,
-  type LibraryFilePart,
   type MessageFileReference,
   type MessageQueueAction,
   type MessageReaction,
@@ -82,6 +81,7 @@ import {
   toggleMessageReactions,
   type WorkDisplayState,
   type WorkflowRuntimeRun,
+  type WorkUIMessage,
 } from "../model/types";
 import { useSessionView, useThreadSessions } from "../model/use-thread-sessions";
 import {
@@ -385,8 +385,9 @@ export function ChatPanel() {
 
   const persistAttachments = React.useCallback(
     async (files: FileUIPart[], threadId: string) => {
+      if (files.length === 0) return [];
       const persisted = await referenceChatAttachments(files, threadId);
-      await queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
       return persisted;
     },
     [queryClient, user.id],
@@ -446,8 +447,18 @@ export function ChatPanel() {
   const activeSession = activeThreadId ? getThreadSession(activeThreadId) : null;
   const [editingQueue, setEditingQueue] = React.useState(false);
   React.useEffect(() => setEditingQueue(false), [activeThreadId]);
-  const { messages, setMessages, status, native, queuedRequests, connection, connectionError } =
-    useSessionView(activeSession);
+  const [draftSubmission, setDraftSubmission] = React.useState<WorkUIMessage | null>(null);
+  const {
+    messages: sessionMessages,
+    setMessages,
+    status: sessionStatus,
+    native,
+    queuedRequests,
+    connection,
+    connectionError,
+  } = useSessionView(activeSession);
+  const messages = !activeThreadId && draftSubmission ? [draftSubmission] : sessionMessages;
+  const status = !activeThreadId && draftSubmission ? "submitted" : sessionStatus;
 
   // 历史分页(官方 message-scroller-load-history):每线程已加载页数与
   // “还有更早历史”只驱动命令式加载,不参与渲染,全部走 ref。
@@ -516,6 +527,11 @@ export function ChatPanel() {
     )
       .then((pages) => {
         if (activeThreadIdRef.current !== threadId) return false;
+        if (
+          activeSession?.store.getState().status === "submitted" ||
+          activeSession?.store.getState().status === "streaming"
+        )
+          return false;
         // 页数组倒序(最旧在前)再 flat 得到时间正序;按 id 去重防页界重叠
         const seen = new Set<string>();
         const loaded = pages
@@ -1369,6 +1385,7 @@ export function ChatPanel() {
       }
       if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
       const submittedOptions = buildRequestBodyRef.current(activeThreadIdRef.current ?? "");
+      const clientMessageId = crypto.randomUUID();
 
       if (isBusy || queuedRequests.length > 0) {
         const threadId = activeThreadIdRef.current;
@@ -1406,6 +1423,17 @@ export function ChatPanel() {
         : { threadId: null };
       if (initialSend) {
         initialSendRef.current = initialSend;
+        setDraftSubmission({
+          id: clientMessageId,
+          role: "user",
+          parts: [{ type: "text", text }, ...files],
+          metadata: {
+            clientMessageId,
+            skillNames: message.skills ?? [],
+            fileReferences: message.fileReferences ?? [],
+            createdAt: new Date().toISOString(),
+          },
+        });
         // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
         // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
         const thread = await createThreadMutation
@@ -1415,6 +1443,7 @@ export function ChatPanel() {
           })
           .catch(() => null);
         if (!thread) {
+          setDraftSubmission(null);
           if (initialSendRef.current === initialSend) initialSendRef.current = null;
           toast.error(t("chat:welcome.toastCreateSessionFailed"));
           return;
@@ -1427,22 +1456,17 @@ export function ChatPanel() {
         if (initialSendRef.current === initialSend) initialSendRef.current = null;
         return;
       }
-      let persistedFiles: LibraryFilePart[];
-      try {
-        persistedFiles = await persistAttachments(files, targetThreadId);
-      } catch (error) {
-        if (initialSendRef.current === initialSend) initialSendRef.current = null;
-        toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
-        return;
-      }
       // 显式发到目标线程自己的 Session 订阅:新建线程时渲染层还没切过去,
       // 用渲染时绑定的实例会把消息发进上一条线程。
-      const sending = getThreadSession(targetThreadId)
+      const sendingThreadId = targetThreadId;
+      const sending = getThreadSession(sendingThreadId)
         .send({
           text,
           options: submittedOptions,
-          files: persistedFiles,
+          files,
+          prepareFiles: () => persistAttachments(files, sendingThreadId),
           metadata: {
+            clientMessageId,
             goal: message.goal,
             skillNames: message.skills ?? [],
             fileReferences: message.fileReferences ?? [],
@@ -1453,10 +1477,11 @@ export function ChatPanel() {
           () => false,
         )
         .finally(() => {
+          setDraftSubmission(null);
           if (initialSendRef.current === initialSend) initialSendRef.current = null;
         });
       // Session 已同步进入 submitted，再选中新线程，首次渲染不会回到欢迎空态。
-      // 附件失败不会导航；用户已主动切到其他线程时也不抢回焦点。
+      // 用户已主动切到其他线程时不抢回焦点；发送失败保留本地消息供重试。
       if (initialSend && activeThreadIdRef.current === null) selectThread(targetThreadId);
       const sent = await sending;
       if (!sent) return;

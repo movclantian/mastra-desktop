@@ -4,6 +4,7 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
 import { messageQueueActionSchema, type QueuedMessage } from "../../shared/agent-contract";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
+import { createWorkMessageSignal } from "../agents/processors";
 import { errorText, workError } from "../errors";
 import {
   prepareWorkbenchMessage,
@@ -87,7 +88,7 @@ function enqueue(result: Awaited<ReturnType<typeof prepareQueueMessage>>, text: 
     options,
   } = result;
   const queueOwnerId = crypto.randomUUID();
-  const queued = agent.queueMessage(text.trim() || "请处理附带的资料。", {
+  const queued = agent.queueMessage(createWorkMessageSignal(text, options), {
     resourceId,
     threadId,
     queueOwnerId,
@@ -181,13 +182,10 @@ const queueMessageActionRoute = registerApiRoute(
           // The native Session.steer implementation is abort + sendMessage. Use
           // its public signal equivalent to track acceptance, not generation completion.
           session.abort();
-          const sent = session.sendSignal(
-            {
-              content: text.trim() || "请处理附带的资料。",
-              requestContext: c.get("requestContext"),
-            },
-            { requireDelivery: true },
-          );
+          const sent = session.sendSignal(createWorkMessageSignal(text, entry.options), {
+            requireDelivery: true,
+            requestContext: c.get("requestContext"),
+          });
           const sending: QueueEntry = {
             options: entry.options,
             view: {

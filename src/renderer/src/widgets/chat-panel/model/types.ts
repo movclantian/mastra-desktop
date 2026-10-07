@@ -10,10 +10,11 @@ import { i18n } from "@/shared/i18n";
 import type { ToolPart } from "@/shared/ui/ai-elements/tool";
 
 /**
- * 工作台消息 metadata：用户引用由服务端 libraryContextProcessor 注入，
+ * 工作台消息 metadata：用户引用随原生用户 signal 一起保存，
  * 助手用量由原生 Session 与历史投影恢复。
  */
 export interface WorkMessageMetadata {
+  clientMessageId?: string;
   agentProfileId?: string;
   agentDisplayName?: string;
   agentAvatar?: string;

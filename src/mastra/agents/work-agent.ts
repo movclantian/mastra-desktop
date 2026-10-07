@@ -395,7 +395,7 @@ function createWorkAgent(
         for (const skill of activated) {
           if (skill) {
             instructions.push(
-              `The user explicitly activated the skill "${skill.name}". Follow its instructions for this request:\n${skill.instructions}`,
+              `The user explicitly selected the skill "${skill.displayName}" (${skill.name}) for this message. This is the skill they are referring to when asking about the selected skill. Follow its instructions for this request:\n${skill.instructions}`,
             );
           }
         }

@@ -36,6 +36,7 @@ import {
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
 } from "../rag/types";
+import { appStorage } from "../storage/database";
 import { parseWebSearchSelection, WEB_SEARCH_CONTEXT_KEY } from "../tools/tool-registry";
 import {
   addRecentWorkspace,
@@ -91,6 +92,13 @@ export async function prepareWorkbenchMessage(
   rawOptions?: unknown,
 ): Promise<SessionRouteResult> {
   const options = workbenchMessageOptionsSchema.parse(rawOptions ?? {});
+  if (options.clientMessageId) {
+    const store = await appStorage.getStore("memory");
+    if (!store) throw new Error("Memory storage is not configured");
+    const { messages } = await store.listMessagesById({ messageIds: [options.clientMessageId] });
+    if (messages.length)
+      throw workError("SESSION_MESSAGE_REJECTED", { text: "这条消息已提交，请刷新会话后重试" });
+  }
   const requestContext = c.get("requestContext");
   const memory = await getWorkMemory(requestContext);
   const thread = await getOwnedThread(memory, threadId, resourceId);
