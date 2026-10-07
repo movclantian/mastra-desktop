@@ -1,10 +1,12 @@
 import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar";
-import * as bottts from "@dicebear/bottts";
-import { createAvatar } from "@dicebear/core";
+import { Avatar as DiceBearAvatar, Style } from "@dicebear/core";
+import bottts from "@dicebear/styles/bottts.json" with { type: "json" };
 import type * as React from "react";
 import { useMemo } from "react";
 
 import { cn } from "@/shared/lib";
+
+const avatarStyle = new Style(bottts);
 
 function Avatar({
   className,
@@ -44,7 +46,10 @@ export function GeneratedAvatar({
   children,
   ...props
 }: React.ComponentProps<typeof Avatar> & { seed: string; name: string; src?: string }) {
-  const image = useMemo(() => src ?? createAvatar(bottts, { seed }).toDataUri(), [src, seed]);
+  const image = useMemo(
+    () => src ?? new DiceBearAvatar(avatarStyle, { seed }).toDataUri(),
+    [src, seed],
+  );
   return (
     <Avatar {...props}>
       <AvatarImage src={image} alt={name} />

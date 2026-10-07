@@ -162,31 +162,28 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-patchedDependencies:
-  '@mastra/core@1.74.0': 69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685
-
 importers:
 
   .:
     dependencies:
       '@ai-sdk/anthropic':
-        specifier: 4.0.71
-        version: 4.0.71(zod@4.6.5)
+        specifier: 4.0.74
+        version: 4.0.74(zod@4.6.5)
       '@ai-sdk/deepseek':
-        specifier: 1.0.57
-        version: 1.0.57(zod@4.6.5)
+        specifier: 3.0.61
+        version: 3.0.61(zod@4.6.5)
       '@ai-sdk/google':
-        specifier: 4.0.87
-        version: 4.0.87(zod@4.6.5)
+        specifier: 4.0.90
+        version: 4.0.90(zod@4.6.5)
       '@ai-sdk/openai':
-        specifier: 4.0.83
-        version: 4.0.83(zod@4.6.5)
+        specifier: 4.0.86
+        version: 4.0.86(zod@4.6.5)
       '@ai-sdk/openai-compatible':
-        specifier: 3.0.62
-        version: 3.0.62(zod@4.6.5)
+        specifier: 3.0.65
+        version: 3.0.65(zod@4.6.5)
       '@ai-sdk/react':
-        specifier: 4.0.130
-        version: 4.0.130(react@19.3.0)(zod@4.6.5)
+        specifier: 4.0.133
+        version: 4.0.133(react@19.3.0)(zod@4.6.5)
       '@base-ui/react':
         specifier: 1.8.0
         version: 1.8.0(@date-fns/tz@1.5.0)(@types/react@19.3.0)(date-fns@4.4.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -211,12 +208,12 @@ importers:
       '@codemirror/view':
         specifier: 6.43.13
         version: 6.43.13
-      '@dicebear/bottts':
-        specifier: ^9.4.2
-        version: 9.4.2(@dicebear/core@9.4.2)
       '@dicebear/core':
-        specifier: 9.4.2
-        version: 9.4.2
+        specifier: 10.7.0
+        version: 10.7.0
+      '@dicebear/styles':
+        specifier: 10.6.0
+        version: 10.6.0
       '@dnd-kit/core':
         specifier: 6.3.1
         version: 6.3.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -228,10 +225,10 @@ importers:
         version: 3.2.2(react@19.3.0)
       '@electron-toolkit/preload':
         specifier: 3.0.2
-        version: 3.0.2(electron@44.5.1(supports-color@10.2.2))
+        version: 3.0.2(electron@44.6.0(supports-color@10.2.2))
       '@electron-toolkit/utils':
         specifier: 4.0.0
-        version: 4.0.0(electron@44.5.1(supports-color@10.2.2))
+        version: 4.0.0(electron@44.6.0(supports-color@10.2.2))
       '@fastify/busboy':
         specifier: 3.2.2
         version: 3.2.2
@@ -303,49 +300,49 @@ importers:
         version: 0.18.0(bufferutil@4.1.0)
       '@mastra/agent-browser':
         specifier: 0.5.3
-        version: 0.5.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)
+        version: 0.5.3(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)
       '@mastra/ai-sdk':
-        specifier: 1.10.6
-        version: 1.10.6(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+        specifier: 1.10.7
+        version: 1.10.7(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       '@mastra/browser-firecrawl':
         specifier: ^0.2.3
-        version: 0.2.3(@mastra/agent-browser@0.5.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(agent-browser@0.19.0(bufferutil@4.1.0)(supports-color@10.2.2))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+        version: 0.2.3(@mastra/agent-browser@0.5.3(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(agent-browser@0.19.0(bufferutil@4.1.0)(supports-color@10.2.2))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       '@mastra/client-js':
-        specifier: 1.51.2
-        version: 1.51.2(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        specifier: 1.52.0
+        version: 1.52.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/core':
-        specifier: 1.74.0
-        version: 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        specifier: 1.75.0
+        version: 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/duckdb':
-        specifier: 1.12.1
-        version: 1.12.1(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        specifier: 1.13.0
+        version: 1.13.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       '@mastra/editor':
-        specifier: 0.15.6
-        version: 0.15.6(@aws-sdk/credential-provider-node@3.972.80)(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(@mastra/mcp@2.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5))(@smithy/signature-v4@5.7.2)(supports-color@10.2.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)
+        specifier: 0.16.0
+        version: 0.16.0(@aws-sdk/credential-provider-node@3.972.80)(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(@mastra/mcp@2.2.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5))(@smithy/signature-v4@5.7.2)(supports-color@10.2.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)
       '@mastra/fastembed':
         specifier: 1.3.2
         version: 1.3.2
       '@mastra/libsql':
-        specifier: 1.25.0
-        version: 1.25.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)
+        specifier: 1.25.1
+        version: 1.25.1(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)
       '@mastra/mcp':
-        specifier: 2.1.2
-        version: 2.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
+        specifier: 2.2.0
+        version: 2.2.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
       '@mastra/memory':
-        specifier: 1.35.0
-        version: 1.35.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)
+        specifier: 1.36.0
+        version: 1.36.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)
       '@mastra/observability':
-        specifier: 1.18.3
-        version: 1.18.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+        specifier: 1.18.4
+        version: 1.18.4(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       '@mastra/rag':
         specifier: 2.6.6
-        version: 2.6.6(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+        version: 2.6.6(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       '@mastra/server':
-        specifier: 1.74.0
-        version: 1.74.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+        specifier: 1.75.0
+        version: 1.75.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       '@mastra/tavily':
         specifier: 1.1.2
-        version: 1.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.6.5)
+        version: 1.1.2(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.6.5)
       '@microsoft/fetch-event-source':
         specifier: ^2.0.1
         version: 2.0.1
@@ -383,8 +380,8 @@ importers:
         specifier: 1.170.41
         version: 1.170.41(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@tavily/core':
-        specifier: 0.7.13
-        version: 0.7.13(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+        specifier: 0.7.14
+        version: 0.7.14(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       '@trycua/cua-driver':
         specifier: 0.34.0
         version: 0.34.0
@@ -410,8 +407,8 @@ importers:
         specifier: 0.6.1
         version: 0.6.1
       ai:
-        specifier: 7.0.127
-        version: 7.0.127(zod@4.6.5)
+        specifier: 7.0.130
+        version: 7.0.130(zod@4.6.5)
       ansi-to-react:
         specifier: 6.2.6
         version: 6.2.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -440,8 +437,8 @@ importers:
         specifier: ^22.1.1
         version: 22.1.1(supports-color@10.2.2)
       firecrawl:
-        specifier: 4.42.4
-        version: 4.42.4(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+        specifier: 4.44.1
+        version: 4.44.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       framer-motion:
         specifier: 14.0.0
         version: 14.0.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -467,8 +464,8 @@ importers:
         specifier: 1.13.0
         version: 1.13.0
       mastra:
-        specifier: 1.32.1
-        version: 1.32.1(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(rxjs@7.8.2)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)
+        specifier: 1.33.0
+        version: 1.33.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(rxjs@7.8.2)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)
       media-chrome:
         specifier: 4.19.3
         version: 4.19.3(react@19.3.0)
@@ -476,8 +473,8 @@ importers:
         specifier: 14.0.0
         version: 14.0.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       nanoid:
-        specifier: 6.0.1
-        version: 6.0.1
+        specifier: 6.0.2
+        version: 6.0.2
       next-themes:
         specifier: 0.4.6
         version: 0.4.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -503,8 +500,8 @@ importers:
         specifier: 10.0.2
         version: 10.0.2(@types/react@19.3.0)(react@19.3.0)
       react-i18next:
-        specifier: ^17.0.15
-        version: 17.0.15(i18next@26.4.2(typescript@7.0.2))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
+        specifier: ^17.0.16
+        version: 17.0.16(i18next@26.4.2(typescript@7.0.2))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2)
       react-jsx-parser:
         specifier: 2.4.1
         version: 2.4.1(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -533,8 +530,8 @@ importers:
         specifier: 1.3.1
         version: 1.3.1
       undici:
-        specifier: 7.29.0
-        version: 7.29.0
+        specifier: 8.11.2
+        version: 8.11.2
       use-stick-to-bottom:
         specifier: 1.1.6
         version: 1.1.6(react@19.3.0)
@@ -562,7 +559,7 @@ importers:
         version: 2.0.0(@types/node@26.6.4)
       '@tailwindcss/vite':
         specifier: 4.3.3
-        version: 4.3.3(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 4.3.3(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       '@types/node':
         specifier: 26.6.4
         version: 26.6.4
@@ -574,19 +571,19 @@ importers:
         version: 19.3.0(@types/react@19.3.0)
       '@vitejs/plugin-react':
         specifier: 6.1.2
-        version: 6.1.2(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 6.1.2(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       concurrently:
         specifier: 10.0.5
         version: 10.0.5
       electron:
-        specifier: 44.5.1
-        version: 44.5.1(supports-color@10.2.2)
+        specifier: 44.6.0
+        version: 44.6.0(supports-color@10.2.2)
       electron-builder:
         specifier: 26.15.3
         version: 26.15.3(electron-builder-squirrel-windows@26.15.3)(supports-color@10.2.2)
       electron-vite:
         specifier: 6.0.0-beta.1
-        version: 6.0.0-beta.1(supports-color@10.2.2)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+        version: 6.0.0-beta.1(supports-color@10.2.2)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -600,8 +597,8 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
       vite:
-        specifier: 8.3.2
-        version: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+        specifier: 8.3.3
+        version: 8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
 packages:
 
@@ -635,44 +632,44 @@ packages:
       express:
         optional: true
 
-  '@ai-sdk/anthropic@4.0.71':
-    resolution: {integrity: sha512-wiv3jhUH0RrvGzSolJMZfZ2cI9As45LhwYmcAoWvNivXjC7wzJ4W/Udq9/u7EGnGsT8lpmFKEKBrMXVeUO97Dg==}
+  '@ai-sdk/anthropic@4.0.74':
+    resolution: {integrity: sha512-q/A7hCZSsCknmC1TtyNkBgNlT12hbKOWrgyb1UdPpIAO9sZcFS0nilZFIsW/ugVKG+hd6bU1r9NL1Ru33FDwZw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/deepseek@1.0.57':
-    resolution: {integrity: sha512-sF+t6MnK1PTNN1oqmJpnWCm/4reVOpKryR1EcIl17O5Bu+AFstD/DpFZueRtzFk1dEZ0+uPX6gZXndjrNPAxLQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/gateway@4.0.103':
-    resolution: {integrity: sha512-nnGTUHzPRQ14jhv9CL4OQrzcRBIFTBMIPKGIi9Z9u/4GtwSRxa/nxUX6np2Iwp5phOzO0a0njj/j9Jolf5AEaA==}
+  '@ai-sdk/deepseek@3.0.61':
+    resolution: {integrity: sha512-D9fj/eMQiWjMjmNkNifvhN7ohJ98kXmlTuqtNzPNaHGo0aqZ4jmxEfAT0DQNLxEkNcljtr0+QP9LmEjUwikIKQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/google@4.0.87':
-    resolution: {integrity: sha512-s0tWc+QeSce7O2ZLm+VWSRQy16dGfqEcMIUxEWh+LFvXX3h0TLH8jxCQ2H1qhiBgTta+6A97eHPhBlRFu1xy+g==}
+  '@ai-sdk/gateway@4.0.106':
+    resolution: {integrity: sha512-NprSdFzyVnbEp2SDWtIgsCFIUHFCehOD9S6FQkF/dLrCmnke8w4SOK3KcmUUiEbwtVzlUF8prkaELp+ohcQaQw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/mcp@2.0.66':
-    resolution: {integrity: sha512-wFAL5rL/CQljgrhrtpzvrmLJ1tY7Q3o9+SQR+02ZYff3jzXOpj3vfCdi6PjJ1jS3jDd8rkmE9QFlfOFKztI3pg==}
+  '@ai-sdk/google@4.0.90':
+    resolution: {integrity: sha512-XQNKWT6CwcgARdqTUZn0j89y0gvDMR0k2j2qhOg7ffoL+6MNViQ9t3ALoleAAKo10yMLFE7Ato0Fk+RD14i2kg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai-compatible@3.0.62':
-    resolution: {integrity: sha512-IAz1xv8zot4KLGa8kN7UfAA6H5+ARzAgAKLsoKxHPBzZuOc2E3ohaELg0x/JR9HVTbMbiftb0dPyCb8cT2KBRg==}
+  '@ai-sdk/mcp@2.0.69':
+    resolution: {integrity: sha512-DRgUmuESCM8KOcVzlFFVFv9GLu1kCqhdcQ2C1zz2vD0VQ/KKyek37geGPvFsV5tUJfywklh99zIKp4V1V3bhPg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@4.0.83':
-    resolution: {integrity: sha512-NgqZVWoya7hfmtLkWyIjX9THbyYMLfxFqpShdAmvMnkoT+R9AZbdULGan8+4BiBWIZ1aHiAsc90l3SL8QU/0+Q==}
+  '@ai-sdk/openai-compatible@3.0.65':
+    resolution: {integrity: sha512-TBfQk1hf9hOioOwdeDvuXdbmFDp+uLvYf5lfu/gCKVFy6rzjpEqTekEln2ebYonrnq2lIglsuj9S9IovaGhDZA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/openai@4.0.86':
+    resolution: {integrity: sha512-sbUHayMvjAYV6ELydYXFTr5UBX5qyYmRELqZR3tV0dieUhgUYd8dED9bwEgqZJNJU6V8GGLOlaEpL1ltbNXA/g==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -682,12 +679,6 @@ packages:
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.23.8
-
-  '@ai-sdk/provider-utils@3.0.37':
-    resolution: {integrity: sha512-mLx1SgE20xKQ87xME+9uG6pFlYPTqGDrMFrZ6XcytDnmbWGwmCIh2Xb9zFrfXUrKycSFRDet4Zovj388L9b1dg==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
 
   '@ai-sdk/provider-utils@4.0.40':
     resolution: {integrity: sha512-OL5IrpUm9Y8Dwy+w/vvFwPotS6m52O9W0op2oXgXdCROMJIBalBI0oro6OIBYkPxvm5Xg02GSkoQN25RlR0bnw==}
@@ -701,8 +692,8 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider-utils@5.0.53':
-    resolution: {integrity: sha512-VVe6UDd0y0/B4TfauuKKzcppqvhTmSluwwUVT4WG2/8h7gFbyFm7PM4UGM+ZXe3/RI6bv+Vl1cw/7aiBoQqdxg==}
+  '@ai-sdk/provider-utils@5.0.56':
+    resolution: {integrity: sha512-F7/U1YpVXEfSxRHbxScm0PVdr9lN6GaUWHnt8ws2UjuGeuxWHqCkV25dGpHAkpDHkuIXoC+aak/OqSylKSJmHw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -715,10 +706,6 @@ packages:
     resolution: {integrity: sha512-h88OPkavHTiN9tMn2l5awAznGB0lXzjcLhgR1/rvjB2zlLprsNxbM2tt6OJsHUxduLC3klq0/eqaSf6fX5XVww==}
     engines: {node: '>=18'}
 
-  '@ai-sdk/provider@2.0.4':
-    resolution: {integrity: sha512-B0M50w0W43jTzZGyZrNwwaK1M79aKPw6PD/dQhkBR7vkR68yCINWBo2CbBLJrbrqYc46TaiSfsTiT+S9EmVl0w==}
-    engines: {node: '>=18'}
-
   '@ai-sdk/provider@3.0.14':
     resolution: {integrity: sha512-5X1k57JBJ4H7H1QjX7CnJYAB1I19r/trVZTMcSms7/kLNZ8RaU4Nt2agcwZzv82Hfx6Q7/TOLU7agAKeFfc8cA==}
     engines: {node: '>=18'}
@@ -727,16 +714,16 @@ packages:
     resolution: {integrity: sha512-VYMBxIQdcHqbIf1j+YZlI9Ati6LZ4wJe0GGd4z4a5H/KxTggjeOiyaVYTnfF7LHZK5jMQ+rofmzz4QPqf++NUw==}
     engines: {node: '>=22'}
 
-  '@ai-sdk/provider@4.0.21':
-    resolution: {integrity: sha512-UpbC9C1oht8dhfKPbVXSLRZS3DI8uk8n5v2uMjBPNIYGsC2kL045ywq7D8Hh9KgnH9rP5W/GxQdYtWScRouqlA==}
+  '@ai-sdk/provider@4.0.24':
+    resolution: {integrity: sha512-iztFqJTdxNN0ZzqZAAnVPMhRMaL1bfQFa3GIPAffWQ0+dP2FXIkyMD8kHeEI7EpB/C6TR45cqOkrS7YZZ1sATA==}
     engines: {node: '>=22'}
 
   '@ai-sdk/provider@4.0.4':
     resolution: {integrity: sha512-tbHKNLirllUNF3ZlkCsXnwab2ZV1Sl4b1H/Cp9ruCce15IBmskE8Gwkk0yo9xDWY+jho2of7lVXtwSsyrq7cwQ==}
     engines: {node: '>=22'}
 
-  '@ai-sdk/react@4.0.130':
-    resolution: {integrity: sha512-6nUGT2mWIPUK/s2nUJH0Hiu90Oqawwo2INAHekOi4hJBb8zhFJS0yMP0aRn/+UO9VmJT/v58d8rWSmGE3B6ApA==}
+  '@ai-sdk/react@4.0.133':
+    resolution: {integrity: sha512-Ah/cW6HOTmKFy0zU5VYfuogOZMVNNqu7FbxjcesKNY03tZZPY/8O/ZQKfrCSUd+ZT6DjR3z07ck6TXLpOdwpBA==}
     engines: {node: '>=22'}
     peerDependencies:
       react: ^18 || ~19.0.1 || ~19.1.2 || ^19.2.1
@@ -1299,15 +1286,12 @@ packages:
   '@date-fns/tz@1.5.0':
     resolution: {integrity: sha512-lwYN/vDPeNRULcepoE/LO2Pgx+7/RV+S9ARfbc9lr2DtGkOD7pAiruHvbR1RX3Qyf6ja47EWJDMsNK5vK08DJg==}
 
-  '@dicebear/bottts@9.4.2':
-    resolution: {integrity: sha512-tsx+dII7EFUCVA8URj66G1GqORCCVduCAx4dY2prEY2IeFianVpkntXuFsWZ9BBGx1NZFndvDith5oTwKMQPbQ==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      '@dicebear/core': ^9.0.0
+  '@dicebear/core@10.7.0':
+    resolution: {integrity: sha512-JUOzKOd8RUByJJo8ZL+C7YE/pvEsWewfpbWUmR8OIQZWv/PvUQHnohdevySC3icyyxe6EIU/8B/rQgA42us1QA==}
+    engines: {node: '>=22.0.0'}
 
-  '@dicebear/core@9.4.2':
-    resolution: {integrity: sha512-MF0042+Z3s8PGZKZLySfhft28bUa3B1iq0e5NSjCvY8gfMi5aIH/iRJGRJa1N9Jz1BNkxYb4yvJ/N9KO8Z6Y+w==}
-    engines: {node: '>=18.0.0'}
+  '@dicebear/styles@10.6.0':
+    resolution: {integrity: sha512-KhxbEVI+z8TaenX58+ZhIRFBt7adggu/F+8g6ZYLu43H2/lgLuWA3Kg8vHBrCVWdfTTTt1p2wUhQomIkkypTuQ==}
 
   '@dnd-kit/accessibility@3.1.1':
     resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
@@ -1758,10 +1742,6 @@ packages:
   '@expo/sudo-prompt@9.3.2':
     resolution: {integrity: sha512-HHQigo3rQWKMDzYDLkubN5WQOYXJJE2eNqIQC2axC2iO3mHdwnIR7FgZVvHWtBwAdzBgAP0ECp8KqS8TiMKvgw==}
 
-  '@fastify/busboy@2.1.1':
-    resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
-    engines: {node: '>=14'}
-
   '@fastify/busboy@3.2.2':
     resolution: {integrity: sha512-yXSS27qPExaXeuLvMRMXOLtpipzfQYNjG3FkunDWKGfMYjKuhFXko9CVzqxm8jcF+lmtS9Fd89QNdh9XDjnbNg==}
 
@@ -2061,8 +2041,8 @@ packages:
       '@mastra/core': '>=1.22.0-0 <2.0.0-0'
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/ai-sdk@1.10.6':
-    resolution: {integrity: sha512-9F/BvH8PRLquY6r8intzVPt7278IYnwaVICkNLkb/RU97uhoQdbmv3sSzjsSZwL7hyX3Gn9DdYzxN9QsPajSJQ==}
+  '@mastra/ai-sdk@1.10.7':
+    resolution: {integrity: sha512-XrootmjFcQI2BIapYUX32BjTVtf4J/dRvdAn0wYo4nuh6LrDqvzcyu0P9h2KN5mqDYtGKaHZlyYtCXKCWFYAwg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.5.0-0 <2.0.0-0'
@@ -2076,32 +2056,32 @@ packages:
       '@mastra/core': '>=1.22.0-0 <2.0.0-0'
       agent-browser: '>=0.19.0'
 
-  '@mastra/client-js@1.51.2':
-    resolution: {integrity: sha512-ugp3hZvPo+lcDcSAFUar8NS744aT+jmaL9V+7R2V6GVJHi+XAaVP9iUebxFzLzGel14oCXToZKeJVvAyMBD1Ng==}
+  '@mastra/client-js@1.52.0':
+    resolution: {integrity: sha512-wrvu4bp4i4LdNldFCUqlbNMtKJTHoPukfz2PrupsDfT5VMQhVu0Vgk8ZQhCEUx41ObKfhutkOrpZWcc/gvjDsw==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/core@1.74.0':
-    resolution: {integrity: sha512-x3qnBlB4RsL4VLH1PgKNSJkGk3qCuIDNsZvR9Dv8mdfUwHTNS5BgZkeJoM1dWawGQA9aK9iYajgcWqaixyqnyw==}
+  '@mastra/core@1.75.0':
+    resolution: {integrity: sha512-1yw89tyha4HU1eO34IC5sYdSCbXuw8WCVf4+pqmNyRmoHp0ZcPzyberdsbq9O8CTHuxKZbf7cgsI2QNI2L3SRA==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/deployer@1.74.0':
-    resolution: {integrity: sha512-mgPmTrfqLhiIEGfovumVC26k/4LiXTt67cHQSGfAzfwG+KxDzqWK/AZXt3AtwdIymu1eTo/yQ6kwWu0dUg6npw==}
+  '@mastra/deployer@1.75.0':
+    resolution: {integrity: sha512-6rJ11ZrYcDnt+WxkJMuZyAAUjrqrK/gDdv30+1tQBvtYcgHDfeuIW6IKbYfowU3C/EhqQtLPDAPlm4OlPQKKhQ==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.58.0-0 <2.0.0-0'
 
-  '@mastra/duckdb@1.12.1':
-    resolution: {integrity: sha512-m/wpZFpDVsDJJ1PfrJjM5ZDXpiH/hPymdbHjgnu5SSQfzMC/nSugQVDHfNu6S/jnX+0/C45kNlxRKP5Nfoue/Q==}
+  '@mastra/duckdb@1.13.0':
+    resolution: {integrity: sha512-bFzLeTVxjc3OYzo415tOy2w4cvcNhQooMOhlLmttta/JvTHMSgHg66z4ZTCIN8ogtu7tAWL20/uZahGyfy9Awg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.68.0-0 <2.0.0-0'
 
-  '@mastra/editor@0.15.6':
-    resolution: {integrity: sha512-HopP0FQ7QCsf6KJNsBSkq1Zj0IOcDHMxhVjLWYN9yeQkEruuwS6qL90/I27EXMprc+/AX1fIefg1yEfealVhQA==}
+  '@mastra/editor@0.16.0':
+    resolution: {integrity: sha512-CenQjq77h7UEIjNUmjYtHk3PiHVU7HradrtHvOvqv+xNYwoXghIxrzY36rQJJ7FwJF6+cxXm4WnarOZ5xqV+Xg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.34.0-0 <2.0.0-0'
@@ -2114,32 +2094,32 @@ packages:
     resolution: {integrity: sha512-guZP1MR4lZcN1LkzYQY+vEQ/RquiofY58BXNk7LN5LiCrY/0SEbMPZK1ySl7ZnGrrUlB86aZrvctJgmaoDG0vA==}
     engines: {node: '>=22.13.0'}
 
-  '@mastra/libsql@1.25.0':
-    resolution: {integrity: sha512-mjBvZd8H4Qp8QG86f898zlB49xiM7+3ijebk1FefMIBecYrTdhLxPRJxP4XHNCFX0tuo9zELipeCpTNwRj5SiA==}
+  '@mastra/libsql@1.25.1':
+    resolution: {integrity: sha512-gFVXC68vHnqy3l0pMx1lOv5k+3iaemUd9WOE5qdinRcEzcvTd/1G1ZalUFiEZ1uCO9FtXNMirBLs5KNBj/9akQ==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.68.0-0 <2.0.0-0'
 
-  '@mastra/loggers@1.3.4':
-    resolution: {integrity: sha512-Rqjf/DzCZVKH+7lMjy/aQOozWWqU9WyHCtXKb288HqzEP6yMSd6pRafDuwZYnoXHxe5mby0eUY+xU5Z4LFi2eg==}
+  '@mastra/loggers@1.3.5':
+    resolution: {integrity: sha512-wGI2xle5VWAvRLXAbT2kzOlUovy5rRD89l0HoPNN12a2KU7QfLCX686KqCD0SrzVAzHENYHrgNm6Ek1lSSCkEg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.0.0-0 <2.0.0-0'
 
-  '@mastra/mcp@2.1.2':
-    resolution: {integrity: sha512-SwLP5ubQ/EzrC6q8jBl5VdrX1qOdtOiXURINLsoZfYQRuf/q6hWQiTmFkura4rTab5XPjJkqcvhYeMaj4rqFYQ==}
+  '@mastra/mcp@2.2.0':
+    resolution: {integrity: sha512-Y5CJxAm3qHU1ML+AZjlPcBfjCfrKfQosxtYB3brmnMyUh4XnZ0hNSCJ/wVNFHyFSdPLquE3h3VI7YGgTgWbF7g==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
-      '@mastra/core': '>=1.68.0-0 <2.0.0-0'
+      '@mastra/core': '>=1.75.0-0 <2.0.0-0'
 
-  '@mastra/memory@1.35.0':
-    resolution: {integrity: sha512-ObYc+ZwlxSHgTmXx56lICkBrqXRJU5fqmd+VwuL0uuQF8ND34JWk+Be22VzTgdDMWThYPxn02jiwsWL5hjPEkg==}
+  '@mastra/memory@1.36.0':
+    resolution: {integrity: sha512-5qTm/f6TXjlEL9Ig800hbpbpuS5dqPijzQblL/nPomRvYiapIUK1jcLQuAmx4J7VzE1DmqYXFGcd8v1fb+DSDg==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.4.1-0 <2.0.0-0'
 
-  '@mastra/observability@1.18.3':
-    resolution: {integrity: sha512-WYw3gouK3c1U3dvpi6M56duRUyVlx94vE1Qs1OfETOgGXiFdW9AyO64YIchQmD+mqKpVxIq1ASvEssRHMag45Q==}
+  '@mastra/observability@1.18.4':
+    resolution: {integrity: sha512-41T4v4ydBkpof36rpqKcJ64GS65RVHI/VN0/V2Peg1YS8KDAYqBkzLSv022TILZldC/dA9DqivPq7BqGMwrr+w==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.16.0-0 <2.0.0-0'
@@ -2158,8 +2138,8 @@ packages:
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
-  '@mastra/server@1.74.0':
-    resolution: {integrity: sha512-g6lfXPD8IVhrTQgzLoCT6grEqzs+HMw8TTuMPYzWbNyYFmz6hQNIpjAw3DFLVhMNO1IBnC2fvgTIfjSP9TdZ5g==}
+  '@mastra/server@1.75.0':
+    resolution: {integrity: sha512-yFhGn8vfGjXCfVkJJOhh9psTk5PrI7nVyEjeFao0L+dOXD5smsZ+to5WqL7UpasIm02dBLQxmJ5IqNTuoZacdw==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.58.0-0 <2.0.0-0'
@@ -3288,8 +3268,8 @@ packages:
   '@tanstack/store@0.11.2':
     resolution: {integrity: sha512-sJ4mjol8uQsHV0gOJzzjwXfh2Fwm+Sz0+8deqiTm4jGbMdjzNSW+xZCFm0kUa870uhd8yi+DpKnZb5Kc4apa0Q==}
 
-  '@tavily/core@0.7.13':
-    resolution: {integrity: sha512-6qVMzYrWPd31dIWqLk/c3F8yGedXw1cSsfbtsDqvdrkpos5vzjfo8RYWCAOGb93QI1E7wsBCTYm+dre5Rv7wvQ==}
+  '@tavily/core@0.7.14':
+    resolution: {integrity: sha512-QB6EHpWjSbTnmIAIA0GU6COYQS8VfGcD8wokfXA9TTvrOzBCTtZZJnKw/JFN0qYpO97SJ4gwmlVlnsSg8DUFcw==}
 
   '@tokenizer/inflate@0.4.1':
     resolution: {integrity: sha512-2mAv+8pkG6GIZiF1kNg1jAjh27IDxEPKwdGul3snfztFerfPGI1LjDezZp3i7BElXompqEtPmoPx6c2wgtWsOA==}
@@ -3497,9 +3477,6 @@ packages:
 
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
-
-  '@types/node@26.6.3':
-    resolution: {integrity: sha512-dsqMQQoeTLqu9wynDD00q573mNzso3IdQOAfHRJqLCcmCFPoGo9A1bDpUcv/9tnKpErQWv9uKeGfl37EIS02Yg==}
 
   '@types/node@26.6.4':
     resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
@@ -3892,8 +3869,8 @@ packages:
     resolution: {integrity: sha512-kja8j7PjmncONqaTsB8fQ+wE2mSU2DJ9D4XKoJ5PFWIdRMa6SLSN1ff4mOr4jCbfRSsxR4keIiySJU0N9T5hIQ==}
     engines: {node: '>= 8.0.0'}
 
-  ai@7.0.127:
-    resolution: {integrity: sha512-JNsNPk4ZvRGEJuqdVo2lYFkm7uAuf3p/RwKFWn1Wh/+IK3U1RyFWw2GXoFnhzqNfxEuj7XJB4WpIUhl1sHToWg==}
+  ai@7.0.130:
+    resolution: {integrity: sha512-QkBkCogl46jXUg0SrSsdqQlOI2ZVMCjfnbBQS8t3gE21U/SO17oNMVFyjmcC9z20wOoYUA+2O2vsso0maoS7dw==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -3997,9 +3974,6 @@ packages:
 
   aws4@1.13.2:
     resolution: {integrity: sha512-lHe62zvbTB5eEABUVi/AwVh0ZKY9rMMDhmm+eeyuuUQbQ3+J+fONVQOZyj+DdrvD4BY33uYniyRJ4UJIaSKAfw==}
-
-  axios@1.19.0:
-    resolution: {integrity: sha512-ht/iuYZXEjFxLH/Hkezgd7m6JKlHHXEUSneaDz8uZe1Gj5QZtCnpyDsckvAiEnT89OEbCLmnte4R4sn7P0EKFw==}
 
   axios@1.20.0:
     resolution: {integrity: sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==}
@@ -4827,8 +4801,8 @@ packages:
     resolution: {integrity: sha512-bO3y10YikuUwUuDUQRM4KfwNkKhnpVO7IPdbsrejwN9/AABJzzTQ4GeHwyzNSrVO+tEH3/Np255a3sVZpZDjvg==}
     engines: {node: '>=8.0.0'}
 
-  electron@44.5.1:
-    resolution: {integrity: sha512-lx7AYoFIiyvEvgvpyWO9kOC60xtNPpiPZAth6Fmg9NutzpCAMLwpUlaBY2EXfZyIgUdzEmLMj9KvK0Vrokl1yQ==}
+  electron@44.6.0:
+    resolution: {integrity: sha512-qjzKZ82yTsAoo0Q/gqdy4PEMQkzYpukZqIduaHWZYHapFhK9wgWwU4YId60xHmwTCraqF4AfVCm05o90dZJKMQ==}
     engines: {node: '>= 22.12.0'}
     hasBin: true
 
@@ -5118,8 +5092,8 @@ packages:
   find-workspaces@0.3.1:
     resolution: {integrity: sha512-UDkGILGJSA1LN5Aa7McxCid4sqW3/e+UYsVwyxki3dDT0F8+ym0rAfnCkEfkL0rO7M+8/mvkim4t/s3IPHmg+w==}
 
-  firecrawl@4.42.4:
-    resolution: {integrity: sha512-J7b0GoVhh+0tuWm5tdcnB+5cXqE299+pT7yOPLHNBAoLJZ8l38mrpLpPiHhSaWqkFOsph00xkAUxTSTYXswM5g==}
+  firecrawl@4.44.1:
+    resolution: {integrity: sha512-1ELxBPkVmth3U4hXeZ2uUjcqzCogTxFa0CS8htCz7Y43ttgu7ZG4n1tigUALIgdhebzaHBjKSNPk1NFt2Lrgfg==}
     engines: {node: '>=22.0.0'}
 
   follow-redirects@1.16.0:
@@ -5966,8 +5940,8 @@ packages:
     engines: {node: '>= 20'}
     hasBin: true
 
-  mastra@1.32.1:
-    resolution: {integrity: sha512-xx3/OiJGV3YUiiAqyJo915KjHQT07EabnGRGiL9GMxArsOof7v4psyl3NN5mBErXDBqMuHFdpsW2zTvt3DK0vw==}
+  mastra@1.33.0:
+    resolution: {integrity: sha512-m1R3Y8vOfVLclqMCM0VzPsgG7EvYWpLNr9TmL6ZEN4eIKXvHX2tyvQUzKzalgaLD2MffhIl7NYtitT2AGDMIww==}
     engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
@@ -6297,8 +6271,8 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  nanoid@6.0.1:
-    resolution: {integrity: sha512-3wVS3i51pE2pi1k5FFL/95BGfVS0kSsvDVuGXHOtxox/TywUmtgq+3qiTOTbs9J7KfHaXPiN171k/A6dBnaXFw==}
+  nanoid@6.0.2:
+    resolution: {integrity: sha512-hIvVOb9Qr1p/9CNNLOe0OlWvgx/ziTsVwKN/GDSsuArN2K0wDiafP3s0SWmsm7o2BdnyS8Z9Z64NFBUbn6ziBg==}
     engines: {node: ^22 || ^24 || >=26}
     hasBin: true
 
@@ -6807,8 +6781,8 @@ packages:
     peerDependencies:
       react: ^19.3.0
 
-  react-i18next@17.0.15:
-    resolution: {integrity: sha512-7uYpx/oBkesLto7cOzOmfITlUBaXHCAcFahmgETMfWr8nbbWRRnVGvz8wsH/xpbNcyoH+NpCcnOQEqWPMO6/hw==}
+  react-i18next@17.0.16:
+    resolution: {integrity: sha512-7uImVD9hG5yUOaP5KHVied1x0A004Di/KU031ULR35Ma+9e9H5GdnNZHgQEIByyAz+IAXBkRDTedNVzjPUH8ZA==}
     peerDependencies:
       i18next: '>= 26.2.0'
       react: '>= 16.8.0'
@@ -7597,10 +7571,6 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@5.29.0:
-    resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
-    engines: {node: '>=14.0'}
-
   undici@6.28.0:
     resolution: {integrity: sha512-LIY910g9TI13YS95lrMFrs8Rm/u/irgHeTWoKCoteeJ04CUJ92eEfj0rVn+7VKMPBpUPiUoBKfhNyLI23EE/KA==}
     engines: {node: '>=18.17'}
@@ -7608,6 +7578,10 @@ packages:
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
+
+  undici@8.11.2:
+    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
+    engines: {node: '>=22.19.0'}
 
   unicode-emoji-modifier-base@1.0.0:
     resolution: {integrity: sha512-yLSH4py7oFH3oG/9K+XWrz1pSi3dfUrWEnInbxMfArOfc1+33BlGPQtLsOYwvdMy11AwUBetYuaRxSPqgkq+8g==}
@@ -7736,8 +7710,8 @@ packages:
   victory-vendor@37.3.6:
     resolution: {integrity: sha512-SbPDPdDBYp+5MJHhBCAyI7wKM3d5ivekigc2Dk2s7pgbZ9wIgIBYGVw4zGHBml/qTFbexrofXW6Gu4noGxrOwQ==}
 
-  vite@8.3.2:
-    resolution: {integrity: sha512-SQr1x6W5vVSbROg7vsyXIaxK9b0G7zsT68acdWWRmnBUsgDieLCRG+Rep9WdZgcposvv/GSnr4GUUBqB3vXq6w==}
+  vite@8.3.3:
+    resolution: {integrity: sha512-cTAldKPImjg6c+gk48U19POPn3GCBzZwpdsN8ZMEEcbpes+6/wvfqUd0C2y3qYY4wsj8PwgFwrZ/1jBPVttMSg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -8041,49 +8015,49 @@ snapshots:
     optionalDependencies:
       express: 5.2.1(supports-color@10.2.2)
 
-  '@ai-sdk/anthropic@4.0.71(zod@4.6.5)':
+  '@ai-sdk/anthropic@4.0.74(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/deepseek@1.0.57(zod@4.6.5)':
+  '@ai-sdk/deepseek@3.0.61(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 2.0.4
-      '@ai-sdk/provider-utils': 3.0.37(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/gateway@4.0.103(zod@4.6.5)':
+  '@ai-sdk/gateway@4.0.106(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       '@vercel/oidc': 3.2.0
       zod: 4.6.5
 
-  '@ai-sdk/google@4.0.87(zod@4.6.5)':
+  '@ai-sdk/google@4.0.90(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/mcp@2.0.66(zod@4.6.5)':
+  '@ai-sdk/mcp@2.0.69(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       cross-spawn: 7.0.6
       pkce-challenge: 5.0.1
       zod: 4.6.5
 
-  '@ai-sdk/openai-compatible@3.0.62(zod@4.6.5)':
+  '@ai-sdk/openai-compatible@3.0.65(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/openai@4.0.83(zod@4.6.5)':
+  '@ai-sdk/openai@4.0.86(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
   '@ai-sdk/provider-utils@2.2.8(zod@4.6.5)':
@@ -8091,14 +8065,6 @@ snapshots:
       '@ai-sdk/provider': 1.1.3
       nanoid: 3.3.18
       secure-json-parse: 2.7.0
-      zod: 4.6.5
-
-  '@ai-sdk/provider-utils@3.0.37(zod@4.6.5)':
-    dependencies:
-      '@ai-sdk/provider': 2.0.4
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.1.1
-      undici: 5.29.0
       zod: 4.6.5
 
   '@ai-sdk/provider-utils@4.0.40(zod@4.6.5)':
@@ -8116,9 +8082,9 @@ snapshots:
       eventsource-parser: 3.1.1
       zod: 4.6.5
 
-  '@ai-sdk/provider-utils@5.0.53(zod@4.6.5)':
+  '@ai-sdk/provider-utils@5.0.56(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider': 4.0.24
       '@standard-schema/spec': 1.1.0
       '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.1
@@ -8133,10 +8099,6 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/provider@2.0.4':
-    dependencies:
-      json-schema: 0.4.0
-
   '@ai-sdk/provider@3.0.14':
     dependencies:
       json-schema: 0.4.0
@@ -8145,7 +8107,7 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/provider@4.0.21':
+  '@ai-sdk/provider@4.0.24':
     dependencies:
       json-schema: 0.4.0
 
@@ -8153,12 +8115,12 @@ snapshots:
     dependencies:
       json-schema: 0.4.0
 
-  '@ai-sdk/react@4.0.130(react@19.3.0)(zod@4.6.5)':
+  '@ai-sdk/react@4.0.133(react@19.3.0)(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/mcp': 2.0.66(zod@4.6.5)
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
-      ai: 7.0.127(zod@4.6.5)
+      '@ai-sdk/mcp': 2.0.69(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
+      ai: 7.0.130(zod@4.6.5)
       react: 19.3.0
       swr: 2.5.1(react@19.3.0)
       throttleit: 2.1.0
@@ -8973,22 +8935,18 @@ snapshots:
       dequal: 2.0.3
       zod: 4.6.5
 
-  '@composio/mastra@0.10.3(@composio/core@0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@composio/mastra@0.10.3(@composio/core@0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@composio/core': 0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       zod: 4.6.5
 
   '@date-fns/tz@1.5.0': {}
 
-  '@dicebear/bottts@9.4.2(@dicebear/core@9.4.2)':
-    dependencies:
-      '@dicebear/core': 9.4.2
+  '@dicebear/core@10.7.0': {}
 
-  '@dicebear/core@9.4.2':
-    dependencies:
-      '@types/json-schema': 7.0.15
+  '@dicebear/styles@10.6.0': {}
 
   '@dnd-kit/accessibility@3.1.1(react@19.3.0)':
     dependencies:
@@ -9058,17 +9016,17 @@ snapshots:
 
   '@electron-internal/extract-zip@1.0.5': {}
 
-  '@electron-toolkit/preload@3.0.2(electron@44.5.1(supports-color@10.2.2))':
+  '@electron-toolkit/preload@3.0.2(electron@44.6.0(supports-color@10.2.2))':
     dependencies:
-      electron: 44.5.1(supports-color@10.2.2)
+      electron: 44.6.0(supports-color@10.2.2)
 
   '@electron-toolkit/tsconfig@2.0.0(@types/node@26.6.4)':
     dependencies:
       '@types/node': 26.6.4
 
-  '@electron-toolkit/utils@4.0.0(electron@44.5.1(supports-color@10.2.2))':
+  '@electron-toolkit/utils@4.0.0(electron@44.6.0(supports-color@10.2.2))':
     dependencies:
-      electron: 44.5.1(supports-color@10.2.2)
+      electron: 44.6.0(supports-color@10.2.2)
 
   '@electron/asar@3.4.1':
     dependencies:
@@ -9326,8 +9284,6 @@ snapshots:
       - supports-color
 
   '@expo/sudo-prompt@9.3.2': {}
-
-  '@fastify/busboy@2.1.1': {}
 
   '@fastify/busboy@3.2.2': {}
 
@@ -9661,9 +9617,9 @@ snapshots:
 
   '@marijn/find-cluster-break@1.0.3': {}
 
-  '@mastra/agent-browser@0.5.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)':
+  '@mastra/agent-browser@0.5.3(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       agent-browser: 0.19.0(bufferutil@4.1.0)(supports-color@10.2.2)
       zod: 4.6.5
     transitivePeerDependencies:
@@ -9675,26 +9631,26 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@mastra/ai-sdk@1.10.6(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/ai-sdk@1.10.7(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       zod: 4.6.5
 
-  '@mastra/browser-firecrawl@0.2.3(@mastra/agent-browser@0.5.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(agent-browser@0.19.0(bufferutil@4.1.0)(supports-color@10.2.2))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
+  '@mastra/browser-firecrawl@0.2.3(@mastra/agent-browser@0.5.3(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(agent-browser@0.19.0(bufferutil@4.1.0)(supports-color@10.2.2))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
     dependencies:
-      '@mastra/agent-browser': 0.5.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/agent-browser': 0.5.3(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       agent-browser: 0.19.0(bufferutil@4.1.0)(supports-color@10.2.2)
-      firecrawl: 4.42.4(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      firecrawl: 4.44.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
     transitivePeerDependencies:
       - debug
       - supports-color
 
-  '@mastra/client-js@1.51.2(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/client-js@1.52.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@ai-sdk/ui-utils': 1.2.11(zod@4.6.5)
       '@lukeed/uuid': 2.0.1
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       canonicalize: 1.0.8
       jose: 6.2.12
@@ -9719,7 +9675,7 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@a2a-js/sdk-v0_3': '@a2a-js/sdk@0.3.14(express@5.2.1(supports-color@10.2.2))'
       '@a2a-js/sdk-v1': '@a2a-js/sdk@1.0.1(express@5.2.1(supports-color@10.2.2))'
@@ -9732,7 +9688,7 @@ snapshots:
       '@lukeed/uuid': 2.0.1
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       '@standard-schema/spec': 1.1.0
-      chat: 4.38.1(ai@7.0.127(zod@4.6.5))(supports-color@10.2.2)(zod@4.6.5)
+      chat: 4.38.1(ai@7.0.130(zod@4.6.5))(supports-color@10.2.2)(zod@4.6.5)
       croner: 10.0.1
       dotenv: 17.4.2
       execa: 9.6.1
@@ -9771,14 +9727,14 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@mastra/deployer@1.74.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)':
+  '@mastra/deployer@1.75.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)':
     dependencies:
       '@babel/core': 8.0.1
       '@babel/preset-typescript': 8.0.1(@babel/core@8.0.1)
       '@babel/traverse': 8.0.4
       '@hono/node-ws': 1.3.1(@hono/node-server@1.19.17(hono@4.13.13))(bufferutil@4.1.0)(hono@4.13.13)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@mastra/server': 1.74.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/server': 1.75.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       '@optimize-lodash/rollup-plugin': 5.1.0(rollup@4.62.4)
       '@rollup/plugin-alias': 6.0.0(rollup@4.62.4)
       '@rollup/plugin-commonjs': 29.0.2(rollup@4.62.4)
@@ -9811,21 +9767,21 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@mastra/duckdb@1.12.1(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+  '@mastra/duckdb@1.13.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
     dependencies:
       '@duckdb/node-api': 1.5.2-r.2
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
 
-  '@mastra/editor@0.15.6(@aws-sdk/credential-provider-node@3.972.80)(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(@mastra/mcp@2.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5))(@smithy/signature-v4@5.7.2)(supports-color@10.2.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)':
+  '@mastra/editor@0.16.0(@aws-sdk/credential-provider-node@3.972.80)(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(@mastra/mcp@2.2.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5))(@smithy/signature-v4@5.7.2)(supports-color@10.2.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)':
     dependencies:
       '@arcadeai/arcadejs': 2.4.1
       '@composio/core': 0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5)
-      '@composio/mastra': 0.10.3(@composio/core@0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@mastra/memory': 1.35.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)
+      '@composio/mastra': 0.10.3(@composio/core@0.18.1(@aws-sdk/credential-provider-node@3.972.80)(@smithy/signature-v4@5.7.2)(ws@8.21.3(bufferutil@4.1.0))(zod@4.6.5))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/memory': 1.36.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
     optionalDependencies:
-      '@mastra/mcp': 2.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
+      '@mastra/mcp': 2.2.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@smithy/hash-node'
@@ -9840,23 +9796,23 @@ snapshots:
       '@huggingface/hub': 2.15.0
       onnxruntime-node: 1.26.0
 
-  '@mastra/libsql@1.25.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)':
+  '@mastra/libsql@1.25.1(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)':
     dependencies:
       '@libsql/client': 0.18.0(bufferutil@4.1.0)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/loggers@1.3.4(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+  '@mastra/loggers@1.3.5(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       pino: 10.3.1
       pino-pretty: 13.1.3
 
-  '@mastra/mcp@2.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)':
+  '@mastra/mcp@2.2.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@modelcontextprotocol/client': 2.0.0
       '@modelcontextprotocol/core': 2.0.0
       '@modelcontextprotocol/ext-apps': 2.0.0(@modelcontextprotocol/client@2.0.0)(@modelcontextprotocol/core@2.0.0)(@modelcontextprotocol/server@2.0.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(zod@4.6.5)
@@ -9870,9 +9826,9 @@ snapshots:
       - react-dom
       - zod
 
-  '@mastra/memory@1.35.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)':
+  '@mastra/memory@1.36.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(supports-color@10.2.2)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       async-mutex: 0.5.0
       diff: 8.0.4
@@ -9884,15 +9840,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@mastra/observability@1.18.3(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/observability@1.18.4(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       zod: 4.6.5
 
-  '@mastra/rag@2.6.6(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/rag@2.6.6(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@aws-sdk/client-bedrock-agent-runtime': 3.1113.0
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       big.js: 7.0.1
       js-tiktoken: 1.0.21
       node-html-better-parser: 1.5.9
@@ -9907,16 +9863,16 @@ snapshots:
       zod: 4.6.5
       zod-from-json-schema: 0.5.6
 
-  '@mastra/server@1.74.0(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/server@1.75.0(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       hono: 4.13.13
       zod: 4.6.5
 
-  '@mastra/tavily@1.1.2(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.6.5)':
+  '@mastra/tavily@1.1.2(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@tavily/core': 0.7.13(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@tavily/core': 0.7.14(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       zod: 4.6.5
     transitivePeerDependencies:
       - debug
@@ -9934,7 +9890,7 @@ snapshots:
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.1
-      jose: 6.2.9
+      jose: 6.2.12
       pkce-challenge: 5.0.1
       zod: 4.6.5
 
@@ -10756,12 +10712,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.3.3
       '@tailwindcss/oxide-win32-x64-msvc': 4.3.3
 
-  '@tailwindcss/vite@4.3.3(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
+  '@tailwindcss/vite@4.3.3(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       '@tailwindcss/node': 4.3.3
       '@tailwindcss/oxide': 4.3.3
       tailwindcss: 4.3.3
-      vite: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vite: 8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
   '@tanstack/history@1.162.4': {}
 
@@ -10797,9 +10753,9 @@ snapshots:
 
   '@tanstack/store@0.11.2': {}
 
-  '@tavily/core@0.7.13(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
+  '@tavily/core@0.7.14(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)':
     dependencies:
-      axios: 1.19.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
+      axios: 1.20.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       https-proxy-agent: 7.0.6(supports-color@10.2.2)
       js-tiktoken: 1.0.21
     transitivePeerDependencies:
@@ -10866,7 +10822,7 @@ snapshots:
     dependencies:
       '@types/http-cache-semantics': 4.2.0
       '@types/keyv': 3.1.4
-      '@types/node': 26.6.3
+      '@types/node': 26.6.4
       '@types/responselike': 1.0.3
 
   '@types/d3-array@3.2.2': {}
@@ -11018,7 +10974,7 @@ snapshots:
 
   '@types/keyv@3.1.4':
     dependencies:
-      '@types/node': 26.6.3
+      '@types/node': 26.6.4
 
   '@types/mdast@4.0.4':
     dependencies:
@@ -11042,10 +10998,6 @@ snapshots:
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
-
-  '@types/node@26.6.3':
-    dependencies:
-      undici-types: 8.9.0
 
   '@types/node@26.6.4':
     dependencies:
@@ -11077,7 +11029,7 @@ snapshots:
 
   '@types/responselike@1.0.3':
     dependencies:
-      '@types/node': 26.6.3
+      '@types/node': 26.6.4
 
   '@types/sinonjs__fake-timers@8.1.5': {}
 
@@ -11271,10 +11223,10 @@ snapshots:
 
   '@vercel/oidc@3.2.0': {}
 
-  '@vitejs/plugin-react@6.1.2(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
+  '@vitejs/plugin-react@6.1.2(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vite: 8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
 
   '@wdio/config@9.31.2(supports-color@10.2.2)':
     dependencies:
@@ -11427,11 +11379,11 @@ snapshots:
     dependencies:
       humanize-ms: 1.2.1
 
-  ai@7.0.127(zod@4.6.5):
+  ai@7.0.130(zod@4.6.5):
     dependencies:
-      '@ai-sdk/gateway': 4.0.103(zod@4.6.5)
-      '@ai-sdk/provider': 4.0.21
-      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
+      '@ai-sdk/gateway': 4.0.106(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.24
+      '@ai-sdk/provider-utils': 5.0.56(zod@4.6.5)
       zod: 4.6.5
 
   ajv@8.20.0:
@@ -11594,16 +11546,6 @@ snapshots:
   atomic-sleep@1.0.0: {}
 
   aws4@1.13.2: {}
-
-  axios@1.19.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2):
-    dependencies:
-      follow-redirects: 1.16.0(debug@4.4.3(supports-color@10.2.2))
-      form-data: 4.0.6
-      https-proxy-agent: 5.0.1(supports-color@10.2.2)
-      proxy-from-env: 2.1.0
-    transitivePeerDependencies:
-      - debug
-      - supports-color
 
   axios@1.20.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2):
     dependencies:
@@ -11822,7 +11764,7 @@ snapshots:
 
   character-reference-invalid@2.0.1: {}
 
-  chat@4.38.1(ai@7.0.127(zod@4.6.5))(supports-color@10.2.2)(zod@4.6.5):
+  chat@4.38.1(ai@7.0.130(zod@4.6.5))(supports-color@10.2.2)(zod@4.6.5):
     dependencies:
       '@workflow/serde': 4.1.0-beta.2
       mdast-util-to-string: 4.0.0
@@ -11832,7 +11774,7 @@ snapshots:
       remend: 1.4.0
       unified: 11.0.5
     optionalDependencies:
-      ai: 7.0.127(zod@4.6.5)
+      ai: 7.0.130(zod@4.6.5)
       zod: 4.6.5
     transitivePeerDependencies:
       - supports-color
@@ -12481,7 +12423,7 @@ snapshots:
 
   electron-to-chromium@1.5.408: {}
 
-  electron-vite@6.0.0-beta.1(supports-color@10.2.2)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
+  electron-vite@6.0.0-beta.1(supports-color@10.2.2)(vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)):
     dependencies:
       '@babel/core': 7.29.7(supports-color@10.2.2)
       '@babel/plugin-transform-arrow-functions': 7.29.7(@babel/core@7.29.7(supports-color@10.2.2))
@@ -12489,7 +12431,7 @@ snapshots:
       esbuild: 0.25.11
       magic-string: 0.30.21
       picocolors: 1.1.1
-      vite: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
+      vite: 8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
@@ -12505,7 +12447,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  electron@44.5.1(supports-color@10.2.2):
+  electron@44.6.0(supports-color@10.2.2):
     dependencies:
       '@electron-internal/extract-zip': 1.0.5
       '@electron/get': 5.1.0(supports-color@10.2.2)
@@ -12866,7 +12808,7 @@ snapshots:
       pkg-types: 1.3.1
       yaml: 2.9.0
 
-  firecrawl@4.42.4(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2):
+  firecrawl@4.44.1(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2):
     dependencies:
       axios: 1.20.0(debug@4.4.3(supports-color@10.2.2))(supports-color@10.2.2)
       typescript-event-target: 1.1.2
@@ -13750,15 +13692,15 @@ snapshots:
 
   marked@18.0.14: {}
 
-  mastra@1.32.1(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(rxjs@7.8.2)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5):
+  mastra@1.33.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(rxjs@7.8.2)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5):
     dependencies:
       '@babel/parser': 8.0.4
       '@babel/types': 8.0.4
       '@clack/prompts': 1.7.0
       '@expo/devcert': 1.2.1(supports-color@10.2.2)
-      '@mastra/core': 1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@mastra/deployer': 1.74.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)
-      '@mastra/loggers': 1.3.4(@mastra/core@1.74.0(patch_hash=69771272a131558144904c02c96dfccaf297ab1ecb933ecb99d9982736e55685)(ai@7.0.127(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+      '@mastra/core': 1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/deployer': 1.75.0(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(bufferutil@4.1.0)(supports-color@10.2.2)(typescript@7.0.2)(zod@4.6.5)
+      '@mastra/loggers': 1.3.5(@mastra/core@1.75.0(ai@7.0.130(zod@4.6.5))(bufferutil@4.1.0)(express@5.2.1(supports-color@10.2.2))(rxjs@7.8.2)(supports-color@10.2.2)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       archiver: 8.0.0
       commander: 14.0.3
       dotenv: 17.4.2
@@ -14347,7 +14289,7 @@ snapshots:
 
   nanoid@3.3.18: {}
 
-  nanoid@6.0.1: {}
+  nanoid@6.0.2: {}
 
   needle@2.9.1(supports-color@10.2.2):
     dependencies:
@@ -14863,7 +14805,7 @@ snapshots:
       react: 19.3.0
       scheduler: 0.28.0
 
-  react-i18next@17.0.15(i18next@26.4.2(typescript@7.0.2))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2):
+  react-i18next@17.0.16(i18next@26.4.2(typescript@7.0.2))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2):
     dependencies:
       '@babel/runtime': 7.29.7
       html-parse-stringify: 4.0.1
@@ -15819,13 +15761,11 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@5.29.0:
-    dependencies:
-      '@fastify/busboy': 2.1.1
-
   undici@6.28.0: {}
 
   undici@7.29.0: {}
+
+  undici@8.11.2: {}
 
   unicode-emoji-modifier-base@1.0.0: {}
 
@@ -15974,7 +15914,7 @@ snapshots:
       d3-time: 3.1.0
       d3-timer: 3.0.1
 
-  vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0):
+  vite@8.3.3(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7

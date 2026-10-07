@@ -1,104 +1,7 @@
 /**
  * skills.sh discovery, audits and source acquisition. Package lifecycle lives in plugins/.
  */
-import { basename, dirname, extname } from "node:path";
-import { validateSkillContent } from "@mastra/core/skills";
-import matter from "gray-matter";
-
-export function categorizeSkillResources(resources: string[]) {
-  const references: string[] = [];
-  const scripts: string[] = [];
-  const assets: string[] = [];
-
-  const scriptExts = new Set([
-    ".py",
-    ".sh",
-    ".bash",
-    ".js",
-    ".ts",
-    ".mjs",
-    ".cjs",
-    ".ps1",
-    ".bat",
-    ".cmd",
-    ".rb",
-    ".go",
-    ".rs",
-    ".lua",
-    ".php",
-  ]);
-  const docExts = new Set([
-    ".md",
-    ".txt",
-    ".pdf",
-    ".rst",
-    ".doc",
-    ".docx",
-    ".html",
-    ".htm",
-    ".markdown",
-  ]);
-  const assetExts = new Set([
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".svg",
-    ".gif",
-    ".webp",
-    ".json",
-    ".yaml",
-    ".yml",
-    ".toml",
-    ".csv",
-    ".tsv",
-    ".xml",
-    ".css",
-  ]);
-
-  for (const item of resources) {
-    const normalized = item.replaceAll("\\", "/").replace(/^\/+/, "");
-    if (!normalized || normalized.toUpperCase() === "SKILL.MD") continue;
-    const lower = normalized.toLowerCase();
-    const ext = extname(lower);
-
-    if (
-      lower.startsWith("references/") ||
-      lower.startsWith("docs/") ||
-      lower.startsWith("reference/") ||
-      lower.startsWith("doc/")
-    ) {
-      references.push(normalized);
-    } else if (
-      lower.startsWith("scripts/") ||
-      lower.startsWith("script/") ||
-      lower.startsWith("bin/") ||
-      lower.startsWith("tools/") ||
-      scriptExts.has(ext)
-    ) {
-      scripts.push(normalized);
-    } else if (
-      lower.startsWith("assets/") ||
-      lower.startsWith("asset/") ||
-      lower.startsWith("images/") ||
-      lower.startsWith("image/") ||
-      lower.startsWith("templates/") ||
-      lower.startsWith("template/") ||
-      assetExts.has(ext)
-    ) {
-      assets.push(normalized);
-    } else if (docExts.has(ext)) {
-      references.push(normalized);
-    } else {
-      assets.push(normalized);
-    }
-  }
-
-  return {
-    references: Array.from(new Set(references)),
-    scripts: Array.from(new Set(scripts)),
-    assets: Array.from(new Set(assets)),
-  };
-}
+import { basename, dirname } from "node:path";
 
 export interface SkillAuditItem {
   provider: string;
@@ -149,15 +52,6 @@ export interface SkillsShSkill {
   owner?: string;
 }
 
-export interface SkillsShSkillDetail extends SkillsShSkill {
-  instructions: string;
-  references: string[];
-  scripts: string[];
-  assets: string[];
-  sourceUrl: string;
-  audits?: SkillAuditItem[];
-}
-
 export interface SkillsShQueryOptions {
   view?: "all-time" | "trending" | "hot";
   curated?: boolean;
@@ -187,10 +81,7 @@ export interface SkillsShListResult {
  */
 const SKILLS_SH_CACHE_TTL = 24 * 60 * 60 * 1000;
 const SKILLS_SH_MAX_RETRIES = 3;
-const SKILLS_SH_MAX_FILES = 2_000;
 const SKILLS_SH_MAX_BYTES = 25 * 1024 * 1024;
-
-type SkillFile = { path: string; contents: Buffer };
 
 interface CacheEntry<T> {
   expiresAt: number;
@@ -236,30 +127,8 @@ function createCachedFetcher<TInput, TResult>(
   };
 }
 
-export function parseSkillMarkdown(content: string, directoryName?: string) {
-  const result = validateSkillContent({ content, directoryName });
-  const fields = result.metadata ?? {};
-  return {
-    name: typeof fields.name === "string" ? fields.name : (directoryName ?? ""),
-    description: typeof fields.description === "string" ? fields.description : "未提供描述",
-    // Passing options disables gray-matter's unbounded cache of whole Markdown documents.
-    enabled: result.valid && matter(content, {}).data.enabled !== false,
-    license: typeof fields.license === "string" ? fields.license : undefined,
-    metadata:
-      fields.metadata && typeof fields.metadata === "object" && !Array.isArray(fields.metadata)
-        ? (fields.metadata as Record<string, unknown>)
-        : undefined,
-    instructions: result.instructions ?? content,
-    validationErrors: result.errors,
-  };
-}
-
 const GITHUB_JSON_HEADERS = {
   Accept: "application/vnd.github+json",
-  "User-Agent": "MastraWork-Skill-Marketplace",
-};
-const GITHUB_TEXT_HEADERS = {
-  Accept: "application/vnd.github.raw",
   "User-Agent": "MastraWork-Skill-Marketplace",
 };
 const PUBLIC_SKILL_HEADERS = {
@@ -815,31 +684,12 @@ export async function listSkillsShSkillsWithOptions(
   return cachedSkillsShOptions(options, options.force);
 }
 
-function normalizeSkillsShFilePath(path: string): string {
-  const normalized = path.trim().replaceAll("\\", "/");
-  if (
-    !normalized ||
-    normalized.startsWith("/") ||
-    normalized.includes(":") ||
-    normalized.split("/").some((part) => !part || part === "." || part === "..")
-  ) {
-    throw new Error("skills.sh 技能文件路径无效");
-  }
-  return normalized;
-}
-
-function skillsShSourceUrl(source: string, slugValue: string): string {
-  return `https://skills.sh/${source}/${slugValue}`;
-}
-
-/** Preview reads only SKILL.md and resource paths; binary files are downloaded on install. */
 async function loadSkillsShSkill(source: string, slugValue: string) {
   const normalizedSource = normalizeSkillsShCoordinate(source, "source");
   const normalizedSlug = normalizeSkillsShCoordinate(slugValue, "skill");
   const base = normalizeSkillsShEntry({ source: normalizedSource, slug: normalizedSlug });
   if (!base) throw new Error("skills.sh 技能元数据无效");
   let content: string | undefined;
-  let resources: string[] = [];
   let github:
     | { owner: string; repo: string; branch: string; skillPath: string; tree: GitTreeItem[] }
     | undefined;
@@ -862,14 +712,15 @@ async function loadSkillsShSkill(source: string, slugValue: string) {
     if (content === undefined) throw new Error("无法读取该 well-known 技能的 SKILL.md");
   } else {
     const [owner, repo] = normalizedSource.split("/");
-    const { default_branch: branch } = await fetchWithRetry<{ default_branch: string }>(
-      `https://api.github.com/repos/${owner}/${repo}`,
+    const { sha: branch } = await fetchWithRetry<{ sha: string }>(
+      `https://api.github.com/repos/${owner}/${repo}/commits/HEAD`,
       {
         headers: GITHUB_JSON_HEADERS,
         responseType: "json",
-        errorMessage: (status) => `GitHub 请求失败（${status}）`,
+        errorMessage: (status) => `GitHub request failed (${status})`,
       },
     );
+    if (!/^[a-f0-9]{40,64}$/.test(branch)) throw new Error("Invalid GitHub commit");
     const result = await fetchWithRetry<{ tree?: GitTreeItem[]; truncated?: boolean }>(
       `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
       {
@@ -891,83 +742,27 @@ async function loadSkillsShSkill(source: string, slugValue: string) {
       : candidates.filter((item) => item.path.toUpperCase() === "SKILL.MD");
     if (selected.length !== 1) throw new Error("无法唯一确定 GitHub 技能目录");
     const skillPath = selected[0].path;
-    const prefix = skillPath.slice(0, -"SKILL.md".length);
-    resources = tree
-      .filter(
-        (item) => item.type === "blob" && item.path.startsWith(prefix) && item.path !== skillPath,
-      )
-      .map((item) => item.path.slice(prefix.length));
-    content = await fetchWithRetry<string>(
-      `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${skillPath.split("/").map(encodeURIComponent).join("/")}`,
-      {
-        headers: GITHUB_TEXT_HEADERS,
-        responseType: "text",
-        errorMessage: (status) => `读取技能文件失败（${status}）`,
-      },
-    );
     github = { owner, repo, branch, skillPath, tree };
   }
-  const detail: SkillsShSkillDetail = {
-    ...base,
-    ...parseSkillMarkdown(content),
-    ...categorizeSkillResources(resources),
-    sourceUrl: skillsShSourceUrl(normalizedSource, normalizedSlug),
-  };
-  return { detail, content, github };
-}
-
-export async function getSkillsShSkillDetail(
-  source: string,
-  slugValue: string,
-): Promise<SkillsShSkillDetail> {
-  const [{ detail }, audits] = await Promise.all([
-    loadSkillsShSkill(source, slugValue),
-    getSkillsShAudit(source, slugValue).catch(() => []),
-  ]);
-  return { ...detail, audits };
+  return { content, github };
 }
 
 /** Source acquisition only; all package writes belong to the plugin installer. */
 export async function getSkillsShPackage(source: string, slugValue: string) {
   const { content, github } = await loadSkillsShSkill(source, slugValue);
-  const files = github
-    ? await downloadGithubSkillFiles(
-        github.owner,
-        github.repo,
-        github.branch,
-        github.skillPath,
-        github.tree,
-      )
-    : [{ path: "SKILL.md", contents: Buffer.from(content, "utf8") }];
-  return { files: new Map(files.map((file) => [file.path, file.contents])) };
-}
-
-async function downloadGithubSkillFiles(
-  owner: string,
-  repo: string,
-  branch: string,
-  skillPath: string,
-  tree: GitTreeItem[],
-): Promise<SkillFile[]> {
-  const prefix = skillPath.slice(0, -"SKILL.md".length);
-  const entries = tree.filter((item) => item.type === "blob" && item.path.startsWith(prefix));
-  if (!entries.length || entries.length > SKILLS_SH_MAX_FILES) throw new Error("技能文件数量无效");
-  const files: SkillFile[] = [];
-  let totalBytes = 0;
-  for (const entry of entries) {
-    const contents = await fetchWithRetry<Buffer>(
-      `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${entry.path.split("/").map(encodeURIComponent).join("/")}`,
-      {
-        headers: GITHUB_TEXT_HEADERS,
-        responseType: "bytes",
-        errorMessage: (status) => `读取技能文件失败（${status}）`,
-      },
-    );
-    totalBytes += contents.byteLength;
-    if (totalBytes > SKILLS_SH_MAX_BYTES) throw new Error("技能包过大");
-    files.push({ path: normalizeSkillsShFilePath(entry.path.slice(prefix.length)), contents });
+  if (github) {
+    const { fetchPluginFiles } = await import("../plugins/registry");
+    const path = dirname(github.skillPath);
+    return fetchPluginFiles({
+      kind: "git",
+      url: `https://github.com/${github.owner}/${github.repo}`,
+      ref: "HEAD",
+      commit: github.branch,
+      path: path === "." ? "" : path,
+    });
   }
-  return files;
+  if (content === undefined) throw new Error("Missing remote skill content");
+  return { files: new Map([["SKILL.md", Buffer.from(content, "utf8")]]) };
 }
 
 interface GitTreeItem {

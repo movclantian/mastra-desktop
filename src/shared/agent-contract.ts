@@ -55,6 +55,7 @@ export const agentMemberSchema = z
     description: z.string().default(""),
     instructions: z.string().trim().min(1),
     skills: z.array(z.string()).default([]),
+    mcpServers: z.array(z.string()).default([]),
     memoryScope: z.enum(["thread", "resource"]).default("thread"),
     delegates: z.array(identifier).default([]),
     avatar: z.string().optional(),
@@ -141,6 +142,7 @@ export interface AgentProfile {
   description: string;
   instructions: string;
   skills: string[];
+  mcpServers: string[];
   members: AgentMemberDefinition[];
   workflow?: AgentWorkflowDefinition;
   categoryId?: string;

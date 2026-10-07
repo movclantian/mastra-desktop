@@ -3,7 +3,7 @@ import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import i18n from "@/shared/i18n";
 import { apiError, type WorkErrorPayload } from "@/shared/lib";
 import type { PluginSkill } from "../../../../../shared/plugin-contract";
-import type { CuratedOwner, McpFormServer, McpSummary, SkillMetadata } from "../model/types";
+import type { McpFormServer, McpSummary } from "../model/types";
 
 export function usePluginSkills(userId?: string) {
   return useQuery({
@@ -22,47 +22,6 @@ async function readPayload<T extends object>(response: Response, fallback: strin
   const payload = (await response.json().catch(() => ({}))) as T & Partial<WorkErrorPayload>;
   if (!response.ok) throw apiError(payload, fallback);
   return payload;
-}
-
-export async function fetchCuratedSkillOwners(): Promise<CuratedOwner[]> {
-  const response = await apiFetch(`${MASTRA_SERVER_URL}/work/plugins/skills-sh/curated`);
-  if (!response.ok) return [];
-  const payload = (await response.json()) as { data?: CuratedOwner[] };
-  return Array.isArray(payload.data) ? payload.data : [];
-}
-
-export interface FetchSkillsShListOptions {
-  view?: "all-time" | "trending" | "hot";
-  curated?: boolean;
-  owner?: string;
-  page?: number;
-  perPage?: number;
-  query?: string;
-  refresh?: boolean;
-}
-
-export async function fetchSkillsShList(options: FetchSkillsShListOptions = {}): Promise<{
-  skills: SkillMetadata[];
-  total: number;
-  page: number;
-  perPage: number;
-  hasMore: boolean;
-  view?: string;
-  curatedOwners?: CuratedOwner[];
-}> {
-  const params = new URLSearchParams();
-  if (options.view) params.set("view", options.view);
-  if (options.curated) params.set("curated", "1");
-  if (options.owner) params.set("owner", options.owner);
-  if (options.page !== undefined) params.set("page", String(options.page));
-  if (options.perPage !== undefined) params.set("perPage", String(options.perPage));
-  if (options.query) params.set("query", options.query);
-  if (options.refresh) params.set("refresh", "1");
-
-  const response = await apiFetch(
-    `${MASTRA_SERVER_URL}/work/plugins/skills-sh/list?${params.toString()}`,
-  );
-  return await readPayload(response, i18n.t("skills:readLeaderboardFailed"));
 }
 
 export async function fetchMcpServers(): Promise<McpSummary[]> {

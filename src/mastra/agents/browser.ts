@@ -578,15 +578,17 @@ async function executeNativeBrowserCommand<T = unknown>(
         }
         if (!result.ok) {
           const hint =
-            result.error === "session_not_visible"
-              ? "Open the Browser panel in this thread, then retry."
-              : result.error === "document_changed"
-                ? "The page navigated during the operation. Take a fresh snapshot and retry."
-                : result.error === "stale_ref"
-                  ? "Take a new browser snapshot to refresh element references."
-                  : result.error === "tab_limit_reached"
-                    ? "The browser has reached its 100-tab limit. Close a tab before opening another."
-                    : "";
+            result.error === "session_not_found"
+              ? "The browser session has not been opened or was closed. Use browser_goto with the target URL or take a new browser_snapshot to initialize it."
+              : result.error === "session_not_visible"
+                ? "Bring the desktop app to the foreground and open the Browser panel in this task's thread, then retry. Native browser automation requires that thread's page to be visible."
+                : result.error === "document_changed"
+                  ? "The page navigated during the operation. Take a fresh snapshot and retry."
+                  : result.error === "stale_ref"
+                    ? "Take a new browser snapshot to refresh element references."
+                    : result.error === "tab_limit_reached"
+                      ? "The browser has reached its 100-tab limit. Close a tab before opening another."
+                      : "";
           fail(
             new Error(
               `Native browser ${operation} failed (${result.error}${hint ? `; ${hint}` : ""}; requestId=${requestId})`,

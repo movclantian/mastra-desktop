@@ -245,7 +245,7 @@ async function ensureAnysearchConnection(resourceId?: string): Promise<void> {
 }
 
 /** The same official storage domain is used by Studio's MCP Clients and the desktop manager. */
-export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
+async function storedMcpServers(resourceId?: string): Promise<McpServerConfig[]> {
   await ensureAnysearchConnection(resourceId);
   const store = await mcpStore();
   const pages = await Promise.all(
@@ -257,10 +257,14 @@ export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
       }),
     ),
   );
+  return pages.flatMap((page) => page.mcpClients.flatMap(connectionsOf));
+}
+
+export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
   const plugins = new Map(
     (resourceId ? await listInstalledPlugins(resourceId) : []).map((plugin) => [plugin.id, plugin]),
   );
-  const servers = pages.flatMap((page) => page.mcpClients.flatMap(connectionsOf));
+  const servers = await storedMcpServers(resourceId);
   return {
     servers: servers.map((server) => {
       if (!server.plugin) return server;
@@ -290,7 +294,7 @@ export async function saveMcpServer(
   const server = mcpServerConfigSchema.parse(input);
   const store = await mcpStore();
   const current = server.clientId ? await ownedClient(server.clientId, resourceId) : undefined;
-  if (!current && (await getMcpConfig(resourceId)).servers.some((entry) => entry.id === server.id))
+  if (!current && (await storedMcpServers(resourceId)).some((entry) => entry.id === server.id))
     throw workError("MCP_CONFIG_INVALID", { text: "MCP connection ID already exists" });
   const rawOptions = current ? connectionOptions(current) : {};
   const options = current
@@ -503,7 +507,7 @@ export async function deleteMcpServer(
   managedPlugin = false,
   keepCredentials = false,
 ): Promise<void> {
-  const server = (await getMcpConfig(resourceId)).servers.find((entry) => entry.id === id);
+  const server = (await storedMcpServers(resourceId)).find((entry) => entry.id === id);
   if (!server?.clientId || !server.serverName) throw workError("MCP_SERVER_NOT_FOUND");
   if (server.plugin && !managedPlugin)
     throw workError("MCP_CONFIG_INVALID", {
@@ -815,7 +819,9 @@ async function toDefinition(
       );
     if (server.builtin === "anysearch")
       requestHeaders.set("X-Anysearch-Client", "mastra-desktop/1.0");
-    secretHeaders.forEach((value, key) => requestHeaders.set(key, value));
+    secretHeaders.forEach((value, key) => {
+      requestHeaders.set(key, value);
+    });
     return {
       url: new URL(plugin?.current.format !== "portable" ? expand(server.url) : server.url),
       allowedHosts: server.allowedHosts,
@@ -871,11 +877,14 @@ async function toDefinition(
 }
 
 /** Materialize plugin-owned connections in the same native store as manually configured MCP. */
-export async function syncPluginMcp(plugin: InstalledPlugin, resourceId: string): Promise<void> {
-  const existing = (await getMcpConfig(resourceId)).servers.filter(
+export async function syncPluginMcp(
+  plugin: InstalledPlugin,
+  resourceId: string,
+  current?: InstalledPlugin,
+): Promise<void> {
+  const existing = (await storedMcpServers(resourceId)).filter(
     (server) => server.plugin?.id === plugin.id,
   );
-  const current = await getInstalledPlugin(plugin.id, resourceId);
   const retainedRaw = await readFile(
     withinRoot(pluginsDirectory(resourceId), `${plugin.id}/configuration.json`),
     "utf8",
@@ -932,7 +941,7 @@ export async function removePluginMcp(
   resourceId: string,
   keepCredentials = false,
 ): Promise<void> {
-  for (const server of (await getMcpConfig(resourceId)).servers)
+  for (const server of await storedMcpServers(resourceId))
     if (server.plugin?.id === pluginId)
       await deleteMcpServer(server.id, resourceId, true, keepCredentials);
 }
@@ -942,6 +951,18 @@ export async function deletePluginMcpCredentials(
   resourceId: string,
 ): Promise<void> {
   for (const server of servers) await deleteReplacedCredentials(server, undefined, resourceId);
+}
+
+/** Reconcile native records to the committed install state after an interrupted write. */
+export async function recoverPluginMcp(
+  plugins: InstalledPlugin[],
+  resourceId: string,
+): Promise<void> {
+  const ids = new Set(plugins.map((plugin) => plugin.id));
+  for (const server of await storedMcpServers(resourceId))
+    if (server.plugin && !ids.has(server.plugin.id))
+      await deleteMcpServer(server.id, resourceId, true, true);
+  for (const plugin of plugins) await syncPluginMcp(plugin, resourceId);
 }
 
 async function createClient(
@@ -1021,9 +1042,15 @@ export async function closeMcpConnections(resourceId?: string): Promise<void> {
 export async function getConfiguredMcpTools(
   resourceId?: string,
   builtin?: "anysearch",
+  allowedIds?: string[],
 ): Promise<ToolsInput> {
   const config = await getMcpConfig(resourceId);
-  const selected = config.servers.filter((server) => server.enabled && server.builtin === builtin);
+  const selected = config.servers.filter(
+    (server) =>
+      server.enabled &&
+      server.builtin === builtin &&
+      (!allowedIds || allowedIds.includes(server.id)),
+  );
   const outcomes = await Promise.allSettled(
     selected.map(async (server) => {
       const client = await getConfiguredMcpClient(server, resourceId);

@@ -28,7 +28,7 @@ type NativeBrowserAgentCommandDiagnostic = {
   reason: NativeBrowserAgentCommandFailure;
 };
 
-/** Authenticated local RPC to the exact visible Electron tab; it never creates a page. */
+/** Authenticated local RPC to the bound thread's visible Electron tab. */
 export class NativeBrowserAgentCommandBroker {
   readonly token = randomBytes(32).toString("base64url");
   readonly endpoint: string;

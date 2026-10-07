@@ -162,6 +162,8 @@ async function preparePluginStorage(owner: string): Promise<void> {
           )
             await rm(withinRoot(versions, entry.name), { recursive: true, force: true });
       }
+      const { recoverPluginMcp } = await import("../connections/mcp");
+      await recoverPluginMcp([...plugins.values()], owner);
     })().catch((error) => {
       preparedOwners.delete(owner);
       throw error;
@@ -393,13 +395,13 @@ async function activateRecord(
 ): Promise<void> {
   const { syncPluginMcp, removePluginMcp } = await import("../connections/mcp");
   try {
-    await syncPluginMcp(next, owner);
+    await syncPluginMcp(next, owner, previous);
     await saveRecord(next, owner);
   } catch (error) {
     if (previous) {
       await syncPluginMcp(previous, owner);
       await saveRecord(previous, owner);
-    } else await removePluginMcp(next.id, owner);
+    } else await removePluginMcp(next.id, owner, true);
     throw error;
   }
 }

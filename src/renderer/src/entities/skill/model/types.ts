@@ -8,60 +8,6 @@ export interface SkillAuditItem {
   categories?: string[];
 }
 
-export interface SkillMetadata {
-  name: string;
-  path: string;
-  description: string;
-  enabled?: boolean;
-  validationErrors?: string[];
-  metadata?: Record<string, unknown>;
-  origin?: "marketplace" | "skills-sh" | "installed";
-  marketplaceId?: string;
-  marketplaceName?: string;
-  sourcePath?: string;
-  branch?: string;
-  skillsShSource?: string;
-  skillsShSlug?: string;
-  installs?: number;
-  sourceUrl?: string;
-  change?: number;
-  installsYesterday?: number;
-  isOfficial?: boolean;
-  owner?: string;
-  audits?: SkillAuditItem[];
-}
-
-export interface SkillDetail extends SkillMetadata {
-  instructions: string;
-  references: string[];
-  scripts: string[];
-  assets: string[];
-  audits?: SkillAuditItem[];
-}
-
-export interface CuratedSkill {
-  id?: string;
-  slug: string;
-  name: string;
-  source: string;
-  installs?: number;
-  installUrl?: string | null;
-  url?: string;
-  description?: string;
-  change?: number;
-  installsYesterday?: number;
-  isOfficial?: boolean;
-  owner?: string;
-}
-
-export interface CuratedOwner {
-  owner: string;
-  totalInstalls: number;
-  featuredRepo?: string;
-  featuredSkill?: string;
-  skills: CuratedSkill[];
-}
-
 export interface McpFormServer {
   clientId?: string;
   serverName?: string;
@@ -103,18 +49,5 @@ export interface McpSummary extends McpFormServer {
   headerKeys: string[];
   envKeys: string[];
 }
-
-export interface SkillMarketplace {
-  id: string;
-  name: string;
-  url: string;
-  branch: string;
-  path?: string;
-  enabled: boolean;
-}
-
-export type SkillSection = "public" | "personal" | "mcp";
-export type MarketCategory = "official" | "leaderboard" | "marketplace";
-export type LeaderboardView = "all-time" | "trending" | "hot";
 
 import type { CredentialPointer } from "../../../../../shared/credential-contract";

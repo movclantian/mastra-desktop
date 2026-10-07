@@ -40,6 +40,7 @@ import {
   uninstallPlugin,
   updatePlugin,
 } from "../plugins/registry";
+import { getSkillsShAudit } from "../skills/marketplaces";
 import { type RequestContextLike, userIdFromContext } from "../storage/database";
 
 function owner(context: RequestContextLike): string {
@@ -51,6 +52,16 @@ const idPath = z.object({ id: pluginIdSchema });
 const common = { responseType: "json", onValidationError: workValidationError } as const;
 
 export const pluginRoutes = [
+  createRoute({
+    ...common,
+    path: "/work/plugins/skills-sh/audit",
+    method: "GET",
+    queryParamSchema: z.object({
+      source: z.string().trim().min(1).max(180),
+      slug: z.string().trim().min(1).max(180),
+    }),
+    handler: async ({ source, slug }) => ({ audits: await getSkillsShAudit(source, slug) }),
+  }),
   createRoute({
     ...common,
     path: "/work/plugins",

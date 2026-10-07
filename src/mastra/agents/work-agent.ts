@@ -509,13 +509,19 @@ function createWorkAgent(
     // for direct calls that do not carry a thread workspace context.
     workspace,
     tools: async ({ requestContext }) => {
-      const tools = await resolveSharedTools(requestContext);
       const profile =
         fixedProfile ??
         (await getAgentProfile(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           userIdFromContext(requestContext),
         ));
+      const activeMember = member ?? activeHandoffMember(profile, requestContext);
+      const tools = await resolveSharedTools(
+        requestContext,
+        profile.id === DEFAULT_AGENT_PROFILE_ID
+          ? undefined
+          : (activeMember?.mcpServers ?? profile.mcpServers),
+      );
       if (!member && profile.workflow?.strategy === "handoff")
         tools.handoff = teamHandoffTool(profile);
       if (!isCodeModeAvailable(requestContext)) delete tools.execute_typescript;

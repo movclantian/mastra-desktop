@@ -153,7 +153,10 @@ export function isCodeModeAvailable(requestContext?: RequestContextLike): boolea
 }
 
 /** Tools available to both the primary agent and its built-in subagents. */
-export async function resolveSharedTools(requestContext?: RequestContextLike): Promise<ToolsInput> {
+export async function resolveSharedTools(
+  requestContext?: RequestContextLike,
+  mcpServerIds?: string[],
+): Promise<ToolsInput> {
   const tools = {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
@@ -166,7 +169,7 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
       parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
       userIdFromContext(requestContext),
     )),
-    ...(await getConfiguredMcpTools(userIdFromContext(requestContext))),
+    ...(await getConfiguredMcpTools(userIdFromContext(requestContext), undefined, mcpServerIds)),
     ...(await getComputerTools(requestContext)),
   };
   // Preserve computer-specific approval settings; other tools use the shared session policy.

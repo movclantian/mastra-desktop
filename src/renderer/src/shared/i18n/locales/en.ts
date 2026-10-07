@@ -1,5 +1,9 @@
 export const en = {
   plugins: {
+    capabilities: "Available skills and MCP servers",
+    unavailableComponent: "Component removed or unavailable",
+    transport: "Package source type",
+    autoDetect: "Detect source type from URL",
     supported: "All discovered components are supported",
     knownComponentFilter:
       "Filters use known component types. Open a plugin's details to load types not supplied by its catalog.",
@@ -29,9 +33,9 @@ export const en = {
     configAutoSave:
       "Configuration saves automatically. Connection definitions and availability are managed by the plugin.",
     unavailableSkill: "Skill removed or unavailable",
-    defaultSkills: "The default Agent can discover every globally enabled skill.",
+    defaultSkills: "The default Agent can discover globally enabled skills and MCP servers.",
     selectionHint:
-      "Select skills this Agent may discover. Disabled plugins remain unavailable. Skills explicitly attached to a message apply to that request.",
+      "Select skills and MCP servers this Agent may use. Disabled or unconfigured components remain unavailable. Skills attached to a message apply to that request.",
     title: "Plugins",
     discover: "Discover",
     installed: "Installed",
@@ -3213,10 +3217,12 @@ export const en = {
     emptyList: "No scheduled tasks yet",
     statusActive: "Active",
     statusPausedTag: "Paused",
-    nextRun: "Next run",
-    lastRun: "Last run",
+    nextRun: "Next trigger",
+    lastRun: "Last trigger",
+    serverTimezone: "Server local timezone",
     detailsTitle: "Schedule Details",
-    detailsDesc: "Each trigger sends a Mastra signal to the schedule's dedicated thread.",
+    detailsDesc:
+      "Send tasks on schedule and view their progress and results in the linked conversation.",
     edit: "Edit schedule",
     cancelEdit: "Cancel edit",
     runIn: "Run in",
@@ -3240,7 +3246,7 @@ export const en = {
       titlePlaceholder: "e.g., Daily Briefing",
       prompt: "Task Description",
       promptPlaceholder: "Describe what the Agent should do on each run",
-      promptHint: "The description will be sent to the thread as the signal body.",
+      promptHint: "The agent receives this task description on each trigger.",
       runIn: "Run in",
       selectThread: "Select thread",
       newThreadOption: "Create dedicated thread for this schedule",

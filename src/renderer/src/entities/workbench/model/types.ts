@@ -120,6 +120,7 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   description: i18n.t("chat:agents.defaultAgentDescription"),
   instructions: "",
   skills: [],
+  mcpServers: [],
   members: [],
   workflow: undefined,
   tags: [i18n.t("common:default")],

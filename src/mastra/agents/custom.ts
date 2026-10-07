@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import * as bottts from "@dicebear/bottts";
-import { createAvatar } from "@dicebear/core";
+import { Avatar, Style } from "@dicebear/core";
+import bottts from "@dicebear/styles/bottts.json" with { type: "json" };
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
@@ -24,6 +24,7 @@ export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
 
 const CONFIG_KEY = "agent-profiles";
+const avatarStyle = new Style(bottts);
 
 export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 export { agentWorkflowSchema } from "../../shared/agent-contract";
@@ -41,6 +42,7 @@ const DEFAULT_PROFILE: AgentProfile = {
   description: "负责规划、执行和复查复杂工作任务的默认 Agent。",
   instructions: "",
   skills: [],
+  mcpServers: [],
   members: [],
   workflow: undefined,
   tags: ["默认", "通用"],
@@ -69,6 +71,7 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
       ? raw.skills.filter((item): item is string => typeof item === "string")
       : [],
     members: (raw.members ?? []).map((member) => agentMemberSchema.parse(member)),
+    mcpServers: z.array(z.string()).parse(raw.mcpServers ?? []),
     workflow: raw.workflow === undefined ? undefined : agentWorkflowSchema.parse(raw.workflow),
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((item): item is string => typeof item === "string")
@@ -155,10 +158,10 @@ export async function createAgentProfile(
 ): Promise<AgentProfile> {
   const current = await listAgentProfiles(resourceId);
   const profile = normalizeProfile({ ...input, id: randomUUID() });
-  profile.avatar = createAvatar(bottts, { seed: profile.id }).toDataUri();
+  profile.avatar = new Avatar(avatarStyle, { seed: profile.id }).toDataUri();
   profile.members = profile.members.map((member) => ({
     ...member,
-    avatar: createAvatar(bottts, { seed: `${profile.id}:${member.id}` }).toDataUri(),
+    avatar: new Avatar(avatarStyle, { seed: `${profile.id}:${member.id}` }).toDataUri(),
   }));
   try {
     validateAgentTeam(profile);
@@ -189,9 +192,10 @@ export async function deleteAgentProfile(id: string, resourceId?: string): Promi
   memberCache.delete(scopedProfileKey(id, resourceId));
 }
 
-export async function setAgentProfileSkills(
+export async function setAgentProfileCapabilities(
   id: string,
   skills: string[],
+  mcpServers: string[],
   memberId: string | undefined,
   resourceId: string,
 ): Promise<AgentProfile> {
@@ -207,6 +211,15 @@ export async function setAgentProfileSkills(
   if (skills.some((skill) => !available.has(skill) && !target.skills.includes(skill)))
     throw workError("VALIDATION_FAILED", { text: "Skill component not found" });
   target.skills = [...new Set(skills)];
+  const { getMcpConfig } = await import("../connections/mcp");
+  const availableMcp = new Set(
+    (await getMcpConfig(resourceId)).servers
+      .filter((server) => !server.builtin)
+      .map((server) => server.id),
+  );
+  if (mcpServers.some((server) => !availableMcp.has(server) && !target.mcpServers.includes(server)))
+    throw workError("VALIDATION_FAILED", { text: "MCP component not found" });
+  target.mcpServers = [...new Set(mcpServers)];
   profile.updatedAt = new Date().toISOString();
   await saveProfiles(profiles, resourceId);
   return profile;

@@ -52,10 +52,11 @@ async function pluginRequest<T>(
   return payload as T;
 }
 
-function sourceFromInput(value: string, ref = "HEAD", path = ""): PluginSource {
+function sourceFromInput(value: string, ref = "HEAD", path = "", transport = "auto"): PluginSource {
   if (!/^https?:\/\//i.test(value)) return { kind: "local", path: value };
   const url = new URL(value);
-  return url.hostname === "github.com"
+  return transport === "git" ||
+    (transport === "auto" && (url.hostname === "github.com" || url.pathname.endsWith(".git")))
     ? { kind: "git", url: value, ref, path }
     : { kind: "archive", url: value, path };
 }
@@ -84,6 +85,7 @@ export function PluginHubPage() {
   const [keepData, setKeepData] = React.useState(true);
   const [importOpen, setImportOpen] = React.useState(false);
   const [importUrl, setImportUrl] = React.useState("");
+  const [importTransport, setImportTransport] = React.useState("auto");
   const [importRef, setImportRef] = React.useState("HEAD");
   const [importPath, setImportPath] = React.useState("");
   const [editingSource, setEditingSource] = React.useState<MarketplaceSource | "new" | null>(null);
@@ -1118,6 +1120,19 @@ export function PluginHubPage() {
               <label htmlFor="plugin-import-url" className="text-sm">
                 {t("plugins:remote")}
               </label>
+              <Select
+                value={importTransport}
+                onValueChange={(value) => value && setImportTransport(value)}
+              >
+                <SelectTrigger aria-label={t("plugins:transport")} className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">{t("plugins:autoDetect")}</SelectItem>
+                  <SelectItem value="git">Git</SelectItem>
+                  <SelectItem value="archive">HTTP ZIP</SelectItem>
+                </SelectContent>
+              </Select>
               <Input
                 id="plugin-import-url"
                 value={importUrl}
@@ -1146,7 +1161,14 @@ export function PluginHubPage() {
                     action.mutate(
                       {
                         path: "/install",
-                        body: { source: sourceFromInput(importUrl.trim(), importRef, importPath) },
+                        body: {
+                          source: sourceFromInput(
+                            importUrl.trim(),
+                            importRef,
+                            importPath,
+                            importTransport,
+                          ),
+                        },
                       },
                       {
                         onSuccess: () => {

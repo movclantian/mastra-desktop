@@ -9,7 +9,7 @@ import {
   deleteAgentProfile,
   ensureProfileAgentsRegistered,
   listAgentProfiles,
-  setAgentProfileSkills,
+  setAgentProfileCapabilities,
   unregisterProfileAgents,
 } from "../agents/custom";
 import { errorText, workError, workValidationError } from "../errors";
@@ -61,8 +61,8 @@ export const agentProfilesRoute = createRoute({
   },
 });
 
-export const agentProfileSkillsRoute = createRoute({
-  path: "/work/agents/:agentId/skills",
+export const agentProfileCapabilitiesRoute = createRoute({
+  path: "/work/agents/:agentId/capabilities",
   method: "PUT",
   responseType: "json",
   onValidationError: workValidationError,
@@ -70,12 +70,19 @@ export const agentProfileSkillsRoute = createRoute({
   bodySchema: z
     .object({
       skills: z.array(z.string().regex(/^pc_[a-f0-9]{32}$/)).max(2000),
+      mcpServers: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)).max(2000),
       memberId: z.string().min(1).optional(),
     })
     .strict(),
-  handler: async ({ agentId, skills, memberId, requestContext, mastra }) => {
+  handler: async ({ agentId, skills, mcpServers, memberId, requestContext, mastra }) => {
     const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const agent = await setAgentProfileSkills(agentId, skills, memberId, resourceId);
+    const agent = await setAgentProfileCapabilities(
+      agentId,
+      skills,
+      mcpServers,
+      memberId,
+      resourceId,
+    );
     unregisterProfileAgents(mastra, agentId, resourceId);
     await ensureProfileAgentsRegistered(mastra, agent, resourceId);
     return { agent };

@@ -6,7 +6,7 @@ import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit
  */
 
 import {
-  agentProfileSkillsRoute,
+  agentProfileCapabilitiesRoute,
   agentProfilesRoute,
   assistAgentProfileRoute,
   deleteAgentProfileRoute,
@@ -67,12 +67,6 @@ import { scheduleRoutes } from "./schedules";
 import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
 import { signalRoutes } from "./signals";
-import {
-  skillsShAuditRoute,
-  skillsShCuratedRoute,
-  skillsShListRoute,
-  skillsShSkillRoute,
-} from "./skills";
 import { storageInfoRoute } from "./storage";
 import { teamWorkflowRoutes } from "./team-runs";
 import { threadRoutes } from "./threads/threads";
@@ -103,7 +97,7 @@ export const workRoutes = [
   authMeRoute,
   ...backgroundTaskRoutes,
   agentProfilesRoute,
-  agentProfileSkillsRoute,
+  agentProfileCapabilitiesRoute,
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
@@ -168,8 +162,4 @@ export const workRoutes = [
   toolsConfigRoute,
   saveToolsConfigRoute,
   usageSummaryRoute,
-  skillsShAuditRoute,
-  skillsShCuratedRoute,
-  skillsShListRoute,
-  skillsShSkillRoute,
 ];

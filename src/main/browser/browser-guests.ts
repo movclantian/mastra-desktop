@@ -650,9 +650,11 @@ export class NativeBrowserGuestManager {
   ): Promise<unknown> {
     const session = NativeBrowserSessionSchema.parse(rawSession);
     const operation = NativeBrowserAgentOperationSchema.parse(rawOperation);
+    const initializesSession =
+      operation === "goto" || operation === "snapshot" || operation === "screenshot";
     const current =
       this.sessions.get(this.sessionKey(session)) ??
-      (operation === "goto" ? this.getOrCreate(session) : undefined);
+      (initializesSession ? this.getOrCreate(session) : undefined);
     if (!current) {
       if (operation === "state") return Promise.resolve({ state: null, visible: false });
       throw new NativeBrowserAgentCommandError("session_not_found");
@@ -677,9 +679,10 @@ export class NativeBrowserGuestManager {
     }
     const deadline = Date.now() + timeout;
     return this.enqueueAgentCommand(current, async () => {
-      if (operation === "goto" && current.tabs.length === 0) {
-        BrowserNavigateRequestSchema.parse({ url: input.url });
-        await this.createTab(current, ABOUT_BLANK);
+      if (initializesSession && current.tabs.length === 0) {
+        if (operation === "goto") BrowserNavigateRequestSchema.parse({ url: input.url });
+        // Seed the visible surface before activation: renderer ensure() shares this queue.
+        await this.createTab(current, operation === "goto" ? ABOUT_BLANK : this.homeUrl(current));
       }
       if (!this.isActiveViewVisible(current) || current.bounds.threadId !== session.threadId) {
         this.emitEvent({ type: "activate", ...session });

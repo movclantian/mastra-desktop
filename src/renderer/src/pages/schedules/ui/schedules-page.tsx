@@ -1,11 +1,11 @@
-import { useRouterState } from "@tanstack/react-router";
+import { Link, useRouterState } from "@tanstack/react-router";
 import {
   CalendarClockIcon,
   CheckIcon,
   ChevronRightIcon,
   Clock3Icon,
-  MoreHorizontalIcon,
   PauseIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -30,7 +30,6 @@ import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
@@ -324,8 +323,8 @@ export function SchedulesPage() {
     : undefined;
 
   return (
-    <div className="flex size-full min-h-0 flex-col bg-background">
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-4">
+    <div className="flex size-full min-h-0 min-w-0 flex-col bg-background">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0">
           <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
             <CalendarClockIcon className="size-5 text-primary" />
@@ -351,8 +350,8 @@ export function SchedulesPage() {
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-        <aside className="flex min-h-0 w-full shrink-0 flex-col border-b border-border md:w-[min(34%,25rem)] md:border-r md:border-b-0">
-          <div className="shrink-0 p-4">
+        <aside className="flex h-52 min-h-0 min-w-0 w-full shrink-0 flex-col border-b border-border md:h-auto md:w-[min(34%,25rem)] md:border-r md:border-b-0">
+          <div className="shrink-0 p-3">
             <div className="relative">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -379,7 +378,7 @@ export function SchedulesPage() {
                     key={schedule.id}
                     type="button"
                     className={cn(
-                      "w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/50",
+                      "w-full rounded-lg border p-3 text-left [overflow-wrap:anywhere] transition-colors hover:bg-muted/50",
                       selectedId === schedule.id && "border-primary/50 bg-muted/60",
                     )}
                     onClick={() => openExisting(schedule)}
@@ -397,9 +396,12 @@ export function SchedulesPage() {
                     <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                       {schedule.prompt}
                     </p>
-                    <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Clock3Icon className="size-3.5" /> {t("schedules:nextRun")}{" "}
-                      {formatFireAt(schedule.nextFireAt, t("schedules:neverRun"))}
+                    <div className="mt-2 flex items-start gap-1.5 text-xs text-muted-foreground">
+                      <Clock3Icon className="mt-0.5 size-3.5 shrink-0" />
+                      <span className="min-w-0">
+                        {t("schedules:nextRun")}{" "}
+                        {formatFireAt(schedule.nextFireAt, t("schedules:neverRun"))}
+                      </span>
                     </div>
                   </button>
                 ))}
@@ -410,108 +412,125 @@ export function SchedulesPage() {
 
         <main className="min-h-0 min-w-0 flex-1">
           <ScrollArea className="size-full">
-            <div className="mx-auto w-full max-w-3xl p-5 md:p-8">
+            <div className="w-full min-w-0 p-4 [overflow-wrap:anywhere] lg:p-5">
               {selected && !editing ? (
-                <Card>
-                  <CardHeader className="flex flex-row items-start justify-between gap-4 border-b">
+                <section className="space-y-5" aria-label={t("schedules:detailsTitle")}>
+                  <div className="flex items-start justify-between gap-3 border-b pb-4">
                     <div className="min-w-0">
-                      <CardTitle>{t("schedules:detailsTitle")}</CardTitle>
-                      <CardDescription className="mt-1">
-                        {t("schedules:detailsDesc")}
-                      </CardDescription>
+                      <h2 className="text-xl font-semibold tracking-tight">
+                        {scheduleLabel(selected, t("schedules:defaultScheduleName"))}
+                      </h2>
+                      <Badge
+                        className="mt-2"
+                        variant={selected.status === "active" ? "default" : "secondary"}
+                      >
+                        {selected.status === "active"
+                          ? t("schedules:statusActive")
+                          : t("schedules:statusPausedTag")}
+                      </Badge>
                     </div>
                     <Button
-                      size="icon"
-                      variant="ghost"
-                      title={t("schedules:edit")}
-                      aria-label={t("schedules:edit")}
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
                       onClick={() => setEditing(true)}
                     >
-                      <MoreHorizontalIcon />
+                      <PencilIcon /> {t("schedules:edit")}
                     </Button>
-                  </CardHeader>
-                  <CardContent className="space-y-5 pt-5">
-                    <div className="space-y-5">
-                      <div className="rounded-lg bg-muted/40 p-4">
-                        <p className="whitespace-pre-wrap text-sm leading-6">{selected.prompt}</p>
-                      </div>
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div>
-                          <p className="text-xs text-muted-foreground">{t("schedules:runIn")}</p>
-                          <p className="mt-1 text-sm">
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-medium text-muted-foreground">
+                      {t("schedules:form.prompt")}
+                    </h3>
+                    <p className="whitespace-pre-wrap text-base leading-7">{selected.prompt}</p>
+                  </div>
+                  <dl className="grid grid-cols-1 gap-x-6 gap-y-4 border-y py-4 sm:grid-cols-2 xl:grid-cols-3 [&>div]:min-w-0">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">{t("schedules:runIn")}</dt>
+                      <dd className="mt-1 text-sm">
+                        {selected.threadId ? (
+                          <Link
+                            to="/chat"
+                            search={{ thread: selected.threadId }}
+                            className="text-primary underline-offset-4 hover:underline focus-visible:underline"
+                          >
                             {selectedThread
                               ? threadTitle(selectedThread, t("schedules:newThread"))
-                              : t("schedules:newThreadPerRun")}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">Cron</p>
-                          <p className="mt-1 font-mono text-sm">{selected.cron}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">{t("schedules:signal")}</p>
-                          <p className="mt-1 text-sm">
-                            {selected.signalType ?? "notification"} · &lt;
-                            {selected.tagName ?? "schedule"}&gt;
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">
-                            {t("schedules:busyIdleStatus")}
-                          </p>
-                          <p className="mt-1 text-sm">
-                            {selected.ifActive?.behavior ?? "deliver"} /{" "}
-                            {selected.ifIdle?.behavior ?? "wake"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">{t("schedules:nextRun")}</p>
-                          <p className="mt-1 text-sm">
-                            {formatFireAt(selected.nextFireAt, t("schedules:neverRun"))}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-muted-foreground">{t("schedules:lastRun")}</p>
-                          <p className="mt-1 text-sm">
-                            {formatFireAt(selected.lastFireAt, t("schedules:neverRun"))}
-                          </p>
-                        </div>
-                      </div>
-                      <Separator />
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => void act(selected.id, "run")}
-                          disabled={busyId === selected.id}
-                        >
-                          <PlayIcon /> {t("schedules:runNow")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            void act(selected.id, selected.status === "active" ? "pause" : "resume")
-                          }
-                          disabled={busyId === selected.id}
-                        >
-                          {selected.status === "active" ? <PauseIcon /> : <CheckIcon />}
-                          {selected.status === "active"
-                            ? t("schedules:pause")
-                            : t("schedules:resume")}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => void act(selected.id, "delete")}
-                          disabled={busyId === selected.id}
-                        >
-                          <Trash2Icon /> {t("schedules:delete")}
-                        </Button>
-                      </div>
+                              : t("schedules:newThread")}
+                          </Link>
+                        ) : (
+                          t("schedules:newThreadPerRun")
+                        )}
+                      </dd>
                     </div>
-                  </CardContent>
-                </Card>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">
+                        {t("schedules:form.cronExpression")}
+                      </dt>
+                      <dd className="mt-1 font-mono text-sm">{selected.cron}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">
+                        {t("schedules:form.timezone")}
+                      </dt>
+                      <dd className="mt-1 text-sm">
+                        {selected.timezone || t("schedules:serverTimezone")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">{t("schedules:nextRun")}</dt>
+                      <dd className="mt-1 text-sm">
+                        {formatFireAt(selected.nextFireAt, t("schedules:neverRun"))}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">{t("schedules:lastRun")}</dt>
+                      <dd className="mt-1 text-sm">
+                        {formatFireAt(selected.lastFireAt, t("schedules:neverRun"))}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted-foreground">
+                        {t("schedules:busyIdleStatus")}
+                      </dt>
+                      <dd className="mt-1 text-sm">
+                        {t(
+                          `schedules:form.runningBehaviors.${selected.ifActive?.behavior ?? "deliver"}`,
+                        )}{" "}
+                        / {t(`schedules:form.idleBehaviors.${selected.ifIdle?.behavior ?? "wake"}`)}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => void act(selected.id, "run")}
+                      disabled={busyId === selected.id}
+                    >
+                      <PlayIcon /> {t("schedules:runNow")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void act(selected.id, selected.status === "active" ? "pause" : "resume")
+                      }
+                      disabled={busyId === selected.id}
+                    >
+                      {selected.status === "active" ? <PauseIcon /> : <CheckIcon />}
+                      {selected.status === "active" ? t("schedules:pause") : t("schedules:resume")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => void act(selected.id, "delete")}
+                      disabled={busyId === selected.id}
+                    >
+                      <Trash2Icon /> {t("schedules:delete")}
+                    </Button>
+                  </div>
+                </section>
               ) : editing ? (
                 <div className="space-y-6">
                   <div className="flex items-start justify-between gap-4">
