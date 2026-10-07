@@ -8,6 +8,8 @@ import { cn } from "@/shared/lib";
 import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Checkbox } from "@/shared/ui/checkbox";
+import { FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { AgentProfile } from "../../../../../shared/agent-contract";
@@ -283,17 +285,14 @@ function AgentCapabilitySelection({
           {skillIds.map((id) => {
             const skill = choices.get(id);
             return (
-              <label key={id} className="flex min-w-0 items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
+              <FieldLabel key={id} className="min-w-0 items-start gap-2 text-sm font-normal">
+                <Checkbox
                   className="mt-1"
                   checked={isDefault ? skill?.enabled === true : selected.includes(id)}
                   disabled={isDefault || !onSaved || (!original.includes(id) && !skill?.enabled)}
-                  onChange={(event) =>
+                  onCheckedChange={(checked) =>
                     setSelected((current) =>
-                      event.target.checked
-                        ? [...current, id]
-                        : current.filter((item) => item !== id),
+                      checked ? [...current, id] : current.filter((item) => item !== id),
                     )
                   }
                 />
@@ -306,7 +305,7 @@ function AgentCapabilitySelection({
                     </span>
                   ) : null}
                 </span>
-              </label>
+              </FieldLabel>
             );
           })}
           {!skills.isPending && !skills.error && !skillIds.length ? (
@@ -322,9 +321,8 @@ function AgentCapabilitySelection({
           {mcpIds.map((id) => {
             const server = servers.get(id);
             return (
-              <label key={id} className="flex min-w-0 items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
+              <FieldLabel key={id} className="min-w-0 items-start gap-2 text-sm font-normal">
+                <Checkbox
                   className="mt-1"
                   checked={isDefault ? server?.enabled === true : selectedMcp.includes(id)}
                   disabled={
@@ -333,11 +331,9 @@ function AgentCapabilitySelection({
                     (!originalMcp.includes(id) &&
                       (!server?.enabled || !!server.configurationError || !!server.connectionError))
                   }
-                  onChange={(event) =>
+                  onCheckedChange={(checked) =>
                     setSelectedMcp((current) =>
-                      event.target.checked
-                        ? [...current, id]
-                        : current.filter((item) => item !== id),
+                      checked ? [...current, id] : current.filter((item) => item !== id),
                     )
                   }
                 />
@@ -347,7 +343,7 @@ function AgentCapabilitySelection({
                   {server?.configurationError ? ` · ${t("plugins:missingConfig")}` : ""}
                   {server?.connectionError ? ` · ${t("agentHub:capabilityConnectionFailed")}` : ""}
                 </span>
-              </label>
+              </FieldLabel>
             );
           })}
           {!mcp.isPending && !mcp.error && !mcpIds.length ? (

@@ -36,8 +36,6 @@ import { registerShutdownHandlers, shutdownRequestMiddleware } from "./routes/sh
 import { memoryThreadMiddleware } from "./routes/threads/threads";
 import { appStorage } from "./storage/database";
 import {
-  getThreadWorkspace,
-  getWorkspaceConfig,
   registerWorkspaceLifecycle,
   scheduleIdleWorkspaceCleanup,
 } from "./workspace/workspace-manager";
@@ -217,7 +215,6 @@ export const mastra = new Mastra({
     submit_plan: submitPlanTool,
   },
   editor: workEditor,
-  workspace: await getThreadWorkspace((await getWorkspaceConfig()).threadsRoot),
   server: {
     auth: workAuth,
     storedResources: { scope: { metadataKey: "mastra_resource_id" } },

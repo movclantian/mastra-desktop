@@ -11,12 +11,12 @@ import type {
   Agent,
   AgentExecutionOptions,
   DelegationConfig,
-  MastraDBMessage,
   ToolsInput,
 } from "@mastra/core/agent";
 import { buildBasePrompt, createCodingAgent } from "@mastra/core/coding-agent";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
+import { createWorkspaceTools } from "@mastra/core/workspace";
 import { delegationMemberIds } from "../../shared/agent-contract";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
@@ -155,81 +155,6 @@ function codingAgentBasePrompt(requestContext?: RequestContext): string {
   });
 }
 
-/**
- * 子代理委派配置(docs/en/docs/subagents.mdx):
- * 透传最近 14 条相关上下文,保留最近工具证据并过滤敏感消息;
- * 子 Agent 的工具和执行步数由子 Agent 自身配置决定,空结果显式回填,
- * 防止把"无发现"当成证据。
- */
-const SENSITIVE_KEY_PATTERN =
-  /^(?:api[_ -]?key|password|secret|authorization|access[_ -]?token|refresh[_ -]?token|bearer)$/i;
-const SENSITIVE_VALUE_PATTERN =
-  /(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:sk|rk|pk|ghp|github_pat|xox[baprs])_[A-Za-z0-9._-]{12,}|(?:api[_ -]?key|password|secret|authorization|access[_ -]?token|refresh[_ -]?token)\s*[:=]\s*[^\s,;]+)/gi;
-const MAX_DELEGATION_STRING_LENGTH = 8_000;
-
-function isToolMessage(message: { content?: unknown }): boolean {
-  const content = message.content;
-  if (Array.isArray(content)) {
-    return content.some((part) => {
-      if (typeof part !== "object" || part === null) return false;
-      const type = (part as { type?: unknown }).type;
-      return type === "tool-invocation" || type === "tool-result" || type === "tool-call";
-    });
-  }
-  if (typeof content !== "object" || content === null) return false;
-  const parts = (content as { parts?: unknown }).parts;
-  return (
-    Array.isArray(parts) &&
-    parts.some((part) => {
-      if (typeof part !== "object" || part === null) return false;
-      const type = (part as { type?: unknown }).type;
-      return type === "tool-invocation" || type === "tool-result" || type === "tool-call";
-    })
-  );
-}
-
-function compactDelegationString(value: string): string {
-  const sanitized = value.replace(SENSITIVE_VALUE_PATTERN, "[redacted]");
-  if (sanitized.length <= MAX_DELEGATION_STRING_LENGTH) return sanitized;
-  const head = Math.floor(MAX_DELEGATION_STRING_LENGTH * 0.7);
-  const tail = MAX_DELEGATION_STRING_LENGTH - head;
-  return `${sanitized.slice(0, head)}\n...[委派上下文已裁剪 ${sanitized.length - MAX_DELEGATION_STRING_LENGTH} 字符]...\n${sanitized.slice(-tail)}`;
-}
-
-function compactDelegationValue(value: unknown, key?: string): unknown {
-  if (key && SENSITIVE_KEY_PATTERN.test(key)) return "[redacted]";
-  if (typeof value === "string") return compactDelegationString(value);
-  if (Array.isArray(value)) return value.map((item) => compactDelegationValue(item));
-  if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([entryKey, entryValue]) => [
-      entryKey,
-      compactDelegationValue(entryValue, entryKey),
-    ]),
-  );
-}
-
-function compactDelegationMessage<T extends { content?: unknown }>(message: T): T {
-  if (message.content === undefined) return message;
-  return { ...message, content: compactDelegationValue(message.content) } as T;
-}
-
-function toolCallIds(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap((item) => toolCallIds(item));
-  if (typeof value !== "object" || value === null) return [];
-  const record = value as Record<string, unknown>;
-  const ownId =
-    typeof record.toolCallId === "string"
-      ? record.toolCallId
-      : typeof record.toolCallID === "string"
-        ? record.toolCallID
-        : undefined;
-  return [
-    ...(ownId ? [ownId] : []),
-    ...Object.values(record).flatMap((child) => toolCallIds(child)),
-  ];
-}
-
 export function describeIncompleteDelegation(result: {
   finishReason?: string;
   subAgentToolResults?: { toolName: string; toolCallId: string; isError?: boolean }[];
@@ -257,34 +182,16 @@ export function describeIncompleteDelegation(result: {
 const WORK_DELEGATION: DelegationConfig = {
   hookErrorStrategy: "throw",
   includeSubAgentToolResultsInModelContext: false,
-  messageFilter: ({ messages }) => {
-    const candidates = messages.filter(
-      (message) =>
-        message.role === "user" || message.role === "assistant" || isToolMessage(message),
-    );
-
-    // Keep the recent conversation small, then expand it to include any
-    // message carrying the same tool-call id as the retained tail. This keeps
-    // tool invocations and results paired even when the storage adapter split
-    // them across messages.
-    const recent = candidates.slice(-16);
-    const relatedToolIds = new Set(recent.flatMap((message) => toolCallIds(message.content)));
-    const selected = candidates.filter(
-      (message) =>
-        recent.includes(message) ||
-        toolCallIds(message.content).some((id) => relatedToolIds.has(id)),
-    );
-    return selected
-      .slice(-24)
-      .map((message) => compactDelegationMessage(message as MastraDBMessage));
-  },
+  // Each assignment starts with its explicit prompt; unrelated parent turns and
+  // tool history must not become the child's own conversation.
+  messageFilter: () => [],
   // 委派前界定并细化任务(官方 docs/subagents.mdx onDelegationStart):为只读专家补一份
   // 输出契约、把随附内容显式声明为数据而非指令,并用 modifiedMaxSteps 收敛委派迭代,
   // 避免子 Agent 把冗长过程或跑飞的循环带回父级。
   onDelegationStart: ({ primitiveId, prompt, requestContext }) => {
     const contract =
       primitiveId === "reviewer"
-        ? "只做静态审查,不修改文件;按【严重度 → 位置 → 问题 → 修复建议】分条输出,每条给出可核验的证据(路径:行)。不要复述整段代码或原始内容。"
+        ? "只做静态审查,不修改文件;只报告有实际影响且证据充分的问题,按【严重度 → 位置 → 问题 → 修复建议】分条输出。风格偏好不算缺陷,没有问题就明确说明。不要复述整段代码或原始内容。"
         : primitiveId === "explorer"
           ? "只做只读探查,不修改文件;用简短的结构化列表返回事实与关键结论,并为每条结论标注来源(路径/链接)。不要复述大段原文。"
           : undefined;
@@ -298,7 +205,6 @@ const WORK_DELEGATION: DelegationConfig = {
   },
   onDelegationComplete: (context) => {
     if (!context.success) {
-      context.bail();
       return {
         feedback: "The delegated task failed; do not treat it as evidence.",
         resultText: "The delegated task failed. No reliable result is available.",
@@ -401,7 +307,33 @@ function createWorkAgent(
       return instructions;
     },
     model: resolveAgentModel,
-    ...(!member ? { goal: { judge: resolveAgentModel } } : {}),
+    ...(!member
+      ? {
+          goal: {
+            judge: resolveAgentModel,
+            tools: async ({ requestContext }: { requestContext: RequestContext }) => {
+              if (!requestContext.get(WORKSPACE_PATH_CONTEXT_KEY))
+                throw new Error("Goal verification requires the active thread workspace");
+              const activeWorkspace = await workspace({ requestContext });
+              const tools = await createWorkspaceTools(activeWorkspace, {
+                workspace: activeWorkspace,
+                requestContext,
+              });
+              return Object.fromEntries(
+                [
+                  "mastra_workspace_read_file",
+                  "mastra_workspace_list_files",
+                  "mastra_workspace_file_stat",
+                  "mastra_workspace_grep",
+                  "mastra_workspace_search",
+                ]
+                  .filter((name) => tools[name])
+                  .map((name) => [name, tools[name]]),
+              );
+            },
+          },
+        }
+      : {}),
     memory: ({ requestContext }) =>
       getMemory({
         requestContext,

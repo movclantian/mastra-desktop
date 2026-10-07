@@ -148,7 +148,14 @@ const stableId = (value: string) => createHash("sha256").update(value).digest("h
 interface McpRuntime {
   clients: Map<
     string,
-    { hash: string; promise: Promise<MCPClient>; error?: string; toolCount?: number }
+    {
+      hash: string;
+      promise: Promise<MCPClient>;
+      error?: string;
+      toolCount?: number;
+      discovery?: ReturnType<MCPClient["listToolsWithErrors"]>;
+      retryAfter?: number;
+    }
   >;
   redirects: Map<
     string,
@@ -1066,6 +1073,25 @@ async function createClient(
   });
 }
 
+function discoveryError(
+  server: McpServerConfig,
+  result: Awaited<ReturnType<MCPClient["listToolsWithErrors"]>>,
+): string | undefined {
+  const name = toolNamespace(server);
+  const error = result.errors[name];
+  if (!error) return undefined;
+  const detail = result.errorDetails[name];
+  if (detail?.httpStatus === 401 || detail?.httpStatus === 403)
+    return `MCP 授权失败（HTTP ${detail.httpStatus}），请检查 API Key、请求头或完成 OAuth 授权。`;
+  if (server.transport === "stdio" && detail?.code === "CONNECTION_CLOSED")
+    return "MCP 进程已退出，请检查启动命令、运行环境及依赖是否安装；具体原因见进程日志。";
+  if (detail?.code === "REQUEST_TIMEOUT")
+    return "MCP 连接或工具发现超时，请检查服务状态、网络及超时设置后重试。";
+  return server.plugin
+    ? "Plugin MCP connection failed; check its connection and configuration"
+    : error;
+}
+
 export async function testMcpServer(
   server: McpServerConfig,
   resourceId?: string,
@@ -1075,15 +1101,18 @@ export async function testMcpServer(
   try {
     const result = await client.listToolsWithErrors();
     const tools = Object.keys(result.tools);
-    const error = result.errors[toolNamespace(server)];
+    const error = discoveryError(server, result);
+    const runtime = getRuntime(resourceId).clients.get(server.id);
+    if (!error && runtime?.hash === JSON.stringify(server)) {
+      runtime.error = undefined;
+      runtime.retryAfter = undefined;
+      runtime.toolCount = tools.length;
+    }
     return {
       ok: !error,
       toolCount: tools.length,
       tools,
-      error:
-        error && server.plugin
-          ? "Plugin MCP connection failed; check its connection and configuration"
-          : error,
+      error,
     };
   } catch (error) {
     throw workError("MCP_CONNECTION_FAILED", {
@@ -1152,13 +1181,17 @@ export async function getConfiguredMcpTools(
     selected.map(async (server) => {
       const client = await getConfiguredMcpClient(server, resourceId);
       const runtime = getRuntime(resourceId).clients.get(server.id);
+      // Share concurrent discovery and give failed connections 30 seconds before another attempt.
+      if (runtime?.retryAfter && runtime.retryAfter > Date.now()) return {};
       try {
-        const { tools, errors } = await client.listToolsWithErrors();
-        if (Object.keys(errors).length)
+        const discovery = runtime?.discovery ?? client.listToolsWithErrors();
+        if (runtime) runtime.discovery = discovery;
+        const result = await discovery;
+        const { tools } = result;
+        const error = discoveryError(server, result);
+        if (error)
           throw workError("MCP_CONNECTION_FAILED", {
-            text: server.plugin
-              ? "Plugin MCP tool discovery failed"
-              : `${server.name}: ${Object.values(errors).join("; ")}`,
+            text: `${server.name}: ${error}`,
           });
         const prefix = `${toolNamespace(server)}_`;
         const selectedTools = !server.tools
@@ -1178,6 +1211,7 @@ export async function getConfiguredMcpTools(
             );
         if (runtime) {
           runtime.error = undefined;
+          runtime.retryAfter = undefined;
           runtime.toolCount = Object.keys(selectedTools).length;
         }
         return Object.fromEntries(
@@ -1213,11 +1247,16 @@ export async function getConfiguredMcpTools(
           }),
         );
       } catch (error) {
+        const firstFailure = !runtime?.retryAfter || runtime.retryAfter <= Date.now();
         if (runtime) {
           runtime.error = errorText(error);
           runtime.toolCount = undefined;
+          runtime.retryAfter = Date.now() + 30_000;
         }
-        throw error;
+        if (firstFailure) throw error;
+        return {};
+      } finally {
+        if (runtime) runtime.discovery = undefined;
       }
     }),
   );
@@ -1259,12 +1298,21 @@ export async function authenticateMcpServer(
     runtime.redirects.set(serverId, redirect);
   }
   // SDK owns the per-server authentication task; this map only delivers its browser URL.
-  const authentication = client.authenticate(toolNamespace(server)).catch((error: unknown) => {
-    throw workError("MCP_CONNECTION_FAILED", {
-      text: errorText(error, "MCP OAuth 授权失败"),
-      cause: error,
+  const authentication = client
+    .authenticate(toolNamespace(server))
+    .then(() => {
+      const connection = runtime.clients.get(serverId);
+      if (connection?.hash === JSON.stringify(server)) {
+        connection.error = undefined;
+        connection.retryAfter = undefined;
+      }
+    })
+    .catch((error: unknown) => {
+      throw workError("MCP_CONNECTION_FAILED", {
+        text: errorText(error, "MCP OAuth 授权失败"),
+        cause: error,
+      });
     });
-  });
   const clearRedirect = () => {
     if (runtime.redirects.get(serverId) === redirect) runtime.redirects.delete(serverId);
   };

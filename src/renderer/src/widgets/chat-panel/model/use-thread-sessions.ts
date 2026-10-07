@@ -5,11 +5,13 @@ import {
   type KnownAgentControllerEvent,
 } from "@mastra/client-js";
 import { mastraDBMessageToSignal } from "@mastra/core/signals";
+import { useQueryClient } from "@tanstack/react-query";
 import { DefaultChatTransport, type FileUIPart, readUIMessageStream } from "ai";
 import * as React from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { qk, type WorkThread } from "@/entities/workbench";
 import { getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload } from "@/shared/lib";
@@ -61,6 +63,7 @@ function createThreadSession(
   buildBody: () => Record<string, unknown>,
   onBusy: (busy: boolean) => void,
   onSettled: () => void,
+  isDeleting: () => boolean,
 ) {
   const store = createStore<SessionView>(() => ({
     messages: [],
@@ -281,6 +284,7 @@ function createThreadSession(
     }
   };
   const refreshQueue = async () => {
+    if (disposed || isDeleting()) return;
     const signal = observationSignal;
     const startedAt = ++queueRevision;
     const payload = await requestJson<{ requests: QueuedRequest[] }>(
@@ -291,7 +295,7 @@ function createThreadSession(
     if (!disposed && startedAt === queueRevision) setQueue(payload.requests);
   };
   const queueRefreshFailed = (error: unknown) => {
-    if (!disposed)
+    if (!disposed && !isDeleting() && !(error instanceof Error && error.name === "AbortError"))
       toast.error(i18n.t("chat:prompt.queueSyncFailed"), {
         description: error instanceof Error ? error.message : String(error),
       });
@@ -409,6 +413,8 @@ function createThreadSession(
     },
   });
   const connect = () => {
+    if (isDeleting())
+      return Promise.reject(new DOMException("Thread deletion in progress", "AbortError"));
     disposed = false;
     return connection.connect();
   };
@@ -582,6 +588,8 @@ function createThreadSession(
     hasPendingMessages: () => pendingMessages.size > 0,
     connect,
     reconnect: () => {
+      if (isDeleting())
+        return Promise.reject(new DOMException("Thread deletion in progress", "AbortError"));
       disposed = false;
       return connection.reconnect();
     },
@@ -715,7 +723,32 @@ export function useThreadSessions(
   onBusy: (threadId: string, busy: boolean) => void,
   onSettled: (threadId: string) => void,
 ) {
+  const queryClient = useQueryClient();
   const sessions = React.useMemo(() => new Map<string, ThreadSession>(), [userId]);
+  React.useEffect(
+    () =>
+      queryClient.getMutationCache().subscribe((event) => {
+        if (event.type !== "updated") return;
+        const key = event.mutation.options.mutationKey;
+        if (key?.[0] !== qk.deleteThread(userId)[0] || key[1] !== userId) return;
+        const threadId = event.mutation.state.variables;
+        if (typeof threadId !== "string") return;
+        const session = sessions.get(threadId);
+        if (!session) return;
+        if (event.action.type === "pending") session.dispose();
+        else if (event.action.type === "success" || event.action.type === "error") {
+          const threads = queryClient.getQueryData<WorkThread[]>(qk.threads(userId));
+          if (
+            event.action.type === "success" ||
+            (threads && !threads.some((thread) => thread.id === threadId))
+          ) {
+            session.dispose();
+            sessions.delete(threadId);
+          } else void session.reconnect().catch(() => undefined);
+        }
+      }),
+    [queryClient, sessions, userId],
+  );
   const callbacks = React.useRef({ buildBody, onBusy, onSettled });
   callbacks.current = { buildBody, onBusy, onSettled };
   React.useEffect(() => {
@@ -748,12 +781,18 @@ export function useThreadSessions(
           () => callbacks.current.buildBody(threadId),
           (busy) => callbacks.current.onBusy(threadId, busy),
           () => callbacks.current.onSettled(threadId),
+          () =>
+            queryClient.isMutating({
+              mutationKey: qk.deleteThread(userId),
+              exact: true,
+              predicate: (mutation) => mutation.state.variables === threadId,
+            }) > 0,
         );
         sessions.set(threadId, session);
       }
       return session;
     },
-    [sessions, userId],
+    [queryClient, sessions, userId],
   );
   const retainActive = React.useCallback(
     (activeThreadId: string | null) => {

@@ -636,9 +636,26 @@ export const MessageItem = React.memo(function MessageItem({
           <Message align="end">
             {/* 官方 message-group:分组中非末条消息渲染空头像占位,视觉上折叠连续消息 */}
             <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
-              {showAvatar ? <UserAvatar userId={userId} /> : null}
+              {showAvatar ? (
+                speaker?.agentProfileId ? (
+                  <GeneratedAvatar
+                    seed={
+                      speaker.teamMemberId
+                        ? `${speaker.agentProfileId}:${speaker.teamMemberId}`
+                        : speaker.agentProfileId
+                    }
+                    name={speaker.agentDisplayName ?? speaker.agentProfileId}
+                    src={speaker.agentAvatar}
+                  />
+                ) : (
+                  <UserAvatar userId={userId} />
+                )
+              ) : null}
             </MessageAvatar>
             <MessageContent className="items-end">
+              {speaker?.agentDisplayName ? (
+                <MessageHeader className="px-0">{speaker.agentDisplayName}</MessageHeader>
+              ) : null}
               {editing ? (
                 <div className="flex w-full max-w-2xl self-end flex-col items-end gap-2">
                   <Textarea

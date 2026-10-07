@@ -1925,9 +1925,6 @@ export const en = {
     describeInlineChange: "Describe modification...",
     submitInlineChange: "Submit inline modification",
     inputInlineRequirement: "Enter inline modification requirements",
-    useAiToModify: "Use AI to modify selection",
-    modifyWithCurrentModel: "Modify selection with current session and model",
-    pleaseSelectSession: "Please select a conversation first",
     closeInlineBar: "Close inline editing toolbar",
     inlineModifyFailed: "Inline modification failed",
     openInPrefix: "Open in",
@@ -1961,8 +1958,6 @@ export const en = {
     previewFileLoading: "Loading preview…",
     fileLoadFailed: "Failed to load file",
     fileLoadFailedDesc: "Unable to retrieve preview content for {{fileName}}",
-    defaultInstruction:
-      "Improve this code while preserving its existing behavior, interface, and observable results.",
     noReplacementCode: "Model did not return replacement code",
     selectionChangedNotApplied: "Selection changed, model result not applied",
     createDirFailed: "Failed to create folder",
@@ -3143,8 +3138,6 @@ export const en = {
     handoffHistory: "Handoff history",
     handoffDescription: "A handoff changes who receives subsequent messages.",
     initialExpert: "Initial specialist",
-    invocationDetails: "View invocation messages and tool trace",
-    toolPayloads: "Tool inputs and outputs",
     describePromptRequired: "Please describe the desired Agent or team first",
     aiCreateSuccess: "Agent created with {{skills}} skills and {{mcp}} MCP servers linked",
     aiCapabilitiesHint:

@@ -16,6 +16,7 @@ import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Checkbox } from "@/shared/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -1016,24 +1017,30 @@ export function PluginHubPage({
                 <p className="text-sm break-words text-muted-foreground">
                   {plugin.current.description}
                 </p>
-                <div className="flex flex-wrap gap-1">
-                  {plugin.current.components
-                    .filter((component) => filter === "plugins" || component.kind === filter)
-                    .map((component) => (
-                      <Badge key={component.id} variant="outline">
-                        {component.kind} · {component.name}
-                        {!component.supported ? ` · ${t("plugins:unsupported")}` : ""}
-                      </Badge>
-                    ))}
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                    {plugin.current.components
+                      .filter((component) => filter === "plugins" || component.kind === filter)
+                      .map((component) => (
+                        <Badge
+                          className="max-w-full whitespace-normal break-all"
+                          key={component.id}
+                          variant="outline"
+                        >
+                          {component.kind} · {component.name}
+                          {!component.supported ? ` · ${t("plugins:unsupported")}` : ""}
+                        </Badge>
+                      ))}
+                  </div>
+                  <Button
+                    className="ml-auto shrink-0"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => select({ id: plugin.id })}
+                  >
+                    {t("plugins:detail")}
+                  </Button>
                 </div>
-                <Button
-                  className="self-start"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => select({ id: plugin.id })}
-                >
-                  {t("plugins:detail")}
-                </Button>
               </section>
             ))}
             {!installed.isPending && !visiblePlugins.length ? (
@@ -1445,14 +1452,10 @@ export function PluginHubPage({
                     {t("plugins:rollback")}
                   </Button>
                 ) : null}
-                <label className="flex items-center gap-1 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={keepData}
-                    onChange={(event) => setKeepData(event.target.checked)}
-                  />
-                  {t("plugins:keepData")}
-                </label>
+                <FieldLabel className="min-w-0 items-center gap-2 text-xs font-normal">
+                  <Checkbox checked={keepData} onCheckedChange={setKeepData} />
+                  <span className="min-w-0 break-words">{t("plugins:keepData")}</span>
+                </FieldLabel>
                 <Button
                   size="sm"
                   variant="destructive"

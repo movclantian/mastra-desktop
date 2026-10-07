@@ -183,6 +183,7 @@ export function useDeleteThreadMutation(userId: string) {
     );
   };
   return useMutation({
+    mutationKey: qk.deleteThread(userId),
     mutationFn: async (threadId: string) => {
       await window.api?.terminal?.closeThread({ resourceId: userId, threadId });
       return deleteThreadRequest(threadId, userId);

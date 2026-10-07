@@ -244,11 +244,12 @@ function CodeEditor({
   );
 
   const runInlineEdit = React.useCallback(
-    async (requestedInstruction?: string) => {
+    async (requestedInstruction: string) => {
+      const editInstruction = requestedInstruction.trim();
       const current = editorRef.current;
       const currentSelection = selection;
       const threadId = activeThreadIdRef.current;
-      if (!current || !currentSelection || !threadId || aiBusy) return;
+      if (!editInstruction || !current || !currentSelection || !threadId || aiBusy) return;
 
       const documentText = current.state.doc.toString();
       const selectedText = current.state.sliceDoc(currentSelection.from, currentSelection.to);
@@ -282,8 +283,7 @@ function CodeEditor({
                 Math.min(documentText.length, currentSelection.to + 2_000),
               )
             : "",
-          instruction:
-            requestedInstruction?.trim() || instruction.trim() || t("workspace:defaultInstruction"),
+          instruction: editInstruction,
           signal: controller.signal,
         });
         if (typeof payload?.text !== "string" || !payload.text.trim()) {
@@ -322,7 +322,7 @@ function CodeEditor({
         setAiBusy(false);
       }
     },
-    [aiBusy, includeContext, instruction, selection, t],
+    [aiBusy, includeContext, selection, t],
   );
 
   const modelLabel = modelSelection?.modelName || t("workspace:currentModel");
@@ -452,7 +452,7 @@ function CodeEditor({
               />
               <Button
                 aria-label={t("workspace:submitInlineChange")}
-                disabled={aiBusy || !activeThreadId}
+                disabled={aiBusy || !activeThreadId || !instruction.trim()}
                 size="icon-xs"
                 title={t("workspace:submitInlineChange")}
                 type="submit"
@@ -477,24 +477,6 @@ function CodeEditor({
               <PencilLineIcon />
             </Button>
           )}
-          <Button
-            aria-label={t("workspace:useAiToModify")}
-            disabled={aiBusy || !activeThreadId}
-            onClick={() => void runInlineEdit()}
-            size="icon-xs"
-            title={
-              activeThreadId
-                ? t("workspace:modifyWithCurrentModel")
-                : t("workspace:pleaseSelectSession")
-            }
-            variant="ghost"
-          >
-            {aiBusy ? (
-              <Dotm3x3_11 size={14} dotSize={2.2} colorPreset="solid-theme" />
-            ) : (
-              <SparklesIcon />
-            )}
-          </Button>
           <span
             className="max-w-36 truncate border-l px-1.5 text-[10px] text-muted-foreground"
             title={`${modelLabel}${reasoningLabel}`}

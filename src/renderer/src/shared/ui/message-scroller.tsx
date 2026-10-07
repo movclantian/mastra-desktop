@@ -36,9 +36,25 @@ function MessageScroller({
 function MessageScrollerViewport({
   className,
   onScroll,
+  onPointerDown,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Viewport>) {
   const lastScrollTopRef = React.useRef(0);
+  const draggingScrollbarRef = React.useRef(false);
+
+  React.useEffect(() => {
+    const endDrag = () => {
+      draggingScrollbarRef.current = false;
+    };
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    window.addEventListener("blur", endDrag);
+    return () => {
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+      window.removeEventListener("blur", endDrag);
+    };
+  }, []);
 
   // 原生滚动条拖动只产生 scroll 事件(Chromium 不向元素派发 wheel/touch/
   // keydown),库的 userScrollIntent 收不到,锚定模式(内部 spacer 展开)下
@@ -49,7 +65,8 @@ function MessageScrollerViewport({
     const { scrollTop } = viewport;
     const scrolledUp = scrollTop < lastScrollTopRef.current - 2;
     lastScrollTopRef.current = scrollTop;
-    if (!scrolledUp) return;
+    // Queue collapse and viewport resize also adjust scrollTop. They are not user intent.
+    if (!draggingScrollbarRef.current || !scrolledUp) return;
     // 仅锚定态需要补偿:spacer 折叠(高度 0)时库自身已凭 scroll 事件解除
     // following-bottom,无需介入。
     const spacer = viewport.querySelector<HTMLElement>("[data-message-scroller-spacer]");
@@ -68,6 +85,19 @@ function MessageScrollerViewport({
       onScroll={(event) => {
         handleScrollbarDrag(event);
         onScroll?.(event);
+      }}
+      onPointerDown={(event) => {
+        const viewport = event.currentTarget;
+        const bounds = viewport.getBoundingClientRect();
+        const x = event.clientX - bounds.left;
+        draggingScrollbarRef.current =
+          event.button === 0 &&
+          event.pointerType === "mouse" &&
+          event.target === viewport &&
+          viewport.scrollHeight > viewport.clientHeight &&
+          (x < viewport.clientLeft || x >= viewport.clientLeft + viewport.clientWidth);
+        lastScrollTopRef.current = viewport.scrollTop;
+        onPointerDown?.(event);
       }}
       {...props}
     />

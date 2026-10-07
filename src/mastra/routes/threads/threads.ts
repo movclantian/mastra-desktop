@@ -157,6 +157,7 @@ export const searchThreadsRoute = registerApiRoute("/work/threads/search", {
 
     for (const thread of threads) {
       if (results.length >= limit) break;
+      if (thread.metadata?.goalJudge === true) continue;
       const messages = normalizeChatHistoryMessages(
         (await memory.recall({ threadId: thread.id, resourceId, perPage: false })).messages,
       );
@@ -837,6 +838,8 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     const payload = (await c.res.clone().json()) as {
       threads: Array<{ id: string; metadata?: Record<string, unknown> }>;
     };
+    // Keep native pagination: even a page containing only judge threads may have more pages.
+    payload.threads = payload.threads.filter((thread) => thread.metadata?.goalJudge !== true);
     // Derive activity from persisted user turns, not settings writes to thread.updatedAt.
     // Aggregate timestamps in SQL so listing threads never loads message bodies into memory.
     const lastUserRequests = new Map<string, string>();

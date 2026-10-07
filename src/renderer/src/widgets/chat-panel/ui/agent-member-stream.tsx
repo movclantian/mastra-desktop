@@ -1,20 +1,18 @@
-import { useQuery } from "@tanstack/react-query";
-import { isToolUIPart } from "ai";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon, XIcon } from "lucide-react";
-import { useState } from "react";
 import type { AgentProfile } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api/client";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
-import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { AvatarBadge, AvatarGroup, GeneratedAvatar } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { TeamInvocation } from "../../../../../shared/agent-contract";
-import type { TracePart, WorkUIMessage } from "../model/types";
-import { AssistantTrace } from "./assistant-trace";
+import { buildDisplayMessages } from "../lib/display";
+import type { WorkUIMessage } from "../model/types";
+import { MessageItem } from "./message-list";
 
 export type AgentMemberRuntimeStatus = "idle" | "running" | "suspended" | "completed" | "error";
 
@@ -64,21 +62,6 @@ function statusIcon(status: AgentMemberRuntimeStatus, className = "size-3.5") {
   if (status === "completed") return <CheckCircle2Icon className={className} />;
   if (status === "error") return <AlertCircleIcon className={className} />;
   return <CircleIcon className={className} />;
-}
-
-function statusLabel(
-  status: AgentMemberRuntimeStatus,
-  t: (key: string, options?: Record<string, unknown>) => string,
-): string {
-  return status === "running"
-    ? t("chat:memberStream.streaming")
-    : status === "suspended"
-      ? t("chat:panels.workflowStatus.suspended")
-      : status === "completed"
-        ? t("chat:memberStream.completed")
-        : status === "error"
-          ? t("chat:memberStream.failed")
-          : t("chat:memberStream.waitingSchedule");
 }
 
 function memberStatusClass(status: AgentMemberRuntimeStatus): string {
@@ -169,41 +152,30 @@ export function AgentMemberMessageView({
   member,
   runtime,
   threadId,
+  profile,
 }: {
   member: AgentProfile["members"][number];
   runtime: AgentMemberRuntime;
   threadId: string | null;
+  profile: AgentProfile;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="grid min-w-0 gap-3 py-2" data-agent-member-view>
-      <p className="break-words text-sm font-medium">
-        {member.name} · {member.profession}
-      </p>
+    <div className="flex min-w-0 flex-col" data-agent-member-view>
       {runtime.entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("chat:memberStream.waitingSchedule")}</p>
       ) : null}
-      {runtime.entries.map((entry) => (
-        <div key={entry.id} className="grid min-w-0 gap-2 rounded-lg border p-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {statusIcon(entry.status)}
-            <span>{statusLabel(entry.status, t)}</span>
-            {entry.invocation ? (
-              <time>{new Date(entry.invocation.startedAt).toLocaleString()}</time>
-            ) : null}
-          </div>
-          <p className="whitespace-pre-wrap break-words text-sm">{entry.label}</p>
-          {entry.text ? <MessageResponse>{entry.text}</MessageResponse> : null}
-          {entry.invocation?.error ? (
-            <p className="whitespace-pre-wrap break-words text-xs text-destructive">
-              {entry.invocation.error}
-            </p>
-          ) : null}
-          {entry.invocation && threadId ? (
-            <InvocationTranscript threadId={threadId} invocation={entry.invocation} />
-          ) : null}
-        </div>
-      ))}
+      {runtime.entries.map((entry) =>
+        entry.invocation && threadId ? (
+          <InvocationTranscript
+            key={entry.id}
+            threadId={threadId}
+            invocation={entry.invocation}
+            member={member}
+            profile={profile}
+          />
+        ) : null,
+      )}
     </div>
   );
 }
@@ -211,61 +183,74 @@ export function AgentMemberMessageView({
 function InvocationTranscript({
   threadId,
   invocation,
+  member,
+  profile,
 }: {
   threadId: string;
   invocation: TeamInvocation;
+  member: AgentProfile["members"][number];
+  profile: AgentProfile;
 }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const { user } = useAuth();
+  const running = invocation.status === "running";
   const detail = useQuery({
     queryKey: ["team-invocation", user?.id, threadId, invocation.id, invocation.status],
     queryFn: ({ signal }) =>
-      requestJson<{ messages: WorkUIMessage[]; tools: unknown[] }>(
+      requestJson<{ messages: WorkUIMessage[] }>(
         `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/invocations/${encodeURIComponent(invocation.id)}`,
         { signal },
       ),
-    enabled: open,
-    refetchInterval: open && invocation.status === "running" ? 1500 : false,
-    staleTime: invocation.status === "running" || invocation.status === "suspended" ? 0 : Infinity,
+    placeholderData: keepPreviousData,
+    refetchInterval: running ? 1500 : false,
+    staleTime: running || invocation.status === "suspended" ? 0 : Infinity,
   });
+  const parent = profile.members.find((item) => item.id === invocation.parentMemberId);
+  const promptId = `${invocation.id}:prompt`;
+  const transcript = detail.data?.messages ?? [];
+  const messages: WorkUIMessage[] =
+    transcript[0]?.role === "user"
+      ? [{ ...transcript[0], id: promptId }, ...transcript.slice(1)]
+      : [
+          { id: promptId, role: "user", parts: [{ type: "text", text: invocation.prompt }] },
+          ...transcript,
+        ];
+  const display = buildDisplayMessages(messages, running);
   return (
-    <details onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="cursor-pointer text-xs text-muted-foreground">
-        {t("agentHub:invocationDetails")}
-      </summary>
-      <ScrollArea className="max-h-96">
-        <div className="grid min-w-0 gap-2 pt-2">
-          {detail.isPending ? <p>{t("common:loading")}</p> : null}
-          {detail.error ? (
-            <p className="break-words text-destructive">{detail.error.message}</p>
-          ) : null}
-          {detail.data?.messages.map((message) => (
-            <div className="min-w-0" key={message.id}>
-              <span className="text-xs text-muted-foreground">{message.role}</span>
-              <AssistantTrace
-                parts={message.parts.filter(
-                  (part): part is TracePart => part.type === "reasoning" || isToolUIPart(part),
-                )}
-                isStreaming={false}
-              />
-              {message.parts.map((part, index) =>
-                part.type === "text" ? (
-                  <MessageResponse key={index}>{part.text}</MessageResponse>
-                ) : null,
-              )}
-            </div>
-          ))}
-          {detail.data?.tools.length ? (
-            <details>
-              <summary className="cursor-pointer text-xs">{t("agentHub:toolPayloads")}</summary>
-              <pre className="whitespace-pre-wrap break-all text-xs">
-                {JSON.stringify(detail.data.tools, null, 2)}
-              </pre>
-            </details>
-          ) : null}
-        </div>
-      </ScrollArea>
-    </details>
+    <>
+      {display.map((entry, index) => {
+        const isPrompt = entry.message.role === "user";
+        const emptyReply = entry.sourceIds.length === 0;
+        return (
+          <MessageItem
+            key={entry.key}
+            message={{
+              ...entry.message,
+              metadata: {
+                ...entry.message.metadata,
+                agentProfileId: invocation.profileId,
+                teamMemberId: isPrompt ? parent?.id : invocation.memberId,
+                agentDisplayName: isPrompt ? (parent?.name ?? profile.displayName) : member.name,
+                agentAvatar: isPrompt ? (parent?.avatar ?? profile.avatar) : member.avatar,
+              },
+            }}
+            userId={user?.id ?? ""}
+            readOnly
+            isGenerating={running}
+            isStreaming={running && index === display.length - 1 && !isPrompt}
+            emptyReply={
+              emptyReply && (running || detail.isPending || invocation.status === "error")
+            }
+            replyError={emptyReply ? invocation.error : undefined}
+            onEdit={() => undefined}
+            onRetry={() => undefined}
+          />
+        );
+      })}
+      {detail.error || (invocation.error && display.at(-1)?.sourceIds.length) ? (
+        <p role="status" className="break-words text-sm text-destructive">
+          {detail.error?.message ?? invocation.error}
+        </p>
+      ) : null}
+    </>
   );
 }

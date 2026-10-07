@@ -899,7 +899,12 @@ const teamInvocationDetailRoute = registerApiRoute(
           resourceId: memoryResourceId,
           perPage: false,
         });
-        if (recalled.messages.length) detail.messages = recalled.messages;
+        // Step snapshots include output that has not reached memory yet.
+        const messages = new Map(recalled.messages.map((message) => [message.id, message]));
+        for (const message of detail.messages) messages.set(message.id, message);
+        detail.messages = [...messages.values()].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        );
       }
       return c.json({ ...detail, messages: workbenchMessages(detail.messages) });
     },

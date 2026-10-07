@@ -6,6 +6,7 @@
 export const qk = {
   desktopSettings: () => ["desktop-settings"] as const,
   threads: (userId: string) => ["threads", userId] as const,
+  deleteThread: (userId: string) => ["delete-thread", userId] as const,
   threadContext: (userId: string, threadId: string | null) =>
     ["thread-context", userId, threadId] as const,
   providerConfig: () => ["provider-config"] as const,

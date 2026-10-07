@@ -16,7 +16,7 @@ const inlineEditSchema = z.object({
   selectedText: z.string().min(1).max(24_000),
   beforeContext: z.string().max(8_000).optional(),
   afterContext: z.string().max(8_000).optional(),
-  instruction: z.string().max(2_000).optional(),
+  instruction: z.string().trim().min(1).max(2_000),
 });
 
 const inlineCompletionSchema = z.object({
@@ -83,8 +83,7 @@ export const inlineEditRoute = registerApiRoute("/work/workspace/threads/:thread
       .join("\n\n");
 
     const profile = await getAgentProfile(metadata.agentProfileId, input.resourceId);
-    const instruction =
-      input.instruction?.trim() || "改进选中的代码,保持原有行为、接口和外部可观察结果不变。";
+    const instruction = input.instruction;
     const prompt = [
       `文件: ${input.path}`,
       input.language ? `语言: ${input.language}` : "",

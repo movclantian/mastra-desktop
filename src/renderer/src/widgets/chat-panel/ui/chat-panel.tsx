@@ -1852,6 +1852,7 @@ export function ChatPanel() {
                   >
                     {activeMember ? (
                       <AgentMemberMessageView
+                        profile={agentSelection}
                         member={activeMember}
                         threadId={activeThreadId}
                         runtime={
