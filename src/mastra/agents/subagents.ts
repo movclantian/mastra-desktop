@@ -207,12 +207,18 @@ function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition
   const guarded = new WeakSet<object>();
   return {
     id: "scoped-tool-policy",
-    processInputStep({ requestContext, tools, activeTools }) {
+    async processInputStep({ requestContext, tools, activeTools }) {
       const scheduled = requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true;
       if (!requestContext) return;
       const rules = parsePermissionRules(requestContext.get(PERMISSION_RULES_CONTEXT_KEY));
       const mode = resolveRequestMode(requestContext);
       const scopedTools = { ...tools } as ToolSet;
+      const skillBindings = new Map(
+        (scopedTools.skill || scopedTools.skill_read
+          ? await listPluginSkills(userIdFromContext(requestContext))
+          : []
+        ).map((skill) => [skill.name, skill.path]),
+      );
       for (const name of ["skill", "skill_read"]) {
         const tool = scopedTools[name];
         const execute = tool?.execute;
@@ -223,8 +229,10 @@ function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition
             const skill = (await listPluginSkills(userIdFromContext(requestContext))).find(
               (item) => item.name === runtimeName,
             );
-            if (!skill?.enabled)
-              throw new Error("This plugin skill is disabled or no longer installed");
+            if (!skill?.enabled || skill.path !== skillBindings.get(runtimeName))
+              throw new Error(
+                "This plugin skill is unavailable or changed; refresh the conversation tools",
+              );
           }
           return execute(input, context);
         };

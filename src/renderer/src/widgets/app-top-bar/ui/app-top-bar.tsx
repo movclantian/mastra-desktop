@@ -13,14 +13,7 @@ import { useAuth } from "@/features/auth";
 import { CommandPaletteTrigger } from "@/features/command-palette";
 import { OpenInIde } from "@/features/workspace-session";
 import { useTranslation } from "@/shared/i18n";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/shared/ui/breadcrumb";
+import { Breadcrumb, BreadcrumbItem, BreadcrumbList, BreadcrumbPage } from "@/shared/ui/breadcrumb";
 import { Button } from "@/shared/ui/button";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { PanelHeader } from "@/shared/ui/panel";
@@ -40,9 +33,6 @@ export function AppTopBar() {
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const threads = useThreadsQuery(userId).data ?? [];
-  const activeSkillPath = useRouterState({
-    select: (state) => (state.location.search as { skill?: string }).skill ?? null,
-  });
   const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
   const setWorkspacePanelOpen = useWorkbenchStore((state) => state.setWorkspacePanelOpen);
   const terminalPanelOpen = useWorkbenchStore((state) => state.terminalPanelOpen);
@@ -69,48 +59,19 @@ export function AppTopBar() {
         <Separator orientation="vertical" className="mx-1 h-4" />
         <Breadcrumb className="min-w-0">
           <BreadcrumbList className="flex-nowrap text-xs sm:text-sm">
-            {activeView === "skills" && activeSkillPath ? (
-              <>
-                <BreadcrumbItem className="shrink-0">
-                  <BreadcrumbLink
-                    className="cursor-pointer"
-                    render={
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void navigate({
-                            to: "/skills",
-                            search: (prev) => ({ ...prev, skill: undefined }),
-                          })
-                        }
-                      />
-                    }
+            <BreadcrumbItem className="min-w-0">
+              <BreadcrumbPage className="flex min-w-0 items-center gap-2 font-medium">
+                <span className="truncate">{title}</span>
+                {isCurrentThreadBusy && activeView === "chat" ? (
+                  <span
+                    className="flex shrink-0 items-center text-primary"
+                    title={t("topbar:runningTooltip")}
                   >
-                    {t("sidebar:skills")}
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem className="min-w-0">
-                  <BreadcrumbPage className="max-w-64 truncate font-medium">
-                    {activeSkillPath.split("/").pop() || activeSkillPath}
-                  </BreadcrumbPage>
-                </BreadcrumbItem>
-              </>
-            ) : (
-              <BreadcrumbItem className="min-w-0">
-                <BreadcrumbPage className="flex min-w-0 items-center gap-2 font-medium">
-                  <span className="truncate">{title}</span>
-                  {isCurrentThreadBusy && activeView === "chat" ? (
-                    <span
-                      className="flex shrink-0 items-center text-primary"
-                      title={t("topbar:runningTooltip")}
-                    >
-                      <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
-                    </span>
-                  ) : null}
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            )}
+                    <Dotm3x3_6 size={12} dotSize={2} colorPreset="solid-theme" />
+                  </span>
+                ) : null}
+              </BreadcrumbPage>
+            </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
       </div>

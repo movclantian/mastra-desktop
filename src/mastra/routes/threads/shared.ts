@@ -124,9 +124,9 @@ export type ThreadMetadata = {
     categories?: Record<string, string>;
     tools?: Record<string, string>;
   };
-  /** Mastra Session.model persists the selected router ID for each mode. */
-  [key: `modeModelId_${string}`]: string | undefined;
-  reasoningEffortByMode?: Record<string, string>;
+  /** Mastra Session.model persists one selected router ID per thread. */
+  currentModelId?: string;
+  reasoningEffort?: string;
   /**
    * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
    * - 显式绑定:用户在 promptInput 选择器选定的本地目录

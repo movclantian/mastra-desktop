@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -14,7 +14,7 @@ import {
 import { listSkillsShSkillsWithOptions } from "../skills/marketplaces";
 import { getAppConfig, setAppConfig } from "../storage/database";
 import { directoryFiles, packagePath, pluginHash, withinRoot } from "./packages";
-import { withPluginOperation } from "./registry";
+import { externalPluginDirectory, withPluginOperation } from "./registry";
 
 const github = (repository: string): PluginSource => ({
   kind: "git",
@@ -77,7 +77,10 @@ export const DEFAULT_PLUGIN_MARKETPLACES: MarketplaceSource[] = [
 const SOURCES_KEY = "plugin-marketplaces";
 const CACHE_TTL = 24 * 60 * 60 * 1_000;
 const record = z.record(z.string(), z.unknown());
-const catalogSchema = z.object({ plugins: z.array(record).max(5_000) });
+const catalogSchema = z.object({
+  name: z.string().optional(),
+  plugins: z.array(record).max(5_000),
+});
 
 export async function getPluginMarketplaces(owner: string): Promise<MarketplaceSource[]> {
   const raw = await getAppConfig(SOURCES_KEY, owner);
@@ -204,6 +207,7 @@ export function parseMarketplace(
   const catalog = catalogSchema.parse(document);
   const seen = new Set<string>();
   return catalog.plugins.map((entry) => {
+    if (entry.strict !== undefined) z.boolean().parse(entry.strict);
     const key = z.string().min(1).max(128).parse(entry.name);
     if (seen.has(key)) throw new Error(`Duplicate marketplace entry: ${key}`);
     seen.add(key);
@@ -234,6 +238,7 @@ export function parseMarketplace(
     return {
       id: `listing_${pluginHash(`${marketplace.id}\0${key}`).slice(0, 32)}`,
       sourceId: marketplace.id,
+      marketplaceName: catalog.name,
       key,
       name:
         typeof presentation.displayName === "string"
@@ -330,14 +335,12 @@ export async function refreshPluginCatalog(
           installs: skill.installs,
         }));
       } else if (source.source.kind === "local") {
+        const root = await externalPluginDirectory(source.source.path);
         if (source.format === "skills") {
-          next.listings = skillDirectoryListings(
-            [...(await directoryFiles(source.source.path)).keys()],
-            source,
-          );
+          next.listings = skillDirectoryListings([...(await directoryFiles(root)).keys()], source);
         } else {
           const contents = await readFile(
-            withinRoot(source.source.path, packagePath(source.catalogPath)),
+            withinRoot(root, await realpath(withinRoot(root, packagePath(source.catalogPath)))),
             "utf8",
           );
           if (Buffer.byteLength(contents) > 5 * 1024 * 1024)

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { Avatar, Style } from "@dicebear/core";
-import bottts from "@dicebear/styles/bottts.json" with { type: "json" };
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
@@ -24,7 +24,8 @@ export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
 
 const CONFIG_KEY = "agent-profiles";
-const avatarStyle = new Style(bottts);
+// Mastra's bundler strips JSON import attributes; load the style through Node instead.
+const avatarStyle = new Style(createRequire(import.meta.url)("@dicebear/styles/bottts.json"));
 
 export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 export { agentWorkflowSchema } from "../../shared/agent-contract";
@@ -136,6 +137,24 @@ async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Prom
   );
 }
 
+// Profiles share one per-user config record, so all read/modify/write operations share its lock.
+const profileWrites = new Map<string, Promise<unknown>>();
+async function withProfileWrite<T>(
+  resourceId: string | undefined,
+  action: () => Promise<T>,
+): Promise<T> {
+  if (!resourceId?.trim()) throw workError("AUTH_REQUIRED");
+  const pending = (profileWrites.get(resourceId) ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(action);
+  profileWrites.set(resourceId, pending);
+  try {
+    return await pending;
+  } finally {
+    if (profileWrites.get(resourceId) === pending) profileWrites.delete(resourceId);
+  }
+}
+
 async function assertProfileIdle(id: string, resourceId?: string) {
   const store = await appStorage.getStore("workflows");
   const runs = await store?.listWorkflowRuns({ resourceId, perPage: false });
@@ -152,44 +171,103 @@ async function assertProfileIdle(id: string, resourceId?: string) {
   }
 }
 
+/** Discover metadata only. Creating an Agent must not connect to MCP servers or run tools. */
+export async function getAgentCapabilityCatalog(resourceId: string) {
+  if (!resourceId?.trim()) throw workError("AUTH_REQUIRED");
+  const { getMcpConfig, summarizeMcpServer } = await import("../connections/mcp");
+  const [skills, config] = await Promise.all([
+    listPluginSkills(resourceId),
+    getMcpConfig(resourceId),
+  ]);
+  const servers = await Promise.all(
+    config.servers
+      .filter((server) => server.enabled && !server.builtin)
+      .map((server) => summarizeMcpServer(server, resourceId)),
+  );
+  return {
+    skills: skills
+      .filter((skill) => skill.enabled)
+      .map((skill) => ({
+        id: skill.id,
+        name: skill.displayName,
+        description: skill.description,
+      })),
+    mcpServers: servers
+      .filter((server) => !server.configurationError && !server.connectionError)
+      .map((server) => ({
+        id: server.id,
+        name: server.name,
+        tools: Object.entries(server.tools ?? {}).map(([name, tool]) => ({
+          name,
+          description: tool.description,
+        })),
+      })),
+  };
+}
+
+function validateProfileCapabilities(
+  target: Pick<AgentProfile, "skills" | "mcpServers">,
+  catalog: Awaited<ReturnType<typeof getAgentCapabilityCatalog>>,
+  previous?: Pick<AgentProfile, "skills" | "mcpServers">,
+) {
+  for (const key of ["skills", "mcpServers"] as const) {
+    const ids = z.array(z.string()).max(2000).parse(target[key]);
+    const available = new Set(catalog[key].map((item) => item.id));
+    const invalid = ids.filter((id) => !available.has(id) && !previous?.[key].includes(id));
+    if (invalid.length)
+      throw workError("VALIDATION_FAILED", {
+        text: `${key === "skills" ? "Skill" : "MCP"} 不存在、已停用或不可用，请刷新能力列表后重试: ${invalid.join(", ")}`,
+      });
+    target[key] = [...new Set(ids)];
+  }
+}
+
 export async function createAgentProfile(
   input: Omit<AgentProfileInput, "id" | "createdAt" | "updatedAt">,
   resourceId?: string,
 ): Promise<AgentProfile> {
-  const current = await listAgentProfiles(resourceId);
-  const profile = normalizeProfile({ ...input, id: randomUUID() });
-  profile.avatar = new Avatar(avatarStyle, { seed: profile.id }).toDataUri();
-  profile.members = profile.members.map((member) => ({
-    ...member,
-    avatar: new Avatar(avatarStyle, { seed: `${profile.id}:${member.id}` }).toDataUri(),
-  }));
-  try {
-    validateAgentTeam(profile);
-  } catch (cause) {
-    throw workError("VALIDATION_FAILED", {
-      text: cause instanceof Error ? cause.message : String(cause),
-      cause,
-    });
-  }
-  await saveProfiles([...current, profile], resourceId);
-  return profile;
+  if (!resourceId?.trim()) throw workError("AUTH_REQUIRED");
+  return withProfileWrite(resourceId, async () => {
+    const profile = normalizeProfile({ ...input, id: randomUUID() });
+    profile.avatar = new Avatar(avatarStyle, { seed: profile.id }).toDataUri();
+    profile.members = profile.members.map((member) => ({
+      ...member,
+      avatar: new Avatar(avatarStyle, { seed: `${profile.id}:${member.id}` }).toDataUri(),
+    }));
+    try {
+      validateAgentTeam(profile);
+    } catch (cause) {
+      throw workError("VALIDATION_FAILED", {
+        text: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      });
+    }
+    const catalog = await getAgentCapabilityCatalog(resourceId);
+    for (const target of [profile, ...profile.members])
+      validateProfileCapabilities(target, catalog);
+    const current = await listAgentProfiles(resourceId);
+    await saveProfiles([...current, profile], resourceId);
+    return profile;
+  });
 }
 
 export async function deleteAgentProfile(id: string, resourceId?: string): Promise<void> {
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可删除" });
-  await assertProfileIdle(id, resourceId);
-  // Deletion must also work for invalid definitions, without interpreting an obsolete graph.
-  const raw = await getAppConfig(CONFIG_KEY, resourceId);
-  const profiles = z
-    .array(z.object({ id: z.string() }).passthrough())
-    .parse(JSON.parse(raw ?? "[]"));
-  await setAppConfig(
-    CONFIG_KEY,
-    JSON.stringify(profiles.filter((profile) => profile.id !== id)),
-    resourceId,
-  );
-  memberCache.delete(scopedProfileKey(id, resourceId));
+  return withProfileWrite(resourceId, async () => {
+    await assertProfileIdle(id, resourceId);
+    // Deletion must also work for invalid definitions, without interpreting an obsolete graph.
+    const raw = await getAppConfig(CONFIG_KEY, resourceId);
+    const profiles = z
+      .array(z.object({ id: z.string() }).passthrough())
+      .parse(JSON.parse(raw ?? "[]"));
+    await setAppConfig(
+      CONFIG_KEY,
+      JSON.stringify(profiles.filter((profile) => profile.id !== id)),
+      resourceId,
+    );
+    memberCache.delete(scopedProfileKey(id, resourceId));
+  });
 }
 
 export async function setAgentProfileCapabilities(
@@ -200,29 +278,23 @@ export async function setAgentProfileCapabilities(
   resourceId: string,
 ): Promise<AgentProfile> {
   if (id === DEFAULT_AGENT_PROFILE_ID)
-    throw workError("VALIDATION_FAILED", { text: "The default Agent uses all enabled skills" });
-  await assertProfileIdle(id, resourceId);
-  const profiles = await listAgentProfiles(resourceId);
-  const profile = profiles.find((item) => item.id === id);
-  if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
-  const target = memberId ? profile.members.find((item) => item.id === memberId) : profile;
-  if (!target) throw workError("VALIDATION_FAILED", { text: "Agent member not found" });
-  const available = new Set((await listPluginSkills(resourceId)).map((skill) => skill.id));
-  if (skills.some((skill) => !available.has(skill) && !target.skills.includes(skill)))
-    throw workError("VALIDATION_FAILED", { text: "Skill component not found" });
-  target.skills = [...new Set(skills)];
-  const { getMcpConfig } = await import("../connections/mcp");
-  const availableMcp = new Set(
-    (await getMcpConfig(resourceId)).servers
-      .filter((server) => !server.builtin)
-      .map((server) => server.id),
-  );
-  if (mcpServers.some((server) => !availableMcp.has(server) && !target.mcpServers.includes(server)))
-    throw workError("VALIDATION_FAILED", { text: "MCP component not found" });
-  target.mcpServers = [...new Set(mcpServers)];
-  profile.updatedAt = new Date().toISOString();
-  await saveProfiles(profiles, resourceId);
-  return profile;
+    throw workError("VALIDATION_FAILED", {
+      text: "The default Agent uses all enabled skills and MCP servers",
+    });
+  return withProfileWrite(resourceId, async () => {
+    await assertProfileIdle(id, resourceId);
+    const profiles = await listAgentProfiles(resourceId);
+    const profile = profiles.find((item) => item.id === id);
+    if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
+    const target = memberId ? profile.members.find((item) => item.id === memberId) : profile;
+    if (!target) throw workError("VALIDATION_FAILED", { text: "Agent member not found" });
+    const selection = { skills, mcpServers };
+    validateProfileCapabilities(selection, await getAgentCapabilityCatalog(resourceId), target);
+    Object.assign(target, selection);
+    profile.updatedAt = new Date().toISOString();
+    await saveProfiles(profiles, resourceId);
+    return profile;
+  });
 }
 
 type ProfileAgentFactory = (profile: AgentProfile, resourceScope?: string) => Agent;

@@ -12,7 +12,7 @@ export interface McpFormServer {
   clientId?: string;
   serverName?: string;
   builtin?: "anysearch";
-  plugin?: { id: string; componentId: string; digest: string };
+  plugin?: { id: string; componentId: string; digest: string; configurationRevision?: string };
   status?: "draft" | "published" | "archived";
   version?: string;
   timeout?: number;

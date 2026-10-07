@@ -92,12 +92,11 @@ export async function deleteThreadRequest(threadId: string, resourceId: string):
 export async function updateThreadModel(
   threadId: string,
   resourceId: string,
-  modeId: string,
   selection: ModelSelection,
 ): Promise<WorkThread> {
   const payload = await requestJson<{ thread: MemoryThread }>(
     `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/model?${resourceQuery(resourceId)}`,
-    { method: "PATCH", body: { selection, modeId } },
+    { method: "PATCH", body: { selection } },
     i18n.t("sidebar:saveModelFailed"),
   );
   return workThread(payload.thread);

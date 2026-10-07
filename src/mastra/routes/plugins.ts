@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   marketplaceQuerySchema,
   marketplaceSourceSchema,
+  pluginConfigurationPatchSchema,
   pluginIdSchema,
   pluginSourceSchema,
 } from "../../shared/plugin-contract";
@@ -22,6 +23,7 @@ import {
   archiveFiles,
   describePackage,
   MAX_PACKAGE_BYTES,
+  packageChanges,
   packagePath,
   selectPackageRoot,
   withinRoot,
@@ -35,7 +37,9 @@ import {
   listInstalledPlugins,
   listPluginSkills,
   pluginVersionDirectory,
+  previewPluginUpload,
   rollbackPlugin,
+  savePluginConfiguration,
   setPluginEnabled,
   uninstallPlugin,
   updatePlugin,
@@ -49,6 +53,34 @@ function owner(context: RequestContextLike): string {
   return id;
 }
 const idPath = z.object({ id: pluginIdSchema });
+
+async function readPluginUpload(request: Request) {
+  if (!request.body) throw workError("VALIDATION_FAILED", { text: "Missing plugin ZIP" });
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of request.body) {
+    size += chunk.byteLength;
+    if (size > MAX_PACKAGE_BYTES + 1024 * 1024)
+      throw workError("VALIDATION_FAILED", { text: "Plugin upload exceeds 25 MB" });
+    chunks.push(chunk);
+  }
+  const form = await new Request(request.url, {
+    method: "POST",
+    headers: request.headers,
+    body: Buffer.concat(chunks, size),
+  }).formData();
+  const file = form.get("archive");
+  for (const key of form.keys())
+    if (key !== "archive" && key !== "digest")
+      throw workError("VALIDATION_FAILED", { text: "Unknown plugin upload field" });
+  if (!(file instanceof File) || file.size > MAX_PACKAGE_BYTES)
+    throw workError("VALIDATION_FAILED", { text: "Upload a plugin ZIP smaller than 25 MB" });
+  return {
+    file,
+    files: selectPackageRoot(archiveFiles(Buffer.from(await file.arrayBuffer()))),
+    digest: form.get("digest"),
+  };
+}
 const common = { responseType: "json", onValidationError: workValidationError } as const;
 
 export const pluginRoutes = [
@@ -131,9 +163,9 @@ export const pluginRoutes = [
     method: "GET",
     pathParamSchema: idPath,
     queryParamSchema: z.object({ key: z.string().min(1) }),
-    handler: async ({ id, key, requestContext }) => {
+    handler: async ({ id, key, requestContext, abortSignal }) => {
       const listing = await getMarketplaceListing(id, key, owner(requestContext));
-      const acquired = await fetchPluginFiles(listing.source);
+      const acquired = await fetchPluginFiles(listing.source, abortSignal);
       return { listing, preview: describePackage(acquired.files, listing.id, listing) };
     },
   }),
@@ -162,11 +194,7 @@ export const pluginRoutes = [
     method: "POST",
     handler: async (c) => {
       const resourceId = owner(c.get("requestContext"));
-      const form = await c.req.raw.formData();
-      const file = form.get("archive");
-      if (!(file instanceof File) || file.size > MAX_PACKAGE_BYTES)
-        throw workError("VALIDATION_FAILED", { text: "Upload a plugin ZIP smaller than 25 MB" });
-      const files = selectPackageRoot(archiveFiles(Buffer.from(await file.arrayBuffer())));
+      const { file, files } = await readPluginUpload(c.req.raw);
       return c.json(
         {
           plugin: await installPlugin(
@@ -176,6 +204,30 @@ export const pluginRoutes = [
         },
         201,
       );
+    },
+  }),
+  registerApiRoute("/work/plugins/:id/upload", {
+    method: "POST",
+    handler: async (c) => {
+      const resourceId = owner(c.get("requestContext"));
+      const id = pluginIdSchema.parse(c.req.param("id"));
+      const plugin = await getInstalledPlugin(id, resourceId);
+      if (plugin?.source.kind !== "upload")
+        throw workError("VALIDATION_FAILED", { text: "Select an installed ZIP plugin" });
+      const { files, digest } = await readPluginUpload(c.req.raw);
+      if (digest !== null)
+        return c.json({
+          plugin: await updatePlugin(
+            id,
+            z
+              .string()
+              .regex(/^[a-f0-9]{64}$/)
+              .parse(digest),
+            resourceId,
+            files,
+          ),
+        });
+      return c.json(await previewPluginUpload(id, files, resourceId));
     },
   }),
   createRoute({
@@ -209,6 +261,20 @@ export const pluginRoutes = [
     bodySchema: z.object({ enabled: z.boolean(), componentId: pluginIdSchema.optional() }),
     handler: async ({ id, enabled, componentId, requestContext }) => ({
       plugin: await setPluginEnabled(id, enabled, componentId, owner(requestContext)),
+    }),
+  }),
+  createRoute({
+    ...common,
+    path: "/work/plugins/:id/configuration",
+    method: "PUT",
+    pathParamSchema: idPath,
+    bodySchema: pluginConfigurationPatchSchema,
+    handler: async ({ id, requestContext, digest, revision, values, secretPatch }) => ({
+      plugin: await savePluginConfiguration(
+        id,
+        { digest, revision, values, secretPatch },
+        owner(requestContext),
+      ),
     }),
   }),
   createRoute({

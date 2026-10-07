@@ -1,7 +1,13 @@
 /**
  * skills.sh discovery, audits and source acquisition. Package lifecycle lives in plugins/.
  */
-import { basename, dirname } from "node:path";
+import { z } from "zod";
+import {
+  archiveFiles,
+  type PackageFiles,
+  pluginHash,
+  selectPackageRoot,
+} from "../plugins/packages";
 
 export interface SkillAuditItem {
   provider: string;
@@ -127,14 +133,6 @@ function createCachedFetcher<TInput, TResult>(
   };
 }
 
-const GITHUB_JSON_HEADERS = {
-  Accept: "application/vnd.github+json",
-  "User-Agent": "MastraWork-Skill-Marketplace",
-};
-const PUBLIC_SKILL_HEADERS = {
-  Accept: "text/markdown, text/plain;q=0.9",
-  "User-Agent": "MastraWork-Skill-Marketplace",
-};
 const SKILLS_SH_HEADERS = {
   Accept: "application/json",
   "User-Agent": "MastraWork-Skill-Marketplace",
@@ -684,88 +682,56 @@ export async function listSkillsShSkillsWithOptions(
   return cachedSkillsShOptions(options, options.force);
 }
 
-async function loadSkillsShSkill(source: string, slugValue: string) {
+/** Source acquisition only; Git discovery and package writes use the unified plugin pipeline. */
+export async function getSkillsShPackage(source: string, slugValue: string, signal?: AbortSignal) {
   const normalizedSource = normalizeSkillsShCoordinate(source, "source");
   const normalizedSlug = normalizeSkillsShCoordinate(slugValue, "skill");
   const base = normalizeSkillsShEntry({ source: normalizedSource, slug: normalizedSlug });
   if (!base) throw new Error("skills.sh 技能元数据无效");
-  let content: string | undefined;
-  let github:
-    | { owner: string; repo: string; branch: string; skillPath: string; tree: GitTreeItem[] }
-    | undefined;
-  if (base.sourceType === "well-known") {
-    for (const path of [
-      `/.well-known/agent-skills/${encodeURIComponent(normalizedSlug)}/SKILL.md`,
-      `/.well-known/skills/${encodeURIComponent(normalizedSlug)}/SKILL.md`,
-    ]) {
-      try {
-        content = await fetchWithRetry<string>(`https://${normalizedSource}${path}`, {
-          headers: PUBLIC_SKILL_HEADERS,
-          responseType: "text",
-          errorMessage: (status) => `读取远程技能文件失败（${status}）`,
-        });
-        break;
-      } catch {
-        // Both well-known skill discovery conventions are supported.
-      }
-    }
-    if (content === undefined) throw new Error("无法读取该 well-known 技能的 SKILL.md");
-  } else {
-    const [owner, repo] = normalizedSource.split("/");
-    const { sha: branch } = await fetchWithRetry<{ sha: string }>(
-      `https://api.github.com/repos/${owner}/${repo}/commits/HEAD`,
-      {
-        headers: GITHUB_JSON_HEADERS,
-        responseType: "json",
-        errorMessage: (status) => `GitHub request failed (${status})`,
-      },
+  if (base.sourceType === "github") {
+    const { fetchGitPackage } = await import("../plugins/registry");
+    return fetchGitPackage(
+      { kind: "git", url: `https://github.com/${normalizedSource}`, ref: "HEAD", path: "" },
+      signal,
+      normalizedSlug,
     );
-    if (!/^[a-f0-9]{40,64}$/.test(branch)) throw new Error("Invalid GitHub commit");
-    const result = await fetchWithRetry<{ tree?: GitTreeItem[]; truncated?: boolean }>(
-      `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-      {
-        headers: GITHUB_JSON_HEADERS,
-        responseType: "json",
-        errorMessage: (status) => `GitHub 请求失败（${status}）`,
-      },
-    );
-    if (result.truncated) throw new Error("GitHub 技能目录不完整");
-    const tree = result.tree ?? [];
-    const candidates = tree.filter(
-      (item) => item.type === "blob" && /(^|\/)SKILL\.md$/i.test(item.path),
-    );
-    const matching = candidates.filter(
-      (item) => basename(dirname(item.path)).toLowerCase() === normalizedSlug.toLowerCase(),
-    );
-    const selected = matching.length
-      ? matching
-      : candidates.filter((item) => item.path.toUpperCase() === "SKILL.MD");
-    if (selected.length !== 1) throw new Error("无法唯一确定 GitHub 技能目录");
-    const skillPath = selected[0].path;
-    github = { owner, repo, branch, skillPath, tree };
   }
-  return { content, github };
-}
-
-/** Source acquisition only; all package writes belong to the plugin installer. */
-export async function getSkillsShPackage(source: string, slugValue: string) {
-  const { content, github } = await loadSkillsShSkill(source, slugValue);
-  if (github) {
-    const { fetchPluginFiles } = await import("../plugins/registry");
-    const path = dirname(github.skillPath);
-    return fetchPluginFiles({
-      kind: "git",
-      url: `https://github.com/${github.owner}/${github.repo}`,
-      ref: "HEAD",
-      commit: github.branch,
-      path: path === "." ? "" : path,
-    });
-  }
-  if (content === undefined) throw new Error("Missing remote skill content");
-  return { files: new Map([["SKILL.md", Buffer.from(content, "utf8")]]) };
-}
-
-interface GitTreeItem {
-  path: string;
-  type: string;
+  let files: PackageFiles;
+  const { downloadPackage } = await import("../plugins/registry");
+  const indexUrl = `https://${normalizedSource}/.well-known/agent-skills/index.json`;
+  const index = z
+    .object({
+      $schema: z.literal("https://schemas.agentskills.io/discovery/0.2.0/schema.json"),
+      skills: z
+        .array(
+          z.object({
+            name: z.string(),
+            type: z.enum(["skill-md", "archive"]),
+            url: z.string(),
+            digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+          }),
+        )
+        .max(5000),
+    })
+    .safeParse(JSON.parse((await downloadPackage(indexUrl, signal)).toString("utf8")));
+  if (!index.success)
+    throw new Error(
+      "Unsupported well-known discovery index; a valid discovery/0.2.0 index is required",
+    );
+  const entries = index.data.skills.filter((skill) => skill.name === normalizedSlug);
+  if (entries.length !== 1)
+    throw new Error("The well-known skill must have exactly one index entry");
+  const entry = entries[0];
+  const url = new URL(entry.url, indexUrl);
+  if (url.protocol !== "https:") throw new Error("Well-known skill artifacts require HTTPS");
+  const artifact = await downloadPackage(url.href, signal);
+  if (`sha256:${pluginHash(artifact)}` !== entry.digest)
+    throw new Error("Well-known skill artifact digest mismatch");
+  if (entry.type === "archive") {
+    if (artifact.length < 4 || artifact.readUInt16LE(0) !== 0x4b50)
+      throw new Error("Only ZIP well-known skill archives are supported");
+    files = selectPackageRoot(archiveFiles(artifact));
+    if (!files.has("SKILL.md")) throw new Error("The skill archive must contain a root SKILL.md");
+  } else files = new Map([["SKILL.md", artifact]]);
+  return { files };
 }

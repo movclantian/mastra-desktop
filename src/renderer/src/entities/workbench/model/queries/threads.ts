@@ -159,9 +159,7 @@ export function useCreateThreadMutation(userId: string) {
           permissionRules,
         },
       });
-      return modelSelection
-        ? updateThreadModel(thread.id, userId, currentModeId, modelSelection)
-        : thread;
+      return modelSelection ? updateThreadModel(thread.id, userId, modelSelection) : thread;
     },
     onSuccess: (thread, input) => {
       void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
@@ -197,7 +195,10 @@ export function useDeleteThreadMutation(userId: string) {
       });
     },
     onSettled: async (_data, error, threadId) => {
-      await queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: qk.threads(userId) }),
+        queryClient.invalidateQueries({ queryKey: qk.schedules() }),
+      ]);
       const threads = queryClient.getQueryData<WorkThread[]>(qk.threads(userId));
       // Cleanup can fail after the server has already deleted the row.
       if (error && threads && !threads.some((thread) => thread.id === threadId))

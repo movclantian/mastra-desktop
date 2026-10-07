@@ -176,6 +176,12 @@ export const WORK_ERRORS = {
     status: 400,
     text: "定时任务参数无效",
   },
+  SCHEDULE_THREAD_NOT_FOUND: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "安排关联的会话不存在或已被删除，请重新创建安排",
+  },
 
   // ---- 模型与供应商(models/)--------------------------------------------
   MODEL_NOT_CONFIGURED: {
@@ -297,6 +303,12 @@ export const WORK_ERRORS = {
   },
 
   // ---- 技能(routes/skills + skills/)-----------------------------------
+  PLUGIN_FETCH_FAILED: {
+    domain: ErrorDomain.MASTRA,
+    category: ErrorCategory.THIRD_PARTY,
+    status: 502,
+    text: "获取插件源码失败，请检查来源地址、网络和访问权限后重试。",
+  },
   SKILL_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,
     category: ErrorCategory.USER,

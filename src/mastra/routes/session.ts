@@ -214,8 +214,6 @@ export async function workbenchControllerMiddleware(
     const selection = z
       .object({
         modelId: z.string().min(1),
-        scope: z.literal("thread").optional(),
-        modeId: z.enum(["plan", "build", "review"]).optional(),
       })
       .parse(body);
     const model = splitRouterId(selection.modelId);
@@ -652,14 +650,13 @@ const declineSessionToolRoute = registerApiRoute(
   },
 );
 
-/** Save model selection and its per-mode reasoning preference in one product request. */
+/** Save the thread model and reasoning preference in one product request. */
 export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/model", {
   method: "PATCH",
   handler: async (c) => {
     const result = await sessionFor(c);
     const body = z
       .object({
-        modeId: z.enum(["plan", "build", "review"]).optional(),
         selection: z.object({
           providerId: z.string().trim().min(1),
           modelId: z.string().trim().min(1),
@@ -667,24 +664,17 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
         }),
       })
       .parse(await c.req.json());
-    const modeId = body.modeId ?? result.controllerSession.mode.get();
     const { providerId, modelId, reasoningEffort = "off" } = body.selection;
     if (!(await resolveConfiguredModel(providerId, modelId, result.resourceId))) {
       throw workError("MODEL_NOT_CONFIGURED");
     }
-    await result.controllerSession.model.switch({
-      modelId: `${providerId}/${modelId}`,
-      modeId,
-    });
+    await result.controllerSession.model.switch(`${providerId}/${modelId}`);
     await result.controllerSession.thread.setSetting({
-      key: "reasoningEffortByMode",
-      value: {
-        ...((result.thread.metadata as ThreadMetadata)?.reasoningEffortByMode ?? {}),
-        [modeId]: reasoningEffort,
-      },
+      key: "reasoningEffort",
+      value: reasoningEffort,
     });
     const thread = await result.memory.getThreadById({ threadId: result.threadId });
-    return c.json({ modeId, modelId: result.controllerSession.model.get(), thread });
+    return c.json({ modelId: result.controllerSession.model.get(), thread });
   },
 });
 

@@ -381,6 +381,10 @@ async function assertResourceIdOwnership(
   const queryResource = c.req.query("resourceId");
   if (queryResource && queryResource !== user.id) return false;
   if (!RESOURCE_OWNERSHIP_METHODS.has(c.req.method)) return true;
+  // Plugin ZIP routes derive their owner exclusively from authentication and reject extra form fields.
+  // Their bounded multipart reader must run before any full-body form parsing.
+  if (/^\/work\/plugins\/(?:[a-zA-Z0-9_-]+\/)?upload$/.test(new URL(c.req.raw.url).pathname))
+    return true;
 
   const contentType = c.req.header("content-type") ?? "";
   let resourceIds: unknown[] | undefined;

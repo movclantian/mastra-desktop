@@ -48,10 +48,9 @@ function patchThreadInCache(
 
 function threadModelSelection(
   metadata: ThreadMetadata,
-  modeId: WorkModeId,
   providers: ProviderConfig[],
 ): ModelSelection | null {
-  const id = metadata[`modeModelId_${modeId}`];
+  const id = metadata.currentModelId;
   if (typeof id !== "string") return null;
   const provider = providers.find((item) => id.startsWith(`${item.id}/`));
   if (!provider || provider.disabled) return null;
@@ -62,7 +61,7 @@ function threadModelSelection(
     providerId: provider.id,
     modelId,
     modelName: model.name,
-    reasoningEffort: (metadata.reasoningEffortByMode?.[modeId] ?? "off") as ReasoningEffort | "off",
+    reasoningEffort: (metadata.reasoningEffort ?? "off") as ReasoningEffort | "off",
   };
 }
 export interface SessionSettings {
@@ -123,7 +122,7 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
         void saveProviderConfig({ modelSelection: selection }).catch(() => undefined);
         return;
       }
-      void updateThreadModel(activeThreadId, userId, modeId, selection)
+      void updateThreadModel(activeThreadId, userId, selection)
         .then((thread) => {
           patchThreadInCache(queryClient, userId, activeThreadId, () => thread);
           if (activeThreadRef.current === activeThreadId) setModelSelectionDraft(selection);
@@ -133,7 +132,7 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
           void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
         });
     },
-    [activeThreadId, modeId, queryClient, setModelSelectionDraft, userId],
+    [activeThreadId, queryClient, setModelSelectionDraft, userId],
   );
 
   const setAgentSelection = useCallback(
@@ -160,7 +159,7 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
       patchThreadInCache(queryClient, userId, activeThreadId, () => thread);
       if (activeThreadRef.current === activeThreadId) {
         setModeIdDraft(next);
-        setModelSelectionDraft(threadModelSelection(thread.metadata, next, providers));
+        setModelSelectionDraft(threadModelSelection(thread.metadata, providers));
       }
     },
     [activeThreadId, providers, queryClient, setModeIdDraft, setModelSelectionDraft, userId],
@@ -211,8 +210,8 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
     const selectionKey = JSON.stringify([
       activeThreadId,
       currentModeId,
-      metadata[`modeModelId_${currentModeId}`],
-      metadata.reasoningEffortByMode?.[currentModeId],
+      metadata.currentModelId,
+      metadata.reasoningEffort,
     ]);
     if (adoptedThreadRef.current === selectionKey) return;
     adoptedThreadRef.current = selectionKey;
@@ -224,9 +223,7 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
       const profile = agents.find((item) => item.id === metadata.agentProfileId);
       if (profile) setAgentSelectionDraft(profile);
     }
-    setModelSelectionDraft(
-      threadModelSelection(metadata, parseModeId(metadata.currentModeId), providers),
-    );
+    setModelSelectionDraft(threadModelSelection(metadata, providers));
   }, [
     activeThreadId,
     agents,

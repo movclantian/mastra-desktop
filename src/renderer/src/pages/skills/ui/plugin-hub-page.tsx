@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DownloadIcon, FolderOpenIcon, PlusIcon, RefreshCwIcon, Settings2Icon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
@@ -11,7 +11,7 @@ import {
   setMcpServerEnabled,
 } from "@/entities/skill";
 import { getAuthToken, useAuth } from "@/features/auth";
-import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { Badge } from "@/shared/ui/badge";
@@ -23,33 +23,34 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
 import { McpDialog } from "@/widgets/mcp-dialog";
+import { pluginCredentialPurpose } from "../../../../../shared/credential-contract";
 import type {
   InstalledPlugin,
   MarketplaceCatalog,
   MarketplaceListing,
   MarketplaceSource,
+  PluginChange,
+  PluginConfigValue,
   PluginSource,
   PluginVersion,
 } from "../../../../../shared/plugin-contract";
+import { pluginConfigValueError } from "../../../../../shared/plugin-contract";
 
 async function pluginRequest<T>(
   path: string,
   method = "GET",
   body?: Record<string, unknown> | FormData,
 ): Promise<T> {
-  const response = await apiFetch(`${MASTRA_SERVER_URL}/work/plugins${path}`, {
+  return requestJson<T>(`/work/plugins${path}`, {
     method,
     ...(body ? { body } : {}),
   });
-  const payload = await response.json();
-  if (!response.ok)
-    throw new Error(payload.message ?? payload.error?.message ?? `HTTP ${response.status}`);
-  return payload as T;
 }
 
 function sourceFromInput(value: string, ref = "HEAD", path = "", transport = "auto"): PluginSource {
@@ -61,12 +62,236 @@ function sourceFromInput(value: string, ref = "HEAD", path = "", transport = "au
     : { kind: "archive", url: value, path };
 }
 
-export function PluginHubPage() {
+function PluginConfigurationForm({
+  plugin,
+  version,
+  disabled,
+  onSaved,
+}: {
+  plugin: InstalledPlugin;
+  version: PluginVersion;
+  disabled: boolean;
+  onSaved: () => Promise<unknown>;
+}) {
+  const { t } = useTranslation();
+  const saved =
+    plugin.pendingConfiguration?.digest === version.digest &&
+    version.digest !== plugin.current.digest
+      ? plugin.pendingConfiguration.configuration
+      : plugin.configuration;
+  const [base, setBase] = React.useState(saved);
+  const [draft, setDraft] = React.useState<Record<string, string>>({});
+  const [error, setError] = React.useState("");
+  const { token, user } = useAuth();
+  const fields = Object.entries(version.userConfig ?? {});
+  const save = useMutation({
+    mutationKey: ["plugin-configuration", user?.id, plugin.id],
+    mutationFn: async (edits: Record<string, string>) => {
+      if (!token || getAuthToken() !== token) throw new Error("Session changed");
+      const values: Record<string, PluginConfigValue | null> = {};
+      const secrets: Record<string, PluginConfigValue | null> = {};
+      for (const [key, raw] of Object.entries(edits)) {
+        const field = version.userConfig?.[key];
+        if (!field) throw new Error("Plugin option changed");
+        let value: PluginConfigValue | null = raw === "" ? null : raw;
+        if (raw && field.multiple) {
+          try {
+            value = JSON.parse(raw);
+          } catch {
+            throw new Error(`${field.title}: ${t("plugins:arrayValue")}`);
+          }
+        } else if (raw && field.type === "number") value = Number(raw);
+        else if (raw && field.type === "boolean") value = raw === "true";
+        const invalid = value === null ? undefined : pluginConfigValueError(field, value);
+        if (invalid && invalid !== "required") throw new Error(`${field.title}: ${invalid}`);
+        (field.sensitive ? secrets : values)[key] = value;
+      }
+      const purpose = pluginCredentialPurpose(plugin.id);
+      const secretPatch = Object.keys(secrets).length
+        ? await window.api.credentials.put({ purpose, value: JSON.stringify(secrets) })
+        : undefined;
+      try {
+        const result = await pluginRequest<{ plugin: InstalledPlugin }>(
+          `/${plugin.id}/configuration`,
+          "PUT",
+          {
+            digest: version.digest,
+            revision: base?.revision ?? "",
+            values,
+            secretPatch,
+          },
+        );
+        if (getAuthToken() !== token) throw new Error("Session changed");
+        return result.plugin;
+      } finally {
+        if (secretPatch)
+          await window.api.credentials
+            .delete({ purpose, secretRef: secretPatch.credentialRef })
+            .catch(() => undefined);
+      }
+    },
+    onSuccess: async (result, edits) => {
+      setBase(
+        result.pendingConfiguration?.digest === version.digest &&
+          version.digest !== result.current.digest
+          ? result.pendingConfiguration.configuration
+          : result.configuration,
+      );
+      setDraft((current) =>
+        Object.fromEntries(Object.entries(current).filter(([key, value]) => value !== edits[key])),
+      );
+      setError("");
+      await onSaved();
+    },
+    onError: (failure) => setError(failure.message),
+  });
+  const mutate = save.mutate;
+  React.useEffect(() => {
+    if (!Object.keys(draft).length || disabled || save.isPending || error) return;
+    const timer = setTimeout(() => mutate(draft), 800);
+    return () => clearTimeout(timer);
+  }, [draft, disabled, save.isPending, error, mutate]);
+  const edit = (key: string, value: string) => {
+    setError("");
+    setDraft((current) => ({ ...current, [key]: value }));
+  };
+  return (
+    <section className="grid min-w-0 gap-3 rounded-md border p-3">
+      <h3 className="text-sm font-medium">
+        {t("plugins:userConfiguration")} · {version.version ?? version.digest.slice(0, 8)}
+      </h3>
+      <p className="break-words text-xs text-muted-foreground">
+        {t(
+          version.digest === plugin.current.digest
+            ? "plugins:configurationHint"
+            : "plugins:pendingConfigurationHint",
+        )}
+      </p>
+      {fields.map(([key, field]) => {
+        const stored = base?.values[key] ?? field.default;
+        const value =
+          draft[key] ??
+          (field.sensitive
+            ? ""
+            : Array.isArray(stored)
+              ? JSON.stringify(stored)
+              : String(stored ?? ""));
+        const inputId = `plugin-${plugin.id}-${version.digest}-${key}`;
+        const placeholder =
+          field.sensitive && base?.secretKeys.includes(key)
+            ? t("plugins:secretConfigured")
+            : field.multiple
+              ? t("plugins:arrayValue")
+              : "";
+        return (
+          <Field key={key} className="min-w-0">
+            <FieldLabel htmlFor={inputId} className="break-words">
+              {field.title}
+              {field.required ? " *" : ""}
+            </FieldLabel>
+            <div className="flex min-w-0 items-center gap-2">
+              {field.options || (field.type === "boolean" && !field.sensitive) ? (
+                <select
+                  id={inputId}
+                  value={value}
+                  disabled={disabled}
+                  className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                  onChange={(event) => edit(key, event.target.value)}
+                >
+                  <option value="">{t("plugins:unset")}</option>
+                  {(field.options ?? ["true", "false"]).map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <Input
+                  id={inputId}
+                  className="min-w-0 flex-1"
+                  disabled={disabled}
+                  type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"}
+                  min={field.min}
+                  max={field.max}
+                  step="any"
+                  autoComplete="off"
+                  value={value}
+                  placeholder={placeholder}
+                  onChange={(event) => edit(key, event.target.value)}
+                />
+              )}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={disabled}
+                onClick={() => edit(key, "")}
+              >
+                {t("plugins:resetOption")}
+              </Button>
+            </div>
+            <FieldDescription className="break-words">{field.description}</FieldDescription>
+          </Field>
+        );
+      })}
+      <p aria-live="polite" className="break-words text-xs text-muted-foreground">
+        {save.isPending
+          ? t("plugins:savingConfiguration")
+          : Object.keys(draft).length
+            ? t("plugins:unsavedConfiguration")
+            : t("plugins:saved")}
+      </p>
+      {error ? (
+        <div className="grid gap-2">
+          <p role="alert" className="break-words text-xs text-destructive">
+            {error}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={disabled || save.isPending}
+              onClick={() => {
+                setError("");
+                mutate(draft);
+              }}
+            >
+              {t("plugins:retry")}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={save.isPending}
+              onClick={() => {
+                setBase(saved);
+                setError("");
+              }}
+            >
+              {t("plugins:reloadConfiguration")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function PluginHubPage({
+  initialView,
+  initialComponent,
+}: {
+  initialView?: "discover" | "installed" | "sources";
+  initialComponent?: "skill" | "mcp";
+}) {
   const { t } = useTranslation();
   const { user, token } = useAuth();
   const queryClient = useQueryClient();
-  const [tab, setTab] = React.useState<"discover" | "installed" | "sources">("discover");
-  const [filter, setFilter] = React.useState<"plugins" | "skill" | "mcp">("plugins");
+  const [tab, setTab] = React.useState<"discover" | "installed" | "sources">(
+    initialView ?? "discover",
+  );
+  const [filter, setFilter] = React.useState<"plugins" | "skill" | "mcp">(
+    initialComponent ?? "plugins",
+  );
   const [componentFilter, setComponentFilter] = React.useState("all");
   const [search, setSearch] = React.useState("");
   const query = React.useDeferredValue(search.trim().toLocaleLowerCase());
@@ -91,6 +316,9 @@ export function PluginHubPage() {
   const [editingSource, setEditingSource] = React.useState<MarketplaceSource | "new" | null>(null);
   const [mcpDialog, setMcpDialog] = React.useState<McpSummary | "new" | null>(null);
   const uploadRef = React.useRef<HTMLInputElement>(null);
+  const [uploadTarget, setUploadTarget] = React.useState<string>();
+  const [pendingZip, setPendingZip] = React.useState<{ id: string; digest: string; file: File }>();
+  const [uploading, setUploading] = React.useState(false);
   const installed = useQuery({
     queryKey: ["plugins", user?.id],
     queryFn: () => pluginRequest<{ plugins: InstalledPlugin[] }>(""),
@@ -129,7 +357,8 @@ export function PluginHubPage() {
         queryKey.some((key) => typeof key === "string" && /plugin|skill|mcp/i.test(key)),
     });
   const action = useMutation({
-    mutationFn: ({
+    mutationKey: ["plugin-action", user?.id],
+    mutationFn: async ({
       path,
       method = "POST",
       body,
@@ -139,15 +368,55 @@ export function PluginHubPage() {
       body?: Record<string, unknown> | FormData;
     }) => {
       if (!token || getAuthToken() !== token) throw new Error("Session changed");
-      return pluginRequest<{ plugin?: InstalledPlugin }>(path, method, body);
+      const result = await pluginRequest<{ plugin?: InstalledPlugin; error?: string }>(
+        path,
+        method,
+        body,
+      );
+      if (getAuthToken() !== token) throw new Error("Session changed");
+      return result;
     },
-    onSuccess: async (result) => {
+    onSuccess: async (result, operation) => {
       await invalidate();
-      if (result.plugin) setSelection({ id: result.plugin.id });
-      toast.success(t("plugins:saved"));
+      if (result.plugin && /\/(install|upload)$/.test(operation.path))
+        setSelection({ id: result.plugin.id });
+      if (result.error) toast.error(result.error);
+      else toast.success(t("plugins:saved"));
     },
     onError: (error) => toast.error(error.message),
   });
+  const pendingActions = useMutationState({
+    filters: { mutationKey: ["plugin-action", user?.id], status: "pending" },
+    select: (mutation) =>
+      mutation.state.variables as { path: string; body?: Record<string, unknown> },
+  });
+  const configuringPlugins = useMutationState({
+    filters: { mutationKey: ["plugin-configuration", user?.id], status: "pending" },
+    select: (mutation) => mutation.options.mutationKey?.[2],
+  });
+  const sourceBusy = (id: string) =>
+    pendingActions.some(
+      (operation) =>
+        operation.path.startsWith(`/marketplaces/${id}`) ||
+        (operation.path === "/marketplaces" &&
+          (operation.body?.source as MarketplaceSource | undefined)?.id === id),
+    );
+  const listingBusy = (listing: MarketplaceListing) =>
+    pendingActions.some(
+      (operation) =>
+        operation.path === `/marketplaces/${listing.sourceId}/install` &&
+        operation.body?.key === listing.key,
+    );
+  const pluginBusy = (id: string, listing?: MarketplaceListing) =>
+    configuringPlugins.includes(id) ||
+    pendingActions.some(
+      (operation) =>
+        operation.path === "/check-updates" ||
+        operation.path === `/${id}` ||
+        operation.path.startsWith(`/${id}/`) ||
+        operation.path.startsWith(`/${id}?`),
+    ) ||
+    (!!listing && listingBusy(listing));
   const refresh = useMutation({
     mutationFn: ({ id, params }: { id: string; params: URLSearchParams }) =>
       pluginRequest<MarketplaceCatalog>(`/marketplaces/${id}/catalog?refresh=1&${params}`),
@@ -225,7 +494,15 @@ export function PluginHubPage() {
           .toLocaleLowerCase()
           .includes(query),
     ) ?? [];
-  const busy = action.isPending;
+  const busy =
+    uploading ||
+    (active
+      ? pluginBusy(active.id, active.listing)
+      : selection?.listing
+        ? listingBusy(selection.listing)
+        : pendingActions.some(
+            (operation) => operation.path === "/install" || operation.path === "/upload",
+          ));
   const select = (next: NonNullable<typeof selection>) => {
     setSelection(next);
     setSkillPath(null);
@@ -240,7 +517,26 @@ export function PluginHubPage() {
     if (!file) return;
     const body = new FormData();
     body.set("archive", file);
-    await action.mutateAsync({ path: "/upload", body });
+    setUploading(true);
+    try {
+      if (uploadTarget) {
+        const result = await pluginRequest<{ preview: PluginVersion; changes: PluginChange[] }>(
+          `/${uploadTarget}/upload`,
+          "POST",
+          body,
+        );
+        setPendingZip({ id: uploadTarget, digest: result.preview.digest, file });
+        setSelection({ id: uploadTarget });
+        await invalidate();
+        return;
+      }
+      await action.mutateAsync({
+        path: "/upload",
+        body,
+      });
+    } finally {
+      setUploading(false);
+    }
     setTab("installed");
     setImportOpen(false);
   };
@@ -255,7 +551,7 @@ export function PluginHubPage() {
         <Button
           variant="outline"
           size="sm"
-          disabled={busy}
+          disabled={pendingActions.some((operation) => operation.path === "/check-updates")}
           onClick={() => action.mutate({ path: "/check-updates" })}
         >
           <RefreshCwIcon />
@@ -358,6 +654,7 @@ export function PluginHubPage() {
                 key={item}
                 variant={filter === item ? "secondary" : "ghost"}
                 size="sm"
+                aria-pressed={filter === item}
                 onClick={() => setFilter(item)}
               >
                 {t(`plugins:${item}`)}
@@ -437,7 +734,12 @@ export function PluginHubPage() {
           </Button>
         </div>
       ) : null}
-      {[installed.error, sources.error, tab === "discover" ? catalog.error : null]
+      {[
+        installed.error,
+        sources.error,
+        tab === "discover" ? catalog.error : null,
+        tab === "installed" && filter === "mcp" ? mcp.error : null,
+      ]
         .filter(Boolean)
         .map((error) => (
           <div
@@ -471,6 +773,15 @@ export function PluginHubPage() {
         </div>
       ) : null}
       <ScrollArea className="min-h-0 flex-1">
+        {(tab === "sources" && sources.isPending) ||
+        (tab === "installed" && (filter === "mcp" ? mcp.isPending : installed.isPending)) ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("plugins:loading")}
+          </p>
+        ) : null}
+        {tab === "discover" && !sources.isPending && !selectedSource ? (
+          <p className="text-sm text-muted-foreground">{t("plugins:noEnabledSources")}</p>
+        ) : null}
         {tab === "discover" ? (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))] gap-3 pb-3">
             {catalog.isFetching && !catalog.data ? (
@@ -504,7 +815,11 @@ export function PluginHubPage() {
                   </Button>
                   <Button
                     size="sm"
-                    disabled={busy || !!listing.blockedReason || listingInstalled.has(listing.id)}
+                    disabled={
+                      listingBusy(listing) ||
+                      !!listing.blockedReason ||
+                      listingInstalled.has(listing.id)
+                    }
                     onClick={() => select({ listing })}
                   >
                     {t(listingInstalled.has(listing.id) ? "plugins:installed" : "plugins:install")}
@@ -563,7 +878,7 @@ export function PluginHubPage() {
                   <Switch
                     aria-label={`${t("plugins:enable")} ${source.name}`}
                     checked={source.enabled}
-                    disabled={busy}
+                    disabled={sourceBusy(source.id)}
                     onCheckedChange={(enabled) =>
                       action.mutate({
                         path: "/marketplaces",
@@ -577,7 +892,7 @@ export function PluginHubPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={busy || !source.enabled}
+                    disabled={sourceBusy(source.id) || !source.enabled}
                     onClick={() =>
                       action.mutate({
                         path: `/marketplaces/${source.id}/catalog?refresh=1`,
@@ -590,7 +905,7 @@ export function PluginHubPage() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={busy}
+                    disabled={sourceBusy(source.id)}
                     onClick={() =>
                       action.mutate({ path: `/marketplaces/${source.id}`, method: "DELETE" })
                     }
@@ -688,7 +1003,7 @@ export function PluginHubPage() {
                   <Switch
                     aria-label={`${t("plugins:enable")} ${plugin.current.name}`}
                     checked={plugin.enabled}
-                    disabled={busy}
+                    disabled={pluginBusy(plugin.id, plugin.listing)}
                     onCheckedChange={(enabled) =>
                       action.mutate({
                         path: `/${plugin.id}/enabled`,
@@ -810,13 +1125,21 @@ export function PluginHubPage() {
                 <>
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span>{version.format}</span>
+                    <span className="break-all">
+                      {t("plugins:source")}:{" "}
+                      {active?.listing?.sourceId ??
+                        selection?.listing?.sourceId ??
+                        active?.source.kind}
+                    </span>
                     <Badge variant="outline">
                       {t(
-                        version.components.every((component) => component.supported)
-                          ? "plugins:supported"
-                          : version.components.some((component) => component.supported)
-                            ? "plugins:partial"
-                            : "plugins:unsupported",
+                        version.blockedReasons?.length || active?.dependencyErrors?.length
+                          ? "plugins:unavailableComponent"
+                          : version.components.every((component) => component.supported)
+                            ? "plugins:supported"
+                            : version.components.some((component) => component.supported)
+                              ? "plugins:partial"
+                              : "plugins:unsupported",
                       )}
                     </Badge>
                     {version.version ? (
@@ -830,11 +1153,74 @@ export function PluginHubPage() {
                       {t("plugins:revision")}: {version.digest.slice(0, 12)}
                     </span>
                   </div>
+                  {version.homepage ? (
+                    <p className="break-all text-xs text-muted-foreground">{version.homepage}</p>
+                  ) : null}
+                  {version.usageExamples?.length ? (
+                    <section className="grid min-w-0 gap-1">
+                      <h3 className="text-sm font-medium">{t("plugins:examples")}</h3>
+                      {version.usageExamples.map((example) => (
+                        <p key={example} className="break-words text-sm">
+                          {example}
+                        </p>
+                      ))}
+                    </section>
+                  ) : null}
+                  {active && version.readmePath ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="self-start"
+                      onClick={() => setSkillPath(version.readmePath ?? null)}
+                    >
+                      {t("plugins:readme")}
+                    </Button>
+                  ) : null}
                   {version.issues.map((issue) => (
                     <p key={issue} className="text-sm break-words text-destructive">
                       {issue}
                     </p>
                   ))}
+                  {[
+                    ...(version.blockedReasons ?? []),
+                    ...(active?.dependencyErrors ?? []),
+                    ...(active?.configurationErrors ?? []),
+                  ]
+                    .filter((issue, index, all) => all.indexOf(issue) === index)
+                    .map((issue) => (
+                      <p key={issue} role="status" className="break-words text-sm text-destructive">
+                        {issue}
+                      </p>
+                    ))}
+                  {version.dependencies?.length ? (
+                    <p className="break-words text-xs text-muted-foreground">
+                      {t("plugins:dependencies")}:{" "}
+                      {version.dependencies
+                        .map(
+                          (item) =>
+                            `${item.name}${item.marketplace ? `@${item.marketplace}` : ""}${item.version ? ` (${item.version})` : ""}`,
+                        )
+                        .join(", ")}
+                    </p>
+                  ) : null}
+                  {active
+                    ? [active.current, active.update?.preview, active.previous]
+                        .filter((item): item is PluginVersion => !!item)
+                        .filter(
+                          (item, index, all) =>
+                            Object.keys(item.userConfig ?? {}).length > 0 &&
+                            all.findIndex((other) => other.digest === item.digest) === index,
+                        )
+                        .map((item) => (
+                          <PluginConfigurationForm
+                            key={`${active.id}:${item.digest}`}
+                            plugin={active}
+                            version={item}
+                            disabled={busy}
+                            onSaved={invalidate}
+                          />
+                        ))
+                    : null}
                   {version.components.map((component) => (
                     <section
                       key={component.id}
@@ -897,6 +1283,7 @@ export function PluginHubPage() {
                               const server = mcp.data?.find((item) => item.id === component.id);
                               if (server) setMcpDialog(server);
                             }}
+                            disabled={!mcp.data?.some((item) => item.id === component.id)}
                           >
                             {t("plugins:configure")}
                           </Button>
@@ -970,6 +1357,19 @@ export function PluginHubPage() {
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             {active ? (
               <>
+                {active.source.kind === "upload" ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => {
+                      setUploadTarget(active.id);
+                      uploadRef.current?.click();
+                    }}
+                  >
+                    {t("plugins:replaceZip")}
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant="outline"
@@ -1004,17 +1404,32 @@ export function PluginHubPage() {
                 {active.update?.available && active.update.digest ? (
                   <Button
                     size="sm"
-                    disabled={busy}
+                    disabled={
+                      busy ||
+                      (active.source.kind === "upload" &&
+                        (pendingZip?.id !== active.id ||
+                          pendingZip.digest !== active.update.digest))
+                    }
                     onClick={() => {
                       if (
                         window.confirm(
                           `${t("plugins:updateConfirm")}\n${active.update?.changes?.map((change) => t(`plugins:changes.${change.kind}`, { name: change.name, keys: change.keys?.join(", ") })).join("\n") ?? ""}`,
                         )
-                      )
-                        action.mutate({
-                          path: `/${active.id}/update`,
-                          body: { digest: active.update?.digest },
-                        });
+                      ) {
+                        if (active.source.kind === "upload" && pendingZip?.id === active.id) {
+                          const body = new FormData();
+                          body.set("archive", pendingZip.file);
+                          body.set("digest", pendingZip.digest);
+                          action.mutate(
+                            { path: `/${active.id}/upload`, body },
+                            { onSuccess: () => setPendingZip(undefined) },
+                          );
+                        } else
+                          action.mutate({
+                            path: `/${active.id}/update`,
+                            body: { digest: active.update?.digest },
+                          });
+                      }
                     }}
                   >
                     {t("plugins:update")}
@@ -1084,7 +1499,10 @@ export function PluginHubPage() {
                 <Button
                   variant="outline"
                   disabled={busy}
-                  onClick={() => uploadRef.current?.click()}
+                  onClick={() => {
+                    setUploadTarget(undefined);
+                    uploadRef.current?.click();
+                  }}
                 >
                   <DownloadIcon />
                   {t("plugins:upload")}
@@ -1195,7 +1613,7 @@ export function PluginHubPage() {
         accept=".zip"
         aria-label={t("plugins:upload")}
         onChange={(event) => {
-          void upload(event.target.files?.[0]).catch(() => undefined);
+          void upload(event.target.files?.[0]).catch((error: Error) => toast.error(error.message));
           event.target.value = "";
         }}
       />

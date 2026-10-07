@@ -5,13 +5,15 @@ import { basename, isAbsolute, relative, resolve, sep } from "node:path";
 import { validateSkillContent } from "@mastra/core/skills";
 import AdmZip from "adm-zip";
 import matter from "gray-matter";
+import { validRange } from "semver";
 import { z } from "zod";
-import type {
-  MarketplaceListing,
-  PluginChange,
-  PluginComponent,
-  PluginMcpDefinition,
-  PluginVersion,
+import {
+  type MarketplaceListing,
+  type PluginChange,
+  type PluginComponent,
+  type PluginMcpDefinition,
+  type PluginVersion,
+  pluginUserConfigSchema,
 } from "../../shared/plugin-contract";
 
 export const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
@@ -19,6 +21,23 @@ export const MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
 const MAX_FILES = 2_000;
 export interface PackageFiles extends Map<string, Buffer> {
   executablePaths?: Set<string>;
+  directories?: Set<string>;
+}
+
+export function packageDirectories(files: PackageFiles): Set<string> {
+  const directories = new Set(files.directories);
+  for (const path of files.keys()) {
+    const parts = path.split("/");
+    for (let count = 1; count < parts.length; count++)
+      directories.add(parts.slice(0, count).join("/"));
+  }
+  const seen = new Set<string>();
+  for (const path of [...directories, ...files.keys()]) {
+    const key = packagePath(path).toLowerCase();
+    if (seen.has(key)) throw new Error(`Conflicting package file or directory: ${path}`);
+    seen.add(key);
+  }
+  return directories;
 }
 export const pluginHash = (value: string | Buffer) =>
   createHash("sha256").update(value).digest("hex");
@@ -27,6 +46,7 @@ export function packagePath(value: string): string {
   const path = value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
   if (
     !path ||
+    path.length > 4096 ||
     path.startsWith("/") ||
     path
       .split("/")
@@ -89,7 +109,13 @@ export function archiveFiles(buffer: Buffer): PackageFiles {
     const mode = (entry.attr >>> 16) & 0o170000;
     if (mode && mode !== 0o100000 && mode !== 0o040000)
       throw new Error("Archive links and special files are not supported");
-    if (!entry.isDirectory) {
+    if (entry.isDirectory) {
+      const key = packagePath(entry.entryName).toLowerCase();
+      if (seen.has(key)) throw new Error(`Duplicate package path: ${entry.entryName}`);
+      seen.add(key);
+      files.directories ??= new Set();
+      files.directories.add(packagePath(entry.entryName));
+    } else {
       addFile(files, entry.entryName, entry.getData(), seen, total);
       if ((entry.attr >>> 16) & 0o111) {
         files.executablePaths ??= new Set();
@@ -107,6 +133,7 @@ export async function directoryFiles(directory: string): Promise<PackageFiles> {
   const files: PackageFiles = new Map();
   const seen = new Set<string>();
   const total = { bytes: 0 };
+  let entries = 0;
   const visit = async (current: string, prefix: string, ancestors: Set<string>) => {
     const physical = await realpath(current);
     withinRoot(root, physical);
@@ -114,12 +141,16 @@ export async function directoryFiles(directory: string): Promise<PackageFiles> {
     const next = new Set([...ancestors, physical]);
     for (const entry of await readdir(current, { withFileTypes: true })) {
       if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (++entries > MAX_FILES) throw new Error("Plugin package exceeds 2,000 entries");
       const name = packagePath(`${prefix}${entry.name}`);
       const path = await realpath(resolve(current, entry.name));
       withinRoot(root, path);
       const info = await lstat(path);
-      if (info.isDirectory()) await visit(path, `${name}/`, next);
-      else if (info.isFile()) {
+      if (info.isDirectory()) {
+        files.directories ??= new Set();
+        files.directories.add(name);
+        await visit(path, `${name}/`, next);
+      } else if (info.isFile()) {
         if (info.size + total.bytes > MAX_UNPACKED_BYTES)
           throw new Error("Plugin package exceeds 100 MB");
         addFile(files, name, await readFile(path), seen, total);
@@ -153,6 +184,11 @@ export function selectPackageRoot(
         .filter((name) => name.startsWith(prefix))
         .map((name) => name.slice(prefix.length)),
     );
+    selected.directories = new Set(
+      [...packageDirectories(files)]
+        .filter((name) => name.startsWith(prefix))
+        .map((name) => name.slice(prefix.length)),
+    );
     return selected;
   }
   if (!unwrap) return files;
@@ -163,7 +199,9 @@ export function selectPackageRoot(
     !result.has(".codex-plugin/plugin.json") &&
     !result.has("SKILL.md")
   ) {
-    const roots = new Set([...result.keys()].map((path) => path.split("/")[0]));
+    const roots = new Set(
+      [...result.keys(), ...packageDirectories(result)].map((path) => path.split("/")[0]),
+    );
     const root = [...roots][0];
     if (
       roots.size !== 1 ||
@@ -174,14 +212,21 @@ export function selectPackageRoot(
     const executablePaths = new Set(
       [...(result.executablePaths ?? [])].map((name) => name.slice(root.length + 1)),
     );
+    const directories = new Set(
+      [...packageDirectories(result)]
+        .filter((name) => name.startsWith(`${root}/`))
+        .map((name) => name.slice(root.length + 1)),
+    );
     result = new Map([...result].map(([path, value]) => [path.slice(root.length + 1), value]));
     result.executablePaths = executablePaths;
+    result.directories = directories;
   }
   return result;
 }
 
 export function packageDigest(files: PackageFiles): string {
   const hash = createHash("sha256");
+  for (const path of [...packageDirectories(files)].sort()) hash.update(`directory:${path}\0`);
   for (const [path, contents] of [...files].sort(([a], [b]) => a.localeCompare(b, "en")))
     hash
       .update(`${path}\0${files.executablePaths?.has(path) ? "x" : "-"}\0${contents.length}\0`)
@@ -195,6 +240,21 @@ export function packageChanges(previous: PluginVersion, next: PluginVersion): Pl
   const changes: PluginChange[] = previous.components
     .filter((component) => !after.has(component.id))
     .map((component) => ({ kind: "removed", componentId: component.id, name: component.name }));
+  if (
+    JSON.stringify(previous.userConfig) !== JSON.stringify(next.userConfig) ||
+    JSON.stringify(previous.dependencies) !== JSON.stringify(next.dependencies)
+  )
+    changes.push({
+      kind: "configuration",
+      componentId: "plugin",
+      name: next.name,
+      keys: [
+        ...Object.keys(next.userConfig ?? {}),
+        ...(next.dependencies ?? []).map((item) => `dependency:${item.name}`),
+      ],
+    });
+  if (JSON.stringify(previous.blockedReasons) !== JSON.stringify(next.blockedReasons))
+    changes.push({ kind: "support", componentId: "plugin", name: next.name });
   for (const component of next.components) {
     const old = before.get(component.id);
     const identity = { componentId: component.id, name: component.name };
@@ -275,6 +335,36 @@ function componentPaths(value: unknown, allowRoot = false): string[] {
         });
 }
 
+export function claudePackageManifest(files: PackageFiles, listing?: MarketplaceListing) {
+  let manifest = files.has(".claude-plugin/plugin.json")
+    ? readJson(files, ".claude-plugin/plugin.json")
+    : undefined;
+  if (listing?.format !== "claude") return manifest;
+  const appended = ["skills", "commands", "agents", "hooks", "outputStyles", "themes"];
+  if (
+    listing.strict === false &&
+    manifest &&
+    appended.some((key) => listing.manifest?.[key] !== undefined)
+  )
+    throw new Error("Conflicting component declarations in a non-strict Claude entry");
+  if (!manifest) return listing.manifest;
+  manifest = { ...manifest };
+  if (listing.strict !== false) {
+    // Entry MCP, LSP, userConfig and channels do not override an existing package manifest.
+    for (const key of appended) {
+      const extra = listing.manifest?.[key];
+      if (extra === undefined) continue;
+      if (key === "skills")
+        manifest.skills = [
+          ...componentPaths(manifest.skills, true),
+          ...componentPaths(extra, true),
+        ].map((path) => (path ? `./${path}` : "."));
+      else manifest[key] ??= extra;
+    }
+  }
+  return manifest;
+}
+
 function parseMcp(input: unknown, portable: boolean): PluginMcpDefinition {
   const raw = objectSchema.parse(input);
   const type = raw.type ?? (raw.command ? "stdio" : "http");
@@ -313,6 +403,10 @@ function parseMcp(input: unknown, portable: boolean): PluginMcpDefinition {
     new Headers(value.headers);
     return { transport: "http", url: value.url, headers: value.headers };
   }
+  const unsupported = Object.keys(raw).filter(
+    (key) => !["type", "command", "args", "env", "cwd", "url", "headers"].includes(key),
+  );
+  if (unsupported.length) throw new Error(`Unsupported MCP settings: ${unsupported.join(", ")}`);
   if (type === "stdio")
     return {
       transport: "stdio",
@@ -323,9 +417,11 @@ function parseMcp(input: unknown, portable: boolean): PluginMcpDefinition {
     };
   if (type !== "http" && type !== "streamable-http")
     throw new Error(`Unsupported MCP transport: ${String(type)}`);
+  const url = z.string().min(1).parse(raw.url);
+  if (!/\$\{[^}]+\}/.test(url)) z.url({ protocol: /^https?$/ }).parse(url);
   return {
     transport: "http",
-    url: z.url({ protocol: /^https?$/ }).parse(raw.url),
+    url,
     headers: stringRecord.optional().parse(raw.headers),
   };
 }
@@ -337,6 +433,7 @@ export function describePackage(
   listing?: MarketplaceListing,
 ): PluginVersion {
   const issues: string[] = [];
+  const blockedReasons: string[] = [];
   const hasClaude = files.has(".claude-plugin/plugin.json");
   const hasCodex = files.has(".codex-plugin/plugin.json");
   if (
@@ -358,7 +455,12 @@ export function describePackage(
           ? "codex"
           : (listing?.format ?? "skills");
   const manifestPath = format === "portable" ? "plugin.json" : `.${format}-plugin/plugin.json`;
-  let manifest = files.has(manifestPath) ? readJson(files, manifestPath) : undefined;
+  let manifest =
+    format === "claude"
+      ? claudePackageManifest(files, listing)
+      : files.has(manifestPath)
+        ? readJson(files, manifestPath)
+        : undefined;
   if (format === "portable") {
     const parsed = portableManifest.parse(manifest);
     for (const key of Object.keys(manifest ?? {}))
@@ -371,35 +473,110 @@ export function describePackage(
         Array.isArray(parsed.extensions))
     )
       issues.push("Ignored non-object extensions field");
-  } else if (listing?.format === "claude") {
-    const appended = ["skills", "commands", "agents", "hooks", "outputStyles", "themes"];
-    if (
-      listing.strict === false &&
-      manifest &&
-      appended.some((key) => listing.manifest?.[key] !== undefined)
-    )
-      throw new Error("Conflicting component declarations in a non-strict Claude entry");
-    if (!manifest) manifest = listing.manifest;
-    else if (listing.strict !== false) {
-      // Entry MCP, LSP, userConfig and channels are ignored when the package has its own manifest.
-      manifest = { ...manifest };
-      for (const key of appended) {
-        const extra = listing.manifest?.[key];
-        if (extra === undefined) continue;
-        if (key === "skills")
-          manifest.skills = [
-            ...componentPaths(manifest.skills, true),
-            ...componentPaths(extra, true),
-          ].map((path) => (path ? `./${path}` : "."));
-        else manifest[key] ??= extra;
-      }
-    }
   }
   if (listing && manifest?.name && manifest.name !== listing.key && format === "claude")
-    throw new Error("Marketplace entry and plugin manifest names differ");
-  const rootSkillName = files.has("SKILL.md")
-    ? matter(files.get("SKILL.md")?.toString("utf8") ?? "").data.name
-    : undefined;
+    issues.push(
+      "Marketplace entry and plugin manifest names differ; installation identity remains the marketplace entry",
+    );
+  if (format === "codex" && !manifest)
+    throw new Error(
+      "A Codex package requires .codex-plugin/plugin.json or a portable root plugin.json",
+    );
+  if ((format === "claude" || format === "codex") && manifest) {
+    z.object({
+      name: z.string().min(1),
+      version: z.string().optional(),
+      description: z.string().optional(),
+      defaultEnabled: z.boolean().optional(),
+      homepage: z.url().optional(),
+      license: z.string().optional(),
+      keywords: z.array(z.string()).optional(),
+      author: (format === "claude"
+        ? z.object({ name: z.string(), email: z.string().optional(), url: z.string().optional() })
+        : z.union([z.string(), z.object({ name: z.string().optional() })])
+      ).optional(),
+    }).parse(manifest);
+    const known = new Set([
+      "$schema",
+      "name",
+      "displayName",
+      "version",
+      "description",
+      "author",
+      "homepage",
+      "repository",
+      "license",
+      "keywords",
+      "metadata",
+      "icon",
+      "documentationUrl",
+      "supportUrl",
+      "screenshots",
+      "skills",
+      "mcpServers",
+      "commands",
+      "agents",
+      "hooks",
+      "lspServers",
+      "apps",
+      "userConfig",
+      "dependencies",
+      "channels",
+      "outputStyles",
+      "themes",
+      "experimental",
+      "workflows",
+      "rules",
+      "interface",
+      "defaultEnabled",
+    ]);
+    for (const key of Object.keys(manifest))
+      if (!known.has(key) && !["source", "strict", "category", "tags"].includes(key))
+        issues.push(`Ignored unknown manifest field: ${key}`);
+    if (format === "codex" && manifest.userConfig !== undefined)
+      blockedReasons.push("Codex userConfig semantics are not supported");
+  }
+  const userConfig =
+    format === "claude" && manifest?.userConfig !== undefined
+      ? pluginUserConfigSchema.parse(manifest.userConfig)
+      : undefined;
+  const dependencies =
+    manifest?.dependencies === undefined
+      ? undefined
+      : z
+          .array(
+            z.union([
+              z
+                .string()
+                .min(1)
+                .transform((value) => {
+                  const [name, marketplace, extra] = value.split("@");
+                  if (!name || marketplace === "" || extra !== undefined)
+                    throw new Error("Invalid plugin dependency identifier");
+                  return { name, marketplace };
+                }),
+              z
+                .object({
+                  name: z.string().min(1),
+                  marketplace: z.string().min(1).optional(),
+                  version: z.string().min(1).optional(),
+                })
+                .strict(),
+            ]),
+          )
+          .max(100)
+          .parse(manifest.dependencies);
+  for (const dependency of dependencies ?? [])
+    if ("version" in dependency && dependency.version && !validRange(dependency.version))
+      blockedReasons.push(`Unrecognized dependency version range: ${dependency.name}`);
+  let rootSkillName: unknown;
+  if (format === "skills" && files.has("SKILL.md")) {
+    try {
+      rootSkillName = matter(files.get("SKILL.md")?.toString("utf8") ?? "").data.name;
+    } catch {
+      /* The component parser reports invalid frontmatter below. */
+    }
+  }
   const name = z
     .string()
     .min(1)
@@ -430,6 +607,30 @@ export function describePackage(
             : ["skills"]),
           ...(format === "portable" ? [] : componentPaths(manifest?.skills, true)),
         ];
+  const directories = packageDirectories(files);
+  if (format !== "portable") {
+    for (const path of componentPaths(manifest?.skills, true))
+      if (path && !directories.has(path)) throw new Error(`Skill directory not found: ${path}`);
+    for (const path of typeof manifest?.mcpServers === "string" ||
+    Array.isArray(manifest?.mcpServers)
+      ? componentPaths(manifest.mcpServers)
+      : [])
+      if (!files.has(path)) throw new Error(`MCP configuration file not found: ${path}`);
+  }
+  if (files.has("skills") && format !== "skills")
+    add("skill", "skills", {
+      name: "skills",
+      description: "",
+      supported: false,
+      issues: ["The skills component location must be a directory"],
+    });
+  if (directories.has(format === "portable" ? "mcp.json" : ".mcp.json"))
+    add("mcp", "mcp.json", {
+      name: "mcp.json",
+      description: "",
+      supported: false,
+      issues: ["The MCP component location must be a file"],
+    });
   const skillFiles = [...files.keys()].filter(
     (path) =>
       basename(path) === "SKILL.md" &&
@@ -460,14 +661,23 @@ export function describePackage(
       continue;
     }
     const skillName = typeof parsed.data.name === "string" ? parsed.data.name : (parent ?? "skill");
+    const skillIssues = [...result.errors];
+    if (format === "claude") {
+      for (const match of content.matchAll(/\$\{user_config\.([^}]+)\}/g))
+        if (!userConfig?.[match[1]]) skillIssues.push(`Undeclared userConfig option: ${match[1]}`);
+      if (/\$\{CLAUDE_PROJECT_DIR\}/.test(content))
+        skillIssues.push("Project-specific skill variables are not supported");
+      if (/!`[^`]+`/.test(parsed.content))
+        skillIssues.push("Skill shell preprocessing is not supported");
+    }
     const identity = pluginHash(`${pluginId}\0skill\0${path}`).slice(0, 20);
     add("skill", path, {
       name: skillName,
       description: typeof parsed.data.description === "string" ? parsed.data.description : "",
       path,
       runtimeName: `skill-${identity}`,
-      supported: result.valid,
-      issues: result.errors,
+      supported: result.valid && !skillIssues.length,
+      issues: skillIssues,
     });
   }
   const mcpPaths =
@@ -508,58 +718,67 @@ export function describePackage(
     !Array.isArray(manifest.mcpServers)
   )
     mcpDocuments.push(["manifest", manifest.mcpServers]);
-  const mcpNames = new Set<string>();
+  const mcpServers = new Map<string, { path: string; value: unknown }>();
   for (const [path, input] of mcpDocuments)
-    for (const [serverName, value] of Object.entries(objectSchema.parse(input))) {
-      try {
-        if (mcpNames.has(serverName)) throw new Error(`Duplicate MCP server name: ${serverName}`);
-        mcpNames.add(serverName);
-        const mcp = parseMcp(value, format === "portable");
-        if (mcp.command?.startsWith("./") && !files.has(packagePath(mcp.command)))
-          throw new Error(`Missing bundled MCP executable: ${mcp.command}`);
-        add("mcp", serverName, {
-          name: serverName,
-          description: "",
-          supported: true,
-          issues: [],
-          mcp,
-          configurationKeys:
-            format === "portable"
-              ? []
-              : [
-                  ...new Set(
-                    [
-                      mcp.command,
-                      ...(mcp.args ?? []),
-                      mcp.cwd,
-                      mcp.url,
-                      ...Object.values(mcp.env ?? {}),
-                      ...Object.values(mcp.headers ?? {}),
-                    ]
-                      .flatMap((value) =>
-                        [...(value ?? "").matchAll(/\$\{([^}]+)\}/g)].map((match) => match[1]),
-                      )
-                      .filter(
-                        (key) =>
-                          ![
-                            "PLUGIN_ROOT",
-                            "PLUGIN_DATA",
-                            "CLAUDE_PLUGIN_ROOT",
-                            "CLAUDE_PLUGIN_DATA",
-                          ].includes(key) && !key.includes(":-"),
-                      ),
-                  ),
-                ],
-        });
-      } catch (error) {
-        add("mcp", `${path}:${serverName}`, {
-          name: serverName,
-          description: "",
-          supported: false,
-          issues: [error instanceof Error ? error.message : "Invalid MCP server"],
-        });
+    for (const [serverName, value] of Object.entries(objectSchema.parse(input)))
+      mcpServers.set(serverName, { path, value });
+  for (const [serverName, { path, value }] of mcpServers) {
+    try {
+      const mcp = parseMcp(value, format === "portable");
+      const serialized = JSON.stringify(mcp);
+      if (format === "claude") {
+        for (const match of serialized.matchAll(/\$\{user_config\.([^}]+)\}/g))
+          if (!userConfig?.[match[1]]) throw new Error(`Undeclared userConfig option: ${match[1]}`);
+        if (/\$\{CLAUDE_PROJECT_DIR\}/.test(serialized))
+          throw new Error("Project-specific MCP variables are not supported");
       }
+      if (mcp.command?.startsWith("./") && !files.has(packagePath(mcp.command)))
+        throw new Error(`Missing bundled MCP executable: ${mcp.command}`);
+      add("mcp", serverName, {
+        name: serverName,
+        description: "",
+        supported: true,
+        issues: [],
+        mcp,
+        configurationKeys:
+          format === "portable"
+            ? []
+            : [
+                ...new Set(
+                  [
+                    mcp.command,
+                    ...(mcp.args ?? []),
+                    mcp.cwd,
+                    mcp.url,
+                    ...Object.values(mcp.env ?? {}),
+                    ...Object.values(mcp.headers ?? {}),
+                  ]
+                    .flatMap((value) =>
+                      [...(value ?? "").matchAll(/\$\{([^}]+)\}/g)].map((match) => match[1]),
+                    )
+                    .filter(
+                      (key) =>
+                        ![
+                          "PLUGIN_ROOT",
+                          "PLUGIN_DATA",
+                          "CLAUDE_PLUGIN_ROOT",
+                          "CLAUDE_PLUGIN_DATA",
+                        ].includes(key) &&
+                        !key.includes(":-") &&
+                        !key.startsWith("user_config."),
+                    ),
+                ),
+              ],
+      });
+    } catch (error) {
+      add("mcp", `${path}:${serverName}`, {
+        name: serverName,
+        description: "",
+        supported: false,
+        issues: [error instanceof Error ? error.message : "Invalid MCP server"],
+      });
     }
+  }
   const extensions = manifest?.extensions;
   const openai =
     extensions && typeof extensions === "object" && !Array.isArray(extensions)
@@ -568,9 +787,26 @@ export function describePackage(
   const overlay =
     openai && typeof openai === "object" && !Array.isArray(openai)
       ? (openai as Record<string, unknown>)
-      : files.has(".codex-plugin/plugin.json")
+      : (format === "portable" || format === "codex") && files.has(".codex-plugin/plugin.json")
         ? readJson(files, ".codex-plugin/plugin.json")
         : {};
+  for (const key of ["channels", "outputStyles", "themes", "experimental", "workflows", "rules"]) {
+    if (manifest?.[key] !== undefined || overlay[key] !== undefined || directories.has(key))
+      add("extension", key, {
+        name: key,
+        description: "",
+        supported: false,
+        issues: [`${key} execution is not supported`],
+      });
+  }
+  if (format === "portable") {
+    for (const key of ["skills", "mcpServers", "dependencies", "userConfig"])
+      if (overlay[key] !== undefined)
+        issues.push(`Ignored client overlay field ${key}; portable components use fixed locations`);
+    if (extensions && typeof extensions === "object" && !Array.isArray(extensions))
+      for (const namespace of Object.keys(extensions))
+        if (namespace !== "com.openai") issues.push(`Ignored client extension: ${namespace}`);
+  }
   for (const kind of ["commands", "agents", "hooks", "lsp", "apps"] as const) {
     const key = kind === "lsp" ? "lspServers" : kind;
     if (
@@ -600,15 +836,27 @@ export function describePackage(
     runtimeNames.every((name) => /^[a-z0-9-]{1,64}$/.test(name)),
     "Skill runtime names must satisfy Mastra's slug constraints",
   );
+  const presentation =
+    overlay.interface && typeof overlay.interface === "object" && !Array.isArray(overlay.interface)
+      ? (overlay.interface as Record<string, unknown>)
+      : {};
+  const examples = presentation.defaultPrompt;
   return {
-    digest: packageDigest(files),
-    name,
+    digest: pluginHash(JSON.stringify([packageDigest(files), format, manifest, listing?.strict])),
+    name:
+      typeof listing?.manifest?.displayName === "string"
+        ? listing.manifest.displayName
+        : typeof presentation.displayName === "string"
+          ? presentation.displayName
+          : typeof manifest?.displayName === "string"
+            ? manifest.displayName
+            : name,
     description:
       typeof manifest?.description === "string"
         ? manifest.description
         : (listing?.description ?? ""),
     format,
-    version: typeof manifest?.version === "string" ? manifest.version : undefined,
+    version: typeof manifest?.version === "string" ? manifest.version : listing?.version,
     author:
       typeof manifest?.author === "string"
         ? manifest.author
@@ -617,7 +865,23 @@ export function describePackage(
           : undefined,
     license: typeof manifest?.license === "string" ? manifest.license : undefined,
     homepage: typeof manifest?.homepage === "string" ? manifest.homepage : undefined,
+    usageExamples:
+      typeof examples === "string"
+        ? [examples]
+        : Array.isArray(examples)
+          ? examples.filter((example): example is string => typeof example === "string")
+          : undefined,
+    readmePath: [...files.keys()].find((path) => /^readme\.md$/i.test(path)),
     components,
+    userConfig,
+    defaultEnabled:
+      typeof listing?.manifest?.defaultEnabled === "boolean"
+        ? listing.manifest.defaultEnabled
+        : typeof manifest?.defaultEnabled === "boolean"
+          ? manifest.defaultEnabled
+          : undefined,
+    dependencies,
+    blockedReasons,
     issues,
     installedAt: new Date().toISOString(),
   };

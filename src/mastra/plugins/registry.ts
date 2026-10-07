@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
@@ -11,25 +12,36 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import matter from "gray-matter";
-import type {
-  InstalledPlugin,
-  MarketplaceListing,
-  PluginComponent,
-  PluginSkill,
-  PluginSource,
-  PluginVersion,
+import { satisfies, valid, validRange } from "semver";
+import { z } from "zod";
+import { pluginCredentialPurpose } from "../../shared/credential-contract";
+import {
+  type InstalledPlugin,
+  type MarketplaceListing,
+  type PluginComponent,
+  type PluginConfigValue,
+  type PluginSkill,
+  type PluginSource,
+  type PluginVersion,
+  pluginConfigurationPatchSchema,
+  pluginConfigValueError,
+  pluginConfigValueSchema,
 } from "../../shared/plugin-contract";
+import { deleteCredential, resolveCredential, storeCredential } from "../credential-broker";
+import { workError } from "../errors";
 import { getLibsqlClient, getStorageDirectory } from "../storage/database";
 import {
   archiveFiles,
+  claudePackageManifest,
   describePackage,
   directoryFiles,
   MAX_PACKAGE_BYTES,
   type PackageFiles,
   packageChanges,
+  packageDirectories,
   packagePath,
   pluginHash,
   selectPackageRoot,
@@ -75,21 +87,184 @@ export async function listInstalledPlugins(owner?: string): Promise<InstalledPlu
     sql: "SELECT record FROM installed_plugins WHERE owner = ? ORDER BY id",
     args: [ownerKey(owner)],
   });
-  return rows.rows.map((row) => JSON.parse(String(row.record)) as InstalledPlugin);
+  return evaluatePlugins(rows.rows.map((row) => JSON.parse(String(row.record)) as InstalledPlugin));
 }
 
 export async function getInstalledPlugin(
   id: string,
   owner?: string,
 ): Promise<InstalledPlugin | undefined> {
-  await preparePluginStorage(ownerKey(owner));
-  const result = await (await database()).execute({
-    sql: "SELECT record FROM installed_plugins WHERE owner = ? AND id = ?",
-    args: [ownerKey(owner), id],
+  return (await listInstalledPlugins(owner)).find((plugin) => plugin.id === id);
+}
+
+function evaluatePlugins(plugins: InstalledPlugin[]): InstalledPlugin[] {
+  for (const plugin of plugins) {
+    plugin.configurationErrors = Object.entries(plugin.current.userConfig ?? {}).flatMap(
+      ([key, field]) => {
+        const value =
+          field.sensitive && plugin.configuration?.secretKeys.includes(key)
+            ? undefined
+            : (plugin.configuration?.values[key] ?? field.default);
+        const error =
+          field.sensitive && plugin.configuration?.secretKeys.includes(key)
+            ? undefined
+            : pluginConfigValueError(field, value);
+        return error ? [`${field.title}: ${error}`] : [];
+      },
+    );
+  }
+  const errors = new Map<string, string[]>();
+  const visit = (plugin: InstalledPlugin, ancestors: Set<string>): string[] => {
+    if (ancestors.has(plugin.id)) return [`Circular plugin dependency: ${plugin.current.name}`];
+    const cached = errors.get(plugin.id);
+    if (cached) return cached;
+    const result = [...(plugin.current.blockedReasons ?? [])];
+    const next = new Set([...ancestors, plugin.id]);
+    for (const dependency of plugin.current.dependencies ?? []) {
+      const label = `${dependency.name}${dependency.marketplace ? `@${dependency.marketplace}` : ""}`;
+      const sources = new Set(
+        plugins
+          .filter(
+            (item) =>
+              item.listing &&
+              (dependency.marketplace
+                ? item.listing.marketplaceName === dependency.marketplace
+                : item.listing.sourceId === plugin.listing?.sourceId),
+          )
+          .map((item) => item.listing?.sourceId),
+      );
+      const candidates = plugins.filter(
+        (item) => item.listing?.key === dependency.name && sources.has(item.listing.sourceId),
+      );
+      const target = sources.size === 1 && candidates.length === 1 ? candidates[0] : undefined;
+      if (!target) result.push(`Missing or ambiguous plugin dependency: ${label}`);
+      else if (
+        !target.enabled ||
+        target.configurationErrors?.length ||
+        !target.current.components.some(
+          (component) => component.supported && target.componentEnabled[component.id] !== false,
+        ) ||
+        visit(target, next).length
+      )
+        result.push(`Plugin dependency is unavailable: ${label}`);
+      else if (
+        dependency.version &&
+        (!validRange(dependency.version) ||
+          !target.current.version ||
+          !valid(target.current.version) ||
+          !satisfies(target.current.version, dependency.version))
+      )
+        result.push(`Plugin dependency version is not satisfied: ${label} (${dependency.version})`);
+    }
+    errors.set(plugin.id, result);
+    return result;
+  };
+  return plugins.map((plugin) => ({ ...plugin, dependencyErrors: visit(plugin, new Set()) }));
+}
+
+export async function resolvePluginConfiguration(
+  plugin: InstalledPlugin,
+): Promise<Record<string, PluginConfigValue>> {
+  const pointer = plugin.configuration?.secretCredential;
+  const secrets = pointer
+    ? z
+        .record(z.string(), pluginConfigValueSchema)
+        .parse(
+          JSON.parse(
+            await resolveCredential(pointer.credentialRef, pluginCredentialPurpose(plugin.id)),
+          ),
+        )
+    : {};
+  const values: Record<string, PluginConfigValue> = {};
+  for (const [key, field] of Object.entries(plugin.current.userConfig ?? {})) {
+    const value =
+      (field.sensitive ? secrets[key] : plugin.configuration?.values[key]) ?? field.default;
+    const error = pluginConfigValueError(field, value);
+    if (error) throw new Error(`Invalid plugin configuration: ${field.title} (${error})`);
+    if (value !== undefined) values[key] = value;
+  }
+  return values;
+}
+
+function skillDirectory(plugin: InstalledPlugin, owner: string): string {
+  return withinRoot(
+    pluginsDirectory(owner),
+    `${plugin.id}/runtime/${plugin.current.digest}/${plugin.configuration?.revision ?? "default"}`,
+  );
+}
+
+async function writeSkillEntries(
+  plugin: InstalledPlugin,
+  owner: string,
+  files?: PackageFiles,
+): Promise<void> {
+  const destination = skillDirectory(plugin, owner);
+  const existing = await readdir(destination).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
   });
-  return result.rows[0]
-    ? (JSON.parse(String(result.rows[0].record)) as InstalledPlugin)
-    : undefined;
+  if (existing) return;
+  const source = join(pluginVersionDirectory(plugin, owner), "source");
+  const contents = files ?? (await directoryFiles(source));
+  await mkdir(dirname(destination), { recursive: true });
+  const staging = await mkdtemp(join(dirname(destination), ".staging-"));
+  try {
+    for (const component of plugin.current.components) {
+      if (
+        component.kind !== "skill" ||
+        !component.supported ||
+        !component.path ||
+        !component.runtimeName
+      )
+        continue;
+      const prefix =
+        component.path === "SKILL.md" ? "" : component.path.slice(0, -"SKILL.md".length);
+      for (const directory of packageDirectories(contents))
+        if (directory.startsWith(prefix) && directory.length > prefix.length)
+          await mkdir(
+            withinRoot(staging, `${component.runtimeName}/${directory.slice(prefix.length)}`),
+            { recursive: true },
+          );
+      for (const [path, buffer] of contents) {
+        if (!path.startsWith(prefix)) continue;
+        const rel = path.slice(prefix.length);
+        const target = withinRoot(staging, `${component.runtimeName}/${packagePath(rel)}`);
+        await mkdir(dirname(target), { recursive: true });
+        let rendered: Buffer | string = buffer;
+        if (plugin.current.format === "claude" && path.endsWith(".md"))
+          rendered = buffer
+            .toString("utf8")
+            .replace(
+              /\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|user_config\.[^}]+)\}/g,
+              (_match, key: string) => {
+                if (key === "CLAUDE_PLUGIN_ROOT") return source;
+                if (key === "CLAUDE_PLUGIN_DATA")
+                  return join(pluginsDirectory(owner), plugin.id, "data");
+                const name = key.slice("user_config.".length);
+                const field = plugin.current.userConfig?.[name];
+                if (!field) throw new Error(`Undeclared userConfig option: ${name}`);
+                if (field.sensitive) return `[sensitive:${name}]`;
+                const value = plugin.configuration?.values[name] ?? field.default ?? "";
+                return Array.isArray(value) ? JSON.stringify(value) : String(value);
+              },
+            );
+        if (rel === "SKILL.md") {
+          const parsed = matter(rendered.toString());
+          rendered = matter.stringify(parsed.content, {
+            ...parsed.data,
+            name: component.runtimeName,
+          });
+        }
+        await writeFile(target, rendered, {
+          flag: "wx",
+          mode: contents.executablePaths?.has(path) ? 0o755 : 0o644,
+        });
+      }
+    }
+    await rename(staging, destination);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 const preparedOwners = new Map<string, Promise<void>>();
@@ -121,9 +296,25 @@ async function preparePluginStorage(owner: string): Promise<void> {
               throw error;
             },
           );
-          if (marker && !JSON.parse(marker).removeData)
+          if (marker && !JSON.parse(marker).removeData) {
             await rm(withinRoot(base, "versions"), { recursive: true, force: true });
-          else {
+            await rm(withinRoot(base, "runtime"), { recursive: true, force: true });
+          } else {
+            const userConfiguration = await readFile(
+              withinRoot(base, "user-configuration.json"),
+              "utf8",
+            ).catch((error: NodeJS.ErrnoException) => {
+              if (error.code === "ENOENT") return undefined;
+              throw error;
+            });
+            const credential = userConfiguration
+              ? JSON.parse(userConfiguration).secretCredential
+              : undefined;
+            if (credential)
+              await deleteCredential(
+                credential.credentialRef,
+                pluginCredentialPurpose(directory.name),
+              );
             const saved = await readFile(join(base, "configuration.json"), "utf8").catch(
               (error: NodeJS.ErrnoException) => {
                 if (error.code === "ENOENT") return undefined;
@@ -143,6 +334,7 @@ async function preparePluginStorage(owner: string): Promise<void> {
           }
           continue;
         }
+        await rm(withinRoot(base, "runtime"), { recursive: true, force: true });
         for (const entry of await readdir(base, { withFileTypes: true }))
           if (entry.isDirectory() && entry.name.startsWith(".staging-"))
             await rm(withinRoot(base, entry.name), { recursive: true, force: true });
@@ -163,7 +355,8 @@ async function preparePluginStorage(owner: string): Promise<void> {
             await rm(withinRoot(versions, entry.name), { recursive: true, force: true });
       }
       const { recoverPluginMcp } = await import("../connections/mcp");
-      await recoverPluginMcp([...plugins.values()], owner);
+      for (const plugin of plugins.values()) await writeSkillEntries(plugin, owner);
+      await recoverPluginMcp(evaluatePlugins([...plugins.values()]), owner);
     })().catch((error) => {
       preparedOwners.delete(owner);
       throw error;
@@ -174,9 +367,20 @@ async function preparePluginStorage(owner: string): Promise<void> {
 }
 
 async function saveRecord(plugin: InstalledPlugin, owner: string): Promise<void> {
+  assert(
+    Object.entries(plugin.current.userConfig ?? {}).every(
+      ([key, field]) => !field.sensitive || plugin.configuration?.values[key] === undefined,
+    ),
+    "Sensitive plugin configuration must use the credential vault; configure the candidate version first",
+  );
+  const {
+    dependencyErrors: _dependencies,
+    configurationErrors: _configuration,
+    ...record
+  } = plugin;
   await (await database()).execute({
     sql: "INSERT INTO installed_plugins (owner, id, record) VALUES (?, ?, ?) ON CONFLICT(owner, id) DO UPDATE SET record = excluded.record",
-    args: [owner, plugin.id, JSON.stringify(plugin)],
+    args: [owner, plugin.id, JSON.stringify(record)],
   });
 }
 
@@ -223,33 +427,68 @@ export async function downloadPackage(url: string, signal?: AbortSignal): Promis
 const executeGit = promisify(execFile);
 
 /** Native Git handles authenticated hosts and sparse checkouts without running package scripts. */
-async function gitPackageFiles(
+export async function fetchGitPackage(
   source: Extract<PluginSource, { kind: "git" }>,
   signal?: AbortSignal,
+  skillSlug?: string,
 ) {
   const temporary = await mkdtemp(join(tmpdir(), "mastra-plugin-"));
   const repository = withinRoot(temporary, "repository");
   const hooks = withinRoot(temporary, "empty-hooks");
   await mkdir(hooks);
-  const git = async (args: string[]) =>
-    (
-      await executeGit(
-        "git",
-        ["-c", "protocol.file.allow=never", "-c", `core.hooksPath=${hooks}`, ...args],
-        {
-          windowsHide: true,
-          timeout: 90_000,
-          maxBuffer: 1024 * 1024,
-          signal,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-        },
-      )
-    ).stdout.trim();
+  const git = async (args: string[]) => {
+    try {
+      return (
+        await executeGit(
+          "git",
+          [
+            "--literal-pathspecs",
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            `core.hooksPath=${hooks}`,
+            ...args,
+          ],
+          {
+            windowsHide: true,
+            timeout: 90_000,
+            maxBuffer: 8 * 1024 * 1024,
+            signal,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          },
+        )
+      ).stdout.trim();
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+      const step = args.find((arg) =>
+        ["clone", "fetch", "rev-parse", "ls-tree", "sparse-checkout", "checkout"].includes(arg),
+      );
+      throw workError("PLUGIN_FETCH_FAILED", {
+        text:
+          failure.code === "ENOENT"
+            ? "未找到 Git，请安装 Git 并重启应用后重试。"
+            : failure.killed
+              ? `Git ${step} 超时，请检查网络或代理后重试。`
+              : failure.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+                ? "Git 仓库目录过大，请导入具体插件子目录。"
+                : `Git ${step} 失败，请检查网络、代理、仓库地址及 Git 访问权限后重试。`,
+      });
+    }
+  };
   try {
     const url = new URL(source.url);
     if (url.username || url.password)
       throw new Error("Use Git's credential manager instead of credentials in repository URLs");
-    await git(["clone", "--filter=blob:none", "--no-checkout", "--", source.url, repository]);
+    await git([
+      "clone",
+      "--depth=1",
+      "--filter=blob:none",
+      "--no-checkout",
+      "--",
+      source.url,
+      repository,
+    ]);
     await git([
       "-C",
       repository,
@@ -261,31 +500,59 @@ async function gitPackageFiles(
     ]);
     const revision = await git(["-C", repository, "rev-parse", "--verify", "FETCH_HEAD^{commit}"]);
     if (!/^[a-f0-9]{40,64}$/.test(revision)) throw new Error("Git returned an invalid commit");
-    if (source.path)
+    let subdirectory = source.path ? packagePath(source.path) : "";
+    if (skillSlug) {
+      const paths = (await git(["-C", repository, "ls-tree", "-r", "--name-only", "-z", revision]))
+        .split("\0")
+        .filter((path) => path === "SKILL.md" || path.endsWith("/SKILL.md"));
+      const matching = paths.filter(
+        (path) => basename(dirname(path)).toLowerCase() === skillSlug.toLowerCase(),
+      );
+      const candidates = matching.length ? matching : paths.filter((path) => path === "SKILL.md");
+      if (candidates.length !== 1)
+        throw workError("SKILL_PACKAGE_INVALID", {
+          text: candidates.length
+            ? `仓库中有多个 ${skillSlug} 技能目录，请导入具体子目录。`
+            : `仓库中未找到 ${skillSlug} 的 SKILL.md。`,
+        });
+      const directory = dirname(candidates[0]);
+      subdirectory = directory === "." ? "" : packagePath(directory);
+    }
+    if (subdirectory)
       await git([
         "-C",
         repository,
         "sparse-checkout",
         "set",
-        "--no-cone",
+        "--cone",
+        "--skip-checks",
         "--",
-        packagePath(source.path),
+        subdirectory,
       ]);
     await git(["-C", repository, "checkout", "--detach", revision]);
-    const directory = withinRoot(repository, source.path || ".");
+    const directory = withinRoot(repository, subdirectory || ".");
     const files = await directoryFiles(directory);
+    if (
+      skillSlug &&
+      !subdirectory &&
+      matter(files.get("SKILL.md")?.toString("utf8") ?? "").data.name !== skillSlug
+    )
+      throw workError("SKILL_PACKAGE_INVALID", {
+        text: `仓库根目录的技能名称与 ${skillSlug} 不一致。`,
+      });
     const modes = await git([
       "-C",
       repository,
       "ls-tree",
       "-r",
+      "-z",
       revision,
       "--",
-      source.path || ".",
+      subdirectory || ".",
     ]);
-    const prefix = source.path ? `${packagePath(source.path)}/` : "";
+    const prefix = subdirectory ? `${subdirectory}/` : "";
     files.executablePaths = new Set(
-      modes.split("\n").flatMap((line) => {
+      modes.split("\0").flatMap((line) => {
         const match = /^100755 blob [a-f0-9]+\t(.+)$/.exec(line);
         return match?.[1].startsWith(prefix) ? [match[1].slice(prefix.length)] : [];
       }),
@@ -300,7 +567,8 @@ export async function fetchPluginFiles(
   source: PluginSource,
   signal?: AbortSignal,
 ): Promise<{ files: PackageFiles; revision?: string }> {
-  if (source.kind === "local") return { files: await directoryFiles(source.path) };
+  if (source.kind === "local")
+    return { files: await directoryFiles(await externalPluginDirectory(source.path)) };
   if (source.kind === "archive")
     return {
       files: selectPackageRoot(
@@ -311,11 +579,11 @@ export async function fetchPluginFiles(
     };
   if (source.kind === "skills-sh") {
     const { getSkillsShPackage } = await import("../skills/marketplaces");
-    return getSkillsShPackage(source.source, source.slug);
+    return getSkillsShPackage(source.source, source.slug, signal);
   }
   if (source.kind === "upload")
     throw new Error("Select the ZIP file again to update an uploaded plugin");
-  return gitPackageFiles(source, signal);
+  return fetchGitPackage(source, signal);
 }
 
 function installId(source: PluginSource, listing?: MarketplaceListing): string {
@@ -333,6 +601,8 @@ async function writeVersion(
   const destination = pluginVersionDirectory(plugin, owner);
   await mkdir(staging, { recursive: true });
   try {
+    for (const directory of packageDirectories(files))
+      await mkdir(withinRoot(staging, `source/${packagePath(directory)}`), { recursive: true });
     for (const [path, contents] of files) {
       const target = withinRoot(staging, `source/${packagePath(path)}`);
       await mkdir(dirname(target), { recursive: true });
@@ -340,35 +610,6 @@ async function writeVersion(
         flag: "wx",
         mode: files.executablePaths?.has(path) ? 0o755 : 0o644,
       });
-    }
-    for (const component of plugin.current.components) {
-      if (
-        component.kind !== "skill" ||
-        !component.supported ||
-        !component.path ||
-        !component.runtimeName
-      )
-        continue;
-      const prefix =
-        component.path === "SKILL.md" ? "" : component.path.slice(0, -"SKILL.md".length);
-      for (const [path, contents] of files) {
-        if (!path.startsWith(prefix)) continue;
-        const rel = path.slice(prefix.length);
-        const target = withinRoot(staging, `skills/${component.runtimeName}/${packagePath(rel)}`);
-        await mkdir(dirname(target), { recursive: true });
-        if (rel === "SKILL.md") {
-          const parsed = matter(contents.toString("utf8"));
-          await writeFile(
-            target,
-            matter.stringify(parsed.content, { ...parsed.data, name: component.runtimeName }),
-            { flag: "wx" },
-          );
-        } else
-          await writeFile(target, contents, {
-            flag: "wx",
-            mode: files.executablePaths?.has(path) ? 0o755 : 0o644,
-          });
-      }
     }
     await writeFile(join(staging, "version.json"), JSON.stringify(plugin.current));
     await mkdir(dirname(destination), { recursive: true });
@@ -393,6 +634,22 @@ async function activateRecord(
   previous: InstalledPlugin | undefined,
   owner: string,
 ): Promise<void> {
+  const plugins = await listInstalledPlugins(owner);
+  Object.assign(
+    next,
+    evaluatePlugins([...plugins.filter((item) => item.id !== next.id), next]).find(
+      (item) => item.id === next.id,
+    ),
+  );
+  if (
+    next.enabled &&
+    (!previous?.enabled || previous.current.digest !== next.current.digest) &&
+    next.dependencyErrors?.length
+  )
+    throw new Error(next.dependencyErrors.join("; "));
+  if (previous && previous.current.digest !== next.current.digest)
+    await resolvePluginConfiguration(next);
+  await writeSkillEntries(next, owner);
   const { syncPluginMcp, removePluginMcp } = await import("../connections/mcp");
   try {
     await syncPluginMcp(next, owner, previous);
@@ -404,6 +661,18 @@ async function activateRecord(
     } else await removePluginMcp(next.id, owner, true);
     throw error;
   }
+  const kept = new Set([
+    next.configuration?.secretCredential?.credentialRef,
+    next.pendingConfiguration?.configuration.secretCredential?.credentialRef,
+  ]);
+  for (const ref of new Set([
+    previous?.configuration?.secretCredential?.credentialRef,
+    previous?.pendingConfiguration?.configuration.secretCredential?.credentialRef,
+  ]))
+    if (ref && !kept.has(ref))
+      await deleteCredential(ref, pluginCredentialPurpose(next.id)).catch(() => {
+        console.warn(`Could not remove a replaced plugin credential: ${next.id}`);
+      });
 }
 
 export async function installPlugin(
@@ -432,14 +701,27 @@ export async function installPlugin(
       source: input.source,
       listing: input.listing,
       current,
-      enabled: true,
+      enabled: current.defaultEnabled !== false,
       componentEnabled: {},
       createdAt: now,
       updatedAt: now,
     };
+    const retained = await readFile(
+      withinRoot(pluginsDirectory(owner), `${id}/user-configuration.json`),
+      "utf8",
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (retained) plugin.configuration = JSON.parse(retained);
+    const evaluated = evaluatePlugins([...(await listInstalledPlugins(owner)), plugin]).find(
+      (item) => item.id === id,
+    );
+    if (evaluated?.dependencyErrors?.length) throw new Error(evaluated.dependencyErrors.join("; "));
     await writeVersion(plugin, acquired.files, owner);
     await activateRecord(plugin, undefined, owner);
     await rm(withinRoot(pluginsDirectory(owner), `${id}/configuration.json`), { force: true });
+    await rm(withinRoot(pluginsDirectory(owner), `${id}/user-configuration.json`), { force: true });
     await rm(withinRoot(pluginsDirectory(owner), `${id}/uninstalled.json`), { force: true });
     return plugin;
   });
@@ -485,8 +767,8 @@ export async function listPluginSkills(owner?: string): Promise<PluginSkill[]> {
               name: component.runtimeName,
               displayName: `${plugin.current.name}:${component.name}`,
               description: component.description,
-              path: join(pluginVersionDirectory(plugin, owner), "skills", component.runtimeName),
-              enabled: plugin.enabled && plugin.componentEnabled[component.id] !== false,
+              path: join(skillDirectory(plugin, owner), component.runtimeName),
+              enabled: pluginComponentEnabled(plugin, component),
             },
           ]
         : [],
@@ -498,7 +780,14 @@ export function pluginComponentEnabled(
   plugin: InstalledPlugin,
   component: PluginComponent,
 ): boolean {
-  return plugin.enabled && component.supported && plugin.componentEnabled[component.id] !== false;
+  return (
+    plugin.enabled &&
+    !plugin.dependencyErrors?.length &&
+    !plugin.configurationErrors?.length &&
+    !plugin.current.blockedReasons?.length &&
+    component.supported &&
+    plugin.componentEnabled[component.id] !== false
+  );
 }
 
 async function updateSource(plugin: InstalledPlugin, owner: string, refresh: boolean) {
@@ -529,6 +818,7 @@ export async function checkPluginUpdate(id: string, ownerInput?: string): Promis
         version: next.version,
         available: next.digest !== plugin.current.digest,
         changes: packageChanges(plugin.current, next),
+        preview: next,
       };
     } catch (error) {
       plugin.update = {
@@ -546,13 +836,20 @@ export async function updatePlugin(
   id: string,
   expectedDigest: string,
   ownerInput?: string,
+  uploadedFiles?: PackageFiles,
 ): Promise<InstalledPlugin> {
   const owner = ownerKey(ownerInput);
   return withPluginOperation(owner, id, async () => {
     const plugin = await getInstalledPlugin(id, owner);
     if (!plugin) throw new Error("Plugin not found");
-    const candidate = await updateSource(plugin, owner, false);
-    const acquired = await fetchPluginFiles(candidate.source);
+    if (uploadedFiles && plugin.source.kind !== "upload")
+      throw new Error("ZIP replacement is only available for ZIP imports");
+    const candidate = uploadedFiles
+      ? { source: plugin.source, listing: undefined }
+      : await updateSource(plugin, owner, false);
+    const acquired = uploadedFiles
+      ? { files: uploadedFiles, revision: undefined }
+      : await fetchPluginFiles(candidate.source);
     const version = describePackage(acquired.files, id, candidate.listing);
     if (version.digest !== expectedDigest)
       throw new Error("Plugin changed since the update check; check again before updating");
@@ -567,6 +864,11 @@ export async function updatePlugin(
       current: version,
       update: undefined,
       updatedAt: new Date().toISOString(),
+      configuration:
+        plugin.pendingConfiguration?.digest === version.digest
+          ? plugin.pendingConfiguration.configuration
+          : plugin.configuration,
+      pendingConfiguration: undefined,
     };
     await writeVersion(next, acquired.files, owner);
     await activateRecord(next, plugin, owner);
@@ -586,9 +888,127 @@ export async function rollbackPlugin(id: string, ownerInput?: string): Promise<I
       previous: plugin.current,
       update: undefined,
       updatedAt: new Date().toISOString(),
+      configuration:
+        plugin.pendingConfiguration?.digest === plugin.previous.digest
+          ? plugin.pendingConfiguration.configuration
+          : plugin.configuration,
+      pendingConfiguration: undefined,
     };
     await activateRecord(next, plugin, owner);
     return next;
+  });
+}
+
+export async function savePluginConfiguration(
+  id: string,
+  input: z.infer<typeof pluginConfigurationPatchSchema>,
+  ownerInput?: string,
+): Promise<InstalledPlugin> {
+  const owner = ownerKey(ownerInput);
+  const patch = pluginConfigurationPatchSchema.parse(input);
+  return withPluginOperation(owner, id, async () => {
+    const plugin = await getInstalledPlugin(id, owner);
+    if (!plugin) throw new Error("Plugin not found");
+    const version = [plugin.current, plugin.previous, plugin.update?.preview].find(
+      (item) => item?.digest === patch.digest,
+    );
+    if (!version) throw new Error("Plugin version changed; reload its configuration");
+    const pending = version.digest !== plugin.current.digest;
+    const original =
+      pending && plugin.pendingConfiguration?.digest === version.digest
+        ? plugin.pendingConfiguration.configuration
+        : plugin.configuration;
+    if ((original?.revision ?? "") !== patch.revision)
+      throw new Error("Plugin configuration changed; reload before saving");
+    const purpose = pluginCredentialPurpose(id);
+    const secrets = original?.secretCredential
+      ? z
+          .record(z.string(), pluginConfigValueSchema)
+          .parse(
+            JSON.parse(await resolveCredential(original.secretCredential.credentialRef, purpose)),
+          )
+      : {};
+    const values = { ...original?.values };
+    const secretPatch = patch.secretPatch
+      ? z
+          .record(z.string(), pluginConfigValueSchema.nullable())
+          .parse(JSON.parse(await resolveCredential(patch.secretPatch.credentialRef, purpose)))
+      : {};
+    for (const [key, value] of [...Object.entries(patch.values), ...Object.entries(secretPatch)]) {
+      const field = version.userConfig?.[key];
+      if (!field) throw new Error(`Unknown plugin option: ${key}`);
+      if (field.sensitive && Object.hasOwn(patch.values, key) && value !== null)
+        throw new Error("Sensitive plugin values must use the credential vault");
+      const error = value === null ? undefined : pluginConfigValueError(field, value);
+      if (error && error !== "required")
+        throw new Error(`Invalid plugin option: ${field.title} (${error})`);
+      delete values[key];
+      delete secrets[key];
+      if (value !== null) (field.sensitive ? secrets : values)[key] = value;
+    }
+    // Never expose an existing secret when a new manifest changes its classification.
+    for (const [key, field] of Object.entries(version.userConfig ?? {})) {
+      if (field.sensitive && values[key] !== undefined) {
+        secrets[key] = values[key];
+        delete values[key];
+      } else if (!field.sensitive && secrets[key] !== undefined)
+        throw new Error(`Clear and re-enter the option whose sensitivity changed: ${field.title}`);
+    }
+    const credential = Object.keys(secrets).length
+      ? await storeCredential(JSON.stringify(secrets), purpose)
+      : undefined;
+    const configuration = {
+      revision: randomUUID(),
+      values,
+      secretCredential: credential,
+      secretKeys: Object.keys(secrets),
+    };
+    const next: InstalledPlugin = {
+      ...plugin,
+      ...(pending
+        ? { pendingConfiguration: { digest: version.digest, configuration } }
+        : { configuration }),
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      if (pending) await saveRecord(next, owner);
+      else await activateRecord(next, plugin, owner);
+    } catch (error) {
+      if (credential) await deleteCredential(credential.credentialRef, purpose);
+      throw error;
+    }
+    const previous = pending
+      ? plugin.pendingConfiguration?.configuration.secretCredential
+      : undefined;
+    if (
+      previous &&
+      previous.credentialRef !== next.configuration?.secretCredential?.credentialRef &&
+      previous.credentialRef !==
+        next.pendingConfiguration?.configuration.secretCredential?.credentialRef
+    )
+      await deleteCredential(previous.credentialRef, purpose).catch(() => {
+        console.warn(`Could not remove a replaced plugin credential: ${id}`);
+      });
+    return next;
+  });
+}
+
+export async function previewPluginUpload(id: string, files: PackageFiles, ownerInput?: string) {
+  const owner = ownerKey(ownerInput);
+  return withPluginOperation(owner, id, async () => {
+    const plugin = await getInstalledPlugin(id, owner);
+    if (plugin?.source.kind !== "upload") throw new Error("Select an installed ZIP plugin");
+    const preview = describePackage(files, id);
+    const changes = packageChanges(plugin.current, preview);
+    plugin.update = {
+      checkedAt: new Date().toISOString(),
+      digest: preview.digest,
+      available: preview.digest !== plugin.current.digest,
+      changes,
+      preview,
+    };
+    await saveRecord(plugin, owner);
+    return { preview, changes };
   });
 }
 
@@ -619,6 +1039,11 @@ export async function uninstallPlugin(
       withinRoot(pluginsDirectory(owner), `${id}/configuration.json`),
       JSON.stringify(servers),
     );
+    if (plugin.configuration)
+      await writeFile(
+        withinRoot(pluginsDirectory(owner), `${id}/user-configuration.json`),
+        JSON.stringify(plugin.configuration),
+      );
     try {
       await activateRecord({ ...plugin, enabled: false }, plugin, owner);
       await removePluginMcp(plugin.id, owner, true);
@@ -637,9 +1062,35 @@ export async function uninstallPlugin(
     if (removeData) {
       await deletePluginMcpCredentials(servers, owner);
       await rm(withinRoot(pluginsDirectory(owner), `${id}/configuration.json`), { force: true });
+      if (plugin.configuration?.secretCredential)
+        await deleteCredential(
+          plugin.configuration.secretCredential.credentialRef,
+          pluginCredentialPurpose(id),
+        );
+      await rm(withinRoot(pluginsDirectory(owner), `${id}/user-configuration.json`), {
+        force: true,
+      });
     }
+    if (
+      plugin.pendingConfiguration?.configuration.secretCredential &&
+      plugin.pendingConfiguration.configuration.secretCredential.credentialRef !==
+        plugin.configuration?.secretCredential?.credentialRef
+    )
+      await deleteCredential(
+        plugin.pendingConfiguration.configuration.secretCredential.credentialRef,
+        pluginCredentialPurpose(id),
+      );
     // Files may still be referenced by an active Agent run. Reclamation happens on a subsequent cold start.
   });
+}
+
+export async function externalPluginDirectory(path: string): Promise<string> {
+  const directory = await realpath(path);
+  const managed = await realpath(getStorageDirectory());
+  const rel = relative(managed, directory);
+  if (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`))
+    throw new Error("Local plugin sources and editable copies must be outside application storage");
+  return directory;
 }
 
 export async function createLocalPluginCopy(
@@ -651,16 +1102,31 @@ export async function createLocalPluginCopy(
   return withPluginOperation(owner, id, async () => {
     const plugin = await getInstalledPlugin(id, owner);
     if (!plugin) throw new Error("Plugin not found");
-    const parent = await realpath(target);
-    const managed = await realpath(getStorageDirectory());
-    const rel = relative(managed, parent);
-    if (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`))
-      throw new Error("Choose a directory outside application storage for the editable copy");
+    const parent = await externalPluginDirectory(target);
     const files = await directoryFiles(join(pluginVersionDirectory(plugin, owner), "source"));
+    if (plugin.current.format === "claude" && plugin.listing) {
+      const manifest = claudePackageManifest(files, plugin.listing);
+      if (manifest && plugin.current.dependencies?.length)
+        manifest.dependencies = plugin.current.dependencies.map((item) => ({
+          ...item,
+          marketplace: item.marketplace ?? plugin.listing?.marketplaceName,
+        }));
+      const selected = new Set(
+        plugin.current.components.filter((item) => item.kind === "skill").map((item) => item.path),
+      );
+      // Entry-only packages may select a subset of a marketplace's default skills.
+      // Keep their resources, but do not activate the other packages' entry files in the copy.
+      for (const path of files.keys())
+        if (/^skills\/[^/]+\/SKILL\.md$/.test(path) && !selected.has(path)) files.delete(path);
+      if (manifest)
+        files.set(".claude-plugin/plugin.json", Buffer.from(JSON.stringify(manifest, null, 2)));
+    }
     const prefix = plugin.current.name.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 64) || "plugin";
     const destination = await mkdtemp(join(parent, `${prefix}-`));
     withinRoot(parent, destination);
     try {
+      for (const directory of packageDirectories(files))
+        await mkdir(withinRoot(destination, packagePath(directory)), { recursive: true });
       for (const [path, contents] of files) {
         const file = withinRoot(destination, packagePath(path));
         await mkdir(dirname(file), { recursive: true });

@@ -318,8 +318,13 @@ export function SchedulesPage() {
     }
   };
 
-  const selectedThread = selected?.threadId
-    ? threads.find((thread) => thread.id === selected.threadId)
+  const executionThreadId =
+    selected?.threadId ??
+    (typeof selected?.metadata?.lastThreadId === "string"
+      ? selected.metadata.lastThreadId
+      : undefined);
+  const selectedThread = executionThreadId
+    ? threads.find((thread) => thread.id === executionThreadId)
     : undefined;
 
   return (
@@ -448,19 +453,20 @@ export function SchedulesPage() {
                     <div>
                       <dt className="text-xs text-muted-foreground">{t("schedules:runIn")}</dt>
                       <dd className="mt-1 text-sm">
-                        {selected.threadId ? (
+                        {!selected.threadId && <p>{t("schedules:newThreadPerRun")}</p>}
+                        {executionThreadId ? (
                           <Link
                             to="/chat"
-                            search={{ thread: selected.threadId }}
+                            search={{ thread: executionThreadId }}
                             className="text-primary underline-offset-4 hover:underline focus-visible:underline"
                           >
-                            {selectedThread
-                              ? threadTitle(selectedThread, t("schedules:newThread"))
-                              : t("schedules:newThread")}
+                            {!selected.threadId
+                              ? t("schedules:latestConversation")
+                              : selectedThread
+                                ? threadTitle(selectedThread, t("schedules:newThread"))
+                                : t("schedules:newThread")}
                           </Link>
-                        ) : (
-                          t("schedules:newThreadPerRun")
-                        )}
+                        ) : null}
                       </dd>
                     </div>
                     <div>

@@ -24,9 +24,9 @@ export interface ThreadMetadata {
   workspaceExplicit?: boolean;
   currentModeId?: string;
   permissionRules?: PermissionRules;
-  /** Mastra Session.model persists the selected router ID for each mode. */
-  [key: `modeModelId_${string}`]: string | undefined;
-  reasoningEffortByMode?: Record<string, string>;
+  /** Mastra Session.model persists one selected router ID per thread. */
+  currentModelId?: string;
+  reasoningEffort?: string;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;

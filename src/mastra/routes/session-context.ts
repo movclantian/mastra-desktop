@@ -11,7 +11,6 @@ import {
   getAgentProfile,
 } from "../agents/custom";
 import {
-  listWorkModes,
   MODE_ID_CONTEXT_KEY,
   PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
@@ -168,17 +167,12 @@ export async function prepareWorkbenchMessage(
   return result;
 }
 
-/** Restore the native per-mode selection; a new mode starts with the user's default. */
+/** Restore the thread's single model; mode changes keep this selection. */
 async function restoreSessionModel(session: ControllerSession, resourceId: string) {
+  await session.model.syncFromPersisted();
+  if (session.model.hasSelection()) return;
   const defaultModelId = await resolveDefaultModelId(resourceId);
-  if (defaultModelId) {
-    for (const mode of listWorkModes()) {
-      if (!(await session.model.resolveForMode({ modeId: mode.id }))) {
-        await session.model.switch({ modelId: defaultModelId, modeId: mode.id });
-      }
-    }
-  }
-  await session.model.syncFromPersisted({ modeId: session.mode.get() });
+  if (defaultModelId) await session.model.switch(defaultModelId);
 }
 
 /** Resolve the single official Session for a workbench thread. */

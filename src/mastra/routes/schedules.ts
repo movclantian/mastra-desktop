@@ -1,7 +1,6 @@
 /**
  * 持久化 Agent 定时任务路由。
- * 直接调用官方 `mastra.schedules` 服务。安排始终绑定用户线程，
- * 这样每次触发都能继承用户模型、Workspace 和护栏 RequestContext。
+ * 使用官方 schedules.prepare 在触发时创建执行会话；指定会话的安排继续复用该会话。
  */
 
 import type { Mastra } from "@mastra/core/mastra";
@@ -43,7 +42,6 @@ import {
 } from "../rag/types";
 import { AUTHENTICATED_USER_ID_CONTEXT_KEY } from "../storage/database";
 import {
-  deleteThreadWorkspace,
   ensureDirectory,
   implicitThreadWorkspacePath,
   SCHEDULE_RUN_CONTEXT_KEY,
@@ -51,7 +49,6 @@ import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
-import { getWorkbenchSession } from "./session-context";
 import type { ThreadMetadata } from "./threads/shared";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
@@ -106,7 +103,9 @@ type ScheduleView = AgentSchedule;
 export async function prepareScheduledRun({
   mastra,
   schedule,
-}: SchedulePrepareContext<Mastra>): Promise<SchedulePrepareResult | null | undefined> {
+}: Pick<SchedulePrepareContext<Mastra>, "mastra" | "schedule">): Promise<
+  SchedulePrepareResult | undefined
+> {
   const stored = await mastra.schedules.get(schedule.id);
   if (
     !stored ||
@@ -115,11 +114,12 @@ export async function prepareScheduledRun({
   ) {
     return undefined;
   }
-  const { resourceId, threadId } = stored;
-  if (!resourceId || !threadId) return null;
+  const { resourceId } = stored;
+  if (!resourceId) throw workError("SCHEDULE_INVALID");
   const profileId = stored.metadata.profileId;
   const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === profileId);
-  if (!profile?.enabled) return null;
+  if (!profile?.enabled)
+    throw workError("SCHEDULE_INVALID", { text: "安排关联的 Agent 不存在或已停用" });
   if (profile.workflow?.strategy === "workflow")
     throw workError("SCHEDULE_INVALID", {
       text: "Agent 定时任务不能启动显式团队流程，请使用团队运行入口",
@@ -128,18 +128,20 @@ export async function prepareScheduledRun({
   requestContext.set(AUTHENTICATED_USER_ID_CONTEXT_KEY, resourceId);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, resourceId);
   const memory = await mastra.getAgentById(DEFAULT_AGENT_PROFILE_ID).getMemory({ requestContext });
-  const thread = await memory?.getThreadById({ threadId });
-  if (!thread || thread.resourceId !== resourceId) return null;
-  const metadata = (thread.metadata ?? {}) as ThreadMetadata;
+  if (!memory) throw new Error("Agent memory is not configured");
+  let thread = stored.threadId ? await memory.getThreadById({ threadId: stored.threadId }) : null;
+  if (stored.threadId && (!thread || thread.resourceId !== resourceId))
+    throw workError("SCHEDULE_THREAD_NOT_FOUND");
+  const metadata = (thread?.metadata ?? { currentModeId: "build" }) as ThreadMetadata;
   const mode = resolveMode(metadata.currentModeId);
-  const modelId = metadata[`modeModelId_${mode.id}`] ?? (await resolveDefaultModelId(resourceId));
+  const modelId = metadata.currentModelId ?? (await resolveDefaultModelId(resourceId));
   if (!modelId) throw workError("MODEL_NOT_CONFIGURED");
   const { providerId } = splitRouterId(modelId);
   const provider = (await getProvidersConfig(resourceId)).providers.find(
     (item) => item.id === providerId,
   );
   const family = provider?.registryId ?? provider?.protocol;
-  const effort = metadata.reasoningEffortByMode?.[mode.id];
+  const effort = metadata.reasoningEffort;
   const reasoning = z
     .enum(["provider-default", "none", "minimal", "low", "medium", "high", "xhigh"])
     .safeParse(effort);
@@ -153,9 +155,36 @@ export async function prepareScheduledRun({
       : reasoning.success
         ? { modelSettings: { reasoning: reasoning.data } }
         : {};
+  if (!thread) {
+    thread = await memory.createThread({
+      resourceId,
+      title: stored.name?.trim() || "已安排任务",
+      metadata: {
+        draft: false,
+        currentModeId: mode.id,
+        currentModelId: modelId,
+        agentProfileId: profile.id,
+        scheduleId: stored.id,
+      },
+    });
+  }
+  const threadId = thread.id;
   const workspacePath =
     metadata.workspacePath ?? (await implicitThreadWorkspacePath(threadId, resourceId));
+  ensureDirectory(workspacePath);
+  if (!thread.metadata?.workspacePath) {
+    await memory.updateThread({
+      id: threadId,
+      title: thread.title,
+      metadata: { ...thread.metadata, workspacePath, workspaceExplicit: false },
+    });
+  }
+  await mastra.schedules.update(stored.id, {
+    metadata: { ...stored.metadata, lastThreadId: threadId },
+  });
   return {
+    threadId,
+    resourceId,
     ifIdle: {
       ...stored.ifIdle,
       streamOptions: {
@@ -224,57 +253,20 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
       throw workError("SCHEDULE_INVALID", {
         text: "Agent 定时任务仅支持单 Agent 和主管团队，显式流程请通过团队运行入口启动",
       });
-    const memory = await getWorkMemory(c.get("requestContext"));
-    const createdThread = !input.threadId;
-    const thread = input.threadId
-      ? await getOwnedThread(memory, input.threadId, resourceId)
-      : await memory.createThread({
-          resourceId,
-          title: input.name?.trim() || "已安排任务",
-          metadata: { draft: false, currentModeId: "build", agentProfileId: input.agentId },
-        });
-    if (!thread) throw workError("THREAD_NOT_FOUND");
-    const threadId = thread.id;
+    if (input.threadId) {
+      const memory = await getWorkMemory(c.get("requestContext"));
+      if (!(await getOwnedThread(memory, input.threadId, resourceId)))
+        throw workError("THREAD_NOT_FOUND");
+    }
     try {
-      const workspacePath =
-        typeof thread.metadata?.workspacePath === "string" && thread.metadata.workspacePath.trim()
-          ? thread.metadata.workspacePath.trim()
-          : await implicitThreadWorkspacePath(threadId, resourceId);
-      ensureDirectory(workspacePath);
-      if (!thread.metadata?.workspacePath) {
-        await memory.updateThread({
-          id: threadId,
-          title: thread.title,
-          metadata: {
-            ...(thread.metadata ?? {}),
-            workspacePath,
-            workspaceExplicit: false,
-          },
-        });
-      }
-      await getWorkbenchSession(c, threadId, resourceId);
       const schedule = await c.get("mastra").schedules.create({
         ...input,
-        // The registered workbench Agent resolves the current profile from RequestContext.
         agentId: DEFAULT_AGENT_PROFILE_ID,
-        threadId,
         resourceId,
         metadata: { profileId: profile.id },
       } satisfies CreateAgentScheduleInput);
       return c.json({ schedule }, 201);
     } catch (error) {
-      if (createdThread) {
-        await c
-          .get("mastra")
-          .getAgentController("workbench")
-          ?.deleteSession({
-            resourceId,
-            scope: JSON.stringify(["workbench", threadId]),
-          })
-          .catch(() => undefined);
-        await deleteThreadWorkspace(threadId, thread.metadata, resourceId).catch(() => undefined);
-        await memory.deleteThread(threadId).catch(() => undefined);
-      }
       if (error instanceof WorkApiError) throw error;
       throw workError("SCHEDULE_INVALID", {
         text: errorText(error, "创建定时任务失败"),
@@ -339,7 +331,9 @@ export const schedulesRunRoute = registerApiRoute("/work/schedules/:scheduleId/r
   method: "POST",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
-    return c.json(await c.get("mastra").schedules.run(current.id));
+    const mastra = c.get("mastra");
+    // The worker prepares exactly one execution conversation per trigger.
+    return c.json(await mastra.schedules.run(current.id));
   },
 });
 

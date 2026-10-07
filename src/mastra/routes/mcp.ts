@@ -12,7 +12,7 @@ import {
   testMcpServer,
 } from "../connections/mcp";
 import { workError, workValidationError } from "../errors";
-import { listInstalledPlugins, withPluginOperation } from "../plugins/registry";
+import { listInstalledPlugins } from "../plugins/registry";
 
 const serverIdSchema = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/) });
 const serverBodySchema = z.object({ server: mcpServerConfigSchema }).strict();
@@ -72,11 +72,7 @@ export const saveMcpConfigRoute = createRoute({
   onValidationError: workValidationError,
   handler: async ({ server, requestContext, mastra }) => {
     const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const saved = server.plugin
-      ? await withPluginOperation(resourceId, server.plugin.id, () =>
-          saveMcpServer(server, resourceId),
-        )
-      : await saveMcpServer(server, resourceId);
+    const saved = await saveMcpServer(server, resourceId);
     mastra.getEditor()?.mcp.clearCache(saved.clientId);
     return { server: await summarizeMcpServer(saved, resourceId) };
   },

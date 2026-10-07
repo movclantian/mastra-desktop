@@ -806,6 +806,9 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
   }
   if (threadId && thread && c.req.method === "DELETE") {
     await memory.settled();
+    const schedules = c.get("mastra").schedules;
+    const linkedSchedules = await schedules.list({ resourceId, threadId });
+    await Promise.all(linkedSchedules.map((schedule) => schedules.delete(schedule.id)));
     await closeBrowserThreadSessions(resourceId, threadId);
     await closeComputerConnections(resourceId, threadId);
     await Promise.all([

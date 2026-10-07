@@ -258,10 +258,8 @@ export function MessageSelectionScope({
           title: `${t("chat:selection.auxiliary")} · ${quote.text.slice(0, 36)}`,
           metadata: {
             currentModeId: metadata.currentModeId,
-            reasoningEffortByMode: metadata.reasoningEffortByMode,
-            ...Object.fromEntries(
-              Object.entries(metadata).filter(([key]) => key.startsWith("modeModelId_")),
-            ),
+            currentModelId: metadata.currentModelId,
+            reasoningEffort: metadata.reasoningEffort,
           },
         });
         id = child.id;

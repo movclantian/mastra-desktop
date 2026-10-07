@@ -953,6 +953,7 @@ export function ChatPanel() {
         description: "",
         instructions: "",
         skills: [],
+        mcpServers: [],
         memoryScope: "thread",
         delegates: [],
       })),
@@ -968,6 +969,7 @@ export function ChatPanel() {
       description: agentSelection.description,
       instructions: agentSelection.instructions,
       skills: agentSelection.skills,
+      mcpServers: agentSelection.mcpServers,
       memoryScope: "thread",
       delegates: [],
     };

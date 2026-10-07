@@ -40,10 +40,9 @@ const STRENGTH_RANGE = 0.3;
 const BEAM_INTENSITY_STYLE = {
   "--beam-stroke-opacity": 1.8,
   "--beam-inner-opacity": 1.4,
-  "--beam-bloom-opacity": 1.6,
+  "--beam-bloom-opacity": 2.5,
 } as React.CSSProperties;
 
-/** 与上面变量的放大倍数配套:饱和度/亮度/色相流动幅度 */
 const BEAM_SATURATION = 2;
 const BEAM_BRIGHTNESS = 1.6;
 const BEAM_HUE_RANGE = 60;

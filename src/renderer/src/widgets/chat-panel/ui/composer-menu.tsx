@@ -319,7 +319,10 @@ export function ComposerMenu({
                           <DropdownMenuItem
                             key={server.id}
                             onClick={() =>
-                              void navigate({ to: "/skills", search: { section: "mcp" } })
+                              void navigate({
+                                to: "/skills",
+                                search: { view: "installed", component: "mcp" },
+                              })
                             }
                           >
                             <PlugIcon />
@@ -330,7 +333,12 @@ export function ComposerMenu({
                 </ScrollArea>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => void navigate({ to: "/skills", search: { section: "mcp" } })}
+                  onClick={() =>
+                    void navigate({
+                      to: "/skills",
+                      search: { view: "installed", component: "mcp" },
+                    })
+                  }
                 >
                   {t("chat:composer.manageConnections")}
                 </DropdownMenuItem>

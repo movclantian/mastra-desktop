@@ -146,8 +146,13 @@ export function AgentHubPage() {
       const agent = await generateAgentAssist(assistType, assistDescription.trim());
       await queryClient.invalidateQueries({ queryKey: qk.agents() });
       setAssistOpen(false);
-      toast.success(t("agentHub:aiCreateSuccess"));
-      await setAgentSelection(agent);
+      const participants = [agent, ...agent.members];
+      toast.success(
+        t("agentHub:aiCreateSuccess", {
+          skills: new Set(participants.flatMap((item) => item.skills)).size,
+          mcp: new Set(participants.flatMap((item) => item.mcpServers)).size,
+        }),
+      );
       setInspected(agent);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t("agentHub:aiCreateFailed"));
@@ -453,6 +458,9 @@ export function AgentHubPage() {
                   placeholder={t("agentHub:responsibilityPlaceholder")}
                 />
               </Field>
+              <p className="break-words text-sm text-muted-foreground">
+                {t("agentHub:aiCapabilitiesHint")}
+              </p>
             </div>
           </ScrollArea>
           <DialogFooter className="shrink-0">

@@ -12,7 +12,7 @@ export const CredentialPurposeSchema = z
   .min(1)
   .max(256)
   .regex(
-    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl)|browser:firecrawl|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32})$/,
+    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl)|browser:firecrawl|plugin:plugin_[a-f0-9]{32}:config|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32})$/,
   );
 export const CredentialValueSchema = z.string().min(1).max(65_536);
 
@@ -100,3 +100,5 @@ export const mcpCredentialPurpose = (
 ) => CredentialPurposeSchema.parse(`mcp:${serverId}:${field}`);
 export const browserCredentialPurpose = (provider: "firecrawl") =>
   CredentialPurposeSchema.parse(`browser:${provider}`);
+export const pluginCredentialPurpose = (pluginId: string) =>
+  CredentialPurposeSchema.parse(`plugin:${pluginId}:config`);

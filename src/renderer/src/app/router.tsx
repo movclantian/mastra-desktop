@@ -115,9 +115,14 @@ const agentsRoute = createRoute({
 });
 
 function SkillsRoute() {
+  const search = skillsRoute.useSearch();
   return (
     <BlurFade key="skill-hub" duration={0.2} blur="3px" className="size-full">
-      <PluginHubPage />
+      <PluginHubPage
+        key={`${search.view}:${search.component}`}
+        initialView={search.view}
+        initialComponent={search.component}
+      />
     </BlurFade>
   );
 }
@@ -127,10 +132,12 @@ const skillsRoute = createRoute({
   path: "/skills",
   validateSearch: (
     search: Record<string, unknown>,
-  ): { skill?: string; section?: "public" | "personal" | "mcp" } => ({
-    ...(typeof search.skill === "string" && search.skill ? { skill: search.skill } : {}),
-    ...(search.section === "public" || search.section === "personal" || search.section === "mcp"
-      ? { section: search.section }
+  ): { view?: "discover" | "installed" | "sources"; component?: "skill" | "mcp" } => ({
+    ...(search.view === "discover" || search.view === "installed" || search.view === "sources"
+      ? { view: search.view }
+      : {}),
+    ...(search.component === "skill" || search.component === "mcp"
+      ? { component: search.component }
       : {}),
   }),
   component: SkillsRoute,

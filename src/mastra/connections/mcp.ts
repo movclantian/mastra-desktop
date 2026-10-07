@@ -44,6 +44,8 @@ import {
   pluginComponentEnabled,
   pluginsDirectory,
   pluginVersionDirectory,
+  resolvePluginConfiguration,
+  withPluginOperation,
 } from "../plugins/registry";
 import { appStorage, deleteAppConfig, getAppConfig, setAppConfig } from "../storage/database";
 
@@ -58,7 +60,12 @@ export const mcpServerConfigSchema = z
     serverName: z.string().min(1).optional(),
     builtin: z.literal("anysearch").optional(),
     plugin: z
-      .object({ id: z.string(), componentId: z.string(), digest: z.string() })
+      .object({
+        id: z.string(),
+        componentId: z.string(),
+        digest: z.string(),
+        configurationRevision: z.string().optional(),
+      })
       .strict()
       .optional(),
     status: z.enum(["draft", "published", "archived"]).optional(),
@@ -67,7 +74,7 @@ export const mcpServerConfigSchema = z
     tools: z.record(z.string(), z.object({ description: z.string().optional() })).optional(),
     enabled: z.boolean().default(true),
     transport: z.enum(["http", "stdio"]),
-    url: z.url({ protocol: /^https?$/ }).optional(),
+    url: z.string().min(1).optional(),
     headerCredential: CredentialPointerSchema.optional(),
     headerKeys: z.array(z.string()).optional(),
     /** HTTP 传输重定向只允许落到这些主机。 */
@@ -96,6 +103,12 @@ export const mcpServerConfigSchema = z
     if (server.transport === "http" && !server.url) {
       context.addIssue({ code: "custom", path: ["url"], message: "HTTP MCP 必须填写 URL" });
     }
+    if (
+      server.url &&
+      !(server.plugin && /\$\{[^}]+\}/.test(server.url)) &&
+      !z.url({ protocol: /^https?$/ }).safeParse(server.url).success
+    )
+      context.addIssue({ code: "custom", path: ["url"], message: "Invalid HTTP MCP URL" });
     if (server.transport === "stdio" && !server.command) {
       context.addIssue({ code: "custom", path: ["command"], message: "Stdio MCP 必须填写命令" });
     }
@@ -279,6 +292,7 @@ export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
           !!plugin &&
           !!component &&
           plugin.current.digest === server.plugin.digest &&
+          plugin.configuration?.revision === server.plugin.configurationRevision &&
           pluginComponentEnabled(plugin, component),
       };
     }),
@@ -290,6 +304,18 @@ export async function saveMcpServer(
   input: McpServerConfig,
   resourceId?: string,
   managedPlugin = false,
+): Promise<McpServerConfig> {
+  return input.plugin && resourceId && !managedPlugin
+    ? withPluginOperation(resourceId, input.plugin.id, () =>
+        saveMcpServerRecord(input, resourceId, false),
+      )
+    : saveMcpServerRecord(input, resourceId, managedPlugin);
+}
+
+async function saveMcpServerRecord(
+  input: McpServerConfig,
+  resourceId: string | undefined,
+  managedPlugin: boolean,
 ): Promise<McpServerConfig> {
   const server = mcpServerConfigSchema.parse(input);
   const store = await mcpStore();
@@ -330,17 +356,20 @@ export async function saveMcpServer(
           text: "Plugin component changed or was removed; reopen its configuration",
         });
       const definition = current.servers[serverName];
+      const component = plugin.current.components.find((item) => item.id === server.id);
       if (
         server.transport !== definition.type ||
         server.url !== definition.url ||
         server.command !== definition.command ||
-        server.enabled !== previous.enabled ||
+        server.enabled !==
+          (previous.enabled && !!component && pluginComponentEnabled(plugin, component)) ||
         server.name !== current.name ||
         JSON.stringify(server.args ?? []) !== JSON.stringify(definition.args ?? [])
       )
         throw workError("MCP_CONFIG_INVALID", {
           text: "Edit plugin connection credentials here; package definitions are immutable",
         });
+      server.enabled = previous.enabled;
     }
   }
   const currentEntry = current
@@ -582,6 +611,32 @@ export async function mcpManagementMiddleware(c: ContextWithMastra, next: () => 
   }
   const mutation = !["GET", "HEAD"].includes(c.req.method);
   const previous = mutation && id ? await (await mcpStore()).getByIdResolved(id) : null;
+  if (previous && connectionsOf(previous).some((server) => server.plugin))
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "Manage plugin-owned connections through the plugin manager",
+    });
+  if (mutation && c.req.header("content-type")?.includes("application/json")) {
+    const body = await c.req.raw
+      .clone()
+      .json()
+      .catch(() => undefined);
+    const metadata =
+      body && typeof body === "object" && "metadata" in body ? body.metadata : undefined;
+    const options =
+      metadata && typeof metadata === "object" && OPTIONS_KEY in metadata
+        ? metadata[OPTIONS_KEY]
+        : undefined;
+    if (
+      options &&
+      typeof options === "object" &&
+      Object.values(options).some(
+        (entry) => entry && typeof entry === "object" && "plugin" in entry,
+      )
+    )
+      throw workError("MCP_CONFIG_INVALID", {
+        text: "Plugin ownership can only be assigned by the plugin installer",
+      });
+  }
   await next();
   if (c.res.ok && mutation) {
     c.get("mastra").getEditor()?.mcp.clearCache(id);
@@ -610,8 +665,10 @@ export async function summarizeMcpServer(
   const component = plugin?.current.components.find(
     (item) => item.id === server.plugin?.componentId,
   );
-  let configurationError: string | undefined;
-  if (server.plugin && server.enabled) {
+  let configurationError =
+    [...(plugin?.configurationErrors ?? []), ...(plugin?.dependencyErrors ?? [])].join("; ") ||
+    undefined;
+  if (server.enabled && !configurationError) {
     try {
       await toDefinition(server, resourceId);
     } catch (error) {
@@ -760,15 +817,20 @@ async function toDefinition(
     (!plugin ||
       !component ||
       !pluginComponentEnabled(plugin, component) ||
+      plugin.configuration?.revision !== server.plugin.configurationRevision ||
       plugin.current.digest !== server.plugin.digest)
   )
     throw workError("MCP_CONFIG_INVALID", {
-      text: "Plugin component is disabled or no longer installed",
+      text:
+        plugin?.configurationErrors?.join("; ") ||
+        plugin?.dependencyErrors?.join("; ") ||
+        "Plugin component is disabled or no longer installed",
     });
   const env = await resolveSecretRecord(
     server.envCredential,
     mcpCredentialPurpose(server.id, "env"),
   );
+  const options = plugin ? await resolvePluginConfiguration(plugin) : {};
   const root =
     plugin && resourceId ? join(pluginVersionDirectory(plugin, resourceId), "source") : undefined;
   const data =
@@ -788,6 +850,13 @@ async function toDefinition(
       )
         return data;
       if (plugin?.current.format === "portable") return match;
+      if (key.startsWith("user_config.")) {
+        const name = key.slice("user_config.".length);
+        if (!plugin?.current.userConfig?.[name])
+          throw workError("MCP_CONFIG_INVALID", { text: `Undeclared plugin option: ${name}` });
+        const value = options[name] ?? "";
+        return Array.isArray(value) ? JSON.stringify(value) : String(value);
+      }
       const [name, fallback] = key.split(":-", 2);
       const value =
         env[name] ??
@@ -823,7 +892,13 @@ async function toDefinition(
       requestHeaders.set(key, value);
     });
     return {
-      url: new URL(plugin?.current.format !== "portable" ? expand(server.url) : server.url),
+      url: (() => {
+        const value = plugin?.current.format !== "portable" ? expand(server.url) : server.url;
+        const parsed = z.url({ protocol: /^https?$/ }).safeParse(value);
+        if (!parsed.success)
+          throw workError("MCP_CONFIG_INVALID", { text: "Invalid configured MCP URL" });
+        return new URL(parsed.data);
+      })(),
       allowedHosts: server.allowedHosts,
       requestInit: { headers: requestHeaders },
       timeout: server.timeout,
@@ -907,15 +982,22 @@ export async function syncPluginMcp(
         ...previous,
         id: component.id,
         name: `${plugin.current.name}:${component.name}`,
-        plugin: { id: plugin.id, componentId: component.id, digest: plugin.current.digest },
+        plugin: {
+          id: plugin.id,
+          componentId: component.id,
+          digest: plugin.current.digest,
+          configurationRevision: plugin.configuration?.revision,
+        },
         transport: definition.transport,
         command: definition.command,
         args: definition.args,
         url: definition.url,
         allowedHosts:
           previous?.allowedHosts ??
-          (definition.url ? [new URL(definition.url).hostname] : undefined),
-        enabled: pluginComponentEnabled(plugin, component),
+          (definition.url && !/\$\{[^}]+\}/.test(definition.url)
+            ? [new URL(definition.url).hostname]
+            : undefined),
+        enabled: plugin.enabled && plugin.componentEnabled[component.id] !== false,
         requireToolApproval: previous?.requireToolApproval ?? true,
       }),
     );
@@ -993,11 +1075,21 @@ export async function testMcpServer(
     const result = await client.listToolsWithErrors();
     const tools = Object.keys(result.tools);
     const error = result.errors[toolNamespace(server)];
-    return { ok: !error, toolCount: tools.length, tools, error };
+    return {
+      ok: !error,
+      toolCount: tools.length,
+      tools,
+      error:
+        error && server.plugin
+          ? "Plugin MCP connection failed; check its connection and configuration"
+          : error,
+    };
   } catch (error) {
     throw workError("MCP_CONNECTION_FAILED", {
-      text: errorText(error, "连接测试失败"),
-      cause: error,
+      text: server.plugin
+        ? "Plugin MCP connection failed; check its connection and configuration"
+        : errorText(error, "连接测试失败"),
+      ...(server.plugin ? {} : { cause: error }),
     });
   } finally {
     await client.disconnect().catch(() => undefined);
@@ -1024,6 +1116,10 @@ async function getConfiguredMcpClient(
     return await pending.promise;
   } catch (error) {
     if (runtime.clients.get(server.id) === pending) runtime.clients.delete(server.id);
+    if (server.plugin)
+      throw workError("MCP_CONNECTION_FAILED", {
+        text: "Plugin MCP connection could not be prepared",
+      });
     throw error;
   }
 }
@@ -1059,7 +1155,9 @@ export async function getConfiguredMcpTools(
         const { tools, errors } = await client.listToolsWithErrors();
         if (Object.keys(errors).length)
           throw workError("MCP_CONNECTION_FAILED", {
-            text: `${server.name}: ${Object.values(errors).join("; ")}`,
+            text: server.plugin
+              ? "Plugin MCP tool discovery failed"
+              : `${server.name}: ${Object.values(errors).join("; ")}`,
           });
         const prefix = `${toolNamespace(server)}_`;
         const selectedTools = !server.tools
@@ -1101,6 +1199,7 @@ export async function getConfiguredMcpTools(
                     !plugin ||
                     !component ||
                     !pluginComponentEnabled(plugin, component) ||
+                    plugin.configuration?.revision !== server.plugin?.configurationRevision ||
                     plugin.current.digest !== server.plugin?.digest
                   )
                     throw workError("MCP_CONFIG_INVALID", {

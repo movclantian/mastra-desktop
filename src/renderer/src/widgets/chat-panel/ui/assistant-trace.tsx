@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -7,7 +8,9 @@ import {
   XIcon,
 } from "lucide-react";
 import * as React from "react";
+import { fetchMcpServers, usePluginSkills } from "@/entities/skill";
 import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
+import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
 import {
   ChainOfThought,
@@ -167,6 +170,19 @@ const ToolStepItem = React.memo(function ToolStepItem({
   const hasInput = part.input !== undefined;
   const output = "output" in part ? part.output : undefined;
   const input = (part.input ?? {}) as Record<string, unknown>;
+  const { user } = useAuth();
+  const pluginSkills = usePluginSkills(
+    name === "skill" || name === "skill_read" ? user?.id : undefined,
+  );
+  const mcp = useQuery({
+    queryKey: ["plugin-mcp", user?.id],
+    queryFn: fetchMcpServers,
+    enabled: !!user && name.startsWith("mcp_"),
+  });
+  const skill = pluginSkills.data?.find(
+    (skill) => skill.name === (name === "skill" ? input.name : input.skillName),
+  );
+  const server = mcp.data?.find((server) => name.startsWith(`mcp_${server.id}_`));
   const filePaths = [
     ...new Set(
       Object.entries(input).flatMap(([key, value]) =>
@@ -189,7 +205,22 @@ const ToolStepItem = React.memo(function ToolStepItem({
   // 未命中的工具保持通用展示(原始名 + 自动参数提示 + JSON 详情)。
   const ui = getToolUI(name);
   const customSummary = ui?.summarize?.(input, output, name);
-  const chips = customSummary ? (customSummary.chips ?? []) : hintLabel ? [hintLabel] : [];
+  const chips = skill
+    ? [
+        skill.displayName,
+        `${t("common:current")}: ${t(skill.enabled ? "plugins:enabled" : "plugins:disabled")}`,
+      ]
+    : server
+      ? [
+          server.name,
+          name.slice(`mcp_${server.id}_`.length),
+          `${t("common:current")}: ${t(server.configurationError ? "plugins:missingConfig" : server.enabled ? "plugins:enabled" : "plugins:disabled")}`,
+        ]
+      : customSummary
+        ? (customSummary.chips ?? [])
+        : hintLabel
+          ? [hintLabel]
+          : [];
   const files = customSummary ? (customSummary.files ?? []) : filePaths;
   const customDetail = failed ? undefined : ui?.detail?.({ input, output });
 

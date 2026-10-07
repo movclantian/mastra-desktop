@@ -8,6 +8,7 @@ import { cn } from "@/shared/lib";
 import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { AgentProfile } from "../../../../../shared/agent-contract";
 import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
@@ -172,6 +173,12 @@ export function AgentProfileDetails({
           <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
             {selected.description}
           </p>
+          <AgentCapabilitySelection
+            key={member?.id ?? profile.id}
+            profile={profile}
+            memberId={member?.id}
+            onSaved={onSaved}
+          />
           {selected.instructions ? (
             <section className="grid min-w-0 gap-2">
               <h4 className="text-base font-semibold">{t("agentHub:instructions")}</h4>
@@ -180,12 +187,6 @@ export function AgentProfileDetails({
               </p>
             </section>
           ) : null}
-          <AgentCapabilitySelection
-            key={member?.id ?? profile.id}
-            profile={profile}
-            memberId={member?.id}
-            onSaved={onSaved}
-          />
           {member ? (
             <>
               <p className="break-words text-sm leading-relaxed">
@@ -231,6 +232,8 @@ function AgentCapabilitySelection({
     ? (profile.members.find((member) => member.id === memberId)?.mcpServers ?? [])
     : profile.mcpServers;
   const [selectedMcp, setSelectedMcp] = useState(originalMcp);
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLocaleLowerCase();
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE_ID;
   const save = useMutation({
     mutationFn: () =>
@@ -245,22 +248,39 @@ function AgentCapabilitySelection({
     },
   });
   const choices = new Map(skills.data?.map((skill) => [skill.id, skill]));
+  const servers = new Map(
+    mcp.data?.filter((server) => !server.builtin).map((server) => [server.id, server]),
+  );
+  const skillIds = [...new Set([...selected, ...choices.keys()])].filter((id) =>
+    `${choices.get(id)?.displayName ?? id} ${choices.get(id)?.description ?? ""}`
+      .toLocaleLowerCase()
+      .includes(query),
+  );
+  const mcpIds = [...new Set([...selectedMcp, ...servers.keys()])].filter((id) =>
+    (servers.get(id)?.name ?? id).toLocaleLowerCase().includes(query),
+  );
   return (
     <fieldset className="grid min-w-0 gap-2 rounded-md border p-3" disabled={save.isPending}>
       <legend className="px-1 text-sm font-medium">{t("plugins:capabilities")}</legend>
       <p className="text-xs text-muted-foreground">
         {t(isDefault ? "plugins:defaultSkills" : "plugins:selectionHint")}
       </p>
+      <Input
+        aria-label={t("agentHub:searchCapabilities")}
+        placeholder={t("agentHub:searchCapabilities")}
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+      />
       {skills.isPending ? <p role="status">{t("plugins:loading")}</p> : null}
       {skills.error ? (
         <Button variant="outline" onClick={() => void skills.refetch()}>
           {t("plugins:retry")}
         </Button>
       ) : null}
-      <ScrollArea className="max-h-56 min-w-0">
+      <ScrollArea className="h-56 min-w-0">
         <div className="grid min-w-0 gap-2 pr-3">
           <h4 className="text-xs font-medium">{t("plugins:skill")}</h4>
-          {[...new Set([...choices.keys(), ...selected])].map((id) => {
+          {skillIds.map((id) => {
             const skill = choices.get(id);
             return (
               <label key={id} className="flex min-w-0 items-start gap-2 text-sm">
@@ -268,7 +288,7 @@ function AgentCapabilitySelection({
                   type="checkbox"
                   className="mt-1"
                   checked={isDefault ? skill?.enabled === true : selected.includes(id)}
-                  disabled={isDefault || !onSaved}
+                  disabled={isDefault || !onSaved || (!original.includes(id) && !skill?.enabled)}
                   onChange={(event) =>
                     setSelected((current) =>
                       event.target.checked
@@ -280,10 +300,18 @@ function AgentCapabilitySelection({
                 <span className="min-w-0 break-all">
                   {skill?.displayName ?? `${t("plugins:unavailableSkill")} (${id})`}
                   {skill && !skill.enabled ? ` · ${t("plugins:disabled")}` : ""}
+                  {skill?.description ? (
+                    <span className="block break-words text-xs text-muted-foreground">
+                      {skill.description}
+                    </span>
+                  ) : null}
                 </span>
               </label>
             );
           })}
+          {!skills.isPending && !skills.error && !skillIds.length ? (
+            <p className="text-xs text-muted-foreground">{t("agentHub:noMatchingCapabilities")}</p>
+          ) : null}
           <h4 className="border-t pt-2 text-xs font-medium">{t("plugins:mcp")}</h4>
           {mcp.isPending ? <p role="status">{t("plugins:loading")}</p> : null}
           {mcp.error ? (
@@ -291,20 +319,20 @@ function AgentCapabilitySelection({
               {t("plugins:retry")}
             </Button>
           ) : null}
-          {[
-            ...new Set([
-              ...(mcp.data?.filter((server) => !server.builtin).map((server) => server.id) ?? []),
-              ...selectedMcp,
-            ]),
-          ].map((id) => {
-            const server = mcp.data?.find((server) => server.id === id);
+          {mcpIds.map((id) => {
+            const server = servers.get(id);
             return (
               <label key={id} className="flex min-w-0 items-start gap-2 text-sm">
                 <input
                   type="checkbox"
                   className="mt-1"
                   checked={isDefault ? server?.enabled === true : selectedMcp.includes(id)}
-                  disabled={isDefault || !onSaved}
+                  disabled={
+                    isDefault ||
+                    !onSaved ||
+                    (!originalMcp.includes(id) &&
+                      (!server?.enabled || !!server.configurationError || !!server.connectionError))
+                  }
                   onChange={(event) =>
                     setSelectedMcp((current) =>
                       event.target.checked
@@ -317,10 +345,14 @@ function AgentCapabilitySelection({
                   {server?.name ?? `${t("plugins:unavailableComponent")} (${id})`}
                   {server && !server.enabled ? ` · ${t("plugins:disabled")}` : ""}
                   {server?.configurationError ? ` · ${t("plugins:missingConfig")}` : ""}
+                  {server?.connectionError ? ` · ${t("agentHub:capabilityConnectionFailed")}` : ""}
                 </span>
               </label>
             );
           })}
+          {!mcp.isPending && !mcp.error && !mcpIds.length ? (
+            <p className="text-xs text-muted-foreground">{t("agentHub:noMatchingCapabilities")}</p>
+          ) : null}
         </div>
       </ScrollArea>
       {save.error ? (

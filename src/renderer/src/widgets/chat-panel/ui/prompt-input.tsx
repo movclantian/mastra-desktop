@@ -80,9 +80,16 @@ import { MessageQuoteCards, quotedPrompt, useMessageQuotes } from "./message-sel
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
 
-function PromptInputAttachments() {
+function PromptInputAttachments({
+  references,
+  onRemoveReference,
+}: {
+  references: MessageFileReference[];
+  onRemoveReference: (url: string) => void;
+}) {
   const { t } = useTranslation();
   const attachments = usePromptInputAttachments();
+  const referencedSources = usePromptInputReferencedSources();
   if (attachments.files.length === 0) return null;
 
   return (
@@ -100,7 +107,16 @@ function PromptInputAttachments() {
               }
               data={file}
               key={file.id}
-              onRemove={() => attachments.remove(file.id)}
+              onRemove={() => {
+                attachments.remove(file.id);
+                const reference = references.find((item) => item.url === file.url);
+                if (reference) {
+                  for (const source of referencedSources.sources) {
+                    if (source.sourceId === reference.id) referencedSources.remove(source.id);
+                  }
+                }
+                onRemoveReference(file.url);
+              }}
             >
               <AttachmentPreview />
               <AttachmentInfo className="text-xs" />
@@ -410,57 +426,6 @@ function SkillAwareTextarea({
         </div>
       ) : null}
     </>
-  );
-}
-
-function SelectedFileReferenceBadges({
-  files,
-  onRemove,
-}: {
-  files: MessageFileReference[];
-  onRemove: (file: MessageFileReference) => void;
-}) {
-  const { t } = useTranslation();
-  const referencedSources = usePromptInputReferencedSources();
-  if (files.length === 0) return null;
-  return (
-    <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
-      {files.map((file) => (
-        <PromptInputHoverCard key={file.url}>
-          <PromptInputHoverCardTrigger
-            render={
-              <Badge
-                className={`max-w-full gap-1 ${referenceBadgeClass("file", `${file.id}:${file.url}`)}`}
-                variant="outline"
-              />
-            }
-          >
-            <FileIcon className="size-3 shrink-0" />
-            <span className="max-w-52 truncate">{file.filename}</span>
-            <button
-              aria-label={t("chat:removeFileRef", { name: file.filename })}
-              className="rounded-sm hover:bg-primary/15"
-              onClick={(event) => {
-                event.stopPropagation();
-                const source = referencedSources.sources.find((item) => item.sourceId === file.id);
-                if (source) referencedSources.remove(source.id);
-                onRemove(file);
-              }}
-              type="button"
-            >
-              <XIcon className="size-3" />
-            </button>
-          </PromptInputHoverCardTrigger>
-          <PromptInputHoverCardContent className="min-w-0 space-y-1">
-            <p className="truncate font-medium" title={file.filename}>
-              {file.filename}
-            </p>
-            <p className="text-xs text-muted-foreground">{file.mediaType || t("chat:file")}</p>
-            <p className="line-clamp-2 break-all text-xs text-muted-foreground">{file.url}</p>
-          </PromptInputHoverCardContent>
-        </PromptInputHoverCard>
-      ))}
-    </div>
   );
 }
 
@@ -1025,19 +990,10 @@ export function ChatPromptInput({
                 if (threadId) removeQuotes(threadId, [id]);
               }}
             />
-            <PromptInputAttachments />
-            <SelectedFileReferenceBadges
-              files={selectedFileReferences.filter((reference) =>
-                controller.attachments.files.some((file) => file.url === reference.url),
-              )}
-              onRemove={(file) => {
-                const attachment = controller.attachments.files.find(
-                  (item) => item.url === file.url,
-                );
-                if (attachment) controller.attachments.remove(attachment.id);
-                setSelectedFileReferences((current) =>
-                  current.filter((item) => item.url !== file.url),
-                );
+            <PromptInputAttachments
+              references={selectedFileReferences}
+              onRemoveReference={(url) => {
+                setSelectedFileReferences((current) => current.filter((item) => item.url !== url));
               }}
             />
           </PromptInputHeader>
