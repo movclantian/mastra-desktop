@@ -62,6 +62,7 @@ import {
   TaskTrigger,
 } from "@/shared/ui/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/shared/ui/ai-elements/tool";
+import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
@@ -299,8 +300,10 @@ const ToolStepItem = React.memo(function ToolStepItem({
         {hasDetails ? (
           <CollapsibleTrigger
             render={
-              <button
-                className="group/trigger flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-2 text-left"
+              <Button
+                variant="ghost"
+                size="xs"
+                className="group/trigger flex h-auto min-w-0 flex-1 items-start justify-between gap-2 p-0 text-left whitespace-normal"
                 type="button"
               />
             }

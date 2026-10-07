@@ -69,6 +69,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
+import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { ShineBorder } from "@/shared/ui/shine-border";
 import {
@@ -803,8 +804,8 @@ function InlineCreateRow({
       ) : (
         <FilePlus2Icon className="size-4 shrink-0 text-muted-foreground" />
       )}
-      <input
-        className="min-w-0 flex-1 border-0 bg-transparent px-1 py-0.5 outline-none ring-1 ring-ring/50 focus:ring-1"
+      <Input
+        className="h-6 min-w-0 flex-1 bg-transparent px-1 py-0.5 text-xs"
         onBlur={onCancel}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {

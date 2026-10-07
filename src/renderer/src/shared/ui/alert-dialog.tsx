@@ -1,7 +1,70 @@
 import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog";
-import type * as React from "react";
-import { cn } from "@/shared/lib";
+import * as React from "react";
+import { create } from "zustand";
+import { useTranslation } from "@/shared/i18n";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
+import { ScrollArea } from "@/shared/ui/scroll-area";
+
+type ConfirmationRequest = {
+  description: string;
+  resolve: (confirmed: boolean) => void;
+};
+const useConfirmations = create<{ requests: ConfirmationRequest[]; mounted: boolean }>(() => ({
+  requests: [],
+  mounted: false,
+}));
+
+/** Shared confirmation for actions initiated outside a component, including workspace stores. */
+export function confirmAction(description: string): Promise<boolean> {
+  if (!useConfirmations.getState().mounted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    useConfirmations.setState(({ requests }) => ({
+      requests: [...requests, { description, resolve }],
+    }));
+  });
+}
+
+export function ConfirmationDialog() {
+  const { t } = useTranslation();
+  const request = useConfirmations((state) => state.requests[0]);
+  React.useEffect(() => {
+    useConfirmations.setState({ mounted: true });
+    return () => {
+      const { requests } = useConfirmations.getState();
+      useConfirmations.setState({ requests: [], mounted: false });
+      for (const pending of requests) pending.resolve(false);
+    };
+  }, []);
+  const finish = (confirmed: boolean) => {
+    if (!request || useConfirmations.getState().requests[0] !== request) return;
+    useConfirmations.setState(({ requests }) => ({ requests: requests.slice(1) }));
+    request.resolve(confirmed);
+  };
+  return (
+    <AlertDialog
+      open={!!request}
+      onOpenChange={(open) => {
+        if (!open) finish(false);
+      }}
+    >
+      <AlertDialogContent className="flex max-h-[calc(100dvh-2rem)] min-w-0 flex-col">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("common:confirm")}</AlertDialogTitle>
+        </AlertDialogHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <AlertDialogDescription className="whitespace-pre-wrap break-words text-left">
+            {request?.description}
+          </AlertDialogDescription>
+        </ScrollArea>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => finish(true)}>{t("common:confirm")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;

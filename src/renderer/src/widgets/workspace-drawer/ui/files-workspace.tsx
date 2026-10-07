@@ -57,6 +57,7 @@ import {
   FileTreeFolder,
 } from "@/shared/ui/ai-elements/file-tree";
 import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-icon";
+import { confirmAction } from "@/shared/ui/alert-dialog";
 import { Button } from "@/shared/ui/button";
 import {
   ContextMenu,
@@ -1239,7 +1240,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     async (path: string) => {
       const closing = openFilesRef.current.find((item) => item.path === path);
       if (closing?.draft !== closing?.content) {
-        if (!window.confirm(t("workspace:unsavedConfirm"))) return;
+        if (!(await confirmAction(t("workspace:unsavedConfirm")))) return;
+        if (openFilesRef.current.find((item) => item.path === path) !== closing) return;
         if (!(await saveFile(path))) return;
       }
       setOpenFiles((current) => {

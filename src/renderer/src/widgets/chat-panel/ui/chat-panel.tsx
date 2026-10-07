@@ -209,7 +209,9 @@ function TranscriptOutline({ entries }: { entries: OutlineEntry[] }) {
     <HoverCard>
       <HoverCardTrigger
         render={
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             aria-label={t("chat:welcome.outlineAriaLabel")}
             className="pointer-events-auto flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
             type="button"
@@ -233,9 +235,11 @@ function TranscriptOutline({ entries }: { entries: OutlineEntry[] }) {
         <ScrollArea className="max-h-72">
           <div className="flex flex-col gap-1 pr-2">
             {entries.map((entry) => (
-              <button
+              <Button
+                variant="ghost"
+                size="xs"
                 aria-current={currentAnchorId === entry.id ? "location" : undefined}
-                className="flex min-h-7 items-center rounded-xl px-2 py-1.5 text-left text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground aria-current:bg-accent aria-current:text-accent-foreground"
+                className="flex h-auto min-h-7 items-center justify-start rounded-xl px-2 py-1.5 text-left text-sm whitespace-normal hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground aria-current:bg-accent aria-current:text-accent-foreground"
                 key={entry.id}
                 onClick={() =>
                   scrollToMessage(entry.id, {
@@ -246,7 +250,7 @@ function TranscriptOutline({ entries }: { entries: OutlineEntry[] }) {
                 type="button"
               >
                 <span className="min-w-0 whitespace-normal break-words">{entry.text}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </ScrollArea>
@@ -1785,7 +1789,9 @@ export function ChatPanel() {
                   >
                     <Item
                       render={
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="xs"
                           type="button"
                           onClick={() => {
                             handleSubmit({ text: starter.prompt, files: [] }, () => undefined);

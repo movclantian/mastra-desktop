@@ -76,7 +76,9 @@ export function HelpTooltip({ content, label }: { content: string; label: string
         <TooltipTrigger
           aria-label={label}
           render={
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               type="button"
               className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />

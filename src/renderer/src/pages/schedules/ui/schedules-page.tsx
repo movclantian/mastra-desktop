@@ -379,11 +379,13 @@ export function SchedulesPage() {
             ) : (
               <div className="space-y-2">
                 {filtered.map((schedule) => (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     key={schedule.id}
                     type="button"
                     className={cn(
-                      "w-full rounded-lg border p-3 text-left [overflow-wrap:anywhere] transition-colors hover:bg-muted/50",
+                      "h-auto w-full min-w-0 flex-col items-stretch rounded-lg border p-3 text-left whitespace-normal [overflow-wrap:anywhere] transition-colors hover:bg-muted/50",
                       selectedId === schedule.id && "border-primary/50 bg-muted/60",
                     )}
                     onClick={() => openExisting(schedule)}
@@ -408,7 +410,7 @@ export function SchedulesPage() {
                         {formatFireAt(schedule.nextFireAt, t("schedules:neverRun"))}
                       </span>
                     </div>
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}

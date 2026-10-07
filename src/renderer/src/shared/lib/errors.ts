@@ -79,14 +79,18 @@ export function describeError(payload: WorkErrorPayload | unknown): DescribedErr
 /**
  * 统一错误 toast 出口。
  */
-export function toastError(error: unknown, context?: string): DescribedError {
+export function toastError(
+  error: unknown,
+  context?: string,
+  action?: { label: string; onClick: () => void },
+): DescribedError {
   const described = describeError(error);
   const title =
     context && context !== described.title ? `${context}：${described.title}` : described.title;
   const lines = [title];
   if (described.hint) lines.push(described.hint);
   if (described.detail) lines.push(described.detail);
-  toast.error(lines.join("\n"));
+  toast.error(lines.join("\n"), { action });
   console.error("[work-error]", {
     title,
     hint: described.hint,

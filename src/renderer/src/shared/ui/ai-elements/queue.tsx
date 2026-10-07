@@ -182,9 +182,11 @@ export const QueueSectionTrigger = ({
   <div className="flex min-w-0 items-center gap-1">
     <CollapsibleTrigger
       render={
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           className={cn(
-            "group flex min-w-0 flex-1 items-center justify-between rounded-md bg-muted/40 px-2 py-1 text-left font-medium text-muted-foreground text-sm transition-colors hover:bg-muted",
+            "group flex h-auto min-w-0 flex-1 items-center justify-between rounded-md bg-muted/40 px-2 py-1 text-left font-medium text-muted-foreground text-sm transition-colors hover:bg-muted",
             className,
           )}
           type="button"

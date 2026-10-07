@@ -55,9 +55,11 @@ export function MessageQuoteCards({
             className="flex min-w-0 items-start gap-1 rounded-md border bg-muted/40 px-2 py-1.5"
           >
             <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               type="button"
-              className="min-w-0 flex-1 text-left text-xs hover:text-primary"
+              className="h-auto min-w-0 flex-1 justify-start p-0 text-left text-xs whitespace-normal hover:text-primary"
               title={quote.text}
               onClick={() => {
                 useWorkbenchStore
@@ -69,7 +71,7 @@ export function MessageQuoteCards({
               <span className="line-clamp-2 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                 {quote.text}
               </span>
-            </button>
+            </Button>
             <Button
               variant="ghost"
               size="icon-xs"
@@ -100,12 +102,14 @@ export function MessageLink({ node: _node, ...props }: React.ComponentProps<type
     : null;
   if (asset)
     return (
-      <button
+      <Button
+        variant="link"
+        size="xs"
         type="button"
         title={asset.filename}
         className={
           props.className ??
-          "cursor-pointer break-words text-primary underline underline-offset-4 [overflow-wrap:anywhere]"
+          "inline h-auto p-0 whitespace-normal break-words text-primary underline underline-offset-4 [overflow-wrap:anywhere]"
         }
         onClick={() => {
           const store = useWorkbenchStore.getState();
@@ -113,13 +117,15 @@ export function MessageLink({ node: _node, ...props }: React.ComponentProps<type
         }}
       >
         {props.children}
-      </button>
+      </Button>
     );
   if (!props.href?.startsWith(WORKSPACE_FILE_FRAGMENT)) return <MessageAnchor {...props} />;
   return (
-    <button
+    <Button
+      variant="link"
+      size="xs"
       type="button"
-      className="cursor-pointer break-words text-primary underline underline-offset-4 [overflow-wrap:anywhere]"
+      className="inline h-auto p-0 whitespace-normal break-words text-primary underline underline-offset-4 [overflow-wrap:anywhere]"
       onClick={() => {
         let path: string | null = null;
         try {
@@ -140,7 +146,7 @@ export function MessageLink({ node: _node, ...props }: React.ComponentProps<type
       }}
     >
       {props.children}
-    </button>
+    </Button>
   );
 }
 

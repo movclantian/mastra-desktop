@@ -2,6 +2,7 @@ import { RouterProvider } from "@tanstack/react-router";
 import * as React from "react";
 import { resetWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { LoginScreen, useAuth } from "@/features/auth";
+import { ConfirmationDialog } from "@/shared/ui/alert-dialog";
 import { SmoothCursor } from "@/shared/ui/smooth-cursor";
 import { Toaster } from "@/shared/ui/sonner";
 import { TooltipProvider } from "@/shared/ui/tooltip";
@@ -43,6 +44,7 @@ function AuthGate() {
   return (
     <TooltipProvider>
       <RouterProvider router={router} />
+      <ConfirmationDialog key={user.id} />
       <SmoothCursor />
       <Toaster position="bottom-right" />
     </TooltipProvider>

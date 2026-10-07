@@ -407,9 +407,11 @@ const FilePathButton = memo(({ frame, onFilePathClick }: FilePathButtonProps) =>
   }, [frame, onFilePathClick]);
 
   return (
-    <button
+    <Button
+      variant="link"
+      size="xs"
       className={cn(
-        "underline decoration-dotted hover:text-primary",
+        "h-auto min-w-0 p-0 text-xs whitespace-normal break-all underline decoration-dotted hover:text-primary",
         onFilePathClick && "cursor-pointer",
       )}
       disabled={!onFilePathClick}
@@ -419,7 +421,7 @@ const FilePathButton = memo(({ frame, onFilePathClick }: FilePathButtonProps) =>
       {frame.filePath}
       {frame.lineNumber !== null && `:${frame.lineNumber}`}
       {frame.columnNumber !== null && `:${frame.columnNumber}`}
-    </button>
+    </Button>
   );
 });
 

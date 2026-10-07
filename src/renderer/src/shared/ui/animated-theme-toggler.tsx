@@ -1,9 +1,9 @@
 import { Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-
 import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 
 export type TransitionVariant =
   | "circle"
@@ -295,11 +295,13 @@ export const AnimatedThemeToggler = ({
   }, [shape, fromCenter, duration, isDark, isControlled, onThemeChange, cancelAnim]);
 
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon-xs"
       type="button"
       ref={buttonRef}
       onClick={toggleTheme}
-      className={cn(showLabel && "flex items-center gap-2 px-3 py-1.5", className)}
+      className={cn(showLabel && "h-auto w-auto flex items-center gap-2 px-3 py-1.5", className)}
       {...props}
     >
       {isDark ? <Sun className="size-4 shrink-0" /> : <Moon className="size-4 shrink-0" />}
@@ -310,6 +312,6 @@ export const AnimatedThemeToggler = ({
       ) : (
         <span className="sr-only">{i18n.t("common:toggleTheme")}</span>
       )}
-    </button>
+    </Button>
   );
 };

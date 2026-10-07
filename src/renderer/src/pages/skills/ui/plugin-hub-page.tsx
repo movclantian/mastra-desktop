@@ -10,10 +10,12 @@ import {
   type SkillAuditItem,
   setMcpServerEnabled,
 } from "@/entities/skill";
+import { useAssistantDiagnosis } from "@/entities/workbench";
 import { getAuthToken, useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
+import { confirmAction } from "@/shared/ui/alert-dialog";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
@@ -26,6 +28,8 @@ import {
 } from "@/shared/ui/dialog";
 import { Field, FieldDescription, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
+import { NativeSelect, NativeSelectOption } from "@/shared/ui/native-select";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
@@ -52,6 +56,54 @@ async function pluginRequest<T>(
     method,
     ...(body ? { body } : {}),
   });
+}
+
+function pluginProblems(plugin: InstalledPlugin, servers: McpSummary[] = []): string[] {
+  return [
+    ...new Set([
+      ...plugin.current.issues,
+      ...(plugin.current.blockedReasons ?? []),
+      ...(plugin.dependencyErrors ?? []),
+      ...(plugin.configurationErrors ?? []),
+      ...(plugin.update?.error ? [plugin.update.error] : []),
+      ...plugin.current.components.flatMap((component) => {
+        const server = servers.find((item) => item.id === component.id);
+        return [...component.issues, server?.configurationError, server?.connectionError]
+          .filter((issue): issue is string => Boolean(issue))
+          .map((issue) => `${component.name}: ${issue}`);
+      }),
+    ]),
+  ];
+}
+
+function pluginDiagnosticContext(plugin: InstalledPlugin): string {
+  return `Plugin: ${plugin.current.name} (${plugin.id})\nVersion: ${plugin.current.version ?? plugin.current.digest}\nSource: ${JSON.stringify(plugin.source)}\nMarketplace: ${plugin.listing?.sourceId ?? "local"}`;
+}
+
+function DiagnosticIssue({
+  text,
+  context,
+  onDiagnose,
+}: {
+  text: string;
+  context: string;
+  onDiagnose: (context: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex min-w-0 flex-wrap items-start gap-2">
+      <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-destructive [overflow-wrap:anywhere]">
+        {text}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => void onDiagnose(`${context}\nError: ${text}`)}
+      >
+        {t("plugins:diagnose")}
+      </Button>
+    </div>
+  );
 }
 
 function sourceFromInput(value: string, ref = "HEAD", path = "", transport = "auto"): PluginSource {
@@ -84,6 +136,7 @@ function PluginConfigurationForm({
   const [draft, setDraft] = React.useState<Record<string, string>>({});
   const [error, setError] = React.useState("");
   const { token, user } = useAuth();
+  const diagnosis = useAssistantDiagnosis(user?.id ?? "");
   const fields = Object.entries(version.userConfig ?? {});
   const save = useMutation({
     mutationKey: ["plugin-configuration", user?.id, plugin.id],
@@ -192,20 +245,20 @@ function PluginConfigurationForm({
             </FieldLabel>
             <div className="flex min-w-0 items-center gap-2">
               {field.options || (field.type === "boolean" && !field.sensitive) ? (
-                <select
+                <NativeSelect
                   id={inputId}
                   value={value}
                   disabled={disabled}
-                  className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm"
+                  className="min-w-0 flex-1"
                   onChange={(event) => edit(key, event.target.value)}
                 >
-                  <option value="">{t("plugins:unset")}</option>
+                  <NativeSelectOption value="">{t("plugins:unset")}</NativeSelectOption>
                   {(field.options ?? ["true", "false"]).map((option) => (
-                    <option key={option} value={option}>
+                    <NativeSelectOption key={option} value={option}>
                       {option}
-                    </option>
+                    </NativeSelectOption>
                   ))}
-                </select>
+                </NativeSelect>
               ) : (
                 <Input
                   id={inputId}
@@ -244,9 +297,11 @@ function PluginConfigurationForm({
       </p>
       {error ? (
         <div className="grid gap-2">
-          <p role="alert" className="break-words text-xs text-destructive">
-            {error}
-          </p>
+          <DiagnosticIssue
+            text={error}
+            context={pluginDiagnosticContext(plugin)}
+            onDiagnose={diagnosis.start}
+          />
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -286,6 +341,7 @@ export function PluginHubPage({
 }) {
   const { t } = useTranslation();
   const { user, token } = useAuth();
+  const diagnosis = useAssistantDiagnosis(user?.id ?? "");
   const queryClient = useQueryClient();
   const [tab, setTab] = React.useState<"discover" | "installed" | "sources">(
     initialView ?? "discover",
@@ -381,10 +437,16 @@ export function PluginHubPage({
       await invalidate();
       if (result.plugin && /\/(install|upload)$/.test(operation.path))
         setSelection({ id: result.plugin.id });
-      if (result.error) toast.error(result.error);
+      if (result.error)
+        toast.error(result.error, {
+          action: diagnosis.action(`Plugin operation: ${operation.path}\n${result.error}`),
+        });
       else toast.success(t("plugins:saved"));
     },
-    onError: (error) => toast.error(error.message),
+    onError: (error) =>
+      toast.error(error.message, {
+        action: diagnosis.action(`Plugin/MCP operation failed: ${error.message}`),
+      }),
   });
   const pendingActions = useMutationState({
     filters: { mutationKey: ["plugin-action", user?.id], status: "pending" },
@@ -424,12 +486,18 @@ export function PluginHubPage({
     onSuccess: async () => {
       await invalidate();
     },
-    onError: (error) => toast.error(error.message),
+    onError: (error) =>
+      toast.error(error.message, {
+        action: diagnosis.action(`Plugin/MCP operation failed: ${error.message}`),
+      }),
   });
   const nativeMcp = useMutation({
     mutationFn: (operation: () => Promise<unknown>) => operation(),
     onSuccess: invalidate,
-    onError: (error) => toast.error(error.message),
+    onError: (error) =>
+      toast.error(error.message, {
+        action: diagnosis.action(`Plugin/MCP operation failed: ${error.message}`),
+      }),
   });
   const active = installed.data?.plugins.find(
     (plugin) =>
@@ -739,7 +807,7 @@ export function PluginHubPage({
         installed.error,
         sources.error,
         tab === "discover" ? catalog.error : null,
-        tab === "installed" && filter === "mcp" ? mcp.error : null,
+        tab === "installed" ? mcp.error : null,
       ]
         .filter(Boolean)
         .map((error) => (
@@ -748,7 +816,11 @@ export function PluginHubPage({
             key={error?.message}
             className="flex flex-wrap items-center gap-2 text-sm text-destructive"
           >
-            <span className="min-w-0 break-words">{error?.message}</span>
+            <DiagnosticIssue
+              text={error?.message ?? ""}
+              context="Plugin marketplace / MCP status"
+              onDiagnose={diagnosis.start}
+            />
             <Button variant="outline" size="sm" onClick={() => void invalidate()}>
               {t("plugins:retry")}
             </Button>
@@ -793,12 +865,14 @@ export function PluginHubPage({
                 key={listing.id}
                 className="flex min-w-0 flex-col gap-2 rounded-lg border p-3"
               >
-                <button
-                  className="text-left font-medium break-words hover:underline"
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="h-auto min-w-0 justify-start p-0 text-left font-medium whitespace-normal break-words hover:underline"
                   onClick={() => select({ listing })}
                 >
                   {listing.name}
-                </button>
+                </Button>
                 <p className="line-clamp-3 min-w-0 flex-1 text-sm break-words text-muted-foreground">
                   {listing.description}
                 </p>
@@ -931,16 +1005,16 @@ export function PluginHubPage({
                       {server.transport} ·{" "}
                       {t(server.enabled ? "plugins:enabled" : "plugins:disabled")}
                     </p>
-                    {server.connectionError ? (
-                      <p className="break-words text-xs text-destructive">
-                        {server.connectionError}
-                      </p>
-                    ) : null}
-                    {server.configurationError ? (
-                      <p role="alert" className="break-words text-xs text-destructive">
-                        {t("plugins:missingConfig")}: {server.configurationError}
-                      </p>
-                    ) : null}
+                    {[server.connectionError, server.configurationError]
+                      .filter((issue): issue is string => Boolean(issue))
+                      .map((issue) => (
+                        <DiagnosticIssue
+                          key={issue}
+                          text={issue}
+                          context={`MCP: ${server.name} (${server.id})\nTransport: ${server.transport}`}
+                          onDiagnose={diagnosis.start}
+                        />
+                      ))}
                   </div>
                   <Button size="sm" variant="outline" onClick={() => setMcpDialog(server)}>
                     <Settings2Icon />
@@ -973,8 +1047,8 @@ export function PluginHubPage({
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => {
-                        if (window.confirm(t("mcp:deleteConfirm", { name: server.name })))
+                      onClick={async () => {
+                        if (await confirmAction(t("mcp:deleteConfirm", { name: server.name })))
                           nativeMcp.mutate(() => deleteMcpServer(server.id));
                       }}
                     >
@@ -992,12 +1066,14 @@ export function PluginHubPage({
                 className="flex min-w-0 flex-col gap-2 rounded-lg border p-3"
               >
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <button
-                    className="min-w-0 flex-1 text-left font-medium break-words hover:underline"
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="h-auto min-w-0 flex-1 justify-start p-0 text-left font-medium whitespace-normal break-words hover:underline"
                     onClick={() => select({ id: plugin.id })}
                   >
                     {plugin.current.name}
-                  </button>
+                  </Button>
                   <Badge variant="outline">
                     {plugin.current.version ?? plugin.current.digest.slice(0, 8)}
                   </Badge>
@@ -1017,6 +1093,14 @@ export function PluginHubPage({
                 <p className="text-sm break-words text-muted-foreground">
                   {plugin.current.description}
                 </p>
+                {pluginProblems(plugin, mcp.data).map((issue) => (
+                  <DiagnosticIssue
+                    key={issue}
+                    text={issue}
+                    context={pluginDiagnosticContext(plugin)}
+                    onDiagnose={diagnosis.start}
+                  />
+                ))}
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <div className="flex min-w-0 flex-1 flex-wrap gap-1">
                     {plugin.current.components
@@ -1256,10 +1340,27 @@ export function PluginHubPage({
                       <p className="text-sm break-words text-muted-foreground">
                         {component.description}
                       </p>
-                      {component.issues.map((issue) => (
-                        <p key={issue} className="text-xs break-words text-destructive">
-                          {issue}
-                        </p>
+                      {[
+                        ...new Set(
+                          [
+                            ...component.issues,
+                            ...(active
+                              ? [
+                                  mcp.data?.find((item) => item.id === component.id)
+                                    ?.configurationError,
+                                  mcp.data?.find((item) => item.id === component.id)
+                                    ?.connectionError,
+                                ]
+                              : []),
+                          ].filter((issue): issue is string => Boolean(issue)),
+                        ),
+                      ].map((issue) => (
+                        <DiagnosticIssue
+                          key={issue}
+                          text={issue}
+                          context={`${active ? pluginDiagnosticContext(active) : version.name}\nComponent: ${component.name} (${component.id}, ${component.kind})`}
+                          onDiagnose={diagnosis.start}
+                        />
                       ))}
                       {component.configurationKeys?.length ? (
                         <p className="break-all text-xs text-muted-foreground">
@@ -1268,20 +1369,6 @@ export function PluginHubPage({
                       ) : null}
                       {active && component.kind === "mcp" && component.supported ? (
                         <div className="grid min-w-0 gap-2">
-                          {mcp.data?.find((item) => item.id === component.id)
-                            ?.configurationError ? (
-                            <p className="break-words text-xs text-destructive">
-                              {
-                                mcp.data.find((item) => item.id === component.id)
-                                  ?.configurationError
-                              }
-                            </p>
-                          ) : null}
-                          {mcp.data?.find((item) => item.id === component.id)?.connectionError ? (
-                            <p className="break-words text-xs text-destructive">
-                              {mcp.data.find((item) => item.id === component.id)?.connectionError}
-                            </p>
-                          ) : null}
                           <Button
                             size="sm"
                             variant="outline"
@@ -1394,7 +1481,11 @@ export function PluginHubPage({
                         );
                         setLocalCopyPath(copy.path);
                       })
-                      .catch((error: Error) => toast.error(error.message))
+                      .catch((error: Error) =>
+                        toast.error(error.message, {
+                          action: diagnosis.action(`Plugin operation: ${error.message}`),
+                        }),
+                      )
                       .finally(() => setCopying(false));
                   }}
                 >
@@ -1417,9 +1508,9 @@ export function PluginHubPage({
                         (pendingZip?.id !== active.id ||
                           pendingZip.digest !== active.update.digest))
                     }
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        window.confirm(
+                        await confirmAction(
                           `${t("plugins:updateConfirm")}\n${active.update?.changes?.map((change) => t(`plugins:changes.${change.kind}`, { name: change.name, keys: change.keys?.join(", ") })).join("\n") ?? ""}`,
                         )
                       ) {
@@ -1460,8 +1551,8 @@ export function PluginHubPage({
                   size="sm"
                   variant="destructive"
                   disabled={busy}
-                  onClick={() => {
-                    if (window.confirm(t("plugins:uninstallConfirm")))
+                  onClick={async () => {
+                    if (await confirmAction(t("plugins:uninstallConfirm")))
                       action.mutate(
                         {
                           path: `/${active.id}?removeData=${keepData ? "0" : "1"}`,
@@ -1531,16 +1622,20 @@ export function PluginHubPage({
                             },
                           );
                       })
-                      .catch((error: Error) => toast.error(error.message));
+                      .catch((error: Error) =>
+                        toast.error(error.message, {
+                          action: diagnosis.action(`Plugin operation: ${error.message}`),
+                        }),
+                      );
                   }}
                 >
                   <FolderOpenIcon />
                   {t("plugins:local")}
                 </Button>
               </div>
-              <label htmlFor="plugin-import-url" className="text-sm">
+              <Label htmlFor="plugin-import-url" className="text-sm">
                 {t("plugins:remote")}
-              </label>
+              </Label>
               <Select
                 value={importTransport}
                 onValueChange={(value) => value && setImportTransport(value)}
@@ -1559,17 +1654,17 @@ export function PluginHubPage({
                 value={importUrl}
                 onChange={(event) => setImportUrl(event.target.value)}
               />
-              <label htmlFor="plugin-import-ref" className="text-sm">
+              <Label htmlFor="plugin-import-ref" className="text-sm">
                 {t("plugins:branch")}
-              </label>
+              </Label>
               <Input
                 id="plugin-import-ref"
                 value={importRef}
                 onChange={(event) => setImportRef(event.target.value)}
               />
-              <label htmlFor="plugin-import-path" className="text-sm">
+              <Label htmlFor="plugin-import-path" className="text-sm">
                 {t("plugins:packagePath")}
-              </label>
+              </Label>
               <Input
                 id="plugin-import-path"
                 value={importPath}
@@ -1599,7 +1694,9 @@ export function PluginHubPage({
                       },
                     );
                   } catch (error) {
-                    toast.error(String(error));
+                    toast.error(String(error), {
+                      action: diagnosis.action(`Plugin import: ${String(error)}`),
+                    });
                   }
                 }}
               >
@@ -1616,7 +1713,11 @@ export function PluginHubPage({
         accept=".zip"
         aria-label={t("plugins:upload")}
         onChange={(event) => {
-          void upload(event.target.files?.[0]).catch((error: Error) => toast.error(error.message));
+          void upload(event.target.files?.[0]).catch((error: Error) =>
+            toast.error(error.message, {
+              action: diagnosis.action(`Plugin operation: ${error.message}`),
+            }),
+          );
           event.target.value = "";
         }}
       />
@@ -1710,21 +1811,21 @@ function MarketplaceEditor({
                 .finally(() => setSaving(false));
             }}
           >
-            <label htmlFor="marketplace-name">{t("plugins:name")}</label>
+            <Label htmlFor="marketplace-name">{t("plugins:name")}</Label>
             <Input
               id="marketplace-name"
               required
               value={name}
               onChange={(event) => setName(event.target.value)}
             />
-            <label htmlFor="marketplace-url">{t("plugins:url")}</label>
+            <Label htmlFor="marketplace-url">{t("plugins:url")}</Label>
             <Input
               id="marketplace-url"
               required
               value={url}
               onChange={(event) => setUrl(event.target.value)}
             />
-            <label htmlFor="marketplace-format">{t("plugins:format")}</label>
+            <Label htmlFor="marketplace-format">{t("plugins:format")}</Label>
             <Select
               value={format}
               onValueChange={(value: MarketplaceSource["format"] | null) => {
@@ -1749,19 +1850,19 @@ function MarketplaceEditor({
                 <SelectItem value="skills-sh">skills.sh</SelectItem>
               </SelectContent>
             </Select>
-            <label htmlFor="marketplace-path">{t("plugins:catalogPath")}</label>
+            <Label htmlFor="marketplace-path">{t("plugins:catalogPath")}</Label>
             <Input
               id="marketplace-path"
               value={path}
               onChange={(event) => setPath(event.target.value)}
             />
-            <label htmlFor="marketplace-root">{t("plugins:packagePath")}</label>
+            <Label htmlFor="marketplace-root">{t("plugins:packagePath")}</Label>
             <Input
               id="marketplace-root"
               value={packageRoot}
               onChange={(event) => setPackageRoot(event.target.value)}
             />
-            <label htmlFor="marketplace-ref">{t("plugins:branch")}</label>
+            <Label htmlFor="marketplace-ref">{t("plugins:branch")}</Label>
             <Input
               id="marketplace-ref"
               value={ref}

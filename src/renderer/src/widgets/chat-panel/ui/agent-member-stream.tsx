@@ -101,7 +101,9 @@ export function AgentMemberSwitcher({
             const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
             const active = member.id === activeMemberId;
             return (
-              <button
+              <Button
+                variant="ghost"
+                size="xs"
                 aria-label={member.name}
                 aria-pressed={active}
                 className="group relative size-8 shrink-0 rounded-full p-0 transition-transform hover:z-10 hover:scale-105"
@@ -121,7 +123,7 @@ export function AgentMemberSwitcher({
                     {statusIcon(runtime.status, "size-2")}
                   </AvatarBadge>
                 </GeneratedAvatar>
-              </button>
+              </Button>
             );
           })}
         </AvatarGroup>

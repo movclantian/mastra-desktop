@@ -171,7 +171,7 @@ export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   unicodeCollapseWhitespace: false,
   unicodeTrim: true,
 
-  regex: true,
+  regex: false,
   regexPresets: ["secrets"],
   regexStrategy: "redact",
   regexPhase: "all",

@@ -1,4 +1,5 @@
 import { i18n } from "@/shared/i18n";
+import { confirmAction } from "@/shared/ui/alert-dialog";
 
 const dirtyThreads = new Map<string, Set<string>>();
 
@@ -10,24 +11,27 @@ export function setWorkspaceDraftState(threadId: string, ownerId: string, dirty:
   else dirtyThreads.delete(threadId);
 }
 
-export function confirmWorkspaceDraftSwitch(
+export async function confirmWorkspaceDraftSwitch(
   currentThreadId: string | null,
   nextThreadId: string | null,
-): boolean {
+): Promise<boolean> {
   if (!currentThreadId || currentThreadId === nextThreadId || !dirtyThreads.has(currentThreadId)) {
     return true;
   }
-  return window.confirm(i18n.t("workspace:unsavedSwitchConfirm"));
+  return confirmAction(i18n.t("workspace:unsavedSwitchConfirm"));
 }
 
 export function hasWorkspaceDrafts(): boolean {
   return dirtyThreads.size > 0;
 }
 
-export function confirmWorkspaceDraftClose(threadId: string | null, ownerId: string): boolean {
+export async function confirmWorkspaceDraftClose(
+  threadId: string | null,
+  ownerId: string,
+): Promise<boolean> {
   return (
     !threadId ||
     !dirtyThreads.get(threadId)?.has(ownerId) ||
-    window.confirm(i18n.t("workspace:unsavedCloseConfirm"))
+    confirmAction(i18n.t("workspace:unsavedCloseConfirm"))
   );
 }

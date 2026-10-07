@@ -9,8 +9,9 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import type { McpFormServer, McpSummary } from "@/entities/skill";
+import { useAssistantDiagnosis } from "@/entities/workbench/model/queries/threads";
 import { qk } from "@/entities/workbench/model/query-keys";
-import { getAuthToken } from "@/features/auth";
+import { getAuthToken, useAuth } from "@/features/auth";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
@@ -74,8 +75,12 @@ function parseKeyValue(value: string) {
 
 export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const diagnosis = useAssistantDiagnosis(user?.id ?? "");
   const queryClient = useQueryClient();
   const [form, setForm] = React.useState<McpFormServer>(initial);
+  const diagnosticContext = (error: unknown) =>
+    `MCP: ${form.name} (${form.id})\nTransport: ${form.transport}\nPlugin: ${form.plugin?.id ?? "standalone"}\nError: ${error instanceof Error ? error.message : String(error)}`;
   const [headersText, setHeadersText] = React.useState("");
   const [anysearchKey, setAnysearchKey] = React.useState("");
   const [envText, setEnvText] = React.useState("");
@@ -244,7 +249,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       if (!response.ok || !result.ok) throw new Error(result.error || t("mcp:testFailed"));
       toast.success(t("mcp:testSuccess", { count: result.toolCount ?? 0 }));
     } catch (error) {
-      toastError(error, t("mcp:testFailed"));
+      toastError(error, t("mcp:testFailed"), diagnosis.action(diagnosticContext(error)));
     } finally {
       await Promise.all(
         temporaryCredentials.map((credential) =>
@@ -313,7 +318,11 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       onSaved();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : t("mcp:saveFailed"));
-      toastError(error, isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed"));
+      toastError(
+        error,
+        isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed"),
+        diagnosis.action(diagnosticContext(error)),
+      );
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -635,6 +644,14 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             {saveError ? (
               <p role="alert" className="break-words text-sm text-destructive">
                 {saveError}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-2"
+                  onClick={() => void diagnosis.start(diagnosticContext(saveError))}
+                >
+                  {t("plugins:diagnose")}
+                </Button>
               </p>
             ) : null}
           </div>

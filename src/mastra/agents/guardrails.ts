@@ -284,7 +284,7 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   unicodeCollapseWhitespace: false,
   unicodeTrim: true,
 
-  regex: true,
+  regex: false,
   regexPresets: ["secrets"],
   regexStrategy: "redact",
   regexPhase: "all",

@@ -7,6 +7,7 @@ import { useTranslation } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
@@ -439,7 +440,7 @@ export function ComputerSection() {
                         .includes(filter.toLowerCase()),
                     )
                     .map((tool) => (
-                      <label
+                      <Label
                         key={tool.name}
                         className="flex min-w-0 items-start gap-2 rounded-md border p-2"
                       >
@@ -460,7 +461,7 @@ export function ComputerSection() {
                             {tool.description}
                           </span>
                         </span>
-                      </label>
+                      </Label>
                     ))}
                 </div>
               </ScrollArea>

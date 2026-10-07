@@ -65,6 +65,42 @@
   "overrides": [
     {
       "includes": [
+        "src/renderer/src/app/**",
+        "src/renderer/src/pages/**",
+        "src/renderer/src/widgets/**",
+        "src/renderer/src/features/**",
+        "src/renderer/src/entities/**"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noRestrictedElements": {
+              "level": "error",
+              "options": {
+                "elements": {
+                  "button": "Use a shared Button, Toggle, TabsTrigger, or the appropriate component-library control.",
+                  "select": "Use Select or NativeSelect from shared/ui.",
+                  "textarea": "Use Textarea or the editor component from shared/ui.",
+                  "label": "Use Label or FieldLabel from shared/ui.",
+                  "table": "Use Table from shared/ui.",
+                  "thead": "Use TableHeader from shared/ui.",
+                  "tbody": "Use TableBody from shared/ui.",
+                  "tr": "Use TableRow from shared/ui.",
+                  "th": "Use TableHead from shared/ui.",
+                  "td": "Use TableCell from shared/ui.",
+                  "dialog": "Use Dialog or AlertDialog from shared/ui.",
+                  "details": "Use Collapsible, Accordion, or an existing animated component.",
+                  "summary": "Use CollapsibleTrigger or AccordionTrigger.",
+                  "progress": "Use Progress from shared/ui."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
         "src/renderer/src/components/ui/**",
         "src/renderer/src/components/ai-elements/**"
       ],

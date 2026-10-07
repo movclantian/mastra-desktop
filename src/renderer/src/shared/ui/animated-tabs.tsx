@@ -1,6 +1,7 @@
 import { motion } from "motion/react";
 import type * as React from "react";
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 
 export interface AnimatedTabItem {
   id: string;
@@ -87,7 +88,9 @@ export function AnimatedTabs({
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
         return (
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             key={tab.id}
             id={animatedTabDomId(layoutId, tab.id)}
             role="tab"
@@ -99,7 +102,7 @@ export function AnimatedTabs({
             onClick={() => onChange(tab.id)}
             onKeyDown={handleKeyDown}
             className={cn(
-              "relative z-10 flex shrink-0 cursor-pointer select-none items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
+              "relative z-10 flex h-auto shrink-0 cursor-pointer select-none items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors",
               "outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
               variant === "line" ? "rounded-t-md" : "rounded-md",
               isActive
@@ -125,7 +128,7 @@ export function AnimatedTabs({
             {tab.icon && <span className="shrink-0">{tab.icon}</span>}
             <span className="truncate">{tab.label}</span>
             {tab.badge && <span className="ml-1 shrink-0">{tab.badge}</span>}
-          </button>
+          </Button>
         );
       })}
     </div>

@@ -1,4 +1,6 @@
-"use client";
+import { Button } from "@/shared/ui/button";
+
+("use client");
 
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
@@ -41,7 +43,7 @@ export const InlineCitationCardTrigger = ({
     delay={0}
     render={
       <Badge
-        render={<button type="button" />}
+        render={<Button variant="ghost" size="icon-xs" type="button" />}
         className={cn("ml-1 cursor-pointer rounded-full", className)}
         variant="secondary"
         {...props}
@@ -184,7 +186,9 @@ export const InlineCitationCarouselPrev = ({
   }, [api]);
 
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon-xs"
       aria-label="Previous"
       className={cn("shrink-0", className)}
       onClick={handleClick}
@@ -192,7 +196,7 @@ export const InlineCitationCarouselPrev = ({
       {...props}
     >
       <ArrowLeftIcon className="size-4 text-muted-foreground" />
-    </button>
+    </Button>
   );
 };
 
@@ -211,7 +215,9 @@ export const InlineCitationCarouselNext = ({
   }, [api]);
 
   return (
-    <button
+    <Button
+      variant="ghost"
+      size="icon-xs"
       aria-label="Next"
       className={cn("shrink-0", className)}
       onClick={handleClick}
@@ -219,7 +225,7 @@ export const InlineCitationCarouselNext = ({
       {...props}
     >
       <ArrowRightIcon className="size-4 text-muted-foreground" />
-    </button>
+    </Button>
   );
 };
 

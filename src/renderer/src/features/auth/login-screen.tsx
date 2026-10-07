@@ -3,6 +3,7 @@ import * as React from "react";
 import { useTranslation } from "@/shared/i18n";
 import { useTheme } from "@/shared/theme";
 import { AnimatedThemeToggler } from "@/shared/ui/animated-theme-toggler";
+import { Button } from "@/shared/ui/button";
 import { Card, CardContent } from "@/shared/ui/card";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Dotm3x3_1 } from "@/shared/ui/dotm-3x3-1";
@@ -297,13 +298,15 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
                 </ShimmerButton>
                 <FieldDescription className="text-center">
                   {mode === "login" ? t("auth:noAccountYet") : t("auth:alreadyHaveAccount")}{" "}
-                  <button
+                  <Button
+                    variant="link"
+                    size="xs"
                     type="button"
-                    className="font-medium text-foreground underline underline-offset-4 cursor-pointer"
+                    className="h-auto p-0 font-medium text-foreground underline underline-offset-4"
                     onClick={() => switchMode(mode === "login" ? "register" : "login")}
                   >
                     {mode === "login" ? t("auth:registerNow") : t("auth:backToLogin")}
-                  </button>
+                  </Button>
                 </FieldDescription>
               </FieldGroup>
             </form>

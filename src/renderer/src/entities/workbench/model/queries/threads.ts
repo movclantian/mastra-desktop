@@ -9,7 +9,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
+import { getWorkbenchClientSession } from "@/shared/api";
+import { i18n } from "@/shared/i18n";
 import { confirmWorkspaceDraftSwitch } from "@/shared/lib/workspace-drafts";
+import { redactDiagnosticText } from "../../../../../../shared/credential-contract";
 import {
   cloneThreadRequest,
   createThreadRequest,
@@ -23,7 +27,7 @@ import { closeDeletedThreadBrowserView } from "../close-deleted-thread-browser-v
 import { qk } from "../query-keys";
 import type { WorkModeId } from "../session";
 import { ACTIVE_THREAD_KEY, userStorageKey } from "../storage";
-import { threadActivityAt, type WorkThread } from "../types";
+import { DEFAULT_AGENT_PROFILE, threadActivityAt, type WorkThread } from "../types";
 import { useWorkbenchStore } from "../workbench-store";
 
 export function useThreadsQuery(userId: string) {
@@ -230,9 +234,15 @@ export function useCloneThreadMutation(userId: string) {
 export function useSelectThread() {
   const navigate = useNavigate();
   return useCallback(
-    (threadId: string | null) => {
+    async (threadId: string | null) => {
       const current = useWorkbenchStore.getState().lastKnownThreadId;
-      if (!confirmWorkspaceDraftSwitch(current, threadId)) return;
+      const owner = useWorkbenchStore.getState().userId;
+      if (!(await confirmWorkspaceDraftSwitch(current, threadId))) return;
+      if (
+        useWorkbenchStore.getState().lastKnownThreadId !== current ||
+        useWorkbenchStore.getState().userId !== owner
+      )
+        return;
       useWorkbenchStore.getState().setLastKnownThreadId(threadId);
       // localStorage 兜底:直接打开无 hash 时仍能恢复上次会话
       const userId = useWorkbenchStore.getState().userId;
@@ -307,4 +317,58 @@ export function useActiveThreadResolver(threads: WorkThread[] | undefined): void
     )[0];
     if (latest) selectThread(latest.id);
   }, [selectThread, threads, urlThread]);
+}
+
+/** Start a dedicated troubleshooting conversation through the native message endpoint. */
+export function useAssistantDiagnosis(userId: string) {
+  const queryClient = useQueryClient();
+  const selectThread = useSelectThread();
+  const pending = useRef(false);
+  const start = async (context: string) => {
+    if (pending.current || !userId) return;
+    pending.current = true;
+    const progress = toast.loading(i18n.t("plugins:startingDiagnosis"));
+    let prompt = "";
+    let threadId: string | undefined;
+    try {
+      const { modelSelection, permissionRules } = useWorkbenchStore.getState();
+      const thread = await createThreadRequest(userId, {
+        threadId: nanoid(),
+        title: i18n.t("plugins:diagnose"),
+        metadata: {
+          agentProfileId: DEFAULT_AGENT_PROFILE.id,
+          currentModeId: "build",
+          permissionRules,
+        },
+      });
+      threadId = thread.id;
+      if (modelSelection) await updateThreadModel(thread.id, userId, modelSelection);
+      const safeContext = redactDiagnosticText(context);
+      prompt = `${i18n.t("plugins:diagnosisPrompt")}\n\n<diagnostic-data>\n${safeContext}\n</diagnostic-data>`;
+      await getWorkbenchClientSession(userId, thread.id).sendMessage(prompt, {
+        requestContext: {
+          "mastra-work:message-options": { clientMessageId: crypto.randomUUID() },
+        },
+      });
+    } catch (error) {
+      if (threadId && prompt) useWorkbenchStore.getState().setPendingPrompt(prompt);
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (threadId) {
+        await queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
+        selectThread(threadId);
+      }
+      pending.current = false;
+      toast.dismiss(progress);
+    }
+  };
+  return {
+    start,
+    action: (context: string) => ({
+      label: i18n.t("plugins:diagnose"),
+      onClick: () => {
+        void start(context);
+      },
+    }),
+  };
 }

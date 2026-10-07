@@ -18,6 +18,7 @@ import { create } from "zustand";
 import { reportWorkbenchState } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { confirmWorkspaceDraftClose } from "@/shared/lib/workspace-drafts";
+import { confirmAction } from "@/shared/ui/alert-dialog";
 import {
   DEFAULT_MODE_ID,
   DEFAULT_PERMISSION_RULES,
@@ -70,10 +71,12 @@ function panelLabel(kind: "files" | "terminal" | "changes" | "chat"): string {
         : i18n.t("workspace:codeChanges");
 }
 
-function confirmTerminalSessionClose(session: TerminalSessionInfo | undefined): boolean {
+async function confirmTerminalSessionClose(
+  session: TerminalSessionInfo | undefined,
+): Promise<boolean> {
   return (
     !terminalNeedsCloseConfirmation(session?.status) ||
-    window.confirm(i18n.t("workspace:terminalCloseConfirm"))
+    confirmAction(i18n.t("workspace:terminalCloseConfirm"))
   );
 }
 
@@ -183,7 +186,7 @@ export interface WorkbenchStore {
   activePanelTab: ActivePanelTab;
   activatePanelTab: (tab: ActivePanelTab) => void;
   addPanelTab: (kind: "files" | "terminal" | "changes") => string;
-  closePanelTab: (id: string) => boolean;
+  closePanelTab: (id: string) => Promise<boolean>;
   reorderPanelTab: (id: string, overId: string) => void;
   openWorkspacePanel: (kind?: Exclude<ActivePanelTab["kind"], "chat">) => void;
   terminalPanelOpen: boolean;
@@ -191,7 +194,7 @@ export interface WorkbenchStore {
   terminalDrawerSessionIds: string[];
   activeTerminalDrawerSessionId: string;
   addTerminalDrawerSession: (id?: string) => string;
-  closeTerminalDrawerSession: (id: string) => boolean;
+  closeTerminalDrawerSession: (id: string) => Promise<boolean>;
   setActiveTerminalDrawerSessionId: (id: string) => void;
   reorderTerminalDrawerSession: (id: string, overId: string) => void;
   moveTerminalTab: (
@@ -409,18 +412,20 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     });
     return id;
   },
-  closePanelTab: (id) => {
+  closePanelTab: async (id) => {
+    const { lastKnownThreadId, userId } = get();
     const tab = get().panelTabs.find((item) => item.id === id);
     if (!tab) return false;
-    if (tab.kind === "files" && !confirmWorkspaceDraftClose(get().lastKnownThreadId, tab.id)) {
+    if (tab.kind === "files" && !(await confirmWorkspaceDraftClose(lastKnownThreadId, tab.id))) {
       return false;
     }
     if (
       tab.kind === "terminal" &&
-      !confirmTerminalSessionClose(get().terminalSessions.get(tab.id))
+      !(await confirmTerminalSessionClose(get().terminalSessions.get(tab.id)))
     ) {
       return false;
     }
+    if (get().lastKnownThreadId !== lastKnownThreadId || get().userId !== userId) return false;
     set((state) => {
       const index = state.panelTabs.findIndex((tab) => tab.id === id);
       if (index < 0) return state;
@@ -511,11 +516,18 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     }));
     return nextId;
   },
-  closeTerminalDrawerSession: (id) => {
+  closeTerminalDrawerSession: async (id) => {
+    const { lastKnownThreadId, userId } = get();
     if (!get().terminalDrawerSessionIds.includes(id)) return false;
-    if (!confirmTerminalSessionClose(get().terminalSessions.get(id))) {
+    if (!(await confirmTerminalSessionClose(get().terminalSessions.get(id)))) {
       return false;
     }
+    if (
+      get().lastKnownThreadId !== lastKnownThreadId ||
+      get().userId !== userId ||
+      !get().terminalDrawerSessionIds.includes(id)
+    )
+      return false;
     set((state) => {
       if (state.terminalDrawerSessionIds.length <= 1) {
         const nextId = nanoid(6);

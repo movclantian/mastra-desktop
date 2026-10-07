@@ -1,6 +1,6 @@
 import React, { useImperativeHandle, useLayoutEffect, useRef } from "react";
-
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 
 interface PulsatingButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   pulseColor?: string;
@@ -86,10 +86,12 @@ export const PulsatingButton = React.forwardRef<HTMLButtonElement, PulsatingButt
     }, [pulseColor]);
 
     return (
-      <button
+      <Button
+        variant="default"
+        size="xs"
         ref={innerRef}
         className={cn(
-          "bg-primary text-primary-foreground relative flex cursor-pointer items-center justify-center rounded-lg px-4 py-2 text-center",
+          "bg-primary text-primary-foreground relative flex h-auto cursor-pointer items-center justify-center rounded-lg px-4 py-2 text-center",
           className,
         )}
         style={
@@ -109,7 +111,7 @@ export const PulsatingButton = React.forwardRef<HTMLButtonElement, PulsatingButt
             variant === "pulse" ? "animate-pulse" : "animate-pulse-ripple",
           )}
         />
-      </button>
+      </Button>
     );
   },
 );

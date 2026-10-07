@@ -3,6 +3,7 @@ import { ProfileAvatar } from "@/entities/workbench/ui/agent-profile-details";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
 import { Button } from "@/shared/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -11,6 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { Label } from "@/shared/ui/label";
+import { NativeSelect, NativeSelectOption } from "@/shared/ui/native-select";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Textarea } from "@/shared/ui/textarea";
@@ -37,21 +40,33 @@ function RuntimeStep({
       ? String(step.output.text)
       : undefined;
   return (
-    <details open={expanded} className="min-w-0 rounded-md border p-2">
-      <summary className="cursor-pointer break-words text-xs">
+    <Collapsible defaultOpen={expanded} className="min-w-0 rounded-md border p-2">
+      <CollapsibleTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-auto max-w-full justify-start whitespace-normal break-words"
+          />
+        }
+      >
         {label} · {step?.status ?? t("agentHub:waiting")}
         {step?.progress ? ` · ${step.progress.completedCount}/${step.progress.totalCount}` : ""}
-      </summary>
-      <div className="grid min-w-0 gap-2 pt-2">
+      </CollapsibleTrigger>
+      <CollapsibleContent className="grid min-w-0 gap-2 pt-2">
         {step?.error ? (
           <p className="whitespace-pre-wrap break-words text-xs text-destructive">{step.error}</p>
         ) : null}
-        <details>
-          <summary className="cursor-pointer text-xs">{t("agentHub:input")}</summary>
-          <pre className="whitespace-pre-wrap break-all text-xs">
-            {JSON.stringify(step?.input, null, 2)}
-          </pre>
-        </details>
+        <Collapsible>
+          <CollapsibleTrigger render={<Button variant="ghost" size="xs" />}>
+            {t("agentHub:input")}
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <pre className="whitespace-pre-wrap break-all text-xs">
+              {JSON.stringify(step?.input, null, 2)}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
         <div className="min-w-0 text-xs">
           <p className="font-medium">{t("agentHub:output")}</p>
           {output ? (
@@ -62,8 +77,8 @@ function RuntimeStep({
             </pre>
           )}
         </div>
-      </div>
-    </details>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -231,16 +246,26 @@ export function HandoffRecord({
   const { t } = useTranslation();
   const name = (id: string) => profile.members.find((member) => member.id === id)?.name ?? id;
   return (
-    <details className="my-2 min-w-0 rounded-md border border-dashed p-2">
-      <summary className="cursor-pointer break-words text-xs">
+    <Collapsible className="my-2 min-w-0 rounded-md border border-dashed p-2">
+      <CollapsibleTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="xs"
+            className="h-auto max-w-full justify-start whitespace-normal break-words"
+          />
+        }
+      >
         {t("agentHub:handoff")} · {name(handoff.fromMemberId)} → {name(handoff.toMemberId)} ·{" "}
         {new Date(handoff.createdAt).toLocaleString()}
-      </summary>
-      <p className="whitespace-pre-wrap break-words text-sm">{handoff.reason}</p>
-      <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">
-        {handoff.context}
-      </p>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-1 pt-2">
+        <p className="whitespace-pre-wrap break-words text-sm">{handoff.reason}</p>
+        <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">
+          {handoff.context}
+        </p>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -306,24 +331,24 @@ export function HandoffPanel({
           </DialogHeader>
           <ScrollArea className="min-h-0 flex-1">
             <div className="grid min-w-0 gap-3">
-              <label className="grid gap-1 text-sm">
+              <Label className="grid gap-1 text-sm">
                 {t("agentHub:nextExpert")}
-                <select
+                <NativeSelect
                   disabled={sending}
-                  className="min-w-0 rounded-md border bg-background p-2"
+                  className="w-full min-w-0"
                   value={target}
                   onChange={(event) => setTarget(event.target.value)}
                 >
                   {profile.members
                     .filter((candidate) => candidate.id !== member.id)
                     .map((candidate) => (
-                      <option key={candidate.id} value={candidate.id}>
+                      <NativeSelectOption key={candidate.id} value={candidate.id}>
                         {candidate.name}
-                      </option>
+                      </NativeSelectOption>
                     ))}
-                </select>
-              </label>
-              <label className="grid gap-1 text-sm">
+                </NativeSelect>
+              </Label>
+              <Label className="grid gap-1 text-sm">
                 {t("agentHub:handoffReason")}
                 <Textarea
                   maxLength={2000}
@@ -331,8 +356,8 @@ export function HandoffPanel({
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
                 />
-              </label>
-              <label className="grid gap-1 text-sm">
+              </Label>
+              <Label className="grid gap-1 text-sm">
                 {t("agentHub:handoffContext")}
                 <Textarea
                   maxLength={20000}
@@ -340,7 +365,7 @@ export function HandoffPanel({
                   value={context}
                   onChange={(event) => setContext(event.target.value)}
                 />
-              </label>
+              </Label>
               {error ? <p className="break-words text-sm text-destructive">{error}</p> : null}
             </div>
           </ScrollArea>

@@ -128,14 +128,16 @@ function PromptInputAttachments({
                 {file.uploadState === "ready" ? (
                   <CheckIcon className="size-3" aria-label={t("chat:prompt.attachmentReady")} />
                 ) : file.uploadState === "error" ? (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     type="button"
-                    className="text-destructive underline"
+                    className="h-auto p-0 text-xs text-destructive underline"
                     onClick={() => attachments.retry(file.id)}
                     aria-label={t("chat:prompt.retryAttachment")}
                   >
                     {t("chat:prompt.retryAttachment")}
-                  </button>
+                  </Button>
                 ) : (
                   <LoaderCircleIcon
                     className="size-3 animate-spin"
@@ -301,14 +303,16 @@ function SkillAwareTextarea({
                   <span className="max-w-52 truncate">
                     {skill?.displayName ?? t("plugins:unavailable")}
                   </span>
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     aria-label={t("chat:prompt.removeSkill", { name })}
-                    className="rounded-sm hover:bg-primary/15"
+                    className="size-4 rounded-sm p-0 hover:bg-primary/15"
                     onClick={() => onChangeSkills(selectedSkills.filter((item) => item !== name))}
                     type="button"
                   >
                     <XIcon className="size-3" />
-                  </button>
+                  </Button>
                 </PromptInputHoverCardTrigger>
                 <PromptInputHoverCardContent className="space-y-1">
                   <p className="font-medium">/{name}</p>

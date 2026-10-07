@@ -478,7 +478,9 @@ function MessageBubbleReactions({
   return (
     <BubbleReactions aria-label={t("chat:messages.messageReactions")}>
       {reactions.map((reaction) => (
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           aria-label={t("chat:messages.reactionsCount", {
             emoji: reaction.emoji,
             count: reaction.userIds.length,
@@ -493,7 +495,7 @@ function MessageBubbleReactions({
           {reaction.userIds.length > 1 ? (
             <span className="text-muted-foreground">{reaction.userIds.length}</span>
           ) : null}
-        </button>
+        </Button>
       ))}
     </BubbleReactions>
   );

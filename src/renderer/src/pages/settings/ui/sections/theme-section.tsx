@@ -21,6 +21,7 @@ import { Button } from "@/shared/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/shared/ui/card";
 import { Input } from "@/shared/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
+import { Label } from "@/shared/ui/label";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Slider } from "@/shared/ui/slider";
@@ -60,18 +61,19 @@ function ColorField({ label, description, value, onChange, recommendedSwatches }
           </span>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <label
+          <Label
             className="relative flex size-6 cursor-pointer items-center justify-center rounded-md border shadow-xs overflow-hidden"
             style={{ backgroundColor: value }}
             title={t("settings:themes.colorPickTitle")}
           >
-            <input
+            <Input
               type="color"
+              aria-label={label}
               value={value.startsWith("#") ? value : "#000000"}
               onChange={(e) => onChange(e.target.value)}
               className="absolute inset-0 size-full cursor-pointer opacity-0"
             />
-          </label>
+          </Label>
           <Input
             value={value}
             onChange={(e) => onChange(e.target.value)}
@@ -81,17 +83,21 @@ function ColorField({ label, description, value, onChange, recommendedSwatches }
         </div>
       </div>
       {recommendedSwatches && recommendedSwatches.length > 0 ? (
-        <div className="flex items-center gap-1 pt-1 overflow-x-auto">
+        <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
           {recommendedSwatches.map((c) => (
-            <button
+            <Button
+              variant="ghost"
+              size="xs"
               key={c}
               type="button"
               onClick={() => onChange(c)}
               className={cn(
-                "size-4 shrink-0 rounded-full border transition-transform hover:scale-125 focus-visible:outline-hidden",
+                "size-4 shrink-0 rounded-full border p-0 transition-transform hover:scale-125",
                 value.toLowerCase() === c.toLowerCase() && "ring-2 ring-primary ring-offset-1",
               )}
               style={{ backgroundColor: c }}
+              aria-label={c}
+              aria-pressed={value.toLowerCase() === c.toLowerCase()}
               title={c}
             />
           ))}
@@ -472,7 +478,7 @@ export function ThemeSection() {
                     }
                     className="py-1"
                   />
-                  <div className="flex items-center gap-1 pt-1 overflow-x-auto">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
                     {[
                       { label: t("settings:themes.radius0"), val: 0 },
                       { label: t("settings:themes.radius4"), val: 4 },
@@ -520,7 +526,7 @@ export function ThemeSection() {
                     }
                     className="py-1"
                   />
-                  <div className="flex items-center gap-1 pt-1 overflow-x-auto">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
                     {[
                       { label: t("settings:themes.border1"), val: 1 },
                       { label: t("settings:themes.border15"), val: 1.5 },
@@ -567,7 +573,7 @@ export function ThemeSection() {
                     }
                     className="py-1"
                   />
-                  <div className="flex items-center gap-1 pt-1 overflow-x-auto">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1 pt-1">
                     {[
                       { label: t("settings:themes.shadow0"), val: 0 },
                       { label: t("settings:themes.shadow2"), val: 2 },
@@ -786,7 +792,9 @@ export function ThemeSection() {
               </CardHeader>
               <CardContent className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 px-4 pb-4">
                 {THEME_INSPIRATIONS.map((insp) => (
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     key={insp.id}
                     type="button"
                     onClick={() => {
@@ -811,7 +819,7 @@ export function ThemeSection() {
                       }
                       toast.success(t("settings:themes.appliedPalette", { name: insp.name }));
                     }}
-                    className="flex flex-col gap-1.5 rounded-lg border bg-card p-2.5 text-left transition-all hover:border-primary hover:shadow-xs focus-visible:outline-hidden"
+                    className="flex h-auto min-w-0 flex-col items-stretch gap-1.5 rounded-lg border bg-card p-2.5 text-left whitespace-normal transition-all hover:border-primary hover:shadow-xs"
                   >
                     <div className="flex h-5 w-full overflow-hidden rounded-md border">
                       <span className="w-1/3 h-full" style={{ backgroundColor: insp.primary }} />
@@ -824,7 +832,7 @@ export function ThemeSection() {
                         {insp.description}
                       </span>
                     </div>
-                  </button>
+                  </Button>
                 ))}
               </CardContent>
             </Card>

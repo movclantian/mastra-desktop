@@ -1,6 +1,6 @@
 import React, { type ComponentPropsWithoutRef, type CSSProperties } from "react";
-
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 
 export interface ShimmerButtonProps extends ComponentPropsWithoutRef<"button"> {
   shimmerColor?: string;
@@ -27,7 +27,9 @@ export const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonPr
     ref,
   ) => {
     return (
-      <button
+      <Button
+        variant="default"
+        size="xs"
         style={
           {
             "--spread": "90deg",
@@ -39,7 +41,7 @@ export const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonPr
           } as CSSProperties
         }
         className={cn(
-          "group relative z-0 flex cursor-pointer items-center justify-center overflow-hidden [border-radius:var(--radius)] border border-white/10 px-6 py-3 whitespace-nowrap text-white [background:var(--bg)]",
+          "group relative z-0 flex h-auto cursor-pointer items-center justify-center overflow-hidden [border-radius:var(--radius)] border border-white/10 px-6 py-3 whitespace-nowrap text-white [background:var(--bg)]",
           "transform-gpu transition-transform duration-300 ease-in-out active:translate-y-px",
           className,
         )}
@@ -82,7 +84,7 @@ export const ShimmerButton = React.forwardRef<HTMLButtonElement, ShimmerButtonPr
             "absolute inset-(--cut) -z-20 [border-radius:var(--radius)] [background:var(--bg)]",
           )}
         />
-      </button>
+      </Button>
     );
   },
 );

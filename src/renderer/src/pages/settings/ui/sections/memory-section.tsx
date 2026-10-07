@@ -206,12 +206,12 @@ function TemplateEditor({ value, onChange }: { value: string; onChange: (value: 
           onChange={(event) => onChange(event.target.value)}
           value={displayedValue}
         />
-        <div className="min-h-48 min-w-0 overflow-auto rounded-lg border bg-muted/30 p-3">
+        <ScrollArea className="max-h-96 min-h-48 min-w-0 rounded-lg border bg-muted/30 p-3">
           <p className="mb-2 text-xs font-medium text-muted-foreground">
             {t("settings:memory.templatePreview")}
           </p>
           <pre className="whitespace-pre-wrap break-words font-sans text-sm">{displayedValue}</pre>
-        </div>
+        </ScrollArea>
       </div>
     </Field>
   );

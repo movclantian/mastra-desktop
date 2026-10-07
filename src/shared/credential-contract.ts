@@ -102,3 +102,25 @@ export const browserCredentialPurpose = (provider: "firecrawl") =>
   CredentialPurposeSchema.parse(`browser:${provider}`);
 export const pluginCredentialPurpose = (pluginId: string) =>
   CredentialPurposeSchema.parse(`plugin:${pluginId}:config`);
+
+/** Diagnostics carry readable errors, never URL credentials or recognized secret values. */
+export function redactDiagnosticText(text: string): string {
+  return text
+    .replace(/https?:\/\/[^\s<>"']+/gi, (raw) => {
+      try {
+        const url = new URL(raw);
+        url.username = "";
+        url.password = "";
+        url.search = "";
+        url.hash = "";
+        return url.toString();
+      } catch {
+        return "[URL]";
+      }
+    })
+    .replace(/(bearer\s+)[^\s"',;}]+/gi, "$1[redacted]")
+    .replace(
+      /((?:api[_-]?key|(?:access[_-]|refresh[_-])?token|password|secret|authorization)["']?\s*[=:]\s*["']?)[^\s"',;}\]]+/gi,
+      "$1[redacted]",
+    );
+}

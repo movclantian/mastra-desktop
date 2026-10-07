@@ -52,6 +52,8 @@ import {
   CodeBlockHeader,
   CodeBlockTitle,
 } from "@/shared/ui/ai-elements/code-block";
+import { Button } from "@/shared/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -329,10 +331,12 @@ function ScreenshotDetail({
     <Dialog>
       <DialogTrigger
         render={
-          <button
+          <Button
+            variant="ghost"
+            size="xs"
             type="button"
             aria-label={label}
-            className="block max-w-full cursor-zoom-in rounded-md focus-visible:ring-2 focus-visible:ring-ring"
+            className="block h-auto max-w-full cursor-zoom-in rounded-md p-0 focus-visible:ring-2 focus-visible:ring-ring"
           />
         }
       >
@@ -426,14 +430,18 @@ function ComputerDetail({ output }: { output: unknown }) {
           </pre>
         </ScrollArea>
       ) : null}
-      <details className="min-w-0 text-xs text-muted-foreground">
-        <summary className="cursor-pointer">{t("chat:trace.computerResult")}</summary>
-        <ScrollArea className="max-h-64">
-          <pre className="whitespace-pre-wrap break-words py-2 [overflow-wrap:anywhere]">
-            {capped(JSON.stringify(envelope.result ?? output, null, 2))}
-          </pre>
-        </ScrollArea>
-      </details>
+      <Collapsible className="min-w-0 text-xs text-muted-foreground">
+        <CollapsibleTrigger render={<Button variant="ghost" size="xs" />}>
+          {t("chat:trace.computerResult")}
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <ScrollArea className="max-h-64">
+            <pre className="whitespace-pre-wrap break-words py-2 [overflow-wrap:anywhere]">
+              {capped(JSON.stringify(envelope.result ?? output, null, 2))}
+            </pre>
+          </ScrollArea>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

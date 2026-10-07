@@ -1,4 +1,6 @@
-"use client";
+import { Button } from "@/shared/ui/button";
+
+("use client");
 
 import { ChevronRightIcon, FileIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
@@ -146,7 +148,10 @@ export const FileTreeFolder = ({
           >
             <CollapsibleTrigger
               render={
-                <button
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  aria-label={name}
                   className="flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0"
                   type="button"
                 />
@@ -159,8 +164,10 @@ export const FileTreeFolder = ({
                 )}
               />
             </CollapsibleTrigger>
-            <button
-              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-left"
+            <Button
+              variant="ghost"
+              size="xs"
+              className="flex h-auto min-w-0 flex-1 items-center justify-start gap-1 border-none bg-transparent p-0 text-left"
               onClick={handleSelect}
               type="button"
             >
@@ -170,7 +177,7 @@ export const FileTreeFolder = ({
                   : (icon ?? <FolderIcon className="size-4 text-blue-500" />)}
               </FileTreeIcon>
               <FileTreeName>{name}</FileTreeName>
-            </button>
+            </Button>
           </div>
           <CollapsibleContent>
             <div className="ml-2">{children}</div>

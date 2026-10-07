@@ -1,4 +1,6 @@
-"use client";
+import { confirmAction } from "@/shared/ui/alert-dialog";
+
+("use client");
 
 import { useLocation, useNavigate, useRouterState } from "@tanstack/react-router";
 import { HelpCircleIcon, KeyboardIcon, SearchIcon } from "lucide-react";
@@ -292,17 +294,19 @@ export function CommandPaletteDialog({
             <span>{t("commandPalette:closeHelp")}</span>
           </span>
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="xs"
           type="button"
           onClick={() => {
             onOpenChange(false);
             window.setTimeout(() => setShortcutsHelpOpen(true), 100);
           }}
-          className="flex items-center gap-1 text-primary hover:underline cursor-pointer"
+          className="h-auto gap-1 p-0 text-xs text-primary hover:underline"
         >
           <HelpCircleIcon className="size-3.5" />
           <span>{t("commandPalette:guideHelp")}</span>
-        </button>
+        </Button>
       </div>
     </CommandDialog>
   );
@@ -449,9 +453,11 @@ export function useGlobalShortcuts() {
   const isMac = React.useMemo(() => isMacPlatform(), []);
 
   React.useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const handleKeyDown = async (event: KeyboardEvent) => {
       // 若处于中文等输入法组合状态，跳过快捷键
       if (event.isComposing) return;
+      // A confirmation must resolve before another shortcut can mutate the workspace.
+      if (document.querySelector('[data-slot="alert-dialog-content"]')) return;
 
       const inEditable = isEditableTarget(event.target);
 
@@ -655,7 +661,7 @@ export function useGlobalShortcuts() {
       ) {
         event.preventDefault();
         if (
-          window.confirm(
+          await confirmAction(
             t("sidebar:deleteThreadConfirm", { title: activeThread.title }) ||
               `确定删除会话「${activeThread.title}」吗？`,
           )

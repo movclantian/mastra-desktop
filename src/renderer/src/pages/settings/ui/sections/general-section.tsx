@@ -19,6 +19,7 @@ import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
+import { Label } from "@/shared/ui/label";
 import { Switch } from "@/shared/ui/switch";
 import {
   fetchProxySettings,
@@ -208,21 +209,15 @@ export function GeneralSection() {
         <div className="py-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {/* 中文 */}
-            <div
-              role="button"
-              tabIndex={0}
+            <Button
+              variant="ghost"
+              aria-pressed={!i18n.language.startsWith("en")}
               onClick={() => {
                 void i18n.changeLanguage("zh");
                 toast.success(t("settings:general.switchedToZh"));
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  void i18n.changeLanguage("zh");
-                  toast.success(t("settings:general.switchedToZh"));
-                }
-              }}
               className={cn(
-                "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
                 !i18n.language.startsWith("en")
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
@@ -254,24 +249,18 @@ export function GeneralSection() {
                   {t("settings:general.langZhDesc")}
                 </p>
               </div>
-            </div>
+            </Button>
 
             {/* 英文 */}
-            <div
-              role="button"
-              tabIndex={0}
+            <Button
+              variant="ghost"
+              aria-pressed={i18n.language.startsWith("en")}
               onClick={() => {
                 void i18n.changeLanguage("en");
                 toast.success(t("settings:general.switchedToEn"));
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  void i18n.changeLanguage("en");
-                  toast.success(t("settings:general.switchedToEn"));
-                }
-              }}
               className={cn(
-                "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
                 i18n.language.startsWith("en")
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
@@ -303,7 +292,7 @@ export function GeneralSection() {
                   {t("settings:general.langEnDesc")}
                 </p>
               </div>
-            </div>
+            </Button>
           </div>
         </div>
       </SettingCard>
@@ -327,15 +316,12 @@ export function GeneralSection() {
           {/* 三种代理模式选择卡片 */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {/* 模式 1: 系统代理 */}
-            <div
-              role="button"
-              tabIndex={0}
+            <Button
+              variant="ghost"
+              aria-pressed={mode === "system"}
               onClick={() => selectMode("system")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") selectMode("system");
-              }}
               className={cn(
-                "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
                 mode === "system"
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
@@ -365,18 +351,15 @@ export function GeneralSection() {
                   {t("settings:general.proxySystemDesc")}
                 </p>
               </div>
-            </div>
+            </Button>
 
             {/* 模式 2: 不使用代理 */}
-            <div
-              role="button"
-              tabIndex={0}
+            <Button
+              variant="ghost"
+              aria-pressed={mode === "direct"}
               onClick={() => selectMode("direct")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") selectMode("direct");
-              }}
               className={cn(
-                "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
                 mode === "direct"
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
@@ -406,18 +389,15 @@ export function GeneralSection() {
                   {t("settings:general.proxyDirectDesc")}
                 </p>
               </div>
-            </div>
+            </Button>
 
             {/* 模式 3: 手动输入代理 */}
-            <div
-              role="button"
-              tabIndex={0}
+            <Button
+              variant="ghost"
+              aria-pressed={mode === "manual"}
               onClick={() => selectMode("manual")}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") selectMode("manual");
-              }}
               className={cn(
-                "relative flex flex-col justify-between rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
                 mode === "manual"
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
@@ -447,7 +427,7 @@ export function GeneralSection() {
                   {t("settings:general.proxyManualDesc")}
                 </p>
               </div>
-            </div>
+            </Button>
           </div>
 
           {/* 手动模式下的代理地址输入框与测试按钮 */}
@@ -455,9 +435,9 @@ export function GeneralSection() {
             <div className="rounded-lg border border-border/70 bg-muted/20 p-3.5 space-y-3">
               <div className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between">
-                  <label htmlFor="proxy-url-input" className="text-xs font-medium text-foreground">
+                  <Label htmlFor="proxy-url-input" className="text-xs font-medium text-foreground">
                     {t("settings:general.proxyUrlLabel")}
-                  </label>
+                  </Label>
                   <span className="text-[11px] text-muted-foreground">
                     {t("settings:general.supportedProtocols")}
                   </span>

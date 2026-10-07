@@ -48,6 +48,7 @@ import {
   ItemTitle,
 } from "@/shared/ui/item";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { AuxiliaryChat } from "@/widgets/chat-panel/ui/auxiliary-chat";
 import { useBrowserSession } from "../model/use-browser-session";
@@ -398,290 +399,300 @@ export function WorkspacePanelShell() {
         >
           {/* 一条统一标签栏:前半是前端拥有的实例(文件树 / 终端 / 代码更改),
             后半是由服务端 state.tabs 派生的浏览器页面。支持横向滚轮与横向滚动条。 */}
-          <div
-            className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-            data-horizontal-scroll="true"
-            onDragOver={(event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "move";
-            }}
-            onDrop={(event) => {
-              event.preventDefault();
-              setDragOverTabId(null);
-              setDraggingTabId(null);
-              const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
-              if (rawData) {
-                try {
-                  const data = JSON.parse(rawData);
-                  if (data.source === "terminal") {
-                    moveTerminalTab("terminal", "workspace", data.id, data.title);
-                  }
-                } catch {}
-              }
-            }}
-          >
-            {panelTabs.map((tab) => {
-              const isSelected =
-                activePanelTab.kind !== "browser" &&
-                activePanelTab.kind !== "welcome" &&
-                activePanelTab.id === tab.id;
-              return (
-                <ContextMenu key={tab.id}>
-                  <ContextMenuTrigger>
-                    <button
-                      draggable
-                      onDragStart={(event) => {
-                        draggedTabRef.current = tab.id;
-                        setDraggingTabId(tab.id);
-                        event.dataTransfer.setData(
-                          TAB_DND_TYPE,
-                          JSON.stringify({
-                            source: "workspace",
-                            id: tab.id,
-                            kind: tab.kind,
-                            title: tab.title,
-                          }),
-                        );
-                        event.dataTransfer.effectAllowed = "move";
-                      }}
-                      onDragOver={(event) => {
-                        event.preventDefault();
-                        event.dataTransfer.dropEffect = "move";
-                        if (dragOverTabId !== tab.id) setDragOverTabId(tab.id);
-                      }}
-                      onDragLeave={() => {
-                        if (dragOverTabId === tab.id) setDragOverTabId(null);
-                      }}
-                      onDrop={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setDragOverTabId(null);
-                        setDraggingTabId(null);
-                        const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
-                        if (rawData) {
-                          try {
-                            const data = JSON.parse(rawData);
-                            if (data.source === "workspace") {
-                              reorderPanelTab(data.id, tab.id);
-                            } else if (data.source === "terminal") {
-                              moveTerminalTab("terminal", "workspace", data.id, data.title, tab.id);
-                            }
-                          } catch {
-                            if (draggedTabRef.current)
-                              reorderPanelTab(draggedTabRef.current, tab.id);
-                          }
-                        } else if (draggedTabRef.current) {
-                          reorderPanelTab(draggedTabRef.current, tab.id);
-                        }
-                        draggedTabRef.current = null;
-                      }}
-                      onDragEnd={() => {
-                        draggedTabRef.current = null;
-                        setDraggingTabId(null);
-                        setDragOverTabId(null);
-                      }}
-                      className={cn(
-                        "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
-                        isSelected
-                          ? "border-border bg-background text-foreground shadow-xs font-medium"
-                          : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                        draggingTabId === tab.id && "opacity-50",
-                        dragOverTabId === tab.id && "ring-2 ring-primary/40",
-                      )}
-                      onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
-                      title={tab.title}
-                      type="button"
-                    >
-                      {tab.kind === "files" ? (
-                        <FolderTreeIcon
-                          className={cn(
-                            "size-3 shrink-0",
-                            isSelected ? "text-primary" : "text-muted-foreground",
-                          )}
-                        />
-                      ) : tab.kind === "chat" ? (
-                        <MessageSquareIcon className="size-3 shrink-0" />
-                      ) : tab.kind === "terminal" ? (
-                        <TerminalIcon
-                          className={cn(
-                            "size-3 shrink-0",
-                            isSelected ? "text-primary" : "text-muted-foreground",
-                          )}
-                        />
-                      ) : (
-                        <FileDiffIcon
-                          className={cn(
-                            "size-3 shrink-0",
-                            isSelected ? "text-primary" : "text-muted-foreground",
-                          )}
-                        />
-                      )}
-                      <span className="truncate">{tab.title}</span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`${t("common:close")} ${tab.title}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          closePanelTab(tab.id);
+          <ScrollArea orientation="horizontal" className="h-full min-w-0 flex-1">
+            <div
+              className="flex h-11 w-max min-w-full items-center gap-1"
+              data-horizontal-scroll="true"
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragOverTabId(null);
+                setDraggingTabId(null);
+                const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
+                if (rawData) {
+                  try {
+                    const data = JSON.parse(rawData);
+                    if (data.source === "terminal") {
+                      moveTerminalTab("terminal", "workspace", data.id, data.title);
+                    }
+                  } catch {}
+                }
+              }}
+            >
+              {panelTabs.map((tab) => {
+                const isSelected =
+                  activePanelTab.kind !== "browser" &&
+                  activePanelTab.kind !== "welcome" &&
+                  activePanelTab.id === tab.id;
+                return (
+                  <ContextMenu key={tab.id}>
+                    <ContextMenuTrigger>
+                      <div
+                        draggable
+                        onDragStart={(event) => {
+                          draggedTabRef.current = tab.id;
+                          setDraggingTabId(tab.id);
+                          event.dataTransfer.setData(
+                            TAB_DND_TYPE,
+                            JSON.stringify({
+                              source: "workspace",
+                              id: tab.id,
+                              kind: tab.kind,
+                              title: tab.title,
+                            }),
+                          );
+                          event.dataTransfer.effectAllowed = "move";
                         }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          if (dragOverTabId !== tab.id) setDragOverTabId(tab.id);
+                        }}
+                        onDragLeave={() => {
+                          if (dragOverTabId === tab.id) setDragOverTabId(null);
+                        }}
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setDragOverTabId(null);
+                          setDraggingTabId(null);
+                          const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
+                          if (rawData) {
+                            try {
+                              const data = JSON.parse(rawData);
+                              if (data.source === "workspace") {
+                                reorderPanelTab(data.id, tab.id);
+                              } else if (data.source === "terminal") {
+                                moveTerminalTab(
+                                  "terminal",
+                                  "workspace",
+                                  data.id,
+                                  data.title,
+                                  tab.id,
+                                );
+                              }
+                            } catch {
+                              if (draggedTabRef.current)
+                                reorderPanelTab(draggedTabRef.current, tab.id);
+                            }
+                          } else if (draggedTabRef.current) {
+                            reorderPanelTab(draggedTabRef.current, tab.id);
+                          }
+                          draggedTabRef.current = null;
+                        }}
+                        onDragEnd={() => {
+                          draggedTabRef.current = null;
+                          setDraggingTabId(null);
+                          setDragOverTabId(null);
+                        }}
+                        className={cn(
+                          "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                          isSelected
+                            ? "border-border bg-background text-foreground shadow-xs font-medium"
+                            : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                          draggingTabId === tab.id && "opacity-50",
+                          dragOverTabId === tab.id && "ring-2 ring-primary/40",
+                        )}
+                        title={tab.title}
+                      >
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          className="h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-none p-0 font-normal"
+                          aria-pressed={isSelected}
+                          onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
+                        >
+                          {tab.kind === "files" ? (
+                            <FolderTreeIcon
+                              className={cn(
+                                "size-3 shrink-0",
+                                isSelected ? "text-primary" : "text-muted-foreground",
+                              )}
+                            />
+                          ) : tab.kind === "chat" ? (
+                            <MessageSquareIcon className="size-3 shrink-0" />
+                          ) : tab.kind === "terminal" ? (
+                            <TerminalIcon
+                              className={cn(
+                                "size-3 shrink-0",
+                                isSelected ? "text-primary" : "text-muted-foreground",
+                              )}
+                            />
+                          ) : (
+                            <FileDiffIcon
+                              className={cn(
+                                "size-3 shrink-0",
+                                isSelected ? "text-primary" : "text-muted-foreground",
+                              )}
+                            />
+                          )}
+                          <span className="truncate">{tab.title}</span>
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={`${t("common:close")} ${tab.title}`}
+                          onClick={(event) => {
                             event.stopPropagation();
                             closePanelTab(tab.id);
-                          }
-                        }}
-                        className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                      >
-                        <XIcon className="size-3" />
-                      </span>
-                    </button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent className="w-48">
-                    <ContextMenuGroup>
-                      <ContextMenuLabel className="max-w-44 truncate">{tab.title}</ContextMenuLabel>
-                      <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
-                        <XIcon className="text-muted-foreground" />
-                        <span>{t("workspace:closeTab")}</span>
-                        <ContextMenuShortcut>
-                          {formatShortcutDisplay(["Mod", "W"], isMac)}
-                        </ContextMenuShortcut>
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => {
-                          for (const other of panelTabs) {
-                            if (other.id !== tab.id) closePanelTab(other.id);
-                          }
-                        }}
-                      >
-                        <span>{t("workspace:closeOtherTabs")}</span>
-                      </ContextMenuItem>
-                      {tab.kind === "terminal" && (
-                        <ContextMenuItem
-                          onClick={() =>
-                            moveTerminalTab("workspace", "terminal", tab.id, tab.title)
-                          }
+                          }}
+                          className="ml-0.5 size-5 rounded p-0.5 text-muted-foreground"
                         >
-                          <PanelBottomOpenIcon className="text-muted-foreground" />
-                          <span>{t("workspace:moveToTerminalDrawer")}</span>
+                          <XIcon className="size-3" />
+                        </Button>
+                      </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-48">
+                      <ContextMenuGroup>
+                        <ContextMenuLabel className="max-w-44 truncate">
+                          {tab.title}
+                        </ContextMenuLabel>
+                        <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
+                          <XIcon className="text-muted-foreground" />
+                          <span>{t("workspace:closeTab")}</span>
+                          <ContextMenuShortcut>
+                            {formatShortcutDisplay(["Mod", "W"], isMac)}
+                          </ContextMenuShortcut>
                         </ContextMenuItem>
-                      )}
-                    </ContextMenuGroup>
-                    <ContextMenuSeparator />
-                    <ContextMenuGroup>
-                      <ContextMenuSub>
-                        <ContextMenuSubTrigger>
-                          <PlusIcon className="text-muted-foreground" />
-                          <span>{t("workspace:newTab")}</span>
-                        </ContextMenuSubTrigger>
-                        <ContextMenuSubContent className="w-44">
-                          <ContextMenuGroup>
-                            <ContextMenuItem onClick={() => addPanelTab("files")}>
-                              <FolderTreeIcon className="text-muted-foreground" />
-                              <span>{t("workspace:files")}</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem onClick={() => addPanelTab("terminal")}>
-                              <TerminalIcon className="text-muted-foreground" />
-                              <span>{t("workspace:terminal")}</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem onClick={() => addPanelTab("changes")}>
-                              <FileDiffIcon className="text-muted-foreground" />
-                              <span>{t("workspace:codeChanges")}</span>
-                            </ContextMenuItem>
-                            <ContextMenuItem onClick={() => createPanelTab("browser")}>
-                              <Globe2Icon className="text-muted-foreground" />
-                              <span>{t("workspace:browsePage")}</span>
-                            </ContextMenuItem>
-                          </ContextMenuGroup>
-                        </ContextMenuSubContent>
-                      </ContextMenuSub>
-                    </ContextMenuGroup>
-                  </ContextMenuContent>
-                </ContextMenu>
-              );
-            })}
-            {state.tabs.map((tab, index) => {
-              const isSelected =
-                activePanelTab.kind === "browser" && activePanelTab.index === index;
-              return (
-                <button
-                  key={tab.id ?? index}
-                  className={cn(
-                    "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
-                    isSelected
-                      ? "border-border bg-background text-foreground shadow-xs font-medium"
-                      : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                  onClick={() => openBrowserTab(index)}
-                  title={tab.url === "about:blank" ? t("workspace:newTab") : tab.title || tab.url}
-                  type="button"
-                >
-                  <Globe2Icon
+                        <ContextMenuItem
+                          onClick={async () => {
+                            for (const other of panelTabs) {
+                              if (other.id !== tab.id && !(await closePanelTab(other.id))) break;
+                            }
+                          }}
+                        >
+                          <span>{t("workspace:closeOtherTabs")}</span>
+                        </ContextMenuItem>
+                        {tab.kind === "terminal" && (
+                          <ContextMenuItem
+                            onClick={() =>
+                              moveTerminalTab("workspace", "terminal", tab.id, tab.title)
+                            }
+                          >
+                            <PanelBottomOpenIcon className="text-muted-foreground" />
+                            <span>{t("workspace:moveToTerminalDrawer")}</span>
+                          </ContextMenuItem>
+                        )}
+                      </ContextMenuGroup>
+                      <ContextMenuSeparator />
+                      <ContextMenuGroup>
+                        <ContextMenuSub>
+                          <ContextMenuSubTrigger>
+                            <PlusIcon className="text-muted-foreground" />
+                            <span>{t("workspace:newTab")}</span>
+                          </ContextMenuSubTrigger>
+                          <ContextMenuSubContent className="w-44">
+                            <ContextMenuGroup>
+                              <ContextMenuItem onClick={() => addPanelTab("files")}>
+                                <FolderTreeIcon className="text-muted-foreground" />
+                                <span>{t("workspace:files")}</span>
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => addPanelTab("terminal")}>
+                                <TerminalIcon className="text-muted-foreground" />
+                                <span>{t("workspace:terminal")}</span>
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => addPanelTab("changes")}>
+                                <FileDiffIcon className="text-muted-foreground" />
+                                <span>{t("workspace:codeChanges")}</span>
+                              </ContextMenuItem>
+                              <ContextMenuItem onClick={() => createPanelTab("browser")}>
+                                <Globe2Icon className="text-muted-foreground" />
+                                <span>{t("workspace:browsePage")}</span>
+                              </ContextMenuItem>
+                            </ContextMenuGroup>
+                          </ContextMenuSubContent>
+                        </ContextMenuSub>
+                      </ContextMenuGroup>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                );
+              })}
+              {state.tabs.map((tab, index) => {
+                const isSelected =
+                  activePanelTab.kind === "browser" && activePanelTab.index === index;
+                return (
+                  <div
+                    key={tab.id ?? index}
                     className={cn(
-                      "size-3 shrink-0",
-                      isSelected ? "text-primary" : "text-muted-foreground",
+                      "group relative flex h-7 max-w-44 min-w-0 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-normal transition-colors cursor-pointer select-none",
+                      isSelected
+                        ? "border-border bg-background text-foreground shadow-xs font-medium"
+                        : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                     )}
-                  />
-                  <span className="truncate">
-                    {tab.url === "about:blank"
-                      ? t("workspace:newTab")
-                      : tab.title || tab.url || t("workspace:newTab")}
-                  </span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label={t("workspace:closeTab")}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      closeBrowserTab(index);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
+                    title={tab.url === "about:blank" ? t("workspace:newTab") : tab.title || tab.url}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-none p-0 font-normal"
+                      aria-pressed={isSelected}
+                      onClick={() => openBrowserTab(index)}
+                    >
+                      <Globe2Icon
+                        className={cn(
+                          "size-3 shrink-0",
+                          isSelected ? "text-primary" : "text-muted-foreground",
+                        )}
+                      />
+                      <span className="truncate">
+                        {tab.url === "about:blank"
+                          ? t("workspace:newTab")
+                          : tab.title || tab.url || t("workspace:newTab")}
+                      </span>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t("workspace:closeTab")}
+                      onClick={(event) => {
                         event.stopPropagation();
                         closeBrowserTab(index);
-                      }
-                    }}
-                    className="ml-0.5 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground cursor-pointer"
-                  >
-                    <XIcon className="size-3" />
-                  </span>
-                </button>
-              );
-            })}
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    aria-label={t("workspace:newTab")}
-                    className="size-6 shrink-0"
-                    size="icon-xs"
-                    title={t("workspace:newTab")}
-                    variant="ghost"
-                  >
-                    <PlusIcon className="size-3.5" />
-                  </Button>
-                }
-              />
-              <DropdownMenuContent align="start">
-                <DropdownMenuItem onClick={() => createPanelTab("browser")}>
-                  <Globe2Icon />
-                  {t("workspace:newBrowserTab")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => createPanelTab("terminal")}>
-                  <TerminalIcon />
-                  {t("workspace:newTerminal")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => createPanelTab("files")}>
-                  <FolderTreeIcon />
-                  {t("workspace:newFileTree")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => createPanelTab("changes")}>
-                  <FileDiffIcon />
-                  {t("workspace:codeChanges")}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+                      }}
+                      className="ml-0.5 size-5 rounded p-0.5 text-muted-foreground"
+                    >
+                      <XIcon className="size-3" />
+                    </Button>
+                  </div>
+                );
+              })}
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={
+                    <Button
+                      aria-label={t("workspace:newTab")}
+                      className="size-6 shrink-0"
+                      size="icon-xs"
+                      title={t("workspace:newTab")}
+                      variant="ghost"
+                    >
+                      <PlusIcon className="size-3.5" />
+                    </Button>
+                  }
+                />
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => createPanelTab("browser")}>
+                    <Globe2Icon />
+                    {t("workspace:newBrowserTab")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("terminal")}>
+                    <TerminalIcon />
+                    {t("workspace:newTerminal")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("files")}>
+                    <FolderTreeIcon />
+                    {t("workspace:newFileTree")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => createPanelTab("changes")}>
+                    <FileDiffIcon />
+                    {t("workspace:codeChanges")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </ScrollArea>
           <Select
             value={workspacePanelMode}
             onValueChange={(val) => {
@@ -846,7 +857,14 @@ export function WorkspacePanelShell() {
                       variant="outline"
                       size="sm"
                       className="cursor-pointer transition-colors hover:bg-muted/70"
-                      render={<button type="button" onClick={() => addPanelTab("files")} />}
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="h-auto whitespace-normal"
+                          type="button"
+                          onClick={() => addPanelTab("files")}
+                        />
+                      }
                     >
                       <ItemMedia variant="icon">
                         <FolderTreeIcon className="size-4 text-foreground" />
@@ -865,7 +883,14 @@ export function WorkspacePanelShell() {
                       variant="outline"
                       size="sm"
                       className="cursor-pointer transition-colors hover:bg-muted/70"
-                      render={<button type="button" onClick={() => createPanelTab("browser")} />}
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="h-auto whitespace-normal"
+                          type="button"
+                          onClick={() => createPanelTab("browser")}
+                        />
+                      }
                     >
                       <ItemMedia variant="icon">
                         <Globe2Icon className="size-4 text-foreground" />
@@ -884,7 +909,14 @@ export function WorkspacePanelShell() {
                       variant="outline"
                       size="sm"
                       className="cursor-pointer transition-colors hover:bg-muted/70"
-                      render={<button type="button" onClick={() => addPanelTab("terminal")} />}
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="h-auto whitespace-normal"
+                          type="button"
+                          onClick={() => addPanelTab("terminal")}
+                        />
+                      }
                     >
                       <ItemMedia variant="icon">
                         <TerminalIcon className="size-4 text-foreground" />
@@ -903,7 +935,14 @@ export function WorkspacePanelShell() {
                       variant="outline"
                       size="sm"
                       className="cursor-pointer transition-colors hover:bg-muted/70"
-                      render={<button type="button" onClick={() => addPanelTab("changes")} />}
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="h-auto whitespace-normal"
+                          type="button"
+                          onClick={() => addPanelTab("changes")}
+                        />
+                      }
                     >
                       <ItemMedia variant="icon">
                         <FileDiffIcon className="size-4 text-foreground" />

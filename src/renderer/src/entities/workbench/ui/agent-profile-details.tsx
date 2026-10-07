@@ -9,6 +9,7 @@ import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -145,14 +146,22 @@ export function AgentProfileDetails({
               </Fragment>
             ))}
             {definition.steps.length ? (
-              <details className="mt-1 min-w-0 border-t px-2 py-2">
-                <summary className="cursor-pointer break-words text-xs font-medium">
+              <Collapsible className="mt-1 min-w-0 border-t px-2 py-2">
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="h-auto max-w-full justify-start whitespace-normal break-words"
+                    />
+                  }
+                >
                   {t("agentHub:executionSteps")}
-                </summary>
-                <div className="pt-2">
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-2">
                   <TeamWorkflowSteps profile={profile} />
-                </div>
-              </details>
+                </CollapsibleContent>
+              </Collapsible>
             ) : null}
           </nav>
         </ScrollArea>

@@ -800,7 +800,7 @@ function ProviderConnectionDialog({
                     onChange={(e) => setBaseUrl(e.target.value)}
                   />
                   {protocol === "openai" ? (
-                    <label
+                    <Label
                       htmlFor="connection-use-responses"
                       className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
                     >
@@ -810,7 +810,7 @@ function ProviderConnectionDialog({
                         onCheckedChange={(v) => setUseResponses(Boolean(v))}
                       />
                       {t("settings:providers.useResponses")}
-                    </label>
+                    </Label>
                   ) : null}
                 </div>
               </div>

@@ -455,43 +455,45 @@ export function UsageSection() {
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">{t("settings:usage.activityTitle")}</CardTitle>
         </CardHeader>
-        <CardContent className="min-w-0 overflow-x-auto pb-4">
-          <TooltipProvider>
-            <ActivityCalendar
-              data={activity}
-              colorScheme={isDark ? "dark" : "light"}
-              theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
-              labels={{
-                totalCount: t("settings:usage.requestCount", {
-                  count: "{{count}}",
-                }),
-              }}
-              blockSize={12}
-              blockMargin={3}
-              blockRadius={3}
-              showWeekdayLabels
-              showTotalCount
-              renderBlock={(block, item) => {
-                const activityItem = item as Activity & { tokens?: number | null };
-                return (
-                  <Tooltip key={item.date}>
-                    <TooltipTrigger render={block} />
-                    <TooltipContent className="text-xs">
-                      <div className="flex flex-col gap-0.5">
-                        <span className="font-semibold">{item.date}</span>
-                        <span>
-                          {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
-                        </span>
-                        {activityItem.tokens !== undefined ? (
-                          <span>Token：{formatNumber(activityItem.tokens)}</span>
-                        ) : null}
-                      </div>
-                    </TooltipContent>
-                  </Tooltip>
-                );
-              }}
-            />
-          </TooltipProvider>
+        <CardContent className="min-w-0 pb-4">
+          <ScrollArea orientation="horizontal" className="w-full">
+            <TooltipProvider>
+              <ActivityCalendar
+                data={activity}
+                colorScheme={isDark ? "dark" : "light"}
+                theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
+                labels={{
+                  totalCount: t("settings:usage.requestCount", {
+                    count: "{{count}}",
+                  }),
+                }}
+                blockSize={12}
+                blockMargin={3}
+                blockRadius={3}
+                showWeekdayLabels
+                showTotalCount
+                renderBlock={(block, item) => {
+                  const activityItem = item as Activity & { tokens?: number | null };
+                  return (
+                    <Tooltip key={item.date}>
+                      <TooltipTrigger render={block} />
+                      <TooltipContent className="text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="font-semibold">{item.date}</span>
+                          <span>
+                            {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
+                          </span>
+                          {activityItem.tokens !== undefined ? (
+                            <span>Token：{formatNumber(activityItem.tokens)}</span>
+                          ) : null}
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                }}
+              />
+            </TooltipProvider>
+          </ScrollArea>
         </CardContent>
       </Card>
 

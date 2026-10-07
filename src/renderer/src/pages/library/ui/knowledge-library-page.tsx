@@ -1184,42 +1184,44 @@ export function KnowledgeLibraryPage({
             </div>
           ) : null}
           {selected && view === "session" ? (
-            <div
+            <ScrollArea
               aria-label={t("library:sourceConversations")}
-              className="flex max-h-24 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 overflow-y-auto border-b bg-background px-4 py-2"
+              className="max-h-24 shrink-0 border-b bg-background"
               role="group"
             >
-              <span className="shrink-0 text-xs font-medium text-muted-foreground">
-                {t("library:sourceConversations")}:
-              </span>
-              {selected.threadIds.map((threadId) => {
-                const thread = threadsById.get(threadId);
-                if (!thread) {
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2">
+                <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                  {t("library:sourceConversations")}:
+                </span>
+                {selected.threadIds.map((threadId) => {
+                  const thread = threadsById.get(threadId);
+                  if (!thread) {
+                    return (
+                      <Badge key={threadId} variant="secondary">
+                        {threadsQuery.isLoading
+                          ? t("library:loadingSources")
+                          : threadsQuery.isError
+                            ? t("library:sourceLookupFailed")
+                            : t("library:sourceUnavailable")}
+                      </Badge>
+                    );
+                  }
                   return (
-                    <Badge key={threadId} variant="secondary">
-                      {threadsQuery.isLoading
-                        ? t("library:loadingSources")
-                        : threadsQuery.isError
-                          ? t("library:sourceLookupFailed")
-                          : t("library:sourceUnavailable")}
-                    </Badge>
+                    <Button
+                      key={thread.id}
+                      className="h-auto min-w-0 max-w-full justify-start gap-1 px-0 py-0 text-xs"
+                      onClick={() => void navigate({ to: "/chat", search: { thread: thread.id } })}
+                      size="sm"
+                      title={thread.title}
+                      variant="link"
+                    >
+                      <span className="truncate">{thread.title}</span>
+                      <ExternalLinkIcon className="size-3 shrink-0" />
+                    </Button>
                   );
-                }
-                return (
-                  <Button
-                    key={thread.id}
-                    className="h-auto min-w-0 max-w-full justify-start gap-1 px-0 py-0 text-xs"
-                    onClick={() => void navigate({ to: "/chat", search: { thread: thread.id } })}
-                    size="sm"
-                    title={thread.title}
-                    variant="link"
-                  >
-                    <span className="truncate">{thread.title}</span>
-                    <ExternalLinkIcon className="size-3 shrink-0" />
-                  </Button>
-                );
-              })}
-            </div>
+                })}
+              </div>
+            </ScrollArea>
           ) : null}
           <div className="min-h-0 flex-1 overflow-hidden bg-muted/20">
             {previewAsset ? (

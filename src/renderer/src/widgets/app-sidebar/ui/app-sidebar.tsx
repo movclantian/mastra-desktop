@@ -473,7 +473,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 <SidebarGroupLabel className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 min-w-0 pr-6">
                     <span className="shrink-0">{t("sidebar:taskList")}</span>
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="xs"
                       type="button"
                       onClick={() => setShowArchived((prev) => !prev)}
                       className={cn(
@@ -500,7 +502,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                           {archivedThreads.length}
                         </span>
                       ) : null}
-                    </button>
+                    </Button>
                   </div>
                   <SidebarGroupAction
                     title={t("sidebar:searchPlaceholder")}
