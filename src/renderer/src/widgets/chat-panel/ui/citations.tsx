@@ -1,4 +1,5 @@
 import * as React from "react";
+import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import {
   InlineCitation,
@@ -15,7 +16,9 @@ import {
   InlineCitationQuote,
   InlineCitationSource,
 } from "@/shared/ui/ai-elements/inline-citation";
-import type { CitationEntries, CitationSource } from "../lib/citation-utils";
+import { ScrollArea } from "@/shared/ui/scroll-area";
+import { type CitationEntries, type CitationSource, findFootnoteIds } from "../lib/citation-utils";
+import { MessageLink } from "./message-selection";
 
 export type { CitationEntries, CitationSource } from "../lib/citation-utils";
 
@@ -36,22 +39,6 @@ export function CitationProvider({
 type MarkdownProps<Tag extends keyof React.JSX.IntrinsicElements> =
   React.JSX.IntrinsicElements[Tag] & { node?: unknown };
 
-interface HastElement {
-  properties?: Record<string, unknown>;
-  children?: HastElement[];
-}
-
-function findFootnoteIds(node: unknown): string[] {
-  const ids: string[] = [];
-  for (const child of (node as HastElement | undefined)?.children ?? []) {
-    const href = child.properties?.href;
-    if (typeof href !== "string") continue;
-    const match = /fn-(.+)$/.exec(href);
-    if (match) ids.push(decodeURIComponent(match[1]).toLowerCase());
-  }
-  return ids;
-}
-
 function collectSources(ids: string[], entries: CitationEntries): CitationSource[] {
   const sources: CitationSource[] = [];
   const seen = new Set<string>();
@@ -66,8 +53,24 @@ function collectSources(ids: string[], entries: CitationEntries): CitationSource
 }
 
 export function FootnoteCitation({ node, children, className, ...props }: MarkdownProps<"sup">) {
+  const { t } = useTranslation();
   const entries = React.useContext(CitationEntriesContext);
   const sources = collectSources(findFootnoteIds(node), entries);
+  const anchors =
+    (
+      node as
+        | {
+            children?: Array<{
+              properties?: { id?: string };
+              children?: Array<{ value?: string }>;
+            }>;
+          }
+        | undefined
+    )?.children ?? [];
+  const label = anchors
+    .map((anchor) => anchor.children?.map((child) => child.value ?? "").join(""))
+    .filter(Boolean)
+    .join(", ");
 
   if (!sources.length) {
     return (
@@ -78,9 +81,18 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
   }
 
   return (
-    <InlineCitation>
+    <InlineCitation {...props} className={className}>
+      {anchors.map((anchor) =>
+        anchor.properties?.id ? (
+          <span key={anchor.properties.id} id={anchor.properties.id} />
+        ) : null,
+      )}
       <InlineCitationCard>
-        <InlineCitationCardTrigger sources={sources.map((source) => source.url)} />
+        <InlineCitationCardTrigger
+          sources={sources.map((source) => source.url)}
+          label={label || undefined}
+          aria-label={t("chat:messages.citationSources")}
+        />
         <InlineCitationCardBody>
           <InlineCitationCarousel>
             <InlineCitationCarouselHeader>
@@ -91,15 +103,20 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
             <InlineCitationCarouselContent>
               {sources.map((source) => (
                 <InlineCitationCarouselItem key={source.url}>
-                  <InlineCitationSource
-                    description={source.description}
-                    title={source.title}
-                    url={source.url}
-                  >
-                    {source.quote ? (
-                      <InlineCitationQuote>{source.quote}</InlineCitationQuote>
-                    ) : null}
-                  </InlineCitationSource>
+                  <ScrollArea className="max-h-72 min-w-0">
+                    <MessageLink
+                      href={source.url}
+                      title={source.title}
+                      className="break-words text-left text-sm font-medium text-primary underline underline-offset-2"
+                    >
+                      {source.title}
+                    </MessageLink>
+                    <InlineCitationSource description={source.description} url={source.url}>
+                      {source.quote ? (
+                        <InlineCitationQuote>{source.quote}</InlineCitationQuote>
+                      ) : null}
+                    </InlineCitationSource>
+                  </ScrollArea>
                 </InlineCitationCarouselItem>
               ))}
             </InlineCitationCarouselContent>
@@ -108,9 +125,4 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
       </InlineCitationCard>
     </InlineCitation>
   );
-}
-
-export function MarkdownSection({ node, children, ...props }: MarkdownProps<"section">) {
-  if ((node as HastElement | undefined)?.properties?.dataFootnotes !== undefined) return null;
-  return <section {...props}>{children}</section>;
 }

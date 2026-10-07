@@ -14,6 +14,7 @@ import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
 import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models/providers";
+import { listPluginSkills } from "../../plugins/registry";
 import {
   attachAssetReference,
   getLibraryAsset,
@@ -507,6 +508,7 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
       });
     };
     let latestRequest = "";
+    const pluginSkills = await listPluginSkills(resourceId);
     for (const message of workbenchMessages(messages)) {
       const metadata = record(message.metadata);
       if (message.role === "user") {
@@ -515,7 +517,13 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
           .map((part) => part.text)
           .join("\n");
         for (const name of Array.isArray(metadata.skillNames) ? metadata.skillNames : []) {
-          if (typeof name === "string") add({ id: name, kind: "skill", label: name });
+          if (typeof name === "string")
+            add({
+              id: name,
+              kind: "skill",
+              label:
+                pluginSkills.find((skill) => skill.id === name)?.displayName ?? "Skill unavailable",
+            });
         }
         for (const source of Array.isArray(metadata.librarySources) ? metadata.librarySources : [])
           addFile(source);
@@ -541,7 +549,14 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
         if (server) add({ id: server.id, kind: "mcp", label: server.name });
         const skillName =
           name === "skill" ? input.name : name === "skill_read" ? input.skillName : undefined;
-        if (typeof skillName === "string") add({ id: skillName, kind: "skill", label: skillName });
+        if (typeof skillName === "string") {
+          const skill = pluginSkills.find((item) => item.name === skillName);
+          add({
+            id: skill?.id ?? skillName,
+            kind: "skill",
+            label: skill?.displayName ?? skillName,
+          });
+        }
         if (output.isError === true || output.success === false || output.ok === false) continue;
         if (
           /^(?:web_fetch|browser_(?:navigate|snapshot|screenshot)|firecrawl_scrape)$/.test(name)
@@ -634,6 +649,10 @@ export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/su
   },
 });
 
+// The desktop host owns draft creation across every renderer entry point.
+// ponytail: process-local serialization; use a database lock if the app gains multiple hosts.
+const draftCreations = new Map<string, Promise<void>>();
+
 export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
   const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
   if (c.req.path === "/api/memory/messages/delete" && c.req.method === "POST") {
@@ -712,6 +731,57 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
           text: "Workspace binding is owned by the first chat turn",
         });
       }
+    }
+    if (!threadId && c.req.method === "POST" && metadata?.draft === true) {
+      const previous = draftCreations.get(resourceId) ?? Promise.resolve();
+      const creation = previous
+        .catch(() => undefined)
+        .then(async () => {
+          await memory.settled();
+          const { threads } = await memory.listThreads({
+            filter: { resourceId },
+            perPage: false,
+            orderBy: { field: "createdAt", direction: "DESC" },
+          });
+          const running = new Set(
+            Object.values(c.get("mastra").listAgents()).flatMap((agent) =>
+              agent
+                .listActiveThreadRuns()
+                .filter((run) => run.resourceId === resourceId)
+                .map((run) => run.threadId),
+            ),
+          );
+          const drafts = threads.filter(
+            (candidate) =>
+              candidate.metadata?.draft === true &&
+              !candidate.metadata.archivedAt &&
+              !running.has(candidate.id),
+          );
+          if (drafts.length) {
+            const client = await getLibsqlClient();
+            const history = await client.execute({
+              sql: `SELECT DISTINCT thread_id FROM "${TABLE_MESSAGES}"
+              WHERE "resourceId" = ? AND thread_id IN (${drafts.map(() => "?").join(",")})
+                AND (role IN ('user', 'assistant') OR (role = 'signal' AND type = 'user'))`,
+              args: [resourceId, ...drafts.map((draft) => draft.id)],
+            });
+            const used = new Set(history.rows.map((row) => row.thread_id));
+            const draft = drafts.find((candidate) => !used.has(candidate.id));
+            if (draft) {
+              c.res = c.json(draft);
+              return;
+            }
+          }
+          await next();
+          await memory.settled();
+        });
+      draftCreations.set(resourceId, creation);
+      try {
+        await creation;
+      } finally {
+        if (draftCreations.get(resourceId) === creation) draftCreations.delete(resourceId);
+      }
+      return;
     }
   }
   if (threadId && c.req.method === "DELETE") {

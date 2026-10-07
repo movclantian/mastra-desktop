@@ -21,7 +21,7 @@ import { useAuth } from "@/features/auth";
 import { AgentHubPage } from "@/pages/agents";
 import { ChatPage } from "@/pages/chat";
 import { SchedulesPage } from "@/pages/schedules";
-import { SkillHubPage } from "@/pages/skills";
+import { PluginHubPage } from "@/pages/skills";
 import { useTranslation } from "@/shared/i18n";
 import { describeError } from "@/shared/lib/errors";
 import { BlurFade } from "@/shared/ui/blur-fade";
@@ -117,7 +117,7 @@ const agentsRoute = createRoute({
 function SkillsRoute() {
   return (
     <BlurFade key="skill-hub" duration={0.2} blur="3px" className="size-full">
-      <SkillHubPage />
+      <PluginHubPage />
     </BlurFade>
   );
 }

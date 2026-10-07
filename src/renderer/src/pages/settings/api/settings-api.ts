@@ -46,10 +46,10 @@ export function fetchSettingsTools(): Promise<ToolsConfig> {
 
 export async function saveSettingsTools(
   config: ToolsConfig,
-  secrets: Record<"tavily" | "firecrawl" | "anysearch", string>,
+  secrets: Record<"tavily" | "firecrawl", string>,
 ): Promise<ToolsConfig> {
   const next = { ...config };
-  for (const engine of ["tavily", "firecrawl", "anysearch"] as const) {
+  for (const engine of ["tavily", "firecrawl"] as const) {
     const value = secrets[engine].trim();
     if (!value) continue;
     const credential = await window.api.credentials.put({
@@ -59,7 +59,7 @@ export async function saveSettingsTools(
     if (engine === "tavily") next.tavily = credential;
     else if (engine === "firecrawl") {
       next.firecrawl = { ...credential, apiUrl: next.firecrawl.apiUrl };
-    } else next.anysearch = credential;
+    }
   }
   await requestJson<void>(
     "/work/tools",
@@ -68,7 +68,6 @@ export async function saveSettingsTools(
       body: {
         tavily: next.tavily,
         firecrawl: { ...next.firecrawl, apiUrl: next.firecrawl.apiUrl.trim() },
-        anysearch: next.anysearch,
       },
     },
     i18n.t("settings:api.saveToolsFailed"),

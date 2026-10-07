@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
 import { createTool, webFetchTool } from "@mastra/core/tools";
-import { getMcpCallToolContent, MCPClient } from "@mastra/mcp";
+import { getMcpCallToolContent } from "@mastra/mcp";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
 import { z } from "zod";
@@ -21,6 +21,7 @@ import {
   CredentialStateSchema,
   searchCredentialPurpose,
 } from "../../shared/credential-contract";
+import { getConfiguredMcpTools, getMcpConfig } from "../connections/mcp";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import {
   archiveTextContent,
@@ -45,12 +46,11 @@ export const WEB_SEARCH_CONTEXT_KEY = "webSearch";
 
 export type ToolsUserConfig = z.infer<typeof toolsConfigSchema>;
 
-const TOOLS_CONFIG_KEY = "tools";
+const TOOLS_CONFIG_KEY = "web-search";
 
 const DEFAULT_TOOLS_CONFIG: ToolsUserConfig = {
   tavily: { hasCredential: false },
   firecrawl: { hasCredential: false, apiUrl: "" },
-  anysearch: { hasCredential: false },
 };
 
 export const toolsConfigSchema = z
@@ -60,25 +60,27 @@ export const toolsConfigSchema = z
       CredentialPointerSchema.extend({ apiUrl: z.string().max(2_048) }),
       z.object({ hasCredential: z.literal(false), apiUrl: z.string().max(2_048) }).strict(),
     ]),
-    anysearch: CredentialStateSchema,
   })
   .strict();
 
-export async function getToolsConfig(resourceId?: string): Promise<ToolsUserConfig> {
-  const raw = await getAppConfig(TOOLS_CONFIG_KEY, resourceId);
-  if (!raw) return DEFAULT_TOOLS_CONFIG;
-  try {
-    return toolsConfigSchema.parse(JSON.parse(raw));
-  } catch {
-    return DEFAULT_TOOLS_CONFIG;
-  }
+export async function getToolsConfig(resourceId?: string) {
+  const [raw, mcp] = await Promise.all([
+    getAppConfig(TOOLS_CONFIG_KEY, resourceId),
+    getMcpConfig(resourceId),
+  ]);
+  const config = raw ? toolsConfigSchema.parse(JSON.parse(raw)) : DEFAULT_TOOLS_CONFIG;
+  const anysearch = mcp.servers.find((server) => server.builtin === "anysearch");
+  return {
+    ...config,
+    anysearch: { enabled: anysearch?.enabled === true, connectionId: anysearch?.id },
+  };
 }
 
 export async function saveToolsConfig(config: unknown, resourceId?: string): Promise<void> {
   const next = toolsConfigSchema.parse(config);
   const current = await getToolsConfig(resourceId);
   await Promise.all(
-    (["tavily", "firecrawl", "anysearch"] as const).map((engine) =>
+    (["tavily", "firecrawl"] as const).map((engine) =>
       next[engine].hasCredential
         ? resolveCredential(next[engine].credentialRef, searchCredentialPurpose(engine))
         : undefined,
@@ -86,7 +88,7 @@ export async function saveToolsConfig(config: unknown, resourceId?: string): Pro
   );
   await setAppConfig(TOOLS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
   await Promise.all(
-    (["tavily", "firecrawl", "anysearch"] as const).map(async (engine) => {
+    (["tavily", "firecrawl"] as const).map(async (engine) => {
       const oldConfig = current[engine];
       const newConfig = next[engine];
       if (
@@ -311,48 +313,8 @@ export const webSearchArchiveProcessor = {
   },
 } satisfies Processor;
 
-// One authenticated native client per account; tool catalogs and errors are never cached here.
-const anysearchClients = new Map<string, { apiKey: string; client: MCPClient }>();
-
-export async function closeWebSearchClients(): Promise<void> {
-  const clients = [...anysearchClients.values()];
-  anysearchClients.clear();
-  await Promise.all(clients.map(({ client }) => client.disconnect()));
-}
-
-async function createAnySearchTools(
-  apiKey: string,
-  preset: DepthPreset,
-  resourceId?: string,
-): Promise<ToolsInput> {
-  const scope = resourceId ?? "__system__";
-  let runtime = anysearchClients.get(scope);
-  if (!runtime || runtime.apiKey !== apiKey) {
-    const previous = runtime;
-    runtime = {
-      apiKey,
-      client: new MCPClient({
-        id: `mastra-work-anysearch-${randomUUID()}`,
-        servers: {
-          anysearch: {
-            url: new URL("https://api.anysearch.com/mcp"),
-            allowedHosts: ["api.anysearch.com"],
-            requestInit: {
-              headers: {
-                "X-Anysearch-Client": "mastra-desktop/1.0",
-                ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-              },
-            },
-            onToolError: "throw",
-          },
-        },
-      }),
-    };
-    anysearchClients.set(scope, runtime);
-    await previous?.client.disconnect();
-  }
-  const { tools, errors } = await runtime.client.listToolsWithErrors();
-  if (errors.anysearch) throw new Error(`AnySearch MCP: ${errors.anysearch}`);
+async function createAnySearchTools(preset: DepthPreset, resourceId?: string): Promise<ToolsInput> {
+  const tools = await getConfiguredMcpTools(resourceId, "anysearch");
   const enabled = new Set([
     "anysearch_search",
     "anysearch_get_sub_domains",
@@ -530,13 +492,10 @@ export async function resolveWebSearchTools(
     };
   }
 
-  const apiKey = config.anysearch.hasCredential
-    ? await resolveCredential(config.anysearch.credentialRef, searchCredentialPurpose("anysearch"))
-    : "";
-
+  if (!config.anysearch.enabled) return {};
   return {
     web_fetch: createArchivedWebFetchTool(),
-    ...(await createAnySearchTools(apiKey, preset, resourceId)),
+    ...(await createAnySearchTools(preset, resourceId)),
   };
 }
 
@@ -552,7 +511,7 @@ export function webSearchInstructions(
 ): string {
   const preset = DEPTH_PRESETS[selection.depth];
   if (!toolsAvailable) {
-    return `Web search was requested (${ENGINE_LABELS[selection.engine]}) but its API key is missing, so no search tool is available. Tell the user to open Settings → 工具 and fill in the ${ENGINE_LABELS[selection.engine]} API key, then answer from your own knowledge and mark it as possibly outdated.`;
+    return `Web search was requested (${ENGINE_LABELS[selection.engine]}) but the connection is unavailable, so no search tool is available. Tell the user to check ${selection.engine === "anysearch" ? "MCP management → AnySearch" : "Settings → 工具"}, then answer from your own knowledge and mark it as possibly outdated.`;
   }
   const engineHint =
     selection.engine === "tavily"

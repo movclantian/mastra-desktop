@@ -25,7 +25,7 @@ export interface ChatLibraryAssetOption {
 
 export function fetchChatSkills<T>(): Promise<T[]> {
   return requestJson<{ skills?: T[] }>(
-    "/work/skills",
+    "/work/plugins/skills",
     {},
     i18n.t("chat:api.loadSkillsFailed"),
   ).then((payload) =>

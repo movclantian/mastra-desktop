@@ -1,7 +1,7 @@
 import { z } from "zod";
 /**
- * 工具路由:读写三个联网检索引擎(Tavily / Firecrawl / AnySearch)的 API Key。
- * 存数据库 app_config 表(key = "tools"),工具在每次请求时按当前配置实例化,
+ * 工具路由:读写 Tavily / Firecrawl API Key，并返回 AnySearch MCP 连接状态。
+ * 存数据库 app_config 表(key = "web-search"),工具在每次请求时按当前配置实例化,
  * 因此改 Key 立即生效、无需重启服务。工具主体见 src/mastra/tools/web-search.ts。
  */
 

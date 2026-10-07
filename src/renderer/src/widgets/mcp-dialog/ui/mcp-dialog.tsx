@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDownIcon,
   Globe2Icon,
@@ -7,7 +8,9 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { getMcpServer, type McpFormServer, type McpSummary } from "@/entities/skill";
+import type { McpFormServer, McpSummary } from "@/entities/skill";
+import { qk } from "@/entities/workbench/model/query-keys";
+import { getAuthToken } from "@/features/auth";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
@@ -16,7 +19,6 @@ import { Checkbox } from "@/shared/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -39,7 +41,7 @@ interface Props {
 }
 
 const initial = (): McpFormServer => ({
-  id: "",
+  id: crypto.randomUUID(),
   name: "",
   enabled: true,
   transport: "http",
@@ -70,41 +72,38 @@ function parseKeyValue(value: string) {
   );
 }
 
-function generatedServerId(form: McpFormServer) {
-  const source =
-    form.name.trim() ||
-    (form.transport === "http" ? form.url?.trim() : form.command?.trim()) ||
-    "mcp";
-  const normalized = source
-    .toLocaleLowerCase()
-    .replace(/^[a-z]+:\/\//, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 56);
-  if (normalized) return normalized;
-  let hash = 2166136261;
-  for (const character of source) {
-    hash ^= character.codePointAt(0) ?? 0;
-    hash = Math.imul(hash, 16777619);
-  }
-  return `mcp-${(hash >>> 0).toString(36)}`;
-}
-
 export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [form, setForm] = React.useState<McpFormServer>(initial);
   const [headersText, setHeadersText] = React.useState("");
+  const [anysearchKey, setAnysearchKey] = React.useState("");
   const [envText, setEnvText] = React.useState("");
   const [oauthClientSecret, setOauthClientSecret] = React.useState("");
   const [allowedHostsText, setAllowedHostsText] = React.useState("");
   const [argsText, setArgsText] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [testing, setTesting] = React.useState(false);
+  const [dirty, setDirty] = React.useState(false);
+  const [saveError, setSaveError] = React.useState("");
+  const editVersion = React.useRef(0);
+  const savingRef = React.useRef(false);
+  const session = React.useRef(getAuthToken());
+  const markEdited = () => {
+    editVersion.current += 1;
+    setDirty(true);
+    setSaveError("");
+  };
 
   const isEditing = Boolean(server);
 
   React.useEffect(() => {
     if (!open) return;
+    editVersion.current += 1;
+    session.current = getAuthToken();
+    setDirty(false);
+    setSaveError("");
+    setAnysearchKey("");
     if (!server) {
       setForm(initial());
       setHeadersText("");
@@ -115,71 +114,29 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       return;
     }
 
-    const initialTransport = server.transport;
-    const initialForm: McpFormServer = {
-      id: server.id || "",
-      name: server.name || "",
-      enabled: server.enabled ?? true,
-      transport: initialTransport,
-      url: server.url ?? "",
-      headerCredential: server.headerCredential,
-      headerKeys: server.headerKeys ?? [],
-      allowedHosts: (server as { allowedHosts?: string[] }).allowedHosts ?? [],
-      command: server.command ?? "",
-      args: server.args ?? [],
-      envCredential: server.envCredential,
-      envKeys: server.envKeys ?? [],
-      inheritDefaultEnv: (server as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
-      requireToolApproval:
-        (server as { requireToolApproval?: boolean }).requireToolApproval ?? true,
-      oauth: server.oauth ?? { enabled: false },
-    };
-    setForm(initialForm);
+    const {
+      connectionError: _error,
+      toolCount: _count,
+      configurationError: _configError,
+      configurationKeys: _keys,
+      ...connection
+    } = server as McpSummary;
+    setForm({ ...initial(), ...connection });
     setArgsText(server.args?.join("\n") ?? "");
     setAllowedHostsText((server as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
 
     setHeadersText("");
     setEnvText("");
     setOauthClientSecret("");
-
-    if (server.id) {
-      getMcpServer(server.id)
-        .then((full) => {
-          setForm({
-            id: full.id,
-            name: full.name,
-            enabled: full.enabled ?? true,
-            transport: full.transport,
-            url: full.url ?? "",
-            headerCredential: full.headerCredential,
-            headerKeys: full.headerKeys ?? [],
-            allowedHosts: (full as { allowedHosts?: string[] }).allowedHosts ?? [],
-            command: full.command ?? "",
-            args: full.args ?? [],
-            envCredential: full.envCredential,
-            envKeys: full.envKeys ?? [],
-            inheritDefaultEnv: (full as { inheritDefaultEnv?: boolean }).inheritDefaultEnv ?? true,
-            requireToolApproval:
-              (full as { requireToolApproval?: boolean }).requireToolApproval ?? true,
-            oauth: full.oauth ?? { enabled: false },
-          });
-          setArgsText(full.args?.join("\n") ?? "");
-          setAllowedHostsText((full as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
-          setHeadersText("");
-          setEnvText("");
-          setOauthClientSecret("");
-        })
-        .catch(() => {
-          // Keep existing values
-        });
-    }
   }, [open, server]);
 
-  const update = (patch: Partial<McpFormServer>) =>
+  const update = (patch: Partial<McpFormServer>) => {
+    markEdited();
     setForm((current) => ({ ...current, ...patch }));
+  };
 
   const payload = async () => {
-    const id = form.id.trim() || generatedServerId(form);
+    const id = form.id;
     const created: Array<{ purpose: string; secretRef: string }> = [];
     const headers = parseKeyValue(headersText);
     const env = parseKeyValue(envText);
@@ -199,7 +156,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
       headerKeys = Object.keys(headers);
       created.push({ purpose, secretRef: headerCredential.credentialRef });
     }
-    if (form.transport === "stdio" && Object.keys(env).length > 0) {
+    if ((form.transport === "stdio" || form.plugin) && Object.keys(env).length > 0) {
       const purpose = mcpCredentialPurpose(id, "env");
       envCredential = await window.api.credentials.put({ purpose, value: JSON.stringify(env) });
       envKeys = Object.keys(env);
@@ -216,16 +173,27 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     }
     return {
       server: {
+        clientId: form.clientId,
+        serverName: form.serverName,
+        builtin: form.builtin,
+        plugin: form.plugin,
+        status: form.status,
+        version: form.version,
+        timeout: form.timeout,
+        tools: form.tools,
         id,
         name: form.name.trim() || id,
         enabled: form.enabled,
         transport: form.transport,
         requireToolApproval: form.requireToolApproval,
+        inheritDefaultEnv: form.inheritDefaultEnv,
         ...(form.transport === "http"
           ? {
               url: form.url?.trim(),
               headerCredential,
               headerKeys,
+              envCredential,
+              envKeys,
               oauth,
               allowedHosts: parseLines(allowedHostsText),
             }
@@ -234,7 +202,6 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               args: parseLines(argsText),
               envCredential,
               envKeys,
-              inheritDefaultEnv: form.inheritDefaultEnv,
             }),
       },
       created,
@@ -288,31 +255,97 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     }
   };
 
-  const save = async () => {
+  const save = async (automatic = false) => {
+    if (savingRef.current || session.current !== getAuthToken()) return;
     if (!validate()) return;
+    savingRef.current = true;
+    const version = editVersion.current;
+    const token = session.current;
     setSaving(true);
+    setSaveError("");
     try {
       const next = await payload();
+      if (token !== getAuthToken()) throw new Error("Session changed");
       const response = await apiFetch(`${MASTRA_SERVER_URL}/work/mcp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ server: next.server }),
       });
-      const result = (await response.json()) as { error?: string };
+      const result = (await response.json()) as {
+        server?: McpSummary;
+        error?: string;
+        message?: string;
+      };
       if (!response.ok)
-        throw new Error(result.error || (isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed")));
-      toast.success(isEditing ? t("mcp:updateSuccess") : t("mcp:createSuccess"));
-      onOpenChange(false);
+        throw new Error(
+          result.message ||
+            result.error ||
+            (isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed")),
+        );
+      if (token !== getAuthToken()) return;
+      if (!automatic) toast.success(isEditing ? t("mcp:updateSuccess") : t("mcp:createSuccess"));
+      if (result.server) {
+        const saved = result.server;
+        // Keep edits made during the request; only advance the saved version and unchanged pointers.
+        setForm((current) => ({
+          ...current,
+          version: saved.version,
+          ...(current.headerCredential === form.headerCredential
+            ? { headerCredential: saved.headerCredential, headerKeys: saved.headerKeys }
+            : {}),
+          ...(current.envCredential === form.envCredential
+            ? { envCredential: saved.envCredential, envKeys: saved.envKeys }
+            : {}),
+          ...(current.oauth === form.oauth ? { oauth: saved.oauth } : {}),
+        }));
+      }
+      if (editVersion.current === version) {
+        setDirty(false);
+        setHeadersText("");
+        setEnvText("");
+        setOauthClientSecret("");
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["mcp-connections"] }),
+        queryClient.invalidateQueries({ queryKey: qk.toolsConfig() }),
+      ]);
+      if (!automatic) onOpenChange(false);
       onSaved();
     } catch (error) {
+      setSaveError(error instanceof Error ? error.message : t("mcp:saveFailed"));
       toastError(error, isEditing ? t("mcp:updateFailed") : t("mcp:saveFailed"));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
 
+  const autoSave = React.useEffectEvent(() => void save(true));
+  React.useEffect(() => {
+    if (!open || !form.plugin || !dirty || saving || testing || saveError) return;
+    if (form.oauth?.enabled && !form.oauth.clientId?.trim()) return;
+    const timer = window.setTimeout(autoSave, 800);
+    return () => window.clearTimeout(timer);
+  }, [
+    open,
+    form,
+    dirty,
+    saving,
+    testing,
+    saveError,
+    headersText,
+    envText,
+    oauthClientSecret,
+    allowedHostsText,
+  ]);
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (next || (!saving && (!form.plugin || !dirty))) onOpenChange(next);
+      }}
+    >
       <DialogContent className="flex max-h-[min(88vh,52rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
         <DialogHeader className="shrink-0 border-b bg-background px-5 py-4 pr-12">
           <div className="flex items-start gap-3">
@@ -340,6 +373,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               </div>
               <TextField
                 id="mcp-name"
+                disabled={Boolean(form.plugin)}
                 label={t("mcp:nameLabel")}
                 value={form.name}
                 onChange={(value) => update({ name: value })}
@@ -355,6 +389,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                 <p className="mt-0.5 text-xs text-muted-foreground">{t("mcp:transportDesc")}</p>
               </div>
               <ToggleGroup
+                disabled={Boolean(form.builtin || form.plugin)}
                 aria-label={t("mcp:transportLabel")}
                 className="grid w-full grid-cols-2 gap-2"
                 variant="outline"
@@ -377,7 +412,22 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
 
             {form.transport === "http" ? (
               <section className="grid gap-3">
+                {form.plugin ? (
+                  <TextAreaField
+                    label={t("plugins:variables")}
+                    value={envText}
+                    onChange={(value) => {
+                      markEdited();
+                      setEnvText(value);
+                    }}
+                    placeholder={(server as McpSummary)?.configurationKeys
+                      ?.map((key) => `${key}=`)
+                      .join("\n")}
+                    hint={t("plugins:variablesHint")}
+                  />
+                ) : null}
                 <TextField
+                  disabled={Boolean(form.builtin || form.plugin)}
                   id="mcp-url"
                   label={t("mcp:urlLabel")}
                   value={form.url ?? ""}
@@ -385,6 +435,45 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                   placeholder={t("mcp:urlPlaceholder")}
                   required
                 />
+                {form.builtin === "anysearch" ? (
+                  <div className="grid min-w-0 gap-2">
+                    <TextField
+                      id="anysearch-api-key"
+                      type="password"
+                      label={t("mcp:anysearchApiKey")}
+                      value={anysearchKey}
+                      placeholder={
+                        form.headerCredential
+                          ? t("mcp:credentialConfigured", {
+                              hint: form.headerCredential.credentialHint,
+                            })
+                          : "as-..."
+                      }
+                      onChange={(value) => {
+                        setAnysearchKey(value);
+                        setHeadersText(value.trim() ? `Authorization=Bearer ${value.trim()}` : "");
+                      }}
+                    />
+                    <p className="break-words text-xs text-muted-foreground">
+                      {t("mcp:anysearchKeyHint")}
+                    </p>
+                    {form.headerCredential ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="justify-self-start"
+                        onClick={() => {
+                          update({ headerCredential: undefined, headerKeys: [] });
+                          setAnysearchKey("");
+                          setHeadersText("");
+                        }}
+                      >
+                        {t("mcp:removeCredential")}
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : null}
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-muted/20">
                   <CollapsibleTrigger className="group flex w-full items-center justify-between px-3.5 py-2.5 text-left text-xs font-medium">
                     {t("mcp:advancedHttpTitle")}
@@ -394,7 +483,10 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                     <TextAreaField
                       label={t("mcp:headersLabel")}
                       value={headersText}
-                      onChange={setHeadersText}
+                      onChange={(value) => {
+                        markEdited();
+                        setHeadersText(value);
+                      }}
                       placeholder={
                         form.headerKeys?.length
                           ? t("mcp:secretConfigured", { keys: form.headerKeys.join(", ") })
@@ -405,11 +497,15 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                     <TextAreaField
                       label={t("mcp:allowedHostsLabel")}
                       value={allowedHostsText}
-                      onChange={setAllowedHostsText}
+                      onChange={(value) => {
+                        markEdited();
+                        setAllowedHostsText(value);
+                      }}
                       placeholder={t("mcp:allowedHostsPlaceholder")}
                       hint={t("mcp:allowedHostsHint")}
                     />
                     <CheckField
+                      disabled={Boolean(form.builtin)}
                       id="mcp-oauth"
                       title={t("mcp:oauthTitle")}
                       description={t("mcp:oauthDesc")}
@@ -435,7 +531,10 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                           id="mcp-oauth-client-secret"
                           label={t("mcp:oauthClientSecret")}
                           value={oauthClientSecret}
-                          onChange={setOauthClientSecret}
+                          onChange={(value) => {
+                            markEdited();
+                            setOauthClientSecret(value);
+                          }}
                           placeholder={
                             form.oauth.clientSecretCredential
                               ? t("mcp:credentialConfigured", {
@@ -454,6 +553,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
               <section className="grid gap-3">
                 <TextField
                   id="mcp-command"
+                  disabled={Boolean(form.plugin)}
                   label={t("mcp:commandLabel")}
                   value={form.command ?? ""}
                   onChange={(value) => update({ command: value })}
@@ -468,6 +568,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                   <CollapsibleContent className="grid gap-3 px-3.5 pt-1 pb-3.5">
                     <TextAreaField
                       label={t("mcp:argsLabel")}
+                      disabled={Boolean(form.plugin)}
                       value={argsText}
                       onChange={setArgsText}
                       placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\Projects"}
@@ -476,7 +577,10 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                     <TextAreaField
                       label={t("mcp:envLabel")}
                       value={envText}
-                      onChange={setEnvText}
+                      onChange={(value) => {
+                        markEdited();
+                        setEnvText(value);
+                      }}
                       placeholder={
                         form.envKeys?.length
                           ? t("mcp:secretConfigured", { keys: form.envKeys.join(", ") })
@@ -498,6 +602,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             <section className="grid gap-2.5 rounded-lg border bg-muted/20 p-3">
               <CheckField
                 id="mcp-enabled"
+                disabled={Boolean(form.plugin)}
                 title={t("mcp:enableImmediately")}
                 checked={form.enabled}
                 onCheckedChange={(checked) => update({ enabled: checked })}
@@ -510,6 +615,28 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                 onCheckedChange={(checked) => update({ requireToolApproval: checked })}
               />
             </section>
+            {form.plugin ? (
+              <p role="status" className="break-words text-xs text-muted-foreground">
+                {t(
+                  saving
+                    ? "common:saving"
+                    : dirty
+                      ? "plugins:configDraft"
+                      : "plugins:configAutoSave",
+                )}
+              </p>
+            ) : null}
+            {(server as McpSummary)?.configurationKeys?.length ? (
+              <p className="break-all text-xs text-muted-foreground">
+                {t("plugins:requiredVariables")}:{" "}
+                {(server as McpSummary).configurationKeys?.join(", ")}
+              </p>
+            ) : null}
+            {saveError ? (
+              <p role="alert" className="break-words text-sm text-destructive">
+                {saveError}
+              </p>
+            ) : null}
           </div>
         </ScrollArea>
         <DialogFooter className="mx-0 mb-0 shrink-0 rounded-none border-0 border-t bg-background px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -523,13 +650,14 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
             {testing ? t("mcp:testing") : t("mcp:testConnection")}
           </Button>
           <div className="flex items-center gap-2">
-            <DialogClose
-              render={
-                <Button size="sm" disabled={testing || saving} variant="ghost">
-                  {t("common:cancel")}
-                </Button>
-              }
-            />
+            <Button
+              size="sm"
+              disabled={testing || saving}
+              variant="ghost"
+              onClick={() => onOpenChange(false)}
+            >
+              {t("common:cancel")}
+            </Button>
             <Button size="sm" disabled={saving || testing} onClick={() => void save()}>
               {saving ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
               {saving
@@ -554,6 +682,7 @@ function TextField({
   onChange,
   placeholder,
   required = false,
+  disabled,
   type = "text",
 }: {
   id: string;
@@ -562,6 +691,7 @@ function TextField({
   onChange: (value: string) => void;
   placeholder?: string;
   required?: boolean;
+  disabled?: boolean;
   type?: "text" | "password";
 }) {
   return (
@@ -574,6 +704,7 @@ function TextField({
         id={id}
         autoComplete="off"
         required={required}
+        disabled={disabled}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -589,12 +720,14 @@ function TextAreaField({
   onChange,
   placeholder,
   hint,
+  disabled,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   hint?: string;
+  disabled?: boolean;
 }) {
   const fieldId = React.useId();
   return (
@@ -602,6 +735,7 @@ function TextAreaField({
       <FieldLabel htmlFor={fieldId}>{label}</FieldLabel>
       <Textarea
         id={fieldId}
+        disabled={disabled}
         className="min-h-20 resize-y font-mono text-xs"
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -620,12 +754,14 @@ function CheckField({
   title,
   description,
   checked,
+  disabled,
   onCheckedChange,
 }: {
   id: string;
   title: string;
   description?: string;
   checked: boolean;
+  disabled?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
   return (
@@ -633,6 +769,7 @@ function CheckField({
       <Checkbox
         id={id}
         checked={checked}
+        disabled={disabled}
         onCheckedChange={(value) => onCheckedChange(value === true)}
       />
       <FieldContent>

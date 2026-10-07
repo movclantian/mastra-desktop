@@ -17,6 +17,7 @@ import {
 import { search as searchEmojis } from "node-emoji";
 import * as React from "react";
 import { toast } from "sonner";
+import { usePluginSkills } from "@/entities/skill";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
@@ -72,13 +73,7 @@ import {
   type MessageReaction,
   referenceBadgeClass,
 } from "../model/types";
-import {
-  AssistantAvatar,
-  CitationProvider,
-  FootnoteCitation,
-  MarkdownSection,
-  UserAvatar,
-} from "./";
+import { AssistantAvatar, CitationProvider, FootnoteCitation, UserAvatar } from "./";
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
 import { MessageLink } from "./message-selection";
@@ -113,7 +108,6 @@ function AssistantPendingIndicator({
 }
 
 const CITATION_MARKDOWN_COMPONENTS = {
-  section: MarkdownSection,
   sup: FootnoteCitation,
   a: MessageLink,
 };
@@ -563,6 +557,7 @@ export const MessageItem = React.memo(function MessageItem({
         (value): value is string => typeof value === "string" && value.length > 0,
       )
     : [];
+  const pluginSkills = usePluginSkills(userId);
   const fileReferences = getMessageFileReferences(message);
   const files = getMessageFiles(message, fileReferences);
   const reactions = getMessageReactions(message);
@@ -656,12 +651,13 @@ export const MessageItem = React.memo(function MessageItem({
                     <div className="flex max-w-full flex-wrap justify-end gap-1">
                       {skillNames.map((skill) => (
                         <Badge
-                          className={`gap-1 ${referenceBadgeClass("skill", skill)}`}
+                          className={`max-w-full break-all whitespace-normal gap-1 ${referenceBadgeClass("skill", skill)}`}
                           key={skill}
                           variant="outline"
                         >
                           <SparklesIcon className="size-3" />
-                          {skill}
+                          {pluginSkills.data?.find((item) => item.id === skill)?.displayName ??
+                            t("plugins:unavailableSkill")}
                         </Badge>
                       ))}
                     </div>
@@ -829,7 +825,7 @@ export const MessageItem = React.memo(function MessageItem({
                             components={CITATION_MARKDOWN_COMPONENTS}
                             rehypePlugins={CITATION_REHYPE_PLUGINS}
                           >
-                            {withResolvedFootnotes(segment.text, citationEntries)}
+                            {withResolvedFootnotes(segment.text, citationEntries, text)}
                           </MessageResponse>
                         </BubbleContent>
                         {canReact && segment === lastTextSegment ? (

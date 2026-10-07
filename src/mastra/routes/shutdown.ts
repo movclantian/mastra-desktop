@@ -17,10 +17,10 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { closeAllBrowsers } from "../agents/browser";
 import { isDesktopControlRequest } from "../auth";
 import { closeComputerConnections } from "../connections/computer";
+import { closeMcpConnections } from "../connections/mcp";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { closeMemoryVector, settleAllMemory } from "../memory/memory-runtime";
 import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
-import { closeWebSearchClients } from "../tools/web-search";
 import { stopWorkspaceCleanup } from "../workspace/workspace-manager";
 import { drainTeamRuns } from "./team-runs";
 
@@ -92,7 +92,7 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
     closeLibraryVector(),
     closeAllBrowsers(),
     closeComputerConnections(),
-    closeWebSearchClients(),
+    closeMcpConnections(),
   ]);
   signal.throwIfAborted();
   await mastra.shutdown({ drainTimeout: 0 });

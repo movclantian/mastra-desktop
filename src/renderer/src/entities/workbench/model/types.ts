@@ -193,11 +193,13 @@ export interface SearchSelection {
 export interface ToolsConfig {
   tavily: CredentialState;
   firecrawl: CredentialState & { apiUrl: string };
-  anysearch: CredentialState;
+  anysearch: { enabled: boolean; connectionId?: string };
 }
 
 export function isSearchEngineReady(engine: SearchEngine, config: ToolsConfig | null): boolean {
-  return engine === "anysearch" || Boolean(config?.[engine].hasCredential);
+  return engine === "anysearch"
+    ? config?.anysearch.enabled === true
+    : Boolean(config?.[engine].hasCredential);
 }
 
 export interface WorkbenchStatePatch {

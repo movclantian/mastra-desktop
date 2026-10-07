@@ -51,6 +51,20 @@ export function libraryAssetContentUrl(assetId: string, resourceId: string): str
   return `${MASTRA_SERVER_URL}/work/library/assets/${encodeURIComponent(assetId)}/content?${resourceQuery(resourceId)}`;
 }
 
+/** Only our authenticated library endpoint is eligible for the in-app file viewer. */
+export function libraryAssetFromUrl(href: string, filename?: string) {
+  try {
+    const url = new URL(href, MASTRA_SERVER_URL);
+    const match = /^\/work\/library\/assets\/([^/]+)\/content$/.exec(url.pathname);
+    if (url.origin !== new URL(MASTRA_SERVER_URL).origin || url.username || url.password || !match)
+      return null;
+    const id = decodeURIComponent(match[1]);
+    return { id, filename: filename || id, url: url.href, mediaType: "" };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchLibraryAssetBlob(url: string): Promise<Blob> {
   const response = await apiFetch(url);
   if (!response.ok) throw new Error(i18n.t("library:loadFileFailed"));
@@ -76,7 +90,6 @@ export async function createLibraryUploadSession(
     byteSize: number;
     folderId?: string;
     threadId?: string;
-    resumeId?: string;
   },
 ): Promise<LibraryUploadSession> {
   const payload = await readJson<{ session?: LibraryUploadSession }>(
@@ -88,6 +101,22 @@ export async function createLibraryUploadSession(
   );
   if (!payload.session) throw new Error(i18n.t("library:createUploadSessionFailed"));
   return payload.session;
+}
+
+export async function fetchLibraryUploadSession(
+  sessionId: string,
+  resourceId: string,
+): Promise<LibraryUploadSession | null> {
+  const response = await apiFetch(
+    `${MASTRA_SERVER_URL}/work/library/uploads/${encodeURIComponent(sessionId)}?${resourceQuery(resourceId)}`,
+  );
+  if (response.status === 404) return null;
+  return (
+    await readJson<{ session: LibraryUploadSession }>(
+      response,
+      i18n.t("library:createUploadSessionFailed"),
+    )
+  ).session;
 }
 
 export function libraryUploadChunkUrl(

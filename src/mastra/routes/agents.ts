@@ -9,6 +9,7 @@ import {
   deleteAgentProfile,
   ensureProfileAgentsRegistered,
   listAgentProfiles,
+  setAgentProfileSkills,
   unregisterProfileAgents,
 } from "../agents/custom";
 import { errorText, workError, workValidationError } from "../errors";
@@ -57,6 +58,27 @@ export const agentProfilesRoute = createRoute({
         })),
       })),
     };
+  },
+});
+
+export const agentProfileSkillsRoute = createRoute({
+  path: "/work/agents/:agentId/skills",
+  method: "PUT",
+  responseType: "json",
+  onValidationError: workValidationError,
+  pathParamSchema: z.object({ agentId: z.string().trim().min(1) }),
+  bodySchema: z
+    .object({
+      skills: z.array(z.string().regex(/^pc_[a-f0-9]{32}$/)).max(2000),
+      memberId: z.string().min(1).optional(),
+    })
+    .strict(),
+  handler: async ({ agentId, skills, memberId, requestContext, mastra }) => {
+    const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    const agent = await setAgentProfileSkills(agentId, skills, memberId, resourceId);
+    unregisterProfileAgents(mastra, agentId, resourceId);
+    await ensureProfileAgentsRegistered(mastra, agent, resourceId);
+    return { agent };
   },
 });
 

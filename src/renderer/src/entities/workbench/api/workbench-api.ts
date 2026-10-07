@@ -49,19 +49,6 @@ export async function createThreadRequest(
   resourceId: string,
   body: Record<string, unknown>,
 ): Promise<WorkThread> {
-  if ((body.metadata as { draft?: boolean } | undefined)?.draft) {
-    const drafts = (await fetchThreads(resourceId)).filter(
-      (thread) => thread.metadata.draft && !thread.metadata.archivedAt,
-    );
-    for (const draft of drafts) {
-      const history = await requestJson<{ messages: unknown[] }>(
-        `/api/memory/threads/${encodeURIComponent(draft.id)}/messages?agentId=${MEMORY_AGENT_ID}&${resourceQuery(resourceId)}&perPage=1`,
-        {},
-        i18n.t("sidebar:readDraftFailed"),
-      );
-      if (history.messages.length === 0) return draft;
-    }
-  }
   return workThread(
     await requestJson<MemoryThread>(
       `/api/memory/threads?agentId=${MEMORY_AGENT_ID}`,

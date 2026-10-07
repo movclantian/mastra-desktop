@@ -129,6 +129,7 @@ export interface WorkbenchStore {
   /** URL ?thread= 的镜像:非 React 场景(openBrowserUrl 等)读取当前线程 */
   lastKnownThreadId: string | null;
   setLastKnownThreadId: (id: string | null) => void;
+  forgetThread: (threadId: string) => void;
   /** 工作台瞬态按 thread 隔离;切换时保存/恢复面板和终端 tab */
   workspaceByThread: Record<string, ThreadWorkspaceState>;
   pendingJump: PendingJump | null;
@@ -264,6 +265,43 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
         browserRequest: state.browserRequest?.threadId === id ? state.browserRequest : null,
       };
     }),
+  forgetThread: (threadId) => {
+    if (get().lastKnownThreadId === threadId) get().setLastKnownThreadId(null);
+    set((state) => {
+      const removeTab = (workspace: ThreadWorkspaceState): ThreadWorkspaceState => {
+        const panelTabs = workspace.panelTabs.filter(
+          (tab) => tab.kind !== "chat" || tab.id !== threadId,
+        );
+        const active = workspace.activePanelTab;
+        return {
+          ...workspace,
+          panelTabs,
+          activePanelTab:
+            active.kind === "chat" && active.id === threadId
+              ? (panelTabs.at(-1) ?? { kind: "welcome", id: "welcome" })
+              : active,
+        };
+      };
+      const workspaceByThread = Object.fromEntries(
+        Object.entries(state.workspaceByThread)
+          .filter(([id]) => id !== threadId)
+          .map(([id, workspace]) => [id, removeTab(workspace)]),
+      );
+      const busyThreadIds = { ...state.busyThreadIds };
+      delete busyThreadIds[threadId];
+      return {
+        ...removeTab(snapshotThreadWorkspace(state)),
+        workspaceByThread,
+        busyThreadIds,
+        messageQuotes: Object.fromEntries(
+          Object.entries(state.messageQuotes)
+            .filter(([id]) => id !== threadId)
+            .map(([id, quotes]) => [id, quotes.filter((quote) => quote.threadId !== threadId)]),
+        ),
+        pendingJump: state.pendingJump?.threadId === threadId ? null : state.pendingJump,
+      };
+    });
+  },
   pendingJump: null,
   setPendingJump: (jump) => set({ pendingJump: jump }),
   messageQuotes: {},

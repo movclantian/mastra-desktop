@@ -1,3 +1,4 @@
+import { mcpManagementMiddleware } from "./connections/mcp";
 import { cleanupOrphanedLibraryAssets } from "./rag/storage/assets";
 /**
  * Mastra 实例入口:注册 Agent / 网关 / 存储 / 观测 / 编辑器与 /work/* 路由,
@@ -228,6 +229,7 @@ export const mastra = new Mastra({
     middleware: [
       { path: "/*", handler: shutdownRequestMiddleware },
       { path: "/*", handler: workRequestContextMiddleware },
+      { path: "/api/stored/mcp-clients*", handler: mcpManagementMiddleware },
       { path: "/api/agent-controller/*", handler: workbenchControllerMiddleware },
       { path: "/api/memory/*", handler: memoryThreadMiddleware },
     ],

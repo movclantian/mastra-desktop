@@ -2,12 +2,13 @@ import { useNavigate } from "@tanstack/react-router";
 import { CopyIcon, MessageSquarePlusIcon, QuoteIcon, XIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { defaultComponents } from "streamdown";
-import { createThreadRequest } from "@/entities/workbench/api/workbench-api";
+import { libraryAssetFromUrl } from "@/entities/library";
+import { createThreadRequest, fetchThreads } from "@/entities/workbench/api/workbench-api";
 import { useInvalidateThreads } from "@/entities/workbench/model/queries/threads";
 import type { MessageQuote, WorkThread } from "@/entities/workbench/model/types";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useTranslation } from "@/shared/i18n";
+import { MessageAnchor } from "@/shared/ui/ai-elements/message";
 import { Button } from "@/shared/ui/button";
 import { Popover, PopoverContent } from "@/shared/ui/popover";
 import { ScrollArea } from "@/shared/ui/scroll-area";
@@ -85,10 +86,36 @@ export function MessageQuoteCards({
 }
 
 /** Keep Streamdown's normal link behavior; workspace references open the owned file preview. */
-export function MessageLink(props: React.ComponentProps<"a">) {
+export function MessageLink({ node: _node, ...props }: React.ComponentProps<typeof MessageAnchor>) {
   const thread = React.useContext(MessageScope);
   const { t } = useTranslation();
-  if (!props.href?.startsWith(WORKSPACE_FILE_FRAGMENT)) return <defaultComponents.a {...props} />;
+  const asset = props.href
+    ? libraryAssetFromUrl(
+        props.href,
+        props.title ||
+          React.Children.toArray(props.children)
+            .filter((child) => typeof child === "string")
+            .join(""),
+      )
+    : null;
+  if (asset)
+    return (
+      <button
+        type="button"
+        title={asset.filename}
+        className={
+          props.className ??
+          "cursor-pointer break-words text-primary underline underline-offset-4 [overflow-wrap:anywhere]"
+        }
+        onClick={() => {
+          const store = useWorkbenchStore.getState();
+          if (store.lastKnownThreadId) store.requestFilePreview(store.lastKnownThreadId, asset);
+        }}
+      >
+        {props.children}
+      </button>
+    );
+  if (!props.href?.startsWith(WORKSPACE_FILE_FRAGMENT)) return <MessageAnchor {...props} />;
   return (
     <button
       type="button"
@@ -220,6 +247,10 @@ export function MessageSelectionScope({
     const quote = selection.quote;
     try {
       let id = store.panelTabs.find((tab) => tab.kind === "chat")?.id;
+      if (id && !(await fetchThreads(userId)).some((item) => item.id === id)) {
+        store.forgetThread(id);
+        id = undefined;
+      }
       if (!id) {
         // Workspace binding is submitted with the first message, never through thread CRUD.
         const metadata = thread.metadata;

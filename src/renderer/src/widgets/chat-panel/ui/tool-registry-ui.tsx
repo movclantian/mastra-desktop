@@ -5,6 +5,7 @@ import {
   BookMarkedIcon,
   BookOpenIcon,
   CameraIcon,
+  CircleCheckIcon,
   CircleStopIcon,
   ClockIcon,
   CodeXmlIcon,
@@ -22,6 +23,7 @@ import {
   KeyboardIcon,
   LibraryBigIcon,
   ListChecksIcon,
+  ListTodoIcon,
   type LucideIcon,
   MonitorIcon,
   MousePointer2Icon,
@@ -59,6 +61,7 @@ import {
 } from "@/shared/ui/dialog";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { asRecord, asString } from "../model/types";
+import { MessageLink } from "./message-selection";
 
 // ---------------------------------------------------------------------------
 // 每个工具的专属 UI 注册表:图标 + 本地化标签 + 关键参数摘要 + 展开详情。
@@ -194,7 +197,7 @@ function ResultsDetail({ output }: { output: unknown }) {
           <div className="rounded-md border bg-muted/30 px-2 py-1.5 text-xs" key={index}>
             <div className="flex items-center justify-between gap-2">
               {url ? (
-                <a
+                <MessageLink
                   className="truncate font-medium text-primary underline underline-offset-2 [overflow-wrap:anywhere]"
                   href={url}
                   rel="noreferrer"
@@ -202,7 +205,7 @@ function ResultsDetail({ output }: { output: unknown }) {
                   title={title}
                 >
                   {title}
-                </a>
+                </MessageLink>
               ) : (
                 <span className="truncate font-medium" title={title}>
                   {title}
@@ -492,6 +495,75 @@ function TextNote({ text }: { text: string }) {
     <p className="whitespace-pre-wrap break-words text-muted-foreground text-xs [overflow-wrap:anywhere]">
       {cap(text, 2000)}
     </p>
+  );
+}
+
+function TaskToolDetail({ input, output }: { input: Record<string, unknown>; output: unknown }) {
+  const { t } = useTranslation();
+  const result = asRecord(output);
+  const tasksValue = Array.isArray(result?.tasks)
+    ? result.tasks
+    : Array.isArray(result?.incompleteTasks)
+      ? result.incompleteTasks
+      : Array.isArray(input.tasks)
+        ? input.tasks
+        : [];
+  const tasks = tasksValue.flatMap((value) => {
+    const task = asRecord(value);
+    const content = asStr(task?.content);
+    if (!task || !content) return [];
+    return [{ id: asStr(task.id), content, status: asStr(task.status) }];
+  });
+  const summary = asRecord(result?.summary);
+  const content = asStr(result?.content);
+  const counts = summary
+    ? [
+        ["completed", summary.completed],
+        ["inProgress", summary.inProgress],
+        ["pending", summary.pending],
+      ].filter((entry): entry is [string, number] => typeof entry[1] === "number")
+    : [];
+
+  if (!content && tasks.length === 0 && counts.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {content ? <TextNote text={content} /> : null}
+      {counts.length > 0 ? (
+        <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {counts.map(([status, count]) => (
+            <span key={status}>
+              {t(`chat:trace.taskStatus.${status}`)}: {count}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {tasks.length > 0 ? (
+        <ul className="space-y-1">
+          {tasks.slice(0, 12).map((task, index) => (
+            <li
+              className="flex min-w-0 items-start gap-2 text-xs"
+              key={task.id ?? `${task.content}:${index}`}
+            >
+              <span className="shrink-0 text-muted-foreground">
+                {task.status === "completed" ? "✓" : task.status === "in_progress" ? "◌" : "○"}
+              </span>
+              <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere]">
+                {task.content}
+              </span>
+              {task.id ? (
+                <code className="shrink-0 text-muted-foreground/70">{task.id}</code>
+              ) : null}
+            </li>
+          ))}
+          {tasks.length > 12 ? (
+            <li className="text-xs text-muted-foreground">
+              {t("chat:trace.moreResults", { count: tasks.length - 12 })}
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -1137,6 +1209,49 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
     labelKey: "notification_inbox",
     summarize: (input) => ({ chips: queryChips(input, "action") }),
     detail: recordsDetailFor("notifications"),
+  },
+  task_write: {
+    icon: ListTodoIcon,
+    labelKey: "task_write",
+    summarize: (input) => {
+      const tasks = Array.isArray(input.tasks) ? input.tasks : [];
+      const firstTask = asStr(asRecord(tasks[0])?.content);
+      return {
+        chips: [
+          tasks.length ? `${tasks.length} tasks` : undefined,
+          firstTask ? cap(firstTask, 56) : undefined,
+        ].filter((value): value is string => Boolean(value)),
+      };
+    },
+    detail: ({ input, output }) => <TaskToolDetail input={input} output={output} />,
+  },
+  task_update: {
+    icon: ListChecksIcon,
+    labelKey: "task_update",
+    summarize: (input) => ({
+      chips: [pickStr(input, "content"), pickStr(input, "status")].filter(
+        (value): value is string => Boolean(value),
+      ),
+    }),
+    detail: ({ input, output }) => <TaskToolDetail input={input} output={output} />,
+  },
+  task_complete: {
+    icon: CircleCheckIcon,
+    labelKey: "task_complete",
+    summarize: (input) => ({ chips: queryChips(input, "id") }),
+    detail: ({ input, output }) => <TaskToolDetail input={input} output={output} />,
+  },
+  task_check: {
+    icon: ListChecksIcon,
+    labelKey: "task_check",
+    summarize: (_input, output) => {
+      const summary = asRecord(asRecord(output)?.summary);
+      const total = typeof summary?.total === "number" ? summary.total : undefined;
+      return {
+        chips: [total === undefined ? undefined : `${total} tasks`].filter(Boolean) as string[],
+      };
+    },
+    detail: ({ input, output }) => <TaskToolDetail input={input} output={output} />,
   },
   skill: {
     icon: BookMarkedIcon,

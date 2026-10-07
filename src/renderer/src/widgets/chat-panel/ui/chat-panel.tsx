@@ -392,8 +392,7 @@ export function ChatPanel() {
     [queryClient, user.id],
   );
 
-  // 最新 threadId 的 ref:解决「首条消息先建线程再发送」时
-  // 请求回调 持有旧值的竞态
+  // 当前路由的最新线程，用于异步操作完成后判断用户是否仍在原会话。
   const activeThreadIdRef = React.useRef(activeThreadId);
   activeThreadIdRef.current = activeThreadId;
   // 新线程首条消息发送期间,路由会先切到新线程。此时不能用尚为空的
@@ -743,11 +742,13 @@ export function ChatPanel() {
     const threadId = activeThreadIdRef.current;
     if (!threadId) return;
     try {
+      const session = getThreadSession(threadId);
+      if (session.store.getState().connection !== "connected") session.disconnect();
       await abortThread(threadId, user.id);
     } catch (error) {
       toastError(error);
     }
-  }, [user.id]);
+  }, [getThreadSession, user.id]);
 
   const isBusy = status === "submitted" || status === "streaming";
   const monitorGoal = Boolean(activeThreadId && objective?.status === "active" && isBusy);
@@ -1396,20 +1397,19 @@ export function ChatPanel() {
       // 未锁定线程的首条消息会消费工作区选定(workspaceLocked 在发送前快照)
       const consumesWorkspaceSelection = !workspaceLocked;
 
-      // 无激活线程时先准备线程再发送。带附件时延后切路由，避免上传/预检
-      // 失败后用户被切到一个看起来像“刷新”的空白新页面。
-      const initialSend: { threadId: string | null } | null = activeThreadId
+      // 固定本次发送目标；异步创建/附件处理期间的路由更新不能改写它。
+      let targetThreadId = activeThreadIdRef.current;
+      const initialSend: { threadId: string | null } | null = targetThreadId
         ? null
         : { threadId: null };
       if (initialSend) {
         initialSendRef.current = initialSend;
-        const deferThreadSelection = files.length > 0;
         // 读取提交瞬间的 store 快照，不依赖下一轮 React render；这样用户刚把
         // 新会话切到“执行”时，创建请求不会又用默认“计划”覆盖选择。
         const thread = await createThreadMutation
           .mutateAsync({
             modeId: useWorkbenchStore.getState().modeId,
-            ...(deferThreadSelection ? { deferSelection: true } : {}),
+            deferSelection: true,
           })
           .catch(() => null);
         if (!thread) {
@@ -1418,11 +1418,9 @@ export function ChatPanel() {
           return;
         }
         initialSend.threadId = thread.id;
-        // 立即更新 ref:sendMessage 读到的是最新 threadId,不等 re-render
-        activeThreadIdRef.current = thread.id;
+        targetThreadId = thread.id;
       }
 
-      const targetThreadId = activeThreadIdRef.current;
       if (!targetThreadId) {
         if (initialSendRef.current === initialSend) initialSendRef.current = null;
         return;
@@ -1435,15 +1433,9 @@ export function ChatPanel() {
         toastError(error, t("chat:welcome.toastAttachmentSaveFailed"));
         return;
       }
-      if (initialSend && !activeThreadId) {
-        // 只有附件已成功持久化，才把用户带到新线程；这样 401/上传失败
-        // 保留在当前页面，错误提示不会被路由切换掩盖。
-        selectThread(targetThreadId);
-      }
-
       // 显式发到目标线程自己的 Session 订阅:新建线程时渲染层还没切过去,
       // 用渲染时绑定的实例会把消息发进上一条线程。
-      const sent = await getThreadSession(targetThreadId)
+      const sending = getThreadSession(targetThreadId)
         .send({
           text,
           options: submittedOptions,
@@ -1461,6 +1453,10 @@ export function ChatPanel() {
         .finally(() => {
           if (initialSendRef.current === initialSend) initialSendRef.current = null;
         });
+      // Session 已同步进入 submitted，再选中新线程，首次渲染不会回到欢迎空态。
+      // 附件失败不会导航；用户已主动切到其他线程时也不抢回焦点。
+      if (initialSend && activeThreadIdRef.current === null) selectThread(targetThreadId);
+      const sent = await sending;
       if (!sent) return;
       if (message.goal) {
         // setObjective finishes before the message ACK. Read it now, independently of task events.
@@ -1680,7 +1676,7 @@ export function ChatPanel() {
 
         {messages.length === 0 &&
         !isBusy &&
-        (!activeThread || activeThread.metadata.draft === true) ? (
+        (!activeThreadId || activeThread?.metadata.draft === true) ? (
           // 新会话: Magic UI 点阵背景 + 粒子光效 + 快捷灵感卡片 + 居中输入区
           <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-4 pb-12 overflow-hidden">
             <DotPattern className="opacity-40 [mask-image:radial-gradient(ellipse_at_center,white,transparent_75%)]" />

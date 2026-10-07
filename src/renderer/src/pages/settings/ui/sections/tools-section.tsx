@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLinkIcon, EyeIcon, EyeOffIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { getMcpServer, type McpFormServer } from "@/entities/skill";
 import {
   isSearchEngineReady,
   qk,
@@ -11,6 +12,7 @@ import {
 } from "@/entities/workbench";
 import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import { Field, FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import {
@@ -19,11 +21,12 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/shared/ui/input-group";
+import { McpDialog } from "@/widgets/mcp-dialog";
 import { saveSettingsTools } from "../../api/settings-api";
 import { SettingCard } from "../controls";
 
 // ---------------------------------------------------------------------------
-// 工具:联网检索引擎的 API Key(写入数据库 app_config 表,key = "tools")。
+// 工具:直接 API 检索引擎的密钥；AnySearch 在统一 MCP 连接中管理。
 // 引擎与搜索强度由输入区的联网检索菜单逐次选择,服务端据此注入对应工具;
 // 工具在每次请求时按当前配置实例化,保存后立即生效、无需重启服务。
 // ---------------------------------------------------------------------------
@@ -31,23 +34,21 @@ import { SettingCard } from "../controls";
 const DEFAULT_TOOLS_CONFIG: ToolsConfig = {
   tavily: { hasCredential: false },
   firecrawl: { hasCredential: false, apiUrl: "" },
-  anysearch: { hasCredential: false },
+  anysearch: { enabled: false },
 };
 
-type KeyedSearchEngine = SearchEngine;
+type KeyedSearchEngine = Exclude<SearchEngine, "anysearch">;
 
-const KEYED_ENGINES: KeyedSearchEngine[] = ["tavily", "firecrawl", "anysearch"];
+const KEYED_ENGINES: KeyedSearchEngine[] = ["tavily", "firecrawl"];
 
 const ENGINE_DOCS_URL: Record<KeyedSearchEngine, string> = {
   tavily: "https://app.tavily.com/home",
   firecrawl: "https://www.firecrawl.dev/app/api-keys",
-  anysearch: "https://www.anysearch.com/docs",
 };
 
 const API_KEY_PLACEHOLDER: Record<KeyedSearchEngine, string> = {
   tavily: "tvly-...",
   firecrawl: "fc-...",
-  anysearch: "as-...",
 };
 
 /** 密钥输入行:基于 InputGroup 的复合密码框,内置显隐切换按钮 */
@@ -76,9 +77,7 @@ function SecretKeyInput({
         placeholder={
           configuredHint
             ? t("settings:tools.credentialConfigured", { hint: configuredHint })
-            : engine === "anysearch"
-              ? t("settings:tools.anysearchPlaceholder")
-              : API_KEY_PLACEHOLDER[engine]
+            : API_KEY_PLACEHOLDER[engine]
         }
         spellCheck={false}
         type={show ? "text" : "password"}
@@ -102,11 +101,11 @@ export function ToolsSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const toolsQuery = useToolsConfigQuery();
+  const [mcpServer, setMcpServer] = React.useState<McpFormServer | null>(null);
   const [draft, setDraft] = React.useState<ToolsConfig>(DEFAULT_TOOLS_CONFIG);
   const [keyDraft, setKeyDraft] = React.useState<Record<KeyedSearchEngine, string>>({
     tavily: "",
     firecrawl: "",
-    anysearch: "",
   });
   const [loaded, setLoaded] = React.useState(false);
   const [dirty, setDirty] = React.useState(false);
@@ -115,7 +114,6 @@ export function ToolsSection() {
   const [showKeys, setShowKeys] = React.useState<Record<KeyedSearchEngine, boolean>>({
     tavily: false,
     firecrawl: false,
-    anysearch: false,
   });
 
   React.useEffect(() => {
@@ -134,7 +132,7 @@ export function ToolsSection() {
         .then((saved) => {
           if (editVersion.current !== version) return;
           setDraft(saved);
-          setKeyDraft({ tavily: "", firecrawl: "", anysearch: "" });
+          setKeyDraft({ tavily: "", firecrawl: "" });
           setDirty(false);
           queryClient.setQueryData(qk.toolsConfig(), saved);
         })
@@ -225,6 +223,42 @@ export function ToolsSection() {
           </SettingCard>
         );
       })}
+      <SettingCard
+        title="AnySearch"
+        description={t("mcp:anysearchManaged")}
+        action={
+          <Badge variant={toolsQuery.data?.anysearch.enabled ? "secondary" : "outline"}>
+            {toolsQuery.data?.anysearch.enabled ? t("settings:tools.available") : t("mcp:disabled")}
+          </Badge>
+        }
+      >
+        <div className="flex min-w-0 flex-wrap items-center gap-2 py-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!toolsQuery.data?.anysearch.connectionId}
+            onClick={() => {
+              const id = toolsQuery.data?.anysearch.connectionId;
+              if (id)
+                void getMcpServer(id)
+                  .then(setMcpServer)
+                  .catch(() => toast.error(t("settings:tools.saveFailed")));
+            }}
+          >
+            {t("mcp:manageConnection")}
+          </Button>
+        </div>
+      </SettingCard>
+      <McpDialog
+        open={Boolean(mcpServer)}
+        server={mcpServer}
+        onOpenChange={(open) => {
+          if (!open) setMcpServer(null);
+        }}
+        onSaved={() => {
+          void queryClient.invalidateQueries({ queryKey: qk.toolsConfig() });
+        }}
+      />
     </>
   );
 }

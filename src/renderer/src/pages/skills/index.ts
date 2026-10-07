@@ -1,1 +1,1 @@
-export { SkillHub, SkillHubPage } from "./ui/skill-hub-page";
+export { PluginHubPage } from "./ui/plugin-hub-page";

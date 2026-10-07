@@ -46,6 +46,7 @@ import {
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import {
+  LibraryTransferPanel,
   type LibraryUploadTarget,
   useLibraryData,
   useLibraryUpload,
@@ -194,8 +195,9 @@ export function KnowledgeLibraryPage({
     inputRef,
     uploading,
     uploadProgress,
-    retryFiles,
-    uploadError,
+    transfers,
+    panelOpen,
+    setPanelOpen,
     uploadFiles,
     cancelUpload,
     retryUpload,
@@ -1085,38 +1087,27 @@ export function KnowledgeLibraryPage({
             </div>
 
             {/* Footer 上传进度 */}
-            {uploading || uploadError ? (
+            {transfers.length ? (
               <div className="border-t border-sidebar-border p-2 shrink-0">
                 <div className="space-y-1.5 bg-background/40 p-2 rounded-md group-data-[collapsible=icon]/sidebar:hidden">
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate">
-                      {uploadError
-                        ? uploadError
-                        : t("library:uploadingCount", { count: retryFiles.length })}
+                      {t("library:transferSummary", {
+                        completed: transfers.filter((item) => item.status === "uploaded").length,
+                        total: transfers.length,
+                      })}
                     </span>
                     <span className="shrink-0 tabular-nums">{uploadProgress}%</span>
                   </div>
                   <Progress value={uploadProgress} />
-                  {uploading ? (
-                    <Button
-                      className="w-full h-7 text-xs"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => void cancelUpload()}
-                    >
-                      {t("library:cancelUpload")}
-                    </Button>
-                  ) : null}
-                  {uploadError && !uploading ? (
-                    <Button
-                      className="w-full h-7 text-xs"
-                      size="sm"
-                      variant="outline"
-                      onClick={retryUpload}
-                    >
-                      {t("library:retryFromBreakpoint")}
-                    </Button>
-                  ) : null}
+                  <Button
+                    className="w-full h-7 text-xs"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setPanelOpen(true)}
+                  >
+                    {t("library:transferPanel")}
+                  </Button>
                 </div>
               </div>
             ) : null}
@@ -1145,6 +1136,12 @@ export function KnowledgeLibraryPage({
               </span>
             </p>
             {selected ? <Badge variant="outline">{statusLabel(selected.status)}</Badge> : null}
+            {transfers.length ? (
+              <Button variant="outline" size="sm" onClick={() => setPanelOpen(true)}>
+                <UploadIcon />
+                {t("library:transferPanel")}
+              </Button>
+            ) : null}
             {selected ? (
               <a
                 className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -1245,6 +1242,17 @@ export function KnowledgeLibraryPage({
           </div>
         </div>
       </div>
+
+      <LibraryTransferPanel
+        open={panelOpen}
+        onOpenChange={setPanelOpen}
+        transfers={transfers}
+        assets={assets}
+        uploading={uploading}
+        progress={uploadProgress}
+        onRetry={retryUpload}
+        onCancel={cancelUpload}
+      />
 
       <Dialog open={folderDialog} onOpenChange={setFolderDialog}>
         <DialogContent>

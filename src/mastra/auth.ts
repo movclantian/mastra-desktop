@@ -434,5 +434,8 @@ export async function workRequestContextMiddleware(
   requestContext.set("user", user);
   requestContext.set(AUTHENTICATED_USER_ID_CONTEXT_KEY, user.id);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, user.id);
+  // A desktop login token is never an upstream service credential. MCP headers
+  // are resolved from the credential vault by the connection manager.
+  requestContext.delete("mastra__authToken");
   await next();
 }

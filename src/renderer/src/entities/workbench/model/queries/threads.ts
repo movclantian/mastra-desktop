@@ -134,7 +134,7 @@ export interface CreateThreadOptions {
   title?: string;
   /** 提交瞬间的模式快照，避免新线程创建与输入栏切换发生竞态。 */
   modeId?: WorkModeId;
-  /** 首条附件上传完成前暂不切换路由，避免失败时把用户带到空白线程。 */
+  /** 由发送方在附件就绪、Session 进入提交状态后统一选择线程。 */
   deferSelection?: boolean;
 }
 
@@ -175,21 +175,33 @@ export function useCreateThreadMutation(userId: string) {
 export function useDeleteThreadMutation(userId: string) {
   const queryClient = useQueryClient();
   const selectThread = useSelectThread();
+  const forgetThread = (threadId: string) => {
+    const store = useWorkbenchStore.getState();
+    const wasSelected = store.lastKnownThreadId === threadId;
+    store.forgetThread(threadId);
+    if (wasSelected) selectThread(null);
+    queryClient.setQueryData<WorkThread[]>(qk.threads(userId), (threads) =>
+      threads?.filter((thread) => thread.id !== threadId),
+    );
+  };
   return useMutation({
     mutationFn: async (threadId: string) => {
       await window.api?.terminal?.closeThread({ resourceId: userId, threadId });
       return deleteThreadRequest(threadId, userId);
     },
     onSuccess: async (_data, threadId) => {
+      forgetThread(threadId);
       await closeDeletedThreadBrowserView(window.api?.browserView, {
         resourceId: userId,
         threadId,
       });
-      // 当前线程被删除 → 回到无选中(不自动切到别的线程)
-      if (useWorkbenchStore.getState().lastKnownThreadId === threadId) {
-        selectThread(null);
-      }
-      void queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
+    },
+    onSettled: async (_data, error, threadId) => {
+      await queryClient.invalidateQueries({ queryKey: qk.threads(userId) });
+      const threads = queryClient.getQueryData<WorkThread[]>(qk.threads(userId));
+      // Cleanup can fail after the server has already deleted the row.
+      if (error && threads && !threads.some((thread) => thread.id === threadId))
+        forgetThread(threadId);
     },
   });
 }
@@ -274,14 +286,15 @@ export function useSyncThreadToStore(threadId: string | null): void {
  * 若既无 URL thread 也无有效 localStorage thread,选中最近发起请求的线程。
  * 仅触发一次;之后的失效刷新不会误切线程。
  */
-export function useActiveThreadResolver(threads: WorkThread[]): void {
+export function useActiveThreadResolver(threads: WorkThread[] | undefined): void {
   const urlThread = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const selectThread = useSelectThread();
   const resolvedRef = useRef(false);
   useEffect(() => {
-    if (resolvedRef.current || threads.length === 0) return;
+    if (resolvedRef.current || !threads) return;
+    // An initially empty account is resolved too; later creation owns its navigation.
     resolvedRef.current = true;
     const current = urlThread ?? useWorkbenchStore.getState().lastKnownThreadId;
     if (current && threads.some((thread) => thread.id === current)) return;

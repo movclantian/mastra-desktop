@@ -63,6 +63,14 @@ export interface CuratedOwner {
 }
 
 export interface McpFormServer {
+  clientId?: string;
+  serverName?: string;
+  builtin?: "anysearch";
+  plugin?: { id: string; componentId: string; digest: string };
+  status?: "draft" | "published" | "archived";
+  version?: string;
+  timeout?: number;
+  tools?: Record<string, { description?: string }>;
   id: string;
   name: string;
   transport: "http" | "stdio";
@@ -88,6 +96,10 @@ export interface McpFormServer {
 }
 
 export interface McpSummary extends McpFormServer {
+  configurationError?: string;
+  configurationKeys?: string[];
+  connectionError?: string;
+  toolCount?: number;
   headerKeys: string[];
   envKeys: string[];
 }

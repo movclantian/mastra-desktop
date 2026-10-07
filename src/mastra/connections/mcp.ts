@@ -6,11 +6,12 @@
  * 凭据仅存主进程凭据库；运行时通过官方 MCPClient 应用请求头、OAuth 和审批策略。
  */
 import { createHash, randomUUID } from "node:crypto";
+import { readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import type { ToolsInput } from "@mastra/core/agent";
-import type { ContextWithMastra } from "@mastra/core/server";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
-import type { StorageResolvedMCPClientType, StorageMCPServerConfig } from "@mastra/core/storage";
-import { handleAutoVersioning, MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS } from "@mastra/server/handlers/version-helpers";
+import type { ContextWithMastra } from "@mastra/core/server";
+import type { StorageMCPServerConfig, StorageResolvedMCPClientType } from "@mastra/core/storage";
 import {
   getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
@@ -18,12 +19,17 @@ import {
   MCPOAuthClientProvider,
   type OAuthStorage,
 } from "@mastra/mcp";
+import {
+  handleAutoVersioning,
+  MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS,
+} from "@mastra/server/handlers/version-helpers";
 import { z } from "zod";
 import {
   type CredentialPointer,
   CredentialPointerSchema,
   mcpCredentialPurpose,
 } from "../../shared/credential-contract";
+import type { InstalledPlugin } from "../../shared/plugin-contract";
 import {
   deleteCredential,
   oauthCredentialPurpose,
@@ -31,6 +37,14 @@ import {
   storeCredential,
 } from "../credential-broker";
 import { errorText, workError } from "../errors";
+import { withinRoot } from "../plugins/packages";
+import {
+  getInstalledPlugin,
+  listInstalledPlugins,
+  pluginComponentEnabled,
+  pluginsDirectory,
+  pluginVersionDirectory,
+} from "../plugins/registry";
 import { appStorage, deleteAppConfig, getAppConfig, setAppConfig } from "../storage/database";
 
 export const mcpServerConfigSchema = z
@@ -43,6 +57,10 @@ export const mcpServerConfigSchema = z
     clientId: z.string().min(1).optional(),
     serverName: z.string().min(1).optional(),
     builtin: z.literal("anysearch").optional(),
+    plugin: z
+      .object({ id: z.string(), componentId: z.string(), digest: z.string() })
+      .strict()
+      .optional(),
     status: z.enum(["draft", "published", "archived"]).optional(),
     version: z.string().optional(),
     timeout: z.number().int().positive().optional(),
@@ -98,6 +116,10 @@ interface McpConfig {
 }
 
 interface McpServerSummary extends McpServerConfig {
+  configurationError?: string;
+  configurationKeys?: string[];
+  connectionError?: string;
+  toolCount?: number;
   headerKeys: string[];
   envKeys: string[];
 }
@@ -106,11 +128,19 @@ export const ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp";
 const OWNER_KEY = "mastra_resource_id";
 const OPTIONS_KEY = "desktopMcp";
 const scopeOf = (resourceId?: string) => resourceId?.trim() || "__system__";
+const toolNamespace = (server: McpServerConfig) =>
+  server.builtin === "anysearch" ? "anysearch" : `mcp_${server.id}`;
 const stableId = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 24);
 
 interface McpRuntime {
-  clients: Map<string, { hash: string; promise: Promise<MCPClient> }>;
-  redirects: Map<string, { client: MCPClient; url: Promise<string>; resolve: (url: string) => void }>;
+  clients: Map<
+    string,
+    { hash: string; promise: Promise<MCPClient>; error?: string; toolCount?: number }
+  >;
+  redirects: Map<
+    string,
+    { client: MCPClient; url: Promise<string>; resolve: (url: string) => void }
+  >;
 }
 const runtimeByScope = new Map<string, McpRuntime>();
 function getRuntime(resourceId?: string): McpRuntime {
@@ -127,32 +157,51 @@ async function mcpStore() {
   if (!store) throw new Error("MCP clients storage is not configured");
   return store;
 }
-function connectionOptions(client: StorageResolvedMCPClientType): Record<string, Partial<McpServerConfig>> {
-  return z.record(z.string(), z.record(z.string(), z.unknown())).parse(client.metadata?.[OPTIONS_KEY] ?? {});
+function connectionOptions(
+  client: StorageResolvedMCPClientType,
+): Record<string, Partial<McpServerConfig>> {
+  return z
+    .record(z.string(), z.record(z.string(), z.unknown()))
+    .parse(client.metadata?.[OPTIONS_KEY] ?? {});
 }
 function connectionsOf(client: StorageResolvedMCPClientType): McpServerConfig[] {
   const options = connectionOptions(client);
-  return Object.entries(client.servers).map(([serverName, server]) => mcpServerConfigSchema.parse({
-    ...options[serverName],
-    id: options[serverName]?.id ?? stableId(`${client.id}:${serverName}`),
-    clientId: client.id,
-    serverName,
-    name: Object.keys(client.servers).length === 1 ? client.name : (options[serverName]?.name ?? serverName),
-    status: client.status,
-    version: `${client.resolvedVersionId}:${client.updatedAt.toISOString()}`,
-    enabled: client.status === "published" && options[serverName]?.enabled !== false,
-    transport: server.type,
-    url: server.url,
-    command: server.command,
-    args: server.args,
-    timeout: server.timeout,
-    tools: server.tools,
-    envKeys: [...new Set([...Object.keys(server.env ?? {}), ...(options[serverName]?.envKeys ?? [])])],
-  }));
+  return Object.entries(client.servers).map(([serverName, server]) =>
+    mcpServerConfigSchema.parse({
+      ...options[serverName],
+      id: options[serverName]?.id ?? stableId(JSON.stringify([client.id, serverName])),
+      builtin:
+        client.id === `anysearch-${stableId(String(client.metadata?.[OWNER_KEY]))}` &&
+        serverName === "anysearch"
+          ? "anysearch"
+          : undefined,
+      clientId: client.id,
+      serverName,
+      name:
+        Object.keys(client.servers).length === 1
+          ? client.name
+          : (options[serverName]?.name ?? serverName),
+      status: client.status,
+      version: `${client.resolvedVersionId}:${client.updatedAt.toISOString()}`,
+      enabled:
+        client.status === "published" &&
+        (Object.keys(client.servers).length === 1 || options[serverName]?.enabled !== false),
+      transport: server.type,
+      url: server.url,
+      command: server.command,
+      args: server.args,
+      timeout: server.timeout,
+      tools: server.tools,
+      envKeys: [
+        ...new Set([...Object.keys(server.env ?? {}), ...(options[serverName]?.envKeys ?? [])]),
+      ],
+    }),
+  );
 }
 async function ownedClient(id: string, resourceId?: string): Promise<StorageResolvedMCPClientType> {
   const client = await (await mcpStore()).getByIdResolved(id);
-  if (!client || client.metadata?.[OWNER_KEY] !== scopeOf(resourceId)) throw workError("MCP_SERVER_NOT_FOUND");
+  if (!client || client.metadata?.[OWNER_KEY] !== scopeOf(resourceId))
+    throw workError("MCP_SERVER_NOT_FOUND");
   return client;
 }
 const preparingAnysearch = new Map<string, Promise<void>>();
@@ -164,15 +213,28 @@ async function ensureAnysearchConnection(resourceId?: string): Promise<void> {
       const store = await mcpStore();
       const id = `anysearch-${stableId(scope)}`;
       if (await store.getById(id)) return;
-      await store.create({ mcpClient: {
-        id, name: "AnySearch", authorId: scope,
-        description: "Built-in web search connection. Choose search depth in the composer; manage credentials here.",
-        servers: { anysearch: { type: "http", url: ANYSEARCH_MCP_URL } },
-        metadata: { [OWNER_KEY]: scope, [OPTIONS_KEY]: { anysearch: {
-          id, builtin: "anysearch", enabled: true, requireToolApproval: false,
-          allowedHosts: ["api.anysearch.com"],
-        } } },
-      } });
+      await store.create({
+        mcpClient: {
+          id,
+          name: "AnySearch",
+          authorId: scope,
+          description:
+            "Built-in web search connection. Choose search depth in the composer; manage credentials here.",
+          servers: { anysearch: { type: "http", url: ANYSEARCH_MCP_URL } },
+          metadata: {
+            [OWNER_KEY]: scope,
+            [OPTIONS_KEY]: {
+              anysearch: {
+                id,
+                builtin: "anysearch",
+                enabled: true,
+                requireToolApproval: false,
+                allowedHosts: ["api.anysearch.com"],
+              },
+            },
+          },
+        },
+      });
       const version = await store.getLatestVersion(id);
       if (!version) throw new Error("MCP initial version was not created");
       await store.update({ id, activeVersionId: version.id, status: "published" });
@@ -186,59 +248,271 @@ async function ensureAnysearchConnection(resourceId?: string): Promise<void> {
 export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
   await ensureAnysearchConnection(resourceId);
   const store = await mcpStore();
-  const pages = await Promise.all((["published", "draft", "archived"] as const).map((status) =>
-    store.listResolved({ perPage: false, metadata: { [OWNER_KEY]: scopeOf(resourceId) }, status }),
-  ));
-  return { servers: pages.flatMap((page) => page.mcpClients.flatMap(connectionsOf)) };
+  const pages = await Promise.all(
+    (["published", "draft", "archived"] as const).map((status) =>
+      store.listResolved({
+        perPage: false,
+        metadata: { [OWNER_KEY]: scopeOf(resourceId) },
+        status,
+      }),
+    ),
+  );
+  const plugins = new Map(
+    (resourceId ? await listInstalledPlugins(resourceId) : []).map((plugin) => [plugin.id, plugin]),
+  );
+  const servers = pages.flatMap((page) => page.mcpClients.flatMap(connectionsOf));
+  return {
+    servers: servers.map((server) => {
+      if (!server.plugin) return server;
+      const plugin = plugins.get(server.plugin.id);
+      const component = plugin?.current.components.find(
+        (item) => item.id === server.plugin?.componentId,
+      );
+      return {
+        ...server,
+        enabled:
+          server.enabled &&
+          !!plugin &&
+          !!component &&
+          plugin.current.digest === server.plugin.digest &&
+          pluginComponentEnabled(plugin, component),
+      };
+    }),
+  };
 }
 
 /** Update one connection without replacing another client's configuration or losing sibling servers. */
-export async function saveMcpServer(input: McpServerConfig, resourceId?: string): Promise<McpServerConfig> {
+export async function saveMcpServer(
+  input: McpServerConfig,
+  resourceId?: string,
+  managedPlugin = false,
+): Promise<McpServerConfig> {
   const server = mcpServerConfigSchema.parse(input);
   const store = await mcpStore();
   const current = server.clientId ? await ownedClient(server.clientId, resourceId) : undefined;
-  const options = current ? connectionOptions(current) : {};
+  if (!current && (await getMcpConfig(resourceId)).servers.some((entry) => entry.id === server.id))
+    throw workError("MCP_CONFIG_INVALID", { text: "MCP connection ID already exists" });
+  const rawOptions = current ? connectionOptions(current) : {};
+  const options = current
+    ? Object.fromEntries(
+        connectionsOf(current).map((entry) => [
+          entry.serverName ?? "",
+          {
+            ...rawOptions[entry.serverName ?? ""],
+            id: entry.id,
+            enabled: entry.enabled,
+          },
+        ]),
+      )
+    : {};
   const serverName = server.serverName ?? `mcp_${server.id}`;
   if (current && !current.servers[serverName]) throw workError("MCP_SERVER_NOT_FOUND");
   const previous = options[serverName];
-  if (previous?.builtin === "anysearch") {
+  if (!managedPlugin) {
+    if (JSON.stringify(server.plugin) !== JSON.stringify(previous?.plugin))
+      throw workError("MCP_CONFIG_INVALID", {
+        text: "Plugin ownership is managed by the plugin installer",
+      });
+    if (previous?.plugin && current) {
+      const plugin = resourceId
+        ? await getInstalledPlugin(previous.plugin.id, resourceId)
+        : undefined;
+      if (
+        !plugin ||
+        plugin.current.digest !== previous.plugin.digest ||
+        !plugin.current.components.some((component) => component.id === server.id)
+      )
+        throw workError("MCP_CONFIG_INVALID", {
+          text: "Plugin component changed or was removed; reopen its configuration",
+        });
+      const definition = current.servers[serverName];
+      if (
+        server.transport !== definition.type ||
+        server.url !== definition.url ||
+        server.command !== definition.command ||
+        server.enabled !== previous.enabled ||
+        server.name !== current.name ||
+        JSON.stringify(server.args ?? []) !== JSON.stringify(definition.args ?? [])
+      )
+        throw workError("MCP_CONFIG_INVALID", {
+          text: "Edit plugin connection credentials here; package definitions are immutable",
+        });
+    }
+  }
+  const currentEntry = current
+    ? connectionsOf(current).find((entry) => entry.serverName === serverName)
+    : undefined;
+  if (currentEntry && server.version && server.version !== currentEntry.version)
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "MCP configuration changed; reload it before saving",
+    });
+  if (currentEntry?.builtin === "anysearch") {
     server.builtin = "anysearch";
-    if (server.transport !== "http" || server.url !== ANYSEARCH_MCP_URL || serverName !== "anysearch" || server.oauth?.enabled)
-      throw workError("MCP_CONFIG_INVALID", { text: "AnySearch uses its built-in HTTP endpoint and API key authentication" });
+    if (
+      server.transport !== "http" ||
+      server.url !== ANYSEARCH_MCP_URL ||
+      serverName !== "anysearch" ||
+      server.oauth?.enabled
+    )
+      throw workError("MCP_CONFIG_INVALID", {
+        text: "AnySearch uses its built-in HTTP endpoint and API key authentication",
+      });
     server.allowedHosts = ["api.anysearch.com"];
-  } else if (server.builtin) throw workError("MCP_CONFIG_INVALID", { text: "Built-in identity is managed by the application" });
-  if (previous?.id && previous.id !== server.id) throw workError("MCP_CONFIG_INVALID", { text: "MCP connection ID cannot change" });
+  } else if (server.builtin)
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "Built-in identity is managed by the application",
+    });
+  if (currentEntry && currentEntry.id !== server.id)
+    throw workError("MCP_CONFIG_INVALID", { text: "MCP connection ID cannot change" });
+  // Plugin configuration patches retain keys that were not edited in the credentials form.
+  if (currentEntry?.plugin && !managedPlugin) {
+    for (const field of ["headers", "env"] as const) {
+      const pointerKey = field === "headers" ? "headerCredential" : "envCredential";
+      const keysKey = field === "headers" ? "headerKeys" : "envKeys";
+      const before = currentEntry[pointerKey];
+      const next = server[pointerKey];
+      if (!before || !next || before.credentialRef === next.credentialRef) continue;
+      const purpose = mcpCredentialPurpose(server.id, field);
+      const merged = {
+        ...(await resolveSecretRecord(before, purpose)),
+        ...(await resolveSecretRecord(next, purpose)),
+      };
+      server[pointerKey] = await storeCredential(
+        JSON.stringify(merged),
+        purpose,
+        next.credentialRef,
+      );
+      server[keysKey] = Object.keys(merged);
+    }
+  }
   await Promise.all([
     resolveSecretRecord(server.headerCredential, mcpCredentialPurpose(server.id, "headers")),
     resolveSecretRecord(server.envCredential, mcpCredentialPurpose(server.id, "env")),
-    server.oauth?.clientSecretCredential ? resolveCredential(server.oauth.clientSecretCredential.credentialRef, mcpCredentialPurpose(server.id, "client-secret")) : undefined,
+    server.oauth?.clientSecretCredential
+      ? resolveCredential(
+          server.oauth.clientSecretCredential.credentialRef,
+          mcpCredentialPurpose(server.id, "client-secret"),
+        )
+      : undefined,
   ]);
   const id = current?.id ?? randomUUID();
   const definition: StorageMCPServerConfig = {
     type: server.transport,
-    ...(server.transport === "http" ? { url: server.url } : { command: server.command, args: server.args, env: current?.servers[serverName]?.env }),
-    timeout: server.timeout, tools: server.tools,
+    ...(server.transport === "http"
+      ? { url: server.url }
+      : { command: server.command, args: server.args, env: current?.servers[serverName]?.env }),
+    timeout: server.timeout,
+    tools: server.tools,
   };
-  const { clientId: _clientId, serverName: _serverName, version: _version, status: _status, transport: _transport, url: _url, command: _command, args: _args, timeout: _timeout, tools: _tools, ...security } = server;
-  const metadata = { ...current?.metadata, [OWNER_KEY]: scopeOf(resourceId), [OPTIONS_KEY]: { ...options, [serverName]: security } };
-  const snapshot = { name: current && Object.keys(current.servers).length > 1 ? current.name : server.name,
-    description: current?.description, servers: { ...current?.servers, [serverName]: definition } };
+  const {
+    clientId: _clientId,
+    serverName: _serverName,
+    version: _version,
+    status: _status,
+    transport: _transport,
+    url: _url,
+    command: _command,
+    args: _args,
+    timeout: _timeout,
+    tools: _tools,
+    ...security
+  } = server;
+  const metadata = {
+    ...current?.metadata,
+    [OWNER_KEY]: scopeOf(resourceId),
+    [OPTIONS_KEY]: { ...options, [serverName]: security },
+  };
+  const snapshot = {
+    name: current && Object.keys(current.servers).length > 1 ? current.name : server.name,
+    description: current?.description,
+    servers: { ...current?.servers, [serverName]: definition },
+  };
   if (current) {
     const updated = await store.update({ id, metadata });
-    await handleAutoVersioning(store, id, "mcpClientId", MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS, current, updated, snapshot);
-  } else await store.create({ mcpClient: { id, ...snapshot, metadata, authorId: scopeOf(resourceId) } });
+    await handleAutoVersioning(
+      store as unknown as Parameters<typeof handleAutoVersioning>[0],
+      id,
+      "mcpClientId",
+      MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS,
+      current,
+      updated,
+      snapshot,
+    );
+  } else
+    await store.create({ mcpClient: { id, ...snapshot, metadata, authorId: scopeOf(resourceId) } });
   const latest = await store.getLatestVersion(id);
   if (!latest) throw new Error("MCP version is missing");
-  await store.update({ id, activeVersionId: latest.id, status: "published" });
+  const enabled =
+    Object.keys(snapshot.servers).length === 1
+      ? server.enabled
+      : Object.values({ ...options, [serverName]: security }).some(
+          (entry) => entry.enabled !== false,
+        );
+  await store.update({
+    id,
+    activeVersionId: latest.id,
+    status: enabled ? "published" : "archived",
+  });
   await closeMcpConnections(resourceId);
-  // Version history may still refer to older credentials; remove secrets only when deleting a connection.
-  return connectionsOf(await ownedClient(id, resourceId)).find((entry) => entry.serverName === serverName)!;
+  await deleteReplacedCredentials(currentEntry, server, resourceId);
+  const saved = connectionsOf(await ownedClient(id, resourceId)).find(
+    (entry) => entry.serverName === serverName,
+  );
+  if (!saved) throw new Error("Saved MCP connection is missing");
+  return saved;
 }
 
-export async function deleteMcpServer(id: string, resourceId?: string): Promise<void> {
+async function deleteReplacedCredentials(
+  previous?: Partial<McpServerConfig>,
+  next?: McpServerConfig,
+  resourceId?: string,
+) {
+  if (!previous?.id) return;
+  const stale: Promise<void>[] = [];
+  for (const kind of ["headers", "env", "client-secret"] as const) {
+    const oldPointer =
+      kind === "headers"
+        ? previous.headerCredential
+        : kind === "env"
+          ? previous.envCredential
+          : previous.oauth?.clientSecretCredential;
+    const pointer =
+      kind === "headers"
+        ? next?.headerCredential
+        : kind === "env"
+          ? next?.envCredential
+          : next?.oauth?.clientSecretCredential;
+    if (oldPointer && oldPointer.credentialRef !== pointer?.credentialRef)
+      stale.push(
+        deleteCredential(oldPointer.credentialRef, mcpCredentialPurpose(previous.id, kind)),
+      );
+  }
+  await Promise.all(stale.map((operation) => operation.catch(() => undefined)));
+  if (
+    !next ||
+    previous.transport !== next.transport ||
+    previous.url !== next.url ||
+    JSON.stringify(previous.oauth) !== JSON.stringify(next.oauth)
+  )
+    await deleteOAuthCredentials(previous.id, resourceId);
+}
+
+export async function deleteMcpServer(
+  id: string,
+  resourceId?: string,
+  managedPlugin = false,
+  keepCredentials = false,
+): Promise<void> {
   const server = (await getMcpConfig(resourceId)).servers.find((entry) => entry.id === id);
   if (!server?.clientId || !server.serverName) throw workError("MCP_SERVER_NOT_FOUND");
-  if (server.builtin) throw workError("MCP_CONFIG_INVALID", { text: "Built-in connections can be disabled, not deleted" });
+  if (server.plugin && !managedPlugin)
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "Remove plugin components through the plugin manager",
+    });
+  if (server.builtin)
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "Built-in connections can be disabled, not deleted",
+    });
   const current = await ownedClient(server.clientId, resourceId);
   const store = await mcpStore();
   const { [server.serverName]: _removed, ...servers } = current.servers;
@@ -246,13 +520,33 @@ export async function deleteMcpServer(id: string, resourceId?: string): Promise<
   else {
     const options = connectionOptions(current);
     delete options[server.serverName];
-    const updated = await store.update({ id: current.id, metadata: { ...current.metadata, [OPTIONS_KEY]: options } });
-    await handleAutoVersioning(store, current.id, "mcpClientId", MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS, current, updated, { servers });
+    const updated = await store.update({
+      id: current.id,
+      metadata: { ...current.metadata, [OPTIONS_KEY]: options },
+    });
+    await handleAutoVersioning(
+      store as unknown as Parameters<typeof handleAutoVersioning>[0],
+      current.id,
+      "mcpClientId",
+      MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS,
+      current,
+      updated,
+      { servers },
+    );
     const latest = await store.getLatestVersion(current.id);
-    if (latest) await store.update({ id: current.id, activeVersionId: latest.id });
+    if (latest && current.status !== "draft")
+      await store.update({
+        id: current.id,
+        activeVersionId: latest.id,
+        status:
+          current.status === "published" &&
+          !Object.keys(servers).some((name) => options[name]?.enabled !== false)
+            ? "archived"
+            : current.status,
+      });
   }
   await closeMcpConnections(resourceId);
-  await deleteOAuthCredentials(server.id, resourceId);
+  if (!keepCredentials) await deleteReplacedCredentials(server, undefined, resourceId);
 }
 
 /** Initialize built-ins for native Studio reads and invalidate live clients after its writes. */
@@ -260,12 +554,72 @@ export async function mcpManagementMiddleware(c: ContextWithMastra, next: () => 
   const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
   if (!resourceId) throw workError("AUTH_REQUIRED");
   await ensureAnysearchConnection(resourceId);
+  const path = c.req.path;
+  const id = path.match(/^\/api\/stored\/mcp-clients\/([^/]+)/)?.[1];
+  if (id === `anysearch-${stableId(scopeOf(resourceId))}`) {
+    if (c.req.method === "DELETE" && path.endsWith(id))
+      throw workError("MCP_CONFIG_INVALID", {
+        text: "Built-in connections can be archived, not deleted",
+      });
+    if (c.req.method === "PATCH") {
+      const body = (await c.req.raw.clone().json()) as {
+        servers?: Record<string, StorageMCPServerConfig>;
+      };
+      if (
+        body.servers &&
+        (Object.keys(body.servers).length !== 1 ||
+          body.servers.anysearch?.type !== "http" ||
+          body.servers.anysearch?.url !== ANYSEARCH_MCP_URL)
+      )
+        throw workError("MCP_CONFIG_INVALID", {
+          text: "The built-in AnySearch endpoint cannot be replaced",
+        });
+    }
+  }
+  const mutation = !["GET", "HEAD"].includes(c.req.method);
+  const previous = mutation && id ? await (await mcpStore()).getByIdResolved(id) : null;
   await next();
-  if (c.res.ok && !["GET", "HEAD"].includes(c.req.method)) await closeMcpConnections(resourceId);
+  if (c.res.ok && mutation) {
+    c.get("mastra").getEditor()?.mcp.clearCache(id);
+    await closeMcpConnections(resourceId);
+    if (previous?.metadata?.[OWNER_KEY] === scopeOf(resourceId)) {
+      const updated = await (await mcpStore()).getByIdResolved(previous.id);
+      const next = new Map(
+        (updated ? connectionsOf(updated) : []).map((server) => [server.id, server]),
+      );
+      for (const server of connectionsOf(previous)) {
+        await deleteReplacedCredentials(server, next.get(server.id), resourceId);
+      }
+    }
+  }
 }
 
-export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {
+export async function summarizeMcpServer(
+  server: McpServerConfig,
+  resourceId?: string,
+): Promise<McpServerSummary> {
+  const runtime = getRuntime(resourceId).clients.get(server.id);
+  const plugin =
+    server.plugin && resourceId
+      ? await getInstalledPlugin(server.plugin.id, resourceId)
+      : undefined;
+  const component = plugin?.current.components.find(
+    (item) => item.id === server.plugin?.componentId,
+  );
+  let configurationError: string | undefined;
+  if (server.plugin && server.enabled) {
+    try {
+      await toDefinition(server, resourceId);
+    } catch (error) {
+      configurationError = errorText(error, "Invalid plugin configuration");
+    }
+  }
   return {
+    configurationError,
+    configurationKeys: component?.configurationKeys,
+    ...(runtime?.hash === JSON.stringify(server)
+      ? { connectionError: runtime.error, toolCount: runtime.toolCount }
+      : {}),
     ...server,
     headerKeys: server.headerKeys ?? [],
     envKeys: server.envKeys ?? [],
@@ -387,7 +741,64 @@ async function resolveSecretRecord(
 async function toDefinition(
   server: McpServerConfig,
   resourceId?: string,
+  preparedPlugin?: InstalledPlugin,
 ): Promise<MastraMCPServerDefinition> {
+  const plugin =
+    preparedPlugin ??
+    (server.plugin && resourceId
+      ? await getInstalledPlugin(server.plugin.id, resourceId)
+      : undefined);
+  const component = plugin?.current.components.find(
+    (item) => item.id === server.plugin?.componentId,
+  );
+  if (
+    server.plugin &&
+    (!plugin ||
+      !component ||
+      !pluginComponentEnabled(plugin, component) ||
+      plugin.current.digest !== server.plugin.digest)
+  )
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "Plugin component is disabled or no longer installed",
+    });
+  const env = await resolveSecretRecord(
+    server.envCredential,
+    mcpCredentialPurpose(server.id, "env"),
+  );
+  const root =
+    plugin && resourceId ? join(pluginVersionDirectory(plugin, resourceId), "source") : undefined;
+  const data =
+    plugin && resourceId ? join(pluginsDirectory(resourceId), plugin.id, "data") : undefined;
+  const expand = (value: string) =>
+    value.replace(/\$\{([^}]+)\}/g, (match, key: string) => {
+      if (
+        (key === "PLUGIN_ROOT" ||
+          (plugin?.current.format !== "portable" && key === "CLAUDE_PLUGIN_ROOT")) &&
+        root
+      )
+        return root;
+      if (
+        (key === "PLUGIN_DATA" ||
+          (plugin?.current.format !== "portable" && key === "CLAUDE_PLUGIN_DATA")) &&
+        data
+      )
+        return data;
+      if (plugin?.current.format === "portable") return match;
+      const [name, fallback] = key.split(":-", 2);
+      const value =
+        env[name] ??
+        (server.inheritDefaultEnv !== false ? process.env[name] : undefined) ??
+        fallback;
+      if (value !== undefined) return value;
+      throw workError("MCP_CONFIG_INVALID", { text: `Missing plugin configuration: ${name}` });
+    });
+  if (
+    server.builtin === "anysearch" &&
+    (server.transport !== "http" || server.url !== ANYSEARCH_MCP_URL)
+  )
+    throw workError("MCP_CONFIG_INVALID", {
+      text: "The built-in AnySearch endpoint cannot be replaced",
+    });
   if (server.transport === "http") {
     const headers = await resolveSecretRecord(
       server.headerCredential,
@@ -395,10 +806,20 @@ async function toDefinition(
     );
     if (!server.url) throw new Error(`MCP 服务 ${server.id} 缺少 URL`);
     const authProvider = await oauthProvider(server, resourceId);
+    const secretHeaders = new Headers(headers);
+    const requestHeaders = new Headers();
+    for (const [key, value] of Object.entries(component?.mcp?.headers ?? {}))
+      requestHeaders.set(
+        key,
+        plugin?.current.format !== "portable" && !secretHeaders.has(key) ? expand(value) : value,
+      );
+    if (server.builtin === "anysearch")
+      requestHeaders.set("X-Anysearch-Client", "mastra-desktop/1.0");
+    secretHeaders.forEach((value, key) => requestHeaders.set(key, value));
     return {
-      url: new URL(server.url),
+      url: new URL(plugin?.current.format !== "portable" ? expand(server.url) : server.url),
       allowedHosts: server.allowedHosts,
-      requestInit: { headers: { ...(server.builtin === "anysearch" ? { "X-Anysearch-Client": "mastra-desktop/1.0" } : {}), ...headers } },
+      requestInit: { headers: requestHeaders },
       timeout: server.timeout,
       onToolError: "throw",
       ...(authProvider ? { authProvider } : {}),
@@ -406,14 +827,42 @@ async function toDefinition(
     };
   }
   if (!server.command) throw new Error(`MCP 服务 ${server.id} 缺少启动命令`);
-  const env = await resolveSecretRecord(
-    server.envCredential,
-    mcpCredentialPurpose(server.id, "env"),
-  );
+  let cwd: string | undefined;
+  let command = server.command;
+  if (root) {
+    const configured = component?.mcp?.cwd;
+    const base =
+      configured && /^\$\{(?:CLAUDE_)?PLUGIN_DATA\}/.test(configured) && data ? data : root;
+    cwd = await realpath(withinRoot(base, configured ? expand(configured) : root));
+    withinRoot(await realpath(base), cwd);
+    if (command.startsWith("./")) command = await realpath(withinRoot(root, command));
+    else if (plugin?.current.format !== "portable") command = expand(command);
+    if (server.command.startsWith("./")) withinRoot(await realpath(root), command);
+  }
   return {
-    command: server.command,
-    args: server.args,
-    env: { ...(server.clientId && server.serverName ? (await ownedClient(server.clientId, resourceId)).servers[server.serverName]?.env : {}), ...env },
+    command,
+    args: root ? server.args?.map(expand) : server.args,
+    cwd,
+    env: {
+      ...(server.clientId && server.serverName
+        ? (await ownedClient(server.clientId, resourceId)).servers[server.serverName]?.env
+        : {}),
+      ...Object.fromEntries(
+        Object.entries(component?.mcp?.env ?? {}).map(([key, value]) => [
+          key,
+          env[key] ?? expand(value),
+        ]),
+      ),
+      ...env,
+      ...(root && data
+        ? {
+            PLUGIN_ROOT: root,
+            PLUGIN_DATA: data,
+            CLAUDE_PLUGIN_ROOT: root,
+            CLAUDE_PLUGIN_DATA: data,
+          }
+        : {}),
+    },
     timeout: server.timeout,
     onToolError: "throw",
     requireToolApproval: server.requireToolApproval,
@@ -421,10 +870,89 @@ async function toDefinition(
   };
 }
 
-async function createClient(servers: McpServerConfig[], resourceId?: string): Promise<MCPClient> {
+/** Materialize plugin-owned connections in the same native store as manually configured MCP. */
+export async function syncPluginMcp(plugin: InstalledPlugin, resourceId: string): Promise<void> {
+  const existing = (await getMcpConfig(resourceId)).servers.filter(
+    (server) => server.plugin?.id === plugin.id,
+  );
+  const current = await getInstalledPlugin(plugin.id, resourceId);
+  const retainedRaw = await readFile(
+    withinRoot(pluginsDirectory(resourceId), `${plugin.id}/configuration.json`),
+    "utf8",
+  ).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
+  const retained = retainedRaw ? z.array(mcpServerConfigSchema).parse(JSON.parse(retainedRaw)) : [];
+  const active = new Set<string>();
+  const next: McpServerConfig[] = [];
+  for (const component of plugin.current.components) {
+    if (component.kind !== "mcp" || !component.supported || !component.mcp) continue;
+    active.add(component.id);
+    const previous =
+      existing.find((server) => server.plugin?.componentId === component.id) ??
+      retained.find((server) => server.plugin?.componentId === component.id);
+    const definition = component.mcp;
+    next.push(
+      mcpServerConfigSchema.parse({
+        ...previous,
+        id: component.id,
+        name: `${plugin.current.name}:${component.name}`,
+        plugin: { id: plugin.id, componentId: component.id, digest: plugin.current.digest },
+        transport: definition.transport,
+        command: definition.command,
+        args: definition.args,
+        url: definition.url,
+        allowedHosts:
+          previous?.allowedHosts ??
+          (definition.url ? [new URL(definition.url).hostname] : undefined),
+        enabled: pluginComponentEnabled(plugin, component),
+        requireToolApproval: previous?.requireToolApproval ?? true,
+      }),
+    );
+  }
+  // Prepare every enabled connection before publishing any next-version binding.
+  if (current && current.current.digest !== plugin.current.digest)
+    for (const server of next)
+      if (server.enabled) {
+        const result = await testMcpServer(server, resourceId, plugin);
+        if (!result.ok)
+          throw workError("MCP_CONNECTION_FAILED", {
+            text: `Update connection failed: ${server.name}`,
+          });
+      }
+  for (const server of next) await saveMcpServer(server, resourceId, true);
+  for (const server of existing)
+    if (server.plugin && !active.has(server.plugin.componentId))
+      await saveMcpServer({ ...server, enabled: false }, resourceId, true);
+}
+
+export async function removePluginMcp(
+  pluginId: string,
+  resourceId: string,
+  keepCredentials = false,
+): Promise<void> {
+  for (const server of (await getMcpConfig(resourceId)).servers)
+    if (server.plugin?.id === pluginId)
+      await deleteMcpServer(server.id, resourceId, true, keepCredentials);
+}
+
+export async function deletePluginMcpCredentials(
+  servers: McpServerConfig[],
+  resourceId: string,
+): Promise<void> {
+  for (const server of servers) await deleteReplacedCredentials(server, undefined, resourceId);
+}
+
+async function createClient(
+  servers: McpServerConfig[],
+  resourceId?: string,
+  preparedPlugin?: InstalledPlugin,
+): Promise<MCPClient> {
   const definitions = await Promise.all(
     servers.map(
-      async (server) => [server.serverName ?? `mcp_${server.id}`, await toDefinition(server, resourceId)] as const,
+      async (server) =>
+        [toolNamespace(server), await toDefinition(server, resourceId, preparedPlugin)] as const,
     ),
   );
   return new MCPClient({
@@ -434,12 +962,16 @@ async function createClient(servers: McpServerConfig[], resourceId?: string): Pr
   });
 }
 
-export async function testMcpServer(server: McpServerConfig, resourceId?: string) {
-  const client = await createClient([server], resourceId);
+export async function testMcpServer(
+  server: McpServerConfig,
+  resourceId?: string,
+  preparedPlugin?: InstalledPlugin,
+) {
+  const client = await createClient([server], resourceId, preparedPlugin);
   try {
     const result = await client.listToolsWithErrors();
     const tools = Object.keys(result.tools);
-    const error = result.errors[server.serverName ?? `mcp_${server.id}`];
+    const error = result.errors[toolNamespace(server)];
     return { ok: !error, toolCount: tools.length, tools, error };
   } catch (error) {
     throw workError("MCP_CONNECTION_FAILED", {
@@ -451,42 +983,129 @@ export async function testMcpServer(server: McpServerConfig, resourceId?: string
   }
 }
 
-async function getConfiguredMcpClient(server: McpServerConfig, resourceId?: string): Promise<MCPClient> {
+async function getConfiguredMcpClient(
+  server: McpServerConfig,
+  resourceId?: string,
+): Promise<MCPClient> {
   const runtime = getRuntime(resourceId);
   const hash = JSON.stringify(server);
   const previous = runtime.clients.get(server.id);
   if (previous?.hash === hash) return previous.promise;
-  const pending = { hash, promise: (async () => {
-    await (await previous?.promise.catch(() => undefined))?.disconnect();
-    return createClient([server], resourceId);
-  })() };
+  const pending = {
+    hash,
+    promise: (async () => {
+      await (await previous?.promise.catch(() => undefined))?.disconnect();
+      return createClient([server], resourceId);
+    })(),
+  };
   runtime.clients.set(server.id, pending);
-  try { return await pending.promise; }
-  catch (error) { if (runtime.clients.get(server.id) === pending) runtime.clients.delete(server.id); throw error; }
+  try {
+    return await pending.promise;
+  } catch (error) {
+    if (runtime.clients.get(server.id) === pending) runtime.clients.delete(server.id);
+    throw error;
+  }
 }
 
 export async function closeMcpConnections(resourceId?: string): Promise<void> {
   const scopes = resourceId === undefined ? [...runtimeByScope.values()] : [getRuntime(resourceId)];
   const pending = scopes.flatMap((scope) => {
     const clients = [...scope.clients.values()];
-    scope.clients.clear(); scope.redirects.clear();
+    scope.clients.clear();
+    scope.redirects.clear();
     return clients.map(async ({ promise }) => (await promise.catch(() => undefined))?.disconnect());
   });
   await Promise.all(pending);
 }
 
-export async function getConfiguredMcpTools(resourceId?: string, builtin?: "anysearch"): Promise<ToolsInput> {
+export async function getConfiguredMcpTools(
+  resourceId?: string,
+  builtin?: "anysearch",
+): Promise<ToolsInput> {
   const config = await getMcpConfig(resourceId);
   const selected = config.servers.filter((server) => server.enabled && server.builtin === builtin);
-  const toolsets = await Promise.all(selected.map(async (server) => {
-    const client = await getConfiguredMcpClient(server, resourceId);
-    const { tools, errors } = await client.listToolsWithErrors();
-    if (Object.keys(errors).length) throw workError("MCP_CONNECTION_FAILED", { text: `${server.name}: ${Object.values(errors).join("; ")}` });
-    if (!server.tools) return tools;
-    const prefix = `${server.serverName}_`;
-    return Object.fromEntries(Object.entries(tools).filter(([name]) => Object.hasOwn(server.tools ?? {}, name.slice(prefix.length))));
-  }));
-  return Object.assign({}, ...toolsets);
+  const outcomes = await Promise.allSettled(
+    selected.map(async (server) => {
+      const client = await getConfiguredMcpClient(server, resourceId);
+      const runtime = getRuntime(resourceId).clients.get(server.id);
+      try {
+        const { tools, errors } = await client.listToolsWithErrors();
+        if (Object.keys(errors).length)
+          throw workError("MCP_CONNECTION_FAILED", {
+            text: `${server.name}: ${Object.values(errors).join("; ")}`,
+          });
+        const prefix = `${toolNamespace(server)}_`;
+        const selectedTools = !server.tools
+          ? tools
+          : Object.fromEntries(
+              Object.entries(tools).flatMap(([name, tool]) => {
+                const config = server.tools?.[name.slice(prefix.length)];
+                return config
+                  ? [
+                      [
+                        name,
+                        config.description ? { ...tool, description: config.description } : tool,
+                      ],
+                    ]
+                  : [];
+              }),
+            );
+        if (runtime) {
+          runtime.error = undefined;
+          runtime.toolCount = Object.keys(selectedTools).length;
+        }
+        return Object.fromEntries(
+          Object.entries(selectedTools).map(([name, tool]) => {
+            const execute = tool.execute;
+            const ownership = server.plugin;
+            if (!ownership || !execute) return [name, tool];
+            return [
+              name,
+              {
+                ...tool,
+                execute: async (...args: Parameters<typeof execute>) => {
+                  const plugin = resourceId
+                    ? await getInstalledPlugin(ownership.id, resourceId)
+                    : undefined;
+                  const component = plugin?.current.components.find(
+                    (item) => item.id === server.plugin?.componentId,
+                  );
+                  if (
+                    !plugin ||
+                    !component ||
+                    !pluginComponentEnabled(plugin, component) ||
+                    plugin.current.digest !== server.plugin?.digest
+                  )
+                    throw workError("MCP_CONFIG_INVALID", {
+                      text: "Plugin tool is no longer available; refresh the conversation tools",
+                    });
+                  return execute(...args);
+                },
+              },
+            ];
+          }),
+        );
+      } catch (error) {
+        if (runtime) {
+          runtime.error = errorText(error);
+          runtime.toolCount = undefined;
+        }
+        throw error;
+      }
+    }),
+  );
+  const tools: ToolsInput = {};
+  for (const [index, outcome] of outcomes.entries()) {
+    if (outcome.status === "fulfilled") Object.assign(tools, outcome.value);
+    else {
+      if (builtin) throw outcome.reason;
+      console.warn(
+        `MCP connection ${selected[index].name} is unavailable`,
+        errorText(outcome.reason),
+      );
+    }
+  }
+  return tools;
 }
 
 /** Start the official MCPClient loopback OAuth flow and expose its redirect URL. */
@@ -514,7 +1133,7 @@ export async function authenticateMcpServer(
     runtime.redirects.set(serverId, redirect);
   }
   // SDK owns the per-server authentication task; this map only delivers its browser URL.
-  const authentication = client.authenticate(server.serverName ?? `mcp_${serverId}`).catch((error: unknown) => {
+  const authentication = client.authenticate(toolNamespace(server)).catch((error: unknown) => {
     throw workError("MCP_CONNECTION_FAILED", {
       text: errorText(error, "MCP OAuth 授权失败"),
       cause: error,

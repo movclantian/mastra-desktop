@@ -351,13 +351,14 @@ function createThreadSession(
   };
   const request = async (command: () => Promise<unknown>) => {
     let submitted = false;
+    failed = false;
+    commandPending = true;
+    // Connecting and its initial idle snapshot are part of the pending command.
+    setStatus("submitted");
     try {
       await connect();
       if (disposed) throw new DOMException("Session disposed", "AbortError");
-      failed = false;
-      commandPending = true;
       awaitingRun = true;
-      setStatus("submitted");
       submitted = true;
       await command();
       commandPending = false;
@@ -373,9 +374,12 @@ function createThreadSession(
       );
     } catch (error) {
       commandPending = false;
-      if (submitted && !(error instanceof DOMException && error.name === "AbortError")) {
+      awaitingRun = false;
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setStatus(store.getState().native?.isRunning || workflowStreaming ? "streaming" : "ready");
+      } else {
         fail(error);
-        if (isConnectionError(error)) reconcile();
+        if (submitted && isConnectionError(error)) reconcile();
       }
       throw error;
     }

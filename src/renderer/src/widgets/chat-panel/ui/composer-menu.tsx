@@ -118,7 +118,7 @@ export function ComposerMenu({
   });
   const availableSkills = useQuery({
     queryKey: ["composer-skills", userId],
-    queryFn: () => fetchChatSkills<{ name: string; description: string }>(),
+    queryFn: () => fetchChatSkills<{ id: string; displayName: string; description: string }>(),
     enabled: open,
   });
   const mcp = useQuery({
@@ -249,20 +249,20 @@ export function ComposerMenu({
                   {availableSkills.data?.length
                     ? availableSkills.data.map((skill) => (
                         <DropdownMenuCheckboxItem
-                          key={skill.name}
-                          checked={skills.includes(skill.name)}
-                          disabled={!skills.includes(skill.name) && skills.length >= 4}
+                          key={skill.id}
+                          checked={skills.includes(skill.id)}
+                          disabled={!skills.includes(skill.id) && skills.length >= 4}
                           closeOnClick={false}
                           onCheckedChange={(checked) =>
                             onSkillsChange(
                               checked
-                                ? [...skills, skill.name]
-                                : skills.filter((name) => name !== skill.name),
+                                ? [...skills, skill.id]
+                                : skills.filter((name) => name !== skill.id),
                             )
                           }
                         >
                           <span className="min-w-0">
-                            <span className="block break-all">{skill.name}</span>
+                            <span className="block break-all">{skill.displayName}</span>
                             <span className="block whitespace-normal break-words text-xs text-muted-foreground">
                               {skill.description}
                             </span>
@@ -461,7 +461,7 @@ export function ChatApprovalSelector() {
         render={
           <PromptInputButton
             size="sm"
-            variant="ghost"
+            variant="outline"
             disabled={saving}
             aria-label={`${t("chat:approvals.title")}: ${label}`}
             title={`${t("chat:approvals.title")}: ${label}`}

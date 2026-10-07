@@ -4,13 +4,15 @@ import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import {
   authenticateMcpServer,
+  deleteMcpServer,
   getMcpConfig,
   mcpServerConfigSchema,
-  saveMcpConfig,
+  saveMcpServer,
   summarizeMcpServer,
   testMcpServer,
 } from "../connections/mcp";
 import { workError, workValidationError } from "../errors";
+import { listInstalledPlugins, withPluginOperation } from "../plugins/registry";
 
 const serverIdSchema = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/) });
 const serverBodySchema = z.object({ server: mcpServerConfigSchema }).strict();
@@ -23,7 +25,26 @@ export const mcpConfigRoute = createRoute({
   onValidationError: workValidationError,
   handler: async ({ requestContext }) => {
     const config = await getMcpConfig(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
-    return { servers: config.servers.map(summarizeMcpServer) };
+    const plugins = await listInstalledPlugins(
+      requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
+    );
+    const visible = config.servers.filter(
+      (server) =>
+        !server.plugin ||
+        plugins.some(
+          (plugin) =>
+            plugin.id === server.plugin?.id &&
+            plugin.current.digest === server.plugin.digest &&
+            plugin.current.components.some((component) => component.id === server.id),
+        ),
+    );
+    return {
+      servers: await Promise.all(
+        visible.map((server) =>
+          summarizeMcpServer(server, requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+        ),
+      ),
+    };
   },
 });
 
@@ -49,14 +70,15 @@ export const saveMcpConfigRoute = createRoute({
   responseType: "json",
   bodySchema: serverBodySchema,
   onValidationError: workValidationError,
-  handler: async ({ server, requestContext }) => {
+  handler: async ({ server, requestContext, mastra }) => {
     const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const config = await getMcpConfig(resourceId);
-    await saveMcpConfig(
-      { servers: [...config.servers.filter((item) => item.id !== server.id), server] },
-      resourceId,
-    );
-    return { server: summarizeMcpServer(server) };
+    const saved = server.plugin
+      ? await withPluginOperation(resourceId, server.plugin.id, () =>
+          saveMcpServer(server, resourceId),
+        )
+      : await saveMcpServer(server, resourceId);
+    mastra.getEditor()?.mcp.clearCache(saved.clientId);
+    return { server: await summarizeMcpServer(saved, resourceId) };
   },
 });
 
@@ -68,14 +90,10 @@ export const deleteMcpConfigRoute = createRoute({
   responseType: "json",
   pathParamSchema: serverIdSchema,
   onValidationError: workValidationError,
-  handler: async ({ id, requestContext }) => {
+  handler: async ({ id, requestContext, mastra }) => {
     const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const config = await getMcpConfig(resourceId);
-    if (!config.servers.some((server) => server.id === id)) throw workError("MCP_SERVER_NOT_FOUND");
-    await saveMcpConfig(
-      { servers: config.servers.filter((server) => server.id !== id) },
-      resourceId,
-    );
+    await deleteMcpServer(id, resourceId);
+    mastra.getEditor()?.mcp.clearCache();
     return { ok: true };
   },
 });

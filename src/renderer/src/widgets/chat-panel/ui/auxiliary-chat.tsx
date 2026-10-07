@@ -3,6 +3,7 @@ import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { useInvalidateThreads, useThreadsQuery } from "@/entities/workbench/model/queries/threads";
+import type { WorkThread } from "@/entities/workbench/model/types";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
@@ -31,14 +32,25 @@ import {
 
 /** A regular controller Session with its own thread; quotes are the only imported conversation context. */
 export function AuxiliaryChat({ threadId, active }: { threadId: string; active: boolean }) {
-  const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
   const threadsQuery = useThreadsQuery(userId);
   const thread = threadsQuery.data?.find((item) => item.id === threadId);
+  return thread ? <AuxiliaryThreadChat thread={thread} userId={userId} active={active} /> : null;
+}
+
+function AuxiliaryThreadChat({
+  thread,
+  userId,
+  active,
+}: {
+  thread: WorkThread;
+  userId: string;
+  active: boolean;
+}) {
+  const { t } = useTranslation();
+  const threadId = thread.id;
   const parentThreadId = useWorkbenchStore((state) => state.lastKnownThreadId);
-  const workspacePath = threadsQuery.data?.find((item) => item.id === parentThreadId)?.metadata
-    .workspacePath;
   const invalidateThreads = useInvalidateThreads();
   const quotes = useMessageQuotes(threadId);
   const removeQuotes = useWorkbenchStore((state) => state.removeMessageQuotes);
@@ -53,7 +65,7 @@ export function AuxiliaryChat({ threadId, active }: { threadId: string; active: 
   });
   const { getThreadSession } = useThreadSessions(
     userId,
-    () => (workspacePath ? { workspacePath } : {}),
+    () => (parentThreadId ? { workspaceSourceThreadId: parentThreadId } : {}),
     (id, busy) => useWorkbenchStore.getState().setThreadBusy(id, busy),
     () => {
       void interactionsQuery.refetch();
@@ -198,9 +210,10 @@ export function AuxiliaryChat({ threadId, active }: { threadId: string; active: 
                 variant="secondary"
                 size="icon-sm"
                 aria-label={t("chat:selection.stop")}
-                onClick={() =>
-                  void abortThread(threadId, userId).catch((error) => toast.error(String(error)))
-                }
+                onClick={() => {
+                  if (session.store.getState().connection !== "connected") session.disconnect();
+                  void abortThread(threadId, userId).catch((error) => toast.error(String(error)));
+                }}
               >
                 <SquareIcon />
               </Button>

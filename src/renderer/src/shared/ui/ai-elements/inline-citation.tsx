@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { cn } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
@@ -27,32 +27,45 @@ export const InlineCitationCard = (props: InlineCitationCardProps) => <HoverCard
 
 export type InlineCitationCardTriggerProps = ComponentProps<typeof Badge> & {
   sources: string[];
+  label?: ReactNode;
 };
 
 export const InlineCitationCardTrigger = ({
   sources,
   className,
+  label,
   ...props
 }: InlineCitationCardTriggerProps) => (
   <HoverCardTrigger
     closeDelay={0}
     delay={0}
-    render={<Badge className={cn("ml-1 rounded-full", className)} variant="secondary" {...props} />}
+    render={
+      <Badge
+        render={<button type="button" />}
+        className={cn("ml-1 cursor-pointer rounded-full", className)}
+        variant="secondary"
+        {...props}
+      />
+    }
   >
-    {sources[0] ? (
-      <>
-        {new URL(sources[0]).hostname} {sources.length > 1 && `+${sources.length - 1}`}
-      </>
-    ) : (
-      "unknown"
-    )}
+    {label ??
+      (sources[0] ? (
+        <>
+          {new URL(sources[0]).hostname} {sources.length > 1 && `+${sources.length - 1}`}
+        </>
+      ) : (
+        "unknown"
+      ))}
   </HoverCardTrigger>
 );
 
 export type InlineCitationCardBodyProps = ComponentProps<"div">;
 
 export const InlineCitationCardBody = ({ className, ...props }: InlineCitationCardBodyProps) => (
-  <HoverCardContent className={cn("relative w-80 p-0", className)} {...props} />
+  <HoverCardContent
+    className={cn("relative w-80 max-w-[calc(100vw-2rem)] p-0", className)}
+    {...props}
+  />
 );
 
 const CarouselApiContext = createContext<CarouselApi | undefined>(undefined);

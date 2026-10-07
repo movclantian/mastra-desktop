@@ -4,6 +4,7 @@ import { Agent } from "@mastra/core/agent";
 import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import { askUserTool, createTool, submitPlanTool } from "@mastra/core/tools";
+import type { ToolSet } from "ai";
 import type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
 import { getComputerTools } from "../connections/computer";
@@ -11,6 +12,7 @@ import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
 import { resolveAgentModel } from "../models/providers";
+import { listPluginSkills } from "../plugins/registry";
 import {
   libraryDocumentChunkerTool,
   libraryGraphSearchTool,
@@ -180,12 +182,18 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
               ? async (input, context) =>
                   tool.execute?.(input, { ...context, observe: context.observe })
               : undefined,
-            requireApproval: (args, context) =>
-              requestToolApproval({
+            requireApproval: async (args, context) => {
+              const required = await requestToolApproval({
                 toolName: name,
                 args,
                 requestContext: context?.requestContext,
-              }),
+              });
+              if (required || !(name.startsWith("mcp_") || name.startsWith("anysearch_")))
+                return required;
+              return typeof tool.requireApproval === "function"
+                ? tool.requireApproval(args, context)
+                : tool.requireApproval === true;
+            },
           }),
     ]),
   );
@@ -193,6 +201,7 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
 
 /** An unattended run exposes only tools authorized by its persisted mode and permission rules. */
 function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition) {
+  const guarded = new WeakSet<object>();
   return {
     id: "scoped-tool-policy",
     processInputStep({ requestContext, tools, activeTools }) {
@@ -200,7 +209,27 @@ function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition
       if (!requestContext) return;
       const rules = parsePermissionRules(requestContext.get(PERMISSION_RULES_CONTEXT_KEY));
       const mode = resolveRequestMode(requestContext);
+      const scopedTools = { ...tools } as ToolSet;
+      for (const name of ["skill", "skill_read"]) {
+        const tool = scopedTools[name];
+        const execute = tool?.execute;
+        if (!execute || guarded.has(execute)) continue;
+        const guardedExecute: typeof execute = async (input, context) => {
+          const runtimeName = name === "skill" ? input.name : input.skillName;
+          if (typeof runtimeName === "string" && /^skill-[a-f0-9]{20}$/.test(runtimeName)) {
+            const skill = (await listPluginSkills(userIdFromContext(requestContext))).find(
+              (item) => item.name === runtimeName,
+            );
+            if (!skill?.enabled)
+              throw new Error("This plugin skill is disabled or no longer installed");
+          }
+          return execute(input, context);
+        };
+        guarded.add(guardedExecute);
+        scopedTools[name] = { ...tool, execute: guardedExecute };
+      }
       return {
+        tools: scopedTools,
         activeTools: resolveAgentActiveTools({
           tools: Object.keys(tools ?? {}),
           activeTools,

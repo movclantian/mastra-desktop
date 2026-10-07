@@ -13,11 +13,10 @@
  * - docs/en/docs/sandbox/search.mdx(bm25/autoIndexPaths)、lsp.mdx、skills.mdx(skills 目录)
  */
 import { mkdirSync } from "node:fs";
-import { lstat, readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { lstat, rm } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentControllerRequestContext, Session } from "@mastra/core/agent-controller";
 import type { Mastra } from "@mastra/core/mastra";
-import { validateSkillContent } from "@mastra/core/skills";
 import type { ToolExecutionContext } from "@mastra/core/tools";
 import {
   LocalFilesystem,
@@ -29,11 +28,12 @@ import {
   type WorkspaceToolConfig,
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
-import matter from "gray-matter";
 import { z } from "zod";
 import { MODE_ID_CONTEXT_KEY } from "../agents/permissions";
+import { listPluginSkills } from "../plugins/registry";
 import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
+  appStorage,
   clampInt,
   clampNumber,
   cleanStrings,
@@ -65,10 +65,6 @@ import "vscode-languageserver-protocol";
 const WORKSPACE_CONFIG_KEY = "workspace";
 const RECENT_WORKSPACES_KEY = "recent-workspaces";
 const RECENT_WORKSPACES_LIMIT = 12;
-const MANAGED_SKILLS_DIRECTORY = join(
-  getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
-  "skills",
-);
 
 /** chat 路由 → Agent 动态 workspace 函数传递线程工作区路径的 RequestContext key */
 export const WORKSPACE_PATH_CONTEXT_KEY = "mastra-work:workspace-path";
@@ -511,37 +507,11 @@ export function ensureDirectory(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
-/** 全局技能目录:上传一次后可被所有线程的 Agent 发现。 */
-export function getManagedSkillsDirectory(resourceId?: string): string {
-  const directory = resourceId
-    ? join(MANAGED_SKILLS_DIRECTORY, "users", scopePathSegment(resourceId))
-    : MANAGED_SKILLS_DIRECTORY;
-  ensureDirectory(directory);
-  return directory;
-}
-
 /** Return enabled managed skill directories for a request-scoped Workspace. */
 export async function getManagedSkillPaths(resourceId?: string): Promise<string[]> {
-  const root = getManagedSkillsDirectory(resourceId);
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  const paths: string[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const directory = join(root, entry.name);
-    try {
-      const skillFile = join(directory, "SKILL.md");
-      if ((await stat(skillFile)).size > 1024 * 1024) continue;
-      const content = await readFile(skillFile, "utf8");
-      if (
-        validateSkillContent({ content, directoryName: entry.name }).valid &&
-        matter(content, {}).data.enabled !== false
-      )
-        paths.push(directory);
-    } catch {
-      // Ignore missing or unreadable skills when resolving an agent's workspace.
-    }
-  }
-  return paths;
+  return (await listPluginSkills(resourceId))
+    .filter((skill) => skill.enabled)
+    .map((skill) => skill.path);
 }
 
 /** Agent tools and the editor share the same tenant-scoped filesystem access. */
@@ -558,7 +528,6 @@ export function createWorkspaceFilesystem(
     allowedPaths: [
       ...config.allowedPaths,
       ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
-      getManagedSkillsDirectory(resourceId),
     ],
   });
 }
@@ -664,10 +633,7 @@ export async function getThreadWorkspace(
       ...(lsp ? { lsp } : {}),
       tools: workspaceTools,
       skillSource: new LocalSkillSource({ basePath: workspacePath }),
-      skills: async ({ requestContext }) => {
-        const scopedResourceId = resourceId ?? userIdFromContext(requestContext);
-        return [...config.skillsPaths, ...(await getManagedSkillPaths(scopedResourceId))];
-      },
+      skills: config.skillsPaths,
       ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
     };
     const workspace = new Workspace(workspaceConfig) as Workspace;
@@ -703,11 +669,27 @@ export async function deleteThreadWorkspace(
         throw new Error("Cannot delete a workspace while its thread is running");
       await destroyWorkspace(runtime, key, entry);
     }
-    await rm(implicitPath, { recursive: true, force: true });
-    if (meta?.workspacePath && !meta.workspaceExplicit) {
-      const root = resolve(runtime.config.threadsRoot);
-      const path = resolve(meta.workspacePath);
-      if (path.startsWith(`${root}${sep}`)) await rm(path, { recursive: true, force: true });
+    const memory = await appStorage.getStore("memory");
+    if (!memory) throw new Error("Memory storage is not configured");
+    const { threads } = await memory.listThreads({ filter: { resourceId }, perPage: false });
+    const remainingPaths = threads.flatMap((thread) =>
+      thread.id !== threadId && typeof thread.metadata?.workspacePath === "string"
+        ? [resolve(thread.metadata.workspacePath)]
+        : [],
+    );
+    const inside = (root: string, path: string) => {
+      const part = relative(root, path);
+      return part !== ".." && !part.startsWith(`..${sep}`) && !isAbsolute(part);
+    };
+    const candidates = new Set([
+      resolve(implicitPath),
+      ...(meta?.workspacePath && !meta.workspaceExplicit ? [resolve(meta.workspacePath)] : []),
+    ]);
+    const root = resolve(runtime.config.threadsRoot);
+    for (const path of candidates) {
+      if (relative(root, path) === "" || !inside(root, path)) continue;
+      if (remainingPaths.some((other) => inside(path, other) || inside(other, path))) continue;
+      await rm(path, { recursive: true, force: true });
     }
   });
   await deleteWorkspaceChanges(threadId, resourceId);

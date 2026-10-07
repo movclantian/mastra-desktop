@@ -12,7 +12,7 @@ export const CredentialPurposeSchema = z
   .min(1)
   .max(256)
   .regex(
-    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl|anysearch)|browser:firecrawl|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32})$/,
+    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl)|browser:firecrawl|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32})$/,
   );
 export const CredentialValueSchema = z.string().min(1).max(65_536);
 
@@ -92,7 +92,7 @@ export type CredentialPurpose = z.infer<typeof CredentialPurposeSchema>;
 
 export const providerCredentialPurpose = (providerId: string) =>
   CredentialPurposeSchema.parse(`provider:${providerId}`);
-export const searchCredentialPurpose = (engine: "tavily" | "firecrawl" | "anysearch") =>
+export const searchCredentialPurpose = (engine: "tavily" | "firecrawl") =>
   CredentialPurposeSchema.parse(`search:${engine}`);
 export const mcpCredentialPurpose = (
   serverId: string,

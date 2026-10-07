@@ -113,7 +113,14 @@ export function ChatModelSelector() {
     <DropdownMenu>
       {/* min-w-0 允许模型标签在工具栏内收缩并截短 */}
       <DropdownMenuTrigger
-        render={<PromptInputButton aria-label={t("chat:models.selectModel")} className="min-w-0" />}
+        render={
+          <PromptInputButton
+            aria-label={t("chat:models.selectModel")}
+            className="min-w-0"
+            size="sm"
+            variant="outline"
+          />
+        }
       >
         {selectedProvider && modelSelection ? (
           <>

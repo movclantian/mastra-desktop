@@ -5,7 +5,12 @@ import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 
-import { agentProfilesRoute, assistAgentProfileRoute, deleteAgentProfileRoute } from "./agents";
+import {
+  agentProfileSkillsRoute,
+  agentProfilesRoute,
+  assistAgentProfileRoute,
+  deleteAgentProfileRoute,
+} from "./agents";
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
@@ -48,6 +53,7 @@ import {
 } from "./mcp";
 import { memoryConfigRoute, memoryProfileRoute, saveMemoryConfigRoute } from "./memory";
 import { messageQueueRoutes } from "./message-queue";
+import { pluginRoutes } from "./plugins";
 import {
   listProviderModelsRoute,
   modelsCatalogRoute,
@@ -62,23 +68,10 @@ import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
 import { signalRoutes } from "./signals";
 import {
-  deleteSkillMarketplaceRoute,
-  deleteSkillRoute,
-  importSkillRoute,
-  installMarketplaceSkillRoute,
-  installSkillsShSkillRoute,
-  marketplaceSkillRoute,
-  saveSkillMarketplaceRoute,
-  skillMarketplacesRoute,
-  skillRegistryRoute,
-  skillRoute,
-  skillsRoute,
   skillsShAuditRoute,
   skillsShCuratedRoute,
   skillsShListRoute,
   skillsShSkillRoute,
-  updateSkillRoute,
-  uploadSkillRoute,
 } from "./skills";
 import { storageInfoRoute } from "./storage";
 import { teamWorkflowRoutes } from "./team-runs";
@@ -99,6 +92,7 @@ import {
 } from "./workspace";
 
 export const workRoutes = [
+  ...pluginRoutes,
   ...teamWorkflowRoutes,
   contentObjectRoute,
   inlineCompletionRoute,
@@ -109,6 +103,7 @@ export const workRoutes = [
   authMeRoute,
   ...backgroundTaskRoutes,
   agentProfilesRoute,
+  agentProfileSkillsRoute,
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
@@ -173,21 +168,8 @@ export const workRoutes = [
   toolsConfigRoute,
   saveToolsConfigRoute,
   usageSummaryRoute,
-  skillsRoute,
-  skillRegistryRoute,
-  deleteSkillMarketplaceRoute,
-  installMarketplaceSkillRoute,
-  installSkillsShSkillRoute,
-  marketplaceSkillRoute,
-  saveSkillMarketplaceRoute,
-  skillMarketplacesRoute,
-  skillRoute,
   skillsShAuditRoute,
   skillsShCuratedRoute,
   skillsShListRoute,
   skillsShSkillRoute,
-  uploadSkillRoute,
-  importSkillRoute,
-  updateSkillRoute,
-  deleteSkillRoute,
 ];

@@ -69,6 +69,7 @@ export interface SessionRouteResult {
 export const workbenchMessageOptionsSchema = workMessageMetadataSchema
   .extend({
     workspacePath: z.string().optional(),
+    workspaceSourceThreadId: z.string().trim().min(1).optional(),
     agentProfileId: z.string().optional(),
     attachmentTokenBudget: z.number().finite().nonnegative().optional(),
     attachmentCapabilities: z
@@ -103,8 +104,15 @@ export async function prepareWorkbenchMessage(
   const patch: ThreadMetadata = {};
   if (metadata.agentProfileId !== profile.id) patch.agentProfileId = profile.id;
   if (!metadata.workspacePath) {
+    const source = options.workspaceSourceThreadId
+      ? await getOwnedThread(memory, options.workspaceSourceThreadId, resourceId)
+      : undefined;
+    if (options.workspaceSourceThreadId && !source) throw workError("THREAD_NOT_FOUND");
     const requested = options.workspacePath;
-    if (requested && existsSync(requested) && statSync(requested).isDirectory()) {
+    if (source?.metadata?.workspacePath) {
+      patch.workspacePath = String(source.metadata.workspacePath);
+      patch.workspaceExplicit = source.metadata.workspaceExplicit === true;
+    } else if (requested && existsSync(requested) && statSync(requested).isDirectory()) {
       patch.workspacePath = requested;
       patch.workspaceExplicit = true;
       await addRecentWorkspace(requested, resourceId);

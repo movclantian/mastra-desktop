@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { basename } from "node:path";
 import * as bottts from "@dicebear/bottts";
 import { createAvatar } from "@dicebear/core";
 import type { Agent } from "@mastra/core/agent";
@@ -17,8 +16,8 @@ import {
   validateAgentTeam,
 } from "../../shared/agent-contract";
 import { workError } from "../errors";
+import { listPluginSkills } from "../plugins/registry";
 import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
-import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace/workspace-manager";
 import { compileTeamWorkflow } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
@@ -190,6 +189,29 @@ export async function deleteAgentProfile(id: string, resourceId?: string): Promi
   memberCache.delete(scopedProfileKey(id, resourceId));
 }
 
+export async function setAgentProfileSkills(
+  id: string,
+  skills: string[],
+  memberId: string | undefined,
+  resourceId: string,
+): Promise<AgentProfile> {
+  if (id === DEFAULT_AGENT_PROFILE_ID)
+    throw workError("VALIDATION_FAILED", { text: "The default Agent uses all enabled skills" });
+  await assertProfileIdle(id, resourceId);
+  const profiles = await listAgentProfiles(resourceId);
+  const profile = profiles.find((item) => item.id === id);
+  if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
+  const target = memberId ? profile.members.find((item) => item.id === memberId) : profile;
+  if (!target) throw workError("VALIDATION_FAILED", { text: "Agent member not found" });
+  const available = new Set((await listPluginSkills(resourceId)).map((skill) => skill.id));
+  if (skills.some((skill) => !available.has(skill) && !target.skills.includes(skill)))
+    throw workError("VALIDATION_FAILED", { text: "Skill component not found" });
+  target.skills = [...new Set(skills)];
+  profile.updatedAt = new Date().toISOString();
+  await saveProfiles(profiles, resourceId);
+  return profile;
+}
+
 type ProfileAgentFactory = (profile: AgentProfile, resourceScope?: string) => Agent;
 type MemberAgentFactory = (
   profile: AgentProfile,
@@ -348,18 +370,18 @@ export async function resolveManagedSkillPaths(
   names: string[] | undefined,
   resourceId?: string,
 ): Promise<string[]> {
-  const requested = names
-    ? new Set(names.map((name) => name.trim().toLowerCase()).filter(Boolean))
-    : undefined;
+  const requested = names ? new Set(names) : undefined;
   if (requested?.size === 0) return [];
-  return (await getManagedSkillPaths(resourceId)).filter(
-    (directory) => !requested || requested.has(basename(directory).toLowerCase()),
-  );
+  return (await listPluginSkills(resourceId))
+    .filter((skill) => skill.enabled && (!requested || requested.has(skill.id)))
+    .map((skill) => skill.path);
 }
 
 /** Read an explicitly activated managed skill through the native skill resolver. */
 export async function loadManagedSkill(name: string, resourceId?: string) {
-  const paths = await resolveManagedSkillPaths([name], resourceId);
-  if (!paths.length) return undefined;
-  return (await resolveAgentSkills(paths).get(name)) ?? undefined;
+  const skill = (await listPluginSkills(resourceId)).find(
+    (item) => item.id === name && item.enabled,
+  );
+  if (!skill) return undefined;
+  return (await resolveAgentSkills([skill.path]).get(skill.name)) ?? undefined;
 }

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { usePluginSkills } from "@/entities/skill";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
@@ -141,6 +142,8 @@ function PromptInputAttachments() {
 }
 
 interface SkillOption {
+  id: string;
+  displayName: string;
   name: string;
   description: string;
 }
@@ -207,7 +210,7 @@ function SkillAwareTextarea({
   const visibleSkills = skills.filter((skill) => {
     return (
       !deferredQuery ||
-      skill.name.toLocaleLowerCase().includes(deferredQuery) ||
+      skill.displayName.toLocaleLowerCase().includes(deferredQuery) ||
       skill.description.toLocaleLowerCase().includes(deferredQuery)
     );
   });
@@ -228,14 +231,14 @@ function SkillAwareTextarea({
   };
 
   const selectSkill = (skill: SkillOption) => {
-    if (!selectedSkills.includes(skill.name) && selectedSkills.length >= 4) {
+    if (!selectedSkills.includes(skill.id) && selectedSkills.length >= 4) {
       toast.error(t("chat:composer.skillLimit"));
       return;
     }
     const prefix = removeCommandToken("/").trimEnd();
-    const nextSkills = selectedSkills.includes(skill.name)
+    const nextSkills = selectedSkills.includes(skill.id)
       ? selectedSkills
-      : [...selectedSkills, skill.name];
+      : [...selectedSkills, skill.id];
     controller.textInput.setInput(prefix ? `${prefix} ` : "");
     onChangeSkills(nextSkills);
     setCommand(null);
@@ -267,7 +270,7 @@ function SkillAwareTextarea({
       {selectedSkills.length > 0 ? (
         <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
           {selectedSkills.map((name) => {
-            const skill = skills.find((item) => item.name === name);
+            const skill = skills.find((item) => item.id === name);
             return (
               <PromptInputHoverCard key={name}>
                 <PromptInputHoverCardTrigger
@@ -279,7 +282,9 @@ function SkillAwareTextarea({
                   }
                 >
                   <SparklesIcon className="size-3 shrink-0" />
-                  <span className="max-w-52 truncate">{name}</span>
+                  <span className="max-w-52 truncate">
+                    {skill?.displayName ?? t("plugins:unavailable")}
+                  </span>
                   <button
                     aria-label={t("chat:prompt.removeSkill", { name })}
                     className="rounded-sm hover:bg-primary/15"
@@ -364,13 +369,13 @@ function SkillAwareTextarea({
                   <PromptInputCommandGroup heading={t("chat:skillsAndCommands")}>
                     {visibleSkills.map((skill) => (
                       <PromptInputCommandItem
-                        key={skill.name}
+                        key={skill.id}
                         onSelect={() => selectSkill(skill)}
-                        value={skill.name}
+                        value={skill.id}
                       >
                         <SparklesIcon className="size-4 shrink-0 text-primary" />
                         <span className="min-w-0">
-                          <span className="block truncate font-medium">/{skill.name}</span>
+                          <span className="block truncate font-medium">/{skill.displayName}</span>
                           <span className="block whitespace-normal break-words text-xs text-muted-foreground">
                             {skill.description}
                           </span>
@@ -505,6 +510,8 @@ function QueuedRequestItem({
   available?: boolean;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const skills = usePluginSkills(user?.id);
   const [text, setText] = React.useState(request.text);
   const [pending, setPending] = React.useState(false);
   const pendingRef = React.useRef(false);
@@ -602,7 +609,9 @@ function QueuedRequestItem({
               variant="secondary"
               className="max-w-full break-all whitespace-normal"
             >
-              /{name}
+              /
+              {skills.data?.find((skill) => skill.id === name)?.displayName ??
+                t("plugins:unavailableSkill")}
             </Badge>
           ))}
           {request.fileReferences.map((file) => (

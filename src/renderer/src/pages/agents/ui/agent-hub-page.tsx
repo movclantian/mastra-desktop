@@ -370,40 +370,22 @@ export function AgentHubPage() {
           if (!open) setInspected(null);
         }}
       >
-        <DialogContent className="flex h-[min(48rem,calc(100dvh-2rem))] max-w-5xl flex-col overflow-hidden sm:max-w-5xl">
-          <DialogHeader>
+        <DialogContent
+          className={cn(
+            "flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden",
+            inspected?.type === "team"
+              ? "h-[min(48rem,calc(100dvh-2rem))] sm:max-w-5xl"
+              : "sm:max-w-2xl",
+          )}
+        >
+          <DialogHeader className="shrink-0 pr-6">
             <DialogTitle>{t("agentHub:profileDetails")}</DialogTitle>
             <DialogDescription>{t("agentHub:profileDetailsDescription")}</DialogDescription>
           </DialogHeader>
           {inspected ? (
-            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-1 gap-3 md:grid-cols-[minmax(10rem,1fr)_minmax(0,3fr)]">
-              <ScrollArea className="min-h-0 max-h-36 rounded-md border md:max-h-none">
-                <div className="grid gap-1 p-1">
-                  {agents
-                    .filter((profile) => profile.type === inspected.type)
-                    .map((profile) => (
-                      <button
-                        type="button"
-                        key={profile.id}
-                        onClick={() => setInspected(profile)}
-                        aria-pressed={profile.id === inspected.id}
-                        className={cn(
-                          "flex min-w-0 items-center gap-2 rounded-md p-2 text-left text-sm hover:bg-muted",
-                          profile.id === inspected.id && "bg-muted",
-                        )}
-                      >
-                        <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
-                        <span className="min-w-0 break-words">{profile.displayName}</span>
-                      </button>
-                    ))}
-                </div>
-              </ScrollArea>
-              <ScrollArea className="min-h-0 min-w-0">
-                <AgentProfileDetails profile={inspected} />
-              </ScrollArea>
-            </div>
+            <AgentProfileDetails key={inspected.id} profile={inspected} onSaved={setInspected} />
           ) : null}
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button
               onClick={async () => {
                 if (!inspected) return;
@@ -412,7 +394,7 @@ export function AgentHubPage() {
                 setActiveView("chat");
               }}
             >
-              {t("agentHub:useExpertNow")}
+              {t(inspected?.type === "team" ? "agentHub:useTeamNow" : "agentHub:useExpertNow")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { defaultRehypePlugins, type StreamdownProps } from "streamdown";
+import { libraryAssetFromUrl } from "@/entities/library";
 import { asString } from "../model/types";
 
 export interface CitationSource {
@@ -11,9 +12,9 @@ export interface CitationSource {
 
 export type CitationEntries = Map<string, CitationSource[]>;
 
-const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/gm;
+const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]*(.*(?:\r?\n[ \t]+.*)*)/gm;
 const FOOTNOTE_REFERENCE = /\[\^([^\]\s]+)\]/g;
-const MARKDOWN_LINK = /\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+const MARKDOWN_LINK = /\[([^\]]*)\]\(((?:https?:\/\/|\/work\/library\/assets\/)[^\s)]+)\)/g;
 const BARE_URL = /https?:\/\/[^\s<>)\]]+/g;
 
 interface LibrarySourcePart {
@@ -39,7 +40,8 @@ function hostnameOf(url: string): string {
 
 function isUsableUrl(url: string): boolean {
   try {
-    return Boolean(new URL(url).hostname);
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;
   }
@@ -50,6 +52,7 @@ function parseDefinitionBody(body: string): CitationSource[] {
   const seen = new Set<string>();
   let rest = body;
   const push = (url: string, title?: string) => {
+    url = libraryAssetFromUrl(url)?.url ?? url;
     if (!isUsableUrl(url) || seen.has(url)) return;
     seen.add(url);
     sources.push({ url, title: title?.trim() || hostnameOf(url) });
@@ -70,10 +73,33 @@ function parseDefinitionBody(body: string): CitationSource[] {
   return sources;
 }
 
-export function parseFootnoteEntries(markdown: string): CitationEntries {
+export function parseFootnoteEntries(
+  markdown: string,
+  known: CitationEntries = new Map(),
+): CitationEntries {
   const entries: CitationEntries = new Map();
   for (const match of markdown.matchAll(FOOTNOTE_DEFINITION)) {
     const sources = parseDefinitionBody(match[2]);
+    if (!sources.length) {
+      const direct = known.get(match[1].toLowerCase());
+      if (direct) sources.push(...direct);
+      else {
+        // Resolve a named document only from sources actually returned for this answer.
+        const body = match[2].toLowerCase();
+        const seen = new Set<string>();
+        for (const candidates of known.values())
+          for (const source of candidates) {
+            if (
+              !seen.has(source.url) &&
+              source.title &&
+              body.includes(source.title.toLowerCase())
+            ) {
+              seen.add(source.url);
+              sources.push(source);
+            }
+          }
+      }
+    }
     if (sources.length > 0) entries.set(match[1].toLowerCase(), sources);
   }
   return entries;
@@ -82,16 +108,27 @@ export function parseFootnoteEntries(markdown: string): CitationEntries {
 function harvestSourceDetails(
   value: unknown,
   into: Map<string, { title?: string; description?: string; quote?: string }>,
+  entries: CitationEntries,
   depth = 0,
 ): void {
   if (depth > 6 || value === null || typeof value !== "object") return;
   if (Array.isArray(value)) {
-    for (const item of value) harvestSourceDetails(item, into, depth + 1);
+    for (const item of value) harvestSourceDetails(item, into, entries, depth + 1);
     return;
   }
   const row = value as Record<string, unknown>;
   const url = asString(row.url);
-  if (url?.startsWith("http")) {
+  if (url && isUsableUrl(url)) {
+    const citationId = asString(row.citationId);
+    const filename = asString(row.filename);
+    if (citationId && filename)
+      entries.set(citationId.toLowerCase(), [
+        {
+          url,
+          title: filename,
+          quote: asString(row.text) ?? asString(row.snippet),
+        },
+      ]);
     const previous = into.get(url);
     into.set(url, {
       title: previous?.title ?? asString(row.title),
@@ -99,7 +136,7 @@ function harvestSourceDetails(
       quote: previous?.quote ?? asString(row.snippet) ?? asString(row.text)?.slice(0, 360),
     });
   }
-  for (const child of Object.values(row)) harvestSourceDetails(child, into, depth + 1);
+  for (const child of Object.values(row)) harvestSourceDetails(child, into, entries, depth + 1);
 }
 
 export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries {
@@ -107,7 +144,7 @@ export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries
     .filter((part) => part.type === "text")
     .map((part) => part.text)
     .join("\n");
-  const entries = parseFootnoteEntries(text);
+  const entries: CitationEntries = new Map();
   for (const part of parts) {
     const libraryPart = part as unknown as LibrarySourcePart;
     if (libraryPart.type !== "data-library-sources" || !Array.isArray(libraryPart.data)) continue;
@@ -122,10 +159,11 @@ export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries
       ]);
     }
   }
-  if (entries.size === 0) return entries;
-
   const details = new Map<string, { title?: string; description?: string; quote?: string }>();
-  harvestSourceDetails(parts, details);
+  harvestSourceDetails(parts, details, entries);
+  for (const [id, sources] of parseFootnoteEntries(text, entries)) {
+    if (!entries.has(id)) entries.set(id, sources);
+  }
   for (const sources of entries.values()) {
     for (const source of sources) {
       const detail = details.get(source.url);
@@ -138,7 +176,11 @@ export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries
   return entries;
 }
 
-export function withResolvedFootnotes(text: string, entries: CitationEntries): string {
+export function withResolvedFootnotes(
+  text: string,
+  entries: CitationEntries,
+  answer = text,
+): string {
   const referenced = new Set(
     [...text.matchAll(FOOTNOTE_REFERENCE)].map((match) => match[1].toLowerCase()),
   );
@@ -146,24 +188,37 @@ export function withResolvedFootnotes(text: string, entries: CitationEntries): s
   const defined = new Set(
     [...text.matchAll(FOOTNOTE_DEFINITION)].map((match) => match[1].toLowerCase()),
   );
-  const missing = [...referenced].filter((id) => !defined.has(id));
+  const definitions = new Map(
+    [...answer.matchAll(FOOTNOTE_DEFINITION)].map((match) => [match[1].toLowerCase(), match[0]]),
+  );
+  const missing = [...referenced].filter(
+    (id) => !defined.has(id) && (definitions.has(id) || entries.get(id)?.length),
+  );
   if (missing.length === 0) return text;
-  const lines = missing.map((id) => {
+  const lines = missing.flatMap((id) => {
+    const definition = definitions.get(id);
+    if (definition) return [definition];
     const sources = entries.get(id);
     return sources?.length
-      ? `[^${id}]: ${sources.map((source) => `[${source.title}](${source.url})`).join(" ")}`
-      : `[^${id}]: …`;
+      ? [`[^${id}]: ${sources.map((source) => `<${source.url}>`).join(" ")}`]
+      : [];
   });
   return `${text.trimEnd()}\n\n${lines.join("\n")}\n`;
 }
 
-function findFootnoteIds(node: unknown): string[] {
+export function findFootnoteIds(node: unknown): string[] {
   const ids: string[] = [];
   for (const child of (node as HastElement | undefined)?.children ?? []) {
     const href = child.properties?.href;
     if (typeof href !== "string") continue;
-    const match = /fn-(.+)$/.exec(href);
-    if (match) ids.push(decodeURIComponent(match[1]).toLowerCase());
+    const match = /^#(?:user-content-)?fn-(.+)$/.exec(href);
+    if (match) {
+      try {
+        ids.push(decodeURIComponent(match[1]).toLowerCase());
+      } catch {
+        /* Invalid fragment. */
+      }
+    }
   }
   return ids;
 }
@@ -219,10 +274,12 @@ function rehypeWorkspaceLinks() {
       const href = node.properties?.href;
       if (node.tagName === "a" && typeof href === "string") {
         const value = href.trim();
+        const asset = libraryAssetFromUrl(value);
         const local =
           /^(?:file:\/\/\/|[a-z]:[\\/])/i.test(value) ||
           (value.length > 0 && !/^(?:#|\/\/|[a-z][a-z\d+.-]*:)/i.test(value));
-        if (local && ![...value].some((character) => character.charCodeAt(0) < 32)) {
+        if (asset) node.properties = { ...node.properties, href: asset.url };
+        else if (local && ![...value].some((character) => character.charCodeAt(0) < 32)) {
           node.properties = {
             ...node.properties,
             href: WORKSPACE_FILE_FRAGMENT + encodeURIComponent(value),

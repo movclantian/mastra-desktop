@@ -1,13 +1,9 @@
 /**
- * 技能市场(docs/en/docs/skills.mdx):GitHub 仓库形式的技能来源,
- * 配置存 app_config(key = "skill-marketplaces"),安装 = 检出 SKILL.md 目录。
+ * skills.sh discovery, audits and source acquisition. Package lifecycle lives in plugins/.
  */
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname } from "node:path";
 import { validateSkillContent } from "@mastra/core/skills";
 import matter from "gray-matter";
-import { getAppConfig, setAppConfig } from "../storage/database";
-import { getManagedSkillsDirectory } from "../workspace/workspace-manager";
 
 export function categorizeSkillResources(resources: string[]) {
   const references: string[] = [];
@@ -104,28 +100,6 @@ export function categorizeSkillResources(resources: string[]) {
   };
 }
 
-interface SkillMarketplace {
-  id: string;
-  name: string;
-  url: string;
-  branch: string;
-  path?: string;
-  enabled: boolean;
-}
-
-export interface MarketplaceSkill {
-  name: string;
-  path: string;
-  description: string;
-  license?: string;
-  metadata?: Record<string, unknown>;
-  marketplaceId: string;
-  marketplaceName: string;
-  sourceUrl: string;
-  sourcePath: string;
-  branch: string;
-}
-
 export interface SkillAuditItem {
   provider: string;
   slug: string;
@@ -204,8 +178,6 @@ export interface SkillsShListResult {
   curatedOwners?: CuratedOwner[];
 }
 
-const MARKETPLACES_KEY = "skill-marketplaces";
-const DEFAULT_BRANCH = "main";
 /**
  * skills.sh 列表缓存有效期。
  *
@@ -262,121 +234,6 @@ function createCachedFetcher<TInput, TResult>(
       if (inFlight.get(cacheKey) === request) inFlight.delete(cacheKey);
     }
   };
-}
-
-function slug(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64);
-}
-
-function parseGithubRepository(value: string): {
-  owner: string;
-  repo: string;
-  branch: string;
-  path: string;
-} {
-  const trimmed = value.trim().replace(/\.git$/, "");
-  const ssh = trimmed.match(/^git@github\.com:([^/]+)\/([^/]+)$/i);
-  if (ssh) return { owner: ssh[1], repo: ssh[2], branch: DEFAULT_BRANCH, path: "" };
-  const url = new URL(trimmed);
-  if (url.hostname.toLowerCase() !== "github.com")
-    throw new Error("技能市场目前只支持 GitHub 仓库地址");
-  const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length < 2) throw new Error("GitHub 地址必须包含 owner/repository");
-  let branch = DEFAULT_BRANCH;
-  let path = "";
-  if (parts[2] === "tree" && parts[3]) {
-    branch = parts[3];
-    path = parts.slice(4).join("/");
-  }
-  return { owner: parts[0], repo: parts[1], branch, path };
-}
-
-function repositoryUrl(marketplace: SkillMarketplace) {
-  const repository = parseGithubRepository(marketplace.url);
-  return { ...repository, path: marketplace.path ?? repository.path };
-}
-
-function normalizeRepositoryPath(value: string): string {
-  const normalized = value
-    .trim()
-    .replaceAll("\\", "/")
-    .replace(/^\/+|\/+$/g, "");
-  if (normalized.split("/").includes("..")) throw new Error("技能市场路径无效");
-  return normalized;
-}
-
-function validateSkillPath(sourcePath: string, configuredPath?: string): string {
-  const normalized = normalizeRepositoryPath(sourcePath);
-  if (!normalized || !/(^|\/)SKILL\.md$/i.test(normalized)) {
-    throw new Error("市场技能必须指向 SKILL.md");
-  }
-  if (
-    configuredPath &&
-    normalized !== configuredPath &&
-    !normalized.startsWith(`${configuredPath}/`)
-  ) {
-    throw new Error("技能路径不属于配置的技能市场目录");
-  }
-  return normalized;
-}
-
-export function normalizeMarketplace(input: unknown): SkillMarketplace {
-  if (!input || typeof input !== "object") throw new Error("技能市场配置无效");
-  const raw = input as Record<string, unknown>;
-  const url = typeof raw.url === "string" ? raw.url.trim() : "";
-  const repository = parseGithubRepository(url);
-  const name =
-    typeof raw.name === "string" && raw.name.trim()
-      ? raw.name.trim()
-      : `${repository.owner}/${repository.repo}`;
-  const id =
-    typeof raw.id === "string" && raw.id.trim()
-      ? slug(raw.id)
-      : slug(`${repository.owner}-${repository.repo}`);
-  if (!id) throw new Error("技能市场 ID 无效");
-  return {
-    id,
-    name,
-    url: `https://github.com/${repository.owner}/${repository.repo}`,
-    branch:
-      typeof raw.branch === "string" && raw.branch.trim() ? raw.branch.trim() : repository.branch,
-    path:
-      typeof raw.path === "string" && raw.path.trim()
-        ? normalizeRepositoryPath(raw.path)
-        : repository.path || undefined,
-    enabled: raw.enabled !== false,
-  };
-}
-
-export async function getSkillMarketplaces(resourceId?: string): Promise<SkillMarketplace[]> {
-  const raw = await getAppConfig(MARKETPLACES_KEY, resourceId);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as { marketplaces?: unknown };
-    if (!Array.isArray(parsed.marketplaces)) return [];
-    return parsed.marketplaces.map(normalizeMarketplace);
-  } catch {
-    return [];
-  }
-}
-
-export async function saveSkillMarketplaces(
-  marketplaces: SkillMarketplace[],
-  resourceId?: string,
-): Promise<void> {
-  const normalized = marketplaces.map(normalizeMarketplace);
-  if (new Set(normalized.map((marketplace) => marketplace.id)).size !== normalized.length) {
-    throw new Error("技能市场 ID 不能重复");
-  }
-  await setAppConfig(
-    MARKETPLACES_KEY,
-    JSON.stringify({ marketplaces: normalized }, null, 2),
-    resourceId,
-  );
 }
 
 export function parseSkillMarkdown(content: string, directoryName?: string) {
@@ -696,24 +553,13 @@ export function getSkillsShCurated(force = false): Promise<CuratedResponse> {
 export async function getSkillsShAudit(source: string, slug: string): Promise<SkillAuditItem[]> {
   const normalizedSource = normalizeSkillsShCoordinate(source, "source");
   const normalizedSlug = normalizeSkillsShCoordinate(slug, "skill");
-  const endpoints = [
+  const result = await fetchWithRetry<SkillAuditResponse>(
     `https://skills.sh/api/v1/skills/audit/${normalizedSource}/${normalizedSlug}`,
-    `https://skills.sh/api/skills/audit/${normalizedSource}/${normalizedSlug}`,
-  ];
-  for (const endpoint of endpoints) {
-    try {
-      const res = await fetchWithRetry<SkillAuditResponse>(
-        endpoint,
-        skillsShJsonOptions(skillsShOidcToken()),
-      );
-      if (res && Array.isArray(res.audits)) {
-        return res.audits;
-      }
-    } catch {
-      // try next
-    }
-  }
-  return [];
+    skillsShJsonOptions(skillsShOidcToken()),
+  );
+  if (!Array.isArray(result.audits))
+    throw new Error("skills.sh returned an invalid audit response");
+  return result.audits;
 }
 
 function getSkillsShQueryCacheKey(options: SkillsShQueryOptions): string {
@@ -930,7 +776,7 @@ async function executeListSkillsShSkillsWithOptions(
   }
 
   // 2. 如果包含搜索关键词
-  if (normalizedQuery.length >= 2) {
+  if (normalizedQuery.length > 0) {
     const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(normalizedQuery)}&limit=200${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
     const payload = await fetchWithRetry<{ skills?: unknown[] }>(searchUrl, SKILLS_SH_JSON_OPTIONS);
     const skills = filterSkills(
@@ -1081,12 +927,9 @@ export async function getSkillsShSkillDetail(
   return { ...detail, audits };
 }
 
-export async function installSkillsShSkill(
-  source: string,
-  slugValue: string,
-  resourceId?: string,
-): Promise<string> {
-  const { detail, content, github } = await loadSkillsShSkill(source, slugValue);
+/** Source acquisition only; all package writes belong to the plugin installer. */
+export async function getSkillsShPackage(source: string, slugValue: string) {
+  const { content, github } = await loadSkillsShSkill(source, slugValue);
   const files = github
     ? await downloadGithubSkillFiles(
         github.owner,
@@ -1096,46 +939,7 @@ export async function installSkillsShSkill(
         github.tree,
       )
     : [{ path: "SKILL.md", contents: Buffer.from(content, "utf8") }];
-  return installSkillFiles(detail.name, files, resourceId);
-}
-
-async function installSkillFiles(
-  name: string,
-  files: SkillFile[],
-  resourceId?: string,
-): Promise<string> {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name) || name.length > 64)
-    throw new Error(`技能名称无效：${name}`);
-  if (files.filter((file) => basename(file.path).toUpperCase() === "SKILL.MD").length !== 1)
-    throw new Error("技能必须恰好包含一个 SKILL.md");
-  const skillFile = files.find((file) => file.path.toUpperCase() === "SKILL.MD");
-  if (!skillFile) throw new Error("未发现 SKILL.md");
-  if (skillFile.contents.byteLength > 1024 * 1024) throw new Error("SKILL.md 不能超过 1 MB");
-  const validation = validateSkillContent({
-    content: skillFile.contents.toString("utf8"),
-    directoryName: name,
-  });
-  if (!validation.valid) throw new Error(validation.errors.join("\n"));
-  const managed = resolve(getManagedSkillsDirectory(resourceId));
-  const root = resolve(managed, name);
-  if (dirname(root) !== managed) throw new Error("技能目录越界");
-  await mkdir(managed, { recursive: true });
-  // Exclusive creation prevents concurrent installs from deleting another request's files.
-  await mkdir(root);
-  try {
-    for (const file of files) {
-      const target = resolve(root, normalizeSkillsShFilePath(file.path));
-      const within = relative(root, target);
-      if (!within || isAbsolute(within) || within === ".." || within.startsWith(`..${sep}`))
-        throw new Error("技能文件路径越界");
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, file.contents, { flag: "wx" });
-    }
-    return root;
-  } catch (error) {
-    await rm(root, { recursive: true, force: true });
-    throw error;
-  }
+  return { files: new Map(files.map((file) => [file.path, file.contents])) };
 }
 
 async function downloadGithubSkillFiles(
@@ -1169,151 +973,4 @@ async function downloadGithubSkillFiles(
 interface GitTreeItem {
   path: string;
   type: string;
-}
-
-export async function listMarketplaceSkills(
-  marketplace: SkillMarketplace,
-  query = "",
-): Promise<MarketplaceSkill[]> {
-  if (!marketplace.enabled) return [];
-  const { owner, repo, branch, path: configuredPath } = repositoryUrl(marketplace);
-  const effectiveBranch = marketplace.branch || branch;
-  const tree = await fetchWithRetry<{ tree?: GitTreeItem[] }>(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(effectiveBranch)}?recursive=1`,
-    {
-      headers: GITHUB_JSON_HEADERS,
-      responseType: "json",
-      errorMessage: (status) => `GitHub 请求失败（${status}）`,
-    },
-  );
-  const skillFiles = (tree.tree ?? []).filter(
-    (item) =>
-      item.type === "blob" &&
-      /(^|\/)SKILL\.md$/i.test(item.path) &&
-      (!configuredPath || item.path.startsWith(`${configuredPath}/`)),
-  );
-  const needle = query.trim().toLocaleLowerCase();
-  if (skillFiles.length > SKILLS_SH_MAX_FILES)
-    throw new Error("市场技能数量超过 2,000，请限定仓库目录");
-  const skills: MarketplaceSkill[] = [];
-  for (let offset = 0; offset < skillFiles.length; offset += 4) {
-    const batch = await Promise.all(
-      skillFiles.slice(offset, offset + 4).map(async (file) => {
-        const parent = file.path.split("/").at(-2) || basename(file.path, ".md");
-        const sourcePath = validateSkillPath(file.path, configuredPath);
-        const raw = await fetchWithRetry<string>(
-          `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(effectiveBranch)}/${sourcePath.split("/").map(encodeURIComponent).join("/")}`,
-          {
-            headers: GITHUB_TEXT_HEADERS,
-            responseType: "text",
-            errorMessage: (status) => `读取技能文件失败（${status}）`,
-          },
-        );
-        const parsed = parseSkillMarkdown(raw, parent);
-        return {
-          name: parsed.name,
-          description: parsed.description,
-          license: parsed.license,
-          path: `marketplace:${marketplace.id}:${file.path}`,
-          marketplaceId: marketplace.id,
-          marketplaceName: marketplace.name,
-          sourceUrl: marketplace.url,
-          sourcePath,
-          branch: effectiveBranch,
-        };
-      }),
-    );
-    skills.push(...batch);
-  }
-  return skills.filter(
-    (skill) =>
-      !needle ||
-      `${skill.name} ${skill.description} ${skill.marketplaceName}`
-        .toLocaleLowerCase()
-        .includes(needle),
-  );
-}
-
-export async function getMarketplaceSkillDetail(
-  marketplaceId: string,
-  sourcePath: string,
-  resourceId?: string,
-) {
-  const marketplace = (await getSkillMarketplaces(resourceId)).find(
-    (item) => item.id === marketplaceId,
-  );
-  if (!marketplace) throw new Error("技能市场不存在");
-  const { owner, repo, path: configuredPath } = repositoryUrl(marketplace);
-  const branch = marketplace.branch || DEFAULT_BRANCH;
-  const normalizedSourcePath = validateSkillPath(sourcePath, configuredPath);
-  const raw = await fetchWithRetry<string>(
-    `https://raw.githubusercontent.com/${owner}/${repo}/${encodeURIComponent(branch)}/${normalizedSourcePath.split("/").map(encodeURIComponent).join("/")}`,
-    {
-      headers: GITHUB_TEXT_HEADERS,
-      responseType: "text",
-      errorMessage: (status) => `读取技能文件失败（${status}）`,
-    },
-  );
-  const parent = normalizedSourcePath.split("/").at(-2) || basename(normalizedSourcePath, ".md");
-  const parsed = parseSkillMarkdown(raw, parent);
-  const prefix = normalizedSourcePath.slice(0, -"SKILL.md".length);
-  const tree = await fetchWithRetry<{ tree?: GitTreeItem[] }>(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    {
-      headers: GITHUB_JSON_HEADERS,
-      responseType: "json",
-      errorMessage: (status) => `GitHub 请求失败（${status}）`,
-    },
-  );
-  const resources = (tree.tree ?? [])
-    .filter(
-      (item) =>
-        item.type === "blob" && item.path.startsWith(prefix) && item.path !== normalizedSourcePath,
-    )
-    .map((item) => item.path.slice(prefix.length))
-    .filter((file) => Boolean(file) && basename(file).toUpperCase() !== "SKILL.MD");
-  const { references, scripts, assets } = categorizeSkillResources(resources);
-  return {
-    ...parsed,
-    path: `marketplace:${marketplace.id}:${normalizedSourcePath}`,
-    references,
-    scripts,
-    assets,
-    marketplaceId: marketplace.id,
-    marketplaceName: marketplace.name,
-    sourceUrl: marketplace.url,
-    sourcePath: normalizedSourcePath,
-    branch,
-  };
-}
-
-export async function installMarketplaceSkill(
-  marketplaceId: string,
-  skillPath: string,
-  resourceId?: string,
-): Promise<string> {
-  const marketplaces = await getSkillMarketplaces(resourceId);
-  const marketplace = marketplaces.find((item) => item.id === marketplaceId);
-  if (!marketplace) throw new Error("技能市场不存在或已被删除");
-  const { owner, repo, path: configuredPath } = repositoryUrl(marketplace);
-  const branch = marketplace.branch || DEFAULT_BRANCH;
-  const sourcePath = validateSkillPath(skillPath, configuredPath);
-  const tree = await fetchWithRetry<{ tree?: GitTreeItem[]; truncated?: boolean }>(
-    `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
-    {
-      headers: GITHUB_JSON_HEADERS,
-      responseType: "json",
-      errorMessage: (status) => `GitHub 请求失败（${status}）`,
-    },
-  );
-  if (tree.truncated) throw new Error("GitHub 技能目录不完整，无法安装");
-  const files = await downloadGithubSkillFiles(owner, repo, branch, sourcePath, tree.tree ?? []);
-  const skillFile = files.find((file) => file.path.toUpperCase() === "SKILL.MD");
-  if (!skillFile) throw new Error("未发现 SKILL.md");
-  if (skillFile.contents.byteLength > 1024 * 1024) throw new Error("SKILL.md 不能超过 1 MB");
-  const metadata = parseSkillMarkdown(
-    skillFile.contents.toString("utf8"),
-    basename(dirname(sourcePath)),
-  );
-  return installSkillFiles(metadata.name, files, resourceId);
 }
