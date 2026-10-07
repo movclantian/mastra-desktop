@@ -1,5 +1,7 @@
 import type { IpcRenderer } from "electron";
 import {
+  ComputerPermissionActionSchema,
+  ComputerPermissionsSchema,
   type DesktopNotification,
   DesktopNotificationSchema,
   type DesktopSettingsPatch,
@@ -11,6 +13,13 @@ import {
 
 export function createWindowApi(ipcRenderer: IpcRenderer) {
   return {
+    computerPermissions: async (action: "status" | "request") =>
+      ComputerPermissionsSchema.parse(
+        await ipcRenderer.invoke(
+          WINDOW_CHANNELS.computerPermissions,
+          ComputerPermissionActionSchema.parse(action),
+        ),
+      ),
     getSettings: async () =>
       DesktopSettingsSchema.parse(await ipcRenderer.invoke(WINDOW_CHANNELS.getSettings)),
     updateSettings: async (patch: DesktopSettingsPatch) =>

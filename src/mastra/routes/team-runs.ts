@@ -12,6 +12,7 @@ import {
 } from "@mastra/core/workflows";
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessageChunk } from "ai";
 import { z } from "zod";
+import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   type AgentProfile,
@@ -19,7 +20,7 @@ import {
   getAgentProfile,
 } from "../agents/custom";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workMessageMetadataSchema } from "../agents/processors";
-import { TEAM_CONVERSATION_CONTEXT_KEY, TEAM_PROFILE_CONTEXT_KEY } from "../agents/team-workflow";
+import { TEAM_CONVERSATION_CONTEXT_KEY } from "../agents/team-workflow";
 import { workError } from "../errors";
 import { publishDesktopNotification } from "../harness/signals";
 import { appStorage } from "../storage/database";

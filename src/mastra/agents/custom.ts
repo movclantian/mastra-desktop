@@ -13,12 +13,13 @@ import {
   agentMemberSchema,
   agentWorkflowSchema,
   DEFAULT_AGENT_PROFILE_ID,
+  TEAM_PROFILE_CONTEXT_KEY,
   validateAgentTeam,
 } from "../../shared/agent-contract";
 import { workError } from "../errors";
 import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
 import { getManagedSkillPaths, getManagedSkillsDirectory } from "../workspace/workspace-manager";
-import { compileTeamWorkflow, TEAM_PROFILE_CONTEXT_KEY } from "./team-workflow";
+import { compileTeamWorkflow } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";

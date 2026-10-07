@@ -183,7 +183,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
   )?.[1];
   const hint = typeof hintValue === "string" ? hintValue : undefined;
   const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
-  const hasDetails = hasInput || output !== undefined;
+  const hasDetails = hasInput || output !== undefined || Boolean(errorText);
 
   // 专属 UI 注册表:命中则用本地化标签 + 精选参数摘要,详情可整体替换;
   // 未命中的工具保持通用展示(原始名 + 自动参数提示 + JSON 详情)。
@@ -191,7 +191,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
   const customSummary = ui?.summarize?.(input, output, name);
   const chips = customSummary ? (customSummary.chips ?? []) : hintLabel ? [hintLabel] : [];
   const files = customSummary ? (customSummary.files ?? []) : filePaths;
-  const customDetail = ui?.detail?.({ input, output });
+  const customDetail = failed ? undefined : ui?.detail?.({ input, output });
 
   const sandboxOutput = React.useMemo(() => {
     if (!sandboxTool) return "";
@@ -379,7 +379,9 @@ const ToolStepItem = React.memo(function ToolStepItem({
             ) : (
               <>
                 {hasInput ? <ToolInput input={part.input} /> : null}
-                {output !== undefined ? <ToolOutput errorText={errorText} output={output} /> : null}
+                {output !== undefined || failed ? (
+                  <ToolOutput errorText={errorText} output={output} />
+                ) : null}
               </>
             )}
           </div>

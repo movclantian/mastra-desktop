@@ -392,17 +392,23 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       suspendedRuns.some((run) => run.toolCalls.some((tool) => tool.toolCallId === task.toolCallId))
     )
       continue;
+    const approval = z
+      .object({
+        requireToolApproval: z.object({ toolName: z.string(), args: z.unknown().optional() }),
+      })
+      .safeParse(task.suspendPayload);
+    const target = approval.success ? approval.data.requireToolApproval : task;
     suspendedRuns.push({
       runId: task.runId,
       toolCalls: [
         {
           toolCallId: task.toolCallId,
-          toolName: task.toolName,
-          args: task.args,
+          toolName: target.toolName,
+          args: target.args,
           suspendPayload: task.suspendPayload,
           requiresApproval: false,
-          category: toolCategoryOf(task.toolName),
-          policy: result.controllerSession.resolveToolApproval(task.toolName),
+          category: toolCategoryOf(target.toolName),
+          policy: result.controllerSession.resolveToolApproval(target.toolName),
         },
       ],
     });
@@ -420,6 +426,21 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       .filter((call) => call.status === "running" || call.status === "suspended")
       .map(async (call) => {
         const previousStatus = call.status;
+        const task = backgroundTasks.find((task) => task.toolCallId === call.toolCallId);
+        // Terminal task state wins over an old suspended child snapshot after a restart.
+        if (task && ["failed", "cancelled", "timed_out"].includes(task.status)) {
+          call.status = "error";
+          call.error = task.error?.message ?? `Background task ${task.status}`;
+          call.endedAt = task.completedAt?.toISOString() ?? new Date().toISOString();
+          await finishTeamInvocation(
+            call.id,
+            { status: call.status, error: call.error, endedAt: call.endedAt },
+            undefined,
+            undefined,
+            previousStatus,
+          );
+          return;
+        }
         const member = registeredAgents.find((candidate) => candidate.id === call.agentId);
         const parked =
           member && call.memoryThreadId && call.memoryResourceId
@@ -430,7 +451,6 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
                 })
               ).runs.length > 0
             : false;
-        const task = backgroundTasks.find((task) => task.toolCallId === call.toolCallId);
         const waiting =
           parked ||
           task?.status === "suspended" ||

@@ -1,4 +1,5 @@
 export { BrowserSection } from "./browser-section";
+export { ComputerSection } from "./computer-section";
 export { GeneralSection } from "./general-section";
 export { GuardrailsSection } from "./guardrails-section";
 export { MemorySection } from "./memory-section";

@@ -1,6 +1,7 @@
 import type { ToolsConfig } from "@/entities/workbench";
 import { requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
+import type { ComputerConfig, ComputerProbe } from "../../../../../shared/computer-contract";
 import { searchCredentialPurpose } from "../../../../../shared/credential-contract";
 import type {
   ProxyConfig,
@@ -10,6 +11,34 @@ import type {
 } from "../../../../../shared/proxy-contract";
 
 export type { ProxyConfig, ProxyMode, ProxyTestResult };
+
+export function fetchComputerConfig() {
+  return requestJson<ComputerConfig>("/work/computer", {}, i18n.t("settings:computer.loadFailed"));
+}
+
+export function saveComputerConfig(config: ComputerConfig) {
+  return requestJson<ComputerConfig>(
+    "/work/computer",
+    { method: "POST", body: { config } },
+    i18n.t("settings:computer.saveFailed"),
+  );
+}
+
+export function probeComputer(config: ComputerConfig) {
+  return requestJson<ComputerProbe>(
+    "/work/computer/probe",
+    { method: "POST", body: { config } },
+    i18n.t("settings:computer.probeFailed"),
+  );
+}
+
+export function disconnectComputer() {
+  return requestJson<{ ok: boolean }>(
+    "/work/computer/disconnect",
+    { method: "POST", body: {} },
+    i18n.t("settings:computer.disconnectFailed"),
+  );
+}
 
 export function fetchSettingsTools(): Promise<ToolsConfig> {
   return requestJson<ToolsConfig>("/work/tools", {}, i18n.t("settings:api.fetchToolsFailed"));

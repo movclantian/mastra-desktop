@@ -31,6 +31,9 @@ files:
 asarUnpack:
   # Native terminals require unpacked executables.
   - 'node_modules/node-pty/**'
+  # CUA's UniFFI loader needs real paths for its platform library and Node addon.
+  - 'node_modules/@trycua/**'
+  - 'node_modules/@ubjs/**'
 win:
   executableName: mastra-desktop
 nsis:

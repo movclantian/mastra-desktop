@@ -9,6 +9,7 @@ import { closeBrowserThreadSessions } from "../../agents/browser";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import { deleteTeamInvocations } from "../../agents/team-activity";
 import { deleteTeamHandoffs } from "../../agents/team-handoff";
+import { closeComputerConnections } from "../../connections/computer";
 import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
@@ -736,6 +737,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
   if (threadId && thread && c.req.method === "DELETE") {
     await memory.settled();
     await closeBrowserThreadSessions(resourceId, threadId);
+    await closeComputerConnections(resourceId, threadId);
     await Promise.all([
       workWebhookSignals.removeThread({ threadId, resourceId }),
       workPollingSignals.removeThread({ threadId, resourceId }),

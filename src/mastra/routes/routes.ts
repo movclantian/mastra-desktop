@@ -83,7 +83,7 @@ import {
 import { storageInfoRoute } from "./storage";
 import { teamWorkflowRoutes } from "./team-runs";
 import { threadRoutes } from "./threads/threads";
-import { saveToolsConfigRoute, toolsConfigRoute } from "./tools";
+import { computerRoutes, saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import { usageSummaryRoute } from "./usage";
 import {
   createThreadTreeEntryRoute,
@@ -112,6 +112,7 @@ export const workRoutes = [
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
+  ...computerRoutes,
   ...proxyRoutes,
   ...threadRoutes,
   ...signalRoutes,

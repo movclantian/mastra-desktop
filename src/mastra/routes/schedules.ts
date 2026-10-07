@@ -15,6 +15,7 @@ import type {
 } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
+import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
@@ -27,7 +28,6 @@ import {
   resolveMode,
 } from "../agents/permissions";
 import { getTeamHandoffState, TEAM_HANDOFF_CONTEXT_KEY } from "../agents/team-handoff";
-import { TEAM_PROFILE_CONTEXT_KEY } from "../agents/team-workflow";
 import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents/work-agent";
 import { errorText, WorkApiError, workError } from "../errors";
 import {

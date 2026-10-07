@@ -79,6 +79,7 @@ import {
   TerminalWriteRequestSchema,
 } from "../shared/terminal-contract";
 import {
+  ComputerPermissionActionSchema,
   DEFAULT_DESKTOP_PREFERENCES,
   DesktopNotificationSchema,
   DesktopPreferencesSchema,
@@ -1156,6 +1157,24 @@ function bootstrap(): void {
   app.whenReady().then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId("com.mastra.desktop");
+
+    ipcMain.handle(WINDOW_CHANNELS.computerPermissions, async (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const action = ComputerPermissionActionSchema.parse(value);
+      if (process.platform !== "darwin")
+        return { supported: false, accessibility: false, screenRecording: false };
+      // Keep macOS permission attribution in the Electron app after app.whenReady().
+      const root = app.getAppPath().replace(/([\\/])app\.asar$/, "$1app.asar.unpacked");
+      const sdk: typeof import("@trycua/cua-driver") = await import(
+        pathToFileURL(join(root, "node_modules", "@trycua", "cua-driver", "dist", "index.js")).href
+      );
+      return {
+        supported: true,
+        ...(action === "request"
+          ? sdk.requestMacOsPermissions()
+          : sdk.currentMacOsPermissionStatus()),
+      };
+    });
 
     ipcMain.handle(WINDOW_CHANNELS.getSettings, async (event) => {
       assertTrustedIpcSender(event);

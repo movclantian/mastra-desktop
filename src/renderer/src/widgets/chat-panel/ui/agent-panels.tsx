@@ -475,34 +475,19 @@ export function AgentQuestionnairePanel({
         return label ? [{ label, description: asString(record?.description) }] : [];
       })
     : [];
-
-  const outputRecord = asRecord(interaction.output);
-  const answerValue = outputRecord?.answer ?? interaction.output;
-  const answers = Array.isArray(answerValue)
-    ? answerValue.flatMap((value) => (asString(value) ? [value] : []))
-    : asString(answerValue)
-      ? [answerValue]
-      : [];
-
-  // items 声明须与 JSX 组合完全一致(库会校验 required/disabled 并告警):
-  // 已完成视图的选项只读展示,choices 需同步声明 disabled
+  // Native ask_user returns content, not an answer field. Preserve the full text:
+  // multi-select answers are formatted by Mastra and may themselves contain commas.
+  const answer = asString(asRecord(interaction.output)?.content)?.replace(/^User answered: /, "");
   const items = [
     {
       name: "answer",
       required: true,
-      ...(options.length > 0
-        ? {
-            choices: options.map((option) => ({
-              value: option.label,
-              ...(completed ? { disabled: true } : {}),
-            })),
-          }
-        : {}),
+      choices: options.map((option) => ({ value: option.label, disabled: busy })),
     },
   ];
-
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (busy) return;
     const formData = new FormData(event.currentTarget);
     const answer =
       selectionMode === "multi_select" ? formData.getAll("answer") : formData.get("answer");
@@ -512,7 +497,7 @@ export function AgentQuestionnairePanel({
   return (
     <div
       className={cn(
-        "mb-2 rounded-xl border p-3 shadow-xs",
+        "mb-2 min-w-0 rounded-xl border p-3 shadow-xs",
         completed ? "border-border/60 bg-background/60" : "bg-background",
       )}
     >
@@ -522,54 +507,58 @@ export function AgentQuestionnairePanel({
           completed ? "text-muted-foreground" : "text-foreground",
         )}
       >
-        <CircleHelpIcon className="size-4 text-primary" />
+        <CircleHelpIcon className="size-4 shrink-0 text-primary" />
         {completed ? t("chat:panels.answered") : t("chat:panels.waitingAnswer")}
       </div>
-      <Questionnaire
-        items={items}
-        onSubmit={completed ? undefined : handleSubmit}
-        shortcuts={!completed && options.length > 0 ? "letters" : undefined}
-      >
-        <QuestionnaireItem multiple={selectionMode === "multi_select"} name="answer" required>
-          <QuestionnaireTitle>{question}</QuestionnaireTitle>
-          {!completed && options.length > 0 ? (
-            <QuestionnaireDescription>
-              {selectionMode === "multi_select"
-                ? t("chat:panels.multiSelectHint")
-                : t("chat:panels.singleSelectHint")}
-            </QuestionnaireDescription>
-          ) : null}
-          <QuestionnaireChoices>
-            {options.length > 0 ? (
-              options.map((option) => (
-                <QuestionnaireChoice
-                  defaultChecked={completed ? answers.includes(option.label) : undefined}
-                  disabled={completed}
-                  key={option.label}
-                  value={option.label}
-                >
-                  <span className="font-medium">{option.label}</span>
-                  {option.description ? (
-                    <QuestionnaireChoiceDescription>
-                      {option.description}
-                    </QuestionnaireChoiceDescription>
-                  ) : null}
-                </QuestionnaireChoice>
-              ))
-            ) : (
-              <QuestionnaireInput
-                aria-label={
-                  completed ? t("chat:panels.answeredContent") : t("chat:panels.answerQuestion")
-                }
-                defaultValue={completed ? formatInteractionValue(answerValue, t) : undefined}
-                disabled={completed}
-                placeholder={completed ? undefined : t("chat:panels.inputAnswerPlaceholder")}
-              />
-            )}
-          </QuestionnaireChoices>
-          {!completed ? <QuestionnaireError /> : null}
-        </QuestionnaireItem>
-        {!completed ? (
+      {completed ? (
+        <ScrollArea className="max-h-[45dvh]">
+          <p className="break-words text-sm font-medium">{question}</p>
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm text-muted-foreground">
+            {answer || t("chat:panels.noAnswerProvided")}
+          </p>
+        </ScrollArea>
+      ) : (
+        <Questionnaire
+          items={items}
+          onSubmit={handleSubmit}
+          shortcuts={!busy && options.length > 0 ? "letters" : undefined}
+        >
+          <ScrollArea className="max-h-[45dvh]">
+            <QuestionnaireItem multiple={selectionMode === "multi_select"} name="answer" required>
+              <QuestionnaireTitle className="break-words">{question}</QuestionnaireTitle>
+              {options.length > 0 ? (
+                <QuestionnaireDescription>
+                  {selectionMode === "multi_select"
+                    ? t("chat:panels.multiSelectHint")
+                    : t("chat:panels.singleSelectHint")}
+                </QuestionnaireDescription>
+              ) : null}
+              <QuestionnaireChoices>
+                {options.map((option) => (
+                  <QuestionnaireChoice disabled={busy} key={option.label} value={option.label}>
+                    <span className="break-words font-medium">{option.label}</span>
+                    {option.description ? (
+                      <QuestionnaireChoiceDescription className="break-words">
+                        {option.description}
+                      </QuestionnaireChoiceDescription>
+                    ) : null}
+                  </QuestionnaireChoice>
+                ))}
+                {/* The primitive handles input/choice exclusivity for single-select,
+                    and includes both values in FormData for multi-select. */}
+                <QuestionnaireInput
+                  aria-label={t("chat:panels.answerQuestion")}
+                  disabled={busy}
+                  placeholder={
+                    options.length > 0
+                      ? t("chat:panels.customAnswerPlaceholder")
+                      : t("chat:panels.inputAnswerPlaceholder")
+                  }
+                />
+              </QuestionnaireChoices>
+              <QuestionnaireError />
+            </QuestionnaireItem>
+          </ScrollArea>
           <QuestionnaireActions>
             <QuestionnaireSkip disabled={busy} onClick={() => onResume("")} type="button">
               {t("common:cancel")}
@@ -578,8 +567,8 @@ export function AgentQuestionnairePanel({
               {busy ? t("chat:panels.submitting") : t("chat:panels.submitAnswer")}
             </QuestionnaireSubmit>
           </QuestionnaireActions>
-        ) : null}
-      </Questionnaire>
+        </Questionnaire>
+      )}
     </div>
   );
 }
@@ -716,17 +705,6 @@ export function AgentPlanPanel({
       </PlanFooter>
     </Plan>
   );
-}
-
-export function formatInteractionValue(value: unknown, t?: (key: string) => string): string {
-  if (typeof value === "string") return value;
-  if (value === undefined)
-    return t ? t("chat:panels.noAnswerProvided") : i18n.t("chat:panels.noAnswerProvided");
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
 }
 
 export function AgentInteractionHistory({ interaction }: { interaction: AgentInteraction }) {

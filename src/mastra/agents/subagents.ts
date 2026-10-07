@@ -3,8 +3,10 @@ import type { ToolsInput } from "@mastra/core/agent";
 import { Agent } from "@mastra/core/agent";
 import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { askUserTool, submitPlanTool } from "@mastra/core/tools";
+import { askUserTool, createTool, submitPlanTool } from "@mastra/core/tools";
 import type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
+import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
+import { getComputerTools } from "../connections/computer";
 import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
@@ -40,6 +42,7 @@ import {
   type PermissionPolicy,
   parsePermissionRules,
   READ_ONLY_EXPERT_CONTEXT_KEY,
+  requestToolApproval,
   resolveAgentActiveTools,
   resolveRequestMode,
   SESSION_TOOL_POLICY_CONTEXT_KEY,
@@ -90,6 +93,7 @@ const explorerAgent = new Agent({
     return {
       untilIdle: true,
       maxProcessorRetries,
+      requireToolApproval: requestToolApproval,
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
@@ -122,6 +126,7 @@ const reviewerAgent = new Agent({
     return {
       untilIdle: true,
       maxProcessorRetries,
+      requireToolApproval: requestToolApproval,
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
@@ -147,7 +152,7 @@ export function isCodeModeAvailable(requestContext?: RequestContextLike): boolea
 
 /** Tools available to both the primary agent and its built-in subagents. */
 export async function resolveSharedTools(requestContext?: RequestContextLike): Promise<ToolsInput> {
-  return {
+  const tools = {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
     ...(isCodeModeAvailable(requestContext) ? { execute_typescript: codeMode.tool } : {}),
@@ -160,7 +165,30 @@ export async function resolveSharedTools(requestContext?: RequestContextLike): P
       userIdFromContext(requestContext),
     )),
     ...(await getConfiguredMcpTools(userIdFromContext(requestContext))),
+    ...(await getComputerTools(requestContext)),
   };
+  // Preserve computer-specific approval settings; other tools use the shared session policy.
+  return Object.fromEntries(
+    Object.entries(tools).map(([name, tool]) => [
+      name,
+      name.startsWith(COMPUTER_TOOL_PREFIX)
+        ? tool
+        : createTool({
+            ...tool,
+            id: name,
+            execute: tool.execute
+              ? async (input, context) =>
+                  tool.execute?.(input, { ...context, observe: context.observe })
+              : undefined,
+            requireApproval: (args, context) =>
+              requestToolApproval({
+                toolName: name,
+                args,
+                requestContext: context?.requestContext,
+              }),
+          }),
+    ]),
+  );
 }
 
 /** An unattended run exposes only tools authorized by its persisted mode and permission rules. */

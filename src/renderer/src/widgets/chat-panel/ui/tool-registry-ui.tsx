@@ -50,6 +50,14 @@ import {
   CodeBlockHeader,
   CodeBlockTitle,
 } from "@/shared/ui/ai-elements/code-block";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/shared/ui/dialog";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { asRecord, asString } from "../model/types";
 
 // ---------------------------------------------------------------------------
@@ -293,7 +301,13 @@ function MediaNote() {
 }
 
 /** browser_screenshot:截图归档在用户内容目录,经 /work/contents 取回路由内联显示 */
-function ScreenshotDetail({ contentObject }: { contentObject: Record<string, unknown> }) {
+function ScreenshotDetail({
+  contentObject,
+  title,
+}: {
+  contentObject: Record<string, unknown>;
+  title?: string;
+}) {
   const { t } = useTranslation();
   const { user: authUser } = useAuth();
   const userId = authUser?.id ?? "anonymous";
@@ -301,20 +315,174 @@ function ScreenshotDetail({ contentObject }: { contentObject: Record<string, unk
   const objectId = asStr(contentObject.objectId);
   const kind = asStr(contentObject.kind);
   if (!objectId || !kind || failed) return null;
+  const label = title ?? t("chat:trace.toolNames.browser_screenshot");
+  const src = contentObjectUrl(userId, {
+    objectId,
+    kind,
+    threadId: asStr(contentObject.threadId),
+    contentType: asStr(contentObject.contentType),
+  });
   return (
-    <img
-      alt={t("chat:trace.toolNames.browser_screenshot")}
-      className="max-h-72 max-w-full rounded-md border"
-      onError={() => setFailed(true)}
-      src={contentObjectUrl(userId, {
-        objectId,
-        kind,
-        threadId: asStr(contentObject.threadId),
-        contentType: asStr(contentObject.contentType),
-      })}
-    />
+    <Dialog>
+      <DialogTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            className="block max-w-full cursor-zoom-in rounded-md focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        <img
+          alt={label}
+          className="max-h-72 max-w-full rounded-md border object-contain"
+          onError={() => setFailed(true)}
+          src={src}
+        />
+      </DialogTrigger>
+      <DialogContent className="flex max-h-[90dvh] min-h-0 w-[95vw] max-w-6xl flex-col overflow-hidden sm:max-w-6xl">
+        <DialogHeader>
+          <DialogTitle>{label}</DialogTitle>
+        </DialogHeader>
+        <ScrollArea className="min-h-0 flex-1">
+          <img alt={label} className="h-auto w-full object-contain" src={src} />
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
   );
 }
+
+function ComputerDetail({ output }: { output: unknown }) {
+  const { t } = useTranslation();
+  const envelope = asRecord(output);
+  if (!envelope) return null;
+  const result = asRecord(envelope.result) ?? envelope;
+  const error = asRecord(result.error);
+  const text =
+    asStr(envelope.text) ??
+    pickStr(result, "tree", "accessibility_tree", "snapshot", "text", "message");
+  const screenshots = Array.isArray(envelope.screenshots) ? envelope.screenshots : [];
+  const effect = asStr(result.effect);
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      {envelope.degraded === true ? (
+        <p className="text-xs text-amber-600">{t("chat:trace.computerDegraded")}</p>
+      ) : null}
+      {effect || typeof result.verified === "boolean" ? (
+        <p className="text-xs text-muted-foreground">
+          {result.verified === true
+            ? t("chat:trace.computerVerified")
+            : t("chat:trace.computerUnverified")}
+          {effect ? ` · ${effect}` : ""}
+        </p>
+      ) : null}
+      <RecordDetail
+        output={result}
+        fields={[
+          "available",
+          "success",
+          "app_name",
+          "title",
+          "pid",
+          "window_id",
+          "display_id",
+          "path",
+          "width",
+          "height",
+          "capture_id",
+          "code",
+        ]}
+      />
+      {error || typeof result.error === "string" ? (
+        <div
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/5 p-2 text-destructive"
+        >
+          <RecordDetail output={error} />
+          {typeof result.error === "string" ? <TextNote text={result.error} /> : null}
+        </div>
+      ) : null}
+      {result.escalation ? <RecordDetail output={result.escalation} /> : null}
+      {["apps", "windows", "displays", "checks"].map((field) => (
+        <RecordsDetail key={field} output={result} field={field} />
+      ))}
+      {screenshots.map((value) => {
+        const image = asRecord(value);
+        return image && asStr(image.objectId) ? (
+          <ScreenshotDetail
+            key={asStr(image.objectId)}
+            contentObject={image}
+            title={t("chat:trace.computerScreenshot")}
+          />
+        ) : null;
+      })}
+      {text ? (
+        <ScrollArea className="max-h-64">
+          <pre className="whitespace-pre-wrap break-words text-xs text-muted-foreground [overflow-wrap:anywhere]">
+            {capped(text)}
+          </pre>
+        </ScrollArea>
+      ) : null}
+      <details className="min-w-0 text-xs text-muted-foreground">
+        <summary className="cursor-pointer">{t("chat:trace.computerResult")}</summary>
+        <ScrollArea className="max-h-64">
+          <pre className="whitespace-pre-wrap break-words py-2 [overflow-wrap:anywhere]">
+            {capped(JSON.stringify(envelope.result ?? output, null, 2))}
+          </pre>
+        </ScrollArea>
+      </details>
+    </div>
+  );
+}
+
+const computerUI: ToolUIDescriptor = {
+  icon: MonitorIcon,
+  labelKey: "computer",
+  summarize: (input, output, name) => {
+    const target = asRecord(input.target) ?? input;
+    const result = asRecord(asRecord(output)?.result);
+    return {
+      chips: [
+        name.slice("computer_".length),
+        pickStr(input, "app_name", "bundle_id", "executable"),
+        target.window_id !== undefined ? `window ${String(target.window_id)}` : undefined,
+        target.pid !== undefined ? `PID ${String(target.pid)}` : undefined,
+        typeof input.x === "number" && typeof input.y === "number"
+          ? `(${input.x}, ${input.y})`
+          : undefined,
+        pickStr(input, "key", "direction", "delivery_mode"),
+        cap(pickStr(input, "text") ?? "", 48) || undefined,
+        asStr(result?.effect),
+      ].filter((value): value is string => Boolean(value)),
+    };
+  },
+  detail: ({ output }) => (asRecord(output) ? <ComputerDetail output={output} /> : null),
+};
+
+const computerUIs: Record<string, ToolUIDescriptor> = Object.fromEntries(
+  (
+    [
+      ["list_apps", AppWindowIcon],
+      ["list_windows", AppWindowIcon],
+      ["get_window_state", CameraIcon],
+      ["get_desktop_state", MonitorIcon],
+      ["click", MousePointerClickIcon],
+      ["double_click", MousePointerClickIcon],
+      ["right_click", MousePointerClickIcon],
+      ["type_text", KeyboardIcon],
+      ["press_key", KeyboardIcon],
+      ["hotkey", KeyboardIcon],
+      ["scroll", ArrowUpDownIcon],
+      ["drag", MoveIcon],
+      ["move_cursor", MousePointer2Icon],
+      ["launch_app", AppWindowIcon],
+      ["verify_state", ListChecksIcon],
+    ] as const
+  ).map(([action, icon]) => [
+    `computer_${action}`,
+    { ...computerUI, icon, labelKey: `computer_${action}` },
+  ]),
+);
 
 // --- 展开详情的通用构件 ------------------------------------------------------
 
@@ -1020,6 +1188,7 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
 
 /** 逐字注册表未命中时按前缀兜底;详情统一走 RecordDetail(非对象输出回退通用 JSON) */
 const PREFIX_UIS: Array<{ prefix: string; descriptor: ToolUIDescriptor }> = [
+  { prefix: "computer_", descriptor: computerUI },
   {
     prefix: "mastra_workspace_computer_",
     descriptor: {
@@ -1059,6 +1228,7 @@ const PREFIX_UIS: Array<{ prefix: string; descriptor: ToolUIDescriptor }> = [
 ];
 
 const EXACT_UIS: Record<string, ToolUIDescriptor> = {
+  ...computerUIs,
   ...workspaceUIs,
   ...browserUIs,
   ...webUIs,

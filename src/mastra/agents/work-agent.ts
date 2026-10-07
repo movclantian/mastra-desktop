@@ -63,11 +63,9 @@ import {
   getGuardrailsConfig,
 } from "./guardrails";
 import {
-  PERMISSION_RULES_CONTEXT_KEY,
-  parsePermissionRules,
   READ_ONLY_EXPERT_CONTEXT_KEY,
+  requestToolApproval,
   resolveRequestMode,
-  toolCategoryOf,
 } from "./permissions";
 import {
   buildInputPipeline,
@@ -500,7 +498,10 @@ function createWorkAgent(
             : fixedProfile?.type === "team" && fixedProfile.workflow?.strategy === "supervisor"
               ? fixedProfile.members.map(({ id }) => id)
               : []),
-        ].map((agentName) => [agentName, { enabled: true, timeoutMs: 900_000 }]),
+        ].map((agentName) => [
+          agentName,
+          { enabled: true, defaultDisposition: "foreground", timeoutMs: 900_000 },
+        ]),
       ),
       waitTimeoutMs: 900_000,
     },
@@ -557,17 +558,7 @@ function createWorkAgent(
             : workSubagents,
           member?.id,
         ),
-        requireToolApproval:
-          requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true
-            ? ({ toolName }) => {
-                const rules = parsePermissionRules(
-                  requestContext.get(PERMISSION_RULES_CONTEXT_KEY),
-                );
-                return (
-                  (rules.tools[toolName] ?? rules.categories[toolCategoryOf(toolName)]) !== "allow"
-                );
-              }
-            : true,
+        requireToolApproval: requestToolApproval,
       };
     },
   });

@@ -2,15 +2,15 @@ import type { Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import type {
-  AgentMemberDefinition,
-  AgentProfile,
-  TeamHandoff,
-  TeamHandoffState,
+import {
+  type AgentMemberDefinition,
+  type AgentProfile,
+  TEAM_PROFILE_CONTEXT_KEY,
+  type TeamHandoff,
+  type TeamHandoffState,
 } from "../../shared/agent-contract";
 import { getLibsqlClient, userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
-import { TEAM_PROFILE_CONTEXT_KEY } from "./team-workflow";
 
 export const TEAM_HANDOFF_CONTEXT_KEY = "mastra-work:handoff";
 export const HANDOFF_COMPLETE_CONTEXT_KEY = "mastra-work:handoff-complete";

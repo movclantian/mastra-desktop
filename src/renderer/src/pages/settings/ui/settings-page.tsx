@@ -7,6 +7,7 @@ import {
   FolderCogIcon,
   GlobeIcon,
   LogOutIcon,
+  MonitorIcon,
   PaletteIcon,
   SearchIcon,
   ServerIcon,
@@ -35,6 +36,7 @@ import {
 } from "@/shared/ui/sidebar";
 import {
   BrowserSection,
+  ComputerSection,
   GeneralSection,
   GuardrailsSection,
   MemorySection,
@@ -54,6 +56,7 @@ import {
 const PRIMARY_SECTIONS = [
   { id: "general", icon: SlidersHorizontalIcon },
   { id: "browser", icon: GlobeIcon },
+  { id: "computer", icon: MonitorIcon },
   { id: "memory", icon: BrainIcon },
   { id: "guardrails", icon: ShieldCheckIcon },
   { id: "workspace", icon: FolderCogIcon },
@@ -76,6 +79,7 @@ const SEARCH_ITEMS: Array<{
   title: string;
   description?: string;
 }> = [
+  { section: "computer", title: "settings:computer.title", description: "settings:computer.desc" },
   {
     section: "general",
     title: "settings:general.languageTitle",
@@ -348,6 +352,7 @@ export function SettingsPage() {
                   <div className="flex min-w-0 flex-col gap-4 p-4">
                     {section === "general" ? <GeneralSection /> : null}
                     {section === "browser" ? <BrowserSection /> : null}
+                    {section === "computer" ? <ComputerSection /> : null}
                     {section === "memory" ? <MemorySection /> : null}
                     {section === "tools" ? <ToolsSection /> : null}
                     {section === "guardrails" ? <GuardrailsSection /> : null}

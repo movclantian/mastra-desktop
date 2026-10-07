@@ -6,10 +6,13 @@ import {
   DEFAULT_WORK_INSTRUCTIONS,
 } from "../src/mastra/agents/agent-instructions.ts";
 import {
+  PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
+  requestToolApproval,
   resolveAgentActiveTools,
   resolveMode,
   resolveRequestMode,
+  SESSION_TOOL_POLICY_CONTEXT_KEY,
 } from "../src/mastra/agents/permissions.ts";
 import {
   buildDisplayMessages,
@@ -193,6 +196,64 @@ const supervisorPrompt = composeAgentInstructions({ profile: team, defaultInstru
 assert.ok(supervisorPrompt.includes("agent-reviewer:"));
 assert.ok(supervisorPrompt.includes("agent-reviewer_2:"));
 assert.ok(!supervisorPrompt.includes("DEFAULT_CODING_PROMPT"));
+assert.ok(supervisorPrompt.includes("Background task IDs are not process PIDs"));
+
+// Delegation must use the parent policy even without a Controller stream consumer.
+const approvalContext = { [PERMISSION_RULES_CONTEXT_KEY]: parsePermissionRules({}) };
+for (const toolName of [
+  "agent-reviewer",
+  "mastra_workspace_read_file",
+  "task_update",
+  "mcp_server_tool",
+  "computer_click",
+]) {
+  assert.equal(
+    await requestToolApproval({ toolName, args: {}, requestContext: approvalContext }),
+    false,
+  );
+}
+const restrictedContext = {
+  [PERMISSION_RULES_CONTEXT_KEY]: parsePermissionRules({
+    categories: { read: "ask" },
+    tools: { "agent-reviewer": "deny" },
+  }),
+};
+assert.equal(
+  await requestToolApproval({
+    toolName: "mastra_workspace_read_file",
+    args: {},
+    requestContext: restrictedContext,
+  }),
+  true,
+);
+assert.equal(
+  await requestToolApproval({
+    toolName: "agent-reviewer",
+    args: {},
+    requestContext: restrictedContext,
+  }),
+  true,
+);
+// Live grants override the persisted category; another session must remain unaffected.
+assert.equal(
+  await requestToolApproval({
+    toolName: "mastra_workspace_read_file",
+    args: {},
+    requestContext: {
+      ...restrictedContext,
+      [SESSION_TOOL_POLICY_CONTEXT_KEY]: () => "allow",
+    },
+  }),
+  false,
+);
+assert.equal(
+  await requestToolApproval({
+    toolName: "mastra_workspace_read_file",
+    args: {},
+    requestContext: restrictedContext,
+  }),
+  true,
+);
 
 const tools = [
   "agent-reviewer",

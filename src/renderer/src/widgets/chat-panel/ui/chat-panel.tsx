@@ -99,7 +99,7 @@ import {
 import type { WorkflowRunAction } from "./agent-panels";
 import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
 import { MessageSelectionScope } from "./message-selection";
-import { HandoffPanel, HandoffRecord, SupervisorDelegations } from "./team-collaboration";
+import { HandoffPanel, HandoffRecord } from "./team-collaboration";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
   "completed",
@@ -1585,11 +1585,6 @@ export function ChatPanel() {
         onAction={handleWorkflowAction}
         workflow={workflow}
         invocations={teamInvocations}
-      />
-      <SupervisorDelegations
-        profile={agentSelection}
-        invocations={teamInvocations}
-        onSelect={setActiveMemberId}
       />
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel

@@ -1,7 +1,7 @@
 import type { DelegationConfig, MastraDBMessage } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
-import { MASTRA_RESOURCE_ID_KEY, MASTRA_THREAD_ID_KEY } from "@mastra/core/request-context";
 import type { AgentProfile, TeamInvocation } from "../../shared/agent-contract";
+import { errorText } from "../errors";
 import { getLibsqlClient, userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 import { HANDOFF_COMPLETE_CONTEXT_KEY, TEAM_HANDOFF_CONTEXT_KEY } from "./team-handoff";
@@ -96,14 +96,12 @@ export async function getTeamInvocationDetail(resourceId: string, threadId: stri
 /** Bind the native isolated memory thread before tools run, including suspended invocations. */
 export const teamInvocationProcessor = {
   id: "team-invocation",
-  async processInputStep({ requestContext, state, runId, messages, agent }) {
+  async processInputStep({ requestContext, state, runId, messages, messageList, agent }) {
     if (!requestContext) return;
     let id = requestContext.get(TEAM_INVOCATION_CONTEXT_KEY) as string | undefined;
     const handoff = requestContext.get(TEAM_HANDOFF_CONTEXT_KEY) as
       | import("../../shared/agent-contract").TeamHandoffState
       | undefined;
-    const threadId = requestContext.get(MASTRA_THREAD_ID_KEY);
-    const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
     if (handoff) {
       if (!runId || !agent) throw new Error("Missing handoff run identity");
       id = `${runId}:handoff`;
@@ -127,13 +125,21 @@ export const teamInvocationProcessor = {
       });
     }
     if (!id || state.invocationId === id) return;
+    // Delegation removes parent memory keys from RequestContext. The MessageList owns
+    // the actual isolated binding, including when the child suspends before completion.
+    const memory = messageList.serialize().memoryInfo;
     await finishTeamInvocation(id, {
       status: "running",
       ...(agent ? { agentId: agent.id } : {}),
-      ...(typeof threadId === "string" ? { memoryThreadId: threadId } : {}),
-      ...(typeof resourceId === "string" ? { memoryResourceId: resourceId } : {}),
+      ...(memory?.threadId ? { memoryThreadId: memory.threadId } : {}),
+      ...(memory?.resourceId ? { memoryResourceId: memory.resourceId } : {}),
     });
     state.invocationId = id;
+  },
+  async processOutputStep({ requestContext, messages, messageList }) {
+    const id = requestContext?.get(TEAM_INVOCATION_CONTEXT_KEY);
+    if (typeof id === "string") await finishTeamInvocation(id, {}, messageList.get.response.db());
+    return messages;
   },
   async processOutputResult({ requestContext, messages, messageList, result }) {
     const id = requestContext?.get(TEAM_INVOCATION_CONTEXT_KEY);
@@ -209,7 +215,11 @@ export function teamDelegation(
           {
             status: context.success && context.result.text.trim() ? "completed" : "error",
             text: context.result.text || completion?.resultText,
-            ...(context.error ? { error: "Delegated task failed" } : {}),
+            ...(!context.success
+              ? { error: errorText(context.error, "Delegated task failed") }
+              : !context.result.text.trim()
+                ? { error: completion?.resultText ?? "Member returned no result" }
+                : {}),
             endedAt: new Date().toISOString(),
             memoryThreadId: context.result.subAgentThreadId,
             memoryResourceId: context.result.subAgentResourceId,

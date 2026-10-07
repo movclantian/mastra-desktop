@@ -7,6 +7,13 @@ import { z } from "zod";
 
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
+import { ComputerConfigSchema } from "../../shared/computer-contract";
+import {
+  closeComputerConnections,
+  getComputerConfig,
+  probeComputer,
+  saveComputerConfig,
+} from "../connections/computer";
 import { workValidationError } from "../errors";
 import { getToolsConfig, saveToolsConfig } from "../tools/tool-registry";
 import { toolsConfigSchema } from "../tools/web-search";
@@ -39,3 +46,46 @@ export const saveToolsConfigRoute = createRoute({
     return { ok: true };
   },
 });
+
+export const computerRoutes = [
+  createRoute({
+    path: "/work/computer",
+    method: "GET",
+    responseType: "json",
+    queryParamSchema: z.object({}).strict(),
+    onValidationError: workValidationError,
+    handler: ({ requestContext }) =>
+      getComputerConfig(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+  }),
+  createRoute({
+    path: "/work/computer",
+    method: "POST",
+    responseType: "json",
+    queryParamSchema: z.object({}).strict(),
+    onValidationError: workValidationError,
+    bodySchema: z.object({ config: ComputerConfigSchema }).strict(),
+    handler: ({ config, requestContext }) =>
+      saveComputerConfig(config, requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+  }),
+  createRoute({
+    path: "/work/computer/probe",
+    method: "POST",
+    responseType: "json",
+    queryParamSchema: z.object({}).strict(),
+    onValidationError: workValidationError,
+    bodySchema: z.object({ config: ComputerConfigSchema }).strict(),
+    handler: ({ config }) => probeComputer(config),
+  }),
+  createRoute({
+    path: "/work/computer/disconnect",
+    method: "POST",
+    responseType: "json",
+    queryParamSchema: z.object({}).strict(),
+    bodySchema: z.object({}).strict(),
+    onValidationError: workValidationError,
+    handler: async ({ requestContext }) => {
+      await closeComputerConnections(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string);
+      return { ok: true };
+    },
+  }),
+];

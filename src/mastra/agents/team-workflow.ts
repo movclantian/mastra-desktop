@@ -17,6 +17,7 @@ import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager"
 import {
   PERMISSION_RULES_CONTEXT_KEY,
   parsePermissionRules,
+  requestToolApproval,
   resolveRequestMode,
   toolCategoryOf,
 } from "./permissions";
@@ -28,7 +29,6 @@ import {
 } from "./team-activity";
 
 export const TEAM_WORKFLOW_CONTEXT_KEY = "mastra-work:team-workflow";
-export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";
 export const TEAM_CONVERSATION_CONTEXT_KEY = "mastra-work:team-conversation";
 const stageSchema = z.object({ request: z.string(), text: z.string() });
 type Stage = z.infer<typeof stageSchema>;
@@ -95,7 +95,6 @@ export function compileTeamWorkflow(
         context.set(MASTRA_THREAD_ID_KEY, thread);
         context.set(MASTRA_RESOURCE_ID_KEY, resource);
         context.set(TEAM_WORKFLOW_CONTEXT_KEY, true);
-        const rules = parsePermissionRules(context.get(PERMISSION_RULES_CONTEXT_KEY));
         const options: AgentExecutionOptions = {
           requestContext: context,
           abortSignal,
@@ -103,8 +102,7 @@ export function compileTeamWorkflow(
           context: context.get(TEAM_CONVERSATION_CONTEXT_KEY) as AgentExecutionOptions["context"],
           toolCallConcurrency: 1,
           untilIdle: true,
-          requireToolApproval: ({ toolName }) =>
-            (rules.tools[toolName] ?? rules.categories[toolCategoryOf(toolName)]) !== "allow",
+          requireToolApproval: requestToolApproval,
           tracingContext: observability.tracingContext,
         };
         const prompt = [
@@ -151,6 +149,7 @@ export function compileTeamWorkflow(
                 }
               : undefined;
           const mode = resolveRequestMode(context);
+          const rules = parsePermissionRules(context.get(PERMISSION_RULES_CONTEXT_KEY));
           if (
             pending &&
             suspendData &&

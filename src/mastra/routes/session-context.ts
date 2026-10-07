@@ -4,6 +4,7 @@ import type { Agent, AgentExecutionOptions } from "@mastra/core/agent";
 import type { Session as ControllerSession } from "@mastra/core/agent-controller";
 import type { ContextWithMastra } from "@mastra/core/server";
 import { z } from "zod";
+import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   ensureProfileAgentsRegistered,
@@ -20,7 +21,6 @@ import {
 } from "../agents/permissions";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workMessageMetadataSchema } from "../agents/processors";
 import { getTeamHandoffState, TEAM_HANDOFF_CONTEXT_KEY } from "../agents/team-handoff";
-import { TEAM_PROFILE_CONTEXT_KEY } from "../agents/team-workflow";
 import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents/work-agent";
 import { workError } from "../errors";
 import {

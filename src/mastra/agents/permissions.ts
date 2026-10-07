@@ -3,6 +3,7 @@ import type {
   PermissionRules,
   ToolCategory,
 } from "@mastra/core/agent-controller";
+import type { RequireToolApprovalFn } from "@mastra/core/tools";
 import { WORKSPACE_TOOLS, WORKSPACE_TOOLS_PREFIX } from "@mastra/core/workspace";
 import { z } from "zod";
 import {
@@ -10,6 +11,7 @@ import {
   type AgentProfile,
   delegationMemberIds,
 } from "../../shared/agent-contract.ts";
+import { COMPUTER_READ_TOOLS, COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract.ts";
 
 /** Workbench category catalog and persisted native Controller permission rules. */
 const DEFAULT_CATEGORY_POLICIES = {
@@ -48,6 +50,16 @@ export type { PermissionPolicy, PermissionRules, ToolCategory };
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
 export const READ_ONLY_EXPERT_CONTEXT_KEY = "mastra-work:read-only-expert";
+
+/** Delegated runs have no Controller approval handler; resolve the same policy before execution. */
+export const requestToolApproval: RequireToolApprovalFn = ({ toolName, requestContext }) => {
+  const resolve = requestContext?.[SESSION_TOOL_POLICY_CONTEXT_KEY] as
+    | ((name: string) => PermissionPolicy)
+    | undefined;
+  if (typeof resolve === "function") return resolve(toolName) !== "allow";
+  const rules = parsePermissionRules(requestContext?.[PERMISSION_RULES_CONTEXT_KEY]);
+  return (rules.tools[toolName] ?? rules.categories[toolCategoryOf(toolName)]) !== "allow";
+};
 
 /**
  * 默认策略:工作台默认完全访问;交互型工具仍显式允许,避免进入审批门。
@@ -143,6 +155,7 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
  * 工作区工具按官方常量表分类；未识别的工作区工具归 edit，按线程的 edit 规则处理。
  */
 export const READ_ONLY_TOOL_NAMES = [
+  ...COMPUTER_READ_TOOLS,
   ...WORKSPACE_READ_TOOLS,
   ...Object.keys(CATEGORY_BY_TOOL).filter((name) => CATEGORY_BY_TOOL[name] === "read"),
   "ask_user",
@@ -217,6 +230,8 @@ export function resolveAgentActiveTools({
 }
 
 export function toolCategoryOf(toolName: string): ToolCategory {
+  if (toolName.startsWith(COMPUTER_TOOL_PREFIX))
+    return COMPUTER_READ_TOOLS.includes(toolName) ? "read" : "execute";
   const explicit = CATEGORY_BY_TOOL[toolName];
   if (explicit) return explicit;
   if (toolName.startsWith(WORKSPACE_TOOLS_PREFIX)) {

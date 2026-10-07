@@ -6,9 +6,17 @@ export const WINDOW_CHANNELS = {
   updateSettings: "window:update-settings",
   notify: "window:notify",
   notificationClick: "window:notification-click",
+  computerPermissions: "window:computer-permissions",
 } as const;
 
 export const SetMinimumWidthRequestSchema = z.number().finite().positive().max(32_767);
+
+export const ComputerPermissionActionSchema = z.enum(["status", "request"]);
+export const ComputerPermissionsSchema = z.object({
+  supported: z.boolean(),
+  accessibility: z.boolean(),
+  screenRecording: z.boolean(),
+});
 
 export const DesktopPreferencesSchema = z
   .object({

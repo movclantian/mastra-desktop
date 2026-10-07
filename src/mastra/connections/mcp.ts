@@ -2,11 +2,15 @@
  * MCP (Model Context Protocol) 连接模块。
  * 官方文档:docs/en/docs/connections/mcp.mdx(传输 / 工具审批 / 安全)、
  * docs/en/reference/tools/mcp-client.mdx(MCPClient API)。
- * 支持 Streamable HTTP 与 Stdio (子进程) 双传输,配置存 app_config 表
- * (key = "mcp"),按配置哈希缓存 MCPClient,变更后重建并动态注入 Agent 工具集。
+ * HTTP/stdio 连接统一使用官方 mcpClients 版本化存储，Studio 与桌面读取同一份配置。
+ * 凭据仅存主进程凭据库；运行时通过官方 MCPClient 应用请求头、OAuth 和审批策略。
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
+import type { ContextWithMastra } from "@mastra/core/server";
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
+import type { StorageResolvedMCPClientType, StorageMCPServerConfig } from "@mastra/core/storage";
+import { handleAutoVersioning, MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS } from "@mastra/server/handlers/version-helpers";
 import {
   getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
@@ -27,7 +31,7 @@ import {
   storeCredential,
 } from "../credential-broker";
 import { errorText, workError } from "../errors";
-import { deleteAppConfig, getAppConfig, setAppConfig } from "../storage/database";
+import { appStorage, deleteAppConfig, getAppConfig, setAppConfig } from "../storage/database";
 
 export const mcpServerConfigSchema = z
   .object({
@@ -36,6 +40,13 @@ export const mcpServerConfigSchema = z
       .trim()
       .regex(/^[a-zA-Z0-9_-]{1,64}$/),
     name: z.string().trim().optional(),
+    clientId: z.string().min(1).optional(),
+    serverName: z.string().min(1).optional(),
+    builtin: z.literal("anysearch").optional(),
+    status: z.enum(["draft", "published", "archived"]).optional(),
+    version: z.string().optional(),
+    timeout: z.number().int().positive().optional(),
+    tools: z.record(z.string(), z.object({ description: z.string().optional() })).optional(),
     enabled: z.boolean().default(true),
     transport: z.enum(["http", "stdio"]),
     url: z.url({ protocol: /^https?$/ }).optional(),
@@ -91,106 +102,166 @@ interface McpServerSummary extends McpServerConfig {
   envKeys: string[];
 }
 
-const MCP_CONFIG_KEY = "mcp";
-const EMPTY_CONFIG: McpConfig = { servers: [] };
+export const ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp";
+const OWNER_KEY = "mastra_resource_id";
+const OPTIONS_KEY = "desktopMcp";
+const scopeOf = (resourceId?: string) => resourceId?.trim() || "__system__";
+const stableId = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 24);
 
 interface McpRuntime {
-  client?: { hash: string; promise: Promise<MCPClient | null> };
-  redirects: Map<
-    string,
-    {
-      client: MCPClient;
-      url: Promise<string>;
-      resolve: (url: string) => void;
-    }
-  >;
+  clients: Map<string, { hash: string; promise: Promise<MCPClient> }>;
+  redirects: Map<string, { client: MCPClient; url: Promise<string>; resolve: (url: string) => void }>;
 }
-
 const runtimeByScope = new Map<string, McpRuntime>();
-
 function getRuntime(resourceId?: string): McpRuntime {
-  const key = resourceId?.trim() || "__system__";
-  let runtime = runtimeByScope.get(key);
+  const scope = scopeOf(resourceId);
+  let runtime = runtimeByScope.get(scope);
   if (!runtime) {
-    runtime = { redirects: new Map() };
-    runtimeByScope.set(key, runtime);
+    runtime = { clients: new Map(), redirects: new Map() };
+    runtimeByScope.set(scope, runtime);
   }
   return runtime;
 }
-
-export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
-  const raw = await getAppConfig(MCP_CONFIG_KEY, resourceId);
-  return raw
-    ? z.object({ servers: z.array(mcpServerConfigSchema) }).parse(JSON.parse(raw))
-    : EMPTY_CONFIG;
+async function mcpStore() {
+  const store = await appStorage.getStore("mcpClients");
+  if (!store) throw new Error("MCP clients storage is not configured");
+  return store;
+}
+function connectionOptions(client: StorageResolvedMCPClientType): Record<string, Partial<McpServerConfig>> {
+  return z.record(z.string(), z.record(z.string(), z.unknown())).parse(client.metadata?.[OPTIONS_KEY] ?? {});
+}
+function connectionsOf(client: StorageResolvedMCPClientType): McpServerConfig[] {
+  const options = connectionOptions(client);
+  return Object.entries(client.servers).map(([serverName, server]) => mcpServerConfigSchema.parse({
+    ...options[serverName],
+    id: options[serverName]?.id ?? stableId(`${client.id}:${serverName}`),
+    clientId: client.id,
+    serverName,
+    name: Object.keys(client.servers).length === 1 ? client.name : (options[serverName]?.name ?? serverName),
+    status: client.status,
+    version: `${client.resolvedVersionId}:${client.updatedAt.toISOString()}`,
+    enabled: client.status === "published" && options[serverName]?.enabled !== false,
+    transport: server.type,
+    url: server.url,
+    command: server.command,
+    args: server.args,
+    timeout: server.timeout,
+    tools: server.tools,
+    envKeys: [...new Set([...Object.keys(server.env ?? {}), ...(options[serverName]?.envKeys ?? [])])],
+  }));
+}
+async function ownedClient(id: string, resourceId?: string): Promise<StorageResolvedMCPClientType> {
+  const client = await (await mcpStore()).getByIdResolved(id);
+  if (!client || client.metadata?.[OWNER_KEY] !== scopeOf(resourceId)) throw workError("MCP_SERVER_NOT_FOUND");
+  return client;
+}
+const preparingAnysearch = new Map<string, Promise<void>>();
+async function ensureAnysearchConnection(resourceId?: string): Promise<void> {
+  const scope = scopeOf(resourceId);
+  let pending = preparingAnysearch.get(scope);
+  if (!pending) {
+    pending = (async () => {
+      const store = await mcpStore();
+      const id = `anysearch-${stableId(scope)}`;
+      if (await store.getById(id)) return;
+      await store.create({ mcpClient: {
+        id, name: "AnySearch", authorId: scope,
+        description: "Built-in web search connection. Choose search depth in the composer; manage credentials here.",
+        servers: { anysearch: { type: "http", url: ANYSEARCH_MCP_URL } },
+        metadata: { [OWNER_KEY]: scope, [OPTIONS_KEY]: { anysearch: {
+          id, builtin: "anysearch", enabled: true, requireToolApproval: false,
+          allowedHosts: ["api.anysearch.com"],
+        } } },
+      } });
+      const version = await store.getLatestVersion(id);
+      if (!version) throw new Error("MCP initial version was not created");
+      await store.update({ id, activeVersionId: version.id, status: "published" });
+    })().finally(() => preparingAnysearch.delete(scope));
+    preparingAnysearch.set(scope, pending);
+  }
+  await pending;
 }
 
-export async function saveMcpConfig(config: McpConfig, resourceId?: string): Promise<void> {
-  const servers = config.servers.map((server) => mcpServerConfigSchema.parse(server));
-  if (new Set(servers.map((server) => server.id)).size !== servers.length)
-    throw workError("MCP_CONFIG_INVALID", { text: "MCP ID 不能重复" });
-  await Promise.all(
-    servers.flatMap((server) => [
-      resolveSecretRecord(server.headerCredential, mcpCredentialPurpose(server.id, "headers")),
-      resolveSecretRecord(server.envCredential, mcpCredentialPurpose(server.id, "env")),
-      server.oauth?.clientSecretCredential
-        ? resolveCredential(
-            server.oauth.clientSecretCredential.credentialRef,
-            mcpCredentialPurpose(server.id, "client-secret"),
-          )
-        : undefined,
-    ]),
-  );
-  const current = await getMcpConfig(resourceId);
-  await setAppConfig(MCP_CONFIG_KEY, JSON.stringify({ servers }, null, 2), resourceId);
-  const runtime = getRuntime(resourceId);
-  const previous = runtime.client;
-  const client = await previous?.promise.catch(() => null);
-  await client?.disconnect();
-  if (runtime.client === previous) runtime.client = undefined;
-  const nextById = new Map(servers.map((server) => [server.id, server]));
-  await Promise.all(
-    current.servers.flatMap((server) => {
-      const next = nextById.get(server.id);
-      const stale: Array<Promise<void>> = [];
-      if (
-        server.headerCredential &&
-        next?.headerCredential?.credentialRef !== server.headerCredential.credentialRef
-      ) {
-        stale.push(
-          deleteCredential(
-            server.headerCredential.credentialRef,
-            mcpCredentialPurpose(server.id, "headers"),
-          ),
-        );
-      }
-      if (
-        server.envCredential &&
-        next?.envCredential?.credentialRef !== server.envCredential.credentialRef
-      ) {
-        stale.push(
-          deleteCredential(
-            server.envCredential.credentialRef,
-            mcpCredentialPurpose(server.id, "env"),
-          ),
-        );
-      }
-      if (
-        server.oauth?.clientSecretCredential &&
-        next?.oauth?.clientSecretCredential?.credentialRef !==
-          server.oauth.clientSecretCredential.credentialRef
-      ) {
-        stale.push(
-          deleteCredential(
-            server.oauth.clientSecretCredential.credentialRef,
-            mcpCredentialPurpose(server.id, "client-secret"),
-          ),
-        );
-      }
-      if (!next) stale.push(deleteOAuthCredentials(server.id, resourceId));
-      return stale.map((operation) => operation.catch(() => undefined));
-    }),
-  );
+/** The same official storage domain is used by Studio's MCP Clients and the desktop manager. */
+export async function getMcpConfig(resourceId?: string): Promise<McpConfig> {
+  await ensureAnysearchConnection(resourceId);
+  const store = await mcpStore();
+  const pages = await Promise.all((["published", "draft", "archived"] as const).map((status) =>
+    store.listResolved({ perPage: false, metadata: { [OWNER_KEY]: scopeOf(resourceId) }, status }),
+  ));
+  return { servers: pages.flatMap((page) => page.mcpClients.flatMap(connectionsOf)) };
+}
+
+/** Update one connection without replacing another client's configuration or losing sibling servers. */
+export async function saveMcpServer(input: McpServerConfig, resourceId?: string): Promise<McpServerConfig> {
+  const server = mcpServerConfigSchema.parse(input);
+  const store = await mcpStore();
+  const current = server.clientId ? await ownedClient(server.clientId, resourceId) : undefined;
+  const options = current ? connectionOptions(current) : {};
+  const serverName = server.serverName ?? `mcp_${server.id}`;
+  if (current && !current.servers[serverName]) throw workError("MCP_SERVER_NOT_FOUND");
+  const previous = options[serverName];
+  if (previous?.builtin === "anysearch") {
+    server.builtin = "anysearch";
+    if (server.transport !== "http" || server.url !== ANYSEARCH_MCP_URL || serverName !== "anysearch" || server.oauth?.enabled)
+      throw workError("MCP_CONFIG_INVALID", { text: "AnySearch uses its built-in HTTP endpoint and API key authentication" });
+    server.allowedHosts = ["api.anysearch.com"];
+  } else if (server.builtin) throw workError("MCP_CONFIG_INVALID", { text: "Built-in identity is managed by the application" });
+  if (previous?.id && previous.id !== server.id) throw workError("MCP_CONFIG_INVALID", { text: "MCP connection ID cannot change" });
+  await Promise.all([
+    resolveSecretRecord(server.headerCredential, mcpCredentialPurpose(server.id, "headers")),
+    resolveSecretRecord(server.envCredential, mcpCredentialPurpose(server.id, "env")),
+    server.oauth?.clientSecretCredential ? resolveCredential(server.oauth.clientSecretCredential.credentialRef, mcpCredentialPurpose(server.id, "client-secret")) : undefined,
+  ]);
+  const id = current?.id ?? randomUUID();
+  const definition: StorageMCPServerConfig = {
+    type: server.transport,
+    ...(server.transport === "http" ? { url: server.url } : { command: server.command, args: server.args, env: current?.servers[serverName]?.env }),
+    timeout: server.timeout, tools: server.tools,
+  };
+  const { clientId: _clientId, serverName: _serverName, version: _version, status: _status, transport: _transport, url: _url, command: _command, args: _args, timeout: _timeout, tools: _tools, ...security } = server;
+  const metadata = { ...current?.metadata, [OWNER_KEY]: scopeOf(resourceId), [OPTIONS_KEY]: { ...options, [serverName]: security } };
+  const snapshot = { name: current && Object.keys(current.servers).length > 1 ? current.name : server.name,
+    description: current?.description, servers: { ...current?.servers, [serverName]: definition } };
+  if (current) {
+    const updated = await store.update({ id, metadata });
+    await handleAutoVersioning(store, id, "mcpClientId", MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS, current, updated, snapshot);
+  } else await store.create({ mcpClient: { id, ...snapshot, metadata, authorId: scopeOf(resourceId) } });
+  const latest = await store.getLatestVersion(id);
+  if (!latest) throw new Error("MCP version is missing");
+  await store.update({ id, activeVersionId: latest.id, status: "published" });
+  await closeMcpConnections(resourceId);
+  // Version history may still refer to older credentials; remove secrets only when deleting a connection.
+  return connectionsOf(await ownedClient(id, resourceId)).find((entry) => entry.serverName === serverName)!;
+}
+
+export async function deleteMcpServer(id: string, resourceId?: string): Promise<void> {
+  const server = (await getMcpConfig(resourceId)).servers.find((entry) => entry.id === id);
+  if (!server?.clientId || !server.serverName) throw workError("MCP_SERVER_NOT_FOUND");
+  if (server.builtin) throw workError("MCP_CONFIG_INVALID", { text: "Built-in connections can be disabled, not deleted" });
+  const current = await ownedClient(server.clientId, resourceId);
+  const store = await mcpStore();
+  const { [server.serverName]: _removed, ...servers } = current.servers;
+  if (Object.keys(servers).length === 0) await store.delete(current.id);
+  else {
+    const options = connectionOptions(current);
+    delete options[server.serverName];
+    const updated = await store.update({ id: current.id, metadata: { ...current.metadata, [OPTIONS_KEY]: options } });
+    await handleAutoVersioning(store, current.id, "mcpClientId", MCP_CLIENT_SNAPSHOT_CONFIG_FIELDS, current, updated, { servers });
+    const latest = await store.getLatestVersion(current.id);
+    if (latest) await store.update({ id: current.id, activeVersionId: latest.id });
+  }
+  await closeMcpConnections(resourceId);
+  await deleteOAuthCredentials(server.id, resourceId);
+}
+
+/** Initialize built-ins for native Studio reads and invalidate live clients after its writes. */
+export async function mcpManagementMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
+  const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string | undefined;
+  if (!resourceId) throw workError("AUTH_REQUIRED");
+  await ensureAnysearchConnection(resourceId);
+  await next();
+  if (c.res.ok && !["GET", "HEAD"].includes(c.req.method)) await closeMcpConnections(resourceId);
 }
 
 export function summarizeMcpServer(server: McpServerConfig): McpServerSummary {
@@ -327,7 +398,9 @@ async function toDefinition(
     return {
       url: new URL(server.url),
       allowedHosts: server.allowedHosts,
-      requestInit: { headers },
+      requestInit: { headers: { ...(server.builtin === "anysearch" ? { "X-Anysearch-Client": "mastra-desktop/1.0" } : {}), ...headers } },
+      timeout: server.timeout,
+      onToolError: "throw",
       ...(authProvider ? { authProvider } : {}),
       requireToolApproval: server.requireToolApproval,
     };
@@ -340,7 +413,9 @@ async function toDefinition(
   return {
     command: server.command,
     args: server.args,
-    env,
+    env: { ...(server.clientId && server.serverName ? (await ownedClient(server.clientId, resourceId)).servers[server.serverName]?.env : {}), ...env },
+    timeout: server.timeout,
+    onToolError: "throw",
     requireToolApproval: server.requireToolApproval,
     ...(server.inheritDefaultEnv === false ? { inheritDefaultEnv: false } : {}),
   };
@@ -349,7 +424,7 @@ async function toDefinition(
 async function createClient(servers: McpServerConfig[], resourceId?: string): Promise<MCPClient> {
   const definitions = await Promise.all(
     servers.map(
-      async (server) => [`mcp_${server.id}`, await toDefinition(server, resourceId)] as const,
+      async (server) => [server.serverName ?? `mcp_${server.id}`, await toDefinition(server, resourceId)] as const,
     ),
   );
   return new MCPClient({
@@ -364,7 +439,7 @@ export async function testMcpServer(server: McpServerConfig, resourceId?: string
   try {
     const result = await client.listToolsWithErrors();
     const tools = Object.keys(result.tools);
-    const error = result.errors[`mcp_${server.id}`];
+    const error = result.errors[server.serverName ?? `mcp_${server.id}`];
     return { ok: !error, toolCount: tools.length, tools, error };
   } catch (error) {
     throw workError("MCP_CONNECTION_FAILED", {
@@ -376,36 +451,42 @@ export async function testMcpServer(server: McpServerConfig, resourceId?: string
   }
 }
 
-async function getConfiguredMcpClient(resourceId?: string): Promise<MCPClient | null> {
-  const config = await getMcpConfig(resourceId);
+async function getConfiguredMcpClient(server: McpServerConfig, resourceId?: string): Promise<MCPClient> {
   const runtime = getRuntime(resourceId);
-  const enabled = config.servers.filter((server) => server.enabled);
-  const hash = JSON.stringify(enabled);
-  const previous = runtime.client;
+  const hash = JSON.stringify(server);
+  const previous = runtime.clients.get(server.id);
   if (previous?.hash === hash) return previous.promise;
-  const pending = {
-    hash,
-    promise: (async () => {
-      const client = await previous?.promise.catch(() => null);
-      await client?.disconnect();
-      return enabled.length ? createClient(enabled, resourceId) : null;
-    })(),
-  };
-  runtime.client = pending;
-  try {
-    return await pending.promise;
-  } catch (error) {
-    if (runtime.client === pending) runtime.client = undefined;
-    throw error;
-  }
+  const pending = { hash, promise: (async () => {
+    await (await previous?.promise.catch(() => undefined))?.disconnect();
+    return createClient([server], resourceId);
+  })() };
+  runtime.clients.set(server.id, pending);
+  try { return await pending.promise; }
+  catch (error) { if (runtime.clients.get(server.id) === pending) runtime.clients.delete(server.id); throw error; }
 }
 
-export async function getConfiguredMcpTools(resourceId?: string): Promise<ToolsInput> {
-  const client = await getConfiguredMcpClient(resourceId);
-  if (!client) return {};
-  const { tools, errors } = await client.listToolsWithErrors();
-  if (Object.keys(errors).length) console.warn("MCP tool discovery failed", errors);
-  return tools;
+export async function closeMcpConnections(resourceId?: string): Promise<void> {
+  const scopes = resourceId === undefined ? [...runtimeByScope.values()] : [getRuntime(resourceId)];
+  const pending = scopes.flatMap((scope) => {
+    const clients = [...scope.clients.values()];
+    scope.clients.clear(); scope.redirects.clear();
+    return clients.map(async ({ promise }) => (await promise.catch(() => undefined))?.disconnect());
+  });
+  await Promise.all(pending);
+}
+
+export async function getConfiguredMcpTools(resourceId?: string, builtin?: "anysearch"): Promise<ToolsInput> {
+  const config = await getMcpConfig(resourceId);
+  const selected = config.servers.filter((server) => server.enabled && server.builtin === builtin);
+  const toolsets = await Promise.all(selected.map(async (server) => {
+    const client = await getConfiguredMcpClient(server, resourceId);
+    const { tools, errors } = await client.listToolsWithErrors();
+    if (Object.keys(errors).length) throw workError("MCP_CONNECTION_FAILED", { text: `${server.name}: ${Object.values(errors).join("; ")}` });
+    if (!server.tools) return tools;
+    const prefix = `${server.serverName}_`;
+    return Object.fromEntries(Object.entries(tools).filter(([name]) => Object.hasOwn(server.tools ?? {}, name.slice(prefix.length))));
+  }));
+  return Object.assign({}, ...toolsets);
 }
 
 /** Start the official MCPClient loopback OAuth flow and expose its redirect URL. */
@@ -421,7 +502,7 @@ export async function authenticateMcpServer(
   const runtime = getRuntime(resourceId);
   if (!server.enabled)
     throw workError("MCP_CONFIG_INVALID", { text: `MCP 服务 ${serverId} 未启用` });
-  const client = await getConfiguredMcpClient(resourceId);
+  const client = await getConfiguredMcpClient(server, resourceId);
   if (!client) throw workError("MCP_CONFIG_INVALID", { text: "没有启用的 MCP 服务" });
   let redirect = runtime.redirects.get(serverId);
   if (!redirect || redirect.client !== client) {
@@ -433,7 +514,7 @@ export async function authenticateMcpServer(
     runtime.redirects.set(serverId, redirect);
   }
   // SDK owns the per-server authentication task; this map only delivers its browser URL.
-  const authentication = client.authenticate(`mcp_${serverId}`).catch((error: unknown) => {
+  const authentication = client.authenticate(server.serverName ?? `mcp_${serverId}`).catch((error: unknown) => {
     throw workError("MCP_CONNECTION_FAILED", {
       text: errorText(error, "MCP OAuth 授权失败"),
       cause: error,

@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { ProfileAvatar, TeamStructure } from "@/entities/workbench/ui/agent-profile-details";
+import { ProfileAvatar } from "@/entities/workbench/ui/agent-profile-details";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import {
   Dialog,
@@ -22,61 +21,6 @@ import type {
   TeamInvocation,
 } from "../../../../../shared/agent-contract";
 import type { WorkflowRuntimeRun, WorkflowRuntimeStep } from "../model/types";
-
-export function SupervisorDelegations({
-  profile,
-  invocations,
-  onSelect,
-}: {
-  profile: AgentProfile;
-  invocations: TeamInvocation[];
-  onSelect: (memberId: string) => void;
-}) {
-  const { t } = useTranslation();
-  if (profile.workflow?.strategy !== "supervisor") return null;
-  const calls = invocations.filter((call) => call.profileId === profile.id && !call.workflowRunId);
-  const name = (id?: string) =>
-    profile.members.find((member) => member.id === id)?.name ?? profile.displayName;
-  const renderCall = (call: TeamInvocation): React.ReactNode => (
-    <li key={call.id} className="grid min-w-0 gap-1 border-l pl-2">
-      <button
-        type="button"
-        onClick={() => onSelect(call.memberId)}
-        className="flex min-w-0 flex-wrap items-center gap-2 text-left text-xs hover:underline"
-      >
-        <span className="break-words">
-          {name(call.parentMemberId)} → {name(call.memberId)}
-        </span>
-        <Badge variant="outline">{call.status}</Badge>
-      </button>
-      <p className="whitespace-pre-wrap break-words text-xs">{call.prompt}</p>
-      <span className="break-all font-mono text-[10px] text-muted-foreground">
-        {call.toolCallId}
-      </span>
-      {call.error ? <p className="break-words text-xs text-destructive">{call.error}</p> : null}
-      <ul className="grid min-w-0 gap-2">
-        {calls.filter((child) => child.parentInvocationId === call.id).map(renderCall)}
-      </ul>
-    </li>
-  );
-  return (
-    <details className="mx-auto mb-2 w-full max-w-3xl rounded-lg border p-2">
-      <summary className="cursor-pointer text-sm">
-        {t("agentHub:delegationHistory")} · {calls.length}
-      </summary>
-      <ScrollArea className="max-h-72">
-        <div className="grid min-w-0 gap-3 pt-2">
-          <TeamStructure profile={profile} />
-          <ul className="grid min-w-0 gap-2">
-            {calls
-              .filter((call) => !calls.some((parent) => parent.id === call.parentInvocationId))
-              .map(renderCall)}
-          </ul>
-        </div>
-      </ScrollArea>
-    </details>
-  );
-}
 
 function RuntimeStep({
   step,

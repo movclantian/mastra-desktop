@@ -2,6 +2,9 @@ import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 
+/** Shared execution identity; consumers must not import the workflow implementation for it. */
+export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";
+
 /** The same roster drives native agent tools, prompts and mode visibility. */
 export function delegationMemberIds(
   profile: AgentProfile,

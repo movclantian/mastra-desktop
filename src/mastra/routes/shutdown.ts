@@ -16,6 +16,7 @@ import type { Mastra } from "@mastra/core/mastra";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { closeAllBrowsers } from "../agents/browser";
 import { isDesktopControlRequest } from "../auth";
+import { closeComputerConnections } from "../connections/computer";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { closeMemoryVector, settleAllMemory } from "../memory/memory-runtime";
 import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
@@ -90,6 +91,7 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
     closeMemoryVector(),
     closeLibraryVector(),
     closeAllBrowsers(),
+    closeComputerConnections(),
     closeWebSearchClients(),
   ]);
   signal.throwIfAborted();
