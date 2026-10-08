@@ -32,6 +32,8 @@ type NativeDisplayState = Extract<
   KnownAgentControllerEvent,
   { type: "display_state_changed" }
 >["displayState"];
+
+export class ToolInteractionUnavailableError extends Error {}
 interface SessionView {
   queuedRequests: QueuedRequest[];
   messages: WorkUIMessage[];
@@ -375,7 +377,9 @@ function createThreadSession(
             if (event.type === "follow_up_queued") void refreshQueue().catch(queueRefreshFailed);
             if (event.type === "agent_start") {
               failed = false;
+              awaitingRun = false;
               store.setState({ runError: undefined });
+              setStatus("streaming");
             }
             if (event.type === "display_state_changed") applyDisplay(event.displayState);
             else if (event.type === "agent_end") {
@@ -445,7 +449,10 @@ function createThreadSession(
     } catch (error) {
       commandPending = false;
       awaitingRun = false;
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (error instanceof ToolInteractionUnavailableError) {
+        setStatus(store.getState().native?.isRunning || workflowStreaming ? "streaming" : "ready");
+        reconcile();
+      } else if (error instanceof DOMException && error.name === "AbortError") {
         setStatus(store.getState().native?.isRunning || workflowStreaming ? "streaming" : "ready");
       } else {
         fail(error);
@@ -703,7 +710,15 @@ function createThreadSession(
                 response.resumeData as Parameters<typeof client.respondToToolSuspension>[1],
                 requestOptions(options),
               );
-        if (!result.ok) throw new Error(result.reason);
+        if (!result.ok) {
+          if (
+            ["not_pending", "stale_tool_call", "no_pending_suspension"].includes(
+              result.reason ?? "",
+            )
+          )
+            throw new ToolInteractionUnavailableError(result.reason);
+          throw new Error(result.reason);
+        }
       });
     },
     dispose() {

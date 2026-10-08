@@ -36,7 +36,7 @@ import {
   scheduledDesktopNotifications,
 } from "../harness/signals";
 import { resolveConfiguredModel, splitRouterId } from "../models/providers";
-import { appStorage } from "../storage/database";
+import { appStorage, getLibsqlClient } from "../storage/database";
 import { ensureTaskExecutorAvailable } from "./background-tasks";
 import { getSessionMessageQueue } from "./message-queue";
 import {
@@ -52,6 +52,34 @@ import {
   listTeamWorkflowRuns,
 } from "./team-runs";
 import { workbenchMessages } from "./threads/messages";
+
+/** Persisted tool results take precedence over a suspension snapshot left by a resumed run. */
+async function listPendingAgentRuns({
+  agent,
+  threadId,
+  resourceId,
+}: Pick<SessionRouteResult, "agent" | "threadId" | "resourceId">) {
+  const result = await agent.listSuspendedRuns({ threadId, resourceId });
+  const ids = result.runs.flatMap((run) =>
+    run.toolCalls.flatMap((tool) => (tool.toolCallId ? [tool.toolCallId] : [])),
+  );
+  if (ids.length === 0) return result;
+  const client = await getLibsqlClient();
+  const rows = await client.execute({
+    sql: `SELECT DISTINCT json_extract(part.value, '$.toolInvocation.toolCallId') AS id
+      FROM mastra_messages AS message, json_each(message.content, '$.parts') AS part
+      WHERE message.thread_id = ? AND message.resourceId = ?
+        AND json_extract(part.value, '$.toolInvocation.toolCallId') IN (SELECT value FROM json_each(?))
+        AND json_extract(part.value, '$.toolInvocation.state') IN ('result', 'output-error', 'output-available')`,
+    args: [threadId, resourceId, JSON.stringify(ids)],
+  });
+  const settled = new Set(rows.rows.map((row) => String(row.id)));
+  const runs = result.runs.flatMap((run) => {
+    const toolCalls = run.toolCalls.filter((tool) => !settled.has(tool.toolCallId ?? ""));
+    return toolCalls.length ? [{ ...run, toolCalls }] : [];
+  });
+  return { runs, total: runs.length };
+}
 
 /** One authenticated subscription covers all of the user's threads, including scheduled runs. */
 const desktopNotificationsRoute = registerApiRoute("/work/desktop-notifications", {
@@ -242,7 +270,7 @@ export async function workbenchControllerMiddleware(
     typeof body?.toolCallId === "string" &&
     !result.controllerSession.suspensions.has({ toolCallId: body.toolCallId })
   ) {
-    const { runs } = await result.agent.listSuspendedRuns({ threadId, resourceId });
+    const { runs } = await listPendingAgentRuns(result);
     for (const run of runs) {
       const tool = run.toolCalls.find(
         (call) => call.toolCallId === body.toolCallId && !call.requiresApproval,
@@ -325,10 +353,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     type: TASK_STATE_TYPE,
   });
   const agent = result.agent;
-  const { runs } = await agent.listSuspendedRuns({
-    threadId: result.threadId,
-    resourceId: result.resourceId,
-  });
+  const { runs } = await listPendingAgentRuns(result);
   const manager = c.get("mastra").backgroundTaskManager;
   const backgroundTasks = manager
     ? (
@@ -459,7 +484,8 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
         const parked =
           member && call.memoryThreadId && call.memoryResourceId
             ? (
-                await member.listSuspendedRuns({
+                await listPendingAgentRuns({
+                  agent: member,
                   threadId: call.memoryThreadId,
                   resourceId: call.memoryResourceId,
                 })
@@ -501,6 +527,11 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
   );
   return {
     ...displayState,
+    isRunning:
+      displayState.isRunning ||
+      Boolean(
+        result.agent.getActiveThreadRunId(result) || result.controllerSession.stream.isActive(),
+      ),
     queuedRequests: getSessionMessageQueue(result.controllerSession),
     activeTools: Object.fromEntries(displayState.activeTools),
     toolInputBuffers: Object.fromEntries(displayState.toolInputBuffers),
@@ -633,10 +664,7 @@ const declineSessionToolRoute = registerApiRoute(
         if (!response.accepted)
           throw workError("SESSION_MESSAGE_REJECTED", { text: response.reason });
       } else {
-        const { runs } = await result.agent.listSuspendedRuns({
-          threadId: result.threadId,
-          resourceId,
-        });
+        const { runs } = await listPendingAgentRuns(result);
         const run = runs.find((candidate) =>
           candidate.toolCalls.some(
             (tool) => tool.toolCallId === body.toolCallId && tool.requiresApproval,

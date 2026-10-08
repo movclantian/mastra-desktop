@@ -83,7 +83,11 @@ import {
   type WorkflowRuntimeRun,
   type WorkUIMessage,
 } from "../model/types";
-import { useSessionView, useThreadSessions } from "../model/use-thread-sessions";
+import {
+  ToolInteractionUnavailableError,
+  useSessionView,
+  useThreadSessions,
+} from "../model/use-thread-sessions";
 import {
   AgentMemberMessageView,
   AgentMemberSwitcher,
@@ -768,7 +772,15 @@ export function ChatPanel() {
     }
   }, [getThreadSession, user.id]);
 
-  const isBusy = status === "submitted" || status === "streaming";
+  const hasLiveBackgroundWork = React.useMemo(
+    () =>
+      backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
+      (workflowRuns ?? []).some((run) =>
+        ["pending", "running", "waiting"].includes(run.status ?? ""),
+      ),
+    [backgroundTasks, workflowRuns],
+  );
+  const isBusy = status === "submitted" || status === "streaming" || hasLiveBackgroundWork;
   const monitorGoal = Boolean(activeThreadId && objective?.status === "active" && isBusy);
   const goalProgress = useDisplayStateQuery(userId, activeThreadId, {
     enabled: monitorGoal,
@@ -796,14 +808,6 @@ export function ChatPanel() {
   ]);
   const hasLiveWorkflow = (workflowRuns ?? []).some((run) =>
     ["pending", "running", "waiting"].includes(run.status ?? ""),
-  );
-  const hasLiveBackgroundWork = React.useMemo(
-    () =>
-      backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
-      (workflowRuns ?? []).some((run) =>
-        ["pending", "running", "waiting"].includes(run.status ?? ""),
-      ),
-    [backgroundTasks, workflowRuns],
   );
   React.useEffect(() => {
     if (!activeThreadId) return;
@@ -1142,7 +1146,6 @@ export function ChatPanel() {
           if (activeThreadIdRef.current !== threadId) return;
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
           setPersistedInteractions(pending);
-          toast.error(t("chat:welcome.toastToolExpired"));
           return;
         }
 
@@ -1158,7 +1161,7 @@ export function ChatPanel() {
         if (!interaction.toolCallId) throw new Error("Missing tool call ID");
 
         setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
-        const resumeRequest = chat.respond(
+        await chat.respond(
           interaction.toolCallId,
           interaction.requiresApproval
             ? {
@@ -1167,45 +1170,21 @@ export function ChatPanel() {
               }
             : { resumeData },
         );
-        // A rejected command restores the still-pending interaction.
-        void resumeRequest
-          .then(async () => {
-            if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId) {
-              // The resume command was accepted; a settings refresh is
-              // auxiliary and must not turn that success into a failed resume.
-              void refreshThreadSettings().catch(() => undefined);
-            }
-          })
-          .catch(async () => {
-            const latest = await fetchSuspendedInteractions(threadId).catch(() => []);
-            if (activeThreadIdRef.current !== threadId) return;
-            const stillPendingAfterFailure = latest.some(
-              (item) =>
-                item.runId === interaction.runId && item.toolCallId === interaction.toolCallId,
-            );
-            if (stillPendingAfterFailure) {
-              setResolvedInteractionKeys((current) => {
-                const next = new Set(current);
-                next.delete(interaction.key);
-                return next;
-              });
-              setPersistedInteractions(latest);
-              toast.error(t("chat:welcome.toastToolFailed"));
-            } else {
-              toast.error(t("chat:welcome.toastToolExpired"));
-            }
-          });
+        if (interaction.toolName === "submit_plan" && activeThreadIdRef.current === threadId)
+          void refreshThreadSettings().catch(() => undefined);
+        const latest = await fetchSuspendedInteractions(threadId).catch(() => undefined);
+        if (latest && activeThreadIdRef.current === threadId) setPersistedInteractions(latest);
       } catch (error) {
         if (activeThreadIdRef.current !== threadId) return;
         const detail = error instanceof Error ? error.message : String(error ?? "");
         if (
+          error instanceof ToolInteractionUnavailableError ||
           /expired|no longer pending|no suspended|no tool invocation|pending task/i.test(detail)
         ) {
           const latest = await fetchSuspendedInteractions(threadId).catch(() => []);
           if (activeThreadIdRef.current !== threadId) return;
           setResolvedInteractionKeys((current) => new Set(current).add(interaction.key));
           setPersistedInteractions(latest);
-          toast.error(t("chat:welcome.toastToolExpired"));
         } else {
           setResolvedInteractionKeys((current) => {
             const next = new Set(current);
@@ -1215,8 +1194,7 @@ export function ChatPanel() {
           toast.error(t("chat:welcome.toastToolFailed"));
         }
       } finally {
-        // The request has been dispatched; the long-running stream owns its
-        // lifecycle now, not the approval button.
+        // Keep the response locked until the command is acknowledged.
         resumingKeysRef.current.delete(resumeKey);
         setResumingKeys((current) => {
           const next = new Set(current);
@@ -1284,7 +1262,7 @@ export function ChatPanel() {
     attachmentTokenBudgetRef.current = attachmentTokenBudget;
   }, [attachmentTokenBudget]);
   const streamingMessageId =
-    status === "streaming" && lastMessage?.role === "assistant" ? lastMessage.id : undefined;
+    isBusy && lastMessage?.role === "assistant" ? lastMessage.id : undefined;
 
   // 官方 message-actions:发送失败的行内常驻提示。瞬时错误自动重连期间
   // status 短暂为 error,延迟 2s 确认避免闪烁(见 useDelayedTrue)。

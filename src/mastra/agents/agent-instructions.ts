@@ -57,6 +57,7 @@ export function composeAgentInstructions({
   if (member && profile.workflow?.strategy !== "handoff") {
     instructions.push(
       `Team context: ${profile.displayName}. ${profile.description}\nYou own the delegated task as ${member.name}. Execute your own specialty and return the actual result, evidence and unresolved issues. The team description supplies context; the supervisor's role does not replace your instructions.`,
+      "Task tools are scoped to your own conversation: use task_check before updating task IDs, and do not reuse the supervisor's task IDs. Before ending, provide a concise textual handoff with changed files, verification results and remaining errors; tool calls alone are not a final report.",
     );
   }
   if (member && profile.workflow?.strategy === "handoff") {

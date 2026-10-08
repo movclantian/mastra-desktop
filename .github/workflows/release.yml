@@ -34,6 +34,7 @@ jobs:
     timeout-minutes: 20
     env:
       CI: 'true'
+      ONNXRUNTIME_NODE_INSTALL: skip
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -95,6 +96,7 @@ jobs:
             artifact_paths: dist/*.snap
     env:
       CI: 'true'
+      ONNXRUNTIME_NODE_INSTALL: skip
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
     steps:

@@ -12,11 +12,29 @@ export default defineConfig({
   // `Unable to load preload script` / `module not found`。
   preload: {
     build: {
+      license: { fileName: 'third-party-licenses.md' },
       externalizeDeps: false,
       isolatedEntries: true
     }
   },
   renderer: {
+    build: { license: { fileName: 'third-party-licenses.md' } },
+    css: {
+      postcss: {
+        plugins: [{
+          postcssPlugin: 'electron-font-formats',
+          Declaration: {
+            src(declaration) {
+              // Chromium supports WOFF2; retain every family, weight and unicode subset.
+              if (declaration.parent?.type !== 'atrule' || declaration.parent.name !== 'font-face') return
+              if (/format\(["']woff2(?:-variations)?["']\)/.test(declaration.value)) {
+                declaration.value = declaration.value.replace(/,\s*url\([^)]*\)\s*format\(["'](?:woff|truetype|opentype)["']\)/g, '')
+              }
+            }
+          }
+        }]
+      }
+    },
     server: { port: DEFAULT_RENDERER_PORT },
     resolve: {
       alias: {

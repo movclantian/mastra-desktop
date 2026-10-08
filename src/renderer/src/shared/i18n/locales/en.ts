@@ -2534,6 +2534,9 @@ export const en = {
       inputAnswerPlaceholder: "Type your answer...",
       customAnswerPlaceholder: "Another answer or additional details...",
       submitting: "Submitting...",
+      declineAnswer: "Decline to answer",
+      declineAnswerResponse:
+        "The user declined to answer this question. Do not ask it again or assume consent to any option. Continue within the available information and permissions; explain any essential missing information if blocked.",
       submitAnswer: "Submit Answer",
       implementationPlan: "Implementation Plan",
       planApprovedDesc: "Plan approved and echoed in message history.",

@@ -917,6 +917,12 @@ export const MessageItem = React.memo(function MessageItem({
                     if (!hasActiveStep) return <AssistantPendingIndicator variant="after-tool" />;
                   } else if (lastSegment.type === "interaction") {
                     return <AssistantPendingIndicator variant="after-interaction" />;
+                  } else if (
+                    !message.parts.some(
+                      (part) => part.type === "text" && part.state === "streaming",
+                    )
+                  ) {
+                    return <AssistantPendingIndicator />;
                   }
                   return null;
                 })()}

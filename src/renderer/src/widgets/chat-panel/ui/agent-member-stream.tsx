@@ -171,7 +171,7 @@ export function AgentMemberMessageView({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex min-w-0 flex-col" data-agent-member-view>
+    <div className="flex min-w-0 flex-col gap-4" data-agent-member-view>
       {runtime.entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t("chat:memberStream.waitingSchedule")}</p>
       ) : null}

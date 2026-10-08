@@ -61,7 +61,6 @@ import {
   QuestionnaireError,
   QuestionnaireInput,
   QuestionnaireItem,
-  QuestionnaireSkip,
   QuestionnaireSubmit,
   QuestionnaireTitle,
 } from "@/shared/ui/questionnaire";
@@ -519,15 +518,21 @@ function AgentQuestionnairePanel({
         </ScrollArea>
       ) : (
         <Questionnaire
+          className="gap-2"
           items={items}
           onSubmit={handleSubmit}
           shortcuts={!busy && options.length > 0 ? "letters" : undefined}
         >
           <ScrollArea className="max-h-[45dvh]">
-            <QuestionnaireItem multiple={selectionMode === "multi_select"} name="answer" required>
-              <QuestionnaireTitle className="break-words">{question}</QuestionnaireTitle>
+            <QuestionnaireItem
+              className="gap-2"
+              multiple={selectionMode === "multi_select"}
+              name="answer"
+              required
+            >
+              <QuestionnaireTitle className="break-words text-sm">{question}</QuestionnaireTitle>
               {options.length > 0 ? (
-                <QuestionnaireDescription>
+                <QuestionnaireDescription className="text-xs">
                   {selectionMode === "multi_select"
                     ? t("chat:panels.multiSelectHint")
                     : t("chat:panels.singleSelectHint")}
@@ -535,10 +540,15 @@ function AgentQuestionnairePanel({
               ) : null}
               <QuestionnaireChoices>
                 {options.map((option) => (
-                  <QuestionnaireChoice disabled={busy} key={option.label} value={option.label}>
+                  <QuestionnaireChoice
+                    className="gap-2 px-2.5 py-2 sm:min-h-9"
+                    disabled={busy}
+                    key={option.label}
+                    value={option.label}
+                  >
                     <span className="break-words font-medium">{option.label}</span>
                     {option.description ? (
-                      <QuestionnaireChoiceDescription className="break-words">
+                      <QuestionnaireChoiceDescription className="break-words text-xs">
                         {option.description}
                       </QuestionnaireChoiceDescription>
                     ) : null}
@@ -560,10 +570,17 @@ function AgentQuestionnairePanel({
             </QuestionnaireItem>
           </ScrollArea>
           <QuestionnaireActions>
-            <QuestionnaireSkip disabled={busy} onClick={() => onResume("")} type="button">
-              {t("common:cancel")}
-            </QuestionnaireSkip>
-            <QuestionnaireSubmit disabled={busy}>
+            <Button
+              className="col-start-2 row-start-1"
+              disabled={busy}
+              onClick={() => onResume(t("chat:panels.declineAnswerResponse"))}
+              type="button"
+              size="sm"
+              variant="outline"
+            >
+              {t("chat:panels.declineAnswer")}
+            </Button>
+            <QuestionnaireSubmit disabled={busy} size="sm">
               {busy ? t("chat:panels.submitting") : t("chat:panels.submitAnswer")}
             </QuestionnaireSubmit>
           </QuestionnaireActions>

@@ -2464,6 +2464,9 @@ export const zh = {
       inputAnswerPlaceholder: "输入你的回答...",
       customAnswerPlaceholder: "其他回答，或补充说明...",
       submitting: "正在提交...",
+      declineAnswer: "拒绝回答",
+      declineAnswerResponse:
+        "用户选择拒绝回答这个问题。请勿重复追问，也不要假设用户同意了某个选项；在现有信息和权限范围内继续，确实无法继续时说明缺少的信息。",
       submitAnswer: "提交回答",
       implementationPlan: "实施计划",
       planApprovedDesc: "计划已完成审批并回显在历史消息中。",
