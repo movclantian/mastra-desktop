@@ -24,7 +24,7 @@ import {
 // 内置供应商注册表(随 @mastra/core 打包)
 // ---------------------------------------------------------------------------
 
-export interface RegistryProvider {
+interface RegistryProvider {
   id: string;
   name: string;
   models: string[];

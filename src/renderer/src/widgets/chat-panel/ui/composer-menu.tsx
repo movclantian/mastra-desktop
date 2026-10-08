@@ -450,7 +450,7 @@ export function ComposerMenu({
 }
 
 /** 审批始终显示在输入工具栏，预设之外的规则明确标记为自定义。 */
-export function ChatApprovalSelector() {
+function ChatApprovalSelector() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const threadId = useRouterState({

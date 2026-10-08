@@ -435,7 +435,7 @@ function workflowResumeTarget(
  * the persisted Mastra snapshot directly and use the AI SDK stream helpers for
  * replay/resume, so the UI does not need a second workflow event protocol.
  */
-export const workflowRunDetailRoute = registerApiRoute(
+const workflowRunDetailRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId",
   {
     method: "GET",
@@ -446,7 +446,7 @@ export const workflowRunDetailRoute = registerApiRoute(
   },
 );
 
-export const workflowRunReplayRoute = registerApiRoute(
+const workflowRunReplayRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/stream",
   {
     method: "GET",
@@ -511,7 +511,7 @@ export const workflowRunReplayRoute = registerApiRoute(
   },
 );
 
-export const workflowRunResumeRoute = registerApiRoute(
+const workflowRunResumeRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/resume",
   {
     method: "POST",
@@ -571,7 +571,7 @@ const rerunWorkflowRoute = registerApiRoute(
   },
 );
 
-export const workflowRunCancelRoute = registerApiRoute(
+const workflowRunCancelRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workflows/:workflowId/runs/:runId/cancel",
   {
     method: "POST",

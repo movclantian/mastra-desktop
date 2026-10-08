@@ -6,7 +6,6 @@ import {
   type BrowserKeyboardBatchRequest,
   BrowserKeyboardBatchRequestSchema,
   type BrowserKeyboardRequest,
-  BrowserKeyboardRequestSchema,
   type BrowserMouseRequest,
   BrowserMouseRequestSchema,
   BrowserNavigateRequestSchema,
@@ -37,7 +36,7 @@ export async function fetchBrowserState(
   return BrowserStateSchema.parse(await response.json());
 }
 
-export function browserScreencastUrl(threadId: string, resourceId: string): string {
+function browserScreencastUrl(threadId: string, resourceId: string): string {
   return browserResourceUrl(threadId, resourceId, "/screencast");
 }
 
@@ -95,17 +94,6 @@ export function sendBrowserMouse(
   return apiFetch(browserResourceUrl(threadId, resourceId, "/mouse"), {
     method: "POST",
     body: BrowserMouseRequestSchema.parse(body),
-  }).then(assertBrowserResponse);
-}
-
-export function sendBrowserKeyboard(
-  threadId: string,
-  resourceId: string,
-  body: BrowserKeyboardRequest,
-): Promise<Response> {
-  return apiFetch(browserResourceUrl(threadId, resourceId, "/keyboard"), {
-    method: "POST",
-    body: BrowserKeyboardRequestSchema.parse(body),
   }).then(assertBrowserResponse);
 }
 

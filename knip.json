@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "entry": [
+    "src/mastra/index.ts",
+    "src/**/*.d.ts",
+    "src/renderer/src/index.css",
+    "scripts/*.{mjs,ts}"
+  ],
+  "project": ["src/**/*.{ts,tsx,js,jsx,mjs,cjs,css}", "scripts/*.{mjs,ts}", "*.config.{ts,js,mjs}"],
+  "paths": {
+    "@/*": ["./src/renderer/src/*"]
+  },
+  "ignoreBinaries": ["attrib", "wt.exe", "x-terminal-emulator"],
+  "ignoreIssues": {
+    "src/shared/credential-contract.ts": ["duplicates"],
+    "src/shared/filesystem-contract.ts": ["duplicates"],
+    "src/shared/workspace-contract.ts": ["duplicates"]
+  },
+  "rules": {
+    "cycles": "error"
+  }
+}

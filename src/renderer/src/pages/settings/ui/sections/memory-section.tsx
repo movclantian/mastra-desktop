@@ -83,7 +83,7 @@ export interface MemoryDraft {
 }
 
 /** OM 自定义抽取器(官方 Extractor API,schema 省略 = 内联字符串抽取) */
-export interface OmExtractorDraft {
+interface OmExtractorDraft {
   id: string;
   name: string;
   instructions: string;
@@ -93,7 +93,7 @@ export interface OmExtractorDraft {
   metadataKeyPath?: string;
 }
 
-export const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
+const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
   lastMessages: 20,
   readOnly: false,
   semanticRecall: false,

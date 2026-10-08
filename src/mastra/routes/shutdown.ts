@@ -102,7 +102,7 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
  * 请求优雅退出:等后台写库落盘(带上限)后退出进程。
  * @param httpExitDelayMs 置 >0 时先延迟再 exit,供 HTTP 路由把响应写出去
  */
-export function requestShutdown(httpExitDelayMs = 0): Promise<boolean> {
+function requestShutdown(httpExitDelayMs = 0): Promise<boolean> {
   if (shutdownPromise) return shutdownPromise;
   shuttingDown = true;
   shutdownPromise = (async () => {

@@ -1,12 +1,10 @@
 import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar";
-import { Avatar as DiceBearAvatar, Style } from "@dicebear/core";
-import bottts from "@dicebear/styles/bottts.json" with { type: "json" };
+import { BotAvatar, type BotAvatarState } from "bot-avatars";
 import type * as React from "react";
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
-import { cn } from "@/shared/lib";
-
-const avatarStyle = new Style(bottts);
+import { useTranslation } from "@/shared/i18n";
+import { cn, getBotAvatarAppearance } from "@/shared/lib/utils";
 
 function Avatar({
   className,
@@ -28,36 +26,30 @@ function Avatar({
   );
 }
 
-function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
-  return (
-    <AvatarPrimitive.Image
-      data-slot="avatar-image"
-      className={cn("aspect-square size-full rounded-full object-cover", className)}
-      {...props}
-    />
-  );
-}
-
 /** Stable per identity, generated locally without HTTP requests or persistent caches. */
-export function GeneratedAvatar({
+export const GeneratedAvatar = memo(function GeneratedAvatar({
   seed,
   name,
-  src,
+  state = "default",
+  className,
   children,
   ...props
-}: React.ComponentProps<typeof Avatar> & { seed: string; name: string; src?: string }) {
-  const image = useMemo(
-    () => src ?? new DiceBearAvatar(avatarStyle, { seed }).toDataUri(),
-    [src, seed],
-  );
+}: React.ComponentProps<typeof Avatar> & { seed: string; name: string; state?: BotAvatarState }) {
+  const { t } = useTranslation();
+  const appearance = useMemo(() => getBotAvatarAppearance(seed), [seed]);
   return (
-    <Avatar {...props}>
-      <AvatarImage src={image} alt={name} />
-      <AvatarFallback>{[...name].slice(0, 2).join("")}</AvatarFallback>
+    <Avatar {...props} className={cn("overflow-visible after:hidden", className)}>
+      <BotAvatar
+        key={seed}
+        {...appearance}
+        size="100%"
+        state={state}
+        aria-label={t(`chat:avatars.${state}`, { name })}
+      />
       {children}
     </Avatar>
   );
-}
+});
 
 function AvatarFallback({ className, ...props }: AvatarPrimitive.Fallback.Props) {
   return (
@@ -101,17 +93,4 @@ function AvatarGroup({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function AvatarGroupCount({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="avatar-group-count"
-      className={cn(
-        "relative flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-muted-foreground ring-2 ring-background group-has-data-[size=lg]/avatar-group:size-10 group-has-data-[size=sm]/avatar-group:size-6 [&>svg]:size-4 group-has-data-[size=lg]/avatar-group:[&>svg]:size-5 group-has-data-[size=sm]/avatar-group:[&>svg]:size-3",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
-export { Avatar, AvatarBadge, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarImage };
+export { Avatar, AvatarBadge, AvatarFallback, AvatarGroup };

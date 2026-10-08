@@ -75,31 +75,40 @@ function memberStatusClass(status: AgentMemberRuntimeStatus): string {
 }
 
 export function AgentMemberSwitcher({
-  members,
+  profile,
+  busy,
   activeMemberId,
   runtimes,
   onSelect,
   onClose,
 }: {
-  members: AgentProfile["members"];
+  profile: AgentProfile;
+  busy: boolean;
   activeMemberId: string | null;
   runtimes: Record<string, AgentMemberRuntime>;
   onSelect: (memberId: string) => void;
   onClose?: () => void;
 }) {
   const { t } = useTranslation();
+  const { members } = profile;
   if (!members.length) return null;
   return (
     <ScrollArea className="max-h-24">
       <div
         aria-label={t("chat:memberStream.threadMembersTab")}
-        className="flex min-w-0 flex-wrap items-center gap-2 px-1 py-1"
+        className="flex min-w-0 flex-wrap items-center gap-2 p-3"
         role="group"
       >
         <AvatarGroup className="min-w-0 flex-wrap gap-y-2 pl-1">
           {members.map((member) => {
             const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
             const active = member.id === activeMemberId;
+            const memberId = profile.workflow
+              ? member.id
+              : member.id === profile.id
+                ? undefined
+                : member.id.replace(/^runtime-/, "");
+            const working = memberId ? runtime.status === "running" : busy;
             return (
               <Button
                 variant="ghost"
@@ -113,11 +122,10 @@ export function AgentMemberSwitcher({
                 type="button"
               >
                 <GeneratedAvatar
-                  seed={member.id}
+                  seed={memberId ? `${profile.id}:${memberId}` : profile.id}
                   name={member.name}
-                  src={member.avatar}
+                  state={working ? "working" : runtime.status === "idle" ? "default" : "sleeping"}
                   className={cn("size-8", active && "z-10 ring-2 ring-inset ring-primary")}
-                  size="sm"
                 >
                   <AvatarBadge className={memberStatusClass(runtime.status)}>
                     {statusIcon(runtime.status, "size-2")}
@@ -232,7 +240,6 @@ function InvocationTranscript({
                 agentProfileId: invocation.profileId,
                 teamMemberId: isPrompt ? parent?.id : invocation.memberId,
                 agentDisplayName: isPrompt ? (parent?.name ?? profile.displayName) : member.name,
-                agentAvatar: isPrompt ? (parent?.avatar ?? profile.avatar) : member.avatar,
               },
             }}
             userId={user?.id ?? ""}

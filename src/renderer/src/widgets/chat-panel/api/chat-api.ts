@@ -57,7 +57,7 @@ export async function fetchChatAssetBlob(url: string): Promise<Blob> {
   return response.blob();
 }
 
-export const chatAssetId = (url: string) => {
+const chatAssetId = (url: string) => {
   const parsed = new URL(url, MASTRA_SERVER_URL);
   if (parsed.origin !== new URL(MASTRA_SERVER_URL).origin) return null;
   return parsed.pathname.match(/^\/work\/library\/assets\/([^/]+)\/content$/)?.[1] ?? null;

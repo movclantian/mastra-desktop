@@ -29,7 +29,12 @@ const BrowserHomeUrlSchema = z.union([z.literal(""), BrowserUrlSchema]);
 export const BrowserSearchEngineSchema = z.enum(["bing", "baidu", "google"]);
 export type BrowserSearchEngine = z.infer<typeof BrowserSearchEngineSchema>;
 
-const DEFAULT_BROWSER_HOME_URL = "https://www.bing.com/";
+export const BROWSER_SEARCH_URLS = {
+  bing: "https://www.bing.com/search?q=",
+  baidu: "https://www.baidu.com/s?wd=",
+  google: "https://www.google.com/search?q=",
+} as const satisfies Record<BrowserSearchEngine, string>;
+const DEFAULT_BROWSER_HOME_URL = new URL("/", BROWSER_SEARCH_URLS.bing).href;
 
 export const BrowserConfigSchema = z
   .object({
@@ -208,7 +213,7 @@ export const NativeBrowserAgentCommandRequestSchema = z.strictObject({
   input: z.record(z.string(), z.unknown()).optional(),
 });
 
-export const NativeBrowserAgentCommandFailureSchema = z.enum([
+const NativeBrowserAgentCommandFailureSchema = z.enum([
   "invalid_request",
   "unauthorized",
   "manager_unavailable",
@@ -299,9 +304,7 @@ export const NativeBrowserEventSchema = z.discriminatedUnion("type", [
 
 export type NativeBrowserSession = z.infer<typeof NativeBrowserSessionSchema>;
 export type NativeBrowserAgentOperation = z.infer<typeof NativeBrowserAgentOperationSchema>;
-export type NativeBrowserAgentCommandRequest = z.infer<
-  typeof NativeBrowserAgentCommandRequestSchema
->;
+
 export type NativeBrowserAgentCommandFailure = z.infer<
   typeof NativeBrowserAgentCommandFailureSchema
 >;

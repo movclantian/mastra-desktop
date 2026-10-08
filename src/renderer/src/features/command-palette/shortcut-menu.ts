@@ -21,7 +21,7 @@ import type { ComponentType } from "react";
 /**
  * 快捷键业务分类
  */
-export type ShortcutCategory = "general" | "navigation" | "workbench" | "appearance";
+type ShortcutCategory = "general" | "navigation" | "workbench" | "appearance";
 
 /**
  * 核心快捷键规范定义接口
@@ -56,7 +56,7 @@ export function isMacPlatform(): boolean {
 /**
  * 格式化单个按键符号
  */
-export function formatKeySymbol(key: string, isMac: boolean): string {
+function formatKeySymbol(key: string, isMac: boolean): string {
   switch (key.toLowerCase()) {
     case "mod":
       return isMac ? "⌘" : "Ctrl";

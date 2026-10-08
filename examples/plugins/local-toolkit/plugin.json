@@ -1,7 +1,0 @@
-{
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "local-toolkit",
-  "version": "1.0.0",
-  "description": "本地多组件验收包：总结笔记、审阅笔记及公开仓库文档 MCP。",
-  "license": "Apache-2.0"
-}

@@ -3,7 +3,7 @@ import type * as React from "react";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 
-export interface AnimatedTabItem {
+interface AnimatedTabItem {
   id: string;
   label: React.ReactNode;
   icon?: React.ReactNode;
@@ -26,11 +26,11 @@ export interface AnimatedTabsProps {
   "aria-label"?: string;
 }
 
-export function animatedTabDomId(layoutId: string, tabId: string): string {
+function animatedTabDomId(layoutId: string, tabId: string): string {
   return `${layoutId}-tab-${tabId}`;
 }
 
-export function animatedTabPanelDomId(layoutId: string, tabId: string): string {
+function animatedTabPanelDomId(layoutId: string, tabId: string): string {
   return `${layoutId}-panel-${tabId}`;
 }
 

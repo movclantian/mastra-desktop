@@ -91,6 +91,4 @@ function ScrollBar({
   );
 }
 
-const ScrollAreaContent = ScrollAreaPrimitive.Content;
-
-export { ScrollArea, ScrollAreaContent, ScrollBar };
+export { ScrollArea, ScrollBar };

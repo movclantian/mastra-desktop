@@ -1,3 +1,4 @@
+import { workValidationError } from "../errors";
 /**
  * 记忆路由:读写用户可配置的 Memory 参数(数据库 app_config 表,保存后实时生效)。
  * Memory 主体见 src/mastra/memory/memory-runtime.ts,
@@ -8,7 +9,7 @@ import { getThreadOMMetadata } from "@mastra/core/memory";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
-import { workError, workValidationError } from "../errors";
+
 import { getMemoryConfig, memoryConfigSchema, saveMemoryConfig } from "../memory/memory-runtime";
 import { getWorkMemory } from "./threads/shared";
 

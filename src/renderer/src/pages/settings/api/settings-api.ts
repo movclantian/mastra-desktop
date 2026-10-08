@@ -40,10 +40,6 @@ export function disconnectComputer() {
   );
 }
 
-export function fetchSettingsTools(): Promise<ToolsConfig> {
-  return requestJson<ToolsConfig>("/work/tools", {}, i18n.t("settings:api.fetchToolsFailed"));
-}
-
 export async function saveSettingsTools(
   config: ToolsConfig,
   secrets: Record<"tavily" | "firecrawl", string>,

@@ -69,3 +69,7 @@ export function isLocalWebUrl(value: string): boolean {
     return false;
   }
 }
+
+export const FONT_STYLES_ORIGIN = "https://fonts.googleapis.com";
+export const FONT_FILES_ORIGIN = "https://fonts.gstatic.com";
+export const FONT_STYLESHEET_URL = `${FONT_STYLES_ORIGIN}/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Cinzel:wght@400..800&family=Cormorant+Garamond:ital,wght@0,400..700;1,400..700&family=Noto+Serif+SC:wght@400..700&family=Nunito:wght@400..800&family=Orbitron:wght@400..900&family=Plus+Jakarta+Sans:wght@400..800&family=Press+Start+2P&family=Rajdhani:wght@400..700&family=Shippori+Mincho:wght@400;600;700&family=Silkscreen:wght@400;700&family=Space+Grotesk:wght@400..700&family=Space+Mono:wght@400;700&family=VT323&display=swap`;

@@ -9,6 +9,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type { ToolsInput } from "@mastra/core/agent";
+import { type AnySpan, resolveCurrentSpan, SpanType } from "@mastra/core/observability";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { StorageMCPServerConfig, StorageResolvedMCPClientType } from "@mastra/core/storage";
@@ -137,7 +138,7 @@ interface McpServerSummary extends McpServerConfig {
   envKeys: string[];
 }
 
-export const ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp";
+const ANYSEARCH_MCP_URL = "https://api.anysearch.com/mcp";
 const OWNER_KEY = "mastra_resource_id";
 const OPTIONS_KEY = "desktopMcp";
 const scopeOf = (resourceId?: string) => resourceId?.trim() || "__system__";
@@ -163,6 +164,11 @@ interface McpRuntime {
   >;
 }
 const runtimeByScope = new Map<string, McpRuntime>();
+// Dynamic tools are resolved repeatedly within one run; refresh discovery on the next run.
+const discoveriesByRun = new WeakMap<
+  AnySpan,
+  WeakMap<MCPClient, ReturnType<MCPClient["listToolsWithErrors"]>>
+>();
 function getRuntime(resourceId?: string): McpRuntime {
   const scope = scopeOf(resourceId);
   let runtime = runtimeByScope.get(scope);
@@ -1170,6 +1176,13 @@ export async function getConfiguredMcpTools(
   builtin?: "anysearch",
   allowedIds?: string[],
 ): Promise<ToolsInput> {
+  const span = resolveCurrentSpan();
+  const run = span?.type === SpanType.AGENT_RUN ? span : span?.findParent(SpanType.AGENT_RUN);
+  let discoveries = run?.isValid ? discoveriesByRun.get(run) : undefined;
+  if (run?.isValid && !discoveries) {
+    discoveries = new WeakMap();
+    discoveriesByRun.set(run, discoveries);
+  }
   const config = await getMcpConfig(resourceId);
   const selected = config.servers.filter(
     (server) =>
@@ -1183,9 +1196,11 @@ export async function getConfiguredMcpTools(
       const runtime = getRuntime(resourceId).clients.get(server.id);
       // Share concurrent discovery and give failed connections 30 seconds before another attempt.
       if (runtime?.retryAfter && runtime.retryAfter > Date.now()) return {};
+      const discovery =
+        discoveries?.get(client) ?? runtime?.discovery ?? client.listToolsWithErrors();
+      if (runtime) runtime.discovery = discovery;
+      discoveries?.set(client, discovery);
       try {
-        const discovery = runtime?.discovery ?? client.listToolsWithErrors();
-        if (runtime) runtime.discovery = discovery;
         const result = await discovery;
         const { tools } = result;
         const error = discoveryError(server, result);
@@ -1247,6 +1262,7 @@ export async function getConfiguredMcpTools(
           }),
         );
       } catch (error) {
+        if (discoveries?.get(client) === discovery) discoveries.delete(client);
         const firstFailure = !runtime?.retryAfter || runtime.retryAfter <= Date.now();
         if (runtime) {
           runtime.error = errorText(error);
@@ -1256,7 +1272,7 @@ export async function getConfiguredMcpTools(
         if (firstFailure) throw error;
         return {};
       } finally {
-        if (runtime) runtime.discovery = undefined;
+        if (runtime?.discovery === discovery) runtime.discovery = undefined;
       }
     }),
   );

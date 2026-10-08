@@ -126,7 +126,7 @@ async function ownedTask(
   return task;
 }
 
-export const backgroundTaskListRoute = registerApiRoute("/work/background-tasks", {
+const backgroundTaskListRoute = registerApiRoute("/work/background-tasks", {
   method: "GET",
   handler: async (c) => {
     const manager = managerFor(c);
@@ -151,7 +151,7 @@ export const backgroundTaskListRoute = registerApiRoute("/work/background-tasks"
   },
 });
 
-export const backgroundTaskStreamRoute = registerApiRoute("/work/background-tasks/stream", {
+const backgroundTaskStreamRoute = registerApiRoute("/work/background-tasks/stream", {
   method: "GET",
   handler: async (c) => {
     const manager = managerFor(c);
@@ -172,25 +172,22 @@ export const backgroundTaskStreamRoute = registerApiRoute("/work/background-task
   },
 });
 
-export const backgroundTaskGetRoute = registerApiRoute("/work/background-tasks/:taskId", {
+const backgroundTaskGetRoute = registerApiRoute("/work/background-tasks/:taskId", {
   method: "GET",
   handler: async (c) => c.json(await ownedTask(c, managerFor(c))),
 });
 
-export const backgroundTaskRestartRoute = registerApiRoute(
-  "/work/background-tasks/:taskId/restart",
-  {
-    method: "POST",
-    handler: async (c) => {
-      const manager = managerFor(c);
-      const task = await ownedTask(c, manager);
-      await ensureTaskExecutorAvailable(manager, task);
-      return c.json(await manager.restart(task.id));
-    },
+const backgroundTaskRestartRoute = registerApiRoute("/work/background-tasks/:taskId/restart", {
+  method: "POST",
+  handler: async (c) => {
+    const manager = managerFor(c);
+    const task = await ownedTask(c, manager);
+    await ensureTaskExecutorAvailable(manager, task);
+    return c.json(await manager.restart(task.id));
   },
-);
+});
 
-export const backgroundTaskCancelRoute = registerApiRoute("/work/background-tasks/:taskId/cancel", {
+const backgroundTaskCancelRoute = registerApiRoute("/work/background-tasks/:taskId/cancel", {
   method: "POST",
   handler: async (c) => {
     const manager = managerFor(c);

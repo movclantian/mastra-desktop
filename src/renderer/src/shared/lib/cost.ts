@@ -1,7 +1,7 @@
 import { getUsage, models as tokenlensModels } from "tokenlens";
 import { i18n } from "@/shared/i18n";
 
-export interface CatalogModelCostLike {
+interface CatalogModelCostLike {
   id: string;
   name: string;
   cost?: {

@@ -54,6 +54,19 @@ import {
   type ShortcutSpec,
 } from "./shortcut-menu";
 
+function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
+  return (
+    <kbd
+      data-slot="kbd"
+      className={cn(
+        "pointer-events-none inline-flex h-5 w-fit shrink-0 items-center justify-center rounded border border-border/70 bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground select-none shadow-2xs",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 /**
  * 顶部导航栏命令面板快速触发按钮 (参考 VS Code / Linear / Raycast 交互风格)
  */
@@ -77,9 +90,7 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
     >
       <SearchIcon className="size-3.5 shrink-0 opacity-70" />
       <span className="hidden sm:inline font-normal">{t("commandPalette:triggerText")}</span>
-      <kbd className="pointer-events-none hidden sm:inline-flex h-4.5 items-center gap-0.5 rounded border border-border/70 bg-background px-1.5 font-mono text-[10px] font-medium text-muted-foreground select-none shadow-2xs">
-        {shortcutBadge}
-      </kbd>
+      <Kbd className="hidden sm:inline-flex h-4.5">{shortcutBadge}</Kbd>
     </Button>
   );
 }
@@ -87,7 +98,7 @@ export function CommandPaletteTrigger({ className }: { className?: string }) {
 /**
  * 全局命令面板核心弹窗 (基于 shadcn cmdk 构建)
  */
-export function CommandPaletteDialog({
+function CommandPaletteDialog({
   open,
   onOpenChange,
   toggleSidebar,
@@ -276,21 +287,15 @@ export function CommandPaletteDialog({
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/40 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground select-none">
         <div className="flex flex-wrap items-center gap-3">
           <span className="flex items-center gap-1">
-            <kbd className="rounded border bg-background px-1 py-0.5 font-mono text-[10px] shadow-2xs">
-              ↑↓
-            </kbd>
+            <Kbd>↑↓</Kbd>
             <span>{t("commandPalette:navHelp")}</span>
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="rounded border bg-background px-1 py-0.5 font-mono text-[10px] shadow-2xs">
-              ↵
-            </kbd>
+            <Kbd>↵</Kbd>
             <span>{t("commandPalette:selectHelp")}</span>
           </span>
           <span className="flex items-center gap-1">
-            <kbd className="rounded border bg-background px-1 py-0.5 font-mono text-[10px] shadow-2xs">
-              esc
-            </kbd>
+            <Kbd>esc</Kbd>
             <span>{t("commandPalette:closeHelp")}</span>
           </span>
         </div>
@@ -315,7 +320,7 @@ export function CommandPaletteDialog({
 /**
  * 快捷键速查指南弹窗 (Keyboard Shortcuts Cheatsheet)
  */
-export function ShortcutsHelpDialog({
+function ShortcutsHelpDialog({
   open,
   onOpenChange,
 }: {
@@ -382,18 +387,14 @@ export function ShortcutsHelpDialog({
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           {primaryDisplay ? (
-                            <kbd className="inline-flex h-5 items-center justify-center rounded border border-border/80 bg-muted px-1.5 font-mono text-[10px] font-semibold text-foreground shadow-2xs">
-                              {primaryDisplay}
-                            </kbd>
+                            <Kbd>{primaryDisplay}</Kbd>
                           ) : (
                             <span className="text-[10px] text-muted-foreground">—</span>
                           )}
                           {secondaryDisplay ? (
                             <>
                               <span className="text-[10px] text-muted-foreground">/</span>
-                              <kbd className="inline-flex h-5 items-center justify-center rounded border border-border/80 bg-muted px-1.5 font-mono text-[10px] font-semibold text-foreground shadow-2xs">
-                                {secondaryDisplay}
-                              </kbd>
+                              <Kbd>{secondaryDisplay}</Kbd>
                             </>
                           ) : null}
                         </div>
@@ -413,7 +414,7 @@ export function ShortcutsHelpDialog({
 /**
  * 全局键盘事件监听 Hook
  */
-export function useGlobalShortcuts() {
+function useGlobalShortcuts() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";

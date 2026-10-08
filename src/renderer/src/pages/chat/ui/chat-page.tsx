@@ -2,16 +2,17 @@ import * as React from "react";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
-import { CHAT_LAYOUT_ID, TERMINAL_DEFAULT_HEIGHT, TERMINAL_MIN_HEIGHT } from "@/shared/config";
+import {
+  CHAT_LAYOUT_ID,
+  DRAWER_TRANSITION,
+  PANEL_CLIP,
+  TERMINAL_DEFAULT_HEIGHT,
+  TERMINAL_MIN_HEIGHT,
+} from "@/shared/config";
 import { cn } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { ChatPanel } from "@/widgets/chat-panel";
 import { TerminalDrawer } from "@/widgets/terminal-drawer";
-
-const DRAWER_TRANSITION =
-  "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-linear";
-
-const PANEL_CLIP = { overflow: "hidden" } as const;
 
 function useDrawerTransition() {
   const [ready, setReady] = React.useState(false);
@@ -95,5 +96,3 @@ export function ChatPage({ userId }: { userId?: string }) {
     </ResizablePanelGroup>
   );
 }
-
-export { ChatPage as ChatWithTerminal };

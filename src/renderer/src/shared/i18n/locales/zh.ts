@@ -1932,6 +1932,10 @@ export const zh = {
     onlyTerminalSupported: "底部抽屉仅支持终端会话",
     terminalIndex: "终端 {{index}}",
     closeTab: "关闭标签",
+    moveTabLeft: "向左移动标签",
+    moveTabRight: "向右移动标签",
+    reorderTabHint: "使用 Alt+Shift+左/右方向键调整标签顺序",
+    tabMoved: "{{title}}：第 {{position}} 个，共 {{count}} 个标签",
     closeOtherTabs: "关闭其他标签",
     moveToWorkspace: "移动到工作区",
     newTerminal: "新建终端",
@@ -2076,6 +2080,9 @@ export const zh = {
     },
     avatars: {
       userAvatar: "用户头像",
+      default: "{{name}}，待命",
+      working: "{{name}}，工作中",
+      sleeping: "{{name}}，休息中",
       userFallback: "我",
     },
     api: {
@@ -2193,6 +2200,9 @@ export const zh = {
       },
     },
     models: {
+      search: "搜索供应商、模型名称或 ID…",
+      noMatches: "没有匹配的模型",
+      manageProviders: "管理供应商",
       selectModel: "选择模型",
       noModels: "暂无可用模型,去设置添加供应商",
       useModel: "使用此模型",

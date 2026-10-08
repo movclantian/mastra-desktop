@@ -1980,6 +1980,10 @@ export const en = {
     onlyTerminalSupported: "Bottom drawer only supports terminal sessions",
     terminalIndex: "Terminal {{index}}",
     closeTab: "Close tab",
+    moveTabLeft: "Move tab left",
+    moveTabRight: "Move tab right",
+    reorderTabHint: "Use Alt+Shift+Left/Right to reorder this tab",
+    tabMoved: "{{title}}: position {{position}} of {{count}}",
     closeOtherTabs: "Close other tabs",
     moveToWorkspace: "Move to workspace",
     newTerminal: "New terminal",
@@ -2136,6 +2140,9 @@ export const en = {
     },
     avatars: {
       userAvatar: "User Avatar",
+      default: "{{name}}, idle",
+      working: "{{name}}, working",
+      sleeping: "{{name}}, sleeping",
       userFallback: "Me",
     },
     api: {
@@ -2254,6 +2261,9 @@ export const en = {
       },
     },
     models: {
+      search: "Search provider, model name or ID…",
+      noMatches: "No matching models",
+      manageProviders: "Manage providers",
       selectModel: "Select Model",
       noModels: "No models available. Add a provider in Settings.",
       useModel: "Use this model",

@@ -165,7 +165,7 @@ const HAS_NATIVE_BROWSER_AGENT_BRIDGE = Boolean(
   process.env.MASTRA_NATIVE_BROWSER_AGENT_BROKER_PATH?.trim(),
 );
 
-export class NativeElectronAgentBrowser extends AgentBrowser {
+class NativeElectronAgentBrowser extends AgentBrowser {
   private readonly operationTimeout: number;
   private readonly knownThreads = new Set<string>();
   private readonly states = new Map<string, MastraBrowserState>();
@@ -476,7 +476,7 @@ export async function closeBrowserThreadSessions(
   if (browser?.hasThreadSession(threadId)) await browser.closeThreadSession(threadId);
 }
 
-export async function replaceBrowserForResource(resourceId = "default"): Promise<void> {
+async function replaceBrowserForResource(resourceId = "default"): Promise<void> {
   const old = browsers.get(resourceId);
   browsers.delete(resourceId);
   const pending = browserPromises.get(resourceId);

@@ -5,7 +5,7 @@ import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 
-export type TransitionVariant =
+type TransitionVariant =
   | "circle"
   | "square"
   | "triangle"
@@ -13,8 +13,6 @@ export type TransitionVariant =
   | "hexagon"
   | "rectangle"
   | "star";
-
-export type AnimatedThemeTogglerVariant = TransitionVariant;
 
 export interface AnimatedThemeTogglerProps extends React.ComponentPropsWithoutRef<"button"> {
   duration?: number;

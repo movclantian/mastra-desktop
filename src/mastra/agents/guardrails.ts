@@ -52,6 +52,7 @@ import {
 import type { RequestContext } from "@mastra/core/request-context";
 import type { Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
 import { resolveContextModel, resolveDefaultLanguageModel } from "../models/providers";
 import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
 import {
@@ -755,7 +756,7 @@ async function buildInput(
       new ResponseCache({
         cache: runtime.responseCacheBackend,
         ttl: cfg.responseCacheTtl,
-        agentId: "mastra-work-agent",
+        agentId: DEFAULT_AGENT_PROFILE_ID,
         ...(cfg.responseCacheScopeMode === "none"
           ? { scope: null }
           : cfg.responseCacheScopeMode === "custom" && cfg.responseCacheScopeValue.trim()

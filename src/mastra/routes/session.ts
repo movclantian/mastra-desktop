@@ -52,7 +52,6 @@ import {
   listTeamWorkflowRuns,
 } from "./team-runs";
 import { workbenchMessages } from "./threads/messages";
-import type { ThreadMetadata } from "./threads/shared";
 
 /** One authenticated subscription covers all of the user's threads, including scheduled runs. */
 const desktopNotificationsRoute = registerApiRoute("/work/desktop-notifications", {
@@ -585,7 +584,7 @@ async function cancelSessionBackgroundTasks(c: ContextWithMastra, result: Sessio
   } while (count === 100);
 }
 
-export const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/abort", {
+const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/abort", {
   method: "POST",
   handler: async (c) => {
     const result = await sessionFor(c);
@@ -668,7 +667,7 @@ const declineSessionToolRoute = registerApiRoute(
 );
 
 /** Save the thread model and reasoning preference in one product request. */
-export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/model", {
+const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/model", {
   method: "PATCH",
   handler: async (c) => {
     const result = await sessionFor(c);
@@ -695,7 +694,7 @@ export const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads
   },
 });
 
-export const sessionDisplayStateRoute = registerApiRoute(
+const sessionDisplayStateRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/display-state",
   {
     method: "GET",
@@ -731,7 +730,7 @@ export const sessionDisplayStateRoute = registerApiRoute(
  * 活跃与空闲分支都只持久化，留给后续正常请求读取。
  * 活跃分支若使用默认 deliver，未消费的状态会在本轮结束后触发新一轮回复。
  */
-export const updateSessionWorkbenchStateRoute = registerApiRoute(
+const updateSessionWorkbenchStateRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workbench-state",
   {
     method: "PUT",
@@ -773,7 +772,7 @@ export const updateSessionWorkbenchStateRoute = registerApiRoute(
  * 需要 Agent 处理的外部事件 → 通知收件箱。普通面板和终端生命周期仅走状态上报。
  * 投递时机与是否攒成 summary 由 agent 的默认投递策略决定,这里只负责落库。
  */
-export const sessionNotificationRoute = registerApiRoute(
+const sessionNotificationRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/notification",
   {
     method: "POST",

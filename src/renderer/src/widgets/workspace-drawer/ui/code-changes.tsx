@@ -22,7 +22,7 @@ type FetchChangeContent = (
   side: "before" | "after",
 ) => Promise<{ content: string; binary: boolean } | null>;
 
-export function CodeChangeRow({
+function CodeChangeRow({
   change,
   open,
   onOpenChange,

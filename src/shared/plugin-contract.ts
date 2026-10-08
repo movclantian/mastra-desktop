@@ -8,7 +8,7 @@ export const pluginConfigValueSchema = z.union([
   z.array(z.string()).max(256),
 ]);
 export type PluginConfigValue = z.infer<typeof pluginConfigValueSchema>;
-export const pluginConfigFieldSchema = z
+const pluginConfigFieldSchema = z
   .object({
     type: z.enum(["string", "number", "boolean", "directory", "file"]),
     title: z.string().min(1),
@@ -74,7 +74,7 @@ export function pluginConfigValueError(
   return undefined;
 }
 
-export interface PluginConfiguration {
+interface PluginConfiguration {
   revision: string;
   values: Record<string, PluginConfigValue>;
   secretCredential?: CredentialPointer;
@@ -271,3 +271,11 @@ export interface PluginSkill {
   path: string;
   enabled: boolean;
 }
+
+/** Marketplace service roots; public skills pages intentionally use www. */
+export const GITHUB_ORIGIN = "https://github.com";
+export const GITHUB_HOST = new URL(GITHUB_ORIGIN).hostname;
+export const GITHUB_API_ORIGIN = "https://api.github.com";
+export const GITHUB_RAW_ORIGIN = "https://raw.githubusercontent.com";
+export const SKILLS_SH_ORIGIN = "https://skills.sh";
+export const SKILLS_SH_PUBLIC_BASE = "https://www.skills.sh";

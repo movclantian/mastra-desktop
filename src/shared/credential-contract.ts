@@ -85,10 +85,6 @@ export const CredentialBrokerResponseSchema = z.discriminatedUnion("ok", [
 
 export type CredentialPointer = z.infer<typeof CredentialPointerSchema>;
 export type CredentialState = z.infer<typeof CredentialStateSchema>;
-export type CredentialPutRequest = z.infer<typeof CredentialPutRequestSchema>;
-export type CredentialPutResult = z.infer<typeof CredentialPutResultSchema>;
-export type CredentialDeleteRequest = z.infer<typeof CredentialDeleteRequestSchema>;
-export type CredentialPurpose = z.infer<typeof CredentialPurposeSchema>;
 
 export const providerCredentialPurpose = (providerId: string) =>
   CredentialPurposeSchema.parse(`provider:${providerId}`);

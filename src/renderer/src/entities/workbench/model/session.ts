@@ -1,11 +1,16 @@
+import {
+  DEFAULT_PERMISSION_RULES,
+  PERMISSION_POLICIES,
+  type PermissionPolicy,
+  type PermissionRules,
+  TOOL_CATEGORIES,
+  type ToolCategory,
+} from "../../../../../shared/agent-contract";
 /**
  * 会话策略(模式 + 工具审批)的渲染层常量与规则助手。
  *
  * 服务端类型真相来自 @mastra/core/agent-controller;渲染进程不能依赖服务端 Agent
- * 模块,所以这里只保留 UI 运行时需要的协议镜像与文案,不是第二份服务端类型定义。
- * 改动类别或策略时仍要同步服务端解析逻辑:
- * - 模式 → src/mastra/agents/permissions.ts
- * - 类别 / 策略 / 规则形状 → src/mastra/agents/permissions.ts
+ * 模块,类别、策略和默认规则统一取自 shared/agent-contract，这里只维护 UI 文案。
  *
  * 这里**不镜像「工具名 → 类别」的映射**:审批面板需要的类别由服务端算好后随
  * 会话 display-state 一起下发,避免两侧各存一份工具清单而漂移。
@@ -25,17 +30,6 @@ export const DEFAULT_MODE_ID: WorkModeId = "build";
 // ---------------------------------------------------------------------------
 // 工具审批(官方 ToolCategory / PermissionPolicy / PermissionRules)
 // ---------------------------------------------------------------------------
-
-export const TOOL_CATEGORIES = ["read", "edit", "execute", "mcp", "other"] as const;
-export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
-
-export const PERMISSION_POLICIES = ["allow", "ask", "deny"] as const;
-export type PermissionPolicy = (typeof PERMISSION_POLICIES)[number];
-
-export interface PermissionRules {
-  categories: Partial<Record<ToolCategory, PermissionPolicy>>;
-  tools: Partial<Record<string, PermissionPolicy>>;
-}
 
 export const CATEGORY_META: Record<ToolCategory, { label: string; description: string }> = {
   read: {
@@ -78,38 +72,6 @@ export const CATEGORY_META: Record<ToolCategory, { label: string; description: s
       return i18n.t("chat:approvals.categoryDescriptions.other");
     },
   },
-};
-
-export const POLICY_META: Record<PermissionPolicy, { label: string; description: string }> = {
-  allow: {
-    get label() {
-      return i18n.t("chat:approvals.policies.allow.label");
-    },
-    get description() {
-      return i18n.t("chat:approvals.policies.allow.desc");
-    },
-  },
-  ask: {
-    get label() {
-      return i18n.t("chat:approvals.policies.ask.label");
-    },
-    get description() {
-      return i18n.t("chat:approvals.policies.ask.desc");
-    },
-  },
-  deny: {
-    get label() {
-      return i18n.t("chat:approvals.policies.deny.label");
-    },
-    get description() {
-      return i18n.t("chat:approvals.policies.deny.desc");
-    },
-  },
-};
-
-export const DEFAULT_PERMISSION_RULES: PermissionRules = {
-  categories: { read: "allow", edit: "allow", execute: "allow", mcp: "allow", other: "allow" },
-  tools: { ask_user: "allow", submit_plan: "allow" },
 };
 
 export interface ApprovalPreset {
@@ -221,3 +183,10 @@ export function parseModeId(value: unknown): WorkModeId {
     ? (value as WorkModeId)
     : DEFAULT_MODE_ID;
 }
+
+export {
+  DEFAULT_PERMISSION_RULES,
+  type PermissionPolicy,
+  type PermissionRules,
+  type ToolCategory,
+} from "../../../../../shared/agent-contract";

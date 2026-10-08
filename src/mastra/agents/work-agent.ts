@@ -7,12 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type {
-  Agent,
-  AgentExecutionOptions,
-  DelegationConfig,
-  ToolsInput,
-} from "@mastra/core/agent";
+import type { Agent, AgentExecutionOptions, DelegationConfig } from "@mastra/core/agent";
 import { buildBasePrompt, createCodingAgent } from "@mastra/core/coding-agent";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
@@ -24,13 +19,11 @@ import { REQUEST_MODEL_ID_CONTEXT_KEY, resolveAgentModel } from "../models/provi
 import { libraryIndexSignals } from "../rag/document/indexing";
 import { userIdFromContext } from "../storage/database";
 import {
-  codeMode,
   parseWebSearchSelection,
-  resolveWebSearchTools,
   WEB_SEARCH_CONTEXT_KEY,
+  webSearchArchiveProcessor,
   webSearchInstructions,
-} from "../tools/tool-registry";
-import { webSearchArchiveProcessor } from "../tools/web-search";
+} from "../tools/web-search";
 import {
   getManagedSkillPaths,
   getThreadWorkspace,
@@ -67,12 +60,7 @@ import {
   requestToolApproval,
   resolveRequestMode,
 } from "./permissions";
-import {
-  buildInputPipeline,
-  isCodeModeAvailable,
-  resolveSharedTools,
-  workSubagents,
-} from "./subagents";
+import { buildInputPipeline, resolveSharedTools, workSubagents } from "./subagents";
 import { teamDelegation, teamInvocationProcessor } from "./team-activity";
 import {
   activeHandoffMember,
@@ -155,7 +143,7 @@ function codingAgentBasePrompt(requestContext?: RequestContext): string {
   });
 }
 
-export function describeIncompleteDelegation(result: {
+function describeIncompleteDelegation(result: {
   finishReason?: string;
   subAgentToolResults?: { toolName: string; toolCallId: string; isError?: boolean }[];
 }): string {
@@ -242,7 +230,7 @@ function createWorkAgent(
       ? profileAgentRuntimeId(fixedProfile as AgentProfile, member.id, resourceScope)
       : fixedProfile
         ? profileAgentRuntimeId(fixedProfile, undefined, resourceScope)
-        : "mastra-work-agent",
+        : DEFAULT_AGENT_PROFILE_ID,
     name: member?.name ?? fixedProfile?.displayName ?? "MastraWork",
     ...(member
       ? { description: memberDelegationDescription(member) }
@@ -273,8 +261,6 @@ function createWorkAgent(
       if (member || requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true)
         instructions.push(resolveRequestMode(requestContext).instructions);
       const supervisor = !member && profile.workflow?.strategy === "supervisor";
-      if (!supervisor && isCodeModeAvailable(requestContext))
-        instructions.push(codeMode.instructions);
       // ponytail: on a GBK console (chcp 936) cmd/PowerShell output decodes as utf-8 and
       // garbles. @mastra/core 1.74 exposes outputEncoding on LocalSandbox only, not on the
       // execute-command tool schema, so per-command selection is unreachable from the agent.
@@ -454,7 +440,6 @@ function createWorkAgent(
       );
       if (!member && profile.workflow?.strategy === "handoff")
         tools.handoff = teamHandoffTool(profile);
-      if (!isCodeModeAvailable(requestContext)) delete tools.execute_typescript;
       const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
       return mergeBrowserToolsForThread(tools, threadId, () =>
         getBrowserForRequest(requestContext),
@@ -501,9 +486,9 @@ function createWorkAgent(
 }
 
 export const mastraWorkAgent = createWorkAgent();
-export const createProfileAgent = (profile: AgentProfile, resourceScope?: string): Agent =>
+const createProfileAgent = (profile: AgentProfile, resourceScope?: string): Agent =>
   createWorkAgent(profile, undefined, resourceScope);
-export const createProfileMemberAgent = (
+const createProfileMemberAgent = (
   profile: AgentProfile,
   member: AgentMemberDefinition,
   resourceScope?: string,

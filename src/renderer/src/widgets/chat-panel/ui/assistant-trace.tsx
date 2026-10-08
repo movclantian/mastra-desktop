@@ -166,10 +166,16 @@ const ToolStepItem = React.memo(function ToolStepItem({
   const sandboxTool = typescriptSandbox || commandSandbox;
   const active = getTraceStepStatus(part) === "active";
   const [open, setOpen] = useTraceDisclosure(showDetails);
-  const failed = part.state === "output-error";
-  const errorText = "errorText" in part ? part.errorText : undefined;
+  const transportFailed = part.state === "output-error";
   const hasInput = part.input !== undefined;
   const output = "output" in part ? part.output : undefined;
+  const codeResult =
+    typescriptSandbox && output && typeof output === "object"
+      ? (output as { success?: boolean; error?: { message?: string } })
+      : undefined;
+  const failed = transportFailed || codeResult?.success === false;
+  const errorText =
+    ("errorText" in part ? part.errorText : undefined) ?? codeResult?.error?.message;
   const input = (part.input ?? {}) as Record<string, unknown>;
   const { user } = useAuth();
   const pluginSkills = usePluginSkills(
@@ -227,7 +233,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
 
   const sandboxOutput = React.useMemo(() => {
     if (!sandboxTool) return "";
-    if (failed) return errorText ?? t("chat:trace.executionFailed");
+    if (transportFailed) return errorText ?? t("chat:trace.executionFailed");
     if (output === undefined) return active ? t("chat:trace.executing") : "";
     if (typeof output === "string") return output;
     if (commandSandbox) {
@@ -248,7 +254,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
       );
     }
     return lines.join("\n");
-  }, [active, commandSandbox, errorText, failed, output, sandboxTool, t]);
+  }, [active, commandSandbox, errorText, transportFailed, output, sandboxTool, t]);
 
   const summary = (
     <div className="min-w-0 space-y-1">

@@ -1,9 +1,16 @@
 import type { ToolsInput } from "@mastra/core/agent";
 /** 子 Agent 与主 Agent 共用当前请求模型。 */
 import { Agent } from "@mastra/core/agent";
+import { resolveCurrentSpan, SpanType } from "@mastra/core/observability";
 import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import { askUserTool, createTool, submitPlanTool } from "@mastra/core/tools";
+import {
+  askUserTool,
+  createTool,
+  MASTRA_TOOL_MARKER,
+  submitPlanTool,
+  type Tool,
+} from "@mastra/core/tools";
 import type { ToolSet } from "ai";
 import type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
@@ -19,14 +26,13 @@ import {
   libraryVectorSearchTool,
 } from "../rag/tools";
 import { userIdFromContext } from "../storage/database";
+import { codeModeProcessor } from "../tools/tool-registry";
 import {
-  CODE_MODE_EXTERNAL_TOOL_NAMES,
-  codeMode,
   parseWebSearchSelection,
   resolveWebSearchTools,
   WEB_SEARCH_CONTEXT_KEY,
-} from "../tools/tool-registry";
-import { webSearchArchiveProcessor } from "../tools/web-search";
+  webSearchArchiveProcessor,
+} from "../tools/web-search";
 import {
   getThreadWorkspace,
   SCHEDULE_RUN_CONTEXT_KEY,
@@ -41,13 +47,11 @@ import {
 } from "./guardrails";
 import {
   PERMISSION_RULES_CONTEXT_KEY,
-  type PermissionPolicy,
   parsePermissionRules,
   READ_ONLY_EXPERT_CONTEXT_KEY,
   requestToolApproval,
   resolveAgentActiveTools,
   resolveRequestMode,
-  SESSION_TOOL_POLICY_CONTEXT_KEY,
 } from "./permissions";
 import { agentsMdProcessor, libraryAttachmentProcessor } from "./processors";
 import { teamInvocationProcessor } from "./team-activity";
@@ -153,64 +157,78 @@ export const workSubagents = {
 
 export type RequestContextLike = { get: (key: string) => unknown };
 
-export function isCodeModeAvailable(requestContext?: RequestContextLike): boolean {
-  const policy = requestContext?.get(SESSION_TOOL_POLICY_CONTEXT_KEY) as
-    | ((toolName: string) => PermissionPolicy)
-    | undefined;
-  return Boolean(
-    policy &&
-      policy("execute_typescript") !== "deny" &&
-      CODE_MODE_EXTERNAL_TOOL_NAMES.every((name) => policy(name) === "allow"),
-  );
-}
-
 /** Tools available to both the primary agent and its built-in subagents. */
 export async function resolveSharedTools(
   requestContext?: RequestContextLike,
   mcpServerIds?: string[],
 ): Promise<ToolsInput> {
-  const tools = {
+  const resourceId = userIdFromContext(requestContext);
+  const prepare = async <T>(name: string, load: () => Promise<T>): Promise<T> => {
+    const span = resolveCurrentSpan()?.createChildSpan({
+      type: SpanType.GENERIC,
+      name: `prepare tools: ${name}`,
+    });
+    let succeeded = false;
+    try {
+      const result = await load();
+      succeeded = true;
+      return result;
+    } finally {
+      span?.end({ metadata: { succeeded } });
+    }
+  };
+  const [notificationInbox, webTools, mcpTools, computerTools] = await Promise.all([
+    getNotificationInboxTool(),
+    prepare("web search", () =>
+      resolveWebSearchTools(
+        parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
+        resourceId,
+      ),
+    ),
+    prepare("MCP", () => getConfiguredMcpTools(resourceId, undefined, mcpServerIds)),
+    prepare("computer", () => getComputerTools(requestContext)),
+  ]);
+  const tools: ToolsInput = {
     ask_user: askUserTool,
     submit_plan: submitPlanTool,
-    ...(isCodeModeAvailable(requestContext) ? { execute_typescript: codeMode.tool } : {}),
     library_vector_search: libraryVectorSearchTool,
     library_graph_search: libraryGraphSearchTool,
     library_document_chunker: libraryDocumentChunkerTool,
-    notification_inbox: await getNotificationInboxTool(),
-    ...(await resolveWebSearchTools(
-      parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
-      userIdFromContext(requestContext),
-    )),
-    ...(await getConfiguredMcpTools(userIdFromContext(requestContext), undefined, mcpServerIds)),
-    ...(await getComputerTools(requestContext)),
+    notification_inbox: notificationInbox,
+    ...webTools,
+    ...mcpTools,
+    ...computerTools,
   };
   // Preserve computer-specific approval settings; other tools use the shared session policy.
   return Object.fromEntries(
-    Object.entries(tools).map(([name, tool]) => [
-      name,
-      name.startsWith(COMPUTER_TOOL_PREFIX)
-        ? tool
-        : createTool({
-            ...tool,
-            id: name,
-            execute: tool.execute
-              ? async (input, context) =>
-                  tool.execute?.(input, { ...context, observe: context.observe })
-              : undefined,
-            requireApproval: async (args, context) => {
-              const required = await requestToolApproval({
-                toolName: name,
-                args,
-                requestContext: context?.requestContext,
-              });
-              if (required || !(name.startsWith("mcp_") || name.startsWith("anysearch_")))
-                return required;
-              return typeof tool.requireApproval === "function"
-                ? tool.requireApproval(args, context)
-                : tool.requireApproval === true;
-            },
-          }),
-    ]),
+    Object.entries(tools).map(([name, tool]) => {
+      if (name.startsWith(COMPUTER_TOOL_PREFIX) || !(MASTRA_TOOL_MARKER in tool))
+        return [name, tool];
+      const original = tool as Tool<Record<string, unknown>>;
+      return [
+        name,
+        createTool({
+          ...original,
+          id: name,
+          execute: original.execute
+            ? async (input, context) =>
+                original.execute?.(input, { ...context, observe: context.observe })
+            : undefined,
+          requireApproval: async (args, context) => {
+            const required = await requestToolApproval({
+              toolName: name,
+              args,
+              requestContext: context?.requestContext,
+            });
+            if (required || !(name.startsWith("mcp_") || name.startsWith("anysearch_")))
+              return required;
+            return typeof original.requireApproval === "function"
+              ? original.requireApproval(args, context)
+              : original.requireApproval === true;
+          },
+        }),
+      ];
+    }),
   );
 }
 
@@ -280,5 +298,6 @@ export async function buildInputPipeline(
     libraryAttachmentProcessor,
     agentsMdProcessor,
     ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),
+    codeModeProcessor(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true),
   ];
 }

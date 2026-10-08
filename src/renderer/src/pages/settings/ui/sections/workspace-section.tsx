@@ -52,7 +52,7 @@ export interface WorkspaceDraft {
   autoIndexPaths: string[];
 }
 
-export const DEFAULT_WORKSPACE_DRAFT: WorkspaceDraft = {
+const DEFAULT_WORKSPACE_DRAFT: WorkspaceDraft = {
   threadsRoot: "",
   readOnly: false,
   allowedPaths: [],
@@ -83,7 +83,7 @@ const WORKSPACE_TOOL_IDS = [
 ] as const;
 
 /** 目录选择字段:路径展示 + 系统目录选择器按钮(路径一律通过选择器写入) */
-export function DirectoryPickerField({
+function DirectoryPickerField({
   value,
   onChange,
 }: {

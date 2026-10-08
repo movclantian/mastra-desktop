@@ -160,7 +160,7 @@ export interface GuardrailsDraft {
 }
 
 /** 与服务端 DEFAULT_CONFIG 保持一致;检测模型自动跟随当前请求模型。 */
-export const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
+const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   jsonPromptInjection: true,
   detectorProviderOptions: "{}",
   maxProcessorRetries: 0,

@@ -30,7 +30,7 @@ const plugins = [
   fallbackPlugin(),
 ];
 
-export interface PreviewLibraryAsset {
+interface PreviewLibraryAsset {
   id: string;
   filename: string;
   mediaType: string;

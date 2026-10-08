@@ -123,7 +123,7 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
   return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
 }
 
-export async function findUserById(id: string): Promise<AuthUser | null> {
+async function findUserById(id: string): Promise<AuthUser | null> {
   await ensureAuthSchema();
   const result = await (await getLibsqlClient()).execute({
     sql: `SELECT id, name, email FROM ${AUTH_USERS_TABLE} WHERE id = ? LIMIT 1`,

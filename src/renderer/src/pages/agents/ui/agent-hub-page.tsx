@@ -611,7 +611,11 @@ function AgentGridCard({
                   active && "border-primary/30 bg-primary/10 text-primary",
                 )}
               >
-                <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
+                <ProfileAvatar
+                  profileId={profile.id}
+                  name={profile.displayName}
+                  state={profile.enabled ? "default" : "sleeping"}
+                />
               </div>
               <div className="min-w-0">
                 <CardTitle className="truncate text-sm font-semibold tracking-tight">
@@ -730,11 +734,15 @@ function AgentListItem({
         <div className="flex min-w-0 flex-1 items-center gap-3.5">
           <div
             className={cn(
-              "flex size-9 shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-foreground transition-colors",
+              "flex size-10 shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-foreground transition-colors",
               active && "border-primary/30 bg-primary/10 text-primary",
             )}
           >
-            <ProfileAvatar name={profile.displayName} avatar={profile.avatar} />
+            <ProfileAvatar
+              profileId={profile.id}
+              name={profile.displayName}
+              state={profile.enabled ? "default" : "sleeping"}
+            />
           </div>
 
           <div className="min-w-0 flex-1">
@@ -814,5 +822,3 @@ function AgentListItem({
     </AgentContextMenuWrapper>
   );
 }
-
-export { AgentHubPage as AgentHub };

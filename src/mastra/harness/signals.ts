@@ -1,10 +1,8 @@
 /** Durable signal providers, desktop notifications, and the notification inbox tool. */
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import {
-  createNotificationInboxTool,
-  type SendNotificationSignalInput,
-} from "@mastra/core/notifications";
+import { createNotificationInboxTool } from "@mastra/core/notifications";
+
 import {
   type SignalProviderTarget,
   type SignalSubscription,
@@ -65,7 +63,7 @@ function publicSubscription(subscription: SignalSubscription): SignalSubscriptio
   };
 }
 
-export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
+class PersistentWebhookSignalProvider extends WebhookSignalProvider {
   private mutations: Promise<unknown> = Promise.resolve();
 
   // ponytail: one mutation queue per provider; partition by account only if write volume demands it.
@@ -156,7 +154,7 @@ export class PersistentWebhookSignalProvider extends WebhookSignalProvider {
 
 type PollingSubscriptionMetadata = { url: string; headers?: Record<string, string> };
 
-export class PersistentPollingSignalProvider extends PersistentWebhookSignalProvider {
+class PersistentPollingSignalProvider extends PersistentWebhookSignalProvider {
   readonly pollInterval = 30_000;
   private fingerprints = new Map<string, string>();
   private stopController = new AbortController();
@@ -348,5 +346,3 @@ export function getNotificationInboxTool(): Promise<
   });
   return notificationInboxToolPromise;
 }
-
-export type WorkNotificationInput = SendNotificationSignalInput | SendNotificationSignalInput[];

@@ -73,9 +73,10 @@ import {
   type MessageReaction,
   referenceBadgeClass,
 } from "../model/types";
-import { AssistantAvatar, CitationProvider, FootnoteCitation, UserAvatar } from "./";
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
+import { AssistantAvatar, UserAvatar } from "./avatars";
+import { CitationProvider, FootnoteCitation } from "./citations";
 import { MessageLink } from "./message-selection";
 
 function AssistantPendingIndicator({
@@ -647,7 +648,7 @@ export const MessageItem = React.memo(function MessageItem({
                         : speaker.agentProfileId
                     }
                     name={speaker.agentDisplayName ?? speaker.agentProfileId}
-                    src={speaker.agentAvatar}
+                    state="sleeping"
                   />
                 ) : (
                   <UserAvatar userId={userId} />
@@ -811,10 +812,10 @@ export const MessageItem = React.memo(function MessageItem({
                     : speaker.agentProfileId
                 }
                 name={speaker.agentDisplayName ?? speaker.agentProfileId}
-                src={speaker.agentAvatar}
+                state={isStreaming ? "working" : "sleeping"}
               />
             ) : (
-              <AssistantAvatar />
+              <AssistantAvatar state={isStreaming ? "working" : "sleeping"} />
             )}
           </MessageAvatar>
           <MessageContent>

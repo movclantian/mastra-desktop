@@ -165,7 +165,6 @@ export function agentIdentityProcessor(configuredMember?: AgentMemberDefinition)
                   ...message.content.metadata,
                   agentProfileId: profile.id,
                   agentDisplayName: member?.name ?? profile.displayName,
-                  agentAvatar: member?.avatar ?? profile.avatar,
                   ...(member ? { teamMemberId: member.id } : {}),
                 },
               },

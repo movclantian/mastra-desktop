@@ -720,61 +720,6 @@ export function WorkspaceGroup({
 }
 
 /** 普通线程文件夹(已归档):无目录语义,仅收纳 */
-export function ThreadFolder({
-  name,
-  icon,
-  threads,
-  defaultOpen = true,
-  onRename,
-  onOpenFileManager,
-}: {
-  name: string;
-  icon: React.ComponentType<{ className?: string }>;
-  threads: WorkThread[];
-  defaultOpen?: boolean;
-  onRename: (thread: WorkThread) => void;
-  onOpenFileManager: (threadId: string) => void;
-}) {
-  const sorted = sortThreads(threads);
-  const [open, setOpen] = React.useState(defaultOpen);
-  const Icon = icon;
-  return (
-    <Collapsible
-      defaultOpen={defaultOpen}
-      open={open}
-      onOpenChange={setOpen}
-      className="group/collapsible"
-    >
-      <SidebarMenuItem>
-        <CollapsibleTrigger render={<SidebarMenuButton className="!pr-2" />}>
-          <Icon className="size-4 shrink-0" />
-          <span>{name}</span>
-          {sorted.length > 0 ? (
-            <span className="ml-1 text-xs text-muted-foreground tabular-nums">{sorted.length}</span>
-          ) : null}
-          <ChevronRightIcon
-            className={cn(
-              "ml-auto size-4 shrink-0 text-muted-foreground transition-transform duration-200",
-              open && "rotate-90 text-foreground",
-            )}
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <SidebarMenuSub>
-            {sorted.map((thread) => (
-              <WorkspaceThreadItem
-                key={thread.id}
-                thread={thread}
-                onOpenFileManager={onOpenFileManager}
-                onRename={onRename}
-              />
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </SidebarMenuItem>
-    </Collapsible>
-  );
-}
 
 function InlineCreateRow({
   kind,

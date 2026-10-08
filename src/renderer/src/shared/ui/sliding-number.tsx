@@ -318,4 +318,4 @@ function SlidingNumber({
   );
 }
 
-export { SlidingNumber, type SlidingNumberProps };
+export { SlidingNumber };

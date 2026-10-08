@@ -37,6 +37,7 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Separator } from "@/shared/ui/separator";
 import { Textarea } from "@/shared/ui/textarea";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
 import type { AgentSchedule } from "../api/schedules-api";
 
 type Frequency = "daily" | "weekdays" | "weekly" | "custom";
@@ -71,7 +72,7 @@ const WEEKDAY_KEYS = [
   ["0", "schedules:days.0"],
 ] as const;
 
-function defaultDraft(threadId = "", agentId = "mastra-work-agent"): ScheduleDraft {
+function defaultDraft(threadId = "", agentId = DEFAULT_AGENT_PROFILE_ID): ScheduleDraft {
   return {
     name: "",
     prompt: "",
@@ -180,7 +181,7 @@ export function SchedulesPage() {
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
   const [draft, setDraft] = React.useState<ScheduleDraft>(() =>
-    defaultDraft(activeThreadId ?? "", agents[0]?.id ?? "mastra-work-agent"),
+    defaultDraft(activeThreadId ?? "", agents[0]?.id ?? DEFAULT_AGENT_PROFILE_ID),
   );
   const [editing, setEditing] = React.useState(false);
   const loading = schedulesQuery.isPending || schedulesQuery.isFetching;
@@ -226,7 +227,7 @@ export function SchedulesPage() {
     const preferredThread =
       activeThreadId ?? threads.find((thread) => !thread.metadata?.archivedAt)?.id ?? "";
     setSelectedId(null);
-    setDraft(defaultDraft(preferredThread, agents[0]?.id ?? "mastra-work-agent"));
+    setDraft(defaultDraft(preferredThread, agents[0]?.id ?? DEFAULT_AGENT_PROFILE_ID));
     setEditing(true);
   };
 
@@ -676,7 +677,9 @@ function ScheduleForm({
             <FieldLabel>{t("schedules:form.useAgent")}</FieldLabel>
             <Select
               value={draft.agentId}
-              onValueChange={(agentId) => onChange({ agentId: agentId ?? "mastra-work-agent" })}
+              onValueChange={(agentId) =>
+                onChange({ agentId: agentId ?? DEFAULT_AGENT_PROFILE_ID })
+              }
               disabled={!targetEditable}
             >
               <SelectTrigger className="w-full">

@@ -1055,7 +1055,7 @@ function ProviderDetail({
 }
 
 /** 模型列表区块:模糊搜索 / 无结果添加自定义 ID / 每行连接测试 / 刷新按钮在搜索行右侧 */
-export function ModelListSection({
+function ModelListSection({
   provider,
   models: initialModels,
   onRefresh,

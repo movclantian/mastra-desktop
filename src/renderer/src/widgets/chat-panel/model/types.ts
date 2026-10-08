@@ -17,7 +17,6 @@ export interface WorkMessageMetadata {
   clientMessageId?: string;
   agentProfileId?: string;
   agentDisplayName?: string;
-  agentAvatar?: string;
   createdAt?: string;
   handoff?: import("../../../../../shared/agent-contract").TeamHandoff;
   teamMemberId?: string;
@@ -63,7 +62,7 @@ export interface MessageFileReference {
   mediaType?: string;
 }
 
-export interface WorkspaceLogData {
+interface WorkspaceLogData {
   objectId: string;
   sha256: string;
   byteSize: number;
@@ -123,7 +122,7 @@ export type TracePart = Extract<MessagePart, { type: "reasoning" }> | ToolPart;
  * stable), but render only the latest snapshot for each toolCallId. Adjacent
  * reasoning chunks share one step; a tool invocation always separates them.
  */
-export function normalizeTraceParts(parts: TracePart[]): TracePart[] {
+function normalizeTraceParts(parts: TracePart[]): TracePart[] {
   const result: TracePart[] = [];
   const toolPositions = new Map<string, number>();
   for (const part of parts) {
@@ -279,7 +278,7 @@ export interface WorkflowRuntimeStep {
   progress?: { completedCount: number; totalCount: number; currentIndex: number };
 }
 
-export interface WorkflowRuntimeEvent {
+interface WorkflowRuntimeEvent {
   id: number;
   type: string;
   at: string;
@@ -785,19 +784,14 @@ export function getBackgroundTasksFromMessages(messages: UIMessage[]): Backgroun
   return [...tasks.values()];
 }
 
-export const TASK_TOOL_NAMES = new Set([
-  "task_write",
-  "task_update",
-  "task_complete",
-  "task_check",
-]);
-export const PROMPT_MANAGED_TOOL_NAMES = new Set(["ask_user", "submit_plan"]);
+const TASK_TOOL_NAMES = new Set(["task_write", "task_update", "task_complete", "task_check"]);
+const PROMPT_MANAGED_TOOL_NAMES = new Set(["ask_user", "submit_plan"]);
 
-export function isTaskToolName(toolName: string | undefined): boolean {
+function isTaskToolName(toolName: string | undefined): boolean {
   return toolName !== undefined && TASK_TOOL_NAMES.has(toolName);
 }
 
-export function isPromptManagedToolName(toolName: string | undefined): boolean {
+function isPromptManagedToolName(toolName: string | undefined): boolean {
   return toolName !== undefined && PROMPT_MANAGED_TOOL_NAMES.has(toolName);
 }
 
@@ -841,35 +835,6 @@ export function parseSuspendedRuns(value: unknown): AgentInteraction[] {
 
 export function getToolName(part: MessagePart): string | undefined {
   return isToolUIPart(part) ? getAISDKToolName(part) : undefined;
-}
-
-export function hasPendingInteraction(
-  messages: UIMessage[],
-  interaction: AgentInteraction,
-): boolean {
-  if (!interaction.toolCallId) return false;
-  return messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      message.parts.some((part) => {
-        if (isToolUIPart(part)) {
-          return (
-            part.toolCallId === interaction.toolCallId &&
-            (interaction.requiresApproval
-              ? part.state === "approval-requested"
-              : part.state !== "output-error" && part.state !== "output-denied")
-          );
-        }
-        const raw = part as unknown as JsonRecord;
-        const data = asRecord(raw.data);
-        return (
-          (raw.type === "data-tool-call-suspended" || raw.type === "data-tool-call-approval") &&
-          data?.runId === interaction.runId &&
-          data.toolCallId === interaction.toolCallId &&
-          data.resumed !== true
-        );
-      }),
-  );
 }
 
 /**
@@ -983,10 +948,7 @@ export function areTasksEqual(left: AgentTask[], right: AgentTask[]): boolean {
   });
 }
 
-export function getCompletedInteraction(
-  messageId: string,
-  part: ToolPart,
-): AgentInteraction | undefined {
+function getCompletedInteraction(messageId: string, part: ToolPart): AgentInteraction | undefined {
   const toolName = getToolName(part);
   if (toolName !== "ask_user" && toolName !== "submit_plan") return undefined;
   if (part.state !== "output-available") return undefined;

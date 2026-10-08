@@ -48,6 +48,10 @@ import {
 import {
   GetProxyRequestSchema,
   GetProxyResultSchema,
+  DEFAULT_MASTRA_PORT as MASTRA_PORT,
+  DEFAULT_MASTRA_SERVER_URL as MASTRA_SERVER_URL,
+  MODELS_DEV_API_URL,
+  MODELS_DEV_ORIGIN,
   PROXY_CHANNELS,
   type ProxyConfig,
   type ProxyTestResult,
@@ -84,6 +88,8 @@ import {
   DesktopNotificationSchema,
   DesktopPreferencesSchema,
   DesktopSettingsPatchSchema,
+  FONT_FILES_ORIGIN,
+  FONT_STYLES_ORIGIN,
   SetMinimumWidthRequestSchema,
   WINDOW_CHANNELS,
 } from "../shared/window-contract";
@@ -106,8 +112,6 @@ import { NativeBrowserGuestManager } from "./browser/browser-guests";
 import { CredentialBroker, CredentialVault } from "./credential-vault";
 import { TerminalSessionRuntime } from "./terminal";
 
-const MASTRA_SERVER_URL = "http://localhost:4111";
-const MASTRA_PORT = 4111;
 const HEALTH_CHECK_INTERVAL_MS = 500;
 const HEALTH_CHECK_TIMEOUT_MS = 120_000;
 
@@ -262,7 +266,7 @@ async function applySessionProxy(config: ProxyConfig): Promise<string | undefine
 
 async function testProxyConnectivity(proxyUrl?: string): Promise<ProxyTestResult> {
   await app.whenReady();
-  const testUrl = "https://models.dev/api.json";
+  const testUrl = MODELS_DEV_API_URL;
   const start = Date.now();
   try {
     const testSession = session.fromPartition(`proxy-test-${Date.now()}`);
@@ -302,7 +306,7 @@ async function resolveSystemProxyUrl(): Promise<string | undefined> {
     await app.whenReady();
     // resolveProxy 按 URL 匹配代理规则(PAC 可对不同域名走不同代理),因此必须给一个
     // 目标 URL 作探测;用服务端必然要访问的模型目录域名,匹配到的规则最贴近实际。
-    const rules = await session.defaultSession.resolveProxy("https://models.dev/api.json");
+    const rules = await session.defaultSession.resolveProxy(MODELS_DEV_API_URL);
     // 形如 "PROXY 127.0.0.1:7890;DIRECT"、"HTTPS gw.corp:443" 或 "DIRECT"
     for (const rule of rules.split(";")) {
       const [rawScheme, host] = rule.trim().split(/\s+/, 2);
@@ -371,11 +375,11 @@ function rendererContentSecurityPolicy(): string {
     "default-src 'self'",
     `connect-src 'self' blob: ${MASTRA_SERVER_URL}${devConnectSources}`,
     `script-src ${scriptSources}`,
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    `img-src 'self' data: blob: ${MASTRA_SERVER_URL} https://models.dev`,
+    `style-src 'self' 'unsafe-inline' ${FONT_STYLES_ORIGIN}`,
+    `img-src 'self' data: blob: ${MASTRA_SERVER_URL} ${MODELS_DEV_ORIGIN}`,
     `media-src 'self' data: blob: ${MASTRA_SERVER_URL}`,
     "worker-src 'self' blob:",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    `font-src 'self' data: ${FONT_FILES_ORIGIN}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -611,14 +615,14 @@ async function killProcessesOnPort(port: number): Promise<void> {
  * (否则健康检查误判为就绪,窗口连上的是孤儿服务,新拉的后端反而起不来)。
  */
 async function freeStaleServer(): Promise<void> {
-  console.warn("[Mastra] 端口 4111 已被占用,尝试清理残留服务…");
+  console.warn(`[Mastra] 端口 ${MASTRA_PORT} 已被占用,尝试清理残留服务…`);
   await killProcessesOnPort(MASTRA_PORT);
   const deadline = Date.now() + 6_000;
   while (Date.now() < deadline) {
     if (!(await isServerUp(500))) return;
     await delay(500);
   }
-  throw new Error("端口 4111 被其他进程占用且无法清理,请手动结束该进程后重试");
+  throw new Error(`端口 ${MASTRA_PORT} 被其他进程占用且无法清理,请手动结束该进程后重试`);
 }
 
 function showCrashDialog(detail: string): void {

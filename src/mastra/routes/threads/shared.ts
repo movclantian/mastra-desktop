@@ -6,6 +6,7 @@ import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
 
@@ -59,7 +60,7 @@ export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): Mastr
  */
 export async function getWorkMemory(requestContext: RequestContext): Promise<Memory> {
   const { mastra } = await import("../../index");
-  const agent = mastra.getAgentById("mastra-work-agent");
+  const agent = mastra.getAgentById(DEFAULT_AGENT_PROFILE_ID);
   const memory = await agent.getMemory({ requestContext });
   if (!memory) {
     throw new Error("Agent memory is not configured");

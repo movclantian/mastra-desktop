@@ -85,21 +85,18 @@ import {
 } from "../model/types";
 import { useSessionView, useThreadSessions } from "../model/use-thread-sessions";
 import {
-  AgentInteractionPanel,
   AgentMemberMessageView,
   AgentMemberSwitcher,
-  AgentQueuePanel,
-  ChatPromptInput,
-  ChatWorkspaceSelector,
   getAgentMemberRuntimes,
-  MessageItem,
-  UserRequestQueuePanel,
-  WorkflowRunPanel,
-} from "./";
+} from "./agent-member-stream";
 import type { WorkflowRunAction } from "./agent-panels";
+import { AgentInteractionPanel, AgentQueuePanel, WorkflowRunPanel } from "./agent-panels";
 import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
+import { MessageItem } from "./message-list";
 import { MessageSelectionScope } from "./message-selection";
+import { ChatPromptInput, UserRequestQueuePanel } from "./prompt-input";
 import { HandoffPanel, HandoffRecord } from "./team-collaboration";
+import { ChatWorkspaceSelector } from "./workspace-selector";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
   "completed",
@@ -1335,24 +1332,36 @@ export function ChatPanel() {
 
   // 始终返回同一层级的 MessageScrollerItem,避免相邻用户消息出现时因增加
   // Fragment/分组父节点而重建旧锚点。showAvatar 只控制视觉,不改变 DOM 身份。
-  const renderMessageItem = (entry: DisplayMessage, showAvatar = true) =>
-    entry.message.metadata?.handoff ? (
-      <HandoffRecord
-        key={entry.key}
-        handoff={entry.message.metadata.handoff}
-        profile={agentSelection}
-      />
+  const renderMessageItem = (entry: DisplayMessage, showAvatar = true) => {
+    const streaming =
+      isBusy &&
+      (entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? ""));
+    const member =
+      handoff?.profileId === agentSelection.id
+        ? agentSelection.members.find((member) => member.id === handoff.activeMemberId)
+        : undefined;
+    const message =
+      streaming && entry.message.role === "assistant" && !entry.message.metadata?.agentProfileId
+        ? {
+            ...entry.message,
+            metadata: {
+              ...entry.message.metadata,
+              agentProfileId: agentSelection.id,
+              teamMemberId: member?.id,
+              agentDisplayName: member?.name ?? agentSelection.displayName,
+            },
+          }
+        : entry.message;
+    return message.metadata?.handoff ? (
+      <HandoffRecord key={entry.key} handoff={message.metadata.handoff} profile={agentSelection} />
     ) : (
       <MessageItem
         isGenerating={isBusy}
-        isStreaming={
-          isBusy &&
-          (entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? ""))
-        }
+        isStreaming={streaming}
         emptyReply={entry.sourceIds.length === 0}
         replyError={entry.sourceIds.length === 0 ? runError : undefined}
         key={entry.key}
-        message={entry.message}
+        message={message}
         onEdit={handleEdit}
         onForkFromMessage={handleForkFromMessage}
         onRetry={handleRetry}
@@ -1365,6 +1374,7 @@ export function ChatPanel() {
         userId={user.id}
       />
     );
+  };
 
   const submittingRef = React.useRef(false);
   const handleSubmit = async (
@@ -1560,11 +1570,12 @@ export function ChatPanel() {
           做的任务。
           外层 max-w-3xl 容器与下方输入框同宽基准,w-[96%] 才是"略窄于输入框"
           (工作区卡片同规格,见 workspace-selector.tsx)。 */}
-      {showMemberSwitcher ? (
+      {showMemberSwitcher && multiAgentProfile ? (
         <div className="mx-auto mb-1 w-full max-w-3xl px-1">
           <AgentMemberSwitcher
             activeMemberId={activeMemberId}
-            members={multiAgentMembers}
+            profile={multiAgentProfile}
+            busy={isBusy}
             onSelect={(memberId) =>
               setActiveMemberId((current) => (current === memberId ? null : memberId))
             }

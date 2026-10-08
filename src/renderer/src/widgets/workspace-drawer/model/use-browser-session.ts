@@ -32,11 +32,11 @@ const EMPTY_BROWSER_STATE: BrowserState = {
   activeTabIndex: 0,
 };
 
-export function isCurrentBrowserStreamEvent(streamEpoch: number, currentEpoch: number): boolean {
+function isCurrentBrowserStreamEvent(streamEpoch: number, currentEpoch: number): boolean {
   return streamEpoch === currentEpoch;
 }
 
-export function mapBrowserPointerToViewport(
+function mapBrowserPointerToViewport(
   clientX: number,
   clientY: number,
   bounds: Pick<DOMRect, "left" | "top" | "width" | "height">,

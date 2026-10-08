@@ -45,7 +45,7 @@ import type {
   PluginSource,
   PluginVersion,
 } from "../../../../../shared/plugin-contract";
-import { pluginConfigValueError } from "../../../../../shared/plugin-contract";
+import { GITHUB_HOST, pluginConfigValueError } from "../../../../../shared/plugin-contract";
 
 async function pluginRequest<T>(
   path: string,
@@ -110,7 +110,7 @@ function sourceFromInput(value: string, ref = "HEAD", path = "", transport = "au
   if (!/^https?:\/\//i.test(value)) return { kind: "local", path: value };
   const url = new URL(value);
   return transport === "git" ||
-    (transport === "auto" && (url.hostname === "github.com" || url.pathname.endsWith(".git")))
+    (transport === "auto" && (url.hostname === GITHUB_HOST || url.pathname.endsWith(".git")))
     ? { kind: "git", url: value, ref, path }
     : { kind: "archive", url: value, path };
 }

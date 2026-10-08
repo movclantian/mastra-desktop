@@ -1,7 +1,11 @@
 import { readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
+
 import { z } from "zod";
 import {
+  GITHUB_API_ORIGIN,
+  GITHUB_HOST,
+  GITHUB_ORIGIN,
+  GITHUB_RAW_ORIGIN,
   type MarketplaceCatalog,
   type MarketplaceListing,
   type MarketplaceQuery,
@@ -10,6 +14,7 @@ import {
   marketplaceSourceSchema,
   type PluginSource,
   pluginSourceSchema,
+  SKILLS_SH_ORIGIN,
 } from "../../shared/plugin-contract";
 import { listSkillsShSkillsWithOptions } from "../skills/marketplaces";
 import { getAppConfig, setAppConfig } from "../storage/database";
@@ -18,11 +23,11 @@ import { externalPluginDirectory, withPluginOperation } from "./registry";
 
 const github = (repository: string): PluginSource => ({
   kind: "git",
-  url: `https://github.com/${repository}`,
+  url: `${GITHUB_ORIGIN}/${repository}`,
   ref: "main",
   path: "",
 });
-export const DEFAULT_PLUGIN_MARKETPLACES: MarketplaceSource[] = [
+const DEFAULT_PLUGIN_MARKETPLACES: MarketplaceSource[] = [
   {
     id: "anthropic-official",
     name: "Claude Plugins Official",
@@ -66,7 +71,7 @@ export const DEFAULT_PLUGIN_MARKETPLACES: MarketplaceSource[] = [
   {
     id: "skills-sh",
     name: "skills.sh",
-    source: { kind: "archive", url: "https://skills.sh", path: "" },
+    source: { kind: "archive", url: SKILLS_SH_ORIGIN, path: "" },
     format: "skills-sh",
     catalogPath: "",
     category: "community",
@@ -181,9 +186,9 @@ function entrySource(input: unknown, marketplace: MarketplaceSource): PluginSour
     // Claude's git-subdir URL accepts the documented owner/repo GitHub shorthand.
     const url =
       type === "github"
-        ? `https://github.com/${repository}`
+        ? `${GITHUB_ORIGIN}/${repository}`
         : type === "git-subdir" && /^[\w.-]+\/[\w.-]+$/.test(repository)
-          ? `https://github.com/${repository}`
+          ? `${GITHUB_ORIGIN}/${repository}`
           : repository;
     if (!z.url({ protocol: /^https?$/ }).safeParse(url).success)
       throw new Error(
@@ -200,10 +205,7 @@ function entrySource(input: unknown, marketplace: MarketplaceSource): PluginSour
   throw new Error(`Unsupported plugin source: ${type}`);
 }
 
-export function parseMarketplace(
-  document: unknown,
-  marketplace: MarketplaceSource,
-): MarketplaceListing[] {
+function parseMarketplace(document: unknown, marketplace: MarketplaceSource): MarketplaceListing[] {
   const catalog = catalogSchema.parse(document);
   const seen = new Set<string>();
   return catalog.plugins.map((entry) => {
@@ -294,7 +296,7 @@ export async function getMarketplaceStatuses(sources: MarketplaceSource[], owner
 }
 
 const refreshing = new Map<string, Promise<MarketplaceCatalog>>();
-export async function refreshPluginCatalog(
+async function refreshPluginCatalog(
   source: MarketplaceSource,
   owner: string,
   query: Partial<MarketplaceQuery> = {},
@@ -351,13 +353,13 @@ export async function refreshPluginCatalog(
         let url: string;
         if (source.source.kind === "git") {
           const repository = new URL(source.source.url);
-          if (repository.hostname !== "github.com")
+          if (repository.hostname !== GITHUB_HOST)
             throw new Error("Use a direct catalog URL for non-GitHub markets");
           const repo = repository.pathname.replace(/\.git\/?$/, "").replace(/^\/|\/$/g, "");
           url =
             source.format === "skills"
-              ? `https://api.github.com/repos/${repo}/git/trees/${encodeURIComponent(source.source.commit ?? source.source.ref)}?recursive=1`
-              : `https://raw.githubusercontent.com/${repo}/${encodeURIComponent(source.source.commit ?? source.source.ref)}/${[source.source.path, source.catalogPath].filter(Boolean).join("/").split("/").map(encodeURIComponent).join("/")}`;
+              ? `${GITHUB_API_ORIGIN}/repos/${repo}/git/trees/${encodeURIComponent(source.source.commit ?? source.source.ref)}?recursive=1`
+              : `${GITHUB_RAW_ORIGIN}/${repo}/${encodeURIComponent(source.source.commit ?? source.source.ref)}/${[source.source.path, source.catalogPath].filter(Boolean).join("/").split("/").map(encodeURIComponent).join("/")}`;
         } else if (source.source.kind === "archive") url = source.source.url;
         else throw new Error("Unsupported marketplace transport");
         const response = await fetch(url, {
@@ -466,7 +468,7 @@ export async function getMarketplaceListing(
       description: "",
       source: { kind: "skills-sh", source: match[1], slug: match[2] },
       format: "skills",
-      homepage: `https://skills.sh/${key}`,
+      homepage: `${SKILLS_SH_ORIGIN}/${key}`,
     };
   }
   if (!listing) throw new Error(catalog.error ?? "Marketplace entry not found");

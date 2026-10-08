@@ -9,29 +9,15 @@ import { z } from "zod";
 import {
   type AgentMemberDefinition,
   type AgentProfile,
+  DEFAULT_PERMISSION_RULES,
   delegationMemberIds,
+  PERMISSION_POLICIES,
+  PERMISSION_RULES_CONTEXT_KEY,
+  TOOL_CATEGORIES,
 } from "../../shared/agent-contract.ts";
 import { COMPUTER_READ_TOOLS, COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract.ts";
 
-/** Workbench category catalog and persisted native Controller permission rules. */
-const DEFAULT_CATEGORY_POLICIES = {
-  read: "allow",
-  edit: "allow",
-  execute: "allow",
-  mcp: "allow",
-  other: "allow",
-} satisfies Record<ToolCategory, PermissionPolicy>;
-
-const PERMISSION_POLICY_KEYS = {
-  allow: true,
-  ask: true,
-  deny: true,
-} satisfies Record<PermissionPolicy, true>;
-
-export const TOOL_CATEGORIES = Object.keys(DEFAULT_CATEGORY_POLICIES) as ToolCategory[];
-export const PERMISSION_POLICIES = Object.keys(PERMISSION_POLICY_KEYS) as PermissionPolicy[];
-
-export const permissionRulesSchema = z.object({
+const permissionRulesSchema = z.object({
   categories: z.partialRecord(z.enum(TOOL_CATEGORIES), z.enum(PERMISSION_POLICIES)),
   tools: z.record(z.string(), z.enum(PERMISSION_POLICIES)),
 });
@@ -47,7 +33,7 @@ export const workbenchSessionStateSchema = z
 export type { PermissionPolicy, PermissionRules, ToolCategory };
 
 /** 已认证会话与定时任务传给 Agent 的当前线程权限规则。 */
-export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
+
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
 export const READ_ONLY_EXPERT_CONTEXT_KEY = "mastra-work:read-only-expert";
 
@@ -64,10 +50,6 @@ export const requestToolApproval: RequireToolApprovalFn = ({ toolName, requestCo
 /**
  * 默认策略:工作台默认完全访问;交互型工具仍显式允许,避免进入审批门。
  */
-export const DEFAULT_PERMISSION_RULES: PermissionRules = {
-  categories: { ...DEFAULT_CATEGORY_POLICIES },
-  tools: { ask_user: "allow", submit_plan: "allow" },
-};
 
 // ---------------------------------------------------------------------------
 // 工具 → 类别(官方 toolCategoryResolver 的位置)
@@ -104,8 +86,8 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
 
 /** 非工作区工具的显式类别。未列出者归 other，按线程的该类别规则处理。 */
 const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
-  // Code Mode:在沙箱里运行模型生成的多工具编排代码,由外层审批统一保护
-  execute_typescript: "execute",
+  // Code Mode 的 QuickJS 无宿主访问能力；每个 external 调用独立遵循当前工具范围与权限。
+  execute_typescript: "read",
   // Skills:只读取技能目录里的说明与脚本文本
   skill: "read",
   skill_search: "read",
@@ -154,7 +136,7 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
  * 工具名 → 权限类别。
  * 工作区工具按官方常量表分类；未识别的工作区工具归 edit，按线程的 edit 规则处理。
  */
-export const READ_ONLY_TOOL_NAMES = [
+const READ_ONLY_TOOL_NAMES = [
   ...COMPUTER_READ_TOOLS,
   ...WORKSPACE_READ_TOOLS,
   ...Object.keys(CATEGORY_BY_TOOL).filter((name) => CATEGORY_BY_TOOL[name] === "read"),
@@ -162,13 +144,14 @@ export const READ_ONLY_TOOL_NAMES = [
 ];
 
 /** Workspace's beforeToolCall hook limits Plan writes to plans/*.md. */
-export const PLAN_TOOL_NAMES = [
+const PLAN_TOOL_NAMES = [
   ...READ_ONLY_TOOL_NAMES,
   "submit_plan",
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
 ];
 
 const COORDINATOR_TOOL_NAMES = new Set([
+  "execute_typescript",
   ...WORKSPACE_READ_TOOLS,
   "ask_user",
   "submit_plan",
@@ -261,7 +244,7 @@ export function parsePermissionRules(value: unknown): PermissionRules {
 /** Official Controller modes shared by the workbench and agent request handlers. */
 import type { AgentControllerMode } from "@mastra/core/agent-controller";
 
-export type WorkModeId = "plan" | "build" | "review";
+type WorkModeId = "plan" | "build" | "review";
 
 export type WorkMode = AgentControllerMode & {
   id: WorkModeId;
@@ -311,7 +294,7 @@ export function listWorkModes(): WorkMode[] {
   return WORK_MODES.map((mode) => ({ ...mode }));
 }
 
-export const DEFAULT_MODE_ID: WorkModeId =
+const DEFAULT_MODE_ID: WorkModeId =
   WORK_MODES.find((mode) => mode.metadata?.default)?.id ?? "build";
 
 /** 会话与定时任务传给 Agent 动态 instructions/tools 的当前模式。 */
@@ -328,3 +311,5 @@ export function resolveRequestMode(context?: { get: (key: string) => unknown }):
   const controller = context?.get("controller") as { session?: { modeId?: unknown } } | undefined;
   return resolveMode(controller?.session?.modeId ?? context?.get(MODE_ID_CONTEXT_KEY));
 }
+
+export { PERMISSION_RULES_CONTEXT_KEY, TOOL_CATEGORIES };

@@ -10,7 +10,8 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": false,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "noUnusedLocals": true
   },
   "include": ["src/mastra/**/*.ts"]
 }

@@ -27,29 +27,5 @@ export function PanelSurface({ className, ...props }: React.ComponentProps<"sect
 }
 
 /** 面板底栏:状态条/快捷操作,统一 h-7、小号文本与顶边描边 */
-export function PanelFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="panel-footer"
-      className={cn(
-        "bg-muted/40 border-t border-border text-muted-foreground mt-auto flex h-7 w-full shrink-0 items-center gap-2 px-3 text-[11px]",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
 
 /** 面板区块标题:内容区内的小节标题,统一字阶与留白 */
-export function PanelSectionLabel({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="panel-section-label"
-      className={cn(
-        "text-muted-foreground px-3 pt-3 pb-1 text-[11px] font-medium tracking-wide",
-        className,
-      )}
-      {...props}
-    />
-  );
-}

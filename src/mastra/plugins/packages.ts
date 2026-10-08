@@ -17,7 +17,7 @@ import {
 } from "../../shared/plugin-contract";
 
 export const MAX_PACKAGE_BYTES = 25 * 1024 * 1024;
-export const MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
+const MAX_UNPACKED_BYTES = 100 * 1024 * 1024;
 const MAX_FILES = 2_000;
 export interface PackageFiles extends Map<string, Buffer> {
   executablePaths?: Set<string>;
@@ -224,7 +224,7 @@ export function selectPackageRoot(
   return result;
 }
 
-export function packageDigest(files: PackageFiles): string {
+function packageDigest(files: PackageFiles): string {
   const hash = createHash("sha256");
   for (const path of [...packageDirectories(files)].sort()) hash.update(`directory:${path}\0`);
   for (const [path, contents] of [...files].sort(([a], [b]) => a.localeCompare(b, "en")))

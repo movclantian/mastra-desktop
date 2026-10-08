@@ -5,16 +5,6 @@ import type * as React from "react";
 
 import { cn } from "@/shared/lib";
 
-function BubbleGroup({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="bubble-group"
-      className={cn("flex min-w-0 flex-col gap-2", className)}
-      {...props}
-    />
-  );
-}
-
 const bubbleVariants = cva(
   "group/bubble relative flex w-fit max-w-[80%] min-w-0 flex-col gap-1 group-data-[align=end]/message:self-end data-[align=end]:self-end data-[variant=ghost]:max-w-full",
   {
@@ -121,4 +111,4 @@ function BubbleReactions({
   );
 }
 
-export { Bubble, BubbleContent, BubbleGroup, BubbleReactions };
+export { Bubble, BubbleContent, BubbleReactions };

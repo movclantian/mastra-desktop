@@ -178,7 +178,7 @@ export function resolveMediaType(filename: string, supplied: string): string {
   return byExtension[extname(filename).toLowerCase()] ?? "application/octet-stream";
 }
 
-export async function extractText(
+async function extractText(
   bytes: Uint8Array,
   filename: string,
   mediaType: string,
@@ -218,7 +218,7 @@ export async function extractText(
 let vectorPromise: Promise<LibSQLVector> | undefined;
 const vectorIndexPromises = new Map<string, Promise<void>>();
 const indexingPromises = new Map<string, Promise<void>>();
-export const LIBRARY_EMBEDDING_DIMENSION = 384;
+const LIBRARY_EMBEDDING_DIMENSION = 384;
 
 export async function getVector(): Promise<LibSQLVector> {
   if (!vectorPromise) {
@@ -385,7 +385,7 @@ async function extractMetadata(
  *
  * LibraryIndexSignalProvider 在 start/stop 中订阅事件并写入官方通知收件箱。
  */
-export interface LibraryIndexSettledEvent {
+interface LibraryIndexSettledEvent {
   resourceId: string;
   assetId: string;
   filename: string;
@@ -601,7 +601,7 @@ export async function reindexAsset(
   });
 }
 
-export async function recoverInterruptedLibraryIndexes(): Promise<void> {
+async function recoverInterruptedLibraryIndexes(): Promise<void> {
   await ensureLibrarySchema();
   const result = await withClient((client) =>
     client.execute({

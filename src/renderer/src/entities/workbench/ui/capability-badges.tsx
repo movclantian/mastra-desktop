@@ -2,7 +2,7 @@ import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
 import type { getModelCapabilities } from "../model/providers";
 
-export const CAPABILITY_STYLES = [
+const CAPABILITY_STYLES = [
   {
     key: "reasoning",
     className: "border-violet-500/25 bg-violet-500/10 text-violet-600",

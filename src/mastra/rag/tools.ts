@@ -40,7 +40,7 @@ async function requestLibraryScope(requestContext?: RequestContext) {
   };
 }
 
-export function resolveChunkerSettings(
+function resolveChunkerSettings(
   defaults: LibrarySettings,
   overrides: {
     strategy?: LibrarySettings["chunkStrategy"];

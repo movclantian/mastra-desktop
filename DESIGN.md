@@ -1,6 +1,6 @@
 ---
 name: Mastra Desktop
-version: 0.0.5
+version: 0.0.6
 description: >-
   Design system for mastra-desktop, a local-first multi-agent coding workbench
   (Electron + React + Mastra). UI is built on shadcn/ui "base-nova" over

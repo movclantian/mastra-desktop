@@ -73,7 +73,7 @@ function parseDefinitionBody(body: string): CitationSource[] {
   return sources;
 }
 
-export function parseFootnoteEntries(
+function parseFootnoteEntries(
   markdown: string,
   known: CitationEntries = new Map(),
 ): CitationEntries {

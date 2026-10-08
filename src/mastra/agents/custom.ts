@@ -1,6 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
-import { Avatar, Style } from "@dicebear/core";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
@@ -24,8 +22,6 @@ export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
 
 const CONFIG_KEY = "agent-profiles";
-// Mastra's bundler strips JSON import attributes; load the style through Node instead.
-const avatarStyle = new Style(createRequire(import.meta.url)("@dicebear/styles/bottts.json"));
 
 export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
 export { agentWorkflowSchema } from "../../shared/agent-contract";
@@ -60,7 +56,6 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
     ...DEFAULT_PROFILE,
     type: raw.type === "team" ? "team" : "agent",
     categoryId: raw.categoryId,
-    avatar: raw.avatar,
     id,
     name,
     displayName:
@@ -229,11 +224,6 @@ export async function createAgentProfile(
   if (!resourceId?.trim()) throw workError("AUTH_REQUIRED");
   return withProfileWrite(resourceId, async () => {
     const profile = normalizeProfile({ ...input, id: randomUUID() });
-    profile.avatar = new Avatar(avatarStyle, { seed: profile.id }).toDataUri();
-    profile.members = profile.members.map((member) => ({
-      ...member,
-      avatar: new Avatar(avatarStyle, { seed: `${profile.id}:${member.id}` }).toDataUri(),
-    }));
     try {
       validateAgentTeam(profile);
     } catch (cause) {
@@ -351,13 +341,13 @@ function registrationToken(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }
 
-export function profileAgentRegistryKey(profile: AgentProfile, resourceScope?: string): string {
+function profileAgentRegistryKey(profile: AgentProfile, resourceScope?: string): string {
   return `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(
     profile.id,
   )}-${registrationToken(profile.updatedAt)}`;
 }
 
-export function profileMemberAgentRegistryKey(
+function profileMemberAgentRegistryKey(
   profile: AgentProfile,
   memberId: string,
   resourceScope?: string,

@@ -37,7 +37,7 @@ import {
   LIBRARY_THREAD_CONTEXT_KEY,
 } from "../rag/types";
 import { appStorage } from "../storage/database";
-import { parseWebSearchSelection, WEB_SEARCH_CONTEXT_KEY } from "../tools/tool-registry";
+import { parseWebSearchSelection, WEB_SEARCH_CONTEXT_KEY } from "../tools/web-search";
 import {
   addRecentWorkspace,
   ensureDirectory,

@@ -18,3 +18,8 @@ export const CHAT_LAYOUT_ID = "mastra-work:chat-layout";
 
 /** 移动端响应式断点 (px) */
 export const MOBILE_BREAKPOINT = 768;
+
+export const TAB_DND_TYPE = "application/x-mastra-tab";
+export const DRAWER_TRANSITION =
+  "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-linear";
+export const PANEL_CLIP = { overflow: "hidden" } as const;

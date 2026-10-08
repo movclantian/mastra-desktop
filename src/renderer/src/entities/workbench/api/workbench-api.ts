@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { apiFetch, getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
 import type { WorkspaceApp } from "../../../../../shared/workspace-contract";
 import type { ProviderConfig } from "../model/providers";
 import type {
@@ -22,7 +23,7 @@ function resourceQuery(resourceId: string): string {
 
 // ---- Threads API -------------------------------------------------------------
 
-const MEMORY_AGENT_ID = "mastra-work-agent";
+const MEMORY_AGENT_ID = DEFAULT_AGENT_PROFILE_ID;
 
 type MemoryThread = Omit<WorkThread, "title" | "metadata"> & {
   title?: string;

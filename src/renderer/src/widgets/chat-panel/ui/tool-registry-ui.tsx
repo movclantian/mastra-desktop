@@ -71,7 +71,7 @@ import { MessageLink } from "./message-selection";
 // 走通用回退(原始工具名 + 参数提示 + ToolInput/ToolOutput JSON)。
 // ---------------------------------------------------------------------------
 
-export type ToolSummary = { chips?: string[]; files?: string[] };
+type ToolSummary = { chips?: string[]; files?: string[] };
 
 export type ToolUIDescriptor = {
   icon: LucideIcon;

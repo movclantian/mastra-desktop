@@ -32,7 +32,7 @@ interface WorkErrorDefinition {
 // 按模块注册(与 src/mastra 的目录结构一一对应)
 // ---------------------------------------------------------------------------
 
-export const WORK_ERRORS = {
+const WORK_ERRORS = {
   // ---- 通用校验(server/,所有路由共用的入参检查)------------------------
   VALIDATION_RESOURCE_ID_REQUIRED: {
     domain: ErrorDomain.MASTRA_SERVER,

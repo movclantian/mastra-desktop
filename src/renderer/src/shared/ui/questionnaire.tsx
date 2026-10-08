@@ -17,22 +17,6 @@ function Questionnaire({
   );
 }
 
-function QuestionnaireProgress({
-  className,
-  ...props
-}: React.ComponentProps<typeof QuestionnairePrimitive.Progress>) {
-  return (
-    <QuestionnairePrimitive.Progress
-      data-slot="questionnaire-progress"
-      className={cn(
-        "min-h-[1lh] w-fit min-w-[14ch] text-xs font-medium text-muted-foreground tabular-nums",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
 function QuestionnaireItem({
   className,
   ...props
@@ -193,31 +177,6 @@ function QuestionnaireActions({ className, ...props }: React.ComponentProps<"div
   );
 }
 
-function QuestionnairePrevious({
-  children,
-  className,
-  size = "default",
-  variant = "outline",
-  ...props
-}: React.ComponentProps<typeof QuestionnairePrimitive.Previous> &
-  Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
-  return (
-    <QuestionnairePrimitive.Previous
-      data-slot="questionnaire-previous"
-      data-size={size}
-      data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-1 row-start-1 min-h-11 justify-self-start sm:min-h-0",
-        className,
-      )}
-      {...props}
-    >
-      {children ?? "Previous"}
-    </QuestionnairePrimitive.Previous>
-  );
-}
-
 function QuestionnaireSkip({
   children,
   className,
@@ -240,31 +199,6 @@ function QuestionnaireSkip({
     >
       {children ?? "Skip"}
     </QuestionnairePrimitive.Skip>
-  );
-}
-
-function QuestionnaireNext({
-  children,
-  className,
-  size = "default",
-  variant = "default",
-  ...props
-}: React.ComponentProps<typeof QuestionnairePrimitive.Next> &
-  Pick<React.ComponentProps<typeof Button>, "size" | "variant">) {
-  return (
-    <QuestionnairePrimitive.Next
-      data-slot="questionnaire-next"
-      data-size={size}
-      data-variant={variant}
-      className={cn(
-        buttonVariants({ size, variant }),
-        "col-start-3 row-start-1 min-h-11 justify-self-end sm:min-h-0",
-        className,
-      )}
-      {...props}
-    >
-      {children ?? "Next"}
-    </QuestionnairePrimitive.Next>
   );
 }
 
@@ -303,9 +237,6 @@ export {
   QuestionnaireError,
   QuestionnaireInput,
   QuestionnaireItem,
-  QuestionnaireNext,
-  QuestionnairePrevious,
-  QuestionnaireProgress,
   QuestionnaireSkip,
   QuestionnaireSubmit,
   QuestionnaireTitle,

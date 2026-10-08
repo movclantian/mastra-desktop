@@ -78,17 +78,17 @@ export const FileTree = ({
   );
 };
 
-export type FileTreeIconProps = HTMLAttributes<HTMLSpanElement>;
+type FileTreeIconProps = HTMLAttributes<HTMLSpanElement>;
 
-export const FileTreeIcon = ({ className, children, ...props }: FileTreeIconProps) => (
+const FileTreeIcon = ({ className, children, ...props }: FileTreeIconProps) => (
   <span className={cn("shrink-0", className)} {...props}>
     {children}
   </span>
 );
 
-export type FileTreeNameProps = HTMLAttributes<HTMLSpanElement>;
+type FileTreeNameProps = HTMLAttributes<HTMLSpanElement>;
 
-export const FileTreeName = ({ className, children, ...props }: FileTreeNameProps) => (
+const FileTreeName = ({ className, children, ...props }: FileTreeNameProps) => (
   <span className={cn("truncate", className)} {...props}>
     {children}
   </span>

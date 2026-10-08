@@ -1,3 +1,5 @@
+import { DEFAULT_RENDERER_PORT } from "./src/shared/proxy-contract";
+import { FONT_STYLES_ORIGIN, FONT_FILES_ORIGIN, FONT_STYLESHEET_URL } from "./src/shared/window-contract";
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
@@ -15,12 +17,22 @@ export default defineConfig({
     }
   },
   renderer: {
+    server: { port: DEFAULT_RENDERER_PORT },
     resolve: {
       alias: {
         '@': resolve('src/renderer/src')
       },
       dedupe: ['@codemirror/state', '@codemirror/view', 'codemirror']
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [react(), tailwindcss(), {
+      name: 'shared-font-endpoints',
+      transformIndexHtml: {
+        order: 'pre',
+        handler: (html) => html
+          .replaceAll('__FONT_STYLES_ORIGIN__', FONT_STYLES_ORIGIN)
+          .replaceAll('__FONT_FILES_ORIGIN__', FONT_FILES_ORIGIN)
+          .replaceAll('__FONT_STYLESHEET_URL__', FONT_STYLESHEET_URL)
+      }
+    }]
   }
 })

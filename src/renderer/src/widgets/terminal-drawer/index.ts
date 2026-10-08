@@ -1,5 +1,1 @@
-export {
-  TerminalPanel as TerminalDrawer,
-  TerminalPanel,
-  TerminalSession,
-} from "./ui/terminal-drawer";
+export { TerminalPanel as TerminalDrawer } from "./ui/terminal-drawer";

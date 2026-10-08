@@ -8,7 +8,7 @@ import { workError } from "../errors";
 import { workWebhookSignals } from "../harness/signals";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
-export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
+const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
   method: "POST",
   handler: async (c) => {
     const body = (await c.req.json()) as {
@@ -40,7 +40,7 @@ export const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/sub
   },
 });
 
-export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
+const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
   method: "DELETE",
   handler: async (c) => {
     const body = (await c.req.json()) as {
@@ -71,7 +71,7 @@ export const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/s
   },
 });
 
-export const webhookSignalRoute = registerApiRoute("/work/signals/webhook", {
+const webhookSignalRoute = registerApiRoute("/work/signals/webhook", {
   method: "POST",
   handler: async (c) => {
     const result = await workWebhookSignals.handleWebhook({

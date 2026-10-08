@@ -1,17 +1,15 @@
 import { i18n } from "@/shared/i18n";
+import {
+  DEFAULT_AGENT_PROFILE_ID,
+  type SearchDepth,
+  type SearchEngine,
+} from "../../../../../shared/agent-contract";
 import type { CredentialState } from "../../../../../shared/credential-contract";
 import type { ReasoningEffort } from "./providers";
 import type { PermissionRules } from "./session";
 
-export interface WorkUser {
-  id: string;
-  name: string;
-  email: string;
-}
-
-export const MAIN_VIEWS = ["chat", "agents", "skills", "library", "schedules", "settings"] as const;
+const MAIN_VIEWS = ["chat", "agents", "skills", "library", "schedules", "settings"] as const;
 export type MainView = (typeof MAIN_VIEWS)[number];
-export const DEFAULT_MAIN_VIEW: MainView = "chat";
 
 export function viewFromPath(pathname: string): MainView {
   const view = pathname.replace(/^\//, "").split("/")[0];
@@ -69,7 +67,7 @@ export interface TreeEntry {
   type: "file" | "dir";
 }
 
-export type WorkspaceChangeKind = "created" | "modified" | "deleted";
+type WorkspaceChangeKind = "created" | "modified" | "deleted";
 
 export interface WorkspaceChangeSnapshot {
   objectId: string;
@@ -106,13 +104,12 @@ export interface ModelSelection {
 export type {
   AgentMemberDefinition,
   AgentProfile,
-  AgentWorkflowDefinition,
 } from "../../../../../shared/agent-contract";
 
 import type { AgentProfile } from "../../../../../shared/agent-contract";
 
 export const DEFAULT_AGENT_PROFILE: AgentProfile = {
-  id: "mastra-work-agent",
+  id: DEFAULT_AGENT_PROFILE_ID,
   type: "agent",
   name: "MastraWork",
   displayName: "MastraWork",
@@ -152,8 +149,6 @@ export interface MessageQuote {
   text: string;
 }
 
-export type PanelTabKind = "files" | "terminal" | "changes" | "chat" | "browser" | "welcome";
-
 export interface LocalPanelTab {
   id: string;
   kind: "files" | "terminal" | "changes" | "chat";
@@ -180,12 +175,6 @@ export interface BrowserRequest {
   newTab?: boolean;
 }
 
-export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;
-export type SearchEngine = (typeof SEARCH_ENGINES)[number];
-
-export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
-export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
-
 export interface SearchSelection {
   engine: SearchEngine;
   depth: SearchDepth;
@@ -203,25 +192,9 @@ export function isSearchEngineReady(engine: SearchEngine, config: ToolsConfig | 
     : Boolean(config?.[engine].hasCredential);
 }
 
-export interface WorkbenchStatePatch {
-  editor?: {
-    workspacePath?: string;
-    openPath?: string;
-    dirty?: boolean;
-    selectedPath?: string;
-  };
-  terminal?: {
-    open: boolean;
-    sessionCount: number;
-    activeTitle?: string;
-    activeStatus?: "connecting" | "ready" | "exited" | "error";
-    lastCommand?: string;
-    lastExitCode?: number;
-  };
-  workbench?: {
-    workspacePanelOpen: boolean;
-    workspacePanelTab?: string;
-    terminalPanelOpen: boolean;
-    libraryOpen: boolean;
-  };
-}
+export {
+  SEARCH_DEPTHS,
+  SEARCH_ENGINES,
+  type SearchDepth,
+  type SearchEngine,
+} from "../../../../../shared/agent-contract";

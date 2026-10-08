@@ -1,1 +1,1 @@
-export { WorkspaceDrawer, WorkspaceDrawer as WorkspacePanel } from "./ui/workspace-drawer";
+export { WorkspaceDrawer } from "./ui/workspace-drawer";

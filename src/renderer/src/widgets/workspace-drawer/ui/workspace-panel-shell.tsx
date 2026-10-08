@@ -1,4 +1,6 @@
 import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
   Columns2Icon,
   FileDiffIcon,
   FolderTreeIcon,
@@ -16,6 +18,7 @@ import * as React from "react";
 import { TerminalSession } from "@/entities/workbench";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
+import { TAB_DND_TYPE } from "@/shared/config";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -58,7 +61,6 @@ import { FilesWorkspace } from "./files-workspace";
 
 const LibraryFilePreview = React.lazy(() => import("@/features/library-upload/file-preview"));
 
-const TAB_DND_TYPE = "application/x-mastra-tab";
 const STORAGE_KEY_FLOATING_BOUNDS = "mastra-workspace:floating-bounds";
 const MIN_FLOATING_WIDTH = 440;
 const MIN_FLOATING_HEIGHT = 300;
@@ -138,6 +140,26 @@ export function WorkspacePanelShell() {
   const draggedTabRef = React.useRef<string | null>(null);
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
+  const reorderHintId = React.useId();
+  const [tabAnnouncement, setTabAnnouncement] = React.useState("");
+  const selectedTabIndex = panelTabs.findIndex(
+    (tab) => "id" in activePanelTab && tab.id === activePanelTab.id,
+  );
+  const movePanelTab = (id: string, direction: -1 | 1) => {
+    const currentTabs = useWorkbenchStore.getState().panelTabs;
+    const index = currentTabs.findIndex((tab) => tab.id === id);
+    const target = currentTabs[index + direction];
+    if (index < 0 || !target) return;
+    reorderPanelTab(id, target.id);
+    setTabAnnouncement(
+      t("workspace:tabMoved", {
+        title: currentTabs[index].title,
+        position: index + direction + 1,
+        count: currentTabs.length,
+      }),
+    );
+  };
+
   const createPanelTab = (kind: "browser" | "terminal" | "files" | "changes") => {
     if (kind !== "browser") {
       addPanelTab(kind);
@@ -422,7 +444,7 @@ export function WorkspacePanelShell() {
                 }
               }}
             >
-              {panelTabs.map((tab) => {
+              {panelTabs.map((tab, tabIndex) => {
                 const isSelected =
                   activePanelTab.kind !== "browser" &&
                   activePanelTab.kind !== "welcome" &&
@@ -503,6 +525,21 @@ export function WorkspacePanelShell() {
                           size="xs"
                           className="h-auto min-w-0 flex-1 justify-start gap-1.5 rounded-none p-0 font-normal"
                           aria-pressed={isSelected}
+                          aria-describedby={reorderHintId}
+                          aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+                          onKeyDown={(event) => {
+                            if (
+                              event.altKey &&
+                              event.shiftKey &&
+                              !event.ctrlKey &&
+                              !event.metaKey &&
+                              (event.key === "ArrowLeft" || event.key === "ArrowRight")
+                            ) {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              movePanelTab(tab.id, event.key === "ArrowLeft" ? -1 : 1);
+                            }
+                          }}
                           onClick={() => activatePanelTab({ kind: tab.kind, id: tab.id })}
                         >
                           {tab.kind === "files" ? (
@@ -550,6 +587,21 @@ export function WorkspacePanelShell() {
                         <ContextMenuLabel className="max-w-44 truncate">
                           {tab.title}
                         </ContextMenuLabel>
+                        <ContextMenuItem
+                          disabled={tabIndex === 0}
+                          onClick={() => movePanelTab(tab.id, -1)}
+                        >
+                          <ArrowLeftIcon />
+                          {t("workspace:moveTabLeft")}
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          disabled={tabIndex === panelTabs.length - 1}
+                          onClick={() => movePanelTab(tab.id, 1)}
+                        >
+                          <ArrowRightIcon />
+                          {t("workspace:moveTabRight")}
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
                         <ContextMenuItem onClick={() => closePanelTab(tab.id)}>
                           <XIcon className="text-muted-foreground" />
                           <span>{t("workspace:closeTab")}</span>
@@ -693,6 +745,36 @@ export function WorkspacePanelShell() {
               </DropdownMenu>
             </div>
           </ScrollArea>
+          <span id={reorderHintId} className="sr-only">
+            {t("workspace:reorderTabHint")}
+          </span>
+          <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+            {tabAnnouncement}
+          </span>
+          {selectedTabIndex >= 0 && panelTabs.length > 1 ? (
+            <div className="flex shrink-0 items-center">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={selectedTabIndex === 0}
+                aria-label={t("workspace:moveTabLeft")}
+                title={t("workspace:moveTabLeft")}
+                onClick={() => movePanelTab(panelTabs[selectedTabIndex].id, -1)}
+              >
+                <ArrowLeftIcon />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={selectedTabIndex === panelTabs.length - 1}
+                aria-label={t("workspace:moveTabRight")}
+                title={t("workspace:moveTabRight")}
+                onClick={() => movePanelTab(panelTabs[selectedTabIndex].id, 1)}
+              >
+                <ArrowRightIcon />
+              </Button>
+            </div>
+          ) : null}
           <Select
             value={workspacePanelMode}
             onValueChange={(val) => {

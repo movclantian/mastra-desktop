@@ -74,7 +74,6 @@ export const LIBRARY_THREAD_CONTEXT_KEY = "libraryThreadId";
 export const LIBRARY_ORIGIN_CONTEXT_KEY = "libraryOrigin";
 export const LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY = "libraryAttachmentTokenBudget";
 export const LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY = "libraryAttachmentCapabilities";
-export const LIBRARY_ATTACHMENTS_CONTEXT_KEY = "libraryAttachments";
 
 // 上传限制(路由层校验用)
 export const MAX_LIBRARY_FILE_BYTES = 50 * 1024 * 1024;

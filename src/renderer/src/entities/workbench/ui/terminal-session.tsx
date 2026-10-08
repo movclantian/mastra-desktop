@@ -12,7 +12,7 @@ import {
 import * as React from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/features/auth";
-import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
+import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import {
@@ -74,7 +74,7 @@ function quoteForShell(path: string): string {
   return `'${path.replaceAll("'", "'\\''")}'`;
 }
 
-export function commandForFile(path: string): string | undefined {
+function commandForFile(path: string): string | undefined {
   const target = quoteForShell(path);
   const extension = path.split(".").pop()?.toLowerCase();
   if (["js", "mjs", "cjs"].includes(extension ?? "")) return `node ${target}`;

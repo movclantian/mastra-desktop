@@ -23,11 +23,11 @@ import {
   archiveFiles,
   describePackage,
   MAX_PACKAGE_BYTES,
-  packageChanges,
   packagePath,
   selectPackageRoot,
   withinRoot,
 } from "../plugins/packages";
+
 import {
   checkPluginUpdate,
   createLocalPluginCopy,

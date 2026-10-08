@@ -1,7 +1,7 @@
 import { ChevronDownIcon, CircleHelpIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
-import { cn } from "@/shared/lib";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,7 +69,7 @@ export function SettingRow({
   );
 }
 
-export function HelpTooltip({ content, label }: { content: string; label: string }) {
+function HelpTooltip({ content, label }: { content: string; label: string }) {
   return (
     <TooltipProvider>
       <Tooltip>
@@ -226,28 +226,6 @@ export function AdvancedSection({
 
 export function SettingGrid({ children }: { children: React.ReactNode }) {
   return <div className="grid min-w-0 gap-x-5 @md/field-group:grid-cols-2">{children}</div>;
-}
-
-export function DependencyGroup({
-  enabled,
-  children,
-  className,
-}: {
-  enabled: boolean;
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <fieldset
-      disabled={!enabled}
-      className={cn(
-        "min-w-0 transition-opacity disabled:pointer-events-none disabled:opacity-45",
-        className,
-      )}
-    >
-      {children}
-    </fieldset>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -774,4 +752,4 @@ export function TagMultiSelect({
   );
 }
 
-export { CAPABILITY_STYLES, CapabilityBadges } from "@/entities/workbench";
+export { CapabilityBadges } from "@/entities/workbench";

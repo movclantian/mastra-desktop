@@ -215,7 +215,7 @@ export const WORKSPACE_RESOURCE_ID_CONTEXT_KEY = "mastra-work:workspace-resource
 
 const CHANGE_DIRECTORY = join(getStorageDirectory(), "users");
 
-export type WorkspaceChangeKind = "created" | "modified" | "deleted";
+type WorkspaceChangeKind = "created" | "modified" | "deleted";
 
 export interface WorkspaceChangeSnapshot {
   objectId: string;

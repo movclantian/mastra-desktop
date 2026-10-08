@@ -1,3 +1,4 @@
+import { DEFAULT_MASTRA_PORT } from "../../shared/proxy-contract";
 /**
  * 持久化 Agent 定时任务路由。
  * 使用官方 schedules.prepare 在触发时创建执行会话；指定会话的安排继续复用该会话。
@@ -202,7 +203,7 @@ export async function prepareScheduledRun({
           [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: resourceId,
           [LIBRARY_RESOURCE_CONTEXT_KEY]: resourceId,
           [LIBRARY_THREAD_CONTEXT_KEY]: threadId,
-          [LIBRARY_ORIGIN_CONTEXT_KEY]: `http://localhost:${mastra.getServer()?.port ?? 4111}`,
+          [LIBRARY_ORIGIN_CONTEXT_KEY]: `http://localhost:${mastra.getServer()?.port ?? DEFAULT_MASTRA_PORT}`,
           [SCHEDULE_RUN_CONTEXT_KEY]: true,
           [SESSION_EXECUTION_CONTEXT_KEY]: execution,
         },
@@ -229,7 +230,7 @@ async function ownedSchedule(c: ContextWithMastra, scheduleId: string): Promise<
   return schedule;
 }
 
-export const schedulesListRoute = registerApiRoute("/work/schedules", {
+const schedulesListRoute = registerApiRoute("/work/schedules", {
   method: "GET",
   handler: async (c) => {
     const resourceId = resourceIdFor(c);
@@ -240,7 +241,7 @@ export const schedulesListRoute = registerApiRoute("/work/schedules", {
   },
 });
 
-export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
+const schedulesCreateRoute = registerApiRoute("/work/schedules", {
   method: "POST",
   handler: async (c) => {
     const resourceId = resourceIdFor(c);
@@ -276,12 +277,12 @@ export const schedulesCreateRoute = registerApiRoute("/work/schedules", {
   },
 });
 
-export const schedulesGetRoute = registerApiRoute("/work/schedules/:scheduleId", {
+const schedulesGetRoute = registerApiRoute("/work/schedules/:scheduleId", {
   method: "GET",
   handler: async (c) => c.json({ schedule: await ownedSchedule(c, c.req.param("scheduleId")) }),
 });
 
-export const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleId", {
+const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleId", {
   method: "PATCH",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
@@ -302,7 +303,7 @@ export const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleI
   },
 });
 
-export const schedulesDeleteRoute = registerApiRoute("/work/schedules/:scheduleId", {
+const schedulesDeleteRoute = registerApiRoute("/work/schedules/:scheduleId", {
   method: "DELETE",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
@@ -311,7 +312,7 @@ export const schedulesDeleteRoute = registerApiRoute("/work/schedules/:scheduleI
   },
 });
 
-export const schedulesPauseRoute = registerApiRoute("/work/schedules/:scheduleId/pause", {
+const schedulesPauseRoute = registerApiRoute("/work/schedules/:scheduleId/pause", {
   method: "POST",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
@@ -319,7 +320,7 @@ export const schedulesPauseRoute = registerApiRoute("/work/schedules/:scheduleId
   },
 });
 
-export const schedulesResumeRoute = registerApiRoute("/work/schedules/:scheduleId/resume", {
+const schedulesResumeRoute = registerApiRoute("/work/schedules/:scheduleId/resume", {
   method: "POST",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
@@ -327,7 +328,7 @@ export const schedulesResumeRoute = registerApiRoute("/work/schedules/:scheduleI
   },
 });
 
-export const schedulesRunRoute = registerApiRoute("/work/schedules/:scheduleId/run", {
+const schedulesRunRoute = registerApiRoute("/work/schedules/:scheduleId/run", {
   method: "POST",
   handler: async (c) => {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));

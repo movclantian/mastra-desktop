@@ -63,7 +63,7 @@ export function isConnectionError(error: unknown): boolean {
   return error instanceof TypeError || error.name === "TimeoutError";
 }
 
-export function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
     const abort = () => {

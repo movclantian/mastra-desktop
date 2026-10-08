@@ -46,7 +46,7 @@ function findProjectRoot(): string {
   return process.cwd();
 }
 
-export const PROJECT_ROOT = findProjectRoot();
+const PROJECT_ROOT = findProjectRoot();
 
 /** 默认用户业务数据根目录:用户家目录下的 .mastrawork 文件夹 */
 export const DEFAULT_MASTRA_DATA_DIRECTORY = join(homedir(), ".mastrawork");

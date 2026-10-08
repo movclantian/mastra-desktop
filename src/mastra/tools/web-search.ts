@@ -8,7 +8,7 @@
  * 引擎 + 强度档(fast/balanced/deep)经 RequestContext 传入,由 Agent 的动态
  * tools / instructions 消费(见 src/mastra/agents/work-agent.ts)。
  */
-import { randomUUID } from "node:crypto";
+
 import type { ToolsInput } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
 import { createTool, webFetchTool } from "@mastra/core/tools";
@@ -16,6 +16,12 @@ import { getMcpCallToolContent } from "@mastra/mcp";
 import { createTavilyExtractTool, createTavilySearchTool } from "@mastra/tavily";
 import { Firecrawl } from "firecrawl";
 import { z } from "zod";
+import {
+  SEARCH_DEPTHS,
+  SEARCH_ENGINES,
+  type SearchDepth,
+  type SearchEngine,
+} from "../../shared/agent-contract";
 import {
   CredentialPointerSchema,
   CredentialStateSchema,
@@ -31,12 +37,6 @@ import {
 } from "../storage/content-objects";
 import { getAppConfig, setAppConfig } from "../storage/database";
 
-export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;
-export type SearchEngine = (typeof SEARCH_ENGINES)[number];
-
-export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
-export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
-
 interface WebSearchSelection {
   engine: SearchEngine;
   depth: SearchDepth;
@@ -44,7 +44,7 @@ interface WebSearchSelection {
 
 export const WEB_SEARCH_CONTEXT_KEY = "webSearch";
 
-export type ToolsUserConfig = z.infer<typeof toolsConfigSchema>;
+type ToolsUserConfig = z.infer<typeof toolsConfigSchema>;
 
 const TOOLS_CONFIG_KEY = "web-search";
 

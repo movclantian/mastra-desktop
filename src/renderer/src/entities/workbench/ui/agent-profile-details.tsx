@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { BotAvatarState } from "bot-avatars";
 import { Fragment, useId, useState } from "react";
 import { fetchMcpServers, usePluginSkills } from "@/entities/skill";
 import { useAuth } from "@/features/auth";
@@ -17,8 +18,25 @@ import type { AgentProfile } from "../../../../../shared/agent-contract";
 import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
 import { qk } from "../model/query-keys";
 
-export function ProfileAvatar({ name, avatar }: { name: string; avatar?: string }) {
-  return <GeneratedAvatar size="lg" seed={name} name={name} src={avatar} />;
+export function ProfileAvatar({
+  profileId,
+  memberId,
+  name,
+  state,
+}: {
+  profileId: string;
+  memberId?: string;
+  name: string;
+  state?: BotAvatarState;
+}) {
+  return (
+    <GeneratedAvatar
+      size="lg"
+      seed={memberId ? `${profileId}:${memberId}` : profileId}
+      name={name}
+      state={state}
+    />
+  );
 }
 
 /** Shared, literal projection of the saved execution definition. */
@@ -90,7 +108,7 @@ export function AgentProfileDetails({
   const selected = member ?? profile;
   const name = member?.name ?? profile.displayName;
   const roster = [
-    { id: null, name: profile.displayName, avatar: profile.avatar, profession: profile.profession },
+    { id: null, name: profile.displayName, profession: profile.profession },
     ...profile.members,
   ];
   return (
@@ -126,7 +144,11 @@ export function AgentProfileDetails({
                   aria-controls={detailsId}
                   className="h-auto w-full min-w-0 justify-start gap-2 whitespace-normal p-2 text-left"
                 >
-                  <ProfileAvatar name={item.name} avatar={item.avatar} />
+                  <ProfileAvatar
+                    profileId={profile.id}
+                    memberId={item.id ?? undefined}
+                    name={item.name}
+                  />
                   <span className="grid min-w-0 flex-1 gap-1">
                     <span className="break-words text-base">{item.name}</span>
                     <span className="break-words text-sm font-normal text-muted-foreground">
@@ -175,7 +197,7 @@ export function AgentProfileDetails({
       >
         <div className="grid min-w-0 content-start gap-3 p-1 pr-3">
           <div className="flex min-w-0 items-start gap-3">
-            <ProfileAvatar name={name} avatar={selected.avatar} />
+            <ProfileAvatar profileId={profile.id} memberId={member?.id} name={name} />
             <div className="min-w-0">
               <h3 className="break-words text-lg font-semibold">{name}</h3>
               <p className="break-words text-base text-muted-foreground">{selected.profession}</p>

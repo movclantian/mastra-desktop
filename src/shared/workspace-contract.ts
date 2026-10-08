@@ -7,9 +7,9 @@ export const WORKSPACE_CHANNELS = {
   openExternal: "workspace:open-external",
 } as const;
 
-export const WorkspaceAppSchema = z.enum(["vscode", "terminal", "explorer"]);
+const WorkspaceAppSchema = z.enum(["vscode", "terminal", "explorer"]);
 
-export const DetectedIdeSchema = z.strictObject({
+const DetectedIdeSchema = z.strictObject({
   id: WorkspaceAppSchema,
   name: z.string().min(1).max(128),
   command: z.string().min(1).max(32_767),

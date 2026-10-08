@@ -29,6 +29,7 @@ import {
   type WorkspaceToolsConfig,
 } from "@mastra/core/workspace";
 import { z } from "zod";
+import { PERMISSION_RULES_CONTEXT_KEY } from "../../shared/agent-contract";
 import { MODE_ID_CONTEXT_KEY } from "../agents/permissions";
 import { listPluginSkills } from "../plugins/registry";
 import { getContentObjectAccessPaths } from "../storage/content-objects";
@@ -42,8 +43,8 @@ import {
   getStorageDirectory,
   setAppConfig,
   stringRecord,
-  userIdFromContext,
 } from "../storage/database";
+
 import {
   createWorkspaceChangeHooks,
   createWorkspaceOutputArchiveHooks,
@@ -142,7 +143,6 @@ export const workspaceConfigSchema = z.object({
 });
 export type WorkspaceUserConfig = z.infer<typeof workspaceConfigSchema>;
 
-const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 /** Scheduler worker -> agent context marker for unattended threaded runs. */
 export const SCHEDULE_RUN_CONTEXT_KEY = "mastra-work:scheduled-run";
 const PERMISSION_CATEGORIES = ["read", "edit", "execute", "mcp", "other"] as const;
@@ -465,7 +465,7 @@ export function registerWorkspaceLifecycle(mastra: Mastra): void {
   }
 }
 
-export async function pruneIdleWorkspaces(): Promise<void> {
+async function pruneIdleWorkspaces(): Promise<void> {
   await Promise.all(
     [...runtimeByScope.values()].map((runtime) =>
       withWorkspaceRuntime(runtime, () => pruneWorkspaces(runtime)),
@@ -490,7 +490,7 @@ function getRuntime(resourceId?: string): WorkspaceRuntime {
 }
 
 /** 线程工作区根目录(隐式绑定的父目录) */
-export async function getThreadsRoot(resourceId?: string): Promise<string> {
+async function getThreadsRoot(resourceId?: string): Promise<string> {
   return (await getWorkspaceConfig(resourceId)).threadsRoot;
 }
 

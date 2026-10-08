@@ -5,6 +5,7 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { TABLE_MESSAGES } from "@mastra/core/storage";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
 import { closeBrowserThreadSessions } from "../../agents/browser";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import {
@@ -133,7 +134,7 @@ const rewriteThreadMessageRoute = registerApiRoute(
   },
 );
 
-export const searchThreadsRoute = registerApiRoute("/work/threads/search", {
+const searchThreadsRoute = registerApiRoute("/work/threads/search", {
   method: "GET",
   handler: async (c) => {
     const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
@@ -185,7 +186,7 @@ export const searchThreadsRoute = registerApiRoute("/work/threads/search", {
 });
 
 // Automatic titles use Memory.generateTitle; this route handles an explicit user request.
-export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadId/generate-title", {
+const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadId/generate-title", {
   method: "POST",
   handler: async (c) => {
     const { resourceId } = z.object({ resourceId: z.string().min(1) }).parse(await c.req.json());
@@ -205,7 +206,7 @@ export const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadI
       .join(" ");
     const title = await c
       .get("mastra")
-      .getAgentById("mastra-work-agent")
+      .getAgentById(DEFAULT_AGENT_PROFILE_ID)
       .generateTitleFromUserMessage({
         message: text,
         requestContext: c.get("requestContext"),
@@ -243,7 +244,7 @@ function parseStoredReactions(raw: unknown): StoredReaction[] {
  * 顺手删掉该消息的向量嵌入。store.updateMessages 只传 reactions 一个键,
  * LibSQL 在写时与库中现有 metadata 浅合并,不会覆盖并发写入的其他键。
  */
-export const toggleMessageReactionRoute = registerApiRoute(
+const toggleMessageReactionRoute = registerApiRoute(
   "/work/threads/:threadId/messages/:messageId/reactions",
   {
     method: "POST",
@@ -310,7 +311,7 @@ export const toggleMessageReactionRoute = registerApiRoute(
           );
         }
 
-        const signal = mastra.getAgentById("mastra-work-agent").sendSignal(
+        const signal = mastra.getAgentById(DEFAULT_AGENT_PROFILE_ID).sendSignal(
           {
             type: "reactive",
             tagName: "user-feedback",
@@ -351,7 +352,7 @@ export const toggleMessageReactionRoute = registerApiRoute(
  * 会物理清理隐式目录,共享会把原会话的工作区文件一并删掉,显式绑定的外部
  * 项目目录才可安全共享。
  */
-export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone", {
+const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone", {
   method: "POST",
   handler: async (c) => {
     const { resourceId, upToMessageId } = z
@@ -403,7 +404,7 @@ export const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone"
 });
 
 /** 分支来源(官方 isClone / getSourceThread):分支会话顶部「派生自 …」导航条的数据源 */
-export const threadSourceRoute = registerApiRoute("/work/threads/:threadId/source", {
+const threadSourceRoute = registerApiRoute("/work/threads/:threadId/source", {
   method: "GET",
   handler: async (c) => {
     const resourceId = z.string().min(1).parse(c.req.query("resourceId"));
@@ -424,7 +425,7 @@ export const threadSourceRoute = registerApiRoute("/work/threads/:threadId/sourc
  * (向上滚动加载历史)。workbenchMessages 会把每页转换为时间正序的 UI 数组,
  * 客户端按页倒序拼接后即可得到完整的时间正序会话。
  */
-export const threadMessagesPageRoute = registerApiRoute("/work/threads/:threadId/messages/page", {
+const threadMessagesPageRoute = registerApiRoute("/work/threads/:threadId/messages/page", {
   method: "GET",
   handler: async (c) => {
     const resourceId = z.string().min(1).parse(c.req.query("resourceId"));
@@ -628,7 +629,7 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
   },
 });
 
-export const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize", {
+const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize", {
   method: "POST",
   handler: async (c) => {
     const { resourceId, model: rawModel } = z

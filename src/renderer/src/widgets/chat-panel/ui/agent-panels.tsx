@@ -453,7 +453,7 @@ export function AgentQueuePanel({ tasks, onClose }: { tasks: AgentTask[]; onClos
   );
 }
 
-export function AgentQuestionnairePanel({
+function AgentQuestionnairePanel({
   interaction,
   busy,
   onResume,
@@ -573,7 +573,7 @@ export function AgentQuestionnairePanel({
   );
 }
 
-export function AgentPlanPanel({
+function AgentPlanPanel({
   interaction,
   busy,
   onResume,
@@ -731,7 +731,7 @@ function approvalToolLabel(toolName: string): string {
   return toolName.replace(/^mastra_workspace_/, "");
 }
 
-export function AgentApprovalPanel({
+function AgentApprovalPanel({
   interaction,
   busy,
   onResume,

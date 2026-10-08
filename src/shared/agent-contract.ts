@@ -1,3 +1,8 @@
+import type {
+  PermissionPolicy,
+  PermissionRules,
+  ToolCategory,
+} from "@mastra/core/agent-controller";
 import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
@@ -69,7 +74,7 @@ const stepBase = {
   retries: z.number().int().min(0).max(5).default(0),
 };
 
-export const agentWorkflowStepSchema = z.discriminatedUnion("kind", [
+const agentWorkflowStepSchema = z.discriminatedUnion("kind", [
   z.object({ ...stepBase, kind: z.literal("agent"), memberId: identifier }).strict(),
   z
     .object({
@@ -130,8 +135,8 @@ export const agentWorkflowSchema = z
 export type AgentMemberDefinition = z.infer<typeof agentMemberSchema>;
 export type AgentWorkflowStep = z.infer<typeof agentWorkflowStepSchema>;
 export type AgentWorkflowCondition = z.infer<typeof conditionSchema>;
-export type AgentWorkflowDefinition = z.infer<typeof agentWorkflowSchema>;
-export type AgentProfileType = "agent" | "team";
+type AgentWorkflowDefinition = z.infer<typeof agentWorkflowSchema>;
+type AgentProfileType = "agent" | "team";
 
 export interface AgentProfile {
   id: string;
@@ -148,7 +153,6 @@ export interface AgentProfile {
   categoryId?: string;
   tags: string[];
   quickPrompts: string[];
-  avatar?: string;
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
@@ -263,3 +267,27 @@ export function validateAgentTeam(
       throw new Error(`foreach ${step.id} 不接受循环终止条件`);
   }
 }
+
+export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
+export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;
+export const SEARCH_DEPTHS = ["fast", "balanced", "deep"] as const;
+export type SearchEngine = (typeof SEARCH_ENGINES)[number];
+export type SearchDepth = (typeof SEARCH_DEPTHS)[number];
+
+export const TOOL_CATEGORIES = [
+  "read",
+  "edit",
+  "execute",
+  "mcp",
+  "other",
+] as const satisfies readonly ToolCategory[];
+export const PERMISSION_POLICIES = [
+  "allow",
+  "ask",
+  "deny",
+] as const satisfies readonly PermissionPolicy[];
+export const DEFAULT_PERMISSION_RULES: PermissionRules = {
+  categories: { read: "allow", edit: "allow", execute: "allow", mcp: "allow", other: "allow" },
+  tools: { ask_user: "allow", submit_plan: "allow" },
+};
+export type { PermissionPolicy, PermissionRules, ToolCategory };

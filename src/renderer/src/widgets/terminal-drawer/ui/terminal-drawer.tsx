@@ -7,6 +7,7 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { TerminalSession } from "@/entities/workbench/ui/terminal-session";
 import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
+import { TAB_DND_TYPE } from "@/shared/config";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -22,8 +23,6 @@ import {
 } from "@/shared/ui/context-menu";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-
-const TAB_DND_TYPE = "application/x-mastra-tab";
 
 export function TerminalPanel() {
   const { t } = useTranslation();
@@ -272,5 +271,3 @@ export function TerminalPanel() {
     </PanelSurface>
   );
 }
-
-export { TerminalSession };

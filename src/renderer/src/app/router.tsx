@@ -198,7 +198,7 @@ const settingsRoute = createRoute({
   component: SettingsRoute,
 });
 
-export const routeTree = rootRoute.addChildren([
+const routeTree = rootRoute.addChildren([
   indexRoute,
   chatRoute,
   agentsRoute,

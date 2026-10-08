@@ -3,6 +3,11 @@
  */
 import { z } from "zod";
 import {
+  GITHUB_ORIGIN,
+  SKILLS_SH_ORIGIN,
+  SKILLS_SH_PUBLIC_BASE,
+} from "../../shared/plugin-contract";
+import {
   archiveFiles,
   type PackageFiles,
   pluginHash,
@@ -19,14 +24,14 @@ export interface SkillAuditItem {
   categories?: string[];
 }
 
-export interface SkillAuditResponse {
+interface SkillAuditResponse {
   id: string;
   source: string;
   slug: string;
   audits: SkillAuditItem[];
 }
 
-export interface CuratedOwner {
+interface CuratedOwner {
   owner: string;
   totalInstalls: number;
   featuredRepo?: string;
@@ -34,7 +39,7 @@ export interface CuratedOwner {
   skills: SkillsShSkill[];
 }
 
-export interface CuratedResponse {
+interface CuratedResponse {
   data: CuratedOwner[];
   totalOwners: number;
   totalSkills: number;
@@ -313,7 +318,7 @@ function normalizeSkillsShEntry(input: unknown): SkillsShSkill | null {
         typeof raw.installUrl === "string"
           ? raw.installUrl
           : normalizedSource.includes("/")
-            ? `https://github.com/${normalizedSource}`
+            ? `${GITHUB_ORIGIN}/${normalizedSource}`
             : null,
       url: typeof raw.url === "string" ? raw.url : undefined,
       isDuplicate: raw.isDuplicate === true,
@@ -341,7 +346,7 @@ const SKILLS_SH_CURATED_CONCURRENCY = 6;
  * 与 skills.sh 官方 API 文档中 owner 参数的语义一致。
  */
 async function fetchSkillsShOwnerSkills(owner: string): Promise<SkillsShSkill[]> {
-  const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(owner)}&limit=100`;
+  const searchUrl = `${SKILLS_SH_ORIGIN}/api/search?q=${encodeURIComponent(owner)}&limit=100`;
   const payload = await fetchWithRetry<{ skills?: unknown[] }>(searchUrl, SKILLS_SH_JSON_OPTIONS);
   return filterSkills(
     (payload.skills ?? [])
@@ -413,7 +418,7 @@ const cachedSkillsShCurated = createCachedFetcher(loadSkillsShCurated, () => "cu
   ttl: SKILLS_SH_CACHE_TTL,
 });
 
-export function getSkillsShCurated(force = false): Promise<CuratedResponse> {
+function getSkillsShCurated(force = false): Promise<CuratedResponse> {
   return cachedSkillsShCurated(undefined, force);
 }
 
@@ -421,7 +426,7 @@ export async function getSkillsShAudit(source: string, slug: string): Promise<Sk
   const normalizedSource = normalizeSkillsShCoordinate(source, "source");
   const normalizedSlug = normalizeSkillsShCoordinate(slug, "skill");
   const result = await fetchWithRetry<SkillAuditResponse>(
-    `https://skills.sh/api/v1/skills/audit/${normalizedSource}/${normalizedSlug}`,
+    `${SKILLS_SH_ORIGIN}/api/v1/skills/audit/${normalizedSource}/${normalizedSlug}`,
     skillsShJsonOptions(skillsShOidcToken()),
   );
   if (!Array.isArray(result.audits))
@@ -500,7 +505,7 @@ interface SkillsShFetchedPage {
  * (每视图 600 条,含 installs/weeklyInstalls/isOfficial/change/installsYesterday),
  * 是当前唯一免鉴权的榜单数据源。字段与 normalizeSkillsShEntry 兼容。
  */
-const SKILLS_SH_PUBLIC_BASE = "https://www.skills.sh";
+
 const SKILLS_SH_PUBLIC_LEADERBOARD_PATHS: Record<string, string> = {
   "all-time": "/",
   trending: "/trending",
@@ -579,7 +584,7 @@ async function fetchSkillsShLeaderboardPage(
       data?: unknown[];
       pagination?: { page: number; perPage: number; total: number; hasMore: boolean };
     }>(
-      `https://skills.sh/api/v1/skills?view=${view}&page=${page}&per_page=${perPage}`,
+      `${SKILLS_SH_ORIGIN}/api/v1/skills?view=${view}&page=${page}&per_page=${perPage}`,
       skillsShJsonOptions(token),
     );
     if (!Array.isArray(result.data)) throw new Error("skills.sh 榜单响应无效");
@@ -644,7 +649,7 @@ async function executeListSkillsShSkillsWithOptions(
 
   // 2. 如果包含搜索关键词
   if (normalizedQuery.length > 0) {
-    const searchUrl = `https://skills.sh/api/search?q=${encodeURIComponent(normalizedQuery)}&limit=200${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
+    const searchUrl = `${SKILLS_SH_ORIGIN}/api/search?q=${encodeURIComponent(normalizedQuery)}&limit=200${owner ? `&owner=${encodeURIComponent(owner)}` : ""}`;
     const payload = await fetchWithRetry<{ skills?: unknown[] }>(searchUrl, SKILLS_SH_JSON_OPTIONS);
     const skills = filterSkills(
       (payload.skills ?? [])
@@ -691,7 +696,7 @@ export async function getSkillsShPackage(source: string, slugValue: string, sign
   if (base.sourceType === "github") {
     const { fetchGitPackage } = await import("../plugins/registry");
     return fetchGitPackage(
-      { kind: "git", url: `https://github.com/${normalizedSource}`, ref: "HEAD", path: "" },
+      { kind: "git", url: `${GITHUB_ORIGIN}/${normalizedSource}`, ref: "HEAD", path: "" },
       signal,
       normalizedSlug,
     );

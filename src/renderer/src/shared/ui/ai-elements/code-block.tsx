@@ -28,7 +28,6 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/shared/ui/context-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -180,7 +179,7 @@ const createRawTokens = (code: string): TokenizedCode => ({
 });
 
 // Synchronous highlight with callback for async results
-export const highlightCode = (
+const highlightCode = (
   code: string,
   language: BundledLanguage,
   // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-callbacks)
@@ -293,7 +292,7 @@ const CodeBlockBody = memo(
 
 CodeBlockBody.displayName = "CodeBlockBody";
 
-export const CodeBlockContainer = ({
+const CodeBlockContainer = ({
   className,
   language,
   style,
@@ -360,7 +359,7 @@ export const CodeBlockActions = ({
   </div>
 );
 
-export const CodeBlockContent = ({
+const CodeBlockContent = ({
   code,
   language,
   showLineNumbers = false,
@@ -544,41 +543,3 @@ export const CodeBlockCopyButton = ({
     </Button>
   );
 };
-
-export type CodeBlockLanguageSelectorProps = ComponentProps<typeof Select>;
-
-export const CodeBlockLanguageSelector = (props: CodeBlockLanguageSelectorProps) => (
-  <Select {...props} />
-);
-
-export type CodeBlockLanguageSelectorTriggerProps = ComponentProps<typeof SelectTrigger>;
-
-export const CodeBlockLanguageSelectorTrigger = ({
-  className,
-  ...props
-}: CodeBlockLanguageSelectorTriggerProps) => (
-  <SelectTrigger
-    className={cn("h-7 border-none bg-transparent px-2 text-xs shadow-none", className)}
-    size="sm"
-    {...props}
-  />
-);
-
-export type CodeBlockLanguageSelectorValueProps = ComponentProps<typeof SelectValue>;
-
-export const CodeBlockLanguageSelectorValue = (props: CodeBlockLanguageSelectorValueProps) => (
-  <SelectValue {...props} />
-);
-
-export type CodeBlockLanguageSelectorContentProps = ComponentProps<typeof SelectContent>;
-
-export const CodeBlockLanguageSelectorContent = ({
-  align = "end",
-  ...props
-}: CodeBlockLanguageSelectorContentProps) => <SelectContent align={align} {...props} />;
-
-export type CodeBlockLanguageSelectorItemProps = ComponentProps<typeof SelectItem>;
-
-export const CodeBlockLanguageSelectorItem = (props: CodeBlockLanguageSelectorItemProps) => (
-  <SelectItem {...props} />
-);

@@ -1,9 +1,12 @@
 import { type ClientOptions, MastraClient } from "@mastra/client-js";
 import { i18n } from "@/shared/i18n";
-import { apiError, readErrorPayload, type WorkErrorPayload } from "@/shared/lib";
-import { type BrowserConfig, BrowserConfigSchema } from "../../../../shared/browser-contract";
+import { apiError, readErrorPayload } from "@/shared/lib";
 
-export const MASTRA_SERVER_URL = import.meta.env.VITE_MASTRA_SERVER_URL ?? "http://localhost:4111";
+import { type BrowserConfig, BrowserConfigSchema } from "../../../../shared/browser-contract";
+import { DEFAULT_MASTRA_SERVER_URL } from "../../../../shared/proxy-contract";
+
+export const MASTRA_SERVER_URL =
+  import.meta.env.VITE_MASTRA_SERVER_URL ?? DEFAULT_MASTRA_SERVER_URL;
 
 const mastraClient = new MastraClient({
   baseUrl: MASTRA_SERVER_URL,
@@ -103,22 +106,4 @@ export async function saveBrowserConfig(
 ): Promise<BrowserConfig> {
   const saved = await requestJson("/work/browser/config", { method: "POST", body: config });
   return applyBrowserConfig(resourceId, saved);
-}
-
-export async function requestText(
-  path: string,
-  init: ApiRequestInit = {},
-  fallback?: string,
-): Promise<string> {
-  const fallbackMessage = fallback ?? i18n.t("common:requestFailed");
-  const response = await apiFetch(path, init);
-  if (!response.ok) {
-    const payload = await readErrorPayload(response, fallbackMessage);
-    throw apiError(payload, fallbackMessage);
-  }
-  return response.text();
-}
-
-export function isApiError(value: unknown): value is Error & WorkErrorPayload {
-  return value instanceof Error && ("code" in value || "domain" in value || "category" in value);
 }

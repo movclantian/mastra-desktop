@@ -1,6 +1,6 @@
 export type ThemeMode = "light" | "dark" | "system";
 
-export type ThemeCategory =
+type ThemeCategory =
   | "brutalism"
   | "soft_brutalism"
   | "clay_glass"

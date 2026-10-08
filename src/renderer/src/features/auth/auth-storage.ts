@@ -3,9 +3,9 @@ import type { RememberedAccount } from "./types";
 
 export const AUTH_TOKEN_KEY = "mastra-work:auth-token";
 export const AUTH_SESSION_KEY = "mastra-work:remembered-session";
-export const AUTH_ACCOUNTS_KEY = "mastra-work:remembered-accounts";
+const AUTH_ACCOUNTS_KEY = "mastra-work:remembered-accounts";
 export const AUTH_AUTO_LOGIN_KEY = "mastra-work:auto-login";
-export const AUTH_COOKIE_KEY = "mastra-token";
+const AUTH_COOKIE_KEY = "mastra-token";
 
 function readStorage<T>(storage: Storage, key: string, fallback: T): T {
   try {

@@ -1,7 +1,7 @@
 import { type UseInViewOptions, useInView } from "motion/react";
 import * as React from "react";
 
-const MOBILE_BREAKPOINT = 768;
+import { MOBILE_BREAKPOINT } from "@/shared/config";
 
 export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean | undefined>(undefined);

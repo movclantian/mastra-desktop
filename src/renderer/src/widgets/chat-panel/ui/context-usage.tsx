@@ -21,11 +21,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 // 位于模型选择器左侧;usage 取自最后一条助手消息的 metadata。
 // ---------------------------------------------------------------------------
 
-export function ContextUnavailable({
-  catalogStatus,
-}: {
-  catalogStatus: "loading" | "ready" | "error";
-}) {
+function ContextUnavailable({ catalogStatus }: { catalogStatus: "loading" | "ready" | "error" }) {
   const { t } = useTranslation();
   const message =
     catalogStatus === "loading"

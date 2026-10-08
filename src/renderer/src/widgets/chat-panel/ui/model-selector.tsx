@@ -1,5 +1,6 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { BoxesIcon, BrainIcon, CheckIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
+import { BoxesIcon, BrainIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
+import { useState } from "react";
 import {
   CapabilityBadges,
   formatModelContextWindow,
@@ -17,30 +18,24 @@ import { useTranslation } from "@/shared/i18n";
 import { ModelSelectorLogo, ModelSelectorName } from "@/shared/ui/ai-elements/model-selector";
 import { PromptInputButton } from "@/shared/ui/ai-elements/prompt-input";
 import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/shared/ui/command";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { HyperText } from "@/shared/ui/hyper-text";
-
-// ---------------------------------------------------------------------------
-// 模型选择器:官方 DropdownMenu 菜单形态 + 官方 ai-elements Logo/Name
-// 结构:供应商分组 → 模型行(hover 展开二级菜单:能力 + 使用) →
-//       思考等级三级子菜单(RadioGroup,仅 reasoning 模型)
-// ---------------------------------------------------------------------------
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
+import { ScrollArea } from "@/shared/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 
 export function ChatModelSelector() {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
   const activeThreadId = useRouterState({
@@ -81,6 +76,7 @@ export function ChatModelSelector() {
     if (!provider) return;
     const caps = getModelCapabilities(provider, modelId, catalog);
     const efforts = getReasoningEfforts(provider);
+    if (modelSelection?.providerId === providerId && modelSelection.modelId === modelId) return;
     setModelSelection({
       providerId,
       modelId,
@@ -109,10 +105,17 @@ export function ChatModelSelector() {
     });
   };
 
+  const selectedCaps =
+    selectedProvider && modelSelection
+      ? getModelCapabilities(selectedProvider, modelSelection.modelId, catalog)
+      : undefined;
+  const efforts = selectedProvider ? getReasoningEfforts(selectedProvider) : [];
+  const currentEffort = modelSelection?.reasoningEffort;
+
   return (
-    <DropdownMenu>
+    <Popover open={open} onOpenChange={setOpen}>
       {/* min-w-0 允许模型标签在工具栏内收缩并截短 */}
-      <DropdownMenuTrigger
+      <PopoverTrigger
         render={
           <PromptInputButton
             aria-label={t("chat:models.selectModel")}
@@ -149,171 +152,192 @@ export function ChatModelSelector() {
           </>
         )}
         <ChevronDownIcon className="size-3.5 opacity-60" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-max max-w-[min(90vw,32rem)]">
-        {activeProviders.length === 0 ? (
-          <DropdownMenuItem
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="w-max min-w-[min(16rem,calc(100vw-2rem))] max-w-[min(32rem,calc(100vw-2rem))] max-h-[var(--available-height)] min-h-0 gap-0 overflow-hidden p-0"
+      >
+        <Command
+          className="h-auto min-h-0 flex-1 [&_[data-slot=command-input-wrapper]]:[contain:inline-size]"
+          label={t("chat:models.selectModel")}
+        >
+          <CommandInput
+            placeholder={t("chat:models.search")}
+            aria-label={t("chat:models.search")}
+          />
+          <CommandList className="min-h-0">
+            <CommandEmpty>{t("chat:models.noMatches")}</CommandEmpty>
+            {activeProviders.map((provider) => (
+              <CommandGroup key={provider.id} heading={provider.name}>
+                {[...provider.enabledModels]
+                  .sort(
+                    (left, right) =>
+                      Number(
+                        modelSelection?.providerId === provider.id &&
+                          modelSelection.modelId === right.id,
+                      ) -
+                      Number(
+                        modelSelection?.providerId === provider.id &&
+                          modelSelection.modelId === left.id,
+                      ),
+                  )
+                  .map((model) => {
+                    const displayName = getModelDisplayName(model);
+                    const caps = getModelCapabilities(provider, model.id, catalog);
+                    const contextWindow = getModelContextWindow(provider, model.id, catalog);
+                    const isSelected =
+                      modelSelection?.providerId === provider.id &&
+                      modelSelection.modelId === model.id;
+                    return (
+                      <HoverCard key={model.id}>
+                        <HoverCardTrigger
+                          render={
+                            <CommandItem
+                              value={JSON.stringify([provider.id, model.id])}
+                              keywords={[
+                                provider.name,
+                                provider.registryId ?? "",
+                                model.id,
+                                getModelDisplayName(model),
+                              ]}
+                              data-checked={isSelected}
+                              onSelect={() => handleSelect(provider.id, model.id, model.name)}
+                              className="gap-2"
+                            />
+                          }
+                        >
+                          <ModelSelectorLogo
+                            provider={provider.registryId ?? "custom"}
+                            className="shrink-0"
+                          />
+                          <span className="min-w-0 flex-1 break-words font-medium">
+                            {displayName}
+                          </span>
+                        </HoverCardTrigger>
+                        <HoverCardContent
+                          side="right"
+                          align="start"
+                          className="w-72 max-w-[calc(100vw-2rem)]"
+                        >
+                          <ScrollArea className="max-h-64 min-w-0">
+                            <div className="flex min-w-0 flex-col gap-2">
+                              <span className="break-words font-medium">{displayName}</span>
+                              {displayName.trim() !== model.id.trim() ? (
+                                <span className="break-all text-xs text-muted-foreground">
+                                  {model.id}
+                                </span>
+                              ) : null}
+                              <div
+                                className="flex flex-wrap items-center gap-1"
+                                aria-label={t("chat:models.capabilities")}
+                              >
+                                {caps.reasoning ||
+                                caps.vision ||
+                                caps.audio ||
+                                caps.tools ||
+                                caps.structuredOutput ? (
+                                  <CapabilityBadges caps={caps} />
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    {t("chat:models.basicChat")}
+                                  </span>
+                                )}
+                                {contextWindow ? (
+                                  <span
+                                    className="text-xs text-muted-foreground"
+                                    title={`${t("chat:models.contextWindow")}: ${contextWindow.toLocaleString("en-US")} tokens`}
+                                  >
+                                    {t("chat:models.contextWindow")}:{" "}
+                                    {formatModelContextWindow(contextWindow)}
+                                  </span>
+                                ) : (
+                                  <Badge className="h-4 px-1 text-[10px]" variant="outline">
+                                    {t(
+                                      catalogStatus === "loading"
+                                        ? "chat:models.catalogLoading"
+                                        : catalogStatus === "error"
+                                          ? "chat:models.catalogError"
+                                          : "chat:models.catalogUnlisted",
+                                    )}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </ScrollArea>
+                        </HoverCardContent>
+                      </HoverCard>
+                    );
+                  })}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+        {selectedProvider && selectedModel && selectedCaps?.reasoning && efforts.length > 0 ? (
+          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-t p-2">
+            <BrainIcon className="size-4 shrink-0" />
+            <span className="min-w-0 flex-1 break-words text-xs">
+              {t("chat:models.reasoningEffort")}
+            </span>
+            <Select
+              value={
+                currentEffort && efforts.includes(currentEffort as ReasoningEffort)
+                  ? currentEffort
+                  : null
+              }
+              onValueChange={(effort) => {
+                if (effort && efforts.includes(effort as ReasoningEffort))
+                  handleEffortChange(
+                    selectedProvider,
+                    selectedModel.id,
+                    selectedModel.name,
+                    effort,
+                  );
+              }}
+            >
+              <SelectTrigger
+                className="w-auto min-w-24 max-w-full"
+                aria-label={t("chat:models.reasoningEffort")}
+              >
+                <SelectValue
+                  placeholder={t(
+                    currentEffort === "off"
+                      ? "chat:models.efforts.none"
+                      : "chat:models.efforts.provider-default",
+                  )}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {efforts.map((effort) => (
+                  <SelectItem key={effort} value={effort}>
+                    {t(`chat:models.efforts.${effort}`, REASONING_EFFORT_LABELS[effort])}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t p-2">
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={() => {
+              setOpen(false);
               openSettings("providers");
             }}
           >
             <SettingsIcon />
-            {t("chat:models.noModels")}
-          </DropdownMenuItem>
-        ) : (
-          activeProviders.map((provider, groupIndex) => (
-            <DropdownMenuGroup key={provider.id}>
-              <DropdownMenuLabel className="flex items-center gap-1.5">
-                <ModelSelectorLogo provider={provider.registryId ?? "custom"} />
-                {provider.name}
-              </DropdownMenuLabel>
-              {[...provider.enabledModels]
-                .sort(
-                  (left, right) =>
-                    Number(
-                      modelSelection?.providerId === provider.id &&
-                        modelSelection?.modelId === right.id,
-                    ) -
-                    Number(
-                      modelSelection?.providerId === provider.id &&
-                        modelSelection?.modelId === left.id,
-                    ),
-                )
-                .map((model) => {
-                  const caps = getModelCapabilities(provider, model.id, catalog);
-                  const contextWindow = getModelContextWindow(provider, model.id, catalog);
-                  const isSelected =
-                    modelSelection?.providerId === provider.id &&
-                    modelSelection?.modelId === model.id;
-                  const currentEffort =
-                    isSelected && modelSelection?.reasoningEffort !== "off"
-                      ? modelSelection?.reasoningEffort
-                      : undefined;
-                  return (
-                    <DropdownMenuSub key={model.id}>
-                      {/* 模型行:点击直接选中;hover/展开按钮打开二级菜单(官方 SubTrigger 自带右侧箭头) */}
-                      <DropdownMenuSubTrigger
-                        className="pr-1 [&>svg:last-child]:ml-0"
-                        onClick={() => handleSelect(provider.id, model.id, model.name)}
-                      >
-                        <ModelSelectorName className="max-w-[min(62vw,24rem)] whitespace-normal break-all">
-                          {getModelDisplayName(model)}
-                        </ModelSelectorName>
-                        <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                          {contextWindow ? (
-                            <span
-                              className="truncate text-[10px] text-muted-foreground"
-                              title={`${contextWindow.toLocaleString("en-US")} tokens`}
-                            >
-                              {formatModelContextWindow(contextWindow)}
-                            </span>
-                          ) : (
-                            <Badge
-                              className="h-4 px-1.5 text-[10px]"
-                              variant={catalogStatus === "loading" ? "secondary" : "outline"}
-                            >
-                              {catalogStatus === "loading"
-                                ? t("chat:models.catalogLoading")
-                                : catalogStatus === "error"
-                                  ? t("chat:models.catalogError")
-                                  : t("chat:models.catalogUnlisted")}
-                            </Badge>
-                          )}
-                          {isSelected ? <CheckIcon className="size-4" /> : null}
-                        </span>
-                      </DropdownMenuSubTrigger>
-                      <DropdownMenuSubContent className="w-max min-w-52 max-w-[min(90vw,28rem)]">
-                        <DropdownMenuGroup>
-                          <DropdownMenuItem
-                            className="pr-2"
-                            onClick={() => handleSelect(provider.id, model.id, model.name)}
-                          >
-                            {t("chat:models.useModel")}
-                            <CheckIcon className="ml-auto size-4" />
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuLabel>{t("chat:models.capabilities")}</DropdownMenuLabel>
-                          <div className="flex flex-wrap gap-1 px-1.5 pb-1.5">
-                            {caps.reasoning ||
-                            caps.vision ||
-                            caps.audio ||
-                            caps.tools ||
-                            caps.structuredOutput ? (
-                              <CapabilityBadges caps={caps} />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                {t("chat:models.basicChat")}
-                              </span>
-                            )}
-                          </div>
-                          {contextWindow ? (
-                            <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                              <span>{t("chat:models.contextWindow")}</span>
-                              <span className="font-mono text-xs text-muted-foreground">
-                                {formatModelContextWindow(contextWindow)}
-                              </span>
-                            </DropdownMenuLabel>
-                          ) : (
-                            <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                              <span>{t("chat:models.contextWindow")}</span>
-                              <Badge
-                                className="h-4 px-1.5 text-[10px]"
-                                variant={catalogStatus === "loading" ? "secondary" : "outline"}
-                              >
-                                {catalogStatus === "loading"
-                                  ? t("chat:models.catalogFetching")
-                                  : catalogStatus === "error"
-                                    ? t("chat:models.catalogFetchError")
-                                    : t("chat:models.catalogUnmatched")}
-                              </Badge>
-                            </DropdownMenuLabel>
-                          )}
-                          {caps.reasoning ? (
-                            <DropdownMenuSub>
-                              <DropdownMenuSubTrigger>
-                                <BrainIcon />
-                                {t("chat:models.reasoningEffort")}
-                                {currentEffort ? (
-                                  <Badge
-                                    className="ml-auto h-4 px-1.5 text-[10px]"
-                                    variant="secondary"
-                                  >
-                                    {t(
-                                      `chat:models.efforts.${currentEffort}`,
-                                      REASONING_EFFORT_LABELS[currentEffort],
-                                    )}
-                                  </Badge>
-                                ) : null}
-                              </DropdownMenuSubTrigger>
-                              <DropdownMenuSubContent>
-                                <DropdownMenuRadioGroup
-                                  value={currentEffort ?? "medium"}
-                                  onValueChange={(effort) =>
-                                    handleEffortChange(provider, model.id, model.name, effort)
-                                  }
-                                >
-                                  {getReasoningEfforts(provider).map((effort) => (
-                                    <DropdownMenuRadioItem key={effort} value={effort}>
-                                      {t(
-                                        `chat:models.efforts.${effort}`,
-                                        REASONING_EFFORT_LABELS[effort],
-                                      )}
-                                    </DropdownMenuRadioItem>
-                                  ))}
-                                </DropdownMenuRadioGroup>
-                              </DropdownMenuSubContent>
-                            </DropdownMenuSub>
-                          ) : null}
-                        </DropdownMenuGroup>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuSub>
-                  );
-                })}
-              {groupIndex < activeProviders.length - 1 ? <DropdownMenuSeparator /> : null}
-            </DropdownMenuGroup>
-          ))
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+            {t("chat:models.manageProviders")}
+          </Button>
+          {activeProviders.length === 0 ? (
+            <span className="min-w-0 flex-1 break-words text-xs text-muted-foreground">
+              {t("chat:models.noModels")}
+            </span>
+          ) : null}
+          <Button variant="outline" size="xs" onClick={() => setOpen(false)}>
+            {t("common:close")}
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

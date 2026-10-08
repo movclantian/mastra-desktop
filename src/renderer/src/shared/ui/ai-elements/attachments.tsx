@@ -14,15 +14,12 @@ import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
 import { createContext, useCallback, useContext, useMemo } from "react";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 
 // ============================================================================
 // Types
 // ============================================================================
 
-export type AttachmentData =
-  | (FileUIPart & { id: string })
-  | (SourceDocumentUIPart & { id: string });
+type AttachmentData = (FileUIPart & { id: string }) | (SourceDocumentUIPart & { id: string });
 
 export type AttachmentMediaCategory =
   | "image"
@@ -32,7 +29,7 @@ export type AttachmentMediaCategory =
   | "source"
   | "unknown";
 
-export type AttachmentVariant = "grid" | "inline" | "list";
+type AttachmentVariant = "grid" | "inline" | "list";
 
 const mediaCategoryIcons: Record<AttachmentMediaCategory, typeof ImageIcon> = {
   audio: Music2Icon,
@@ -47,7 +44,7 @@ const mediaCategoryIcons: Record<AttachmentMediaCategory, typeof ImageIcon> = {
 // Utility Functions
 // ============================================================================
 
-export const getMediaCategory = (data: AttachmentData): AttachmentMediaCategory => {
+const getMediaCategory = (data: AttachmentData): AttachmentMediaCategory => {
   if (data.type === "source-document") {
     return "source";
   }
@@ -70,7 +67,7 @@ export const getMediaCategory = (data: AttachmentData): AttachmentMediaCategory 
   return "unknown";
 };
 
-export const getAttachmentLabel = (data: AttachmentData): string => {
+const getAttachmentLabel = (data: AttachmentData): string => {
   if (data.type === "source-document") {
     return data.title || data.filename || "Source";
   }
@@ -121,10 +118,9 @@ const AttachmentContext = createContext<AttachmentContextValue | null>(null);
 // Hooks
 // ============================================================================
 
-export const useAttachmentsContext = () =>
-  useContext(AttachmentsContext) ?? { variant: "grid" as const };
+const useAttachmentsContext = () => useContext(AttachmentsContext) ?? { variant: "grid" as const };
 
-export const useAttachmentContext = () => {
+const useAttachmentContext = () => {
   const ctx = useContext(AttachmentContext);
   if (!ctx) {
     throw new Error("Attachment components must be used within <Attachment>");
@@ -351,46 +347,6 @@ export const AttachmentRemove = ({
 // AttachmentHoverCard - Hover preview
 // ============================================================================
 
-export type AttachmentHoverCardProps = ComponentProps<typeof HoverCard>;
-
-export const AttachmentHoverCard = (props: AttachmentHoverCardProps) => <HoverCard {...props} />;
-
-export type AttachmentHoverCardTriggerProps = ComponentProps<typeof HoverCardTrigger> & {
-  /** How long to wait before the preview opens (ms). Base UI Trigger API. */
-  delay?: number;
-  /** How long to wait before the preview closes (ms). Base UI Trigger API. */
-  closeDelay?: number;
-};
-
-export const AttachmentHoverCardTrigger = ({
-  delay = 0,
-  closeDelay = 0,
-  ...props
-}: AttachmentHoverCardTriggerProps) => (
-  <HoverCardTrigger closeDelay={closeDelay} delay={delay} {...props} />
-);
-
-export type AttachmentHoverCardContentProps = ComponentProps<typeof HoverCardContent>;
-
-export const AttachmentHoverCardContent = ({
-  align = "start",
-  className,
-  ...props
-}: AttachmentHoverCardContentProps) => (
-  <HoverCardContent align={align} className={cn("w-auto p-2", className)} {...props} />
-);
-
 // ============================================================================
 // AttachmentEmpty - Empty state
 // ============================================================================
-
-export type AttachmentEmptyProps = HTMLAttributes<HTMLDivElement>;
-
-export const AttachmentEmpty = ({ className, children, ...props }: AttachmentEmptyProps) => (
-  <div
-    className={cn("flex items-center justify-center p-4 text-muted-foreground text-sm", className)}
-    {...props}
-  >
-    {children ?? "No attachments"}
-  </div>
-);

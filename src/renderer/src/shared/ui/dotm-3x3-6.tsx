@@ -1,10 +1,10 @@
-"use client";
+import type { DotAnimationResolver } from "@/shared/ui/visual/dotmatrix/core";
+
+("use client");
 
 import type { CSSProperties } from "react";
-import type { DotAnimationResolver, DotMatrixCommonProps } from "@/shared/ui/visual/dotmatrix/core";
-import { createDotm3x3Component } from "@/shared/ui/visual/dotmatrix/core";
 
-export type Dotm3x3_6Props = DotMatrixCommonProps;
+import { createDotm3x3Component } from "@/shared/ui/visual/dotmatrix/core";
 
 const animationResolver: DotAnimationResolver = ({
   isActive,

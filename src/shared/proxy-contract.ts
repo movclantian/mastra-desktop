@@ -6,9 +6,9 @@ export const PROXY_CHANNELS = {
   test: "proxy:test",
 } as const;
 
-export const ProxyModeSchema = z.enum(["system", "direct", "manual"]);
+const ProxyModeSchema = z.enum(["system", "direct", "manual"]);
 
-export const ProxyUrlSchema = z
+const ProxyUrlSchema = z
   .string()
   .trim()
   .min(1)
@@ -27,7 +27,7 @@ export const ProxyUrlSchema = z
     }
   });
 
-export const ProxyConfigSchema = z.discriminatedUnion("mode", [
+const ProxyConfigSchema = z.discriminatedUnion("mode", [
   z.strictObject({ mode: z.literal("system"), url: z.undefined().optional() }),
   z.strictObject({ mode: z.literal("direct"), url: z.undefined().optional() }),
   z.strictObject({ mode: z.literal("manual"), url: ProxyUrlSchema }),
@@ -50,3 +50,11 @@ export type ProxyMode = z.infer<typeof ProxyModeSchema>;
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
 export type ProxySetResult = z.infer<typeof SetProxyResultSchema>;
 export type ProxyTestResult = z.infer<typeof TestProxyResultSchema>;
+
+/** Shared network destinations used by the host, renderer and local API. */
+export const MODELS_DEV_ORIGIN = "https://models.dev";
+export const MODELS_DEV_API_URL = `${MODELS_DEV_ORIGIN}/api.json`;
+export const MODELS_DEV_LOGOS_URL = `${MODELS_DEV_ORIGIN}/logos`;
+export const DEFAULT_MASTRA_PORT = 4111;
+export const DEFAULT_RENDERER_PORT = 5173;
+export const DEFAULT_MASTRA_SERVER_URL = `http://localhost:${DEFAULT_MASTRA_PORT}`;

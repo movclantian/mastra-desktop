@@ -1,1 +1,1 @@
-export { AgentHub, AgentHubPage } from "./ui/agent-hub-page";
+export { AgentHubPage } from "./ui/agent-hub-page";

@@ -6,16 +6,12 @@
  * resolveRequestModel 供 chat / session 路由按请求覆盖模型 —— 路由 id 只携带
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createDeepSeek } from "@ai-sdk/deepseek";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   type GatewayLanguageModel,
   getProviderConfig,
   ModelsDevGateway,
-  modelSupportsStructuredOutput,
+  PROVIDER_REGISTRY,
+  type ProviderConfig,
 } from "@mastra/core/llm";
 import { defaultSettingsMiddleware, type LanguageModelMiddleware, wrapLanguageModel } from "ai";
 import { z } from "zod";
@@ -24,11 +20,25 @@ import {
   providerCredentialPurpose,
   SecretRefSchema,
 } from "../../shared/credential-contract";
+import { MODELS_DEV_API_URL } from "../../shared/proxy-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import { readContentObject } from "../storage/content-objects";
 import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
 
-const REGISTRY_GATEWAY = new ModelsDevGateway();
+const REGISTRY_GATEWAY = new ModelsDevGateway(PROVIDER_REGISTRY);
+
+/** An explicit user URL wins over process-wide *_BASE_URL environment variables. */
+class ConfiguredModelsGateway extends ModelsDevGateway {
+  constructor(
+    config: Record<string, ProviderConfig>,
+    private readonly baseUrl: string,
+  ) {
+    super(config);
+  }
+  override buildUrl(): string {
+    return this.baseUrl;
+  }
+}
 type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 // One catalog serves both model discovery and runtime memory budgets.
@@ -63,7 +73,7 @@ export async function fetchModelsDevCatalog(): Promise<Catalog> {
         if (catalogCache) return catalogCache.body;
         throw new Error("Model catalog is temporarily unavailable");
       }
-      const response = await fetch("https://models.dev/api.json", {
+      const response = await fetch(MODELS_DEV_API_URL, {
         signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok) throw new Error(`models.dev HTTP ${response.status}`);
@@ -94,6 +104,10 @@ const modelLimitsSchema = z.object({
   }),
 });
 
+type ModelLimits = z.infer<typeof modelLimitsSchema>["limit"];
+// Reuse capacity lookups across Memory/tool preparation; a refreshed catalog gets its own cache.
+const modelLimitsByCatalog = new WeakMap<Catalog, Map<string, ModelLimits | undefined>>();
+
 /** Prefer the selected provider; gateways with the same model ID use the smallest known limits. */
 export async function getModelTokenLimits(requestContext?: { get(key: string): unknown }) {
   const routerId = await resolveContextModelId(requestContext);
@@ -103,22 +117,36 @@ export async function getModelTokenLimits(requestContext?: { get(key: string): u
   const provider = providers.find((item) => item.id === providerId);
   const catalog = await fetchModelsDevCatalog().catch(() => undefined);
   if (!catalog) return undefined;
+  let limitsByModel = modelLimitsByCatalog.get(catalog);
+  if (!limitsByModel) {
+    limitsByModel = new Map();
+    modelLimitsByCatalog.set(catalog, limitsByModel);
+  }
+  const key = JSON.stringify([provider?.registryId ?? null, modelId]);
+  if (limitsByModel.has(key)) return limitsByModel.get(key);
   const readLimits = (entry: unknown) => {
     const models = (entry as { models?: Record<string, unknown> } | undefined)?.models;
-    return modelLimitsSchema.safeParse(models?.[modelId]).data?.limit;
+    const model = models?.[modelId];
+    return model ? modelLimitsSchema.safeParse(model).data?.limit : undefined;
   };
   const exact = provider?.registryId ? readLimits(catalog[provider.registryId]) : undefined;
-  if (exact) return exact;
+  if (exact) {
+    limitsByModel.set(key, exact);
+    return exact;
+  }
   const matches = Object.values(catalog).flatMap((entry) => {
     const limits = readLimits(entry);
     return limits ? [limits] : [];
   });
-  if (!matches.length) return undefined;
-  return {
-    context: Math.min(...matches.map((limits) => limits.context)),
-    input: Math.min(...matches.map((limits) => limits.input ?? limits.context)),
-    output: Math.min(...matches.map((limits) => limits.output ?? 4_096)),
-  };
+  const limits = matches.length
+    ? {
+        context: Math.min(...matches.map((limits) => limits.context)),
+        input: Math.min(...matches.map((limits) => limits.input ?? limits.context)),
+        output: Math.min(...matches.map((limits) => limits.output ?? 4_096)),
+      }
+    : undefined;
+  limitsByModel.set(key, limits);
+  return limits;
 }
 
 /** Keep authenticated library URLs intact until the attachment input processor resolves them. */
@@ -214,7 +242,7 @@ function screenshotMiddleware(resourceId?: string): LanguageModelMiddleware {
 }
 
 /** Resolve the SDK protocol from Mastra's provider registry metadata. */
-export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
+function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
   const provider = getProviderConfig(registryId.trim());
   if (!provider) return undefined;
   const npm = provider.npm?.toLowerCase() ?? "";
@@ -236,7 +264,7 @@ const providerSchema = z
     name: z.string().min(1).max(128),
     registryId: z.string().min(1).max(128).optional(),
     protocol: z.enum(["openai", "anthropic", "gemini"]).optional(),
-    baseUrl: z.url().optional(),
+    baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     useResponses: z.boolean().optional(),
     credentialRef: SecretRefSchema,
     credentialHint: CredentialHintSchema,
@@ -355,7 +383,7 @@ function isRequestModel(value: unknown): value is RequestModel {
   return typeof model.id === "string" && Object.keys(model).every((key) => key === "id");
 }
 
-export async function resolveProviderCredential(provider: UserProviderConfig): Promise<string> {
+async function resolveProviderCredential(provider: UserProviderConfig): Promise<string> {
   return resolveCredential(provider.credentialRef, providerCredentialPurpose(provider.id));
 }
 
@@ -387,6 +415,48 @@ export async function resolveConfiguredModel(
   return createProviderModel(provider, modelId, resourceId);
 }
 
+/** Select native protocol dispatch without changing the upstream model ID. */
+function providerModelRoute(provider: UserProviderConfig, modelId: string) {
+  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "") ?? "openai";
+  if (!provider.baseUrl) {
+    const registry = provider.registryId ? getProviderConfig(provider.registryId) : undefined;
+    if (!registry || !provider.registryId)
+      throw new Error(`Unknown model provider: ${provider.registryId ?? provider.id}`);
+    return {
+      providerId: provider.registryId,
+      protocol,
+      responses:
+        registry.modelOverrides?.[modelId]?.shape === "responses" ||
+        provider.registryId === "openai" ||
+        provider.registryId === "xai",
+      config: registry,
+    };
+  }
+  const responses = protocol === "openai" && provider.useResponses === true;
+  const providerId =
+    protocol === "anthropic"
+      ? "anthropic"
+      : protocol === "gemini"
+        ? "google"
+        : responses
+          ? "openai"
+          : provider.registryId === "deepseek"
+            ? "deepseek"
+            : "custom";
+  return {
+    providerId,
+    protocol,
+    responses,
+    config: {
+      name: provider.name,
+      models: provider.enabledModels.map((item) => item.id),
+      apiKeyEnvVar: [],
+      gateway: "models.dev",
+      url: provider.baseUrl,
+    } satisfies ProviderConfig,
+  };
+}
+
 /** Build a model from server-owned provider settings, including models being tested before enabling. */
 export async function createProviderModel(
   provider: UserProviderConfig,
@@ -396,50 +466,23 @@ export async function createProviderModel(
   if (!modelId.trim() || !provider.hasCredential || (!provider.registryId && !provider.baseUrl)) {
     return undefined;
   }
+  const route = providerModelRoute(provider, modelId);
   const apiKey = await resolveProviderCredential(provider);
-
-  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
-  let model: GatewayLanguageModel;
-  if (!provider.baseUrl && provider.registryId) {
-    // The official registry owns provider SDKs, endpoints and model-specific overrides.
-    model = await REGISTRY_GATEWAY.resolveLanguageModel({
-      modelId,
-      providerId: provider.registryId,
-      apiKey,
-    });
-  } else {
-    const baseURL = provider.baseUrl;
-    if (!baseURL) return undefined;
-    switch (protocol) {
-      case "anthropic":
-        model = createAnthropic({ apiKey, baseURL })(modelId);
-        break;
-      case "gemini":
-        model = createGoogleGenerativeAI({ apiKey, baseURL })(modelId);
-        break;
-      default:
-        if (provider.useResponses) {
-          model = createOpenAI({ apiKey, baseURL }).responses(modelId);
-        } else if (provider.registryId === "deepseek") {
-          model = createDeepSeek({ apiKey, baseURL })(modelId);
-        } else {
-          model = createOpenAICompatible({
-            apiKey,
-            baseURL,
-            name: provider.name,
-            supportsStructuredOutputs: modelSupportsStructuredOutput(
-              `${routerPrefix(provider)}/${modelId}`,
-            ),
-          }).chatModel(modelId);
-        }
-    }
-  }
+  const gateway = provider.baseUrl
+    ? new ConfiguredModelsGateway({ [route.providerId]: route.config }, provider.baseUrl)
+    : REGISTRY_GATEWAY;
+  const model = await gateway.resolveLanguageModel({
+    modelId,
+    providerId: route.providerId,
+    apiKey,
+  });
   return wrapLanguageModel({
     model,
+    ...(route.providerId === "custom" ? { providerId: provider.id } : {}),
     middleware: [
       libraryAttachmentMiddleware,
       screenshotMiddleware(resourceId),
-      ...(protocol === "anthropic"
+      ...(route.protocol === "anthropic"
         ? [
             defaultSettingsMiddleware({
               settings: { providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } },
@@ -462,31 +505,22 @@ export async function requestModelFamily(
   return provider?.baseUrl ? undefined : provider?.registryId;
 }
 
-/**
- * 当前生效模型是否请求 OpenAI Responses 端点。
- * 内置 openai provider 由 Mastra 官方 registry 网关构造,它固定用 responses();
- * 自定义网关则看用户勾选的 useResponses。
- */
-function providerUsesResponses(provider: UserProviderConfig | undefined): boolean {
-  if (!provider) return false;
-  if (provider.registryId === "openai" && !provider.baseUrl) return true;
-  return Boolean(provider.baseUrl && provider.protocol === "openai" && provider.useResponses);
-}
-
+/** Match reasoning options to the same route used to construct the model. */
 export async function usesOpenAIResponses(
   rawModel: unknown,
   resourceId?: string,
 ): Promise<boolean> {
   const config = await getProvidersConfig(resourceId);
   if (isRequestModel(rawModel)) {
-    const { providerId } = splitRouterId(rawModel.id);
-    return providerUsesResponses(config.providers.find((candidate) => candidate.id === providerId));
+    const { providerId, modelId } = splitRouterId(rawModel.id);
+    const provider = config.providers.find((candidate) => candidate.id === providerId);
+    return provider ? providerModelRoute(provider, modelId).responses : false;
   }
   const selection = config.modelSelection;
   if (!selection) return false;
   const provider = config.providers.find((candidate) => candidate.id === selection.providerId);
   if (!provider || provider.disabled || !provider.hasCredential) return false;
-  return providerUsesResponses(provider);
+  return providerModelRoute(provider, selection.modelId).responses;
 }
 
 /** Resolve the user's selected model, or the first enabled model for a new configuration. */

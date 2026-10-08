@@ -1,3 +1,4 @@
+import { DEFAULT_RENDERER_PORT } from "../shared/proxy-contract";
 import { mcpManagementMiddleware } from "./connections/mcp";
 import { cleanupOrphanedLibraryAssets } from "./rag/storage/assets";
 /**
@@ -55,7 +56,11 @@ if (process.env.MASTRA_DESKTOP_RUNTIME === "true") {
  * inherited from ELECTRON_RENDERER_URL (with the standard fallback ports).
  */
 function getRendererCorsOrigins(): Set<string> {
-  const origins = new Set(["null", "http://localhost:5173", "http://127.0.0.1:5173"]);
+  const origins = new Set([
+    "null",
+    `http://localhost:${DEFAULT_RENDERER_PORT}`,
+    `http://127.0.0.1:${DEFAULT_RENDERER_PORT}`,
+  ]);
   const configuredUrl = process.env.ELECTRON_RENDERER_URL;
   if (!configuredUrl) return origins;
 
@@ -240,6 +245,8 @@ export const mastra = new Mastra({
     configs: {
       default: {
         serviceName: "mastra-work",
+        // Include native prepare-tools/prepare-memory steps in the request timeline.
+        includeInternalSpans: true,
         exporters: [new MastraStorageExporter()],
         spanOutputProcessors: [new SensitiveDataFilter()],
       },

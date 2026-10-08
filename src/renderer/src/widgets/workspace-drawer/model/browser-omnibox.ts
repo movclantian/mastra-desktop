@@ -1,4 +1,7 @@
-import type { BrowserSearchEngine } from "../../../../../shared/browser-contract";
+import {
+  BROWSER_SEARCH_URLS,
+  type BrowserSearchEngine,
+} from "../../../../../shared/browser-contract";
 
 export function resolveBrowserOmniboxInput(
   rawInput: string,
@@ -25,12 +28,7 @@ export function resolveBrowserOmniboxInput(
 
   const search = (): { kind: "search"; url: string } => ({
     kind: "search",
-    url:
-      searchEngine === "baidu"
-        ? `https://www.baidu.com/s?wd=${encodeURIComponent(input)}`
-        : searchEngine === "google"
-          ? `https://www.google.com/search?q=${encodeURIComponent(input)}`
-          : `https://www.bing.com/search?q=${encodeURIComponent(input)}`,
+    url: `${BROWSER_SEARCH_URLS[searchEngine]}${encodeURIComponent(input)}`,
   });
 
   if (/^https?:/i.test(input)) {

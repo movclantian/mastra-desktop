@@ -6,26 +6,6 @@ import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 
-export interface QueueMessagePart {
-  type: string;
-  text?: string;
-  url?: string;
-  filename?: string;
-  mediaType?: string;
-}
-
-export interface QueueMessage {
-  id: string;
-  parts: QueueMessagePart[];
-}
-
-export interface QueueTodo {
-  id: string;
-  title: string;
-  description?: string;
-  status?: "pending" | "completed";
-}
-
 export type QueueItemProps = ComponentProps<"li">;
 
 export const QueueItem = forwardRef<HTMLLIElement, QueueItemProps>(

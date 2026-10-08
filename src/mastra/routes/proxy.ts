@@ -4,7 +4,7 @@
 import { createRoute } from "@mastra/server/server-adapter";
 import { Agent, EnvHttpProxyAgent, fetch, ProxyAgent, setGlobalDispatcher } from "undici";
 import { z } from "zod";
-import { TestProxyRequestSchema } from "../../shared/proxy-contract";
+import { MODELS_DEV_API_URL, TestProxyRequestSchema } from "../../shared/proxy-contract";
 import { errorText, workValidationError } from "../errors";
 
 let currentProxyUrl: string | undefined =
@@ -13,7 +13,7 @@ let currentProxyUrl: string | undefined =
   process.env.HTTP_PROXY ??
   process.env.http_proxy;
 
-export const proxyGetRoute = createRoute({
+const proxyGetRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   path: "/work/proxy",
   responseType: "json",
@@ -27,7 +27,7 @@ export const proxyGetRoute = createRoute({
   },
 });
 
-export const proxySetRoute = createRoute({
+const proxySetRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   path: "/work/proxy",
   responseType: "json",
@@ -51,7 +51,7 @@ export const proxySetRoute = createRoute({
   },
 });
 
-export const proxyTestRoute = createRoute({
+const proxyTestRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   path: "/work/proxy/test",
   responseType: "json",
@@ -60,7 +60,7 @@ export const proxyTestRoute = createRoute({
   bodySchema: TestProxyRequestSchema,
   handler: async (params) => {
     const proxyUrl = params.url;
-    const testUrl = "https://models.dev/api.json";
+    const testUrl = MODELS_DEV_API_URL;
     const start = Date.now();
     const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : new EnvHttpProxyAgent();
     try {

@@ -28,7 +28,7 @@ export type LocalIdeItem = DetectedIde & {
   icon?: React.ReactNode;
 };
 
-export const IDE_ICON_MAP: Record<string, React.ReactNode> = {
+const IDE_ICON_MAP: Record<string, React.ReactNode> = {
   vscode: (
     <svg
       viewBox="0 0 24 24"

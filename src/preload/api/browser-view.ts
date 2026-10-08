@@ -97,5 +97,3 @@ export function createBrowserViewApi(ipcRenderer: IpcRenderer) {
     },
   };
 }
-
-export type BrowserViewApi = ReturnType<typeof createBrowserViewApi>;

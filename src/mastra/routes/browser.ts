@@ -198,7 +198,7 @@ async function ensureBrowserTab(
   }
 }
 
-export const browserStateRoute = registerApiRoute("/work/threads/:threadId/browser", {
+const browserStateRoute = registerApiRoute("/work/threads/:threadId/browser", {
   method: "GET",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -208,198 +208,195 @@ export const browserStateRoute = registerApiRoute("/work/threads/:threadId/brows
 });
 
 /** SSE 桥接 Mastra ScreencastStream；断开时只停画面订阅，不关闭线程浏览器。 */
-export const browserScreencastRoute = registerApiRoute(
-  "/work/threads/:threadId/browser/screencast",
-  {
-    method: "GET",
-    handler: async (c) => {
-      const owned = await ownedBrowserThread(c);
-      if (!owned) throw workError("THREAD_NOT_FOUND");
-      const { browser, threadId, resourceId } = owned;
-      let screencast: Awaited<ReturnType<typeof browser.startScreencast>>;
-      try {
-        await ensureBrowserTab(browser, resourceId, threadId);
-        screencast = await browser.startScreencast({
-          format: "jpeg",
-          quality: BROWSER_STREAM_QUALITY,
-          maxWidth: BROWSER_STREAM_MAX_WIDTH,
-          maxHeight: BROWSER_STREAM_MAX_HEIGHT,
-          everyNthFrame: 2,
-          threadId,
-        });
-      } catch (error) {
-        return c.json(
-          {
-            error: "browser_start_failed",
-            message: errorText(error, "浏览器不可用"),
-          },
-          503,
-        );
+const browserScreencastRoute = registerApiRoute("/work/threads/:threadId/browser/screencast", {
+  method: "GET",
+  handler: async (c) => {
+    const owned = await ownedBrowserThread(c);
+    if (!owned) throw workError("THREAD_NOT_FOUND");
+    const { browser, threadId, resourceId } = owned;
+    let screencast: Awaited<ReturnType<typeof browser.startScreencast>>;
+    try {
+      await ensureBrowserTab(browser, resourceId, threadId);
+      screencast = await browser.startScreencast({
+        format: "jpeg",
+        quality: BROWSER_STREAM_QUALITY,
+        maxWidth: BROWSER_STREAM_MAX_WIDTH,
+        maxHeight: BROWSER_STREAM_MAX_HEIGHT,
+        everyNthFrame: 2,
+        threadId,
+      });
+    } catch (error) {
+      return c.json(
+        {
+          error: "browser_start_failed",
+          message: errorText(error, "浏览器不可用"),
+        },
+        503,
+      );
+    }
+
+    const encoder = new TextEncoder();
+    let disposed = false;
+    let stopped = false;
+    let closed = false;
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let pendingFrame: unknown;
+    const pendingControls: Array<{ event: string; chunk: Uint8Array }> = [];
+    let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const closeIfDrained = () => {
+      if (
+        !stopped ||
+        closed ||
+        !controllerRef ||
+        pendingFrame !== undefined ||
+        pendingControls.length > 0
+      ) {
+        return;
       }
+      closed = true;
+      controllerRef.close();
+    };
 
-      const encoder = new TextEncoder();
-      let disposed = false;
-      let stopped = false;
-      let closed = false;
-      let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
-      let pendingFrame: unknown;
-      const pendingControls: Array<{ event: string; chunk: Uint8Array }> = [];
-      let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
-
-      const closeIfDrained = () => {
-        if (
-          !stopped ||
-          closed ||
-          !controllerRef ||
-          pendingFrame !== undefined ||
-          pendingControls.length > 0
-        ) {
-          return;
+    const flush = () => {
+      if (disposed || closed || !controllerRef) return;
+      while ((controllerRef.desiredSize ?? 0) > 0) {
+        const nextControl = pendingControls.shift();
+        if (nextControl) {
+          controllerRef.enqueue(nextControl.chunk);
+          continue;
         }
-        closed = true;
-        controllerRef.close();
-      };
+        if (pendingFrame === undefined) break;
+        const frame = pendingFrame;
+        pendingFrame = undefined;
+        controllerRef.enqueue(encoder.encode(`event: frame\ndata: ${JSON.stringify(frame)}\n\n`));
+      }
+      closeIfDrained();
+    };
 
-      const flush = () => {
-        if (disposed || closed || !controllerRef) return;
-        while ((controllerRef.desiredSize ?? 0) > 0) {
-          const nextControl = pendingControls.shift();
-          if (nextControl) {
-            controllerRef.enqueue(nextControl.chunk);
-            continue;
+    const queueControl = (event: string, value: unknown) => {
+      const chunk = encoder.encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`);
+      const existing = pendingControls.findIndex((item) => item.event === event);
+      if (existing >= 0 && event !== "stop") {
+        pendingControls[existing] = { event, chunk };
+        return;
+      }
+      // Only state/url/error/stop exist today; coalescing by event keeps the
+      // control queue bounded even if the browser emits noisy URL/error events.
+      if (pendingControls.length >= 4 && event !== "stop") {
+        const replaceable = pendingControls.findIndex(
+          (item) => item.event === "url" || item.event === "error",
+        );
+        if (replaceable >= 0) pendingControls.splice(replaceable, 1);
+        else return;
+      }
+      pendingControls.push({ event, chunk });
+    };
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controllerRef = controller;
+        const send = (event: string, value: unknown) => {
+          if (disposed || stopped) return;
+          if (event === "frame") {
+            // A frame is a replaceable preview, not a durable event. Keep
+            // only the newest one while a slow client drains the stream.
+            pendingFrame = value;
+          } else {
+            queueControl(event, value);
           }
-          if (pendingFrame === undefined) break;
-          const frame = pendingFrame;
-          pendingFrame = undefined;
-          controllerRef.enqueue(encoder.encode(`event: frame\ndata: ${JSON.stringify(frame)}\n\n`));
-        }
-        closeIfDrained();
-      };
-
-      const queueControl = (event: string, value: unknown) => {
-        const chunk = encoder.encode(`event: ${event}\ndata: ${JSON.stringify(value)}\n\n`);
-        const existing = pendingControls.findIndex((item) => item.event === event);
-        if (existing >= 0 && event !== "stop") {
-          pendingControls[existing] = { event, chunk };
-          return;
-        }
-        // Only state/url/error/stop exist today; coalescing by event keeps the
-        // control queue bounded even if the browser emits noisy URL/error events.
-        if (pendingControls.length >= 4 && event !== "stop") {
-          const replaceable = pendingControls.findIndex(
-            (item) => item.event === "url" || item.event === "error",
-          );
-          if (replaceable >= 0) pendingControls.splice(replaceable, 1);
-          else return;
-        }
-        pendingControls.push({ event, chunk });
-      };
-
-      const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controllerRef = controller;
-          const send = (event: string, value: unknown) => {
-            if (disposed || stopped) return;
-            if (event === "frame") {
-              // A frame is a replaceable preview, not a durable event. Keep
-              // only the newest one while a slow client drains the stream.
-              pendingFrame = value;
-            } else {
-              queueControl(event, value);
-            }
-            flush();
-          };
-          const sendSnapshot = async () => {
-            if (disposed || stopped) return;
-            try {
-              const snapshot = await browser.screenshot({ fullPage: false }, threadId);
-              if (disposed || stopped || !("base64" in snapshot)) return;
-              const size = await browser.evaluate(
-                {
-                  script: "({ width: window.innerWidth, height: window.innerHeight })",
-                },
-                threadId,
-              );
-              if (disposed || stopped || !("result" in size)) return;
-              const viewport = z
-                .object({
-                  width: z.number().positive(),
-                  height: z.number().positive(),
-                })
-                .parse(size.result);
-              send("frame", {
-                data: snapshot.base64,
-                timestamp: Date.now(),
-                viewport,
-              });
-            } catch {
-              // The live screencast remains the primary source. A snapshot
-              // retry must not terminate an otherwise healthy stream.
-            }
-          };
-          const scheduleSnapshot = (delay: number) => {
-            if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
-            snapshotTimer = setTimeout(() => {
-              snapshotTimer = undefined;
-              void sendSnapshot();
-            }, delay);
-          };
-          send("state", { active: true });
-          screencast.on("frame", (frame: unknown) => send("frame", frame));
-          screencast.on("url", (url: unknown) => {
-            send("url", { url });
-            // Navigation can emit its URL before Chromium has painted the
-            // destination. A delayed snapshot fixes the static-page race
-            // without clearing the previous frame or restarting the stream.
-            scheduleSnapshot(250);
-          });
-          screencast.on("error", (error: { message?: string }) =>
-            send("error", { error: "browser_stream_failed", message: error.message }),
-          );
-          screencast.on("stop", (reason: unknown) => {
-            if (disposed || stopped) return;
-            stopped = true;
-            pendingFrame = undefined;
-            queueControl("stop", { reason });
-            flush();
-            closeIfDrained();
-          });
-
-          // startScreencast() starts CDP before returning the stream. For a
-          // static page such as about:blank, its only frame can arrive before
-          // the route attaches listeners. Take one explicit snapshot so the
-          // UI cannot remain in a permanent white "waiting" state.
-          // Retry after a short paint window. This covers about:blank and
-          // static pages whose only screencast frame arrived before the SSE
-          // listeners attached.
-          scheduleSnapshot(350);
-        },
-        pull() {
           flush();
-        },
-        async cancel() {
-          disposed = true;
-          if (snapshotTimer !== undefined) {
-            clearTimeout(snapshotTimer);
-            snapshotTimer = undefined;
+        };
+        const sendSnapshot = async () => {
+          if (disposed || stopped) return;
+          try {
+            const snapshot = await browser.screenshot({ fullPage: false }, threadId);
+            if (disposed || stopped || !("base64" in snapshot)) return;
+            const size = await browser.evaluate(
+              {
+                script: "({ width: window.innerWidth, height: window.innerHeight })",
+              },
+              threadId,
+            );
+            if (disposed || stopped || !("result" in size)) return;
+            const viewport = z
+              .object({
+                width: z.number().positive(),
+                height: z.number().positive(),
+              })
+              .parse(size.result);
+            send("frame", {
+              data: snapshot.base64,
+              timestamp: Date.now(),
+              viewport,
+            });
+          } catch {
+            // The live screencast remains the primary source. A snapshot
+            // retry must not terminate an otherwise healthy stream.
           }
+        };
+        const scheduleSnapshot = (delay: number) => {
+          if (snapshotTimer !== undefined) clearTimeout(snapshotTimer);
+          snapshotTimer = setTimeout(() => {
+            snapshotTimer = undefined;
+            void sendSnapshot();
+          }, delay);
+        };
+        send("state", { active: true });
+        screencast.on("frame", (frame: unknown) => send("frame", frame));
+        screencast.on("url", (url: unknown) => {
+          send("url", { url });
+          // Navigation can emit its URL before Chromium has painted the
+          // destination. A delayed snapshot fixes the static-page race
+          // without clearing the previous frame or restarting the stream.
+          scheduleSnapshot(250);
+        });
+        screencast.on("error", (error: { message?: string }) =>
+          send("error", { error: "browser_stream_failed", message: error.message }),
+        );
+        screencast.on("stop", (reason: unknown) => {
+          if (disposed || stopped) return;
+          stopped = true;
           pendingFrame = undefined;
-          pendingControls.length = 0;
-          await screencast.stop().catch(() => undefined);
-        },
-      });
-      return new Response(stream, {
-        headers: {
-          "Cache-Control": "no-cache, no-transform",
-          Connection: "keep-alive",
-          "Content-Type": "text/event-stream",
-        },
-      });
-    },
-  },
-);
+          queueControl("stop", { reason });
+          flush();
+          closeIfDrained();
+        });
 
-export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/browser/navigate", {
+        // startScreencast() starts CDP before returning the stream. For a
+        // static page such as about:blank, its only frame can arrive before
+        // the route attaches listeners. Take one explicit snapshot so the
+        // UI cannot remain in a permanent white "waiting" state.
+        // Retry after a short paint window. This covers about:blank and
+        // static pages whose only screencast frame arrived before the SSE
+        // listeners attached.
+        scheduleSnapshot(350);
+      },
+      pull() {
+        flush();
+      },
+      async cancel() {
+        disposed = true;
+        if (snapshotTimer !== undefined) {
+          clearTimeout(snapshotTimer);
+          snapshotTimer = undefined;
+        }
+        pendingFrame = undefined;
+        pendingControls.length = 0;
+        await screencast.stop().catch(() => undefined);
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "Content-Type": "text/event-stream",
+      },
+    });
+  },
+});
+
+const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/browser/navigate", {
   method: "POST",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -428,7 +425,7 @@ export const browserNavigateRoute = registerApiRoute("/work/threads/:threadId/br
   },
 });
 
-export const browserActionRoute = registerApiRoute("/work/threads/:threadId/browser/action", {
+const browserActionRoute = registerApiRoute("/work/threads/:threadId/browser/action", {
   method: "POST",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -524,7 +521,7 @@ export const browserActionRoute = registerApiRoute("/work/threads/:threadId/brow
   },
 });
 
-export const browserMouseRoute = registerApiRoute("/work/threads/:threadId/browser/mouse", {
+const browserMouseRoute = registerApiRoute("/work/threads/:threadId/browser/mouse", {
   method: "POST",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -543,7 +540,7 @@ export const browserMouseRoute = registerApiRoute("/work/threads/:threadId/brows
   },
 });
 
-export const browserKeyboardRoute = registerApiRoute("/work/threads/:threadId/browser/keyboard", {
+const browserKeyboardRoute = registerApiRoute("/work/threads/:threadId/browser/keyboard", {
   method: "POST",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -562,7 +559,7 @@ export const browserKeyboardRoute = registerApiRoute("/work/threads/:threadId/br
   },
 });
 
-export const browserKeyboardBatchRoute = registerApiRoute(
+const browserKeyboardBatchRoute = registerApiRoute(
   "/work/threads/:threadId/browser/keyboard/batch",
   {
     method: "POST",
@@ -586,7 +583,7 @@ export const browserKeyboardBatchRoute = registerApiRoute(
   },
 );
 
-export const browserCloseRoute = registerApiRoute("/work/threads/:threadId/browser", {
+const browserCloseRoute = registerApiRoute("/work/threads/:threadId/browser", {
   method: "DELETE",
   handler: async (c) => {
     const owned = await ownedBrowserThread(c);
@@ -617,7 +614,7 @@ export const browserCloseRoute = registerApiRoute("/work/threads/:threadId/brows
   },
 });
 
-export const browserConfigRoute = registerApiRoute("/work/browser/config", {
+const browserConfigRoute = registerApiRoute("/work/browser/config", {
   method: "GET",
   handler: async (c) => {
     const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
@@ -625,7 +622,7 @@ export const browserConfigRoute = registerApiRoute("/work/browser/config", {
   },
 });
 
-export const saveBrowserConfigRoute = registerApiRoute("/work/browser/config", {
+const saveBrowserConfigRoute = registerApiRoute("/work/browser/config", {
   method: "POST",
   handler: async (c) => {
     try {

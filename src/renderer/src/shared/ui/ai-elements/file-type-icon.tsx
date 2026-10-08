@@ -227,7 +227,7 @@ function iconSource(name: string, visited = new Set<string>()): IconSource | und
     : undefined;
 }
 
-export function MaterialIcon({
+function MaterialIcon({
   name,
   className,
   ...props
@@ -254,7 +254,6 @@ export function MaterialIcon({
 }
 
 /** 兼容别名 */
-export const VscodeIcon = MaterialIcon;
 
 function mimeIcon(mediaType?: string) {
   if (!mediaType) return undefined;

@@ -262,7 +262,7 @@ const MIME_TYPES: Record<string, string> = {
   gz: "application/gzip",
 };
 
-export function getMimeType(filePath: string): string {
+function getMimeType(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
   return MIME_TYPES[ext] || "application/octet-stream";
 }

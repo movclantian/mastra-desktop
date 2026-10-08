@@ -147,28 +147,7 @@ import "@fontsource/shippori-mincho/800.css";
  * 主题字体加载完成标记。
  * 供 ThemeProvider 在切换主题时用于诊断(可选)。
  */
-export const THEME_FONTS_LOADED = true;
 
 /**
  * 字体包与主题的映射关系,供调试或按需懒加载扩展使用。
  */
-export const THEME_FONT_MAP: Record<string, string[]> = {
-  default: ["system-ui"],
-  boldkit: ["Space Grotesk", "Public Sans", "Space Mono"],
-  neobrutalism: ["Space Grotesk", "Public Sans", "Space Mono"],
-  retroui: ["Bricolage Grotesque Variable", "Plus Jakarta Sans", "Space Mono"],
-  saaskit: ["Plus Jakarta Sans", "Inter", "Space Mono"],
-  pouf: ["Nunito", "Plus Jakarta Sans", "JetBrains Mono"],
-  glasscn: ["Plus Jakarta Sans", "Inter"],
-  einui: ["Plus Jakarta Sans", "Inter", "JetBrains Mono", "Fira Code"],
-  sabraman: ["Helvetica Neue", "Lucida Grande"],
-  thegridcn: ["Orbitron", "Rajdhani", "Space Grotesk", "Space Mono"],
-  gymnopedies: ["Cormorant Garamond", "Cinzel", "JetBrains Mono"],
-  atroui: ["Plus Jakarta Sans", "Inter", "JetBrains Mono"],
-  usva: ["Inter", "Geist", "Plus Jakarta Sans", "Geist Mono"],
-  "8bitcn": ["Press Start 2P", "Silkscreen", "Space Mono"],
-  pixelact: ["VT323", "Silkscreen", "Space Mono"],
-  washiveil: ["Noto Serif SC Variable", "Shippori Mincho", "Cormorant Garamond"],
-  whiskeyjack: ["system-ui", "Inter", "JetBrains Mono"],
-  motion: ["Inter", "Geist", "Plus Jakarta Sans", "JetBrains Mono"],
-};

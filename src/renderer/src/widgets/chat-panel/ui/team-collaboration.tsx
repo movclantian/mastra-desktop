@@ -298,7 +298,12 @@ export function HandoffPanel({
   return (
     <>
       <div className="mx-auto mb-2 flex w-full max-w-3xl min-w-0 shrink-0 flex-wrap items-center gap-2 rounded-lg border p-2">
-        <ProfileAvatar name={member.name} avatar={member.avatar} />
+        <ProfileAvatar
+          profileId={profile.id}
+          memberId={member.id}
+          name={member.name}
+          state={busy ? "working" : "default"}
+        />
         <div className="min-w-0 flex-1">
           <p className="text-xs text-muted-foreground">{t("agentHub:currentExpert")}</p>
           <p className="break-words text-sm font-medium">{member.name}</p>
