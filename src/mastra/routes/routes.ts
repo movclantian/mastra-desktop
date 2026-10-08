@@ -15,6 +15,7 @@ import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from 
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import { contentObjectRoute } from "./contents";
+import { conversationWorkflowRoutes } from "./conversation-runs";
 import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
@@ -68,7 +69,6 @@ import { sessionRoutes } from "./session";
 import { shutdownRoute } from "./shutdown";
 import { signalRoutes } from "./signals";
 import { storageInfoRoute } from "./storage";
-import { teamWorkflowRoutes } from "./team-runs";
 import { threadRoutes } from "./threads/threads";
 import { computerRoutes, saveToolsConfigRoute, toolsConfigRoute } from "./tools";
 import { usageSummaryRoute } from "./usage";
@@ -87,7 +87,7 @@ import {
 
 export const workRoutes = [
   ...pluginRoutes,
-  ...teamWorkflowRoutes,
+  ...conversationWorkflowRoutes,
   contentObjectRoute,
   inlineCompletionRoute,
   inlineEditRoute,

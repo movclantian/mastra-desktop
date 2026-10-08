@@ -605,10 +605,9 @@ export const zh = {
     },
     providers: {
       modelKind: "模型用途",
-      gatewayDefaultUrl: "留空使用 AI SDK 官方网关地址",
       modelKinds: { language: "对话", image: "生图", video: "生视频" },
-      aiGatewayHint:
-        "统一接入多家厂商的对话、图片和视频模型。使用 AI SDK Gateway 协议及其 API Key，模型用途会从网关目录识别。聊天请选择对话模型，图片和视频由 Agent 调用生成工具。",
+      modelKindHint:
+        "启用后可在聊天模型选择器中直接选择。用途根据 models.dev 和供应商提供的输出能力自动识别；供应商需支持对应的生成接口。",
       searchPlaceholder: "搜索供应商...",
       addGateway: "添加自定义网关",
       expandList: "展开供应商列表",
@@ -2060,7 +2059,7 @@ export const zh = {
       queueAlreadyStarted: "原消息已离开队列。为避免重复发送，保留你的编辑内容供复制。",
       queueSyncFailed: "队列同步失败，请检查连接",
       queueActionFailed: "未能更新队列",
-      workflowQueueUnavailable: "显式团队流程不支持消息排队，请等待流程结束后发送。",
+      workflowQueueUnavailable: "生成或团队流程不支持消息排队，请等待当前任务结束后发送。",
       partialFilesAdded: "部分资料未添加: 已达到附件数量或上下文预算",
       removeAttachment: "移除 {{filename}}",
       skillRefAria: "技能引用 {{name}}",
@@ -2094,10 +2093,11 @@ export const zh = {
       waitingApproval: "等待批准后开始生成。",
       image: "图片生成",
       video: "视频生成",
-      generating: "正在生成，完成后会自动显示。你可以停止当前回复来取消等待。",
+      generating: "正在生成，完成后会自动显示。",
       loading: "正在加载生成文件…",
       loadFailed: "生成文件加载失败",
-      failed: "生成失败，详情见工具执行记录。",
+      failed: "生成失败，请查看错误详情后重试。",
+      canceled: "已停止等待生成结果。",
       preview: "打开预览",
       download: "下载",
     },
@@ -3302,6 +3302,9 @@ export const zh = {
     },
     MODEL_SELECTION_REQUIRED: {
       title: "请先选择一个模型",
+    },
+    PROVIDER_CREDENTIAL_UNAVAILABLE: {
+      title: "模型供应商凭据不可用",
     },
     PROVIDER_MODELS_FETCH_FAILED: {
       title: "拉取模型列表失败",

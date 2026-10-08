@@ -1,6 +1,7 @@
 /** Desktop message presentation, using the official AI SDK converter. */
 import { toAISdkMessages } from "@mastra/ai-sdk/ui";
 import type { MastraDBMessage } from "@mastra/core/agent";
+import { generatedMediaSchema, mediaGenerationStateSchema } from "../../../shared/agent-contract";
 import {
   LIBRARY_SEARCH_TOOL_NAMES,
   type LibraryCitationSource,
@@ -14,6 +15,23 @@ function getLibraryToolName(part: Record<string, unknown>): string | undefined {
   }
   if (typeof part.type !== "string" || !part.type.startsWith("tool-")) return undefined;
   return part.type.slice("tool-".length);
+}
+
+/** Direct generations and native generation tools reference the same library assets. */
+export function generatedFilesInMessage(message: { parts: unknown[] }) {
+  return message.parts.flatMap((raw) => {
+    if (!raw || typeof raw !== "object") return [];
+    const part = raw as Record<string, unknown>;
+    const name = getLibraryToolName(part);
+    const result =
+      part.type === "data-media-generation"
+        ? mediaGenerationStateSchema.safeParse(part.data).data?.result
+        : (name === "generate_image" || name === "generate_video") &&
+            part.state === "output-available"
+          ? generatedMediaSchema.safeParse(part.output).data
+          : undefined;
+    return result?.files ?? [];
+  });
 }
 
 function appendLibrarySourceParts<
@@ -97,11 +115,21 @@ export function workbenchMessages(messages: MastraDBMessage[]) {
   const timestamps = new Map(history.map((message) => [message.id, message.createdAt]));
   return appendLibrarySourceParts(
     restoreFileFilenames(toAISdkMessages(history, { version: "v7" }), history),
-  ).map((message) => ({
-    ...message,
-    metadata: {
-      ...(message.metadata && typeof message.metadata === "object" ? message.metadata : {}),
-      createdAt: timestamps.get(message.id),
-    },
-  }));
+  ).map((message) => {
+    const metadata =
+      message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+    const media = mediaGenerationStateSchema.safeParse(
+      (metadata as Record<string, unknown>).mediaGeneration,
+    );
+    return {
+      ...message,
+      parts: media.success
+        ? [
+            ...message.parts,
+            { type: "data-media-generation" as const, id: message.id, data: media.data },
+          ]
+        : message.parts,
+      metadata: { ...metadata, createdAt: timestamps.get(message.id) },
+    };
+  });
 }

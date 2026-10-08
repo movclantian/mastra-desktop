@@ -196,6 +196,12 @@ const WORK_ERRORS = {
     status: 400,
     text: "selection is required",
   },
+  PROVIDER_CREDENTIAL_UNAVAILABLE: {
+    domain: ErrorDomain.MODEL_ROUTER,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "模型供应商凭据不可用，请检查连接配置",
+  },
   MODEL_GENERATION_FAILED: {
     domain: ErrorDomain.MODEL_ROUTER,
     category: ErrorCategory.THIRD_PARTY,

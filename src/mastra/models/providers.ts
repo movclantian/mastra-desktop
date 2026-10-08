@@ -6,6 +6,8 @@
  * resolveRequestModel 供 chat / session 路由按请求覆盖模型 —— 路由 id 只携带
  * provider/model,URL 与 API Key 始终在服务端解析,不经请求体下发。
  */
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenAI } from "@ai-sdk/openai";
 import {
   type GatewayLanguageModel,
   getProviderConfig,
@@ -20,14 +22,21 @@ import {
   wrapLanguageModel,
 } from "ai";
 import { z } from "zod";
-import { MODEL_KINDS } from "../../shared/agent-contract";
 import {
+  enabledModelSelectionSchema,
+  inferModelKind,
+  MODEL_KINDS,
+  type ModelKind,
+} from "../../shared/agent-contract";
+import {
+  CredentialError,
   CredentialHintSchema,
   providerCredentialPurpose,
   SecretRefSchema,
 } from "../../shared/credential-contract";
 import { MODELS_DEV_API_URL } from "../../shared/proxy-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
+import { errorText, workError } from "../errors";
 import { readContentObject } from "../storage/content-objects";
 import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
 
@@ -45,7 +54,7 @@ class ConfiguredModelsGateway extends ModelsDevGateway {
     return this.baseUrl;
   }
 }
-type GatewayProtocol = "openai" | "anthropic" | "gemini" | "gateway";
+type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 // One catalog serves both model discovery and runtime memory budgets.
 type Catalog = Record<string, unknown>;
@@ -248,8 +257,7 @@ function screenshotMiddleware(resourceId?: string): LanguageModelMiddleware {
 }
 
 /** Resolve the SDK protocol from Mastra's provider registry metadata. */
-function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
-  if (registryId === "vercel") return "gateway";
+export function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
   const provider = getProviderConfig(registryId.trim());
   if (!provider) return undefined;
   const npm = provider.npm?.toLowerCase() ?? "";
@@ -264,26 +272,19 @@ export const REQUEST_MODEL_ID_CONTEXT_KEY = "mastra-work:request-model-id";
 
 const PROVIDERS_CONFIG_KEY = "providers";
 
-const enabledModelSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string(),
-    kind: z.enum(MODEL_KINDS).default("language"),
-  })
-  .strict();
 const providerSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
     name: z.string().min(1).max(128),
     registryId: z.string().min(1).max(128).optional(),
-    protocol: z.enum(["openai", "anthropic", "gemini", "gateway"]).optional(),
+    protocol: z.enum(["openai", "anthropic", "gemini"]).optional(),
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     useResponses: z.boolean().optional(),
     credentialRef: SecretRefSchema,
     credentialHint: CredentialHintSchema,
     hasCredential: z.literal(true),
     disabled: z.boolean().optional(),
-    enabledModels: z.array(enabledModelSchema),
+    enabledModels: z.array(enabledModelSelectionSchema),
   })
   .strict();
 const modelSelectionSchema = z
@@ -314,7 +315,7 @@ function providerScopeKey(resourceId?: string): string {
   return resourceId?.trim() || "__system__";
 }
 
-export async function getProvidersConfig(resourceId?: string): Promise<ProvidersUserConfig> {
+async function readProvidersConfig(resourceId?: string): Promise<ProvidersUserConfig> {
   const scope = providerScopeKey(resourceId);
   const cached = providersConfigCache.get(scope);
   if (cached) return cached;
@@ -333,13 +334,130 @@ export async function getProvidersConfig(resourceId?: string): Promise<Providers
   }
 }
 
+const catalogKindIndexes = new WeakMap<Catalog, Map<string, ModelKind | undefined>>();
+const outputModalitiesSchema = z.object({
+  modalities: z.object({ output: z.array(z.string()).min(1) }),
+});
+
+/** Prefer the exact provider; ambiguous model IDs need the serving provider's metadata. */
+function catalogModelKind(catalog: Catalog, providerId: string | undefined, modelId: string) {
+  let index = catalogKindIndexes.get(catalog);
+  if (!index) {
+    index = new Map();
+    for (const [id, provider] of Object.entries(catalog)) {
+      const models = (provider as { models?: Record<string, unknown> } | undefined)?.models;
+      for (const [modelId, value] of Object.entries(models ?? {})) {
+        const metadata = outputModalitiesSchema.safeParse(value).data;
+        if (!metadata) continue;
+        const kind = inferModelKind(modelId, { outputModalities: metadata.modalities.output });
+        index.set(JSON.stringify([id, modelId]), kind);
+        const key = JSON.stringify([null, modelId]);
+        index.set(key, index.has(key) && index.get(key) !== kind ? undefined : kind);
+      }
+    }
+    catalogKindIndexes.set(catalog, index);
+  }
+  return (
+    index.get(JSON.stringify([providerId, modelId])) ?? index.get(JSON.stringify([null, modelId]))
+  );
+}
+
+const providerKindsSchema = z.object({
+  connection: z.string(),
+  models: z.record(z.string(), z.enum(MODEL_KINDS)),
+});
+const providerKindsCache = new Map<string, Record<string, ModelKind>>();
+function providerConnectionKey(provider: UserProviderConfig) {
+  return JSON.stringify([
+    provider.id,
+    provider.registryId,
+    provider.protocol,
+    provider.baseUrl,
+    provider.credentialRef,
+  ]);
+}
+
+/** Only model discovery writes these facts; changing the connection invalidates them. */
+export async function rememberProviderModelKinds(
+  provider: UserProviderConfig,
+  models: Array<{ id: string; kind?: string }>,
+  resourceId?: string,
+) {
+  const connection = providerConnectionKey(provider);
+  const snapshot = providerKindsSchema.parse({
+    connection,
+    models: Object.fromEntries(
+      models.flatMap((model) => (model.kind ? [[model.id, model.kind]] : [])),
+    ),
+  });
+  await setAppConfig(`provider-model-kinds:${provider.id}`, JSON.stringify(snapshot), resourceId);
+  providerKindsCache.set(
+    JSON.stringify([providerScopeKey(resourceId), connection]),
+    snapshot.models,
+  );
+}
+
+async function readProviderModelKinds(provider: UserProviderConfig, resourceId?: string) {
+  const connection = providerConnectionKey(provider);
+  const key = JSON.stringify([providerScopeKey(resourceId), connection]);
+  const cached = providerKindsCache.get(key);
+  if (cached) return cached;
+  const raw = await getAppConfig(`provider-model-kinds:${provider.id}`, resourceId);
+  let models: Record<string, ModelKind> = {};
+  if (raw) {
+    try {
+      const snapshot = providerKindsSchema.parse(JSON.parse(raw));
+      if (snapshot.connection === connection) models = snapshot.models;
+    } catch (error) {
+      console.warn("Ignoring invalid provider model metadata", error);
+    }
+  }
+  providerKindsCache.set(key, models);
+  return models;
+}
+
+export async function resolveProviderModelKind(
+  provider: UserProviderConfig,
+  modelId: string,
+  resourceId?: string,
+) {
+  const catalog = await fetchModelsDevCatalog().catch(() => ({}));
+  return (
+    catalogModelKind(catalog, provider.registryId, modelId) ??
+    (await readProviderModelKinds(provider, resourceId))[modelId] ??
+    inferModelKind(modelId)
+  );
+}
+
+/** Every consumer gets the same current capabilities, including tools and default selection. */
+export async function getProvidersConfig(resourceId?: string) {
+  const config = await readProvidersConfig(resourceId);
+  const catalog = config.providers.length ? await fetchModelsDevCatalog().catch(() => ({})) : {};
+  const providers = await Promise.all(
+    config.providers.map(async (provider) => {
+      const discovered = await readProviderModelKinds(provider, resourceId);
+      return {
+        ...provider,
+        enabledModels: provider.enabledModels.map((model) => ({
+          ...model,
+          kind:
+            catalogModelKind(catalog, provider.registryId, model.id) ??
+            discovered[model.id] ??
+            inferModelKind(model.id),
+        })),
+      };
+    }),
+  );
+  return { ...config, providers };
+}
+
 /**
  * 写入供应商配置。按字段合并:
  * 只传 providers 只覆盖供应商清单, 只传 modelSelection 只覆盖默认选定模型。
  */
 export async function saveProvidersConfig(config: unknown, resourceId?: string): Promise<void> {
   const patch = providersPatchSchema.parse(config);
-  const current = await getProvidersConfig(resourceId);
+  const current = await readProvidersConfig(resourceId);
   const next: ProvidersUserConfig = {
     providers: patch.providers ?? current.providers,
     modelSelection:
@@ -350,14 +468,21 @@ export async function saveProvidersConfig(config: unknown, resourceId?: string):
     !next.providers.some(
       (provider) =>
         provider.id === next.modelSelection?.providerId &&
-        provider.enabledModels.some(
-          (model) => model.id === next.modelSelection?.modelId && model.kind === "language",
-        ),
+        provider.enabledModels.some((model) => model.id === next.modelSelection?.modelId),
     )
   )
     next.modelSelection = null;
   if (patch.providers) {
-    await Promise.all(patch.providers.map(resolveProviderCredential));
+    const previous = new Map(
+      current.providers.map((provider) => [provider.id, provider.credentialRef]),
+    );
+    // Existing invalid connections must not prevent repairing another provider.
+    // Every newly supplied reference still has to pass the broker's purpose check.
+    await Promise.all(
+      patch.providers
+        .filter((provider) => previous.get(provider.id) !== provider.credentialRef)
+        .map(resolveProviderCredential),
+    );
   }
   await setAppConfig(PROVIDERS_CONFIG_KEY, JSON.stringify(next, null, 2), resourceId);
   providersConfigCache.set(providerScopeKey(resourceId), next);
@@ -373,13 +498,6 @@ export async function saveProvidersConfig(config: unknown, resourceId?: string):
         ),
     );
   }
-}
-
-/** 可用供应商 = 未禁用、有 Key、且至少启用了一个模型 */
-function usableProviders(config: ProvidersUserConfig): UserProviderConfig[] {
-  return config.providers.filter(
-    (provider) => !provider.disabled && provider.hasCredential && provider.enabledModels.length > 0,
-  );
 }
 
 /** 模型路由前缀: 内置供应商用 registryId, 自定义网关用自身 id */
@@ -408,7 +526,18 @@ function isRequestModel(value: unknown): value is RequestModel {
 }
 
 async function resolveProviderCredential(provider: UserProviderConfig): Promise<string> {
-  return resolveCredential(provider.credentialRef, providerCredentialPurpose(provider.id));
+  try {
+    return await resolveCredential(provider.credentialRef, providerCredentialPurpose(provider.id));
+  } catch (error) {
+    throw workError("PROVIDER_CREDENTIAL_UNAVAILABLE", {
+      text: `模型供应商「${provider.name}」：${errorText(error, "凭据读取失败")}`,
+      details: {
+        providerId: provider.id,
+        ...(error instanceof CredentialError ? { reason: error.code } : {}),
+      },
+      cause: error,
+    });
+  }
 }
 
 /** 前端 body.model 携带模型路由 id; 真正的 URL、协议和 Key 始终从服务端读取 */
@@ -427,23 +556,26 @@ export async function resolveConfiguredModel(
   modelId: string,
   resourceId?: string,
 ): Promise<GatewayLanguageModel | undefined> {
-  if (!providerId.trim() || !modelId.trim()) return undefined;
-  const config = await getProvidersConfig(resourceId);
-  const provider = config.providers.find((candidate) => candidate.id === providerId);
+  const selection = await resolveModelSelection(`${providerId}/${modelId}`, resourceId);
+  if (selection?.model.kind !== "language") return undefined;
+  return createProviderModel(selection.provider, modelId, resourceId);
+}
 
-  if (!provider || provider.disabled) return undefined;
-  // A route is valid only when the model is explicitly enabled for this
-  // provider. This keeps persisted subagent selections and request overrides
-  // aligned with the same catalog used by the model picker.
-  if (!provider.enabledModels.some((model) => model.id === modelId && model.kind === "language"))
-    return undefined;
-  return createProviderModel(provider, modelId, resourceId);
+/** Validate any selectable model without constructing a language-only SDK client. */
+export async function resolveModelSelection(routerId: string, resourceId?: string) {
+  const { providerId, modelId } = splitRouterId(routerId);
+  if (!providerId || !modelId) return undefined;
+  const { providers } = await getProvidersConfig(resourceId);
+  const provider = providers.find((candidate) => candidate.id === providerId);
+  if (!provider || provider.disabled || !provider.hasCredential) return undefined;
+  const model = provider.enabledModels.find((candidate) => candidate.id === modelId);
+  return model ? { provider, model } : undefined;
 }
 
 /** Select native protocol dispatch without changing the upstream model ID. */
 function providerModelRoute(provider: UserProviderConfig, modelId: string) {
   const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "") ?? "openai";
-  if (!provider.baseUrl && protocol !== "gateway") {
+  if (!provider.baseUrl) {
     const registry = provider.registryId ? getProviderConfig(provider.registryId) : undefined;
     if (!registry || !provider.registryId)
       throw new Error(`Unknown model provider: ${provider.registryId ?? provider.id}`);
@@ -488,11 +620,7 @@ export async function createProviderModel(
   modelId: string,
   resourceId?: string,
 ): Promise<GatewayLanguageModel | undefined> {
-  if (
-    !modelId.trim() ||
-    !provider.hasCredential ||
-    (!provider.registryId && !provider.baseUrl && provider.protocol !== "gateway")
-  ) {
+  if (!modelId.trim() || !provider.hasCredential || (!provider.registryId && !provider.baseUrl)) {
     return undefined;
   }
   const route = providerModelRoute(provider, modelId);
@@ -501,7 +629,7 @@ export async function createProviderModel(
     ? new ConfiguredModelsGateway({ [route.providerId]: route.config }, provider.baseUrl)
     : REGISTRY_GATEWAY;
   const model =
-    route.protocol === "gateway"
+    provider.registryId === "vercel"
       ? createGateway({
           apiKey,
           ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
@@ -526,6 +654,40 @@ export async function createProviderModel(
         : []),
     ],
   });
+}
+
+/** The connection protocol selects the official SDK; credentials never leave the host. */
+export async function createProviderMediaModel(
+  provider: UserProviderConfig,
+  modelId: string,
+  kind: "image" | "video",
+) {
+  const apiKey = await resolveProviderCredential(provider);
+  if (provider.registryId === "vercel") {
+    const gateway = createGateway({
+      apiKey,
+      ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+    });
+    return kind === "image"
+      ? ({ kind, model: gateway.image(modelId) } as const)
+      : ({ kind, model: gateway.video(modelId) } as const);
+  }
+  const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "");
+  const baseURL = provider.baseUrl ?? getProviderConfig(provider.registryId ?? "")?.url;
+  const settings = { apiKey, ...(baseURL ? { baseURL } : {}) };
+  if (protocol === "gemini") {
+    const google = createGoogleGenerativeAI(settings);
+    return kind === "image"
+      ? ({ kind, model: google.image(modelId) } as const)
+      : ({ kind, model: google.video(modelId) } as const);
+  }
+  if (protocol === "openai" && kind === "image")
+    return { kind, model: createOpenAI(settings).image(modelId) } as const;
+  throw new Error(
+    protocol === "anthropic"
+      ? "Anthropic Messages 协议不提供图片或视频生成接口。请在该供应商支持的 OpenAI Compatible 或 Gemini 连接中启用生成模型。"
+      : "此连接的 OpenAI Compatible 协议没有 AI SDK 支持的视频接口。请使用供应商的 Gemini 视频接口或已支持视频的内置供应商；仅填写视频模型名无法确定非标准视频 API。",
+  );
 }
 
 /** 当前请求模型的家族名 (Mastra registry id) */
@@ -561,28 +723,31 @@ export async function usesOpenAIResponses(
 /** Resolve the user's selected model, or the first enabled model for a new configuration. */
 export async function resolveDefaultModelId(
   resourceId?: string,
+  kind?: ModelKind,
 ): Promise<`${string}/${string}` | undefined> {
   const config = await getProvidersConfig(resourceId);
   const selection = config.modelSelection;
   const provider = selection
     ? config.providers.find((candidate) => candidate.id === selection.providerId)
     : undefined;
-  if (selection) {
-    if (
-      !provider ||
-      provider.disabled ||
-      !provider.hasCredential ||
-      !provider.enabledModels.some(
-        (model) => model.id === selection.modelId && model.kind === "language",
-      )
+  if (
+    selection &&
+    provider &&
+    !provider.disabled &&
+    provider.hasCredential &&
+    provider.enabledModels.some(
+      (model) => model.id === selection.modelId && (!kind || model.kind === kind),
     )
-      return undefined;
+  ) {
     return `${provider.id}/${selection.modelId}`;
   }
-  const fallback = usableProviders(config).find((candidate) =>
-    candidate.enabledModels.some((model) => model.kind === "language"),
+  const fallback = config.providers.find(
+    (candidate) =>
+      !candidate.disabled &&
+      candidate.hasCredential &&
+      candidate.enabledModels.some((model) => !kind || model.kind === kind),
   );
-  const fallbackModel = fallback?.enabledModels.find((model) => model.kind === "language");
+  const fallbackModel = fallback?.enabledModels.find((model) => !kind || model.kind === kind);
   if (!fallback || !fallbackModel) return undefined;
   return `${fallback.id}/${fallbackModel.id}`;
 }
@@ -590,7 +755,7 @@ export async function resolveDefaultModelId(
 export async function resolveDefaultLanguageModel(
   resourceId?: string,
 ): Promise<GatewayLanguageModel | undefined> {
-  const modelId = await resolveDefaultModelId(resourceId);
+  const modelId = await resolveDefaultModelId(resourceId, "language");
   return modelId ? resolveRequestModel({ id: modelId }, resourceId) : undefined;
 }
 
@@ -606,7 +771,9 @@ async function resolveContextModelId(requestContext?: {
     return controller.session.modelId;
   }
   const modelId = requestContext?.get(REQUEST_MODEL_ID_CONTEXT_KEY);
-  return typeof modelId === "string" && modelId ? modelId : resolveDefaultModelId(resourceId);
+  return typeof modelId === "string" && modelId
+    ? modelId
+    : resolveDefaultModelId(resourceId, "language");
 }
 
 export async function resolveContextModel(requestContext?: {

@@ -23,6 +23,7 @@ import {
   getModelCapabilities,
   getModelContextWindow,
   getModelDisplayName,
+  getModelKind,
   invalidateProviderModelsCache,
   type ProviderConfig,
   qk,
@@ -57,7 +58,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/shared/ui/separator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Switch } from "@/shared/ui/switch";
-import { MODEL_KINDS, type ModelKind } from "../../../../../../shared/agent-contract";
 import { providerCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { CapabilityBadges } from "../controls";
 
@@ -90,9 +90,10 @@ function useProviderEditor() {
         providers: next,
         modelSelection: current?.modelSelection ?? null,
       }));
-      void saveProviderConfig({ providers: next }).catch(() =>
-        toast.error(t("settings:providers.saveFailed")),
-      );
+      void saveProviderConfig({ providers: next }).catch((error) => {
+        void queryClient.invalidateQueries({ queryKey: qk.providerConfig() });
+        toastError(error, t("settings:providers.saveFailed"));
+      });
     },
     [queryClient, t],
   );
@@ -620,7 +621,7 @@ function ProviderConnectionDialog({
   const { providers, saveProviders } = useProviderEditor();
   const [name, setName] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
-  const [protocol, setProtocol] = React.useState<GatewayProtocol>("gateway");
+  const [protocol, setProtocol] = React.useState<GatewayProtocol>("openai");
   const [baseUrl, setBaseUrl] = React.useState("");
   const [useResponses, setUseResponses] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -641,7 +642,7 @@ function ProviderConnectionDialog({
     } else {
       setName("");
       setApiKey("");
-      setProtocol("gateway");
+      setProtocol("openai");
       setBaseUrl("");
       setUseResponses(false);
     }
@@ -666,7 +667,7 @@ function ProviderConnectionDialog({
       toast.error(t("settings:providers.pleaseEnterName"));
       return;
     }
-    if (showGatewayFields && protocol !== "gateway" && !baseUrl.trim()) {
+    if (showGatewayFields && !baseUrl.trim()) {
       toast.error(t("settings:providers.pleaseEnterUrl"));
       return;
     }
@@ -783,13 +784,11 @@ function ProviderConnectionDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {protocol === "gateway"
-                    ? t("settings:providers.aiGatewayHint")
-                    : protocol === "anthropic"
-                      ? t("settings:providers.anthropicProtocolHint")
-                      : protocol === "gemini"
-                        ? t("settings:providers.geminiProtocolHint")
-                        : t("settings:providers.openaiProtocolHint")}
+                  {protocol === "anthropic"
+                    ? t("settings:providers.anthropicProtocolHint")
+                    : protocol === "gemini"
+                      ? t("settings:providers.geminiProtocolHint")
+                      : t("settings:providers.openaiProtocolHint")}
                 </p>
               </div>
               <div className="flex flex-col gap-2">
@@ -798,11 +797,7 @@ function ProviderConnectionDialog({
                   <Input
                     id="connection-url"
                     className="flex-1"
-                    placeholder={t(
-                      protocol === "gateway"
-                        ? "settings:providers.gatewayDefaultUrl"
-                        : "settings:providers.serviceAddressPlaceholder",
-                    )}
+                    placeholder={t("settings:providers.serviceAddressPlaceholder")}
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
                   />
@@ -1121,9 +1116,9 @@ function ModelListSection({
   const addCustomModel = () => {
     const id = query.trim();
     if (!id || !canAddCustom) return;
-    const customModel = { id, name: id };
+    const customModel = { id, name: id, kind: getModelKind(provider, id, catalog) };
     setModels((prev) => (prev.some((model) => model.id === id) ? prev : [...prev, customModel]));
-    patchProvider({ enabledModels: [...provider.enabledModels, { id, name: id }] });
+    patchProvider({ enabledModels: [...provider.enabledModels, customModel] });
     setQuery("");
     toast.success(t("settings:providers.customModelAdded", { id }));
   };
@@ -1181,13 +1176,12 @@ function ModelListSection({
       </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="divide-y">
+          <p className="px-4 py-2 text-xs text-muted-foreground">
+            {t("settings:providers.modelKindHint")}
+          </p>
           {orderedModels.map((model) => {
             const enabled = enabledIds.has(model.id);
-            const kind =
-              provider.enabledModels.find((item) => item.id === model.id)?.kind ??
-              model.kind ??
-              "language";
-            const gateway = provider.protocol === "gateway" || provider.registryId === "vercel";
+            const kind = getModelKind(provider, model.id, catalog, model.kind);
             const isCustomModel = !initialModelIds.has(model.id);
             const caps = getModelCapabilities(provider, model.id, catalog);
             const contextWindow = getModelContextWindow(provider, model.id, catalog);
@@ -1214,40 +1208,13 @@ function ModelListSection({
                     ) : null}
                   </div>
                 </div>
-                <Select
-                  value={kind}
-                  onValueChange={(value) => {
-                    if (!value) return;
-                    const updated = { ...model, kind: value as ModelKind };
-                    setModels((current) =>
-                      current.map((item) => (item.id === model.id ? updated : item)),
-                    );
-                    if (enabled)
-                      patchProvider({
-                        enabledModels: provider.enabledModels.map((item) =>
-                          item.id === model.id ? updated : item,
-                        ),
-                      });
-                  }}
+                <Badge
+                  variant="secondary"
+                  className="shrink-0 text-[10px]"
+                  title={t("settings:providers.modelKind")}
                 >
-                  <SelectTrigger
-                    className="h-7 w-24 shrink-0"
-                    aria-label={t("settings:providers.modelKind")}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODEL_KINDS.map((value) => (
-                      <SelectItem
-                        key={value}
-                        value={value}
-                        disabled={value !== "language" && !gateway}
-                      >
-                        {t(`settings:providers.modelKinds.${value}`)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {t(`settings:providers.modelKinds.${kind}`)}
+                </Badge>
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -1268,7 +1235,7 @@ function ModelListSection({
                     const enabledModels = nextEnabled
                       ? provider.enabledModels.some((m) => m.id === model.id)
                         ? provider.enabledModels
-                        : [...provider.enabledModels, model]
+                        : [...provider.enabledModels, { ...model, kind }]
                       : provider.enabledModels.filter((m) => m.id !== model.id);
                     patchProvider({ enabledModels });
                     if (!nextEnabled && isCustomModel) {

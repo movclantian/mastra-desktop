@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createConnection } from "node:net";
 import {
   CredentialBrokerResponseSchema,
+  CredentialError,
   type CredentialPointer,
   CredentialPurposeSchema,
   CredentialValueSchema,
@@ -57,7 +58,8 @@ export async function resolveCredential(secretRef: string, purpose: string): Pro
     secretRef: SecretRefSchema.parse(secretRef),
     purpose: CredentialPurposeSchema.parse(purpose),
   });
-  if (!result.ok || !result.value) throw new Error(result.ok ? "凭据为空" : result.error);
+  if (!result.ok) throw new CredentialError(result.code);
+  if (!result.value) throw new Error("凭据为空");
   return CredentialValueSchema.parse(result.value);
 }
 
@@ -72,8 +74,8 @@ export async function storeCredential(
     purpose: CredentialPurposeSchema.parse(purpose),
     ...(secretRef ? { secretRef: SecretRefSchema.parse(secretRef) } : {}),
   });
-  if (!result.ok || !result.credential)
-    throw new Error(result.ok ? "凭据写入结果无效" : result.error);
+  if (!result.ok) throw new CredentialError(result.code);
+  if (!result.credential) throw new Error("凭据写入结果无效");
   return result.credential;
 }
 
@@ -83,7 +85,7 @@ export async function deleteCredential(secretRef: string, purpose: string): Prom
     secretRef: SecretRefSchema.parse(secretRef),
     purpose: CredentialPurposeSchema.parse(purpose),
   });
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new CredentialError(result.code);
 }
 
 export function oauthCredentialPurpose(serverId: string, key: string): string {

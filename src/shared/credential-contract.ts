@@ -16,6 +16,29 @@ export const CredentialPurposeSchema = z
   );
 export const CredentialValueSchema = z.string().min(1).max(65_536);
 
+const CREDENTIAL_ERROR_MESSAGES = {
+  not_found: "凭据文件已丢失，请在对应连接配置中重新填写凭据。",
+  purpose_mismatch: "凭据与当前连接不匹配，请在该连接中重新填写凭据。",
+  invalid_record: "凭据文件已损坏，请在对应连接配置中重新填写凭据。",
+  key_unavailable: "凭据金库主密钥缺失或无法解密，请恢复完整金库备份；现有文件已保留。",
+  decrypt_failed: "凭据无法解密，金库密钥或系统账户可能已改变，请重新填写凭据。",
+  unauthorized: "凭据服务认证失败，请重新启动桌面应用。",
+  invalid_request: "凭据请求格式无效，请重新启动桌面应用后重试。",
+  unavailable: "凭据存储不可用，请检查用户数据目录和系统凭据服务。",
+} as const;
+export const CredentialErrorCodeSchema = z.enum(
+  Object.keys(CREDENTIAL_ERROR_MESSAGES) as Array<keyof typeof CREDENTIAL_ERROR_MESSAGES>,
+);
+export class CredentialError extends Error {
+  constructor(
+    readonly code: keyof typeof CREDENTIAL_ERROR_MESSAGES,
+    options?: ErrorOptions,
+  ) {
+    super(CREDENTIAL_ERROR_MESSAGES[code], options);
+    this.name = "CredentialError";
+  }
+}
+
 export const CredentialPointerSchema = z
   .object({
     credentialRef: SecretRefSchema,
@@ -80,7 +103,13 @@ export const CredentialBrokerResponseSchema = z.discriminatedUnion("ok", [
       credential: CredentialPointerSchema.optional(),
     })
     .strict(),
-  z.object({ ok: z.literal(false), error: z.string().min(1).max(256) }).strict(),
+  z
+    .object({
+      ok: z.literal(false),
+      code: CredentialErrorCodeSchema,
+      error: z.string().min(1).max(256),
+    })
+    .strict(),
 ]);
 
 export type CredentialPointer = z.infer<typeof CredentialPointerSchema>;

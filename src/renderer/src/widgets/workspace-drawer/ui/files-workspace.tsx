@@ -906,7 +906,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   // 只有激活实例上报 —— 见组件顶部关于 active 的说明。
   React.useEffect(() => {
     if (!active || !activeThreadId) return;
-    reportWorkbenchState(activeThreadId, user.id, {
+    return reportWorkbenchState(activeThreadId, user.id, {
       editor: {
         ...(activeThread?.metadata.workspacePath
           ? { workspacePath: activeThread.metadata.workspacePath }

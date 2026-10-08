@@ -26,6 +26,7 @@ import {
   REQUEST_MODEL_ID_CONTEXT_KEY,
   requestModelFamily,
   resolveDefaultModelId,
+  resolveModelSelection,
   resolveRequestModel,
   usesOpenAIResponses,
 } from "../models/providers";
@@ -151,9 +152,18 @@ export async function prepareWorkbenchMessage(
   });
   const result = await sessionFor(c, { threadId, resourceId, scope: "workbench" });
   const selectedModel = { id: result.controllerSession.model.get() };
+  const selection = await resolveModelSelection(selectedModel.id, resourceId);
+  if (!selection) throw workError("MODEL_NOT_CONFIGURED");
+  requestContext.set(REQUEST_MODEL_ID_CONTEXT_KEY, selectedModel.id);
+  if (selection.model.kind !== "language") {
+    if (options.goal || options.skillNames?.length)
+      throw workError("VALIDATION_FAILED", {
+        text: "直接生成图片或视频不执行目标或技能，请移除这些选项后发送",
+      });
+    return result;
+  }
   if (!(await resolveRequestModel(selectedModel, resourceId)))
     throw workError("MODEL_NOT_CONFIGURED");
-  requestContext.set(REQUEST_MODEL_ID_CONTEXT_KEY, selectedModel.id);
   const webSearch = parseWebSearchSelection(options.webSearch);
   if (webSearch) requestContext.set(WEB_SEARCH_CONTEXT_KEY, webSearch);
   const reasoningSummary = await usesOpenAIResponses(selectedModel, resourceId);

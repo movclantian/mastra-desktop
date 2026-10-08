@@ -1,6 +1,6 @@
 import type { LanguageModelUsage } from "ai";
 import { InfoIcon } from "lucide-react";
-import { getModelContextWindow } from "@/entities/workbench";
+import { getModelContextWindow, getModelKind } from "@/entities/workbench";
 import { useCatalogQuery, useProviderConfigQuery } from "@/entities/workbench/model/queries/config";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useTranslation } from "@/shared/i18n";
@@ -68,6 +68,7 @@ export function ChatContextUsage({
   if (!selectedProvider || !modelSelection) {
     return null;
   }
+  if (getModelKind(selectedProvider, modelSelection.modelId, catalog) !== "language") return null;
 
   const maxTokens = getModelContextWindow(selectedProvider, modelSelection.modelId, catalog);
   if (!maxTokens) {

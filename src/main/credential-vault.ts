@@ -5,13 +5,14 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import type { SafeStorage } from "electron";
 import { z } from "zod";
 import {
   CredentialBrokerRequestSchema,
+  CredentialError,
   type CredentialPointer,
   CredentialPointerSchema,
   CredentialPurposeSchema,
@@ -54,7 +55,7 @@ export class CredentialVault {
 
   private assertProtectedStorage(): void {
     if (!this.storage.isEncryptionAvailable()) {
-      throw new Error("系统凭据存储不可用，凭据金库无法启动");
+      throw new CredentialError("unavailable");
     }
   }
 
@@ -74,8 +75,12 @@ export class CredentialVault {
       this.dataKey = key;
       return key;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        throw new CredentialError("key_unavailable", { cause: error });
     }
+    // Never silently replace a missing master key while encrypted credentials still exist.
+    if ((await readdir(this.directory)).some((name) => /^secret_[a-f0-9]{32}\.json$/.test(name)))
+      throw new CredentialError("key_unavailable");
     const key = randomBytes(32);
     const encryptedKey = this.storage.encryptString(key.toString("base64")).toString("base64");
     await atomicWrite(path, JSON.stringify({ version: 1, encryptedKey }));
@@ -91,18 +96,34 @@ export class CredentialVault {
     return Buffer.from(`mastra-desktop:v1:${secretRef}:${purpose}`, "utf8");
   }
 
+  private async readSecret(secretRef: string, purpose: string) {
+    let raw: string;
+    try {
+      raw = await readFile(this.path(secretRef), "utf8");
+    } catch (error) {
+      throw new CredentialError(
+        (error as NodeJS.ErrnoException).code === "ENOENT" ? "not_found" : "unavailable",
+        { cause: error },
+      );
+    }
+    let document: z.infer<typeof secretDocumentSchema>;
+    try {
+      document = secretDocumentSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      throw new CredentialError("invalid_record", { cause: error });
+    }
+    if (document.secretRef !== secretRef) throw new CredentialError("invalid_record");
+    if (document.purpose !== purpose) throw new CredentialError("purpose_mismatch");
+    return document;
+  }
+
   async put(value: string, purpose: string, existingRef?: string): Promise<CredentialPointer> {
     const secret = CredentialValueSchema.parse(value);
     const parsedPurpose = CredentialPurposeSchema.parse(purpose);
     const secretRef = existingRef
       ? SecretRefSchema.parse(existingRef)
       : `secret_${randomUUID().replaceAll("-", "")}`;
-    if (existingRef) {
-      const existing = secretDocumentSchema.parse(
-        JSON.parse(await readFile(this.path(secretRef), "utf8")),
-      );
-      if (existing.purpose !== parsedPurpose) throw new Error("凭据用途不匹配");
-    }
+    if (existingRef) await this.readSecret(secretRef, parsedPurpose);
     const nonce = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", await this.key(), nonce);
     cipher.setAAD(this.aad(secretRef, parsedPurpose), {
@@ -129,30 +150,25 @@ export class CredentialVault {
 
   async get(secretRef: string, purpose: string): Promise<string> {
     const parsedPurpose = CredentialPurposeSchema.parse(purpose);
-    const document = secretDocumentSchema.parse(
-      JSON.parse(await readFile(this.path(secretRef), "utf8")),
-    );
-    if (document.purpose !== parsedPurpose) throw new Error("凭据用途不匹配");
-    const ciphertext = Buffer.from(document.ciphertext, "base64");
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      await this.key(),
-      Buffer.from(document.nonce, "base64"),
-    );
-    decipher.setAAD(this.aad(document.secretRef, parsedPurpose), {
-      plaintextLength: ciphertext.length,
-    });
-    decipher.setAuthTag(Buffer.from(document.authTag, "base64"));
-    return CredentialValueSchema.parse(
-      Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"),
-    );
+    const document = await this.readSecret(secretRef, parsedPurpose);
+    const key = await this.key();
+    try {
+      const ciphertext = Buffer.from(document.ciphertext, "base64");
+      const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(document.nonce, "base64"));
+      decipher.setAAD(this.aad(secretRef, parsedPurpose), { plaintextLength: ciphertext.length });
+      decipher.setAuthTag(Buffer.from(document.authTag, "base64"));
+      return CredentialValueSchema.parse(
+        Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8"),
+      );
+    } catch (error) {
+      throw new CredentialError("decrypt_failed", { cause: error });
+    }
   }
 
   async delete(secretRef: string, purpose: string): Promise<void> {
     const parsedPurpose = CredentialPurposeSchema.parse(purpose);
     const path = this.path(secretRef);
-    const document = secretDocumentSchema.parse(JSON.parse(await readFile(path, "utf8")));
-    if (document.purpose !== parsedPurpose) throw new Error("凭据用途不匹配");
+    await this.readSecret(secretRef, parsedPurpose);
     await rm(path, { force: true });
   }
 
@@ -213,9 +229,10 @@ export class CredentialBroker {
   }
 
   private async respond(socket: Socket, input: string): Promise<void> {
+    let request: z.infer<typeof CredentialBrokerRequestSchema> | undefined;
     try {
-      const request = CredentialBrokerRequestSchema.parse(JSON.parse(input));
-      if (!this.authenticated(request.token)) throw new Error("认证失败");
+      request = CredentialBrokerRequestSchema.parse(JSON.parse(input));
+      if (!this.authenticated(request.token)) throw new CredentialError("unauthorized");
       if (request.operation === "get") {
         socket.end(
           `${JSON.stringify({ ok: true, value: await this.vault.get(request.secretRef, request.purpose) })}\n`,
@@ -229,8 +246,22 @@ export class CredentialBroker {
       }
       await this.vault.delete(request.secretRef, request.purpose);
       socket.end(`${JSON.stringify({ ok: true })}\n`);
-    } catch {
-      socket.end(`${JSON.stringify({ ok: false, error: "凭据操作失败" })}\n`);
+    } catch (error) {
+      const failure =
+        error instanceof CredentialError
+          ? error
+          : new CredentialError(
+              error instanceof z.ZodError || error instanceof SyntaxError
+                ? "invalid_request"
+                : "unavailable",
+            );
+      // Do not log request payloads, tokens, ciphertext, or decryption errors containing input.
+      console.warn("[credential-broker] request failed", {
+        operation: request?.operation,
+        purpose: request?.purpose,
+        code: failure.code,
+      });
+      socket.end(`${JSON.stringify({ ok: false, code: failure.code, error: failure.message })}\n`);
     }
   }
 

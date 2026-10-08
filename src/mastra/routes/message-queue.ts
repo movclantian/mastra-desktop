@@ -6,12 +6,13 @@ import { messageQueueActionSchema, type QueuedMessage } from "../../shared/agent
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { createWorkMessageSignal } from "../agents/processors";
 import { errorText, workError } from "../errors";
+import { resolveModelSelection } from "../models/providers";
+import { assertNoActiveConversationRun } from "./conversation-runs";
 import {
   prepareWorkbenchMessage,
   sessionFor,
   workbenchMessageOptionsSchema,
 } from "./session-context";
-import { assertNoActiveTeamRun } from "./team-runs";
 
 type Options = z.infer<typeof workbenchMessageOptionsSchema>;
 interface QueueEntry {
@@ -40,9 +41,16 @@ async function prepareQueueMessage(c: ContextWithMastra, text: string, options: 
   if (!threadId) throw workError("VALIDATION_FAILED", { text: "threadId is required" });
   if (!(text.trim() || options.files?.length || options.skillNames?.length))
     throw workError("SESSION_INPUT_REQUIRED");
-  await assertNoActiveTeamRun(resourceId, threadId);
+  await assertNoActiveConversationRun(resourceId, threadId);
   if (options.goal) throw workError("VALIDATION_FAILED", { text: "新目标不接受后续消息排队" });
   const result = await prepareWorkbenchMessage(c, threadId, resourceId, options);
+  if (
+    (await resolveModelSelection(result.controllerSession.model.get(), resourceId))?.model.kind !==
+    "language"
+  )
+    throw workError("VALIDATION_FAILED", {
+      text: "图片或视频生成不接受对话消息排队，请等待生成完成后发送",
+    });
   const profile = await getAgentProfile(
     c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
     resourceId,

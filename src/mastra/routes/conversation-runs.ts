@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { toAISdkStream, withSseHeartbeat, workflowSnapshotToStream } from "@mastra/ai-sdk";
 import type { MastraDBMessage } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
-import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import type { WorkflowRunOutput } from "@mastra/core/stream";
 import {
@@ -12,7 +11,11 @@ import {
 } from "@mastra/core/workflows";
 import { createUIMessageStream, createUIMessageStreamResponse, type UIMessageChunk } from "ai";
 import { z } from "zod";
-import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
+import {
+  type MediaGenerationState,
+  mediaGenerationStateSchema,
+  TEAM_PROFILE_CONTEXT_KEY,
+} from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   type AgentProfile,
@@ -21,14 +24,24 @@ import {
 } from "../agents/custom";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workMessageMetadataSchema } from "../agents/processors";
 import { TEAM_CONVERSATION_CONTEXT_KEY } from "../agents/team-workflow";
-import { workError } from "../errors";
+import { errorText, workError } from "../errors";
 import { publishDesktopNotification } from "../harness/signals";
+import { resolveModelSelection } from "../models/providers";
 import { appStorage } from "../storage/database";
+import { generateMedia, mediaInputFromMessage } from "../tools/media-generation";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 import { prepareWorkbenchMessage, type SessionRouteResult, sessionFor } from "./session-context";
 import { normalizeChatHistoryMessages } from "./threads/shared";
 
-const runningThreads = new Map<string, Promise<void> | undefined>();
+type RunningConversation = {
+  workflowId?: string;
+  runId?: string;
+  messageId?: string;
+  controller?: AbortController;
+  completion?: Promise<void>;
+  canceled?: boolean;
+};
+const runningThreads = new Map<string, RunningConversation>();
 // ponytail: active-run replay uses memory proportional to output; use a persistent
 // Mastra cache when runs must retain token history across Host restarts.
 const workflowStreams = new Map<
@@ -43,15 +56,62 @@ const workflowStreams = new Map<
 >();
 const threadKey = (resourceId: string, threadId: string) => JSON.stringify([resourceId, threadId]);
 
-export function activeTeamWorkflow(resourceId: string, threadId: string) {
-  for (const [runId, stream] of workflowStreams) {
-    if (stream.resourceId === resourceId && stream.threadId === threadId)
-      return { runId, workflowId: stream.workflowId };
-  }
-  return null;
+export function activeThreadWorkflow(resourceId: string, threadId: string) {
+  const run = runningThreads.get(threadKey(resourceId, threadId));
+  return run?.workflowId && run.runId ? { runId: run.runId, workflowId: run.workflowId } : null;
 }
 
-export async function listTeamWorkflowRuns(resourceId: string, threadId: string) {
+export function activeThreadMediaGeneration(resourceId: string, threadId: string) {
+  const messageId = runningThreads.get(threadKey(resourceId, threadId))?.messageId;
+  return messageId ? { messageId } : null;
+}
+
+/** An interrupted request is terminal; reading history must never repeat a paid generation. */
+export async function reconcileMediaMessages(
+  session: SessionRouteResult,
+  messages: MastraDBMessage[],
+) {
+  if (runningThreads.has(threadKey(session.resourceId, session.threadId))) return;
+  const pending = messages.filter(
+    (message) =>
+      mediaGenerationStateSchema.safeParse(message.content.metadata?.mediaGeneration).data
+        ?.status === "generating",
+  );
+  if (!pending.length) return;
+  const storage = await appStorage.getStore("memory");
+  if (!storage) throw new Error("Memory storage is not configured");
+  // A generation may have settled after history was read. Never overwrite its saved result.
+  const latest = await storage.listMessagesById({
+    messageIds: pending.map((message) => message.id),
+  });
+  const saved = new Map(latest.messages.map((message) => [message.id, message]));
+  const updates: MastraDBMessage[] = [];
+  for (const message of pending) {
+    const current = saved.get(message.id);
+    if (!current) continue;
+    message.content = current.content;
+    const metadata = message.content.metadata;
+    const media = mediaGenerationStateSchema.safeParse(metadata?.mediaGeneration).data;
+    if (media?.status !== "generating") continue;
+    const state: MediaGenerationState = {
+      kind: media.kind,
+      status: "failed",
+      error: "上次生成已中断，请点击重新生成。",
+    };
+    message.content = {
+      ...message.content,
+      parts: [{ type: "text", text: JSON.stringify(state) }],
+      metadata: { ...metadata, mediaGeneration: state },
+    };
+    updates.push(message);
+  }
+  if (updates.length) {
+    await session.memory.saveMessages({ messages: updates });
+    await session.memory.settled();
+  }
+}
+
+export async function listThreadWorkflowRuns(resourceId: string, threadId: string) {
   const storage = await appStorage.getStore("workflows");
   const listing = await storage?.listWorkflowRuns({ resourceId, perPage: false });
   return (listing?.runs ?? [])
@@ -60,8 +120,8 @@ export async function listTeamWorkflowRuns(resourceId: string, threadId: string)
       const context = snapshot?.requestContext as Record<string, unknown> | undefined;
       return (
         run.workflowName.startsWith("team-") &&
-        context?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] === threadId &&
-        Boolean(context[TEAM_PROFILE_CONTEXT_KEY])
+        Boolean(context?.[TEAM_PROFILE_CONTEXT_KEY]) &&
+        context?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] === threadId
       );
     })
     .map((run) => ({
@@ -71,14 +131,14 @@ export async function listTeamWorkflowRuns(resourceId: string, threadId: string)
     .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
 }
 
-export async function assertNoActiveTeamRun(resourceId: string, threadId: string) {
+export async function assertNoActiveConversationRun(resourceId: string, threadId: string) {
   if (
     runningThreads.has(threadKey(resourceId, threadId)) ||
-    (await listTeamWorkflowRuns(resourceId, threadId)).some((run) =>
+    (await listThreadWorkflowRuns(resourceId, threadId)).some((run) =>
       ["pending", "running", "waiting", "suspended", "paused"].includes(run.status),
     )
   ) {
-    throw workError("SESSION_MESSAGE_REJECTED", { text: "请先完成、恢复或取消当前团队流程" });
+    throw workError("SESSION_MESSAGE_REJECTED", { text: "请先完成、恢复或取消当前生成或团队流程" });
   }
 }
 
@@ -109,19 +169,28 @@ async function restoreWorkflow(
   return { workflow, context, profile };
 }
 
-export async function cancelTeamRuns(c: ContextWithMastra, session: SessionRouteResult) {
-  for (const item of await listTeamWorkflowRuns(session.resourceId, session.threadId)) {
+export async function cancelConversationRuns(c: ContextWithMastra, session: SessionRouteResult) {
+  const running = runningThreads.get(threadKey(session.resourceId, session.threadId));
+  if (running) {
+    running.canceled = true;
+    running.controller?.abort();
+  }
+  for (const item of await listThreadWorkflowRuns(session.resourceId, session.threadId)) {
     if (!["pending", "running", "waiting", "paused", "suspended"].includes(item.status)) continue;
     const { workflow } = await restoreWorkflow(c, session, item.workflowName, item.runId);
     await (
       await workflow.createRun({ runId: item.runId, resourceId: session.resourceId })
     ).cancel();
   }
-  await runningThreads.get(threadKey(session.resourceId, session.threadId));
+  await runningThreads.get(threadKey(session.resourceId, session.threadId))?.completion;
 }
 
 /** Drain actual native runs and their final message writes before closing storage. */
-export async function drainTeamRuns(mastra: Mastra) {
+export async function drainConversationRuns(mastra: Mastra) {
+  for (const running of runningThreads.values()) {
+    running.canceled = true;
+    running.controller?.abort();
+  }
   for (const workflow of Object.values(mastra.listWorkflows())) {
     if (!workflow.id.startsWith("team-")) continue;
     for (const run of workflow.runs.values()) {
@@ -130,7 +199,7 @@ export async function drainTeamRuns(mastra: Mastra) {
       await run.streamOutput?.result;
     }
   }
-  await Promise.all(runningThreads.values());
+  await Promise.all([...runningThreads.values()].map((run) => run.completion));
 }
 
 function workflowResponse(
@@ -140,12 +209,13 @@ function workflowResponse(
 ) {
   const key = threadKey(session.resourceId, session.threadId);
   let finish!: () => void;
-  runningThreads.set(
-    key,
-    new Promise<void>((resolve) => {
+  runningThreads.set(key, {
+    workflowId: output.workflowId,
+    runId: output.runId,
+    completion: new Promise<void>((resolve) => {
       finish = resolve;
     }),
-  );
+  });
   const replay = {
     resourceId: session.resourceId,
     threadId: session.threadId,
@@ -214,48 +284,59 @@ function workflowResponse(
   return c.json({ workflowId: output.workflowId, runId: output.runId });
 }
 
-export async function startTeamWorkflow(
+export async function startConversationRun(
   c: ContextWithMastra,
   result: SessionRouteResult,
   content: string,
 ) {
   const { resourceId, threadId } = result;
-  await assertNoActiveTeamRun(resourceId, threadId);
+  await assertNoActiveConversationRun(resourceId, threadId);
   const key = threadKey(resourceId, threadId);
   if (runningThreads.has(key) || result.controllerSession.displayState.get().isRunning)
     throw workError("SESSION_MESSAGE_REJECTED");
-  runningThreads.set(key, undefined);
+  const running: RunningConversation = {};
+  runningThreads.set(key, running);
   try {
     const profile = await getAgentProfile(
       c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
       resourceId,
     );
-    if (profile.workflow?.strategy !== "workflow")
-      throw workError("VALIDATION_FAILED", { text: "该团队没有选择显式流程" });
-    const workflow = ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId).workflow;
-    if (!workflow) throw workError("WORKFLOW_NOT_FOUND");
     const options = workMessageMetadataSchema.parse(
       c.get("requestContext").get(WORK_MESSAGE_OPTIONS_CONTEXT_KEY) ?? {},
     );
-    const history = await result.memory.recall({
-      threadId,
-      resourceId,
-      perPage: 20,
-      includeTotal: false,
-      orderBy: { field: "createdAt", direction: "DESC" },
-    });
-    c.get("requestContext").set(
-      TEAM_CONVERSATION_CONTEXT_KEY,
-      normalizeChatHistoryMessages(history.messages)
-        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        .flatMap((message) => {
-          const content = message.content.parts
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n");
-          return content ? [{ role: message.role === "user" ? "user" : "assistant", content }] : [];
-        }),
-    );
+    const model = result.controllerSession.model.get();
+    const selection = await resolveModelSelection(model, resourceId);
+    if (!selection) throw workError("MODEL_NOT_CONFIGURED");
+    const mediaInput =
+      selection.model.kind !== "language"
+        ? mediaInputFromMessage(model, selection.model.kind, content, [
+            ...(options.files ?? []),
+            ...(options.fileReferences ?? []),
+          ])
+        : undefined;
+    if (!mediaInput) {
+      const history = await result.memory.recall({
+        threadId,
+        resourceId,
+        perPage: 20,
+        includeTotal: false,
+        orderBy: { field: "createdAt", direction: "DESC" },
+      });
+      c.get("requestContext").set(
+        TEAM_CONVERSATION_CONTEXT_KEY,
+        normalizeChatHistoryMessages(history.messages)
+          .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+          .flatMap((message) => {
+            const content = message.content.parts
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n");
+            return content
+              ? [{ role: message.role === "user" ? "user" : "assistant", content }]
+              : [];
+          }),
+      );
+    }
     await result.memory.saveMessages({
       messages: [
         {
@@ -284,6 +365,76 @@ export async function startTeamWorkflow(
         },
       ],
     });
+    if (mediaInput) {
+      if (result.thread.metadata?.draft === true) {
+        await result.controllerSession.thread.rename({
+          title: content.trim().replace(/\s+/g, " ").slice(0, 60),
+          pin: false,
+        });
+        await result.controllerSession.thread.setSetting({ key: "draft", value: false });
+      }
+      const message: MastraDBMessage = {
+        id: randomUUID(),
+        role: "assistant",
+        createdAt: new Date(),
+        threadId,
+        resourceId,
+        content: { format: 2, parts: [] },
+      };
+      const save = async (state: MediaGenerationState) => {
+        // Small file references are useful to a later chat agent; binary data stays on disk.
+        message.content.parts = [{ type: "text", text: JSON.stringify(state) }];
+        message.content.metadata = { ...message.content.metadata, mediaGeneration: state };
+        await result.memory.saveMessages({ messages: [message] });
+        await result.memory.settled();
+      };
+      const controller = new AbortController();
+      Object.assign(running, { messageId: message.id, controller });
+      await save({ kind: mediaInput.kind, status: "generating" });
+      const completion = (async () => {
+        let state: MediaGenerationState;
+        try {
+          if (running.canceled) {
+            state = { kind: mediaInput.kind, status: "canceled" };
+          } else {
+            // Image/video requests are non-streaming. Only the finished files enter chat history.
+            const output = await generateMedia(mediaInput, {
+              requestContext: c.get("requestContext"),
+              abortSignal: controller.signal,
+            });
+            state = running.canceled
+              ? { kind: mediaInput.kind, status: "canceled" }
+              : { kind: mediaInput.kind, status: "complete", result: output };
+          }
+        } catch (error) {
+          state = {
+            kind: mediaInput.kind,
+            status: running.canceled ? "canceled" : "failed",
+            error: running.canceled ? undefined : errorText(error),
+          };
+        }
+        await save(state);
+        if (state.status === "complete")
+          publishDesktopNotification({
+            id: message.id,
+            resourceId,
+            threadId,
+            kind: "task",
+            title: "Mastra",
+            body: "",
+          });
+      })().finally(() => runningThreads.delete(key));
+      running.completion = completion;
+      void completion.catch((error) =>
+        c.get("mastra").getLogger().error("Media result persistence failed", { error }),
+      );
+      return c.json({ mediaGeneration: { messageId: message.id } });
+    }
+    const workflow =
+      profile.workflow?.strategy === "workflow"
+        ? ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId).workflow
+        : undefined;
+    if (!workflow) throw workError("WORKFLOW_NOT_FOUND");
     const run = await workflow.createRun({ resourceId });
     return workflowResponse(
       c,
@@ -295,24 +446,6 @@ export async function startTeamWorkflow(
     throw error;
   }
 }
-
-const startTeamRunRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/team-runs", {
-  method: "POST",
-  handler: async (c) => {
-    const body = z
-      .object({ content: z.string().min(1), options: z.unknown().optional() })
-      .strict()
-      .parse(await c.req.json());
-    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-    const result = await prepareWorkbenchMessage(
-      c,
-      c.req.param("threadId"),
-      resourceId,
-      body.options,
-    );
-    return startTeamWorkflow(c, result, body.content);
-  },
-});
 
 interface WorkflowRouteResult extends SessionRouteResult {
   workflow: AnyWorkflow;
@@ -361,7 +494,11 @@ async function workflowRouteFor(c: ContextWithMastra): Promise<WorkflowRouteResu
   if (!state || state.resourceId !== session.resourceId) {
     throw workError("WORKFLOW_RUN_NOT_FOUND");
   }
-  if (state.requestContext?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] !== session.threadId) {
+  const active = activeThreadWorkflow(session.resourceId, session.threadId);
+  if (
+    state.requestContext?.[WORKSPACE_THREAD_ID_CONTEXT_KEY] !== session.threadId &&
+    !(active?.workflowId === workflowId && active.runId === runId)
+  ) {
     throw workError("WORKFLOW_RUN_NOT_FOUND");
   }
   return { ...session, workflow, state };
@@ -391,7 +528,7 @@ async function prepareWorkflowResume(c: ContextWithMastra, result: WorkflowRoute
   const key = threadKey(result.resourceId, result.threadId);
   if (runningThreads.has(key) || result.controllerSession.displayState.get().isRunning)
     throw workError("SESSION_MESSAGE_REJECTED");
-  runningThreads.set(key, undefined);
+  runningThreads.set(key, {});
 }
 
 function workflowResumeTarget(
@@ -554,7 +691,7 @@ const rerunWorkflowRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await workflowRouteFor(c);
-      await assertNoActiveTeamRun(result.resourceId, result.threadId);
+      await assertNoActiveConversationRun(result.resourceId, result.threadId);
       await prepareWorkflowResume(c, result);
       try {
         const run = await result.workflow.createRun({ resourceId: result.resourceId });
@@ -577,6 +714,8 @@ const workflowRunCancelRoute = registerApiRoute(
     method: "POST",
     handler: async (c) => {
       const result = await workflowRouteFor(c);
+      const running = runningThreads.get(threadKey(result.resourceId, result.threadId));
+      if (running?.runId === result.state.runId) running.canceled = true;
       const run = await result.workflow.createRun({
         runId: result.state.runId,
         resourceId: result.resourceId,
@@ -589,8 +728,7 @@ const workflowRunCancelRoute = registerApiRoute(
   },
 );
 
-export const teamWorkflowRoutes = [
-  startTeamRunRoute,
+export const conversationWorkflowRoutes = [
   workflowRunDetailRoute,
   workflowRunReplayRoute,
   workflowRunResumeRoute,

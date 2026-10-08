@@ -12,7 +12,7 @@ files:
   # against the app-level production dependencies. Do not duplicate the
   # deployer's pnpm tree in app.asar.unpacked.
   - '!.mastra/output/node_modules/**'
-  - '!**/.vscode/*'
+  - '!**/.vscode/**'
   # Source maps are useful for development but are not loaded by the packaged
   # runtime. Keeping them duplicated across app.asar and Mastra deploy output
   # adds hundreds of MB and a large number of installer files.
@@ -21,6 +21,14 @@ files:
   - '!**/node_modules/@mastra/editor/ee/**'
   # fastembed.small uses CPU. Do not distribute optional CUDA/TensorRT providers.
   - '!**/node_modules/onnxruntime-node/bin/napi-v6/**/libonnxruntime_providers_{cuda,tensorrt}.so'
+  # Keep one files allowlist: platform-level exclusion-only lists create a
+  # separate matcher that includes the entire project. Releases build natively,
+  # so ${platform} is the runner OS and ${arch} is the target architecture.
+  - '!**/node_modules/onnxruntime-node/bin/napi-v6/!(${platform})/**'
+  - '!**/node_modules/onnxruntime-node/bin/napi-v6/${platform}/!(${arch})/**'
+  - '!**/node_modules/node-pty/prebuilds/!(${platform}-${arch})/**'
+  # Runtime ConPTY binaries live in prebuilds or build/Release.
+  - '!**/node_modules/node-pty/third_party/conpty/**'
   - '!src/*'
   - '!.mastra/.build/**'
   - '!.mastra/dev.lock'
@@ -38,11 +46,6 @@ asarUnpack:
   - 'node_modules/@ubjs/**'
 win:
   executableName: mastra-desktop
-  files:
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/!(win32)/**'
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/win32/!(${arch})/**'
-    - '!**/node_modules/node-pty/prebuilds/!(win32-${arch})/**'
-    - '!**/node_modules/node-pty/third_party/conpty/*/win10-!(${arch})/**'
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -54,11 +57,6 @@ nsis:
   # 允许用户在向导里选择安装目录(仅 assisted 模式生效)
   allowToChangeInstallationDirectory: true
 mac:
-  files:
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/!(darwin)/**'
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/darwin/!(${arch})/**'
-    - '!**/node_modules/node-pty/prebuilds/!(darwin-${arch})/**'
-    - '!**/node_modules/node-pty/third_party/conpty/**'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     - NSCameraUsageDescription: Application requests access to the device's camera.
@@ -69,11 +67,6 @@ mac:
 dmg:
   artifactName: ${name}-${version}.${ext}
 linux:
-  files:
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/!(linux)/**'
-    - '!**/node_modules/onnxruntime-node/bin/napi-v6/linux/!(${arch})/**'
-    - '!**/node_modules/node-pty/prebuilds/!(linux-${arch})/**'
-    - '!**/node_modules/node-pty/third_party/conpty/**'
   target:
     - AppImage
     - snap

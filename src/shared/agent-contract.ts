@@ -9,6 +9,30 @@ export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 
 export const MODEL_KINDS = ["language", "image", "video"] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];
+// Selecting a model writes only its identity; capability metadata is read-only.
+export const enabledModelSelectionSchema = z.object({ id: z.string().min(1), name: z.string() });
+
+/** Prefer declared output capabilities; image/video inputs alone do not make a generator. */
+export function inferModelKind(
+  id: string,
+  metadata?: { modelType?: string; outputModalities?: string[]; generationMethods?: string[] },
+): ModelKind {
+  if (metadata?.modelType === "image" || metadata?.modelType === "video") return metadata.modelType;
+  const output = metadata?.outputModalities ?? [];
+  if (output.includes("video")) return "video";
+  if (output.includes("image")) return "image";
+  if (metadata?.modelType === "language" || output.includes("text")) return "language";
+  const name = id.slice(id.lastIndexOf("/") + 1).toLowerCase();
+  if (name.startsWith("veo-") || metadata?.generationMethods?.includes("predictLongRunning"))
+    return "video";
+  if (
+    /^(?:gpt-image-|chatgpt-image-|dall-e-|imagen-|flux[.-]|gemini-.*-image(?:-|$)|gemini-nano-banana)/.test(
+      name,
+    )
+  )
+    return "image";
+  return "language";
+}
 export const generatedMediaSchema = z.object({
   model: z.string(),
   prompt: z.string(),
@@ -16,18 +40,22 @@ export const generatedMediaSchema = z.object({
   files: z
     .array(
       z.object({
-        objectId: z.uuid(),
-        kind: z.literal("attachment"),
-        threadId: z.string(),
-        contentType: z.string().regex(/^(image|video)\/[\w.+-]+$/),
+        assetId: z.string().min(1),
+        mediaType: z.string().regex(/^(image|video)\/[\w.+-]+$/),
         filename: z.string(),
         byteSize: z.number().nonnegative(),
-        workspacePath: z.string(),
       }),
     )
     .min(1),
 });
 export type GeneratedMedia = z.infer<typeof generatedMediaSchema>;
+export const mediaGenerationStateSchema = z.object({
+  kind: z.enum(["image", "video"]),
+  status: z.enum(["generating", "complete", "failed", "canceled"]),
+  result: generatedMediaSchema.optional(),
+  error: z.string().optional(),
+});
+export type MediaGenerationState = z.infer<typeof mediaGenerationStateSchema>;
 
 /** Shared execution identity; consumers must not import the workflow implementation for it. */
 export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";

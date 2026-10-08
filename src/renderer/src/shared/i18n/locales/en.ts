@@ -631,10 +631,9 @@ export const en = {
     },
     providers: {
       modelKind: "Model purpose",
-      gatewayDefaultUrl: "Leave blank for the official AI SDK Gateway",
       modelKinds: { language: "Chat", image: "Image", video: "Video" },
-      aiGatewayHint:
-        "Access chat, image and video models from multiple providers with the AI SDK Gateway protocol and API key. Model purposes come from the gateway catalog. Select a chat model for the conversation; the Agent calls image and video generation tools.",
+      modelKindHint:
+        "Enabled models appear in the chat selector. Model purposes are detected from models.dev and provider output capabilities. The provider must support the corresponding generation API.",
       searchPlaceholder: "Search providers...",
       addGateway: "Add Custom Gateway",
       expandList: "Expand Provider List",
@@ -2119,7 +2118,7 @@ export const en = {
       queueSyncFailed: "Unable to sync the queue. Check your connection.",
       queueActionFailed: "Unable to update queue",
       workflowQueueUnavailable:
-        "Explicit team workflows do not support queued messages. Wait for the workflow to finish.",
+        "Generation and team workflows do not support queued messages. Wait for the current task to finish.",
       partialFilesAdded: "Some files were not added: attachment limit or context budget reached",
       removeAttachment: "Remove {{filename}}",
       skillRefAria: "Skill reference {{name}}",
@@ -2154,11 +2153,11 @@ export const en = {
       waitingApproval: "Generation will start after approval.",
       image: "Image generation",
       video: "Video generation",
-      generating:
-        "Generating. Results appear when ready. Stop the current response to cancel waiting.",
+      generating: "Generating. Results will appear when ready.",
       loading: "Loading generated file…",
       loadFailed: "Could not load the generated file",
-      failed: "Generation failed. See the tool details.",
+      failed: "Generation failed. Check the error details before retrying.",
+      canceled: "Stopped waiting for the generation result.",
       preview: "Open preview",
       download: "Download",
     },
@@ -3411,6 +3410,9 @@ export const en = {
     },
     MODEL_SELECTION_REQUIRED: {
       title: "Please select a model first",
+    },
+    PROVIDER_CREDENTIAL_UNAVAILABLE: {
+      title: "Model provider credentials unavailable",
     },
     PROVIDER_MODELS_FETCH_FAILED: {
       title: "Failed to fetch model list",

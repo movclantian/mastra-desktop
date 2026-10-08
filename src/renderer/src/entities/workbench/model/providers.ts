@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { readErrorPayload } from "@/shared/lib";
-import type { ModelKind } from "../../../../../shared/agent-contract";
+import { inferModelKind, type ModelKind } from "../../../../../shared/agent-contract";
 
 export interface RegistryProvider {
   id: string;
@@ -14,12 +14,12 @@ export interface RegistryProvider {
   docUrl: string;
 }
 
-export type GatewayProtocol = "openai" | "anthropic" | "gemini" | "gateway";
+export type GatewayProtocol = "openai" | "anthropic" | "gemini";
 
 export interface EnabledModel {
   id: string;
   name: string;
-  kind?: ModelKind;
+  readonly kind?: ModelKind;
 }
 
 export interface ProviderConfig {
@@ -39,6 +39,7 @@ export interface ProviderConfig {
 interface CatalogModel {
   id: string;
   name: string;
+  kind?: ModelKind;
   reasoning: boolean;
   tools: boolean;
   structuredOutput: boolean;
@@ -207,7 +208,6 @@ export function useRegistry(): RegistryProvider[] {
 // ---------------------------------------------------------------------------
 
 export const GATEWAY_PROTOCOLS: { value: GatewayProtocol; label: string }[] = [
-  { value: "gateway", label: "AI SDK Gateway" },
   { value: "openai", label: "OpenAI Compatible" },
   { value: "anthropic", label: "Anthropic" },
   { value: "gemini", label: "Google Gemini" },
@@ -269,7 +269,7 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
             reasoning?: boolean;
             tool_call?: boolean;
             structured_output?: boolean;
-            modalities?: { input?: string[] | string };
+            modalities?: { input?: string[] | string; output?: string[] };
             limit?: { context?: number | string };
             cost?: {
               input?: number;
@@ -297,6 +297,9 @@ export function loadModelCatalog(): Promise<CatalogProvider[]> {
         return {
           id: modelId,
           name: m.name ?? modelId,
+          kind: m.modalities?.output?.length
+            ? inferModelKind(modelId, { outputModalities: m.modalities.output })
+            : undefined,
           reasoning: Boolean(m.reasoning),
           tools: Boolean(m.tool_call),
           structuredOutput: Boolean(m.structured_output),
@@ -362,7 +365,7 @@ export async function fetchProviderModels(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerId: provider.id,
-        protocol: provider.registryId === "vercel" ? "gateway" : (provider.protocol ?? "openai"),
+        protocol: provider.protocol ?? "openai",
         url: provider.baseUrl,
         credentialRef: provider.credentialRef,
       }),
@@ -412,6 +415,27 @@ function findCatalogModelsById(catalog: CatalogProvider[], modelId: string): Cat
   return [];
 }
 
+export function getModelKind(
+  provider: ProviderConfig,
+  modelId: string,
+  catalog: CatalogProvider[],
+  discoveredKind?: ModelKind,
+): ModelKind {
+  const exact = catalog
+    .find((item) => item.id === provider.registryId)
+    ?.models.find((model) => model.id === modelId);
+  const matches = new Set(
+    findCatalogModelsById(catalog, modelId).flatMap((model) => (model.kind ? [model.kind] : [])),
+  );
+  return (
+    exact?.kind ??
+    (matches.size === 1 ? [...matches][0] : undefined) ??
+    discoveredKind ??
+    provider.enabledModels.find((model) => model.id === modelId)?.kind ??
+    inferModelKind(modelId)
+  );
+}
+
 /**
  * 优先按 provider 的 registry id 在 models.dev 目录中查模型能力;
  * 自定义网关再按全目录的模型 ID 精确匹配,无法确认时不展示徽章。
@@ -440,12 +464,13 @@ export function getModelCapabilities(
   const models = providerModel
     ? [providerModel]
     : findCatalogModelsById(catalog, normalizedModelId);
+  const language = getModelKind(provider, modelId, catalog) === "language";
   return {
-    reasoning: models.some((model) => model.reasoning),
+    reasoning: language && models.some((model) => model.reasoning),
     vision: models.some((model) => model.vision),
     audio: models.some((model) => model.audio),
-    tools: models.some((model) => model.tools),
-    structuredOutput: models.some((model) => model.structuredOutput),
+    tools: language && models.some((model) => model.tools),
+    structuredOutput: language && models.some((model) => model.structuredOutput),
   };
 }
 

@@ -68,7 +68,10 @@ export const guardrailsStatusRoute = createRoute({
       | undefined;
     return {
       modelReady: Boolean(
-        await resolveDefaultModelId(params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+        await resolveDefaultModelId(
+          params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string,
+          "language",
+        ),
       ),
       costMetricsReady: typeof observability?.getMetricAggregate === "function",
       workspaceReady: true,

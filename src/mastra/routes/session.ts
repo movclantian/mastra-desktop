@@ -35,9 +35,18 @@ import {
   publishDesktopNotification,
   scheduledDesktopNotifications,
 } from "../harness/signals";
-import { resolveConfiguredModel, splitRouterId } from "../models/providers";
+import { resolveModelSelection } from "../models/providers";
 import { appStorage, getLibsqlClient } from "../storage/database";
 import { ensureTaskExecutorAvailable } from "./background-tasks";
+import {
+  activeThreadMediaGeneration,
+  activeThreadWorkflow,
+  assertNoActiveConversationRun,
+  cancelConversationRuns,
+  listThreadWorkflowRuns,
+  reconcileMediaMessages,
+  startConversationRun,
+} from "./conversation-runs";
 import { getSessionMessageQueue } from "./message-queue";
 import {
   prepareWorkbenchMessage,
@@ -45,13 +54,8 @@ import {
   sessionFor,
   workbenchMessageOptionsSchema,
 } from "./session-context";
-import {
-  activeTeamWorkflow,
-  assertNoActiveTeamRun,
-  cancelTeamRuns,
-  listTeamWorkflowRuns,
-} from "./team-runs";
 import { workbenchMessages } from "./threads/messages";
+import { withThreadWrite } from "./threads/shared";
 
 /** Persisted tool results take precedence over a suspension snapshot left by a resumed run. */
 async function listPendingAgentRuns({
@@ -225,27 +229,40 @@ export async function workbenchControllerMiddleware(
       )
     : await sessionFor(c, { resourceId, threadId, scope: parsed.data[0] });
   if (["/messages", "/steer", "/follow-up"].includes(operation) && c.req.method === "POST") {
-    await assertNoActiveTeamRun(resourceId, threadId);
+    await assertNoActiveConversationRun(resourceId, threadId);
     const profile = await getAgentProfile(
       c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
       resourceId,
     );
-    if (profile.workflow?.strategy === "workflow")
-      throw workError("VALIDATION_FAILED", { text: "显式团队流程必须通过团队运行入口启动" });
-  }
-  if (
-    operation === "/messages" &&
-    c.req.method === "POST" &&
-    messageContext[WORK_MESSAGE_OPTIONS_CONTEXT_KEY]?.goal
-  ) {
-    const objective = z.string().trim().min(1).max(20_000).parse(body?.message);
-    await result.agent.setObjective(objective, { threadId, resourceId });
+    const selection = await resolveModelSelection(result.controllerSession.model.get(), resourceId);
+    if (
+      operation !== "/messages" &&
+      (profile.workflow?.strategy === "workflow" || selection?.model.kind !== "language")
+    )
+      throw workError("VALIDATION_FAILED", {
+        text: "生成或团队流程进行中请先停止，再发送新的请求",
+      });
   }
   if (operation === "/messages" && c.req.method === "POST") {
     const text = z.string().max(100_000).parse(body?.message);
     const options = messageContext[WORK_MESSAGE_OPTIONS_CONTEXT_KEY] ?? {};
     if (!(text.trim() || options.files?.length || options.skillNames?.length))
       throw workError("SESSION_INPUT_REQUIRED");
+    const selection = await resolveModelSelection(result.controllerSession.model.get(), resourceId);
+    const profile = await getAgentProfile(
+      result.thread.metadata?.agentProfileId as string | undefined,
+      resourceId,
+    );
+    if (selection?.model.kind !== "language" || profile.workflow?.strategy === "workflow") {
+      if (options.goal)
+        throw workError("VALIDATION_FAILED", { text: "生成和显式团队流程不使用目标模式" });
+      c.res = await startConversationRun(c, result, text);
+      return;
+    }
+    if (options.goal) {
+      const objective = z.string().trim().min(1).max(20_000).parse(text);
+      await result.agent.setObjective(objective, { threadId, resourceId });
+    }
     const sent = result.controllerSession.sendSignal(createWorkMessageSignal(text, options), {
       requestContext: c.get("requestContext"),
       requireDelivery: true,
@@ -260,8 +277,7 @@ export async function workbenchControllerMiddleware(
         modelId: z.string().min(1),
       })
       .parse(body);
-    const model = splitRouterId(selection.modelId);
-    if (!(await resolveConfiguredModel(model.providerId, model.modelId, resourceId))) {
+    if (!(await resolveModelSelection(selection.modelId, resourceId))) {
       throw workError("MODEL_NOT_CONFIGURED");
     }
   }
@@ -366,14 +382,15 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
         })
       ).tasks
     : [];
-  const workflowRuns = await listTeamWorkflowRuns(result.resourceId, result.threadId);
+  const workflowRuns = await listThreadWorkflowRuns(result.resourceId, result.threadId);
   const backgroundSuspended = backgroundTasks.some((task) => task.status === "suspended");
   const workflowSuspended = workflowRuns.some((run) =>
     ["suspended", "paused"].includes(run.status ?? ""),
   );
-  const workflowRunning = workflowRuns.some((run) =>
-    ["pending", "running", "waiting"].includes(run.status ?? ""),
-  );
+  const workflowRunning =
+    Boolean(activeThreadWorkflow(result.resourceId, result.threadId)) ||
+    workflowRuns.some((run) => ["pending", "running", "waiting"].includes(run.status ?? ""));
+  const activeMediaGeneration = activeThreadMediaGeneration(result.resourceId, result.threadId);
   const storedSuspensions = runs.flatMap((run) => {
     const toolCalls = run.toolCalls.flatMap((toolCall) => {
       const toolName = toolCall.toolName ?? "";
@@ -548,7 +565,8 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       : suspendedRuns.length > 0 || backgroundSuspended || workflowSuspended
         ? "suspended"
         : backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
-            workflowRunning
+            workflowRunning ||
+            activeMediaGeneration
           ? "running"
           : "idle",
     tasks: Array.isArray(tasks) ? tasks : [],
@@ -575,7 +593,8 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       result.resourceId,
       result.threadId,
     ),
-    activeWorkflow: activeTeamWorkflow(result.resourceId, result.threadId),
+    activeWorkflow: activeThreadWorkflow(result.resourceId, result.threadId),
+    activeMediaGeneration,
   };
 }
 
@@ -622,7 +641,7 @@ const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threa
     const objective = await result.agent.getObjective({ threadId: result.threadId });
     if (objective?.status === "active")
       await result.agent.updateObjectiveOptions({ threadId: result.threadId, status: "paused" });
-    await cancelTeamRuns(c, result);
+    await cancelConversationRuns(c, result);
     await abortWorkbenchSession(result.controllerSession);
     await cancelSessionBackgroundTasks(c, result);
     if (objective?.status === "active")
@@ -709,7 +728,7 @@ const sessionModelRoute = registerApiRoute("/work/sessions/:scope/threads/:threa
       })
       .parse(await c.req.json());
     const { providerId, modelId, reasoningEffort = "off" } = body.selection;
-    if (!(await resolveConfiguredModel(providerId, modelId, result.resourceId))) {
+    if (!(await resolveModelSelection(`${providerId}/${modelId}`, result.resourceId))) {
       throw workError("MODEL_NOT_CONFIGURED");
     }
     await result.controllerSession.model.switch(`${providerId}/${modelId}`);
@@ -728,16 +747,20 @@ const sessionDisplayStateRoute = registerApiRoute(
     method: "GET",
     handler: async (c) => {
       const result = await sessionFor(c);
+      const history =
+        c.req.query("includeMessages") === "true"
+          ? (
+              await result.memory.recall({
+                threadId: result.threadId,
+                resourceId: result.resourceId,
+                perPage: false,
+              })
+            ).messages
+          : undefined;
+      if (history) await reconcileMediaMessages(result, history);
       const displayState = await persistentDisplayState(c, result);
       let messages: ReturnType<typeof workbenchMessages> | undefined;
-      if (c.req.query("includeMessages") === "true") {
-        const history = (
-          await result.memory.recall({
-            threadId: result.threadId,
-            resourceId: result.resourceId,
-            perPage: false,
-          })
-        ).messages;
+      if (history) {
         const current = displayState.currentMessage;
         if (current && !history.some((message) => message.id === current.id)) history.push(current);
         messages = workbenchMessages(history);
@@ -762,37 +785,44 @@ const updateSessionWorkbenchStateRoute = registerApiRoute(
   "/work/sessions/:scope/threads/:threadId/workbench-state",
   {
     method: "PUT",
-    handler: async (c) => {
-      const result = await sessionFor(c);
-      const parsed = workbenchStateSchema.safeParse(await c.req.json());
-      if (!parsed.success) {
-        throw workError("VALIDATION_FAILED", {
-          text: "Invalid workbench state",
-          details: { issues: parsed.error.issues },
-        });
-      }
-      for (const [id, value] of Object.entries(parsed.data)) {
-        if (value === undefined) continue;
-        const contents = JSON.stringify(value);
-        const delivery = await result.agent.sendStateSignal(
-          { id, mode: "snapshot", cacheKey: contents, contents, value },
-          {
-            threadId: result.threadId,
-            resourceId: result.resourceId,
-            ifActive: { behavior: "persist" },
-            ifIdle: {
-              behavior: "persist",
-              streamOptions: { requestContext: c.get("requestContext") },
-            },
-          },
-        );
-        if (!delivery.skipped) {
-          await delivery.accepted;
-          await delivery.persisted;
-        }
-      }
-      return c.json({ state: parsed.data });
-    },
+    handler: (c) =>
+      withThreadWrite(
+        c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
+        c.req.param("threadId"),
+        async () => {
+          if (c.req.raw.signal.aborted) return c.body(null, 204);
+          const result = await sessionFor(c);
+          const parsed = workbenchStateSchema.safeParse(await c.req.json());
+          if (!parsed.success) {
+            throw workError("VALIDATION_FAILED", {
+              text: "Invalid workbench state",
+              details: { issues: parsed.error.issues },
+            });
+          }
+          for (const [id, value] of Object.entries(parsed.data)) {
+            if (c.req.raw.signal.aborted) break;
+            if (value === undefined) continue;
+            const contents = JSON.stringify(value);
+            const delivery = await result.agent.sendStateSignal(
+              { id, mode: "snapshot", cacheKey: contents, contents, value },
+              {
+                threadId: result.threadId,
+                resourceId: result.resourceId,
+                ifActive: { behavior: "persist" },
+                ifIdle: {
+                  behavior: "persist",
+                  streamOptions: { requestContext: c.get("requestContext") },
+                },
+              },
+            );
+            if (!delivery.skipped) {
+              await delivery.accepted;
+              await delivery.persisted;
+            }
+          }
+          return c.json({ state: parsed.data });
+        },
+      ),
   },
 );
 
@@ -849,7 +879,7 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
       ) {
         throw workError("VALIDATION_FAILED", { text: "请等待当前运行结束后再继续目标" });
       }
-      await assertNoActiveTeamRun(resourceId, threadId);
+      await assertNoActiveConversationRun(resourceId, threadId);
       await prepareWorkbenchMessage(c, threadId, resourceId, body.options);
       const profile = await getAgentProfile(
         c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,

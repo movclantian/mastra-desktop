@@ -31,7 +31,7 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 export function ThemeProvider({
   children,
   defaultTheme = "light",
-  defaultPreset = "default",
+  defaultPreset = "gymnopedies",
   userId,
 }: ThemeProviderProps) {
   const modeKey = userThemeStorageKey(STORAGE_MODE_KEY, userId ?? "anonymous");

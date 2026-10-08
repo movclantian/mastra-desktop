@@ -7,6 +7,7 @@ import {
   getModelCapabilities,
   getModelContextWindow,
   getModelDisplayName,
+  getModelKind,
   getReasoningEfforts,
   REASONING_EFFORT_LABELS,
   type ReasoningEffort,
@@ -59,14 +60,9 @@ export function ChatModelSelector() {
     activeThreadId,
   );
 
-  const activeProviders = providers
-    .map((provider) => ({
-      ...provider,
-      enabledModels: provider.enabledModels.filter(
-        (model) => !model.kind || model.kind === "language",
-      ),
-    }))
-    .filter((provider) => !provider.disabled && provider.enabledModels.length > 0);
+  const activeProviders = providers.filter(
+    (provider) => !provider.disabled && provider.enabledModels.length > 0,
+  );
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   const selectedModel = selectedProvider?.enabledModels.find(
     (model) => model.id === modelSelection?.modelId,
@@ -191,6 +187,7 @@ export function ChatModelSelector() {
                   .map((model) => {
                     const displayName = getModelDisplayName(model);
                     const caps = getModelCapabilities(provider, model.id, catalog);
+                    const kind = getModelKind(provider, model.id, catalog);
                     const contextWindow = getModelContextWindow(provider, model.id, catalog);
                     const isSelected =
                       modelSelection?.providerId === provider.id &&
@@ -220,6 +217,11 @@ export function ChatModelSelector() {
                           <span className="min-w-0 flex-1 break-words font-medium">
                             {displayName}
                           </span>
+                          {kind !== "language" ? (
+                            <Badge variant="secondary" className="shrink-0 text-[10px]">
+                              {t(`settings:providers.modelKinds.${kind}`)}
+                            </Badge>
+                          ) : null}
                         </HoverCardTrigger>
                         <HoverCardContent
                           side="right"

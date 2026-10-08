@@ -34,6 +34,7 @@ import {
   getProvidersConfig,
   REQUEST_MODEL_ID_CONTEXT_KEY,
   resolveDefaultModelId,
+  resolveModelSelection,
   splitRouterId,
 } from "../models/providers";
 import {
@@ -135,8 +136,9 @@ export async function prepareScheduledRun({
     throw workError("SCHEDULE_THREAD_NOT_FOUND");
   const metadata = (thread?.metadata ?? { currentModeId: "build" }) as ThreadMetadata;
   const mode = resolveMode(metadata.currentModeId);
-  const modelId = metadata.currentModelId ?? (await resolveDefaultModelId(resourceId));
-  if (!modelId) throw workError("MODEL_NOT_CONFIGURED");
+  const modelId = metadata.currentModelId ?? (await resolveDefaultModelId(resourceId, "language"));
+  if (!modelId || (await resolveModelSelection(modelId, resourceId))?.model.kind !== "language")
+    throw workError("MODEL_NOT_CONFIGURED", { text: "Agent 定时任务需要可用的对话模型" });
   const { providerId } = splitRouterId(modelId);
   const provider = (await getProvidersConfig(resourceId)).providers.find(
     (item) => item.id === providerId,

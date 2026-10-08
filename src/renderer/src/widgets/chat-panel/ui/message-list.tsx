@@ -60,6 +60,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
 import { WordRotate } from "@/shared/ui/word-rotate";
+import { mediaGenerationStateSchema } from "../../../../../shared/agent-contract";
 import { fetchChatAssetBlob } from "../api/chat-api";
 import {
   buildCitationEntries,
@@ -78,6 +79,8 @@ import { AssistantTrace } from "./assistant-trace";
 import { AssistantAvatar, UserAvatar } from "./avatars";
 import { CitationProvider, FootnoteCitation } from "./citations";
 import { MessageLink } from "./message-selection";
+
+const MediaGeneration = React.lazy(() => import("./media-generation"));
 
 function AssistantPendingIndicator({
   variant = "initial",
@@ -543,16 +546,22 @@ export const MessageItem = React.memo(function MessageItem({
   const [editText, setEditText] = React.useState("");
   const isUser = message.role === "user";
   const speaker = message.metadata as import("../model/types").WorkMessageMetadata | undefined;
-  const text = message.parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join("\n");
+  const mediaPart = message.parts.find((part) => part.type === "data-media-generation");
+  const media = mediaGenerationStateSchema.safeParse(
+    mediaPart && "data" in mediaPart ? mediaPart.data : speaker?.mediaGeneration,
+  ).data;
+  const text =
+    media?.result?.prompt ??
+    message.parts
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n");
 
   React.useEffect(() => {
     if (!editing) setEditText(text);
   }, [editing, text]);
 
-  const assistantSegments = isUser ? [] : getAssistantSegments(message.parts, message.id);
+  const assistantSegments = isUser || media ? [] : getAssistantSegments(message.parts, message.id);
   // 官方 message-demo:reactions 角标只挂在合并消息的最后一个文本气泡上
   const lastTextSegment = [...assistantSegments]
     .reverse()
@@ -823,6 +832,23 @@ export const MessageItem = React.memo(function MessageItem({
               {speaker?.agentDisplayName ?? "MastraWork"}
             </MessageHeader>
             <MessageAttachments files={files} messageId={message.id} />
+            {media ? (
+              <React.Suspense fallback={null}>
+                <MediaGeneration
+                  kind={media.kind}
+                  pending={media.status === "generating"}
+                  output={media.result}
+                  error={media.error}
+                  canceled={media.status === "canceled"}
+                  onRetry={
+                    !readOnly && (media.status === "failed" || media.status === "canceled")
+                      ? () => onRetry(message.id)
+                      : undefined
+                  }
+                  retryDisabled={isGenerating}
+                />
+              </React.Suspense>
+            ) : null}
             {emptyReply && replyError ? (
               <div className="flex min-w-0 flex-wrap items-start gap-2 text-sm text-muted-foreground">
                 <p
@@ -838,7 +864,10 @@ export const MessageItem = React.memo(function MessageItem({
                 ) : null}
               </div>
             ) : null}
-            {(isStreaming || emptyReply) && !replyError && assistantSegments.length === 0 ? (
+            {(isStreaming || emptyReply) &&
+            !replyError &&
+            !media &&
+            assistantSegments.length === 0 ? (
               <AssistantPendingIndicator variant="initial" />
             ) : null}
             <CitationProvider entries={citationEntries}>
@@ -985,13 +1014,14 @@ export const MessageItem = React.memo(function MessageItem({
                   <GitForkIcon />
                 </Button>
               ) : null}
-              {!readOnly ? (
+              {!readOnly && (!media || media.status === "complete") ? (
                 <Button
                   variant="ghost"
                   size="icon-xs"
                   aria-label={t("chat:messages.retry")}
                   title={t("chat:messages.retry")}
                   onClick={() => onRetry(message.id)}
+                  disabled={hideActions}
                 >
                   <RefreshCcwIcon />
                 </Button>

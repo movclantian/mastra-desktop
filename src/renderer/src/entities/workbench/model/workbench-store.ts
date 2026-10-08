@@ -865,7 +865,7 @@ export function useWorkbenchStateReporter(
 
   useEffect(() => {
     if (!activeThreadId || !userId) return;
-    void reportWorkbenchState(activeThreadId, userId, {
+    return reportWorkbenchState(activeThreadId, userId, {
       workbench: {
         workspacePanelOpen,
         workspacePanelTab: activePanelTabKind,
@@ -887,16 +887,15 @@ export function useWorkbenchStateReporter(
     void terminalSessionsVersion;
     const sessions = [...useWorkbenchStore.getState().terminalSessions.values()];
     if (sessions.length === 0) {
-      void reportWorkbenchState(activeThreadId, userId, {
+      return reportWorkbenchState(activeThreadId, userId, {
         terminal: { open: false, sessionCount: 0 },
       });
-      return;
     }
     const settled = sessions
       .filter((session) => session.settledAt !== undefined)
       .sort((left, right) => (right.settledAt ?? 0) - (left.settledAt ?? 0))[0];
     const focused = sessions.find((session) => session.status === "ready") ?? sessions[0];
-    void reportWorkbenchState(activeThreadId, userId, {
+    return reportWorkbenchState(activeThreadId, userId, {
       terminal: {
         open: true,
         sessionCount: sessions.length,

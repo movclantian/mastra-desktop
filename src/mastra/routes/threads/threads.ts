@@ -19,7 +19,11 @@ import { closeComputerConnections } from "../../connections/computer";
 import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
 import { workPollingSignals, workWebhookSignals } from "../../harness/signals";
-import { resolveDefaultLanguageModel, resolveRequestModel } from "../../models/providers";
+import {
+  resolveDefaultLanguageModel,
+  resolveModelSelection,
+  resolveRequestModel,
+} from "../../models/providers";
 import { listPluginSkills } from "../../plugins/registry";
 import {
   attachAssetReference,
@@ -30,15 +34,21 @@ import {
 import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
 import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
+import {
+  activeThreadMediaGeneration,
+  activeThreadWorkflow,
+  assertNoActiveConversationRun,
+  startConversationRun,
+} from "../conversation-runs";
 import { abortWorkbenchSession, observeSessionWork } from "../session";
 import { prepareWorkbenchMessage } from "../session-context";
-import { assertNoActiveTeamRun, startTeamWorkflow } from "../team-runs";
-import { workbenchMessages } from "./messages";
+import { generatedFilesInMessage, workbenchMessages } from "./messages";
 import {
   deleteThreadMessages,
   getOwnedThread,
   getWorkMemory,
   normalizeChatHistoryMessages,
+  withThreadWrite,
 } from "./shared";
 
 /** Editing rewrites stored history; ordinary messages use Controller.sendMessage. */
@@ -64,7 +74,7 @@ const rewriteThreadMessageRoute = registerApiRoute(
       const threadId = c.req.param("threadId");
       const messageId = c.req.param("messageId");
       const result = await prepareWorkbenchMessage(c, threadId, resourceId, body.options);
-      await assertNoActiveTeamRun(resourceId, threadId);
+      await assertNoActiveConversationRun(resourceId, threadId);
       await abortWorkbenchSession(result.controllerSession);
       await result.memory.settled();
       const recalled = await result.memory.recall({ threadId, resourceId, perPage: false });
@@ -115,7 +125,12 @@ const rewriteThreadMessageRoute = registerApiRoute(
         c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
         resourceId,
       );
-      if (profile.workflow?.strategy === "workflow") return startTeamWorkflow(c, result, content);
+      const selection = await resolveModelSelection(
+        result.controllerSession.model.get(),
+        resourceId,
+      );
+      if (selection?.model.kind !== "language" || profile.workflow?.strategy === "workflow")
+        return startConversationRun(c, result, content);
       observeSessionWork(
         c,
         result.controllerSession,
@@ -204,11 +219,17 @@ const generateThreadTitleRoute = registerApiRoute("/work/threads/:threadId/gener
       .filter((part) => part.type === "text")
       .map((part) => part.text)
       .join(" ");
+    const model = await resolveDefaultLanguageModel(resourceId);
+    if (!model)
+      throw workError("MODEL_NOT_CONFIGURED", {
+        text: "自动命名需要启用对话模型，也可以直接手动修改标题",
+      });
     const title = await c
       .get("mastra")
       .getAgentById(DEFAULT_AGENT_PROFILE_ID)
       .generateTitleFromUserMessage({
         message: text,
+        model,
         requestContext: c.get("requestContext"),
       });
     await memory.updateThread({
@@ -392,12 +413,17 @@ const cloneThreadRoute = registerApiRoute("/work/threads/:threadId/clone", {
     });
     await memory.settled();
     const copied = await memory.recall({ threadId: clone.id, resourceId, perPage: false });
+    const assetIds = new Set<string>();
     for (const message of workbenchMessages(copied.messages)) {
       for (const part of message.parts) {
         const assetId = part.type === "file" ? getLibraryAssetId(part.url) : null;
-        if (assetId && (await getLibraryAsset(resourceId, assetId)))
-          await attachAssetReference(resourceId, assetId, undefined, clone.id);
+        if (assetId) assetIds.add(assetId);
       }
+      for (const file of generatedFilesInMessage(message)) assetIds.add(file.assetId);
+    }
+    for (const assetId of assetIds) {
+      if (await getLibraryAsset(resourceId, assetId))
+        await attachAssetReference(resourceId, assetId, undefined, clone.id);
     }
     return c.json({ thread: clone });
   },
@@ -526,6 +552,12 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
     const pluginSkills = await listPluginSkills(resourceId);
     for (const message of workbenchMessages(messages)) {
       const metadata = record(message.metadata);
+      for (const file of generatedFilesInMessage(message)) {
+        addFile({
+          ...file,
+          url: `/work/library/assets/${encodeURIComponent(file.assetId)}/content`,
+        });
+      }
       if (message.role === "user") {
         latestRequest = message.parts
           .filter((part) => part.type === "text")
@@ -669,6 +701,19 @@ const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize
 const draftCreations = new Map<string, Promise<void>>();
 
 export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
+  const deleting =
+    c.req.method === "DELETE" && /^\/api\/memory\/threads\/([^/]+)$/.exec(c.req.path);
+  if (deleting) {
+    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!resourceId) throw workError("AUTH_REQUIRED");
+    return withThreadWrite(resourceId, decodeURIComponent(deleting[1]), () =>
+      handleMemoryThreadRequest(c, next),
+    );
+  }
+  return handleMemoryThreadRequest(c, next);
+}
+
+async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promise<void>) {
   const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
   if (c.req.path === "/api/memory/messages/delete" && c.req.method === "POST") {
     if (!resourceId) throw workError("AUTH_REQUIRED");
@@ -694,7 +739,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     for (const threadId of threadIds) {
       if (!threadId || !(await getOwnedThread(memory, threadId, resourceId)))
         throw workError("THREAD_NOT_FOUND");
-      await assertNoActiveTeamRun(resourceId, threadId);
+      await assertNoActiveConversationRun(resourceId, threadId);
     }
     await memory.settled();
     for (const threadId of threadIds) {
@@ -800,7 +845,7 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
     }
   }
   if (threadId && c.req.method === "DELETE") {
-    await assertNoActiveTeamRun(resourceId, threadId);
+    await assertNoActiveConversationRun(resourceId, threadId);
     for (const agent of Object.values(c.get("mastra").listAgents())) {
       await agent.abortThreadStream({ resourceId, threadId });
     }
@@ -873,8 +918,15 @@ export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => P
         lastUserRequestAt: lastUserRequests.get(item.id) ?? null,
         metadata: {
           ...item.metadata,
-          isWorking: active.has(item.id),
-          activeRunId: active.get(item.id) ?? null,
+          isWorking:
+            active.has(item.id) ||
+            Boolean(activeThreadWorkflow(resourceId, item.id)) ||
+            Boolean(activeThreadMediaGeneration(resourceId, item.id)),
+          activeRunId:
+            active.get(item.id) ??
+            activeThreadWorkflow(resourceId, item.id)?.runId ??
+            activeThreadMediaGeneration(resourceId, item.id)?.messageId ??
+            null,
         },
       })),
     });

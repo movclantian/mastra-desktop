@@ -22,7 +22,7 @@ import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { closeMemoryVector, settleAllMemory } from "../memory/memory-runtime";
 import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
 import { stopWorkspaceCleanup } from "../workspace/workspace-manager";
-import { drainTeamRuns } from "./team-runs";
+import { drainConversationRuns } from "./conversation-runs";
 
 /** 落盘上限:超时即退出,不能让退出流程挂住(主进程那边还有强杀兜底) */
 const SHUTDOWN_FLUSH_TIMEOUT_MS = 3_000;
@@ -64,7 +64,7 @@ async function drainRuns(mastra: Mastra, signal: AbortSignal): Promise<void> {
         agent.abortThreadStream({ ...run, clearPendingSignals: true });
       }
     }
-    await drainTeamRuns(mastra);
+    await drainConversationRuns(mastra);
     if (!active) return;
     await delay(20, undefined, { signal });
   }

@@ -10,6 +10,29 @@ import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
 
+// ponytail: one desktop host owns these writes; use storage transactions if hosts are shared.
+const threadWrites = new Map<string, Promise<void>>();
+
+/** State snapshots and deletion must not race: Mastra state signals save the whole thread. */
+export async function withThreadWrite<T>(
+  resourceId: string,
+  threadId: string,
+  write: () => Promise<T>,
+): Promise<T> {
+  const key = JSON.stringify([resourceId, threadId]);
+  const operation = (threadWrites.get(key) ?? Promise.resolve()).then(write);
+  const settled = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  threadWrites.set(key, settled);
+  try {
+    return await operation;
+  } finally {
+    if (threadWrites.get(key) === settled) threadWrites.delete(key);
+  }
+}
+
 /** Invalidate derived observations before rewriting the source history. */
 export async function deleteThreadMessages(
   memory: Memory,

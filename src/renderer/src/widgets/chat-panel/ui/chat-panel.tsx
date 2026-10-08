@@ -10,6 +10,7 @@ import {
   fetchThreadSource,
   getModelCapabilities,
   getModelContextWindow,
+  getModelKind,
   qk,
   withCategoryPolicy,
 } from "@/entities/workbench";
@@ -311,7 +312,13 @@ export function ChatPanel() {
   const objective =
     objectiveSnapshot?.threadId === activeThreadId ? objectiveSnapshot.objective : null;
   const [goalMode, setGoalMode] = React.useState(false);
-  const goalAvailable = agentSelection.workflow?.strategy !== "workflow";
+  const selectedProvider = providers.find((provider) => provider.id === modelSelection?.providerId);
+  const isMediaModel = Boolean(
+    selectedProvider &&
+      modelSelection &&
+      getModelKind(selectedProvider, modelSelection.modelId, catalog) !== "language",
+  );
+  const goalAvailable = !isMediaModel && agentSelection.workflow?.strategy !== "workflow";
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
   const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
   const [handoff, setHandoff] = React.useState<WorkDisplayState["handoff"]>(null);
@@ -360,7 +367,6 @@ export function ChatPanel() {
     };
   }, [activeThread?.metadata.clone?.sourceThreadId, activeThreadId, user.id]);
 
-  const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   const selectedContextWindow = React.useMemo(
     () =>
       selectedProvider && modelSelection
@@ -371,9 +377,12 @@ export function ChatPanel() {
   const selectedCapabilities = React.useMemo(
     () =>
       selectedProvider && modelSelection
-        ? getModelCapabilities(selectedProvider, modelSelection.modelId, catalog)
+        ? {
+            ...getModelCapabilities(selectedProvider, modelSelection.modelId, catalog),
+            ...(isMediaModel ? { vision: true, audio: false } : {}),
+          }
         : undefined,
-    [catalog, modelSelection, selectedProvider],
+    [catalog, modelSelection, selectedProvider, isMediaModel],
   );
   const attachmentTokenBudgetRef = React.useRef(selectedContextWindow ?? 32_000);
 
@@ -425,11 +434,14 @@ export function ChatPanel() {
   );
   buildRequestBodyRef.current = () => ({
     // 思考等级:标准 modelSettings.reasoning(max 档退回 providerOptions)
-    ...(selectedProvider && modelSelection && modelSelection.reasoningEffort !== "off"
+    ...(!isMediaModel &&
+    selectedProvider &&
+    modelSelection &&
+    modelSelection.reasoningEffort !== "off"
       ? buildReasoningRequest(selectedProvider, modelSelection.reasoningEffort)
       : {}),
     // 联网检索开关:服务端据此注入检索工具
-    ...(searchSelection ? { webSearch: searchSelection } : {}),
+    ...(!isMediaModel && searchSelection ? { webSearch: searchSelection } : {}),
     // 首条消息的显式工作区选定(未锁定线程才携带,服务端绑定后忽略后续)
     ...(pendingWorkspacePathRef.current && !workspaceLockedRef.current
       ? { workspacePath: pendingWorkspacePathRef.current }
@@ -440,7 +452,6 @@ export function ChatPanel() {
       audio: selectedCapabilities?.audio === true,
     },
     agentProfileId: agentSelection.id,
-    runWorkflow: agentSelection.workflow?.strategy === "workflow",
   });
 
   const { getThreadSession, retainActive } = useThreadSessions(
@@ -652,6 +663,7 @@ export function ChatPanel() {
       if (activeThreadIdRef.current === threadId) void reloadDisplayState();
       void invalidateThreads(userId);
       void queryClient.invalidateQueries({ queryKey: qk.threadContext(userId, threadId) });
+      void queryClient.invalidateQueries({ queryKey: qk.libraryContents(userId) });
     };
     return () => {
       reconcileSettledThreadRef.current = () => undefined;
@@ -1370,13 +1382,7 @@ export function ChatPanel() {
     try {
       const text = message.text.trim();
       const files = message.files ?? [];
-      if (
-        message.goal &&
-        (isBusy ||
-          queuedRequests.length > 0 ||
-          !text ||
-          agentSelection.workflow?.strategy === "workflow")
-      ) {
+      if (message.goal && (isBusy || queuedRequests.length > 0 || !text || !goalAvailable)) {
         toast.error(t("chat:goal.cannotStart"));
         return;
       }
@@ -1387,7 +1393,7 @@ export function ChatPanel() {
       if (isBusy || queuedRequests.length > 0) {
         const threadId = activeThreadIdRef.current;
         if (!threadId) return;
-        if (agentSelection.workflow?.strategy === "workflow") {
+        if (isMediaModel || agentSelection.workflow?.strategy === "workflow") {
           toast.error(t("chat:prompt.workflowQueueUnavailable"));
           return;
         }
@@ -1525,7 +1531,7 @@ export function ChatPanel() {
   const handleGoalAction = async (action: GoalAction) => {
     const threadId = activeThreadIdRef.current;
     if (!threadId) return;
-    const { runWorkflow: _runWorkflow, ...options } = buildRequestBodyRef.current(threadId);
+    const options = buildRequestBodyRef.current(threadId);
     await requestJson(`/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/goal`, {
       method: "POST",
       body: { ...action, options },

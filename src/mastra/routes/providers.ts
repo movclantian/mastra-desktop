@@ -10,6 +10,7 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { createGateway } from "ai";
 import { z } from "zod";
+import { inferModelKind } from "../../shared/agent-contract";
 import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
 import { resolveCredential } from "../credential-broker";
 import { errorText, workError, workValidationError } from "../errors";
@@ -17,7 +18,10 @@ import {
   createProviderModel,
   fetchModelsDevCatalog,
   getProvidersConfig,
+  inferGatewayProtocol,
   providersPatchSchema,
+  rememberProviderModelKinds,
+  resolveProviderModelKind,
   saveProvidersConfig,
 } from "../models/providers";
 
@@ -114,7 +118,7 @@ const GATEWAY_TIMEOUT_MS = 30_000;
 const providerModelsRequestSchema = z
   .object({
     providerId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
-    protocol: z.enum(["openai", "anthropic", "gemini", "gateway"]),
+    protocol: z.enum(["openai", "anthropic", "gemini"]),
     url: z
       .url({ protocol: /^https?$/ })
       .max(2_048)
@@ -139,7 +143,21 @@ export const listProviderModelsRoute = createRoute({
     );
 
     // Use the configured API root exactly; the provider owns its version/path convention.
-    if (protocol === "gateway") {
+    const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    const { providers } = await getProvidersConfig(resourceId);
+    const provider = providers.find((provider) => provider.id === payload.providerId);
+    const discovered = async (models: Array<{ id: string; name: string; kind?: string }>) => {
+      if (
+        provider &&
+        provider.credentialRef === payload.credentialRef &&
+        provider.baseUrl === payload.url &&
+        payload.protocol ===
+          (provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "") ?? "openai")
+      )
+        await rememberProviderModelKinds(provider, models, resourceId);
+      return { models };
+    };
+    if (provider?.registryId === "vercel") {
       const gateway = createGateway({
         apiKey,
         ...(payload.url ? { baseURL: payload.url } : {}),
@@ -147,8 +165,8 @@ export const listProviderModelsRoute = createRoute({
           fetch(input, { ...init, signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) }),
       });
       const { models } = await gateway.getAvailableModels();
-      return {
-        models: models
+      return discovered(
+        models
           .filter(
             (model) => !model.modelType || ["language", "image", "video"].includes(model.modelType),
           )
@@ -157,7 +175,7 @@ export const listProviderModelsRoute = createRoute({
             name: model.name,
             kind: model.modelType ?? "language",
           })),
-      };
+      );
     }
     if (!payload.url)
       throw workError("VALIDATION_FAILED", { text: "Base URL is required for this protocol" });
@@ -205,9 +223,14 @@ export const listProviderModelsRoute = createRoute({
       });
     }
 
+    type ModelMetadata = {
+      model_type?: string;
+      modalities?: { output?: string[] };
+      supportedGenerationMethods?: string[];
+    };
     let data: {
-      data?: { id: string; display_name?: string }[];
-      models?: { name: string; displayName?: string }[];
+      data?: ({ id: string; display_name?: string } & ModelMetadata)[];
+      models?: ({ name: string; displayName?: string } & ModelMetadata)[];
     };
     try {
       data = (await response.json()) as typeof data;
@@ -223,15 +246,24 @@ export const listProviderModelsRoute = createRoute({
         text: `${base}/models 的响应里没有模型列表（既无 data[] 也无 models[]），请确认 Base URL 填的是网关根地址而不是具体端点`,
       });
     }
+    const kind = (id: string, model: ModelMetadata) => {
+      const value = inferModelKind(id, {
+        modelType: model.model_type,
+        outputModalities: model.modalities?.output,
+        generationMethods: model.supportedGenerationMethods,
+      });
+      return value !== "language" || model.model_type || model.modalities?.output?.length
+        ? value
+        : undefined;
+    };
     const models = Array.isArray(data.data)
-      ? data.data.map((m) => ({ id: m.id, name: m.display_name ?? m.id }))
+      ? data.data.map((m) => ({ id: m.id, name: m.display_name ?? m.id, kind: kind(m.id, m) }))
       : (data.models ?? []).map((m) => ({
           id: m.name.replace(/^models\//, ""),
           name: m.displayName ?? m.name.replace(/^models\//, ""),
+          kind: kind(m.name, m),
         }));
-    return {
-      models,
-    };
+    return discovered(models);
   },
 });
 
@@ -275,13 +307,9 @@ export const testProviderModelRoute = createRoute({
     const config = await getProvidersConfig(resourceId);
     const provider = config.providers.find((candidate) => candidate.id === params.providerId);
     if (!provider) throw workError("MODEL_NOT_CONFIGURED");
-    if (
-      provider.enabledModels.some(
-        (model) => model.id === params.modelId && model.kind !== "language",
-      )
-    )
+    if ((await resolveProviderModelKind(provider, params.modelId, resourceId)) !== "language")
       throw workError("VALIDATION_FAILED", {
-        text: "请在对话中调用生成工具验证图片或视频模型；文本连通性测试仅用于对话模型。",
+        text: "请在聊天模型选择器中选中该模型并发送生成请求；文本连通性测试仅用于对话模型。",
       });
     // Testing checks the saved connection before a model is enabled for conversations.
     const model = await createProviderModel(provider, params.modelId, resourceId);

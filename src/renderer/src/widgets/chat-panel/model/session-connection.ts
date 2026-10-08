@@ -63,7 +63,7 @@ export function isConnectionError(error: unknown): boolean {
   return error instanceof TypeError || error.name === "TimeoutError";
 }
 
-function waitForRetry(ms: number, signal: AbortSignal): Promise<void> {
+export function waitForSessionDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
     const abort = () => {
@@ -147,7 +147,7 @@ export function createSessionConnection(options: {
             resetReady();
           }
           options.onState(hasConnected ? "reconnecting" : "connecting");
-          await waitForRetry(Math.min(1000 * 2 ** Math.min(attempts++, 5), 30_000), signal);
+          await waitForSessionDelay(Math.min(1000 * 2 ** Math.min(attempts++, 5), 30_000), signal);
         }
       }
     })().catch((error) => {

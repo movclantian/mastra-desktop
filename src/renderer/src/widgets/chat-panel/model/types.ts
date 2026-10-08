@@ -14,6 +14,7 @@ import type { ToolPart } from "@/shared/ui/ai-elements/tool";
  * 助手用量由原生 Session 与历史投影恢复。
  */
 export interface WorkMessageMetadata {
+  mediaGeneration?: import("../../../../../shared/agent-contract").MediaGenerationState;
   clientMessageId?: string;
   agentProfileId?: string;
   agentDisplayName?: string;
@@ -110,6 +111,7 @@ export type WorkUIMessage = UIMessage<
     "task-update": { tasks: unknown[] };
     "library-sources": unknown[];
     "workspace-log": WorkspaceLogData;
+    "media-generation": import("../../../../../shared/agent-contract").MediaGenerationState;
   }
 >;
 

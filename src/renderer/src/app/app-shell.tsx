@@ -1,9 +1,11 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { useQueryClient } from "@tanstack/react-query";
 import { Outlet, useLocation, useRouterState } from "@tanstack/react-router";
 import * as React from "react";
 import { useDefaultLayout, useGroupRef } from "react-resizable-panels";
 import {
   hydrateWorkbenchStore,
+  qk,
   useOpenBrowserUrl,
   useWorkbenchStateReporter,
   useWorkbenchStore,
@@ -111,6 +113,7 @@ export function RootShell() {
 
 function useDesktopNotifications() {
   const { user, token } = useAuth();
+  const queryClient = useQueryClient();
   const { t } = useTranslation();
   const settings = useDesktopSettingsQuery().data;
   const selectThread = useSelectThread();
@@ -124,7 +127,7 @@ function useDesktopNotifications() {
     [selectThread, user?.id],
   );
   React.useEffect(() => {
-    if (!user || !token || (!desktopEnabled && !scheduleEnabled)) return;
+    if (!user || !token) return;
     const controller = new AbortController();
     const seen = new Set<string>();
     void fetchEventSource(`${MASTRA_SERVER_URL}/work/desktop-notifications`, {
@@ -135,19 +138,19 @@ function useDesktopNotifications() {
         if (response.status === 401 || response.status === 403) controller.abort();
         if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream"))
           throw new Error(`Notification subscription failed: ${response.status}`);
+        // Refresh missed completions after reconnect, even when the chat page is unmounted.
+        void queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
       },
       onmessage(event) {
         if (event.event !== "notification") return;
         const parsed = DesktopNotificationSchema.safeParse(JSON.parse(event.data));
         if (!parsed.success || parsed.data.resourceId !== user.id) return;
         const notification = parsed.data;
-        if (
-          !(notification.kind === "schedule" ? scheduleEnabled : desktopEnabled) ||
-          seen.has(notification.id)
-        )
-          return;
+        if (seen.has(notification.id)) return;
         seen.add(notification.id);
         if (seen.size > 200) seen.delete(seen.values().next().value as string);
+        void queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
+        if (!(notification.kind === "schedule" ? scheduleEnabled : desktopEnabled)) return;
         void window.api.window
           .notify({
             ...notification,
@@ -171,7 +174,7 @@ function useDesktopNotifications() {
       if (!controller.signal.aborted) console.error("Notification subscription failed", error);
     });
     return () => controller.abort();
-  }, [user?.id, token, desktopEnabled, scheduleEnabled, t]);
+  }, [user?.id, token, desktopEnabled, scheduleEnabled, t, queryClient]);
 }
 
 function WorkbenchShell() {

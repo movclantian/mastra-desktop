@@ -22,6 +22,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/sha
 import { Input } from "@/shared/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/shared/ui/input-group";
 import { Label } from "@/shared/ui/label";
+import { PanelHeader } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Slider } from "@/shared/ui/slider";
@@ -201,9 +202,9 @@ export function ThemeSection() {
         )}
       >
         <div className="flex h-full w-full min-h-0 shrink-0 flex-col">
-          {/* 顶栏: 搜索与折叠切换 */}
-          <div className="border-b border-sidebar-border p-2 shrink-0 flex flex-col gap-2">
-            <div className="flex items-center justify-between gap-1">
+          {/* 顶栏与详情列等高，搜索筛选独立排列在下方。 */}
+          <div className="flex shrink-0 flex-col">
+            <PanelHeader className="justify-between gap-1 bg-sidebar px-2">
               <div className="flex items-center gap-1.5 min-w-0 group-data-[collapsible=icon]/sidebar:hidden">
                 <PaletteIcon className="size-4 text-primary shrink-0" />
                 <span className="text-xs font-semibold truncate">
@@ -214,17 +215,21 @@ export function ThemeSection() {
                 size="icon-xs"
                 variant="ghost"
                 className="size-7 shrink-0"
-                onClick={() => setSidebarOpen(!sidebarOpen)}
+                onClick={() => setSidebarOpen((open) => !open)}
+                aria-expanded={sidebarOpen}
+                aria-label={
+                  sidebarOpen ? t("settings:themes.collapseList") : t("settings:themes.expandList")
+                }
                 title={
                   sidebarOpen ? t("settings:themes.collapseList") : t("settings:themes.expandList")
                 }
               >
                 <PanelLeftIcon className="size-4" />
               </Button>
-            </div>
+            </PanelHeader>
 
             {sidebarOpen ? (
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 border-b border-sidebar-border p-2">
                 <InputGroup className="h-7 bg-background">
                   <InputGroupAddon>
                     <SearchIcon className="size-3.5 text-muted-foreground" />
@@ -393,27 +398,14 @@ export function ThemeSection() {
       {/* ========================================================================= */}
       <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-hidden bg-background">
         {/* 顶部标题栏与快捷操作 */}
-        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b bg-muted/20 px-4">
+        <PanelHeader className="justify-between bg-muted/20 px-4">
           <div className="flex items-center gap-2 min-w-0">
-            {!sidebarOpen ? (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                className="-ml-1"
-                onClick={() => setSidebarOpen(true)}
-                title={t("settings:themes.expandList")}
-              >
-                <PanelLeftIcon />
-              </Button>
-            ) : null}
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-semibold truncate text-foreground">
-                {activePreset.name}
-              </span>
-              <Badge variant="outline" className="text-xs">
-                {activePreset.categoryLabel}
-              </Badge>
-            </div>
+            <span className="text-sm font-semibold truncate text-foreground">
+              {activePreset.name}
+            </span>
+            <Badge variant="outline" className="text-xs">
+              {activePreset.categoryLabel}
+            </Badge>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
@@ -438,7 +430,7 @@ export function ThemeSection() {
               {t("settings:themes.copyConfig")}
             </Button>
           </div>
-        </header>
+        </PanelHeader>
 
         {/* 调参主滚动区:卡片自适应铺满整个宽度,不再限宽留白 */}
         <ScrollArea className="min-h-0 flex-1">
