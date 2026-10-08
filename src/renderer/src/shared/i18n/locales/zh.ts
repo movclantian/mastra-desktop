@@ -604,6 +604,11 @@ export const zh = {
       roundTripLatency: "目标服务器响应成功，实测往返延迟：",
     },
     providers: {
+      modelKind: "模型用途",
+      gatewayDefaultUrl: "留空使用 AI SDK 官方网关地址",
+      modelKinds: { language: "对话", image: "生图", video: "生视频" },
+      aiGatewayHint:
+        "统一接入多家厂商的对话、图片和视频模型。使用 AI SDK Gateway 协议及其 API Key，模型用途会从网关目录识别。聊天请选择对话模型，图片和视频由 Agent 调用生成工具。",
       searchPlaceholder: "搜索供应商...",
       addGateway: "添加自定义网关",
       expandList: "展开供应商列表",
@@ -2084,6 +2089,17 @@ export const zh = {
       working: "{{name}}，工作中",
       sleeping: "{{name}}，休息中",
       userFallback: "我",
+    },
+    media: {
+      waitingApproval: "等待批准后开始生成。",
+      image: "图片生成",
+      video: "视频生成",
+      generating: "正在生成，完成后会自动显示。你可以停止当前回复来取消等待。",
+      loading: "正在加载生成文件…",
+      loadFailed: "生成文件加载失败",
+      failed: "生成失败，详情见工具执行记录。",
+      preview: "打开预览",
+      download: "下载",
     },
     api: {
       loadSkillsFailed: "加载技能失败",

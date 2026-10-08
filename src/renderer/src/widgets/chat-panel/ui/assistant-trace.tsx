@@ -72,6 +72,8 @@ import { DotmTriangle2 } from "@/shared/ui/dotm-triangle-2";
 import { getTraceStepStatus, type TracePart } from "../model/types";
 import { getToolUI } from "./tool-registry-ui";
 
+const MediaGeneration = React.lazy(() => import("./media-generation"));
+
 function useTraceDisclosure(showDetails: boolean) {
   const [open, setOpen] = React.useState(showDetails);
   React.useEffect(() => setOpen(showDetails), [showDetails]);
@@ -523,28 +525,46 @@ export function AssistantTrace({
   flushTools();
 
   return (
-    <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
-      <ChainOfThoughtHeader>
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0">
-            {active
-              ? t("chat:trace.processing")
-              : t("chat:trace.stepsCount", {
-                  count: parts.length,
-                  summary: summary || t("chat:trace.executionTrace"),
-                })}
+    <>
+      <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
+        <ChainOfThoughtHeader>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0">
+              {active
+                ? t("chat:trace.processing")
+                : t("chat:trace.stepsCount", {
+                    count: parts.length,
+                    summary: summary || t("chat:trace.executionTrace"),
+                  })}
+            </span>
+            {!open && streamingText ? <ReasoningStreamingPreview text={streamingText} /> : null}
           </span>
-          {!open && streamingText ? <ReasoningStreamingPreview text={streamingText} /> : null}
-        </span>
-      </ChainOfThoughtHeader>
-      {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
+        </ChainOfThoughtHeader>
+        {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
           Header 的 BrainIcon 那一列,步骤正文与 Header 文字起点对齐;
           再往内一层的层级由工具组 TaskContent 自带的时间线承担 */}
-      <ChainOfThoughtContent>
-        {items.map((item) => (
-          <React.Fragment key={item.key}>{item.node}</React.Fragment>
-        ))}
-      </ChainOfThoughtContent>
-    </ChainOfThought>
+        <ChainOfThoughtContent>
+          {items.map((item) => (
+            <React.Fragment key={item.key}>{item.node}</React.Fragment>
+          ))}
+        </ChainOfThoughtContent>
+      </ChainOfThought>
+      {parts.map((part) => {
+        if (part.type === "reasoning") return null;
+        const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
+        if (name !== "generate_image" && name !== "generate_video") return null;
+        return (
+          <React.Suspense key={part.toolCallId} fallback={null}>
+            <MediaGeneration
+              kind={name === "generate_image" ? "image" : "video"}
+              pending={isStreaming && getTraceStepStatus(part) === "active"}
+              waiting={part.state === "approval-requested"}
+              output={"output" in part ? part.output : undefined}
+              error={"errorText" in part ? part.errorText : undefined}
+            />
+          </React.Suspense>
+        );
+      })}
+    </>
   );
 }

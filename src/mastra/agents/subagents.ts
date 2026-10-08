@@ -26,6 +26,7 @@ import {
   libraryVectorSearchTool,
 } from "../rag/tools";
 import { userIdFromContext } from "../storage/database";
+import { resolveMediaTools } from "../tools/media-generation";
 import { codeModeProcessor } from "../tools/tool-registry";
 import {
   parseWebSearchSelection,
@@ -177,7 +178,7 @@ export async function resolveSharedTools(
       span?.end({ metadata: { succeeded } });
     }
   };
-  const [notificationInbox, webTools, mcpTools, computerTools] = await Promise.all([
+  const [notificationInbox, webTools, mcpTools, computerTools, mediaTools] = await Promise.all([
     getNotificationInboxTool(),
     prepare("web search", () =>
       resolveWebSearchTools(
@@ -187,6 +188,7 @@ export async function resolveSharedTools(
     ),
     prepare("MCP", () => getConfiguredMcpTools(resourceId, undefined, mcpServerIds)),
     prepare("computer", () => getComputerTools(requestContext)),
+    prepare("media", () => resolveMediaTools(resourceId)),
   ]);
   const tools: ToolsInput = {
     ask_user: askUserTool,
@@ -198,6 +200,7 @@ export async function resolveSharedTools(
     ...webTools,
     ...mcpTools,
     ...computerTools,
+    ...mediaTools,
   };
   // Preserve computer-specific approval settings; other tools use the shared session policy.
   return Object.fromEntries(

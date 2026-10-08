@@ -8,6 +8,7 @@ import { Agent } from "@mastra/core/agent";
 import { PROVIDER_REGISTRY } from "@mastra/core/llm";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
+import { createGateway } from "ai";
 import { z } from "zod";
 import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
 import { resolveCredential } from "../credential-broker";
@@ -113,8 +114,11 @@ const GATEWAY_TIMEOUT_MS = 30_000;
 const providerModelsRequestSchema = z
   .object({
     providerId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
-    protocol: z.enum(["openai", "anthropic", "gemini"]),
-    url: z.url({ protocol: /^https?$/ }).max(2_048),
+    protocol: z.enum(["openai", "anthropic", "gemini", "gateway"]),
+    url: z
+      .url({ protocol: /^https?$/ })
+      .max(2_048)
+      .optional(),
     credentialRef: SecretRefSchema,
   })
   .strict();
@@ -135,6 +139,28 @@ export const listProviderModelsRoute = createRoute({
     );
 
     // Use the configured API root exactly; the provider owns its version/path convention.
+    if (protocol === "gateway") {
+      const gateway = createGateway({
+        apiKey,
+        ...(payload.url ? { baseURL: payload.url } : {}),
+        fetch: (input, init) =>
+          fetch(input, { ...init, signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS) }),
+      });
+      const { models } = await gateway.getAvailableModels();
+      return {
+        models: models
+          .filter(
+            (model) => !model.modelType || ["language", "image", "video"].includes(model.modelType),
+          )
+          .map((model) => ({
+            id: model.id,
+            name: model.name,
+            kind: model.modelType ?? "language",
+          })),
+      };
+    }
+    if (!payload.url)
+      throw workError("VALIDATION_FAILED", { text: "Base URL is required for this protocol" });
     const base = payload.url.replace(/\/+$/, "");
 
     let endpoint = `${base}/models`;
@@ -249,6 +275,14 @@ export const testProviderModelRoute = createRoute({
     const config = await getProvidersConfig(resourceId);
     const provider = config.providers.find((candidate) => candidate.id === params.providerId);
     if (!provider) throw workError("MODEL_NOT_CONFIGURED");
+    if (
+      provider.enabledModels.some(
+        (model) => model.id === params.modelId && model.kind !== "language",
+      )
+    )
+      throw workError("VALIDATION_FAILED", {
+        text: "请在对话中调用生成工具验证图片或视频模型；文本连通性测试仅用于对话模型。",
+      });
     // Testing checks the saved connection before a model is enabled for conversations.
     const model = await createProviderModel(provider, params.modelId, resourceId);
     if (!model) throw workError("MODEL_NOT_CONFIGURED");

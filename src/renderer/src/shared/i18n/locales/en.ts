@@ -630,6 +630,11 @@ export const en = {
       roundTripLatency: "Target server responded successfully. Measured round-trip latency: ",
     },
     providers: {
+      modelKind: "Model purpose",
+      gatewayDefaultUrl: "Leave blank for the official AI SDK Gateway",
+      modelKinds: { language: "Chat", image: "Image", video: "Video" },
+      aiGatewayHint:
+        "Access chat, image and video models from multiple providers with the AI SDK Gateway protocol and API key. Model purposes come from the gateway catalog. Select a chat model for the conversation; the Agent calls image and video generation tools.",
       searchPlaceholder: "Search providers...",
       addGateway: "Add Custom Gateway",
       expandList: "Expand Provider List",
@@ -2144,6 +2149,18 @@ export const en = {
       working: "{{name}}, working",
       sleeping: "{{name}}, sleeping",
       userFallback: "Me",
+    },
+    media: {
+      waitingApproval: "Generation will start after approval.",
+      image: "Image generation",
+      video: "Video generation",
+      generating:
+        "Generating. Results appear when ready. Stop the current response to cancel waiting.",
+      loading: "Loading generated file…",
+      loadFailed: "Could not load the generated file",
+      failed: "Generation failed. See the tool details.",
+      preview: "Open preview",
+      download: "Download",
     },
     api: {
       loadSkillsFailed: "Failed to load skills",

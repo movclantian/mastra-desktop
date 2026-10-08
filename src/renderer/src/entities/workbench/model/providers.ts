@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { readErrorPayload } from "@/shared/lib";
+import type { ModelKind } from "../../../../../shared/agent-contract";
 
 export interface RegistryProvider {
   id: string;
@@ -13,11 +14,12 @@ export interface RegistryProvider {
   docUrl: string;
 }
 
-export type GatewayProtocol = "openai" | "anthropic" | "gemini";
+export type GatewayProtocol = "openai" | "anthropic" | "gemini" | "gateway";
 
 export interface EnabledModel {
   id: string;
   name: string;
+  kind?: ModelKind;
 }
 
 export interface ProviderConfig {
@@ -205,6 +207,7 @@ export function useRegistry(): RegistryProvider[] {
 // ---------------------------------------------------------------------------
 
 export const GATEWAY_PROTOCOLS: { value: GatewayProtocol; label: string }[] = [
+  { value: "gateway", label: "AI SDK Gateway" },
   { value: "openai", label: "OpenAI Compatible" },
   { value: "anthropic", label: "Anthropic" },
   { value: "gemini", label: "Google Gemini" },
@@ -345,7 +348,7 @@ export async function fetchProviderModels(
   registry: RegistryProvider[],
 ): Promise<EnabledModel[]> {
   let models: EnabledModel[];
-  if (provider.registryId) {
+  if (provider.registryId && provider.registryId !== "vercel") {
     // 内置供应商:模型清单直接来自 provider-registry(无需网络请求)
     const registryProvider = registry.find((p) => p.id === provider.registryId);
     if (!registryProvider) {
@@ -359,7 +362,7 @@ export async function fetchProviderModels(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         providerId: provider.id,
-        protocol: provider.protocol ?? "openai",
+        protocol: provider.registryId === "vercel" ? "gateway" : (provider.protocol ?? "openai"),
         url: provider.baseUrl,
         credentialRef: provider.credentialRef,
       }),

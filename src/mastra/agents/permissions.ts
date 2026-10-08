@@ -86,6 +86,8 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
 
 /** 非工作区工具的显式类别。未列出者归 other，按线程的该类别规则处理。 */
 const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
+  generate_image: "execute",
+  generate_video: "execute",
   // Code Mode 的 QuickJS 无宿主访问能力；每个 external 调用独立遵循当前工具范围与权限。
   execute_typescript: "read",
   // Skills:只读取技能目录里的说明与脚本文本

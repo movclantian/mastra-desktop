@@ -7,6 +7,28 @@ import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 
+export const MODEL_KINDS = ["language", "image", "video"] as const;
+export type ModelKind = (typeof MODEL_KINDS)[number];
+export const generatedMediaSchema = z.object({
+  model: z.string(),
+  prompt: z.string(),
+  warnings: z.array(z.string()).optional(),
+  files: z
+    .array(
+      z.object({
+        objectId: z.uuid(),
+        kind: z.literal("attachment"),
+        threadId: z.string(),
+        contentType: z.string().regex(/^(image|video)\/[\w.+-]+$/),
+        filename: z.string(),
+        byteSize: z.number().nonnegative(),
+        workspacePath: z.string(),
+      }),
+    )
+    .min(1),
+});
+export type GeneratedMedia = z.infer<typeof generatedMediaSchema>;
+
 /** Shared execution identity; consumers must not import the workflow implementation for it. */
 export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";
 

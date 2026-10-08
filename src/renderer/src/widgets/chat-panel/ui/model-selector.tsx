@@ -59,7 +59,14 @@ export function ChatModelSelector() {
     activeThreadId,
   );
 
-  const activeProviders = providers.filter((p) => !p.disabled && p.enabledModels.length > 0);
+  const activeProviders = providers
+    .map((provider) => ({
+      ...provider,
+      enabledModels: provider.enabledModels.filter(
+        (model) => !model.kind || model.kind === "language",
+      ),
+    }))
+    .filter((provider) => !provider.disabled && provider.enabledModels.length > 0);
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   const selectedModel = selectedProvider?.enabledModels.find(
     (model) => model.id === modelSelection?.modelId,

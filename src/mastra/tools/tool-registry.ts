@@ -26,8 +26,15 @@ import {
 
 const CODE_MODE_ID = "execute_typescript";
 const CODE_MODE_TIMEOUT = 30_000;
-// These tools suspend or end the native agent turn; a Code Mode program cannot resume mid-script.
-const DIRECT_TOOL_NAMES = new Set([CODE_MODE_ID, "ask_user", "submit_plan", "handoff"]);
+// Interactions and long generation jobs need the native loop's lifecycle, outside Code Mode's budget.
+const DIRECT_TOOL_NAMES = new Set([
+  CODE_MODE_ID,
+  "ask_user",
+  "submit_plan",
+  "handoff",
+  "generate_image",
+  "generate_video",
+]);
 const codeModeTransport = new QuickJsCodeModeTransport({ memoryLimitMb: 128 });
 // createCodeMode forwards only base context; preserve each run's agent context for delegation.
 const execution = new AsyncLocalStorage<ToolExecutionContext>();

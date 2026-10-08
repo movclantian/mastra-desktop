@@ -13,8 +13,14 @@ import {
   PROVIDER_REGISTRY,
   type ProviderConfig,
 } from "@mastra/core/llm";
-import { defaultSettingsMiddleware, type LanguageModelMiddleware, wrapLanguageModel } from "ai";
+import {
+  createGateway,
+  defaultSettingsMiddleware,
+  type LanguageModelMiddleware,
+  wrapLanguageModel,
+} from "ai";
 import { z } from "zod";
+import { MODEL_KINDS } from "../../shared/agent-contract";
 import {
   CredentialHintSchema,
   providerCredentialPurpose,
@@ -39,7 +45,7 @@ class ConfiguredModelsGateway extends ModelsDevGateway {
     return this.baseUrl;
   }
 }
-type GatewayProtocol = "openai" | "anthropic" | "gemini";
+type GatewayProtocol = "openai" | "anthropic" | "gemini" | "gateway";
 
 // One catalog serves both model discovery and runtime memory budgets.
 type Catalog = Record<string, unknown>;
@@ -243,6 +249,7 @@ function screenshotMiddleware(resourceId?: string): LanguageModelMiddleware {
 
 /** Resolve the SDK protocol from Mastra's provider registry metadata. */
 function inferGatewayProtocol(registryId: string): GatewayProtocol | undefined {
+  if (registryId === "vercel") return "gateway";
   const provider = getProviderConfig(registryId.trim());
   if (!provider) return undefined;
   const npm = provider.npm?.toLowerCase() ?? "";
@@ -257,13 +264,19 @@ export const REQUEST_MODEL_ID_CONTEXT_KEY = "mastra-work:request-model-id";
 
 const PROVIDERS_CONFIG_KEY = "providers";
 
-const enabledModelSchema = z.object({ id: z.string().min(1), name: z.string() }).strict();
+const enabledModelSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    kind: z.enum(MODEL_KINDS).default("language"),
+  })
+  .strict();
 const providerSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
     name: z.string().min(1).max(128),
     registryId: z.string().min(1).max(128).optional(),
-    protocol: z.enum(["openai", "anthropic", "gemini"]).optional(),
+    protocol: z.enum(["openai", "anthropic", "gemini", "gateway"]).optional(),
     baseUrl: z.url({ protocol: /^https?$/ }).optional(),
     useResponses: z.boolean().optional(),
     credentialRef: SecretRefSchema,
@@ -332,6 +345,17 @@ export async function saveProvidersConfig(config: unknown, resourceId?: string):
     modelSelection:
       patch.modelSelection !== undefined ? patch.modelSelection : current.modelSelection,
   };
+  if (
+    next.modelSelection &&
+    !next.providers.some(
+      (provider) =>
+        provider.id === next.modelSelection?.providerId &&
+        provider.enabledModels.some(
+          (model) => model.id === next.modelSelection?.modelId && model.kind === "language",
+        ),
+    )
+  )
+    next.modelSelection = null;
   if (patch.providers) {
     await Promise.all(patch.providers.map(resolveProviderCredential));
   }
@@ -411,14 +435,15 @@ export async function resolveConfiguredModel(
   // A route is valid only when the model is explicitly enabled for this
   // provider. This keeps persisted subagent selections and request overrides
   // aligned with the same catalog used by the model picker.
-  if (!provider.enabledModels.some((model) => model.id === modelId)) return undefined;
+  if (!provider.enabledModels.some((model) => model.id === modelId && model.kind === "language"))
+    return undefined;
   return createProviderModel(provider, modelId, resourceId);
 }
 
 /** Select native protocol dispatch without changing the upstream model ID. */
 function providerModelRoute(provider: UserProviderConfig, modelId: string) {
   const protocol = provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "") ?? "openai";
-  if (!provider.baseUrl) {
+  if (!provider.baseUrl && protocol !== "gateway") {
     const registry = provider.registryId ? getProviderConfig(provider.registryId) : undefined;
     if (!registry || !provider.registryId)
       throw new Error(`Unknown model provider: ${provider.registryId ?? provider.id}`);
@@ -463,7 +488,11 @@ export async function createProviderModel(
   modelId: string,
   resourceId?: string,
 ): Promise<GatewayLanguageModel | undefined> {
-  if (!modelId.trim() || !provider.hasCredential || (!provider.registryId && !provider.baseUrl)) {
+  if (
+    !modelId.trim() ||
+    !provider.hasCredential ||
+    (!provider.registryId && !provider.baseUrl && provider.protocol !== "gateway")
+  ) {
     return undefined;
   }
   const route = providerModelRoute(provider, modelId);
@@ -471,11 +500,17 @@ export async function createProviderModel(
   const gateway = provider.baseUrl
     ? new ConfiguredModelsGateway({ [route.providerId]: route.config }, provider.baseUrl)
     : REGISTRY_GATEWAY;
-  const model = await gateway.resolveLanguageModel({
-    modelId,
-    providerId: route.providerId,
-    apiKey,
-  });
+  const model =
+    route.protocol === "gateway"
+      ? createGateway({
+          apiKey,
+          ...(provider.baseUrl ? { baseURL: provider.baseUrl } : {}),
+        }).languageModel(modelId)
+      : await gateway.resolveLanguageModel({
+          modelId,
+          providerId: route.providerId,
+          apiKey,
+        });
   return wrapLanguageModel({
     model,
     ...(route.providerId === "custom" ? { providerId: provider.id } : {}),
@@ -537,13 +572,17 @@ export async function resolveDefaultModelId(
       !provider ||
       provider.disabled ||
       !provider.hasCredential ||
-      !provider.enabledModels.some((model) => model.id === selection.modelId)
+      !provider.enabledModels.some(
+        (model) => model.id === selection.modelId && model.kind === "language",
+      )
     )
       return undefined;
     return `${provider.id}/${selection.modelId}`;
   }
-  const fallback = usableProviders(config).find((candidate) => candidate.enabledModels.length > 0);
-  const fallbackModel = fallback?.enabledModels[0];
+  const fallback = usableProviders(config).find((candidate) =>
+    candidate.enabledModels.some((model) => model.kind === "language"),
+  );
+  const fallbackModel = fallback?.enabledModels.find((model) => model.kind === "language");
   if (!fallback || !fallbackModel) return undefined;
   return `${fallback.id}/${fallbackModel.id}`;
 }

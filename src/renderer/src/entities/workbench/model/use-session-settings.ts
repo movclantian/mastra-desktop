@@ -56,7 +56,7 @@ function threadModelSelection(
   if (!provider || provider.disabled) return null;
   const modelId = id.slice(`${provider.id}/`.length);
   const model = provider.enabledModels.find((item) => item.id === modelId);
-  if (!model) return null;
+  if (!model || (model.kind && model.kind !== "language")) return null;
   return {
     providerId: provider.id,
     modelId,

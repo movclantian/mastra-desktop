@@ -57,6 +57,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/shared/ui/separator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Switch } from "@/shared/ui/switch";
+import { MODEL_KINDS, type ModelKind } from "../../../../../../shared/agent-contract";
 import { providerCredentialPurpose } from "../../../../../../shared/credential-contract";
 import { CapabilityBadges } from "../controls";
 
@@ -619,7 +620,7 @@ function ProviderConnectionDialog({
   const { providers, saveProviders } = useProviderEditor();
   const [name, setName] = React.useState("");
   const [apiKey, setApiKey] = React.useState("");
-  const [protocol, setProtocol] = React.useState<GatewayProtocol>("openai");
+  const [protocol, setProtocol] = React.useState<GatewayProtocol>("gateway");
   const [baseUrl, setBaseUrl] = React.useState("");
   const [useResponses, setUseResponses] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -640,7 +641,7 @@ function ProviderConnectionDialog({
     } else {
       setName("");
       setApiKey("");
-      setProtocol("openai");
+      setProtocol("gateway");
       setBaseUrl("");
       setUseResponses(false);
     }
@@ -665,7 +666,7 @@ function ProviderConnectionDialog({
       toast.error(t("settings:providers.pleaseEnterName"));
       return;
     }
-    if (showGatewayFields && !baseUrl.trim()) {
+    if (showGatewayFields && protocol !== "gateway" && !baseUrl.trim()) {
       toast.error(t("settings:providers.pleaseEnterUrl"));
       return;
     }
@@ -688,7 +689,7 @@ function ProviderConnectionDialog({
               ...credential,
               name: name.trim(),
               protocol,
-              baseUrl: baseUrl.trim(),
+              baseUrl: baseUrl.trim() || undefined,
               useResponses: protocol === "openai" ? useResponses : false,
             }
           : { ...mode.provider, ...credential };
@@ -712,7 +713,7 @@ function ProviderConnectionDialog({
         id,
         name: name.trim(),
         protocol,
-        baseUrl: baseUrl.trim(),
+        baseUrl: baseUrl.trim() || undefined,
         useResponses: protocol === "openai" ? useResponses : false,
         ...credential,
         enabledModels: [],
@@ -768,7 +769,7 @@ function ProviderConnectionDialog({
                 <Select
                   items={protocolItems}
                   value={protocol}
-                  onValueChange={(v) => setProtocol((v ?? "openai") as GatewayProtocol)}
+                  onValueChange={(value) => setProtocol((value ?? "openai") as GatewayProtocol)}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
@@ -782,11 +783,13 @@ function ProviderConnectionDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {protocol === "anthropic"
-                    ? t("settings:providers.anthropicProtocolHint")
-                    : protocol === "gemini"
-                      ? t("settings:providers.geminiProtocolHint")
-                      : t("settings:providers.openaiProtocolHint")}
+                  {protocol === "gateway"
+                    ? t("settings:providers.aiGatewayHint")
+                    : protocol === "anthropic"
+                      ? t("settings:providers.anthropicProtocolHint")
+                      : protocol === "gemini"
+                        ? t("settings:providers.geminiProtocolHint")
+                        : t("settings:providers.openaiProtocolHint")}
                 </p>
               </div>
               <div className="flex flex-col gap-2">
@@ -795,7 +798,11 @@ function ProviderConnectionDialog({
                   <Input
                     id="connection-url"
                     className="flex-1"
-                    placeholder={t("settings:providers.serviceAddressPlaceholder")}
+                    placeholder={t(
+                      protocol === "gateway"
+                        ? "settings:providers.gatewayDefaultUrl"
+                        : "settings:providers.serviceAddressPlaceholder",
+                    )}
                     value={baseUrl}
                     onChange={(e) => setBaseUrl(e.target.value)}
                   />
@@ -1176,13 +1183,18 @@ function ModelListSection({
         <div className="divide-y">
           {orderedModels.map((model) => {
             const enabled = enabledIds.has(model.id);
+            const kind =
+              provider.enabledModels.find((item) => item.id === model.id)?.kind ??
+              model.kind ??
+              "language";
+            const gateway = provider.protocol === "gateway" || provider.registryId === "vercel";
             const isCustomModel = !initialModelIds.has(model.id);
             const caps = getModelCapabilities(provider, model.id, catalog);
             const contextWindow = getModelContextWindow(provider, model.id, catalog);
             // 内置供应商的 name === id,只渲染一行避免重复
             const displayName = getModelDisplayName(model);
             return (
-              <div key={model.id} className="flex items-center gap-3 px-4 py-2.5">
+              <div key={model.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5">
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm" title={displayName}>
                     {displayName}
@@ -1202,10 +1214,44 @@ function ModelListSection({
                     ) : null}
                   </div>
                 </div>
+                <Select
+                  value={kind}
+                  onValueChange={(value) => {
+                    if (!value) return;
+                    const updated = { ...model, kind: value as ModelKind };
+                    setModels((current) =>
+                      current.map((item) => (item.id === model.id ? updated : item)),
+                    );
+                    if (enabled)
+                      patchProvider({
+                        enabledModels: provider.enabledModels.map((item) =>
+                          item.id === model.id ? updated : item,
+                        ),
+                      });
+                  }}
+                >
+                  <SelectTrigger
+                    className="h-7 w-24 shrink-0"
+                    aria-label={t("settings:providers.modelKind")}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MODEL_KINDS.map((value) => (
+                      <SelectItem
+                        key={value}
+                        value={value}
+                        disabled={value !== "language" && !gateway}
+                      >
+                        {t(`settings:providers.modelKinds.${value}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
                 <Button
                   variant="ghost"
                   size="icon-sm"
-                  disabled={testingId !== null}
+                  disabled={testingId !== null || kind !== "language"}
                   onClick={() => void runTest(model.id)}
                   aria-label={`${t("settings:providers.testModel")} ${model.id}`}
                   title={`${t("settings:providers.testModel")} ${model.id}`}
