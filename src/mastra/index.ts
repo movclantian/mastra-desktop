@@ -1,3 +1,4 @@
+import { BACKGROUND_TASK_TIMEOUT_MS } from "../shared/agent-contract";
 import { DEFAULT_RENDERER_PORT } from "../shared/proxy-contract";
 import { mcpManagementMiddleware } from "./connections/mcp";
 import { cleanupOrphanedLibraryAssets } from "./rag/storage/assets";
@@ -158,7 +159,8 @@ export const mastra = new Mastra({
     globalConcurrency: 10,
     perAgentConcurrency: 5,
     backpressure: "queue",
-    defaultTimeoutMs: 300_000,
+    // Dynamic team members inherit their timeout from the manager, not the static tool map.
+    defaultTimeoutMs: BACKGROUND_TASK_TIMEOUT_MS,
     onTaskComplete: (task) => {
       logger.info("Background task completed", { taskId: task.id, threadId: task.threadId });
       scheduleIdleWorkspaceCleanup();

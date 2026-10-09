@@ -6,6 +6,11 @@ import {
   type TeamHandoffState,
 } from "../../shared/agent-contract.ts";
 
+export const PLATFORM_TOOL_INSTRUCTIONS =
+  process.platform === "win32"
+    ? "The local command tool runs through cmd.exe on Windows. Use the workspace file tools for listing, reading and searching; do not assume ls, tail or other POSIX commands exist. Invoke PowerShell explicitly when you need PowerShell syntax. Verify a command's result before building on it."
+    : "Use the workspace file tools for listing, reading and searching. Verify the available shell and commands before relying on platform-specific syntax.";
+
 export const DEFAULT_WORK_INSTRUCTIONS = `You are MastraWork's workbench assistant.
 Keep answers relevant to the user's current workspace. Be concise and informative, and respond in the user's language.
 For multi-step work in BUILD mode, maintain a task list with task_write, task_update, task_complete and task_check, keeping exactly one task in progress.
@@ -59,6 +64,7 @@ export function composeAgentInstructions({
     instructions.push(
       `Team context: ${profile.displayName}. ${profile.description}\nYou own the delegated task as ${member.name}. Execute your own specialty and return the actual result, evidence and unresolved issues. The team description supplies context; the supervisor's role does not replace your instructions.`,
       "Task tools are scoped to your own conversation: use task_check before updating task IDs, and do not reuse the supervisor's task IDs. Before ending, provide a concise textual handoff with changed files, verification results and remaining errors; tool calls alone are not a final report.",
+      "Deliver the smallest working slice first, then extend it. Read the relevant contract once and start implementing; avoid repeating environment checks already verified by the supervisor. Keep code and documentation proportional to the assignment. Mark a checklist item complete only when its stated files and behavior actually exist.",
     );
   }
   if (member && profile.workflow?.strategy === "handoff") {
@@ -81,8 +87,10 @@ export function composeAgentInstructions({
       `Coordination protocol:
 You are the supervisor of ${profile.displayName}. Choose the appropriate real member tools below for work that benefits from specialization or parallel execution.
 Break a request into bounded assignments with the relevant context, a concrete deliverable and acceptance criteria. Delegate independent assignments together when appropriate; pass earlier results to dependent assignments.
+Each assignment should deliver one independently verifiable slice, not an entire subsystem with many implementation phases. Integrate and verify the first working slice before assigning the next one.
 Use your own available tools to clarify, plan, implement, research and verify as needed. Do not duplicate an active member's assignment or write simulated conversations between members.
 Wait for the actual delegated results, reconcile disagreements, and give the user one integrated answer. If a needed member tool is unavailable or a delegation fails, report the limitation accurately; do not pretend the team executed it.
+An interruption or timeout after starting is not a failure to start. Inspect current shared files and the latest delegation state before reporting what exists; an earlier directory listing is stale after members have worked. Preserve partial changes and do not treat them as verified completion. While waiting, implement or verify independent work already within the user's request instead of expanding documentation alone.
 Greetings, simple clarification and explaining the team do not require a delegation.`,
     );
     if (profile.workflow.steps.length) {
@@ -97,7 +105,7 @@ Greetings, simple clarification and explaining the team do not require a delegat
         "Available delegation tools (use these exact names):",
         "Each delegation has an isolated conversation. Its prompt must include the objective, relevant paths/evidence, constraints, and expected deliverable. Children do not receive your conversation history or prior tool results automatically. Pass a previous member’s relevant findings explicitly for dependent tasks.",
         "Omit maxSteps when delegating; let members continue until they finish their assignment.",
-        "Delegations wait for results by default. Use _background.disposition=deferred only for independent work while you continue another assignment. Background task IDs are not process PIDs: never pass them to mastra_workspace_get_process_output or shell tools. Read background lifecycle notifications and wait for the real result; a started or suspended task is not completed work. Do not duplicate an assignment while its member is running or awaiting user input.",
+        "Choose _background.disposition=foreground when you need a member's result before continuing. Use deferred only for independent work while you continue another assignment. Background task IDs are not process PIDs: never pass them to mastra_workspace_get_process_output or shell tools. Read background lifecycle notifications and wait for the real result; a started or suspended task is not completed work. Do not duplicate an assignment while its member is running or awaiting user input.",
         ...delegates.map((id) => {
           const target = profile.members.find((candidate) => candidate.id === id);
           return `- agent-${id}: ${target ? memberDelegationDescription(target) : id === "explorer" ? "Read-only investigation and evidence gathering." : "Read-only static review and findings."}`;
@@ -105,6 +113,6 @@ Greetings, simple clarification and explaining the team do not require a delegat
       ].join("\n"),
     );
   }
-  instructions.push(RUNTIME_INSTRUCTIONS);
+  instructions.push(RUNTIME_INSTRUCTIONS, PLATFORM_TOOL_INSTRUCTIONS);
   return instructions;
 }

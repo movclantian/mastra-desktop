@@ -7,6 +7,7 @@ import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { AvatarBadge, AvatarGroup, GeneratedAvatar } from "@/shared/ui/avatar";
 import { Button } from "@/shared/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { TeamInvocation } from "../../../../../shared/agent-contract";
@@ -202,9 +203,17 @@ function InvocationTranscript({
   profile: AgentProfile;
 }) {
   const { user } = useAuth();
+  const { t } = useTranslation();
   const running = invocation.status === "running";
   const detail = useQuery({
-    queryKey: ["team-invocation", user?.id, threadId, invocation.id, invocation.status],
+    queryKey: [
+      "team-invocation",
+      user?.id,
+      threadId,
+      invocation.id,
+      invocation.status,
+      invocation.finishReason,
+    ],
     queryFn: ({ signal }) =>
       requestJson<{ messages: WorkUIMessage[] }>(
         `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/invocations/${encodeURIComponent(invocation.id)}`,
@@ -225,6 +234,16 @@ function InvocationTranscript({
           ...transcript,
         ];
   const display = buildDisplayMessages(messages, running);
+  const rawError = detail.error?.message ?? invocation.error;
+  const failureText = detail.error
+    ? t("chat:memberStream.loadFailed")
+    : invocation.finishReason === "timed_out"
+      ? t("chat:memberStream.timedOut")
+      : invocation.finishReason === "aborted" || invocation.finishReason === "cancelled"
+        ? t("chat:memberStream.interrupted")
+        : invocation.finishReason === "length"
+          ? t("chat:memberStream.outputLimit")
+          : t("chat:memberStream.incomplete");
   return (
     <>
       {display.map((entry, index) => {
@@ -249,16 +268,34 @@ function InvocationTranscript({
             emptyReply={
               emptyReply && (running || detail.isPending || invocation.status === "error")
             }
-            replyError={emptyReply ? invocation.error : undefined}
+            replyError={emptyReply && rawError ? failureText : undefined}
             onEdit={() => undefined}
             onRetry={() => undefined}
           />
         );
       })}
-      {detail.error || (invocation.error && display.at(-1)?.sourceIds.length) ? (
-        <p role="status" className="break-words text-sm text-destructive">
-          {detail.error?.message ?? invocation.error}
-        </p>
+      {rawError ? (
+        <Collapsible className="flex min-w-0 flex-col gap-1 text-sm">
+          {detail.error || display.at(-1)?.sourceIds.length ? (
+            <p role="status" className="flex items-start gap-2 text-destructive">
+              <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
+              <span className="min-w-0 [overflow-wrap:anywhere]">{failureText}</span>
+            </p>
+          ) : null}
+          {invocation.error ? (
+            <p className="text-muted-foreground">{t("chat:memberStream.progressRetained")}</p>
+          ) : null}
+          <CollapsibleTrigger className="w-fit text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground">
+            {t("chat:memberStream.errorDetails")}
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ScrollArea className="max-h-40 rounded-md bg-muted/40 p-2">
+              <pre className="whitespace-pre-wrap text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                {rawError}
+              </pre>
+            </ScrollArea>
+          </CollapsibleContent>
+        </Collapsible>
       ) : null}
     </>
   );

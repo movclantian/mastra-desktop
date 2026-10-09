@@ -2530,6 +2530,13 @@ export const zh = {
       memberCompletedTask: "{{name}} 已完成任务",
       memberExecutionError: "{{name}} 执行出错",
       memberJoinedCollaboration: "{{name}} 已加入协作",
+      loadFailed: "暂时无法加载成员消息",
+      timedOut: "本次后台任务执行超时",
+      interrupted: "本次成员执行已中断",
+      outputLimit: "模型输出达到上限，成员尚未完成任务",
+      incomplete: "本次成员执行未完成",
+      progressRetained: "过程中产生的消息和工具结果已保留。",
+      errorDetails: "错误详情",
     },
     welcome: {
       title: "Mastra AI 智能工作台",

@@ -6,6 +6,7 @@ import type {
 import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
+export const BACKGROUND_TASK_TIMEOUT_MS = 15 * 60_000;
 
 export const MODEL_KINDS = ["language", "image", "video"] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];
@@ -226,6 +227,8 @@ export interface TeamInvocation {
   endedAt?: string;
   text?: string;
   error?: string;
+  /** Native model finish reason or terminal background-task status. */
+  finishReason?: string;
   memoryThreadId?: string;
   memoryResourceId?: string;
 }
@@ -234,7 +237,54 @@ export interface TeamInvocation {
 export function isCompleteAgentResult(result: { text: string; finishReason?: string }): boolean {
   return (
     Boolean(result.text.trim()) &&
-    !["error", "tool-calls", "length", "content-filter"].includes(result.finishReason ?? "")
+    !["aborted", "error", "tool-calls", "length", "content-filter"].includes(
+      result.finishReason ?? "",
+    )
+  );
+}
+
+export function incompleteAgentResultMessage(finishReason?: string): string {
+  if (finishReason === "aborted") return "Agent execution was interrupted before completion.";
+  if (finishReason === "length") return "Agent response reached the model output limit.";
+  if (finishReason === "content-filter") return "Agent response was stopped by the model filter.";
+  if (finishReason === "error") return "Agent execution failed before completion.";
+  return "Agent execution ended without a final answer.";
+}
+
+const agentFileOperationSchema = z.object({
+  toolName: z.enum(["mastra_workspace_write_file", "mastra_workspace_edit_file"]),
+  args: z.object({ path: z.string() }),
+  isError: z.boolean().optional(),
+});
+
+/** Tool evidence is a record of operations, not proof that the deliverable works. */
+export function summarizeAgentToolResults(results: readonly unknown[]) {
+  const fileOperations = results.flatMap((value) => {
+    const parsed = agentFileOperationSchema.safeParse(value);
+    return parsed.success
+      ? [{ tool: parsed.data.toolName, path: parsed.data.args.path, isError: parsed.data.isError }]
+      : [];
+  });
+  return {
+    toolResultCount: results.length,
+    fileOperationCount: fileOperations.length,
+    recentFileOperations: fileOperations.slice(-12),
+  };
+}
+
+/** Streamed user signals carry their type in metadata, not on the message itself. */
+export function isUserChatMessage(message: {
+  role: string;
+  content: { metadata?: { signal?: unknown } };
+}): boolean {
+  if (message.role === "user") return true;
+  const signal = message.content.metadata?.signal;
+  return (
+    message.role === "signal" &&
+    typeof signal === "object" &&
+    signal !== null &&
+    "type" in signal &&
+    signal.type === "user"
   );
 }
 

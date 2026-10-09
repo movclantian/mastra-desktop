@@ -2602,6 +2602,13 @@ export const en = {
       memberCompletedTask: "{{name}} completed task",
       memberExecutionError: "{{name}} execution error",
       memberJoinedCollaboration: "{{name}} joined collaboration",
+      loadFailed: "Member messages could not be loaded",
+      timedOut: "This background task timed out",
+      interrupted: "This member's execution was interrupted",
+      outputLimit: "The model reached its output limit before the task was complete",
+      incomplete: "This member's task was not completed",
+      progressRetained: "Messages and tool results produced so far have been retained.",
+      errorDetails: "Error details",
     },
     welcome: {
       title: "Mastra AI Intelligent Workbench",

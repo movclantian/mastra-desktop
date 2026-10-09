@@ -11,6 +11,7 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { isUserChatMessage } from "../../shared/agent-contract";
 import type { DesktopNotification } from "../../shared/window-contract";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { parsePermissionRules, TOOL_CATEGORIES, toolCategoryOf } from "../agents/permissions";
@@ -156,12 +157,7 @@ export function registerWorkbenchSessionLifecycle(mastra: Mastra): void {
     session.subscribe((event) => {
       if (event.type === "agent_start") lastStepUsage = undefined;
       if (event.type === "usage_update") lastStepUsage = event.usage;
-      if (
-        event.type === "message_start" &&
-        (event.message.role === "user" ||
-          (event.message.role === "signal" && event.message.type === "user")) &&
-        !promotingThread
-      ) {
+      if (event.type === "message_start" && isUserChatMessage(event.message) && !promotingThread) {
         promotingThread = promoteUserThread(session)
           .catch((error: unknown) => {
             mastra.getLogger().error("User thread metadata update failed", {
@@ -514,69 +510,79 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       result.controllerSession.run.getRunId(),
   );
   await Promise.all(
-    teamInvocations
-      .filter((call) => call.status === "running" || call.status === "suspended")
-      .map(async (call) => {
-        const previousStatus = call.status;
-        const task = backgroundTasks.find((task) => task.toolCallId === call.toolCallId);
-        // Terminal task state wins over an old suspended child snapshot after a restart.
-        if (task && ["failed", "cancelled", "timed_out"].includes(task.status)) {
-          call.status = "error";
-          call.error = task.error?.message ?? `Background task ${task.status}`;
-          call.endedAt = task.completedAt?.toISOString() ?? new Date().toISOString();
-          await finishTeamInvocation(
-            call.id,
-            { status: call.status, error: call.error, endedAt: call.endedAt },
-            undefined,
-            undefined,
-            previousStatus,
-          );
+    teamInvocations.map(async (call) => {
+      const previousStatus = call.status;
+      const task = backgroundTasks.find(
+        (task) => task.toolCallId === call.toolCallId && task.runId === call.runId,
+      );
+      // Terminal task state wins over an old suspended child snapshot after a restart.
+      if (task && ["failed", "cancelled", "timed_out"].includes(task.status)) {
+        const error = task.error?.message ?? `Background task ${task.status}`;
+        if (call.status === "error" && call.finishReason === task.status && call.error === error)
           return;
-        }
-        const member = registeredAgents.find((candidate) => candidate.id === call.agentId);
-        const parked =
-          member && call.memoryThreadId && call.memoryResourceId
-            ? (
-                await listPendingAgentRuns({
-                  agent: member,
-                  threadId: call.memoryThreadId,
-                  resourceId: call.memoryResourceId,
-                })
-              ).runs.length > 0
-            : false;
-        const waiting =
-          parked ||
-          task?.status === "suspended" ||
-          suspendedRuns.some((run) =>
-            run.toolCalls.some((tool) => tool.toolCallId === call.toolCallId),
-          );
-        if (waiting) {
-          call.status = "suspended";
-          await finishTeamInvocation(
-            call.id,
-            { status: "suspended" },
-            undefined,
-            undefined,
-            previousStatus,
-          );
-        } else if (
-          parentActive ||
-          workflowRunning ||
-          backgroundTasks.some((task) => task.status === "pending" || task.status === "running")
-        ) {
-          call.status = "running";
-        } else {
-          call.status = "error";
-          call.error = "Execution stopped before an invocation result was recorded";
-          await finishTeamInvocation(
-            call.id,
-            { status: call.status, error: call.error, endedAt: new Date().toISOString() },
-            undefined,
-            undefined,
-            previousStatus,
-          );
-        }
-      }),
+        call.status = "error";
+        call.error = error;
+        call.finishReason = task.status;
+        call.endedAt = task.completedAt?.toISOString() ?? new Date().toISOString();
+        await finishTeamInvocation(
+          call.id,
+          {
+            status: call.status,
+            error: call.error,
+            finishReason: call.finishReason,
+            endedAt: call.endedAt,
+          },
+          undefined,
+          undefined,
+          previousStatus,
+        );
+        return;
+      }
+      if (call.status !== "running" && call.status !== "suspended") return;
+      const member = registeredAgents.find((candidate) => candidate.id === call.agentId);
+      const parked =
+        member && call.memoryThreadId && call.memoryResourceId
+          ? (
+              await listPendingAgentRuns({
+                agent: member,
+                threadId: call.memoryThreadId,
+                resourceId: call.memoryResourceId,
+              })
+            ).runs.length > 0
+          : false;
+      const waiting =
+        parked ||
+        task?.status === "suspended" ||
+        suspendedRuns.some((run) =>
+          run.toolCalls.some((tool) => tool.toolCallId === call.toolCallId),
+        );
+      if (waiting) {
+        call.status = "suspended";
+        await finishTeamInvocation(
+          call.id,
+          { status: "suspended" },
+          undefined,
+          undefined,
+          previousStatus,
+        );
+      } else if (
+        parentActive ||
+        workflowRunning ||
+        backgroundTasks.some((task) => task.status === "pending" || task.status === "running")
+      ) {
+        call.status = "running";
+      } else {
+        call.status = "error";
+        call.error = "Execution stopped before an invocation result was recorded";
+        await finishTeamInvocation(
+          call.id,
+          { status: call.status, error: call.error, endedAt: new Date().toISOString() },
+          undefined,
+          undefined,
+          previousStatus,
+        );
+      }
+    }),
   );
   return {
     ...displayState,

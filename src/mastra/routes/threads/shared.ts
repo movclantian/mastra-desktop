@@ -6,7 +6,7 @@ import type { MastraDBMessage } from "@mastra/core/agent/message-list";
 import type { RequestContext } from "@mastra/core/request-context";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { Memory } from "@mastra/memory";
-import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
+import { DEFAULT_AGENT_PROFILE_ID, isUserChatMessage } from "../../../shared/agent-contract";
 
 export type OwnedThread = Awaited<ReturnType<Memory["getThreadById"]>>;
 
@@ -51,7 +51,7 @@ export async function deleteThreadMessages(
 export function normalizeChatHistoryMessages(messages: MastraDBMessage[]): MastraDBMessage[] {
   return messages.flatMap<MastraDBMessage>((message) => {
     if (message.role === "user" || message.role === "assistant") return [message];
-    if (message.role !== "signal" || message.type !== "user") return [];
+    if (!isUserChatMessage(message)) return [];
 
     const signalMetadata = message.content.metadata?.signal;
     const metadata =

@@ -438,11 +438,17 @@ export class WorkApiError extends HTTPException {
       category: definition.category,
       ...(options.details ? { details: options.details } : {}),
     };
+    const responseBody = JSON.stringify(body);
     super(definition.status, {
       message: body.error,
       cause: options.cause,
+      // Mastra's schema-route adapter checks res before calling getResponse().
+      res: new Response(responseBody, {
+        status: definition.status,
+        headers: { "Content-Type": "application/json" },
+      }),
     });
-    this.responseBody = JSON.stringify(body);
+    this.responseBody = responseBody;
   }
 
   override getResponse(): Response {
