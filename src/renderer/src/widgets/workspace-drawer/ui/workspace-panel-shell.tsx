@@ -99,7 +99,7 @@ function getInitialFloatingBounds(): FloatingBounds {
           Math.min(window.innerHeight - 48, parsed.height),
         );
         const x = Math.max(0, Math.min(window.innerWidth - width, parsed.x));
-        const y = Math.max(0, Math.min(window.innerHeight - 48, parsed.y));
+        const y = Math.max(48, Math.min(window.innerHeight - 48, parsed.y));
         return { x, y, width, height };
       }
     }
@@ -185,7 +185,7 @@ export function WorkspacePanelShell() {
           Math.min(window.innerHeight - 48, prev.height),
         );
         const x = Math.max(0, Math.min(window.innerWidth - width, prev.x));
-        const y = Math.max(0, Math.min(window.innerHeight - 48, prev.y));
+        const y = Math.max(48, Math.min(window.innerHeight - 48, prev.y));
         if (width === prev.width && height === prev.height && x === prev.x && y === prev.y) {
           return prev;
         }
@@ -219,9 +219,9 @@ export function WorkspacePanelShell() {
       const dx = moveEvent.clientX - startX;
       const dy = moveEvent.clientY - startY;
       const maxX = Math.max(0, window.innerWidth - initialBounds.width);
-      const maxY = Math.max(0, window.innerHeight - 48);
+      const maxY = Math.max(48, window.innerHeight - 48);
       const nextX = Math.min(Math.max(0, initialBounds.x + dx), maxX);
-      const nextY = Math.min(Math.max(0, initialBounds.y + dy), maxY);
+      const nextY = Math.min(Math.max(48, initialBounds.y + dy), maxY);
 
       setFloatingBounds((prev) => {
         const next = { ...prev, x: nextX, y: nextY };
@@ -289,7 +289,7 @@ export function WorkspacePanelShell() {
       } else if (direction.includes("t")) {
         const potentialHeight = initial.height - dy;
         if (potentialHeight >= MIN_FLOATING_HEIGHT) {
-          const clampedY = Math.max(0, initial.y + dy);
+          const clampedY = Math.max(48, initial.y + dy);
           newHeight = initial.y + initial.height - clampedY;
           newY = clampedY;
         } else {
@@ -409,7 +409,8 @@ export function WorkspacePanelShell() {
         className={cn(
           workspacePanelMode === "floating" &&
             "fixed z-40 size-auto max-h-screen max-w-screen overflow-hidden rounded-xl border border-border/80 bg-background/95 shadow-2xl ring-1 ring-border/50 backdrop-blur-sm",
-          workspacePanelMode === "fullscreen" && "fixed inset-0 z-40 overflow-hidden bg-background",
+          workspacePanelMode === "fullscreen" &&
+            "fixed inset-x-2 bottom-2 top-[calc(var(--app-titlebar-height)+0.5rem)] z-40 size-auto overflow-hidden rounded-xl border border-border bg-background shadow-sm",
         )}
       >
         <PanelHeader

@@ -29,7 +29,7 @@ import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/shared/ui/sidebar";
 import { AppSidebar } from "@/widgets/app-sidebar";
-import { AppTopBar } from "@/widgets/app-top-bar";
+import { AppTopBar, AppWindowBar } from "@/widgets/app-top-bar";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 import { BrowserGuestLayer } from "@/widgets/workspace-drawer/ui/browser-guest-layer";
 import { DesktopNotificationSchema } from "../../../shared/window-contract";
@@ -98,7 +98,7 @@ function drawerHandleProps(open: boolean) {
 }
 
 /**
- * 主应用壳:视图由路由驱动(Outlet),/settings 路由脱离主壳独立全屏。
+ * 主应用壳:视图由路由驱动(Outlet),设置页共享窗口顶栏并使用独立菜单。
  * hash 路由刷新/崩溃恢复后仍能还原当前视图;客户端 UI 态来自 zustand store。
  */
 export function RootShell() {
@@ -251,64 +251,66 @@ function WorkbenchShell() {
 
   if (!user) return null;
 
-  // 设置是全局页面:脱离主应用壳(主侧边栏/顶栏/工作台抽屉),占满整屏,
-  // 通过设置菜单 sidebar 顶部的「返回应用」回到 chat
-  if (location.pathname.startsWith("/settings")) {
-    return (
-      <>
-        <SettingsPage />
-        {/* SettingsPage has no collapsible main sidebar, so the palette omits
-            the main-sidebar toggle command on this route. */}
-        <GlobalCommandPalette />
-      </>
-    );
-  }
-
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
-      <AppSidebar />
-      <SidebarInset
-        className={cn(
-          "border shadow-sm",
-          workspacePanelMode === "fullscreen" ? "overflow-visible" : "overflow-hidden",
+    <SidebarProvider className="h-svh flex-col overflow-hidden bg-sidebar">
+      <AppWindowBar />
+      <div className="flex min-h-0 min-w-0 flex-1">
+        {location.pathname.startsWith("/settings") ? (
+          <SettingsPage />
+        ) : (
+          <>
+            <AppSidebar />
+            <SidebarInset
+              className={cn(
+                "min-w-0 border shadow-sm",
+                workspacePanelMode === "fullscreen" ? "overflow-visible" : "overflow-hidden",
+              )}
+            >
+              <ResizablePanelGroup
+                orientation="horizontal"
+                elementRef={groupRef}
+                groupRef={layoutRef}
+                defaultLayout={dockedWorkspace ? defaultLayout : CLOSED_SHELL_LAYOUT}
+                onLayoutChanged={onLayoutChanged}
+                className={cn(
+                  "min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
+                  transition.className,
+                )}
+              >
+                <ResizablePanel
+                  id="content"
+                  minSize={panelMinWidth}
+                  style={PANEL_CLIP}
+                  className="flex min-w-0 flex-col"
+                >
+                  <AppTopBar />
+                  <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <Outlet />
+                  </main>
+                </ResizablePanel>
+                <ResizableHandle
+                  {...transition.handleProps}
+                  {...drawerHandleProps(dockedWorkspace)}
+                />
+                <ResizablePanel
+                  id="workspace"
+                  collapsible
+                  collapsedSize={0}
+                  minSize={WORKSPACE_MIN_WIDTH}
+                  groupResizeBehavior="preserve-relative-size"
+                  style={
+                    workspacePanelMode === "docked"
+                      ? { ...PANEL_CLIP, ...(wantsWorkspace ? {} : { display: "none" }) }
+                      : { overflow: "visible", ...(wantsWorkspace ? {} : { display: "none" }) }
+                  }
+                >
+                  <WorkspaceDrawerContainer open={wantsWorkspace} />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            </SidebarInset>
+          </>
         )}
-      >
-        <ResizablePanelGroup
-          orientation="horizontal"
-          elementRef={groupRef}
-          groupRef={layoutRef}
-          defaultLayout={dockedWorkspace ? defaultLayout : CLOSED_SHELL_LAYOUT}
-          onLayoutChanged={onLayoutChanged}
-          className={cn("min-h-0 min-w-0 overflow-hidden bg-background", transition.className)}
-        >
-          <ResizablePanel
-            id="content"
-            minSize={panelMinWidth}
-            style={PANEL_CLIP}
-            className="flex min-w-0 flex-col"
-          >
-            <AppTopBar />
-            <main className="relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden">
-              <Outlet />
-            </main>
-          </ResizablePanel>
-          <ResizableHandle {...transition.handleProps} {...drawerHandleProps(dockedWorkspace)} />
-          <ResizablePanel
-            id="workspace"
-            collapsible
-            collapsedSize={0}
-            minSize={WORKSPACE_MIN_WIDTH}
-            groupResizeBehavior="preserve-relative-size"
-            style={
-              workspacePanelMode === "docked"
-                ? { ...PANEL_CLIP, ...(wantsWorkspace ? {} : { display: "none" }) }
-                : { overflow: "visible", ...(wantsWorkspace ? {} : { display: "none" }) }
-            }
-          >
-            <WorkspaceDrawerContainer open={wantsWorkspace} />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </SidebarInset>
+      </div>
       <MainGlobalCommandPalette />
     </SidebarProvider>
   );

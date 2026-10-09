@@ -118,6 +118,24 @@ export type WorkUIMessage = UIMessage<
 export type MessagePart = UIMessage["parts"][number];
 export type TracePart = Extract<MessagePart, { type: "reasoning" }> | ToolPart;
 
+/** Resumed tool results can omit inputs; replayed pending states must not erase a result. */
+export function mergeToolPart(previous: MessagePart | undefined, incoming: ToolPart): ToolPart {
+  if (!previous || !isToolUIPart(previous) || previous.toolCallId !== incoming.toolCallId)
+    return incoming;
+  const latest =
+    previous.state.startsWith("output-") && !incoming.state.startsWith("output-")
+      ? previous
+      : incoming;
+  const input = asRecord(latest.input);
+  return {
+    ...latest,
+    input:
+      latest.input === undefined || (input && Object.keys(input).length === 0)
+        ? (latest === incoming ? previous : incoming).input
+        : latest.input,
+  };
+}
+
 /**
  * A reconnect can replay several snapshots of one tool invocation into the
  * same assistant message. Keep the first position (so reasoning order stays
@@ -154,7 +172,7 @@ function normalizeTraceParts(parts: TracePart[]): TracePart[] {
       toolPositions.set(toolCallId, result.length);
       result.push(part);
     } else {
-      result[position] = part;
+      result[position] = mergeToolPart(result[position], part);
     }
   }
   return result;

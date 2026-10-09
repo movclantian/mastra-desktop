@@ -8,7 +8,8 @@ const result = spawnSync(
   process.execPath,
   [fileURLToPath(new URL("../node_modules/mastra/dist/index.js", import.meta.url)), "build"],
   {
-    env: { ...process.env, MASTRA_BUILD_SKIP_INSTALL: "1" },
+    // Match the desktop runtime so CLI builds do not create ~/.mastra either.
+    env: { ...process.env, MASTRA_BUILD_SKIP_INSTALL: "1", MASTRA_TELEMETRY_DISABLED: "1" },
     stdio: "inherit",
   },
 );

@@ -82,10 +82,10 @@ const DefaultCursorSVG: FC = () => {
   );
 };
 
-function isTextTarget(target: Element | null): boolean {
+function isNativeCursorTarget(target: Element | null): boolean {
   if (!target) return false;
   return !!target.closest(
-    'input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea, [contenteditable="true"], .monaco-editor, .cm-content',
+    '.app-drag, input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), textarea, [contenteditable="true"], .monaco-editor, .cm-content',
   );
 }
 
@@ -110,7 +110,7 @@ export function SmoothCursor({
 
   const [isEnabled, setIsEnabled] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-  const [isOverText, setIsOverText] = useState(false);
+  const [isOverNativeControl, setIsOverNativeControl] = useState(false);
   const useCustomCursor = isEnabled && !hasRunningTask;
 
   // ⚡ 0 延迟核心：坐标使用 useMotionValue 直接映射，彻底剔除物理弹簧的滞后计算
@@ -160,8 +160,7 @@ export function SmoothCursor({
       const { x, y } = lastMousePos.current;
       cursorX.set(x);
       cursorY.set(y);
-      const overText = isTextTarget(document.elementFromPoint(x, y));
-      setIsOverText((current) => (current === overText ? current : overText));
+      setIsOverNativeControl(isNativeCursorTarget(document.elementFromPoint(x, y)));
     }
     root.classList.add("smooth-cursor-mode");
     return () => root.classList.remove("smooth-cursor-mode");
@@ -204,9 +203,9 @@ export function SmoothCursor({
       cursorX.set(currentPos.x);
       cursorY.set(currentPos.y);
 
-      // 检测是否位于文本输入区域
+      // Text inputs and the native title bar use the system cursor.
       const target = e.target as Element | null;
-      setIsOverText(isTextTarget(target));
+      setIsOverNativeControl(isNativeCursorTarget(target));
 
       // 计算速度与动态倾斜角
       updateVelocity(currentPos);
@@ -270,8 +269,7 @@ export function SmoothCursor({
     return null;
   }
 
-  // 文本编辑区淡出，让原生 I-beam 光标接管；其他区域完全由 Magic UI 光标接管（0 系统光标泄漏）
-  const shouldShow = useCustomCursor && isVisible && !isOverText;
+  const shouldShow = useCustomCursor && isVisible && !isOverNativeControl;
 
   return (
     <motion.div

@@ -2,9 +2,10 @@
  * 存储层:MastraCompositeStore 组合存储 + 共享 LibSQL 客户端 + 应用配置 KV。
  * 官方文档:docs/en/docs/storage.mdx(存储后端选型)、
  * docs/en/reference/storage/composite.mdx(按 domain 路由存储后端)。
- * 默认域走 LibSQL(与 Studio 共享 src/mastra/public/mastra.db),
+ * 默认域走 LibSQL(与 Studio 共享用户数据目录中的 mastra.db),
  * observability 域走 DuckDB(OLAP 指标,docs/en/docs/observability/metrics/overview.mdx)。
  * 外部内容归档写入 Workspace allowedPaths 可读的用户目录。
+ * 观测保留策略:docs/en/reference/storage/retention.mdx。
  */
 
 import { randomUUID } from "node:crypto";
@@ -13,6 +14,7 @@ import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
+import type { IMastraLogger } from "@mastra/core/logger";
 import { MastraCompositeStore } from "@mastra/core/storage";
 import { DuckDBStore } from "@mastra/duckdb";
 import { LibSQLStore } from "@mastra/libsql";
@@ -107,6 +109,12 @@ function ensureDirectory(): void {
 }
 ensureDirectory();
 
+const observabilityStorage = new DuckDBStore({
+  path: join(getStorageDirectory(), "observability", "mastra.duckdb").replace(/\\/g, "/"),
+  threads: 2,
+});
+const observabilityRetention = { maxAge: "30d", batchSize: 100 } as const;
+
 /** 组合存储(composite.mdx):默认域 LibSQL,observability 域 DuckDB */
 export const appStorage = new MastraCompositeStore({
   id: "composite-storage",
@@ -115,15 +123,44 @@ export const appStorage = new MastraCompositeStore({
     url: getStorageUrl(),
   }),
   domains: {
-    observability: new DuckDBStore({
-      path: join(
-        getStorageDirectory() || DEFAULT_MASTRA_DATA_DIRECTORY,
-        "observability",
-        "mastra.duckdb",
-      ).replace(/\\/g, "/"),
-    }).observability,
+    observability: observabilityStorage.observability,
+  },
+  retention: {
+    observability: {
+      spans: observabilityRetention,
+      metrics: observabilityRetention,
+      logs: observabilityRetention,
+      scores: observabilityRetention,
+      feedback: observabilityRetention,
+    },
   },
 });
+
+/** Official retention runs in bounded maintenance windows, never during startup/shutdown. */
+export function startStorageMaintenance(logger: IMastraLogger): () => Promise<void> {
+  const controller = new AbortController();
+  let pending: Promise<void> | undefined;
+  const timer = setInterval(() => {
+    if (pending) return;
+    pending = appStorage
+      .prune({ maxBatches: 10, pauseMs: 25, signal: controller.signal })
+      .then(async (results) => {
+        if (!controller.signal.aborted && results.some((result) => result.deleted > 0)) {
+          await observabilityStorage.db.execute("CHECKPOINT");
+        }
+      })
+      .catch((error: unknown) => logger.error("Observability retention failed", { error }))
+      .finally(() => {
+        pending = undefined;
+      });
+  }, 15 * 60_000);
+  timer.unref();
+  return async () => {
+    clearInterval(timer);
+    controller.abort();
+    await pending;
+  };
+}
 
 /**
  * 共享 LibSQL 客户端:与业务库同文件,进程存活期内复用连接

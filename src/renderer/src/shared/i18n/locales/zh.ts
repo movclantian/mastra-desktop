@@ -195,6 +195,13 @@ export const zh = {
     user: "用户",
   },
   topbar: {
+    windowControls: "窗口控制",
+    minimizeWindow: "最小化窗口",
+    maximizeWindow: "最大化窗口",
+    restoreWindow: "还原窗口",
+    closeWindow: "关闭窗口",
+    exitFullscreen: "退出全屏",
+    windowControlError: "窗口操作失败",
     contextDesc: "当前线程实际使用的能力、网页与文件。点击条目在右侧预览。",
     latestRequest: "最近的请求",
     skill: "技能",
@@ -3412,6 +3419,13 @@ export const zh = {
     INTERNAL_ERROR: {
       title: "服务内部错误",
       hint: "请重试;持续出现请重启应用",
+    },
+    REQUEST_TIMEOUT: {
+      title: "请求超时",
+      hint: "请稍后重试，或检查当前模型服务的连接",
+    },
+    REQUEST_CANCELLED: {
+      title: "请求已取消",
     },
   },
 };

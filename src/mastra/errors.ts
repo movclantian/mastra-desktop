@@ -52,6 +52,18 @@ const WORK_ERRORS = {
     status: 400,
     text: "请求参数无效",
   },
+  REQUEST_TIMEOUT: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.THIRD_PARTY,
+    status: 504,
+    text: "请求超时，请重试",
+  },
+  REQUEST_CANCELLED: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 408,
+    text: "请求已取消",
+  },
   AUTH_REQUIRED: {
     domain: ErrorDomain.MASTRA_SERVER,
     category: ErrorCategory.USER,
@@ -412,6 +424,8 @@ export type WorkErrorCode = keyof typeof WORK_ERRORS;
  * Its HTTPException response preserves the same structured body on both route types.
  */
 export class WorkApiError extends HTTPException {
+  private readonly responseBody: string;
+
   constructor(
     code: WorkErrorCode,
     options: { text?: string; details?: Record<string, unknown>; cause?: unknown } = {},
@@ -427,7 +441,15 @@ export class WorkApiError extends HTTPException {
     super(definition.status, {
       message: body.error,
       cause: options.cause,
-      res: Response.json(body, { status: definition.status }),
+    });
+    this.responseBody = JSON.stringify(body);
+  }
+
+  override getResponse(): Response {
+    // An error may be rethrown; each response needs a fresh, unread body stream.
+    return new Response(this.responseBody, {
+      status: this.status,
+      headers: { "Content-Type": "application/json" },
     });
   }
 }
@@ -463,6 +485,8 @@ export const workValidationError: ValidationErrorHook = (error, context) => {
 
 export function handleWorkError(err: Error, c: ContextWithMastra) {
   if (err instanceof HTTPException || err instanceof HonoHTTPException) return err.getResponse();
+  if (err.name === "TimeoutError") return workError("REQUEST_TIMEOUT").getResponse();
+  if (err.name === "AbortError") return workError("REQUEST_CANCELLED").getResponse();
   if (isZodError(err))
     return workError("VALIDATION_FAILED", { details: { issues: err.issues } }).getResponse();
   if (err instanceof WorkspaceReadOnlyError)

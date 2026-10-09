@@ -9,10 +9,29 @@ import {
   DesktopSettingsSchema,
   SetMinimumWidthRequestSchema,
   WINDOW_CHANNELS,
+  type WindowControlAction,
+  WindowControlActionSchema,
+  type WindowState,
+  WindowStateSchema,
 } from "../../shared/window-contract";
 
 export function createWindowApi(ipcRenderer: IpcRenderer) {
   return {
+    control: async (action: WindowControlAction): Promise<void> => {
+      await ipcRenderer.invoke(WINDOW_CHANNELS.control, WindowControlActionSchema.parse(action));
+    },
+    getState: async () =>
+      WindowStateSchema.parse(await ipcRenderer.invoke(WINDOW_CHANNELS.getState)),
+    onStateChange: (callback: (state: WindowState) => void) => {
+      const listener = (_event: unknown, value: unknown) => {
+        const state = WindowStateSchema.safeParse(value);
+        if (state.success) callback(state.data);
+      };
+      ipcRenderer.on(WINDOW_CHANNELS.stateChanged, listener);
+      return () => {
+        ipcRenderer.removeListener(WINDOW_CHANNELS.stateChanged, listener);
+      };
+    },
     computerPermissions: async (action: "status" | "request") =>
       ComputerPermissionsSchema.parse(
         await ipcRenderer.invoke(

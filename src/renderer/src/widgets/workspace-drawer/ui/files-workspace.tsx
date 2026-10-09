@@ -84,6 +84,7 @@ import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { Ripple } from "@/shared/ui/ripple";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
+import { INLINE_COMPLETION_LIMITS } from "../../../../../shared/workspace-contract";
 
 import { fetchInlineCompletion, requestInlineEdit } from "../api/editor-api";
 import {
@@ -213,11 +214,17 @@ function CodeEditor({
           resourceId: resourceIdRef.current,
           path: pathRef.current,
           language: getFileExtension(pathRef.current),
-          prefix: context.state.sliceDoc(Math.max(0, position - 4_000), position),
-          beforeContext: context.state.sliceDoc(0, position),
+          prefix: context.state.sliceDoc(
+            Math.max(from, position - INLINE_COMPLETION_LIMITS.prefix),
+            position,
+          ),
+          beforeContext: context.state.sliceDoc(
+            Math.max(0, position - INLINE_COMPLETION_LIMITS.beforeContext),
+            position,
+          ),
           afterContext: context.state.sliceDoc(
             position,
-            Math.min(context.state.doc.length, position + 4_000),
+            Math.min(context.state.doc.length, position + INLINE_COMPLETION_LIMITS.afterContext),
           ),
           signal: controller.signal,
         });
@@ -229,7 +236,9 @@ function CodeEditor({
       const text = payload.text;
       const firstLine = text.split(/\r?\n/, 1)[0].trim();
       return {
-        from,
+        // The model returns an insertion suffix, so preserve the already typed prefix.
+        from: position,
+        filter: false,
         options: [
           {
             apply: text,
@@ -238,7 +247,6 @@ function CodeEditor({
             type: "text",
           },
         ],
-        validFor: /^[\w$-]*$/,
       };
     },
     [t],

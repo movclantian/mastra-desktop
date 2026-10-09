@@ -6,7 +6,7 @@ import {
 } from "@mastra/client-js";
 import { mastraDBMessageToSignal } from "@mastra/core/signals";
 import { useQueryClient } from "@tanstack/react-query";
-import { DefaultChatTransport, type FileUIPart, readUIMessageStream } from "ai";
+import { DefaultChatTransport, type FileUIPart, isToolUIPart, readUIMessageStream } from "ai";
 import * as React from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
@@ -22,11 +22,12 @@ import {
   isConnectionError,
   waitForSessionDelay,
 } from "./session-connection";
-import type {
-  MessageQueueAction,
-  QueuedRequest,
-  WorkMessageMetadata,
-  WorkUIMessage,
+import {
+  type MessageQueueAction,
+  mergeToolPart,
+  type QueuedRequest,
+  type WorkMessageMetadata,
+  type WorkUIMessage,
 } from "./types";
 
 type NativeDisplayState = Extract<
@@ -92,6 +93,7 @@ function createThreadSession(
   let awaitingRun = false;
   let failed = false;
   let revision = 0;
+  let refreshRevision = 0;
   let queueRevision = 0;
   let librarySources: unknown[] = [];
   const pendingMessages = new Map<string, WorkUIMessage>();
@@ -130,6 +132,8 @@ function createThreadSession(
     toast.error(i18n.t("chat:messages.turnFailed", { detail }));
   };
   const applyMessage = (current: NativeDisplayState["currentMessage"], isRunning: boolean) => {
+    // The controller retains its last snapshot after agent_end; history owns completed messages.
+    if (!isRunning) return;
     const signal =
       current?.role === "signal"
         ? mastraDBMessageToSignal({ ...current, createdAt: new Date(current.createdAt) })
@@ -164,10 +168,12 @@ function createThreadSession(
         const next = [...messages];
         for (const ui of converted) {
           const index = next.findIndex((item) => item.id === ui.id);
-          // Final persisted messages contain stop/error metadata absent from display snapshots.
-          if (!isRunning && index >= 0) continue;
           const previous = next[index];
+          const tools = new Map(
+            previous?.parts.filter(isToolUIPart).map((part) => [part.toolCallId, part]),
+          );
           const parts: WorkUIMessage["parts"] = ui.parts.map((part, partIndex) => {
+            if (isToolUIPart(part)) return mergeToolPart(tools.get(part.toolCallId), part);
             // DB-message conversion marks reasoning as done; the live trailing part is still streaming.
             if (part.type === "reasoning")
               return {
@@ -228,8 +234,12 @@ function createThreadSession(
     );
   };
   const refresh = async (signal = observationSignal) => {
+    const requestRevision = ++refreshRevision;
     const startedAt = revision;
     const queueStartedAt = queueRevision;
+    const messagesAtStart = new Map(
+      store.getState().messages.map((message) => [message.id, message]),
+    );
     const payload = await requestJson<{
       displayState: NativeDisplayState & {
         queuedRequests: QueuedRequest[];
@@ -242,7 +252,7 @@ function createThreadSession(
       { signal: AbortSignal.any([AbortSignal.timeout(30_000), ...(signal ? [signal] : [])]) },
     );
     signal?.throwIfAborted();
-    if (disposed || signal !== observationSignal) return;
+    if (disposed || signal !== observationSignal || requestRevision !== refreshRevision) return;
     if (payload.displayState.activeWorkflow || payload.displayState.activeMediaGeneration)
       failed = false;
     for (const message of payload.messages) pendingMessages.delete(message.id);
@@ -276,18 +286,24 @@ function createThreadSession(
       });
       applyDisplay(payload.displayState);
     } else {
-      // Preserve live updates received while the history request was in flight.
+      // Keep newer live rows, not idle resume preludes absent from persisted history.
       setMessages((current) => {
         const native = store.getState().native;
-        const live = current.find(
-          (message) =>
-            (native?.isRunning && message.id === native.currentMessage?.id) ||
-            (runObserver && runTarget && message.id === runMessageId(runTarget)),
-        );
         const ids = new Set(payload.messages.map((message) => message.id));
+        const live = current.filter(
+          (message) =>
+            (native?.isRunning &&
+              (message.id === native.currentMessage?.id ||
+                message !== messagesAtStart.get(message.id))) ||
+            (runObserver &&
+              runTarget &&
+              message.id === runMessageId(runTarget) &&
+              (!ids.has(message.id) || message !== messagesAtStart.get(message.id))),
+        );
+        const liveById = new Map(live.map((message) => [message.id, message]));
         return [
-          ...payload.messages.map((message) => (message.id === live?.id ? live : message)),
-          ...current.filter((message) => !ids.has(message.id)),
+          ...payload.messages.map((message) => liveById.get(message.id) ?? message),
+          ...live.filter((message) => !ids.has(message.id)),
         ];
       });
     }
@@ -400,6 +416,8 @@ function createThreadSession(
                 "tool_suspension_cancelled",
                 "task_updated",
                 "goal_evaluation",
+                "thread_title_updated",
+                "om_thread_title_updated",
               ].includes(event.type)
             )
               onSettled();
@@ -505,7 +523,7 @@ function createThreadSession(
         while (!signal.aborted) {
           const display = await refresh();
           signal.throwIfAborted();
-          if (display?.activeMediaGeneration?.messageId !== target.messageId) break;
+          if (display && display.activeMediaGeneration?.messageId !== target.messageId) break;
           await waitForSessionDelay(2_000, signal);
         }
       } else {

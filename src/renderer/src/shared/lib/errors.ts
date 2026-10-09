@@ -76,6 +76,24 @@ export function describeError(payload: WorkErrorPayload | unknown): DescribedErr
   return { title: rawMessage ?? i18n.t("errors:unknownError") };
 }
 
+/** Electron forwards console arguments as strings, so serialize diagnostic fields here. */
+export function logWorkError(
+  error: unknown,
+  context?: string,
+  componentStack?: string,
+): DescribedError {
+  const described = describeError(error);
+  console.error(
+    `[work-error] ${JSON.stringify({
+      ...described,
+      context,
+      stack: error instanceof Error ? error.stack : undefined,
+      componentStack,
+    })}`,
+  );
+  return described;
+}
+
 /**
  * 统一错误 toast 出口。
  */
@@ -84,18 +102,12 @@ export function toastError(
   context?: string,
   action?: { label: string; onClick: () => void },
 ): DescribedError {
-  const described = describeError(error);
+  const described = logWorkError(error, context);
   const title =
     context && context !== described.title ? `${context}：${described.title}` : described.title;
   const lines = [title];
   if (described.hint) lines.push(described.hint);
   if (described.detail) lines.push(described.detail);
   toast.error(lines.join("\n"), { action });
-  console.error("[work-error]", {
-    title,
-    hint: described.hint,
-    detail: described.detail,
-    raw: error,
-  });
   return described;
 }

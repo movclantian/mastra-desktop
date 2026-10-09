@@ -1,7 +1,7 @@
 "use client";
 
 import type { ChatStatus, FileUIPart, SourceDocumentUIPart } from "ai";
-import { CornerDownLeftIcon, ImageIcon, Monitor, PlusIcon, SquareIcon, XIcon } from "lucide-react";
+import { CornerDownLeftIcon, ImageIcon, Monitor, PlusIcon, SquareIcon } from "lucide-react";
 import { nanoid } from "nanoid";
 import type {
   ChangeEvent,
@@ -1484,8 +1484,6 @@ export const PromptInputSubmit = ({
     Icon = <DotmSquare3 size={16} dotSize={2} colorPreset="solid-theme" />;
   } else if (status === "streaming") {
     Icon = <SquareIcon className="size-4" />;
-  } else if (status === "error") {
-    Icon = <XIcon className="size-4" />;
   }
 
   const handleClick = useCallback<NonNullable<PromptInputSubmitProps["onClick"]>>(

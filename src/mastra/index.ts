@@ -14,6 +14,7 @@ import { InMemoryServerCache } from "@mastra/core/cache";
 import type { BrowserProvider } from "@mastra/core/editor";
 import { EventEmitterPubSub, withCaching } from "@mastra/core/events";
 import { Mastra } from "@mastra/core/mastra";
+import { SpanType } from "@mastra/core/observability";
 import type { Processor } from "@mastra/core/processors";
 import { askUserTool, submitPlanTool } from "@mastra/core/tools";
 import { MastraEditor } from "@mastra/editor";
@@ -245,10 +246,34 @@ export const mastra = new Mastra({
     configs: {
       default: {
         serviceName: "mastra-work",
-        // Include native prepare-tools/prepare-memory steps in the request timeline.
-        includeInternalSpans: true,
-        exporters: [new MastraStorageExporter()],
-        spanOutputProcessors: [new SensitiveDataFilter()],
+        // Internal workflow snapshots duplicate the entire agent state at every processor.
+        includeInternalSpans: false,
+        excludeSpanTypes: [SpanType.MODEL_CHUNK],
+        exporters: [
+          new MastraStorageExporter({
+            maxBatchSize: 32,
+            maxBufferSize: 64,
+            maxBatchWaitMs: 1_000,
+          }),
+        ],
+        spanOutputProcessors: [
+          {
+            name: "processor-trace-summary",
+            process(span) {
+              if (span?.type === SpanType.PROCESSOR_RUN) {
+                // Keep timing, identity and errors; model/tool spans own the actual content.
+                span.input = undefined;
+                span.output = undefined;
+                if (span.attributes) {
+                  span.attributes = { ...span.attributes, messageListMutations: undefined };
+                }
+              }
+              return span;
+            },
+            async shutdown() {},
+          },
+          new SensitiveDataFilter(),
+        ],
       },
     },
   }),

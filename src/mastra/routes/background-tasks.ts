@@ -9,6 +9,23 @@ function managerFor(c: ContextWithMastra): BackgroundTaskManager {
   return manager;
 }
 
+/** Cancel every page before deleting history or its request-scoped executors. */
+export async function cancelThreadBackgroundTasks(
+  manager: BackgroundTaskManager | undefined,
+  owner: { threadId: string; resourceId: string },
+): Promise<void> {
+  if (!manager) return;
+  for (;;) {
+    const { tasks } = await manager.listTasks({
+      ...owner,
+      status: ["pending", "running", "suspended"],
+      perPage: 100,
+    });
+    if (!tasks.length) return;
+    await Promise.all(tasks.map((task) => manager.cancel(task.id)));
+  }
+}
+
 function resourceIdFor(c: ContextWithMastra): string {
   const resourceId = c.get("requestContext").get("userId");
   if (typeof resourceId !== "string" || !resourceId) throw workError("AUTH_REQUIRED");

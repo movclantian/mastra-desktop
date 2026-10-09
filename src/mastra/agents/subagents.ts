@@ -108,6 +108,7 @@ const explorerAgent = new Agent({
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
       untilIdle: true,
+      stopWhen: [],
       maxProcessorRetries,
       requireToolApproval: requestToolApproval,
     };
@@ -144,6 +145,7 @@ const reviewerAgent = new Agent({
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
       untilIdle: true,
+      stopWhen: [],
       maxProcessorRetries,
       requireToolApproval: requestToolApproval,
     };

@@ -26,6 +26,7 @@ import { useTranslation } from "@/shared/i18n";
 import { describeError } from "@/shared/lib/errors";
 import { BlurFade } from "@/shared/ui/blur-fade";
 import { Button } from "@/shared/ui/button";
+import { WindowTitleBar } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { RootShell } from "./app-shell";
 
@@ -53,21 +54,24 @@ function RouteError({ error, reset }: ErrorComponentProps) {
   const { t } = useTranslation();
   const described = describeError(error);
   return (
-    <ScrollArea className="h-dvh w-full bg-background text-foreground">
-      <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center gap-3 p-4">
-        <h1 className="text-base font-medium">{t("common:pageError")}</h1>
-        <p className="text-sm text-muted-foreground">{t("common:pageErrorHint")}</p>
-        <pre className="whitespace-pre-wrap break-words rounded-lg border bg-muted/50 p-3 text-xs">
-          {described.detail ?? described.title}
-        </pre>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={reset}>{t("common:retry")}</Button>
-          <Button variant="outline" onClick={() => window.location.reload()}>
-            {t("common:reloadPage")}
-          </Button>
+    <div className="flex h-dvh min-w-0 flex-col bg-background text-foreground">
+      <WindowTitleBar />
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="mx-auto flex min-h-[calc(100dvh-var(--app-titlebar-height))] w-full max-w-lg flex-col justify-center gap-3 p-4">
+          <h1 className="text-base font-medium">{t("common:pageError")}</h1>
+          <p className="text-sm text-muted-foreground">{t("common:pageErrorHint")}</p>
+          <pre className="whitespace-pre-wrap break-words rounded-lg border bg-muted/50 p-3 text-xs">
+            {described.detail ?? described.title}
+          </pre>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={reset}>{t("common:retry")}</Button>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              {t("common:reloadPage")}
+            </Button>
+          </div>
         </div>
-      </div>
-    </ScrollArea>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -184,7 +188,7 @@ const schedulesRoute = createRoute({
   component: SchedulesRoute,
 });
 
-/** RootShell 对 /settings 脱壳渲染(独立全屏);路由本体仅作占位 */
+/** 设置页由 RootShell 渲染,共享窗口顶栏;路由本体仅作占位。 */
 function SettingsRoute() {
   return null;
 }

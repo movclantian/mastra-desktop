@@ -152,21 +152,6 @@ const PLAN_TOOL_NAMES = [
   WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE,
 ];
 
-const COORDINATOR_TOOL_NAMES = new Set([
-  "execute_typescript",
-  ...WORKSPACE_READ_TOOLS,
-  "ask_user",
-  "submit_plan",
-  "task_write",
-  "task_update",
-  "task_complete",
-  "task_check",
-  "skill",
-  "skill_search",
-  "skill_read",
-  "notification_inbox",
-]);
-
 /** Native mode allowlists must retain the configured delegation tools, not every agent-shaped name. */
 export function resolveAgentActiveTools({
   tools,
@@ -205,11 +190,7 @@ export function resolveAgentActiveTools({
       (!mode.availableTools || mode.availableTools.includes(name) || coordinationTools.has(name)) &&
       (!readOnlyExpert || READ_ONLY_TOOL_NAMES.includes(name)) &&
       (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
-      (scheduled ? policy === "allow" : policy !== "deny") &&
-      (!supervisor ||
-        coordinationTools.has(name) ||
-        COORDINATOR_TOOL_NAMES.has(name) ||
-        (mode.id === "plan" && name === WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE))
+      (scheduled ? policy === "allow" : policy !== "deny")
     );
   });
 }
@@ -276,7 +257,7 @@ Only Markdown files directly inside plans/ may be written in this mode. You may 
     metadata: { default: true },
     description: "按用户要求执行任务，遵循工具权限",
     instructions: `MODE: BUILD.
-Carry out the user's request according to your configured role, following an approved plan when one exists. A supervisor coordinates execution through its members.
+Carry out the user's request according to your configured role, following an approved plan when one exists. A supervisor can execute work directly and delegate suitable assignments to its members.
 Report actual results and unresolved issues; use tools only when the task requires them.
 Stay within the user's requested scope. Ask when a decision changes that scope.`,
   },

@@ -1,6 +1,10 @@
 import type { DelegationConfig, MastraDBMessage } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
-import type { AgentProfile, TeamInvocation } from "../../shared/agent-contract";
+import {
+  type AgentProfile,
+  isCompleteAgentResult,
+  type TeamInvocation,
+} from "../../shared/agent-contract";
 import { errorText } from "../errors";
 import { getLibsqlClient, userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
@@ -52,7 +56,11 @@ export async function finishTeamInvocation(
   await client.execute({
     sql: "UPDATE team_invocations SET record = json_patch(record, ?), messages = COALESCE(?, messages), tools = COALESCE(?, tools) WHERE id = ? AND (? IS NULL OR json_extract(record, '$.status') = ?)",
     args: [
-      JSON.stringify(patch),
+      JSON.stringify({
+        ...patch,
+        ...(patch.status === "completed" || patch.status === "running" ? { error: null } : {}),
+        ...(patch.status === "running" ? { endedAt: null } : {}),
+      }),
       messages ? JSON.stringify(messages) : null,
       tools ? JSON.stringify(tools) : null,
       id,
@@ -146,13 +154,20 @@ export const teamInvocationProcessor = {
     if (typeof id !== "string") return messages;
     const directHandoff = Boolean(requestContext?.get(TEAM_HANDOFF_CONTEXT_KEY));
     const handedOff = requestContext?.get(HANDOFF_COMPLETE_CONTEXT_KEY) === true;
+    const completed = handedOff || isCompleteAgentResult(result);
+    const failed =
+      result.finishReason === "error" || (!completed && result.finishReason !== "tool-calls");
     await finishTeamInvocation(
       id,
       {
         text: result.text,
-        ...(directHandoff && result.finishReason === "error"
-          ? { status: "error" as const, error: "Member execution failed" }
-          : directHandoff && (handedOff || result.finishReason !== "tool-calls")
+        ...(directHandoff && failed
+          ? {
+              status: "error" as const,
+              error: `Member execution incomplete (finish reason: ${result.finishReason ?? "unknown"})`,
+              endedAt: new Date().toISOString(),
+            }
+          : directHandoff && completed
             ? { status: "completed" as const, endedAt: new Date().toISOString() }
             : {}),
       },
@@ -209,25 +224,27 @@ export function teamDelegation(
     },
     onDelegationComplete: async (context) => {
       const completion = await base.onDelegationComplete?.(context);
-      if (context.primitiveType === "agent") {
-        await finishTeamInvocation(
-          `${context.runId}:${context.toolCallId}`,
-          {
-            status: context.success && context.result.text.trim() ? "completed" : "error",
-            text: context.result.text || completion?.resultText,
-            ...(!context.success
-              ? { error: errorText(context.error, "Delegated task failed") }
-              : !context.result.text.trim()
-                ? { error: completion?.resultText ?? "Member returned no result" }
-                : {}),
-            endedAt: new Date().toISOString(),
-            memoryThreadId: context.result.subAgentThreadId,
-            memoryResourceId: context.result.subAgentResourceId,
-          },
-          context.messages,
-          context.result.subAgentToolResults,
-        );
-      }
+      if (context.primitiveType !== "agent") return completion;
+      const completed = context.success && isCompleteAgentResult(context.result);
+      const failure = !context.success
+        ? errorText(context.error, "Delegated task failed")
+        : (completion?.resultText ??
+          `Delegated task incomplete (finish reason: ${context.result.finishReason ?? "unknown"}). Inspect the retained messages and tool results before retrying.`);
+      await finishTeamInvocation(
+        `${context.runId}:${context.toolCallId}`,
+        {
+          status: completed ? "completed" : "error",
+          text: context.result.text || completion?.resultText,
+          ...(!completed ? { error: failure } : {}),
+          endedAt: new Date().toISOString(),
+          memoryThreadId: context.result.subAgentThreadId,
+          memoryResourceId: context.result.subAgentResourceId,
+        },
+        context.messages,
+        context.result.subAgentToolResults,
+      );
+      // Persist partial evidence before the official hook error marks the tool/task failed.
+      if (!completed && !context.error) throw new Error(failure);
       return completion;
     },
   };

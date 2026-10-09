@@ -92,6 +92,8 @@ import {
   FONT_STYLES_ORIGIN,
   SetMinimumWidthRequestSchema,
   WINDOW_CHANNELS,
+  WindowControlActionSchema,
+  type WindowState,
 } from "../shared/window-contract";
 import {
   type DetectedIde,
@@ -696,6 +698,8 @@ function ensureMastraRunning(): Promise<void> {
       const env: NodeJS.ProcessEnv = {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
+        // Disable framework analytics so it does not create ~/.mastra.
+        MASTRA_TELEMETRY_DISABLED: "1",
         // The Mastra CLI sets MASTRA_DEV=true for its watcher child. The
         // desktop runtime is production-like even in development, so the
         // service entrypoint clears that CLI-only flag before constructing
@@ -821,8 +825,13 @@ async function readMastraStorageDirectory(): Promise<string> {
   return info.directory;
 }
 
+function readWindowState(window: BrowserWindow): WindowState {
+  return { maximized: window.isMaximized(), fullscreen: window.isFullScreen() };
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
+    frame: false,
     width: 1200,
     height: 800,
     minWidth: 900,
@@ -838,6 +847,17 @@ function createWindow(): void {
       webviewTag: true,
     },
   });
+
+  const window = mainWindow;
+  const publishWindowState = () => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(WINDOW_CHANNELS.stateChanged, readWindowState(window));
+    }
+  };
+  window.on("maximize", publishWindowState);
+  window.on("unmaximize", publishWindowState);
+  window.on("enter-full-screen", publishWindowState);
+  window.on("leave-full-screen", publishWindowState);
 
   const nativeBrowser = new NativeBrowserGuestManager(mainWindow, browserProxy);
   nativeBrowserViews = nativeBrowser;
@@ -1161,6 +1181,32 @@ function bootstrap(): void {
   app.whenReady().then(async () => {
     // Set app user model id for windows
     electronApp.setAppUserModelId("com.mastra.desktop");
+
+    ipcMain.handle(WINDOW_CHANNELS.getState, (event) => {
+      assertTrustedIpcSender(event);
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window) throw new Error("Window is unavailable");
+      return readWindowState(window);
+    });
+    ipcMain.handle(WINDOW_CHANNELS.control, (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      const action = WindowControlActionSchema.parse(value);
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (!window) throw new Error("Window is unavailable");
+      switch (action) {
+        case "minimize":
+          window.minimize();
+          break;
+        case "toggleMaximize":
+          if (window.isFullScreen()) window.setFullScreen(false);
+          else if (window.isMaximized()) window.unmaximize();
+          else window.maximize();
+          break;
+        case "close":
+          window.close();
+          break;
+      }
+    });
 
     ipcMain.handle(WINDOW_CHANNELS.computerPermissions, async (event, value: unknown) => {
       assertTrustedIpcSender(event);

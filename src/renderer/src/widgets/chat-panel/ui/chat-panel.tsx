@@ -563,11 +563,7 @@ export function ChatPanel() {
         // hasMore 指向更旧的页:取已加载的最旧一页(数组末项)判断
         hasEarlierHistoryRef.current = pages[pages.length - 1]?.hasMore ?? false;
         if (activeSession?.store.getState().messages !== startingMessages) return false;
-        const currentMessageId = activeSession?.store.getState().native?.currentMessage?.id;
-        setMessages((current) => [
-          ...loaded,
-          ...current.filter((message) => message.id === currentMessageId && !seen.has(message.id)),
-        ]);
+        setMessages(loaded);
         return true;
       })
       .catch(() => {
@@ -736,7 +732,7 @@ export function ChatPanel() {
   );
 
   // 表情反应(官方 BubbleReactions 业务对接):乐观更新 + 服务端持久化。
-  // messageId 是聚合显示消息的 id(= 末条源消息 id),与服务端存储行一致。
+  // 聚合消息保留首条源消息的 id，保证恢复执行时表情和展示锚点稳定。
   const handleToggleReaction = React.useCallback(
     (messageId: string, emoji: string) => {
       const threadId = activeThreadIdRef.current;
@@ -1353,7 +1349,7 @@ export function ChatPanel() {
         key={entry.key}
         message={message}
         onEdit={handleEdit}
-        onForkFromMessage={handleForkFromMessage}
+        onForkFromMessage={() => handleForkFromMessage(entry.sourceIds.at(-1) ?? message.id)}
         onRetry={handleRetry}
         onRetrySend={handleRetrySend}
         onToggleReaction={handleToggleReaction}

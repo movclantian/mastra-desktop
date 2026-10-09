@@ -21,6 +21,7 @@ import { closeMcpConnections } from "../connections/mcp";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { closeMemoryVector, settleAllMemory } from "../memory/memory-runtime";
 import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
+import { startStorageMaintenance } from "../storage/database";
 import { stopWorkspaceCleanup } from "../workspace/workspace-manager";
 import { drainConversationRuns } from "./conversation-runs";
 
@@ -32,6 +33,7 @@ const HTTP_EXIT_DELAY_MS = 200;
 let shuttingDown = false;
 let runtimeMastra: Mastra | undefined;
 let shutdownPromise: Promise<boolean> | undefined;
+let stopStorageMaintenance: (() => Promise<void>) | undefined;
 const pendingRequests = new Set<Promise<void>>();
 const sessions = new Set<Session>();
 
@@ -75,6 +77,7 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
   workWebhookSignals.stop();
   libraryIndexSignals.stop();
   await Promise.all([
+    stopStorageMaintenance?.(),
     stopWorkspaceCleanup(),
     mastra.stopWorkers({ drainTimeout: SHUTDOWN_FLUSH_TIMEOUT_MS }),
     mastra.backgroundTaskManager?.shutdown({ deadline: Date.now() + SHUTDOWN_FLUSH_TIMEOUT_MS }),
@@ -147,6 +150,7 @@ export const shutdownRoute = registerApiRoute("/work/shutdown", {
 /** Bind desktop process shutdown signals once at the composition root. */
 export function registerShutdownHandlers(mastra: Mastra): void {
   runtimeMastra = mastra;
+  stopStorageMaintenance = startStorageMaintenance(mastra.getLogger());
   for (const controller of Object.values(mastra.listAgentControllers())) {
     controller.onSessionCreated((session) => {
       sessions.add(session);

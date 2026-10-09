@@ -5,13 +5,33 @@ import "./index.css";
 import "@/shared/theme/fonts";
 import "@/shared/i18n";
 
-import { StrictMode } from "react";
+import * as React from "react";
 import { createRoot } from "react-dom/client";
 import RendererApp from "@/app/app";
 import { installAuthenticatedFetch } from "@/features/auth";
+import { logWorkError } from "@/shared/lib/errors";
 import { hasWorkspaceDrafts } from "@/shared/lib/workspace-drafts";
 
 installAuthenticatedFetch();
+
+if (import.meta.env.DEV) {
+  const writeError = console.error.bind(console);
+  // Passive-effect loops are warnings and never reach createRoot's error callbacks.
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === "string" && args[0].startsWith("Maximum update depth exceeded")) {
+      logWorkError(
+        new Error(args[0]),
+        "react:update-loop",
+        React.captureOwnerStack?.() ?? undefined,
+      );
+      return;
+    }
+    writeError(...args);
+  };
+  import.meta.hot?.dispose(() => {
+    console.error = writeError;
+  });
+}
 
 window.addEventListener("beforeunload", (event) => {
   if (!hasWorkspaceDrafts()) return;
@@ -21,9 +41,14 @@ window.addEventListener("beforeunload", (event) => {
 
 const rootElement = document.getElementById("root");
 if (rootElement) {
-  createRoot(rootElement).render(
-    <StrictMode>
+  createRoot(rootElement, {
+    onCaughtError: (error, info) => logWorkError(error, "react:caught", info.componentStack),
+    onUncaughtError: (error, info) => logWorkError(error, "react:uncaught", info.componentStack),
+    onRecoverableError: (error, info) =>
+      logWorkError(error, "react:recoverable", info.componentStack),
+  }).render(
+    <React.StrictMode>
       <RendererApp />
-    </StrictMode>,
+    </React.StrictMode>,
   );
 }

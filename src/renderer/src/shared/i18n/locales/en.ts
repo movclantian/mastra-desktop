@@ -202,6 +202,13 @@ export const en = {
     user: "User",
   },
   topbar: {
+    windowControls: "Window controls",
+    minimizeWindow: "Minimize window",
+    maximizeWindow: "Maximize window",
+    restoreWindow: "Restore window",
+    closeWindow: "Close window",
+    exitFullscreen: "Exit full screen",
+    windowControlError: "Window action failed",
     contextDesc:
       "Capabilities, pages and files from this thread. Select an item to preview it on the right.",
     latestRequest: "Latest request",
@@ -3520,6 +3527,13 @@ export const en = {
     INTERNAL_ERROR: {
       title: "Internal server error",
       hint: "Please retry; restart application if it persists",
+    },
+    REQUEST_TIMEOUT: {
+      title: "Request timed out",
+      hint: "Please retry or check the connection to the selected model provider",
+    },
+    REQUEST_CANCELLED: {
+      title: "Request cancelled",
     },
   },
 };

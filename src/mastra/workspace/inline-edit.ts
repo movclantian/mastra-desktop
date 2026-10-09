@@ -1,13 +1,18 @@
 import { registerApiRoute } from "@mastra/core/server";
 import { generateText, type LanguageModel } from "ai";
 import { z } from "zod";
+import { INLINE_COMPLETION_LIMITS } from "../../shared/workspace-contract";
 import { getAgentProfile } from "../agents/custom";
 import { resolveMode } from "../agents/permissions";
 import { workError } from "../errors";
 import { resolveRequestModel } from "../models/providers";
 import { getWorkbenchSession } from "../routes/session-context";
 import type { ThreadMetadata } from "../routes/threads/shared";
-import { getOwnedThread, getWorkMemory } from "../routes/threads/shared";
+import {
+  getOwnedThread,
+  getWorkMemory,
+  normalizeChatHistoryMessages,
+} from "../routes/threads/shared";
 
 const inlineEditSchema = z.object({
   resourceId: z.string().min(1),
@@ -23,9 +28,9 @@ const inlineCompletionSchema = z.object({
   resourceId: z.string().min(1),
   path: z.string().min(1),
   language: z.string().max(40).optional(),
-  prefix: z.string().max(1_000).optional(),
-  beforeContext: z.string().max(12_000).optional(),
-  afterContext: z.string().max(8_000).optional(),
+  prefix: z.string().max(INLINE_COMPLETION_LIMITS.prefix).optional(),
+  beforeContext: z.string().max(INLINE_COMPLETION_LIMITS.beforeContext).optional(),
+  afterContext: z.string().max(INLINE_COMPLETION_LIMITS.afterContext).optional(),
 });
 
 function partText(message: { content?: { parts?: unknown[] } }): string {
@@ -43,14 +48,30 @@ function partText(message: { content?: { parts?: unknown[] } }): string {
 }
 
 function stripCodeFence(value: string): string {
-  const trimmed = value.trim();
-  const fenced = trimmed.match(/^```[^\n]*\n([\s\S]*?)\n```$/);
-  return (fenced?.[1] ?? trimmed).trim();
+  const fenced = value.match(/^\s*```[^\n]*\n([\s\S]*?)\r?\n```\s*$/);
+  // Leading spaces/newlines can be part of a code insertion or indentation.
+  return fenced?.[1] ?? value;
+}
+
+async function recentThreadContext(
+  session: Awaited<ReturnType<typeof getWorkbenchSession>>,
+  threadId: string,
+): Promise<string> {
+  // Session reads only the newest window and returns it in conversation order.
+  const messages = await session.thread.listMessages({ threadId, limit: 20 });
+  return normalizeChatHistoryMessages(messages)
+    .flatMap((message) => {
+      const text = partText(message);
+      return text ? [`${message.role}: ${text.slice(0, 1_200)}`] : [];
+    })
+    .slice(-8)
+    .join("\n\n");
 }
 
 export const inlineEditRoute = registerApiRoute("/work/workspace/threads/:threadId/inline-edit", {
   method: "POST",
   handler: async (c) => {
+    const abortSignal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120_000)]);
     const threadId = c.req.param("threadId");
     const parsed = inlineEditSchema.safeParse(await c.req.json());
     if (!parsed.success) {
@@ -68,19 +89,7 @@ export const inlineEditRoute = registerApiRoute("/work/workspace/threads/:thread
     const resolved = await resolveRequestModel({ id: session.model.get() }, input.resourceId);
     if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
-    const recalled = await memory.recall({
-      threadId,
-      resourceId: input.resourceId,
-      perPage: false,
-    });
-    const history = (recalled.messages ?? [])
-      .map((message) => {
-        const text = partText(message);
-        return text ? `${message.role}: ${text.slice(0, 1_200)}` : "";
-      })
-      .filter(Boolean)
-      .slice(-8)
-      .join("\n\n");
+    const history = await recentThreadContext(session, threadId);
 
     const profile = await getAgentProfile(metadata.agentProfileId, input.resourceId);
     const instruction = input.instruction;
@@ -112,9 +121,13 @@ export const inlineEditRoute = registerApiRoute("/work/workspace/threads/:thread
       ].join("\n\n"),
       prompt,
       maxOutputTokens: 4_096,
+      abortSignal,
+    }).catch((error: unknown) => {
+      abortSignal.throwIfAborted();
+      throw error;
     });
     const text = stripCodeFence(result.text);
-    if (!text) throw workError("VALIDATION_FAILED", { text: "模型没有返回可替换的代码" });
+    if (!text.trim()) throw workError("VALIDATION_FAILED", { text: "模型没有返回可替换的代码" });
     return c.json({ text });
   },
 });
@@ -124,6 +137,7 @@ export const inlineCompletionRoute = registerApiRoute(
   {
     method: "POST",
     handler: async (c) => {
+      const abortSignal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(15_000)]);
       const threadId = c.req.param("threadId");
       const parsed = inlineCompletionSchema.safeParse(await c.req.json());
       if (!parsed.success) {
@@ -141,19 +155,7 @@ export const inlineCompletionRoute = registerApiRoute(
       const resolved = await resolveRequestModel({ id: session.model.get() }, input.resourceId);
       if (!resolved) throw workError("MODEL_NOT_CONFIGURED");
 
-      const recalled = await memory.recall({
-        threadId,
-        resourceId: input.resourceId,
-        perPage: false,
-      });
-      const history = (recalled.messages ?? [])
-        .map((message) => {
-          const text = partText(message);
-          return text ? `${message.role}: ${text.slice(0, 1_200)}` : "";
-        })
-        .filter(Boolean)
-        .slice(-8)
-        .join("\n\n");
+      const history = await recentThreadContext(session, threadId);
       const profile = await getAgentProfile(metadata.agentProfileId, input.resourceId);
       const prompt = [
         `文件: ${input.path}`,
@@ -180,9 +182,14 @@ export const inlineCompletionRoute = registerApiRoute(
         ].join("\n\n"),
         prompt,
         maxOutputTokens: 1_024,
+        maxRetries: 0,
+        abortSignal,
+      }).catch((error: unknown) => {
+        abortSignal.throwIfAborted();
+        throw error;
       });
       const text = stripCodeFence(result.text);
-      if (!text) return c.json({ text: "" });
+      if (!text.trim()) return c.json({ text: "" });
       return c.json({ text });
     },
   },

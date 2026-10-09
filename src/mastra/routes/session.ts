@@ -37,7 +37,7 @@ import {
 } from "../harness/signals";
 import { resolveModelSelection } from "../models/providers";
 import { appStorage, getLibsqlClient } from "../storage/database";
-import { ensureTaskExecutorAvailable } from "./background-tasks";
+import { cancelThreadBackgroundTasks, ensureTaskExecutorAvailable } from "./background-tasks";
 import {
   activeThreadMediaGeneration,
   activeThreadWorkflow,
@@ -130,13 +130,49 @@ export function observeSessionWork(
   });
 }
 
+/** Promote only accepted user turns; native Memory owns asynchronous title generation. */
+async function promoteUserThread(session: ControllerSession) {
+  const threadId = session.thread.getId();
+  if (!threadId) return;
+  const resourceId = session.identity.getResourceId();
+  const store = await appStorage.getStore("memory");
+  if (!store) return;
+  await withThreadWrite(resourceId, threadId, async () => {
+    if (session.thread.getId() !== threadId) return;
+    await store.updateThreadMetadata({
+      id: threadId,
+      resourceId,
+      update: (thread) =>
+        thread.metadata?.draft === true ? { ...thread.metadata, draft: false } : undefined,
+    });
+  });
+}
+
 /** Persist only the last-step context measure; cumulative usage belongs to Session. */
 export function registerWorkbenchSessionLifecycle(mastra: Mastra): void {
   mastra.getAgentController("workbench")?.onSessionCreated((session) => {
     let lastStepUsage: TokenUsage | undefined;
+    let promotingThread: Promise<void> | undefined;
     session.subscribe((event) => {
       if (event.type === "agent_start") lastStepUsage = undefined;
       if (event.type === "usage_update") lastStepUsage = event.usage;
+      if (
+        event.type === "message_start" &&
+        (event.message.role === "user" ||
+          (event.message.role === "signal" && event.message.type === "user")) &&
+        !promotingThread
+      ) {
+        promotingThread = promoteUserThread(session)
+          .catch((error: unknown) => {
+            mastra.getLogger().error("User thread metadata update failed", {
+              threadId: session.thread.getId(),
+              error,
+            });
+          })
+          .finally(() => {
+            promotingThread = undefined;
+          });
+      }
     });
     session.onBeforeAgentEnd((event) => {
       const runId = session.getCurrentRunId();
@@ -618,22 +654,6 @@ export async function abortWorkbenchSession(session: ControllerSession) {
   }
 }
 
-async function cancelSessionBackgroundTasks(c: ContextWithMastra, result: SessionRouteResult) {
-  const manager = c.get("mastra").backgroundTaskManager;
-  if (!manager) return;
-  let count: number;
-  do {
-    const { tasks } = await manager.listTasks({
-      resourceId: result.resourceId,
-      threadId: result.threadId,
-      status: ["pending", "running", "suspended"],
-      perPage: 100,
-    });
-    count = tasks.length;
-    await Promise.all(tasks.map((task) => manager.cancel(task.id)));
-  } while (count === 100);
-}
-
 const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/abort", {
   method: "POST",
   handler: async (c) => {
@@ -643,7 +663,7 @@ const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threa
       await result.agent.updateObjectiveOptions({ threadId: result.threadId, status: "paused" });
     await cancelConversationRuns(c, result);
     await abortWorkbenchSession(result.controllerSession);
-    await cancelSessionBackgroundTasks(c, result);
+    await cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, result);
     if (objective?.status === "active")
       await result.agent.updateObjectiveOptions({ threadId: result.threadId, status: "paused" });
     return c.json({ aborted: true });
@@ -759,15 +779,10 @@ const sessionDisplayStateRoute = registerApiRoute(
           : undefined;
       if (history) await reconcileMediaMessages(result, history);
       const displayState = await persistentDisplayState(c, result);
-      let messages: ReturnType<typeof workbenchMessages> | undefined;
-      if (history) {
-        const current = displayState.currentMessage;
-        if (current && !history.some((message) => message.id === current.id)) history.push(current);
-        messages = workbenchMessages(history);
-      }
       return c.json({
         displayState,
-        ...(messages ? { messages } : {}),
+        // Live snapshots travel in displayState; they are not necessarily persisted message rows.
+        ...(history ? { messages: workbenchMessages(history) } : {}),
       });
     },
   },
@@ -911,7 +926,7 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
         throw workError("VALIDATION_FAILED", { text: "目标不能为空" });
       await result.agent.updateObjectiveOptions({ ...target, status: "paused" });
       await abortWorkbenchSession(result.controllerSession);
-      await cancelSessionBackgroundTasks(c, result);
+      await cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, result);
       if (body.action === "clear") await result.agent.clearObjective(target);
       else if (body.action === "update" && body.objective) {
         if (body.objective !== current.objective) {

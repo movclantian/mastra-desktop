@@ -133,7 +133,6 @@ export async function prepareWorkbenchMessage(
   if (Object.keys(patch).length) {
     await memory.updateThread({
       id: threadId,
-      title: thread.title,
       metadata: { ...metadata, ...patch },
     });
   }

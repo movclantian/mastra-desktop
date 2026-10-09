@@ -1,8 +1,9 @@
 /** Desktop thread lifecycle hooks around the built-in Memory API. */
+import { setTimeout as delay } from "node:timers/promises";
 import type { MastraDBMessage } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
-import { TABLE_MESSAGES } from "@mastra/core/storage";
+import { TABLE_MESSAGES, TABLE_THREAD_STATE } from "@mastra/core/storage";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
@@ -13,7 +14,7 @@ import {
   WORK_MESSAGE_OPTIONS_CONTEXT_KEY,
   workMessageMetadataSchema,
 } from "../../agents/processors";
-import { deleteTeamInvocations } from "../../agents/team-activity";
+import { deleteTeamInvocations, listTeamInvocations } from "../../agents/team-activity";
 import { deleteTeamHandoffs } from "../../agents/team-handoff";
 import { closeComputerConnections } from "../../connections/computer";
 import { getMcpConfig } from "../../connections/mcp";
@@ -34,6 +35,7 @@ import {
 import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
 import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
+import { cancelThreadBackgroundTasks } from "../background-tasks";
 import {
   activeThreadMediaGeneration,
   activeThreadWorkflow,
@@ -700,6 +702,70 @@ const summarizeThreadRoute = registerApiRoute("/work/threads/:threadId/summarize
 // ponytail: process-local serialization; use a database lock if the app gains multiple hosts.
 const draftCreations = new Map<string, Promise<void>>();
 
+/** Follow persisted relationships, never thread/resource ID prefixes, across delegated memories. */
+async function deleteRelatedThreadData(
+  c: ContextWithMastra,
+  memory: Awaited<ReturnType<typeof getWorkMemory>>,
+  resourceId: string,
+  threadId: string,
+): Promise<void> {
+  const mastra = c.get("mastra");
+  const agents = Object.values(mastra.listAgents());
+  const stopped = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(10_000)]);
+  const targets = new Map([[threadId, { threadId, resourceId }]]);
+  for (const target of targets.values()) {
+    stopped.throwIfAborted();
+    await cancelThreadBackgroundTasks(mastra.backgroundTaskManager, target);
+    for (const agent of agents) {
+      agent.abortThreadStream({ ...target, clearPendingSignals: true });
+    }
+    // abortThreadStream only requests cancellation; wait before deleting writable state.
+    while (agents.some((agent) => agent.getActiveThreadRunId(target))) {
+      await delay(20, undefined, { signal: stopped }).catch((error: unknown) => {
+        stopped.throwIfAborted();
+        throw error;
+      });
+    }
+    await memory.settled();
+    const calls = await listTeamInvocations(resourceId, target.threadId);
+    for (const call of calls) {
+      if (!call.memoryThreadId || !call.memoryResourceId || targets.has(call.memoryThreadId))
+        continue;
+      const child = await getOwnedThread(memory, call.memoryThreadId, call.memoryResourceId);
+      if (child) targets.set(child.id, { threadId: child.id, resourceId: child.resourceId });
+    }
+    const { threads } = await memory.listThreads({
+      filter: {
+        resourceId: target.resourceId,
+        metadata: { goalJudge: true, parentThreadId: target.threadId },
+      },
+      perPage: false,
+    });
+    for (const child of threads) {
+      targets.set(child.id, { threadId: child.id, resourceId: child.resourceId });
+    }
+  }
+
+  const client = await getLibsqlClient();
+  const backgroundTasks = await appStorage.getStore("backgroundTasks");
+  const threadState = await appStorage.getStore("threadState");
+  for (const target of [...targets.values()].reverse()) {
+    stopped.throwIfAborted();
+    await backgroundTasks?.deleteTasks(target);
+    if (threadState) {
+      const { rows } = await client.execute({
+        sql: `SELECT type FROM "${TABLE_THREAD_STATE}" WHERE "threadId" = ?`,
+        args: [target.threadId],
+      });
+      for (const row of rows) {
+        await threadState.deleteState({ threadId: target.threadId, type: String(row.type) });
+      }
+    }
+    if (target.threadId !== threadId) await memory.deleteThread(target.threadId);
+  }
+  await memory.settled();
+}
+
 export async function memoryThreadMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
   const deleting =
     c.req.method === "DELETE" && /^\/api\/memory\/threads\/([^/]+)$/.exec(c.req.path);
@@ -846,16 +912,19 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
   }
   if (threadId && c.req.method === "DELETE") {
     await assertNoActiveConversationRun(resourceId, threadId);
-    for (const agent of Object.values(c.get("mastra").listAgents())) {
-      await agent.abortThreadStream({ resourceId, threadId });
-    }
-    await c
-      .get("mastra")
-      .getAgentController("workbench")
-      ?.deleteSession({
+    const controller = c.get("mastra").getAgentController("workbench");
+    const scope = JSON.stringify(["workbench", threadId]);
+    const session = await controller?.getSessionByResource(resourceId, scope);
+    // Signal the main abort first; cancelling children also releases a parent waiting on them.
+    await Promise.all([
+      session ? abortWorkbenchSession(session) : undefined,
+      cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, {
         resourceId,
-        scope: JSON.stringify(["workbench", threadId]),
-      });
+        threadId,
+      }),
+    ]);
+    await controller?.deleteSession({ resourceId, scope });
+    await deleteRelatedThreadData(c, memory, resourceId, threadId);
     await memory.settled();
   }
   await next();

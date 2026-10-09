@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 export const WINDOW_CHANNELS = {
+  control: "window:control",
+  getState: "window:get-state",
+  stateChanged: "window:state-changed",
   setMinimumWidth: "window:set-minimum-width",
   getSettings: "window:get-settings",
   updateSettings: "window:update-settings",
@@ -8,6 +11,14 @@ export const WINDOW_CHANNELS = {
   notificationClick: "window:notification-click",
   computerPermissions: "window:computer-permissions",
 } as const;
+
+export const WindowControlActionSchema = z.enum(["minimize", "toggleMaximize", "close"]);
+export type WindowControlAction = z.infer<typeof WindowControlActionSchema>;
+export const WindowStateSchema = z.object({
+  maximized: z.boolean(),
+  fullscreen: z.boolean(),
+});
+export type WindowState = z.infer<typeof WindowStateSchema>;
 
 export const SetMinimumWidthRequestSchema = z.number().finite().positive().max(32_767);
 

@@ -25,7 +25,9 @@ import {
   InputGroupInput,
 } from "@/shared/ui/input-group";
 import { Meteors } from "@/shared/ui/meteors";
+import { WindowTitleBar } from "@/shared/ui/panel";
 import { Particles } from "@/shared/ui/particles";
+import { ScrollArea } from "@/shared/ui/scroll-area";
 import { ShimmerButton } from "@/shared/ui/shimmer-button";
 import { submitAuth as submitAuthRequest } from "./auth-api";
 import { AUTH_AUTO_LOGIN_KEY, getRememberedAccounts } from "./auth-storage";
@@ -98,274 +100,285 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
   };
 
   return (
-    <main className="relative flex min-h-svh items-center justify-center bg-background p-4 sm:p-6 select-none">
-      {/* 顶部右上角主题深浅色切换 */}
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+    <div className="flex h-svh min-w-0 flex-col overflow-hidden bg-background">
+      <WindowTitleBar>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">MastraWork</span>
         <AnimatedThemeToggler
           theme={isDark ? "dark" : "light"}
           onThemeChange={(next) => setThemeMode(next)}
-          className="size-9 rounded-xl border border-border bg-card/80 p-2 shadow-xs backdrop-blur-md hover:bg-accent text-foreground transition-colors cursor-pointer"
+          className="app-no-drag size-8 shrink-0 rounded-lg p-1.5 text-foreground transition-colors hover:bg-accent"
         />
-      </div>
+      </WindowTitleBar>
+      <ScrollArea className="min-h-0 flex-1">
+        <main className="relative flex min-h-[calc(100svh-var(--app-titlebar-height))] items-center justify-center bg-background p-4 sm:p-6 select-none">
+          <div className="w-full max-w-4xl">
+            <Card className="overflow-hidden p-0 shadow-xl border-border bg-card text-card-foreground">
+              <CardContent className="grid min-w-0 p-0 md:grid-cols-2">
+                <form className="flex min-w-0 flex-col justify-center p-6 sm:p-8" onSubmit={submit}>
+                  <FieldGroup>
+                    <div className="flex flex-col items-center gap-2 text-center">
+                      <div className="mb-2 flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+                        {mode === "login" ? <LogInIcon /> : <UserPlusIcon />}
+                      </div>
+                      <h1 className="text-2xl font-bold">
+                        {mode === "login" ? t("auth:welcomeBack") : t("auth:createAccount")}
+                      </h1>
+                      <p className="text-sm text-balance text-muted-foreground">
+                        {mode === "login" ? t("auth:loginSubtitle") : t("auth:registerSubtitle")}
+                      </p>
+                    </div>
 
-      <div className="w-full max-w-4xl">
-        <Card className="overflow-hidden p-0 shadow-xl border-border bg-card text-card-foreground">
-          <CardContent className="grid min-w-0 p-0 md:grid-cols-2">
-            <form className="flex min-w-0 flex-col justify-center p-6 sm:p-8" onSubmit={submit}>
-              <FieldGroup>
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <div className="mb-2 flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-                    {mode === "login" ? <LogInIcon /> : <UserPlusIcon />}
-                  </div>
-                  <h1 className="text-2xl font-bold">
-                    {mode === "login" ? t("auth:welcomeBack") : t("auth:createAccount")}
-                  </h1>
-                  <p className="text-sm text-balance text-muted-foreground">
-                    {mode === "login" ? t("auth:loginSubtitle") : t("auth:registerSubtitle")}
-                  </p>
-                </div>
-
-                {mode === "register" ? (
-                  <Field>
-                    <FieldLabel htmlFor="auth-name">{t("auth:name")}</FieldLabel>
-                    <Input
-                      id="auth-name"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      placeholder={t("auth:namePlaceholder")}
-                      autoComplete="name"
-                      required
-                    />
-                  </Field>
-                ) : null}
-
-                <Field>
-                  <FieldLabel htmlFor="auth-email">{t("auth:email")}</FieldLabel>
-                  <InputGroup>
-                    <InputGroupInput
-                      id="auth-email"
-                      type="email"
-                      value={email}
-                      onChange={(event) => setEmail(event.target.value)}
-                      placeholder="you@example.com"
-                      autoComplete="email"
-                      required
-                    />
-                    {mode === "login" && rememberedAccounts.length > 0 ? (
-                      <InputGroupAddon align="inline-end">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger
-                            render={
-                              <InputGroupButton
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={t("auth:selectRememberedAccount")}
-                              />
-                            }
-                          >
-                            <ChevronDownIcon />
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-64">
-                            <DropdownMenuGroup>
-                              <DropdownMenuLabel>{t("auth:rememberedAccounts")}</DropdownMenuLabel>
-                              {rememberedAccounts.map((account) => (
-                                <DropdownMenuItem
-                                  key={account.email}
-                                  onClick={() => selectAccount(account)}
-                                >
-                                  <span className="flex min-w-0 flex-col">
-                                    <span className="truncate">{account.name}</span>
-                                    <span className="truncate text-xs text-muted-foreground">
-                                      {account.email}
-                                    </span>
-                                  </span>
-                                </DropdownMenuItem>
-                              ))}
-                            </DropdownMenuGroup>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </InputGroupAddon>
+                    {mode === "register" ? (
+                      <Field>
+                        <FieldLabel htmlFor="auth-name">{t("auth:name")}</FieldLabel>
+                        <Input
+                          id="auth-name"
+                          value={name}
+                          onChange={(event) => setName(event.target.value)}
+                          placeholder={t("auth:namePlaceholder")}
+                          autoComplete="name"
+                          required
+                        />
+                      </Field>
                     ) : null}
-                  </InputGroup>
-                </Field>
 
-                <Field>
-                  <FieldLabel htmlFor="auth-password">{t("auth:password")}</FieldLabel>
-                  <InputGroup>
-                    <InputGroupInput
-                      id="auth-password"
-                      type={showPassword ? "text" : "password"}
-                      value={password}
-                      onChange={(event) => setPassword(event.target.value)}
-                      autoComplete={mode === "login" ? "current-password" : "new-password"}
-                      required
-                    />
-                    <InputGroupAddon align="inline-end">
-                      <InputGroupButton
-                        aria-label={showPassword ? t("auth:hidePassword") : t("auth:showPassword")}
-                        size="icon-xs"
-                        variant="ghost"
-                        onClick={() => setShowPassword((show) => !show)}
-                      >
-                        {showPassword ? <EyeIcon /> : <EyeOffIcon />}
-                      </InputGroupButton>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {mode === "register" ? (
-                    <FieldDescription>{t("auth:passwordHint")}</FieldDescription>
-                  ) : null}
-                </Field>
-
-                {mode === "register" ? (
-                  <Field>
-                    <FieldLabel htmlFor="auth-confirm-password">
-                      {t("auth:confirmPassword")}
-                    </FieldLabel>
-                    <InputGroup>
-                      <InputGroupInput
-                        id="auth-confirm-password"
-                        type={showConfirmPassword ? "text" : "password"}
-                        value={confirmPassword}
-                        onChange={(event) => setConfirmPassword(event.target.value)}
-                        autoComplete="new-password"
-                        required
-                      />
-                      <InputGroupAddon align="inline-end">
-                        <InputGroupButton
-                          aria-label={
-                            showConfirmPassword ? t("auth:hidePassword") : t("auth:showPassword")
-                          }
-                          size="icon-xs"
-                          variant="ghost"
-                          onClick={() => setShowConfirmPassword((show) => !show)}
-                        >
-                          {showConfirmPassword ? <EyeIcon /> : <EyeOffIcon />}
-                        </InputGroupButton>
-                      </InputGroupAddon>
-                    </InputGroup>
-                  </Field>
-                ) : null}
-
-                {mode === "login" ? (
-                  <div className="flex flex-wrap items-center justify-center gap-x-20 gap-y-2">
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="remember-login"
-                        checked={remember}
-                        onCheckedChange={(checked) => {
-                          setRemember(Boolean(checked));
-                          if (!checked) setAutoLogin(false);
-                        }}
-                      />
-                      <FieldLabel htmlFor="remember-login" className="font-normal">
-                        {t("auth:rememberMe")}
-                      </FieldLabel>
+                    <Field>
+                      <FieldLabel htmlFor="auth-email">{t("auth:email")}</FieldLabel>
+                      <InputGroup>
+                        <InputGroupInput
+                          id="auth-email"
+                          type="email"
+                          value={email}
+                          onChange={(event) => setEmail(event.target.value)}
+                          placeholder="you@example.com"
+                          autoComplete="email"
+                          required
+                        />
+                        {mode === "login" && rememberedAccounts.length > 0 ? (
+                          <InputGroupAddon align="inline-end">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <InputGroupButton
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={t("auth:selectRememberedAccount")}
+                                  />
+                                }
+                              >
+                                <ChevronDownIcon />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-64">
+                                <DropdownMenuGroup>
+                                  <DropdownMenuLabel>
+                                    {t("auth:rememberedAccounts")}
+                                  </DropdownMenuLabel>
+                                  {rememberedAccounts.map((account) => (
+                                    <DropdownMenuItem
+                                      key={account.email}
+                                      onClick={() => selectAccount(account)}
+                                    >
+                                      <span className="flex min-w-0 flex-col">
+                                        <span className="truncate">{account.name}</span>
+                                        <span className="truncate text-xs text-muted-foreground">
+                                          {account.email}
+                                        </span>
+                                      </span>
+                                    </DropdownMenuItem>
+                                  ))}
+                                </DropdownMenuGroup>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </InputGroupAddon>
+                        ) : null}
+                      </InputGroup>
                     </Field>
-                    <Field orientation="horizontal">
-                      <Checkbox
-                        id="auto-login"
-                        checked={autoLogin}
-                        onCheckedChange={(checked) => {
-                          const next = Boolean(checked);
-                          setAutoLogin(next);
-                          if (next) setRemember(true);
-                        }}
-                      />
-                      <FieldLabel htmlFor="auto-login" className="font-normal">
-                        {t("auth:autoLogin")}
-                      </FieldLabel>
-                    </Field>
-                  </div>
-                ) : null}
 
-                {error ? <FieldError className="text-center">{error}</FieldError> : null}
-                {/* 首要 CTA:金属扫光。颜色全部走主题 token,不用组件默认的黑底白字 */}
-                <ShimmerButton
-                  type="submit"
-                  disabled={busy}
-                  borderRadius="0.625rem"
-                  shimmerDuration="2.6s"
-                  shimmerColor="var(--primary-foreground)"
-                  background="var(--primary)"
-                  className="w-full gap-2 border-primary/20 py-2.5 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {busy ? <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" /> : null}
-                  {busy
-                    ? t("auth:pleaseWait")
-                    : mode === "login"
-                      ? t("auth:login")
-                      : t("auth:register")}
-                </ShimmerButton>
-                <FieldDescription className="text-center">
-                  {mode === "login" ? t("auth:noAccountYet") : t("auth:alreadyHaveAccount")}{" "}
-                  <Button
-                    variant="link"
-                    size="xs"
-                    type="button"
-                    className="h-auto p-0 font-medium text-foreground underline underline-offset-4"
-                    onClick={() => switchMode(mode === "login" ? "register" : "login")}
-                  >
-                    {mode === "login" ? t("auth:registerNow") : t("auth:backToLogin")}
-                  </Button>
-                </FieldDescription>
-              </FieldGroup>
-            </form>
-            <div className="relative hidden min-h-[480px] overflow-hidden bg-primary md:block">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,color-mix(in_oklch,var(--primary-foreground)_20%,transparent),transparent_40%),linear-gradient(140deg,var(--primary),color-mix(in_oklch,var(--primary)_70%,black))]" />
-              {/* 品牌区环境层:粒子跟随光标、流星斜掠。登录后整屏卸载,无长期开销 */}
-              <Particles
-                className="pointer-events-none absolute inset-0"
-                quantity={90}
-                staticity={38}
-                ease={60}
-                size={0.5}
-                color="#ffffff"
-              />
-              <Meteors
-                className="pointer-events-none"
-                number={12}
-                minDelay={0.4}
-                maxDelay={3.2}
-                minDuration={3}
-                maxDuration={9}
-              />
-              <div className="relative flex h-full flex-col justify-between p-8 text-primary-foreground">
-                <div className="flex items-center justify-between text-sm font-medium tracking-[0.18em] uppercase">
-                  {/* 品牌字解码:悬停时逐字符乱码收敛,呼应产品的"工程感" */}
-                  <div className="flex items-center gap-2">
-                    <img
-                      src="./icon.png"
-                      alt=""
-                      className="size-8 rounded-lg object-cover shadow-sm"
-                      draggable={false}
-                    />
-                    <HyperText
-                      as="span"
-                      className="p-0 text-sm font-medium tracking-[0.18em] uppercase"
-                      duration={700}
-                      startOnView
+                    <Field>
+                      <FieldLabel htmlFor="auth-password">{t("auth:password")}</FieldLabel>
+                      <InputGroup>
+                        <InputGroupInput
+                          id="auth-password"
+                          type={showPassword ? "text" : "password"}
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          autoComplete={mode === "login" ? "current-password" : "new-password"}
+                          required
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupButton
+                            aria-label={
+                              showPassword ? t("auth:hidePassword") : t("auth:showPassword")
+                            }
+                            size="icon-xs"
+                            variant="ghost"
+                            onClick={() => setShowPassword((show) => !show)}
+                          >
+                            {showPassword ? <EyeIcon /> : <EyeOffIcon />}
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      {mode === "register" ? (
+                        <FieldDescription>{t("auth:passwordHint")}</FieldDescription>
+                      ) : null}
+                    </Field>
+
+                    {mode === "register" ? (
+                      <Field>
+                        <FieldLabel htmlFor="auth-confirm-password">
+                          {t("auth:confirmPassword")}
+                        </FieldLabel>
+                        <InputGroup>
+                          <InputGroupInput
+                            id="auth-confirm-password"
+                            type={showConfirmPassword ? "text" : "password"}
+                            value={confirmPassword}
+                            onChange={(event) => setConfirmPassword(event.target.value)}
+                            autoComplete="new-password"
+                            required
+                          />
+                          <InputGroupAddon align="inline-end">
+                            <InputGroupButton
+                              aria-label={
+                                showConfirmPassword
+                                  ? t("auth:hidePassword")
+                                  : t("auth:showPassword")
+                              }
+                              size="icon-xs"
+                              variant="ghost"
+                              onClick={() => setShowConfirmPassword((show) => !show)}
+                            >
+                              {showConfirmPassword ? <EyeIcon /> : <EyeOffIcon />}
+                            </InputGroupButton>
+                          </InputGroupAddon>
+                        </InputGroup>
+                      </Field>
+                    ) : null}
+
+                    {mode === "login" ? (
+                      <div className="flex flex-wrap items-center justify-center gap-x-20 gap-y-2">
+                        <Field orientation="horizontal">
+                          <Checkbox
+                            id="remember-login"
+                            checked={remember}
+                            onCheckedChange={(checked) => {
+                              setRemember(Boolean(checked));
+                              if (!checked) setAutoLogin(false);
+                            }}
+                          />
+                          <FieldLabel htmlFor="remember-login" className="font-normal">
+                            {t("auth:rememberMe")}
+                          </FieldLabel>
+                        </Field>
+                        <Field orientation="horizontal">
+                          <Checkbox
+                            id="auto-login"
+                            checked={autoLogin}
+                            onCheckedChange={(checked) => {
+                              const next = Boolean(checked);
+                              setAutoLogin(next);
+                              if (next) setRemember(true);
+                            }}
+                          />
+                          <FieldLabel htmlFor="auto-login" className="font-normal">
+                            {t("auth:autoLogin")}
+                          </FieldLabel>
+                        </Field>
+                      </div>
+                    ) : null}
+
+                    {error ? <FieldError className="text-center">{error}</FieldError> : null}
+                    {/* 首要 CTA:金属扫光。颜色全部走主题 token,不用组件默认的黑底白字 */}
+                    <ShimmerButton
+                      type="submit"
+                      disabled={busy}
+                      borderRadius="0.625rem"
+                      shimmerDuration="2.6s"
+                      shimmerColor="var(--primary-foreground)"
+                      background="var(--primary)"
+                      className="w-full gap-2 border-primary/20 py-2.5 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      Mastrawork
-                    </HyperText>
+                      {busy ? (
+                        <Dotm3x3_1 size={14} dotSize={2.2} colorPreset="solid-theme" />
+                      ) : null}
+                      {busy
+                        ? t("auth:pleaseWait")
+                        : mode === "login"
+                          ? t("auth:login")
+                          : t("auth:register")}
+                    </ShimmerButton>
+                    <FieldDescription className="text-center">
+                      {mode === "login" ? t("auth:noAccountYet") : t("auth:alreadyHaveAccount")}{" "}
+                      <Button
+                        variant="link"
+                        size="xs"
+                        type="button"
+                        className="h-auto p-0 font-medium text-foreground underline underline-offset-4"
+                        onClick={() => switchMode(mode === "login" ? "register" : "login")}
+                      >
+                        {mode === "login" ? t("auth:registerNow") : t("auth:backToLogin")}
+                      </Button>
+                    </FieldDescription>
+                  </FieldGroup>
+                </form>
+                <div className="relative hidden min-h-[480px] overflow-hidden bg-primary md:block">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,color-mix(in_oklch,var(--primary-foreground)_20%,transparent),transparent_40%),linear-gradient(140deg,var(--primary),color-mix(in_oklch,var(--primary)_70%,black))]" />
+                  {/* 品牌区环境层:粒子跟随光标、流星斜掠。登录后整屏卸载,无长期开销 */}
+                  <Particles
+                    className="pointer-events-none absolute inset-0"
+                    quantity={90}
+                    staticity={38}
+                    ease={60}
+                    size={0.5}
+                    color="#ffffff"
+                  />
+                  <Meteors
+                    className="pointer-events-none"
+                    number={12}
+                    minDelay={0.4}
+                    maxDelay={3.2}
+                    minDuration={3}
+                    maxDuration={9}
+                  />
+                  <div className="relative flex h-full flex-col justify-between p-8 text-primary-foreground">
+                    <div className="flex items-center justify-between text-sm font-medium tracking-[0.18em] uppercase">
+                      {/* 品牌字解码:悬停时逐字符乱码收敛,呼应产品的"工程感" */}
+                      <div className="flex items-center gap-2">
+                        <img
+                          src="./icon.png"
+                          alt=""
+                          className="size-8 rounded-lg object-cover shadow-sm"
+                          draggable={false}
+                        />
+                        <HyperText
+                          as="span"
+                          className="p-0 text-sm font-medium tracking-[0.18em] uppercase"
+                          duration={700}
+                          startOnView
+                        >
+                          Mastrawork
+                        </HyperText>
+                      </div>
+                      {activePreset ? (
+                        <span className="text-xs font-normal tracking-normal opacity-75">
+                          {activePreset.name}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="max-w-xs space-y-3">
+                      <p className="text-3xl font-semibold leading-tight">{t("auth:heroTitle")}</p>
+                      <p className="text-sm text-primary-foreground/75">{t("auth:heroSubtitle")}</p>
+                    </div>
                   </div>
-                  {activePreset ? (
-                    <span className="text-xs font-normal tracking-normal opacity-75">
-                      {activePreset.name}
-                    </span>
-                  ) : null}
                 </div>
-                <div className="max-w-xs space-y-3">
-                  <p className="text-3xl font-semibold leading-tight">{t("auth:heroTitle")}</p>
-                  <p className="text-sm text-primary-foreground/75">{t("auth:heroSubtitle")}</p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <p className="mt-4 px-6 text-center text-xs text-muted-foreground">
-          {t("auth:termsNotice")}
-        </p>
-      </div>
-    </main>
+              </CardContent>
+            </Card>
+            <p className="mt-4 px-6 text-center text-xs text-muted-foreground">
+              {t("auth:termsNotice")}
+            </p>
+          </div>
+        </main>
+      </ScrollArea>
+    </div>
   );
 }

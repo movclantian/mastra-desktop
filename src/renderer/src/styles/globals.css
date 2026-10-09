@@ -13,6 +13,7 @@
   color-scheme: light;
   --sidebar-width: 16rem;
   --sidebar-width-icon: 3rem;
+  --app-titlebar-height: 3rem;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -487,6 +488,17 @@
     font-weight: var(--theme-heading-weight, 600);
     letter-spacing: var(--theme-letter-spacing, -0.02em);
   }
+}
+
+/* Formula spacing and letter case must not inherit decorative theme typography. */
+.katex {
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* Chromium / Windows 全局优雅滚动条适配 */
@@ -2068,6 +2080,44 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(
   mix-blend-mode: normal;
 }
 
+.app-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+
+/* Only chrome controls need native hit regions; content animations must not update them. */
+.app-drag .app-no-drag,
+.app-drag
+  :is(
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    label,
+    summary,
+    [tabindex],
+    [role="button"],
+    [role="link"],
+    [role="tab"],
+    [role="menuitem"],
+    [role="checkbox"],
+    [role="switch"],
+    [role="slider"],
+    [contenteditable]:not([contenteditable="false"])
+  ),
+/* Portaled surfaces can overlap the title bar; exclude the surface, not each descendant. */
+[role="dialog"],
+[role="menu"],
+[role="listbox"],
+[data-slot="dialog-overlay"],
+[data-slot="sheet-overlay"],
+[data-slot="alert-dialog-overlay"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 /* Magic UI Smooth Cursor: 全局无死角隐藏系统原生光标，杜绝双指针冲突 */
 html.smooth-cursor-mode,
 html.smooth-cursor-mode *,
@@ -2107,4 +2157,10 @@ html.smooth-cursor-mode .monaco-editor *,
 html.smooth-cursor-mode .cm-content,
 html.smooth-cursor-mode .cm-content * {
   cursor: text;
+}
+
+/* Native drag regions do not deliver pointer moves to the custom cursor. */
+html.smooth-cursor-mode .app-drag,
+html.smooth-cursor-mode .app-drag * {
+  cursor: revert;
 }

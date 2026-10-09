@@ -7,10 +7,11 @@ import {
 } from "@mastra/core/request-context";
 import { type AnyWorkflow, createStep, createWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
-import type {
-  AgentProfile,
-  AgentWorkflowCondition,
-  AgentWorkflowStep,
+import {
+  type AgentProfile,
+  type AgentWorkflowCondition,
+  type AgentWorkflowStep,
+  isCompleteAgentResult,
 } from "../../shared/agent-contract";
 import { userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
@@ -223,6 +224,17 @@ export function compileTeamWorkflow(
           }
           if (suspendedRun) throw new Error("Suspended member run has no resumable tool call");
           const complete = await output.getFullOutput();
+          if (!isCompleteAgentResult(complete)) {
+            await finishTeamInvocation(
+              invocationId,
+              { text: complete.text },
+              complete.messages,
+              toolResults,
+            );
+            throw new Error(
+              `Member did not finish its task (finish reason: ${complete.finishReason}). Partial messages and tool results were retained.`,
+            );
+          }
           await finishTeamInvocation(
             invocationId,
             { status: "completed", text: complete.text, endedAt: new Date().toISOString() },
@@ -238,8 +250,9 @@ export function compileTeamWorkflow(
               error: error instanceof Error ? error.message : String(error),
               endedAt: new Date().toISOString(),
             },
-            [],
-            toolResults,
+            undefined,
+            // A resume can fail before producing new tool events; retain the earlier evidence.
+            toolResults.length ? toolResults : undefined,
           );
           throw error;
         }

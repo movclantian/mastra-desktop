@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { DirectoryPathSchema } from "./filesystem-contract";
 
+export const INLINE_COMPLETION_LIMITS = {
+  prefix: 1_000,
+  beforeContext: 12_000,
+  afterContext: 8_000,
+} as const;
+
 export const WORKSPACE_CHANNELS = {
   detectIdes: "workspace:detect-ides",
   openInApp: "workspace:open-in-app",

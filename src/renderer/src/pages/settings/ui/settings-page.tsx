@@ -29,10 +29,10 @@ import {
   SidebarGroup,
   SidebarGroupContent,
   SidebarHeader,
+  SidebarInset,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarProvider,
 } from "@/shared/ui/sidebar";
 import {
   BrowserSection,
@@ -49,7 +49,7 @@ import {
 } from "./sections";
 
 // ---------------------------------------------------------------------------
-// 设置页:全局视图(独立于主应用壳),左侧固定菜单 sidebar(不可收起)。
+// 设置页:复用主窗口的 SidebarProvider,顶栏开关与快捷键控制当前菜单。
 // 顶部 SidebarHeader =「返回应用」;三列对齐基准:所有列 header 统一 h-12。
 // ---------------------------------------------------------------------------
 
@@ -229,12 +229,11 @@ export function SettingsPage() {
     ));
 
   return (
-    <SidebarProvider
-      className="h-svh w-full items-stretch"
-      style={{ "--sidebar-width": "15rem", minHeight: 0 } as React.CSSProperties}
-      disableKeyboardShortcut
+    <div
+      className="flex h-full min-h-0 min-w-0 w-full"
+      style={{ "--sidebar-width": "15rem" } as React.CSSProperties}
     >
-      <Sidebar collapsible="none" className="shrink-0 border-r border-border bg-sidebar">
+      <Sidebar collapsible="offcanvas" variant="inset">
         {/* 与供应商列/详情列的 header 统一 h-12 + border-b,保证水平分割线对齐 */}
         <SidebarHeader className="h-12 border-b border-border p-0!">
           <SidebarMenuButton
@@ -330,7 +329,7 @@ export function SettingsPage() {
           </div>
         </SidebarFooter>
       </Sidebar>
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+      <SidebarInset className="min-w-0 overflow-hidden border shadow-sm">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
@@ -365,7 +364,7 @@ export function SettingsPage() {
             </motion.div>
           </AnimatePresence>
         </div>
-      </main>
-    </SidebarProvider>
+      </SidebarInset>
+    </div>
   );
 }

@@ -2,7 +2,7 @@
 
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
+import { createMathPlugin } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 
 import type { ComponentProps } from "react";
@@ -12,7 +12,12 @@ import { cn } from "@/shared/lib";
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-const streamdownPlugins = { cjk, code, math, mermaid };
+export const streamdownPlugins = {
+  cjk,
+  code,
+  math: createMathPlugin({ singleDollarTextMath: true }),
+  mermaid,
+};
 
 /** Fragment links stay inside this answer; they must never open a browser window or alter routing. */
 export function MessageAnchor({

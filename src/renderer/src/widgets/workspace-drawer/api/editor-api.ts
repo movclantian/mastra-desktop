@@ -1,5 +1,4 @@
-import { apiFetch } from "@/shared/api";
-import { i18n } from "@/shared/i18n";
+import { apiFetch, requestJson } from "@/shared/api";
 
 export interface InlineCompletionRequest {
   threadId: string;
@@ -44,20 +43,8 @@ export async function requestInlineEdit({
   signal,
   ...body
 }: InlineEditRequest): Promise<{ text?: unknown; error?: unknown }> {
-  const response = await apiFetch(
+  return requestJson<{ text: string }>(
     `/work/workspace/threads/${encodeURIComponent(threadId)}/inline-edit?resourceId=${encodeURIComponent(resourceId)}`,
     { method: "POST", body: { ...body, resourceId }, signal },
   );
-  const payload = (await response.json().catch(() => null)) as {
-    text?: unknown;
-    error?: unknown;
-  } | null;
-  if (!response.ok) {
-    throw new Error(
-      typeof payload?.error === "string"
-        ? payload.error
-        : i18n.t("workspace:inlineModifyRequestFailed"),
-    );
-  }
-  return payload ?? {};
 }

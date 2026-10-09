@@ -230,6 +230,14 @@ export interface TeamInvocation {
   memoryResourceId?: string;
 }
 
+/** A partial answer followed by another tool call or a token cutoff is not a final handoff. */
+export function isCompleteAgentResult(result: { text: string; finishReason?: string }): boolean {
+  return (
+    Boolean(result.text.trim()) &&
+    !["error", "tool-calls", "length", "content-filter"].includes(result.finishReason ?? "")
+  );
+}
+
 export interface TeamHandoff {
   id: number;
   profileId: string;

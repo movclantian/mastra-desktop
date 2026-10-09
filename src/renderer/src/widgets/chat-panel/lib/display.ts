@@ -1,6 +1,6 @@
 import { isToolUIPart } from "ai";
 import type { TeamHandoff } from "../../../../../shared/agent-contract";
-import type { WorkUIMessage } from "../model/types";
+import { mergeToolPart, type WorkUIMessage } from "../model/types";
 
 /** Handoffs are presentation events; they never become synthetic model messages. */
 export function withHandoffMessages(
@@ -64,11 +64,24 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
       previousMessage?.role === "assistant" &&
       !previousMessage.metadata?.handoff &&
       message.role === "assistant" &&
-      previousMessage.metadata?.teamMemberId === message.metadata?.teamMemberId &&
-      previousMessage.metadata?.agentProfileId === message.metadata?.agentProfileId
+      (!previousMessage.metadata?.teamMemberId ||
+        !message.metadata?.teamMemberId ||
+        previousMessage.metadata.teamMemberId === message.metadata.teamMemberId) &&
+      (!previousMessage.metadata?.agentProfileId ||
+        !message.metadata?.agentProfileId ||
+        previousMessage.metadata.agentProfileId === message.metadata.agentProfileId)
     ) {
       entry = previous;
       entry.sourceIds.push(message.id);
+      // Identity is stamped when a run finishes; missing live metadata is not a new speaker.
+      entry.message.metadata = {
+        ...previousMessage.metadata,
+        agentProfileId:
+          previousMessage.metadata?.agentProfileId ?? message.metadata?.agentProfileId,
+        agentDisplayName:
+          previousMessage.metadata?.agentDisplayName ?? message.metadata?.agentDisplayName,
+        teamMemberId: previousMessage.metadata?.teamMemberId ?? message.metadata?.teamMemberId,
+      };
     } else {
       entry = {
         message: { ...message, parts: [] },
@@ -90,7 +103,7 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
       if (message.role === "assistant" && isToolUIPart(part)) {
         const position = toolPositions.get(part.toolCallId);
         if (position !== undefined) {
-          entry.message.parts[position] = part;
+          entry.message.parts[position] = mergeToolPart(entry.message.parts[position], part);
           continue;
         }
         toolPositions.set(part.toolCallId, entry.message.parts.length);
