@@ -1,10 +1,10 @@
 {
   "name": "mastra-desktop",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Local-first multi-agent coding workbench built on Electron, React and the Mastra framework",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
-  "author": "mastra-desktop contributors",
+  "author": "MastraWork contributors",
   "homepage": "https://github.com/movclantian/mastra-desktop",
   "repository": {
     "type": "git",

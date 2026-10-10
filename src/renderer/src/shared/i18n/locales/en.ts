@@ -412,9 +412,98 @@ export const en = {
       workspace: "Files & Execution",
       storage: "Data & History",
       usage: "Usage & Cost",
+      about: "About",
     },
     groups: {
       advanced: "Advanced Settings",
+    },
+    about: {
+      title: "About MastraWork",
+      description:
+        "Application version and the main open-source and third-party resources used by MastraWork.",
+      version: "Version {{version}}",
+      resourcesTitle: "Open-source and third-party resources",
+      resourcesDescription:
+        "Representative dependencies and services selected for a local-first desktop agent workbench. Versions are read from the project manifest.",
+      source: "Source",
+      type: "Type",
+      license: "License / authorization",
+      included: "Included",
+      kinds: {
+        framework: "Framework",
+        runtime: "Runtime",
+        component: "Component",
+        library: "Library",
+        tool: "Tool",
+        model: "Model",
+        data: "Data",
+        asset: "Asset",
+        service: "Third-party service",
+      },
+      licenseNote:
+        "Use follows the referenced license or service terms. Keep required notices and provide credentials or consent where a hosted service is enabled.",
+      resources: {
+        mastra: {
+          usage:
+            "Agent runtime, memory, workspace, tasks, and orchestration foundation; selected for native multi-agent support.",
+        },
+        electron: {
+          usage:
+            "Desktop shell and native window integration; selected for cross-platform desktop packaging.",
+        },
+        react: {
+          usage: "Renderer UI framework; selected for the existing component and state ecosystem.",
+        },
+        typescript: {
+          usage:
+            "Application language and static checking; selected to keep IPC and agent contracts typed.",
+        },
+        electronVite: {
+          usage:
+            "Main, preload, and renderer build pipeline; selected for Electron-aware Vite bundling.",
+        },
+        aiSdk: {
+          usage:
+            "Model streaming and tool-call interfaces; selected for provider-neutral AI integration.",
+        },
+        mcp: {
+          usage:
+            "Model Context Protocol connections and tools; selected for interoperable external capabilities.",
+        },
+        tailwind: {
+          usage:
+            "Utility styling system; selected for compact responsive layouts and shared design tokens.",
+        },
+        baseUi: {
+          usage: "Accessible headless UI primitives used by the shadcn-style component layer.",
+        },
+        lucide: {
+          usage: "Consistent interface icons; selected for the product's accessible icon language.",
+        },
+        modelsDev: {
+          usage:
+            "Model catalog and context metadata used to present provider and model information.",
+        },
+        searchServices: {
+          usage:
+            "Optional hosted search and browser services; enabled only with user configuration and credentials.",
+        },
+        providerModels: {
+          usage:
+            "Models selected by the user through BYOK provider settings; the app does not bundle or claim ownership of model weights.",
+        },
+        fastEmbed: {
+          usage: "Local embedding and retrieval support for knowledge-base search.",
+        },
+        assets: {
+          usage:
+            "Bundled fonts and interface assets used to keep the desktop UI readable and consistent.",
+        },
+        userData: {
+          usage:
+            "Files, prompts, and knowledge-base content supplied by the user and stored locally when configured.",
+        },
+      },
     },
     computer: {
       title: "Computer control · Cua Driver",

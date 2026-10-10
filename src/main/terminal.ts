@@ -194,7 +194,7 @@ function terminalEnvironment(source: NodeJS.ProcessEnv): Record<string, string> 
   if (process.platform === "win32") normalizeWindowsToolchain(environment);
   environment.TERM = "xterm-256color";
   environment.COLORTERM = "truecolor";
-  environment.TERM_PROGRAM = "Mastra Desktop";
+  environment.TERM_PROGRAM = "MastraWork";
   return environment;
 }
 

@@ -6,6 +6,7 @@ import {
   DatabaseIcon,
   FolderCogIcon,
   GlobeIcon,
+  InfoIcon,
   LogOutIcon,
   MonitorIcon,
   PaletteIcon,
@@ -35,6 +36,7 @@ import {
   SidebarMenuItem,
 } from "@/shared/ui/sidebar";
 import {
+  AboutSection,
   BrowserSection,
   ComputerSection,
   GeneralSection,
@@ -68,6 +70,7 @@ const ADVANCED_SECTIONS = [
   { id: "themes", icon: PaletteIcon },
   { id: "storage", icon: DatabaseIcon },
   { id: "usage", icon: BarChart3Icon },
+  { id: "about", icon: InfoIcon },
 ] as const;
 
 const SECTIONS = [...PRIMARY_SECTIONS, ...ADVANCED_SECTIONS] as const;
@@ -181,6 +184,7 @@ const SEARCH_ITEMS: Array<{
   { section: "themes", title: "settings:tabs.themes" },
   { section: "storage", title: "settings:tabs.storage" },
   { section: "usage", title: "settings:tabs.usage" },
+  { section: "about", title: "settings:tabs.about" },
 ];
 
 export function SettingsPage() {
@@ -358,6 +362,7 @@ export function SettingsPage() {
                     {section === "workspace" ? <WorkspaceSection /> : null}
                     {section === "storage" ? <StorageSection /> : null}
                     {section === "usage" ? <UsageSection /> : null}
+                    {section === "about" ? <AboutSection /> : null}
                   </div>
                 </ScrollArea>
               )}

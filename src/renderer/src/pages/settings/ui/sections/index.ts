@@ -1,3 +1,4 @@
+export { AboutSection } from "./about-section";
 export { BrowserSection } from "./browser-section";
 export { ComputerSection } from "./computer-section";
 export { GeneralSection } from "./general-section";

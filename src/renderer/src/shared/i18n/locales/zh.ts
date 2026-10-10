@@ -402,9 +402,86 @@ export const zh = {
       workspace: "文件与执行",
       storage: "数据与历史",
       usage: "用量与费用",
+      about: "关于",
     },
     groups: {
       advanced: "高级设置",
+    },
+    about: {
+      title: "关于 MastraWork",
+      description: "查看 MastraWork 的版本，以及项目使用的主要开源软件和第三方资源。",
+      version: "版本 {{version}}",
+      resourcesTitle: "开源与第三方资源",
+      resourcesDescription:
+        "这里列出代表性的依赖和服务。它们用于构建本地优先的桌面 Agent 工作台，版本直接读取项目清单。",
+      source: "来源",
+      type: "类型",
+      license: "许可证 / 授权类型",
+      included: "随项目提供",
+      kinds: {
+        framework: "框架",
+        runtime: "运行时",
+        component: "组件",
+        library: "库",
+        tool: "工具",
+        model: "模型",
+        data: "数据",
+        asset: "素材",
+        service: "第三方服务",
+      },
+      licenseNote:
+        "使用时遵守对应许可证或服务条款；需要保留许可声明，并在启用托管服务时提供必要的凭据或授权。",
+      resources: {
+        mastra: {
+          usage:
+            "提供 Agent 运行时、记忆、工作区、任务和编排能力，选择它是为了使用原生多 Agent 支持。",
+        },
+        electron: {
+          usage: "提供桌面壳和原生窗口集成，选择它是为了跨平台桌面打包。",
+        },
+        react: {
+          usage: "提供渲染进程 UI 框架，沿用成熟的组件和状态生态。",
+        },
+        typescript: {
+          usage: "提供应用开发语言和静态检查，保证 IPC 与 Agent 契约保持类型安全。",
+        },
+        electronVite: {
+          usage: "提供主进程、预加载和渲染进程构建链，适配 Electron 的 Vite 打包。",
+        },
+        aiSdk: {
+          usage: "提供模型流式输出和工具调用接口，支持与供应商解耦的 AI 集成。",
+        },
+        mcp: {
+          usage: "提供 Model Context Protocol 连接和工具，接入可互操作的外部能力。",
+        },
+        tailwind: {
+          usage: "提供工具类样式系统，用于紧凑的响应式布局和共享设计令牌。",
+        },
+        baseUi: {
+          usage: "提供可访问的无头 UI 原语，作为 shadcn 风格组件层的基础。",
+        },
+        lucide: {
+          usage: "提供统一的界面图标，保持产品的可访问图标语言。",
+        },
+        modelsDev: {
+          usage: "提供模型目录和上下文元数据，用于展示供应商和模型信息。",
+        },
+        searchServices: {
+          usage: "提供可选的托管搜索和浏览器服务，仅在用户配置凭据后启用。",
+        },
+        providerModels: {
+          usage: "用户通过 BYOK 供应商设置选择的模型；应用不捆绑模型权重，也不主张模型所有权。",
+        },
+        fastEmbed: {
+          usage: "为资料库检索提供本地向量嵌入和召回支持。",
+        },
+        assets: {
+          usage: "提供内置字体和界面素材，保持桌面界面清晰一致。",
+        },
+        userData: {
+          usage: "用户提供的文件、提示词和资料库内容；按配置保存在本地。",
+        },
+      },
     },
     computer: {
       title: "电脑控制 · Cua Driver",
