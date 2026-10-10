@@ -67,6 +67,7 @@ mac:
 dmg:
   artifactName: ${productName}-${version}.${ext}
 linux:
+  artifactName: ${productName}-${version}.${ext}
   target:
     - AppImage
     - snap
