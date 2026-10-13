@@ -15,7 +15,6 @@ import type { ToolSet } from "ai";
 import {
   type AgentMemberDefinition,
   type AgentProfile,
-  BACKGROUND_TASK_TIMEOUT_MS,
   delegationMemberIds,
 } from "../../shared/agent-contract";
 import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
@@ -114,7 +113,7 @@ const explorerAgent = new Agent({
   defaultOptions: async ({ requestContext }) => {
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
-      untilIdle: { maxIdleMs: BACKGROUND_TASK_TIMEOUT_MS },
+      untilIdle: true,
       stopWhen: [],
       maxProcessorRetries,
       requireToolApproval: requestToolApproval,
@@ -151,7 +150,7 @@ const reviewerAgent = new Agent({
   defaultOptions: async ({ requestContext }) => {
     const { maxProcessorRetries } = await getGuardrailsConfig(userIdFromContext(requestContext));
     return {
-      untilIdle: { maxIdleMs: BACKGROUND_TASK_TIMEOUT_MS },
+      untilIdle: true,
       stopWhen: [],
       maxProcessorRetries,
       requireToolApproval: requestToolApproval,

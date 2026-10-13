@@ -16,6 +16,7 @@ import {
 import { workError } from "../errors";
 import { listPluginSkills } from "../plugins/registry";
 import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
+import { DEFAULT_WORK_INSTRUCTIONS } from "./agent-instructions";
 import { compileTeamWorkflow } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
@@ -37,7 +38,7 @@ const DEFAULT_PROFILE: AgentProfile = {
   displayName: "MastraWork",
   profession: "通用工作 Agent",
   description: "负责规划、执行和复查复杂工作任务的默认 Agent。",
-  instructions: "",
+  instructions: DEFAULT_WORK_INSTRUCTIONS,
   skills: [],
   mcpServers: [],
   members: [],
@@ -62,7 +63,12 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
       typeof raw.displayName === "string" && raw.displayName.trim() ? raw.displayName.trim() : name,
     profession: typeof raw.profession === "string" ? raw.profession.trim() : "自定义 Agent",
     description: typeof raw.description === "string" ? raw.description.trim() : "",
-    instructions: typeof raw.instructions === "string" ? raw.instructions.trim() : "",
+    instructions:
+      typeof raw.instructions === "string" && raw.instructions.trim()
+        ? raw.instructions.trim()
+        : id === DEFAULT_AGENT_PROFILE_ID
+          ? DEFAULT_WORK_INSTRUCTIONS
+          : "",
     skills: Array.isArray(raw.skills)
       ? raw.skills.filter((item): item is string => typeof item === "string")
       : [],
@@ -100,7 +106,7 @@ export async function listAgentProfiles(resourceId?: string): Promise<AgentProfi
       }
     });
   return [
-    DEFAULT_PROFILE,
+    profiles.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ?? DEFAULT_PROFILE,
     ...profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID),
   ];
 }
@@ -110,7 +116,7 @@ export async function getAgentProfile(
   resourceId?: string,
 ): Promise<AgentProfile> {
   const selectedId = id?.trim() || DEFAULT_AGENT_PROFILE_ID;
-  if (selectedId === DEFAULT_AGENT_PROFILE_ID) return DEFAULT_PROFILE;
+  if (selectedId === DEFAULT_AGENT_PROFILE_ID) return (await listAgentProfiles(resourceId))[0];
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
   const selected = raw
     ? z
@@ -125,11 +131,7 @@ export async function getAgentProfile(
 }
 
 async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Promise<void> {
-  await setAppConfig(
-    CONFIG_KEY,
-    JSON.stringify(profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID)),
-    resourceId,
-  );
+  await setAppConfig(CONFIG_KEY, JSON.stringify(profiles), resourceId);
 }
 
 // Profiles share one per-user config record, so all read/modify/write operations share its lock.
@@ -281,6 +283,26 @@ export async function setAgentProfileCapabilities(
     const selection = { skills, mcpServers };
     validateProfileCapabilities(selection, await getAgentCapabilityCatalog(resourceId), target);
     Object.assign(target, selection);
+    profile.updatedAt = new Date().toISOString();
+    await saveProfiles(profiles, resourceId);
+    return profile;
+  });
+}
+
+export async function setAgentProfileInstructions(
+  id: string,
+  instructions: string,
+  memberId: string | undefined,
+  resourceId: string,
+): Promise<AgentProfile> {
+  return withProfileWrite(resourceId, async () => {
+    await assertProfileIdle(id, resourceId);
+    const profiles = await listAgentProfiles(resourceId);
+    const profile = profiles.find((item) => item.id === id);
+    if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
+    const target = memberId ? profile.members.find((item) => item.id === memberId) : profile;
+    if (!target) throw workError("VALIDATION_FAILED", { text: "Agent member not found" });
+    target.instructions = instructions;
     profile.updatedAt = new Date().toISOString();
     await saveProfiles(profiles, resourceId);
     return profile;

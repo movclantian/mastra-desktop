@@ -139,26 +139,15 @@ export function useWindowMinWidth({
   React.useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
-    let frame = 0;
-    let previous = -1;
-    const reportWhenSettled = () => {
-      const width = element.clientWidth;
-      if (width !== previous) {
-        previous = width;
-        frame = requestAnimationFrame(reportWhenSettled);
-        return;
-      }
-      frame = 0;
-      report();
-    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const observer = new ResizeObserver(() => {
-      previous = -1;
-      if (!frame) frame = requestAnimationFrame(reportWhenSettled);
+      clearTimeout(timer);
+      timer = setTimeout(report, 180);
     });
     observer.observe(element);
     return () => {
       observer.disconnect();
-      if (frame) cancelAnimationFrame(frame);
+      clearTimeout(timer);
     };
   }, [elementRef, report]);
 

@@ -3193,7 +3193,8 @@ export const en = {
     registerFailed: "Registration failed",
     welcomeBack: "Welcome back",
     createAccount: "Create an account",
-    loginSubtitle: "Sign in to MastraWork to continue your work",
+    loginSubtitle:
+      "Let MastraWork handle repetitive work, so real productivity stays on your computer.",
     registerSubtitle: "Register to get started with MastraWork",
     name: "Name",
     namePlaceholder: "Your name",
@@ -3214,9 +3215,8 @@ export const en = {
     alreadyHaveAccount: "Already have an account?",
     registerNow: "Sign up now",
     backToLogin: "Back to sign in",
-    heroTitle: "Keep every piece of work inside your workspace.",
-    heroSubtitle:
-      "Independent sessions, model configurations, knowledge libraries, and usage metrics, securely preserved with your account.",
+    heroTitle: "Repetitive work belongs to MastraWork.",
+    heroSubtitle: "Keep real productivity on your computer.",
     termsNotice: "By signing in, you agree to MastraWork's Terms of Service and Privacy Policy.",
   },
   agentHub: {
@@ -3231,6 +3231,10 @@ export const en = {
     teamOverview: "Team overview",
     executionSteps: "Execution steps",
     instructions: "Instructions",
+    resolvedInstructions: "Full system prompt preview",
+    previewHint:
+      "This preview uses the default context. Runs resolve workspace, mode and selected capabilities for the current thread.",
+    saveInstructionsFailed: "Failed to save instructions",
     skills: "Skills",
     delegates: "May delegate to",
     none: "None",

@@ -287,7 +287,11 @@ export function teamDelegation(
       return policy ?? { proceed: true };
     },
     onDelegationComplete: async (context) => {
-      const completion = await base.onDelegationComplete?.(context);
+      const aborted =
+        context.primitiveType === "agent" &&
+        context.success &&
+        context.result.finishReason === "aborted";
+      const completion = aborted ? undefined : await base.onDelegationComplete?.(context);
       if (context.primitiveType !== "agent") return completion;
       const completed = context.success && isCompleteAgentResult(context.result);
       const failure = !context.success
@@ -306,7 +310,9 @@ export function teamDelegation(
         context.messages,
         context.result.subAgentToolResults,
       );
-      // Interruption is a task outcome; throwing here discards the native partial result.
+      // A timed-out child can return a partial text result; the background manager
+      // must record that dispatch as failed after its transcript has been saved.
+      if (aborted) throw new Error(incompleteAgentResultMessage("aborted"));
       return completion;
     },
   };

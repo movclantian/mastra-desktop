@@ -58,13 +58,11 @@ export function composeAgentInstructions({
 }): string[] {
   const isDefault = profile.id === DEFAULT_AGENT_PROFILE_ID && !member;
   const instructions = isDefault
-    ? [...defaultInstructions]
+    ? [...defaultInstructions, profile.instructions]
     : [member?.instructions ?? profile.instructions];
   if (member && profile.workflow?.strategy !== "handoff") {
     instructions.push(
       `Team context: ${profile.displayName}. ${profile.description}\nYou own the delegated task as ${member.name}. Execute your own specialty and return the actual result, evidence and unresolved issues. The team description supplies context; the supervisor's role does not replace your instructions.`,
-      "Task tools are scoped to your own conversation: use task_check before updating task IDs, and do not reuse the supervisor's task IDs. Before ending, provide a concise textual handoff with changed files, verification results and remaining errors; tool calls alone are not a final report.",
-      "Deliver the smallest working slice first, then extend it. Read the relevant contract once and start implementing; avoid repeating environment checks already verified by the supervisor. Keep code and documentation proportional to the assignment. Mark a checklist item complete only when its stated files and behavior actually exist.",
     );
   }
   if (member && profile.workflow?.strategy === "handoff") {

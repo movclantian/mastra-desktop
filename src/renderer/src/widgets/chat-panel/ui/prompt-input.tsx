@@ -765,68 +765,13 @@ export function ChatPromptInput({
   const clearPendingLibraryFiles = useWorkbenchStore((state) => state.clearPendingLibraryFiles);
   const pendingPrompt = useWorkbenchStore((state) => state.pendingPrompt);
   const setPendingPrompt = useWorkbenchStore((state) => state.setPendingPrompt);
-  const reportPromptMinWidth = useWorkbenchStore((state) => state.reportPromptMinWidth);
   const threadId = useWorkbenchStore((state) => state.lastKnownThreadId);
   const quotes = useMessageQuotes(threadId);
   const removeQuotes = useWorkbenchStore((state) => state.removeMessageQuotes);
   React.useEffect(() => {
     if (quotes.length) footerRef.current?.closest("form")?.querySelector("textarea")?.focus();
   }, [quotes]);
-  // 工具组可以换行；面板最小宽度取较宽一组的自然宽度与内距。
   const footerRef = React.useRef<HTMLDivElement>(null);
-  const lastReportedPromptWidthRef = React.useRef<number | null>(null);
-  React.useEffect(() => {
-    const footer = footerRef.current;
-    const left = footer?.firstElementChild;
-    const right = footer?.lastElementChild;
-    if (!footer || !(left instanceof HTMLElement) || !(right instanceof HTMLElement)) return;
-    if (left === right) return;
-    // 测量脱离布局流的克隆，避免修改观察节点导致 ResizeObserver 反馈循环。
-    const naturalWidth = (element: HTMLElement) => {
-      const clone = element.cloneNode(true) as HTMLElement;
-      Object.assign(clone.style, {
-        position: "absolute",
-        left: "-100000px",
-        top: "0",
-        visibility: "hidden",
-        pointerEvents: "none",
-        width: "max-content",
-        minWidth: "max-content",
-        maxWidth: "none",
-        flex: "none",
-      });
-      footer.appendChild(clone);
-      const width = clone.getBoundingClientRect().width;
-      clone.remove();
-      return width;
-    };
-    let frame: number | null = null;
-    const measure = () => {
-      const styles = getComputedStyle(footer);
-      const fixed = Number.parseFloat(styles.paddingLeft) + Number.parseFloat(styles.paddingRight);
-      const width = Math.max(naturalWidth(left), naturalWidth(right)) + fixed;
-      if (lastReportedPromptWidthRef.current === Math.ceil(width)) return;
-      lastReportedPromptWidthRef.current = Math.ceil(width);
-      reportPromptMinWidth(width);
-    };
-    const scheduleMeasure = () => {
-      if (frame !== null) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = null;
-        measure();
-      });
-    };
-    scheduleMeasure();
-    // 同时观察两组自身:换模型、开关检索都会改变它们的宽度,而 footer 尺寸未必变
-    const observer = new ResizeObserver(scheduleMeasure);
-    observer.observe(footer);
-    observer.observe(left);
-    observer.observe(right);
-    return () => {
-      observer.disconnect();
-      if (frame !== null) window.cancelAnimationFrame(frame);
-    };
-  }, [reportPromptMinWidth]);
   const [selectedSkills, setSelectedSkills] = React.useState<string[]>([]);
   const [selectedFileReferences, setSelectedFileReferences] = React.useState<
     MessageFileReference[]
@@ -1011,9 +956,8 @@ export function ChatPromptInput({
             selectedSkills={selectedSkills}
           />
         </PromptInputBody>
-        {/* 两组控件各自保持完整，窄面板时换行；模式与功能标签紧跟 +。 */}
         <PromptInputFooter
-          className="flex-wrap gap-2 border-t border-border/40 px-2.5 pt-2 pb-2"
+          className="flex-nowrap gap-1 border-t border-border/40 px-2.5 pt-2 pb-2"
           ref={footerRef}
         >
           <ComposerMenu
@@ -1030,7 +974,7 @@ export function ChatPromptInput({
             goalAvailable={goalAvailable}
             busy={status === "submitted" || status === "streaming"}
           />
-          <div className="ml-auto flex min-w-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
               <ChatContextUsage usage={usage} billingUsage={billingUsage} />

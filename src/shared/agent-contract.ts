@@ -6,7 +6,7 @@ import type {
 import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
-export const BACKGROUND_TASK_TIMEOUT_MS = 15 * 60_000;
+export const BACKGROUND_TASK_TIMEOUT_MS = 24 * 60 * 60_000;
 
 export const MODEL_KINDS = ["language", "image", "video"] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];

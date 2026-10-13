@@ -204,8 +204,6 @@ export interface WorkbenchStore {
     title?: string,
     overId?: string,
   ) => void;
-  promptMinWidth: number;
-  reportPromptMinWidth: (width: number) => void;
   /** 会话登记表(Map 本身不参与订阅,version 驱动上报 hook) */
   terminalSessions: Map<string, TerminalSessionInfo>;
   terminalSessionsVersion: number;
@@ -636,12 +634,6 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
       return state;
     });
   },
-  promptMinWidth: 0,
-  reportPromptMinWidth: (width) =>
-    set((state) => {
-      const rounded = Math.ceil(width);
-      return state.promptMinWidth === rounded ? state : { promptMinWidth: rounded };
-    }),
   terminalSessions: new Map(),
   terminalSessionsVersion: 0,
   reportTerminalSession: (id, info) =>
@@ -815,7 +807,6 @@ export function resetWorkbenchStore(): void {
     terminalPanelOpen: freshWorkspace.terminalPanelOpen,
     terminalDrawerSessionIds: freshWorkspace.terminalDrawerSessionIds,
     activeTerminalDrawerSessionId: freshWorkspace.activeTerminalDrawerSessionId,
-    promptMinWidth: 0,
     terminalSessions: freshWorkspace.terminalSessions,
     terminalSessionsVersion: 0,
     terminalRequest: null,

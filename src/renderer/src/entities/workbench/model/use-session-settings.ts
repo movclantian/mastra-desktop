@@ -9,6 +9,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef } from "react";
+import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
 import {
   saveProviderConfig,
   updateThread,
@@ -106,9 +107,17 @@ export function useSessionSettings(userId: string, activeThreadId: string | null
   useEffect(() => {
     if (agents.length === 0) return;
     const current = useWorkbenchStore.getState().agentSelection;
-    if (agents.some((profile) => profile.id === current.id)) return;
+    const selected = agents.find((profile) => profile.id === current.id);
+    if (selected) {
+      if (
+        selected.updatedAt !== current.updatedAt ||
+        selected.instructions !== current.instructions
+      )
+        setAgentSelectionDraft(selected);
+      return;
+    }
     setAgentSelectionDraft(
-      agents.find((profile) => profile.id === "default") ?? agents[0] ?? current,
+      agents.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ?? agents[0] ?? current,
     );
   }, [agents, setAgentSelectionDraft]);
 

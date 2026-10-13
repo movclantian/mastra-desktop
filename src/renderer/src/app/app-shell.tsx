@@ -17,13 +17,7 @@ import { useAuth } from "@/features/auth";
 import { GlobalCommandPalette } from "@/features/command-palette";
 import { SettingsPage } from "@/pages/settings";
 import { MASTRA_SERVER_URL } from "@/shared/api";
-import {
-  CHAT_HORIZONTAL_PADDING,
-  DRAWER_TRANSITION,
-  PANEL_CLIP,
-  SHELL_LAYOUT_ID,
-  WORKSPACE_MIN_WIDTH,
-} from "@/shared/config";
+import { CHAT_MIN_WIDTH, PANEL_CLIP, SHELL_LAYOUT_ID, WORKSPACE_MIN_WIDTH } from "@/shared/config";
 import { useTranslation } from "@/shared/i18n";
 import { cn, useHorizontalWheelScroll, useLinkRouting, useWindowMinWidth } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
@@ -37,12 +31,8 @@ import { DesktopNotificationSchema } from "../../../shared/window-contract";
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
   return (
     <div
-      // The resizable panel owns the minimum width. Keeping a second
-      // min-width here makes a collapsed panel overflow its zero-width shell
-      // and leaves the native browser surface visible without its sidebar.
-      style={{ minWidth: 0 }}
       className={cn(
-        "flex h-full min-h-0 w-full flex-col bg-background transition-opacity duration-200 ease-linear",
+        "flex h-full min-h-0 min-w-0 flex-col bg-background",
         open ? "opacity-100" : "pointer-events-none opacity-0",
       )}
     >
@@ -59,33 +49,6 @@ const MAX_WORKSPACE_WIDTH = 760;
 function MainGlobalCommandPalette() {
   const { toggleSidebar } = useSidebar();
   return <GlobalCommandPalette toggleSidebar={toggleSidebar} />;
-}
-
-function useDrawerTransition() {
-  const [ready, setReady] = React.useState(false);
-  const [resizing, setResizing] = React.useState(false);
-
-  React.useEffect(() => {
-    const frame = requestAnimationFrame(() => setReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  const onPointerDown = React.useCallback(() => {
-    setResizing(true);
-    const stop = () => {
-      setResizing(false);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-  }, []);
-
-  return {
-    className: ready && !resizing ? DRAWER_TRANSITION : undefined,
-    resizing,
-    handleProps: { onPointerDown },
-  };
 }
 
 function drawerHandleProps(open: boolean) {
@@ -187,7 +150,6 @@ function WorkbenchShell() {
 
   const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
   const workspacePanelMode = useWorkbenchStore((state) => state.workspacePanelMode);
-  const promptMinWidth = useWorkbenchStore((state) => state.promptMinWidth);
   const openBrowserUrl = useOpenBrowserUrl();
 
   // 登录后注入用户 + 从 localStorage 恢复面板模式与会话草稿(幂等)
@@ -202,19 +164,13 @@ function WorkbenchShell() {
   useHorizontalWheelScroll();
   useLinkRouting(openBrowserUrl);
 
-  const transition = useDrawerTransition();
-
-  const chatMinWidth = promptMinWidth > 0 ? promptMinWidth + CHAT_HORIZONTAL_PADDING : 0;
-  const frozenChatMinWidth = React.useRef(chatMinWidth);
-  if (!transition.resizing) frozenChatMinWidth.current = chatMinWidth;
-  const panelMinWidth = transition.resizing ? frozenChatMinWidth.current : chatMinWidth;
   const wantsWorkspace = workspacePanelOpen && activeView === "chat";
   const dockedWorkspace = wantsWorkspace && workspacePanelMode === "docked";
 
   const groupRef = React.useRef<HTMLDivElement>(null);
   useWindowMinWidth({
     elementRef: groupRef,
-    contentMinWidth: panelMinWidth,
+    contentMinWidth: CHAT_MIN_WIDTH,
     reservedWidth: dockedWorkspace ? WORKSPACE_MIN_WIDTH : 0,
   });
 
@@ -272,14 +228,11 @@ function WorkbenchShell() {
                 groupRef={layoutRef}
                 defaultLayout={dockedWorkspace ? defaultLayout : CLOSED_SHELL_LAYOUT}
                 onLayoutChanged={onLayoutChanged}
-                className={cn(
-                  "min-h-0 min-w-0 flex-1 overflow-hidden bg-background",
-                  transition.className,
-                )}
+                className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
               >
                 <ResizablePanel
                   id="content"
-                  minSize={panelMinWidth}
+                  minSize={CHAT_MIN_WIDTH}
                   style={PANEL_CLIP}
                   className="flex min-w-0 flex-col"
                 >
@@ -288,10 +241,7 @@ function WorkbenchShell() {
                     <Outlet />
                   </main>
                 </ResizablePanel>
-                <ResizableHandle
-                  {...transition.handleProps}
-                  {...drawerHandleProps(dockedWorkspace)}
-                />
+                <ResizableHandle {...drawerHandleProps(dockedWorkspace)} />
                 <ResizablePanel
                   id="workspace"
                   collapsible

@@ -5,8 +5,8 @@
 /** 右侧工作区面板的可用性下限 (px) */
 export const WORKSPACE_MIN_WIDTH = 340;
 
-/** 输入区左右内距之外,聊天区自己还要留的水平留白 (px) */
-export const CHAT_HORIZONTAL_PADDING = 32;
+/** 输入工具栏单行排布所需的聊天面板下限 (px) */
+export const CHAT_MIN_WIDTH = 520;
 
 /** 终端抽屉的默认高度与下限 (px) */
 export const TERMINAL_DEFAULT_HEIGHT = 280;
@@ -20,6 +20,4 @@ export const CHAT_LAYOUT_ID = "mastra-work:chat-layout";
 export const MOBILE_BREAKPOINT = 768;
 
 export const TAB_DND_TYPE = "application/x-mastra-tab";
-export const DRAWER_TRANSITION =
-  "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-linear";
 export const PANEL_CLIP = { overflow: "hidden" } as const;

@@ -324,6 +324,29 @@ export async function deleteAgent(id: string): Promise<void> {
   );
 }
 
+export async function updateAgentInstructions(
+  id: string,
+  instructions: string,
+  memberId?: string,
+): Promise<AgentProfile> {
+  const payload = await requestJson<{ agent: AgentProfile }>(
+    `/work/agents/${encodeURIComponent(id)}/instructions`,
+    { method: "PUT", body: { instructions, ...(memberId ? { memberId } : {}) } },
+    i18n.t("agentHub:saveInstructionsFailed"),
+  );
+  return payload.agent;
+}
+
+export async function fetchAgentInstructions(id: string, memberId?: string): Promise<string> {
+  const query = memberId ? `?memberId=${encodeURIComponent(memberId)}` : "";
+  const payload = await requestJson<{ instructions: string }>(
+    `/work/agents/${encodeURIComponent(id)}/instructions${query}`,
+    {},
+    i18n.t("agentHub:fetchAgentsFailed"),
+  );
+  return payload.instructions;
+}
+
 // ---- Workspace API -----------------------------------------------------------
 
 export async function fetchRecentWorkspaces(): Promise<RecentWorkspace[]> {

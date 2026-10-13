@@ -15,6 +15,7 @@ import { qk, type WorkThread } from "@/entities/workbench";
 import { getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload } from "@/shared/lib";
+import type { ToolPart } from "@/shared/ui/ai-elements/tool";
 import {
   type ConnectionState,
   createSessionConnection,
@@ -151,6 +152,15 @@ function createThreadSession(
         role: current.role === "signal" ? ("user" as const) : current.role,
       };
       const converted = toAISdkMessages([message], { version: "v7" }) as WorkUIMessage[];
+      const toolUpdates = new Map(
+        message.content.parts.flatMap((part) =>
+          part.type === "tool-invocation" &&
+          part.toolInvocation?.toolCallId &&
+          typeof part.updatedAt === "number"
+            ? [[part.toolInvocation.toolCallId, part.updatedAt] as const]
+            : [],
+        ),
+      );
       const filenames = new Map(
         typeof signal?.contents === "object"
           ? signal.contents.flatMap((part) =>
@@ -173,7 +183,11 @@ function createThreadSession(
             previous?.parts.filter(isToolUIPart).map((part) => [part.toolCallId, part]),
           );
           const parts: WorkUIMessage["parts"] = ui.parts.map((part, partIndex) => {
-            if (isToolUIPart(part)) return mergeToolPart(tools.get(part.toolCallId), part);
+            if (isToolUIPart(part)) {
+              const updatedAt = toolUpdates.get(part.toolCallId);
+              const enriched: ToolPart = updatedAt === undefined ? part : { ...part, updatedAt };
+              return mergeToolPart(tools.get(part.toolCallId), enriched);
+            }
             // DB-message conversion marks reasoning as done; the live trailing part is still streaming.
             if (part.type === "reasoning")
               return {

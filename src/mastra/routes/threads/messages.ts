@@ -113,6 +113,20 @@ function restoreFileFilenames(
 export function workbenchMessages(messages: MastraDBMessage[]) {
   const history = normalizeChatHistoryMessages(messages);
   const timestamps = new Map(history.map((message) => [message.id, message.createdAt]));
+  const toolUpdates = new Map(
+    history.map((message) => [
+      message.id,
+      new Map(
+        message.content.parts.flatMap((part) =>
+          part.type === "tool-invocation" &&
+          part.toolInvocation?.toolCallId &&
+          typeof part.updatedAt === "number"
+            ? [[part.toolInvocation.toolCallId, part.updatedAt] as const]
+            : [],
+        ),
+      ),
+    ]),
+  );
   return appendLibrarySourceParts(
     restoreFileFilenames(toAISdkMessages(history, { version: "v7" }), history),
   ).map((message) => {
@@ -123,12 +137,16 @@ export function workbenchMessages(messages: MastraDBMessage[]) {
     );
     return {
       ...message,
-      parts: media.success
-        ? [
-            ...message.parts,
-            { type: "data-media-generation" as const, id: message.id, data: media.data },
-          ]
-        : message.parts,
+      parts: [
+        ...message.parts.map((part) => {
+          const updatedAt =
+            "toolCallId" in part ? toolUpdates.get(message.id)?.get(part.toolCallId) : undefined;
+          return updatedAt === undefined ? part : { ...part, updatedAt };
+        }),
+        ...(media.success
+          ? [{ type: "data-media-generation" as const, id: message.id, data: media.data }]
+          : []),
+      ],
       metadata: { ...metadata, createdAt: timestamps.get(message.id) },
     };
   });

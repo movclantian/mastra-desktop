@@ -7,6 +7,8 @@ import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit
 
 import {
   agentProfileCapabilitiesRoute,
+  agentProfileInstructionsPreviewRoute,
+  agentProfileInstructionsRoute,
   agentProfilesRoute,
   assistAgentProfileRoute,
   deleteAgentProfileRoute,
@@ -98,6 +100,8 @@ export const workRoutes = [
   ...backgroundTaskRoutes,
   agentProfilesRoute,
   agentProfileCapabilitiesRoute,
+  agentProfileInstructionsRoute,
+  agentProfileInstructionsPreviewRoute,
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,

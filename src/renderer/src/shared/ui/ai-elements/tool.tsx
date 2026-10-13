@@ -12,7 +12,7 @@ import { Badge } from "@/shared/ui/badge";
 
 import { CodeBlock } from "./code-block";
 
-export type ToolPart = ToolUIPart | DynamicToolUIPart;
+export type ToolPart = (ToolUIPart | DynamicToolUIPart) & { updatedAt?: number };
 
 const statusIcons: Record<ToolPart["state"], ReactNode> = {
   "approval-requested": <ClockIcon className="size-4 text-yellow-600" />,

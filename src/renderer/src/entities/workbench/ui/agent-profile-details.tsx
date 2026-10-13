@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BotAvatarState } from "bot-avatars";
-import { Fragment, useId, useState } from "react";
+import { useId, useState } from "react";
 import { fetchMcpServers, usePluginSkills } from "@/entities/skill";
 import { useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api";
@@ -14,8 +14,10 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui
 import { FieldLabel } from "@/shared/ui/field";
 import { Input } from "@/shared/ui/input";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+import { Textarea } from "@/shared/ui/textarea";
 import type { AgentProfile } from "../../../../../shared/agent-contract";
 import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
+import { fetchAgentInstructions, updateAgentInstructions } from "../api/workbench-api";
 import { qk } from "../model/query-keys";
 
 export function ProfileAvatar({
@@ -123,49 +125,32 @@ export function AgentProfileDetails({
       {isTeam && definition ? (
         <ScrollArea className="min-h-0 min-w-0 rounded-md border">
           <nav aria-label={t("agentHub:teamRoster")} className="grid min-w-0 gap-1 p-1">
-            {roster.map((item, index) => (
-              <Fragment key={item.id === null ? "profile" : `member:${item.id}`}>
-                {index === 1 ? (
-                  <div className="my-1 grid min-w-0 gap-2 border-y px-2 py-3">
-                    <Badge className="max-w-full whitespace-normal">
-                      {t(`agentHub:strategies.${definition.strategy}`)}
-                    </Badge>
-                    <p className="break-words text-sm leading-relaxed text-muted-foreground">
-                      {t(`agentHub:strategyDescriptions.${definition.strategy}`)}
-                    </p>
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant={item.id === selectedId ? "secondary" : "ghost"}
-                  onClick={() => setSelectedId(item.id)}
-                  aria-pressed={item.id === selectedId}
-                  aria-label={item.name}
-                  aria-controls={detailsId}
-                  className="h-auto w-full min-w-0 justify-start gap-2 whitespace-normal p-2 text-left"
-                >
-                  <ProfileAvatar
-                    profileId={profile.id}
-                    memberId={item.id ?? undefined}
-                    name={item.name}
-                  />
-                  <span className="grid min-w-0 flex-1 gap-1">
-                    <span className="break-words text-base">{item.name}</span>
-                    <span className="break-words text-sm font-normal text-muted-foreground">
-                      {item.id === null
-                        ? t(
-                            definition.strategy === "supervisor"
-                              ? "agentHub:supervisor"
-                              : "agentHub:teamOverview",
-                          )
-                        : item.profession}
-                    </span>
-                    {definition.strategy === "handoff" && item.id === definition.entryMemberId ? (
-                      <span className="text-xs text-primary">{t("agentHub:initialExpert")}</span>
-                    ) : null}
+            {roster.map((item) => (
+              <Button
+                key={item.id === null ? "profile" : `member:${item.id}`}
+                type="button"
+                variant={item.id === selectedId ? "secondary" : "ghost"}
+                onClick={() => setSelectedId(item.id)}
+                aria-pressed={item.id === selectedId}
+                aria-label={item.name}
+                aria-controls={detailsId}
+                className="h-auto w-full min-w-0 justify-start gap-2 whitespace-normal p-2 text-left"
+              >
+                <ProfileAvatar
+                  profileId={profile.id}
+                  memberId={item.id ?? undefined}
+                  name={item.name}
+                />
+                <span className="grid min-w-0 flex-1 gap-1">
+                  <span className="break-words text-base">{item.name}</span>
+                  <span className="break-words text-sm font-normal text-muted-foreground">
+                    {item.id === null ? t("chat:agents.mainAgent") : item.profession}
                   </span>
-                </Button>
-              </Fragment>
+                  {definition.strategy === "handoff" && item.id === definition.entryMemberId ? (
+                    <span className="text-xs text-primary">{t("agentHub:initialExpert")}</span>
+                  ) : null}
+                </span>
+              </Button>
             ))}
             {definition.steps.length ? (
               <Collapsible className="mt-1 min-w-0 border-t px-2 py-2">
@@ -212,14 +197,13 @@ export function AgentProfileDetails({
             memberId={member?.id}
             onSaved={onSaved}
           />
-          {selected.instructions ? (
-            <section className="grid min-w-0 gap-2">
-              <h4 className="text-base font-semibold">{t("agentHub:instructions")}</h4>
-              <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
-                {selected.instructions}
-              </p>
-            </section>
-          ) : null}
+          <AgentInstructionsEditor
+            key={`${profile.id}:${member?.id ?? "main"}:${profile.updatedAt}`}
+            profile={profile}
+            memberId={member?.id}
+            instructions={selected.instructions}
+            onSaved={onSaved}
+          />
           {member ? (
             <>
               <p className="break-words text-sm leading-relaxed">
@@ -236,6 +220,73 @@ export function AgentProfileDetails({
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+function AgentInstructionsEditor({
+  profile,
+  memberId,
+  instructions,
+  onSaved,
+}: {
+  profile: AgentProfile;
+  memberId?: string;
+  instructions: string;
+  onSaved?: (profile: AgentProfile) => void;
+}) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState(instructions);
+  const preview = useQuery({
+    queryKey: ["agent-instructions", profile.id, memberId, profile.updatedAt],
+    queryFn: () => fetchAgentInstructions(profile.id, memberId),
+  });
+  const save = useMutation({
+    mutationFn: () => updateAgentInstructions(profile.id, draft, memberId),
+    onSuccess: async (updated) => {
+      await queryClient.invalidateQueries({ queryKey: qk.agents() });
+      onSaved?.(updated);
+    },
+  });
+  return (
+    <section className="grid min-w-0 gap-2">
+      <h4 className="text-base font-semibold">{t("agentHub:instructions")}</h4>
+      <Textarea
+        aria-label={t("agentHub:instructions")}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        className="min-h-48 resize-y whitespace-pre-wrap"
+        maxLength={200_000}
+      />
+      {save.error ? (
+        <p role="alert" className="break-words text-sm text-destructive">
+          {save.error.message}
+        </p>
+      ) : null}
+      <Button
+        size="sm"
+        className="justify-self-start"
+        disabled={draft.trim() === instructions || !draft.trim() || save.isPending}
+        onClick={() => save.mutate()}
+      >
+        {t("plugins:save")}
+      </Button>
+      <Collapsible className="min-w-0 rounded-md border p-2">
+        <CollapsibleTrigger render={<Button size="sm" variant="ghost" />}>
+          {t("agentHub:resolvedInstructions")}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="pt-2">
+          {preview.isPending ? <p role="status">{t("plugins:loading")}</p> : null}
+          {preview.error ? <p role="alert">{preview.error.message}</p> : null}
+          {preview.data ? (
+            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+              {preview.data}
+            </pre>
+          ) : null}
+          <p className="mt-2 text-xs text-muted-foreground">{t("agentHub:previewHint")}</p>
+        </CollapsibleContent>
+      </Collapsible>
+    </section>
   );
 }
 

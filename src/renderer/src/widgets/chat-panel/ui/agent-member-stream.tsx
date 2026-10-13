@@ -93,22 +93,27 @@ export function AgentMemberSwitcher({
   const { t } = useTranslation();
   const { members } = profile;
   if (!members.length) return null;
+  const mainAgent = profile.members.find((member) => member.id === profile.id);
+  const orderedMembers = mainAgent
+    ? [mainAgent, ...members.filter((member) => member.id !== mainAgent.id)]
+    : members;
   return (
-    <ScrollArea className="max-h-24">
+    <ScrollArea className="max-h-20">
       <div
         aria-label={t("chat:memberStream.threadMembersTab")}
         className="flex min-w-0 flex-wrap items-center gap-2 p-3"
         role="group"
       >
         <AvatarGroup className="min-w-0 flex-wrap gap-y-2 pl-1">
-          {members.map((member) => {
+          {orderedMembers.map((member) => {
             const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
-            const active = member.id === activeMemberId;
-            const memberId = profile.workflow
-              ? member.id
-              : member.id === profile.id
+            const active = member.id === (activeMemberId ?? profile.id);
+            const memberId =
+              member.id === profile.id
                 ? undefined
-                : member.id.replace(/^runtime-/, "");
+                : profile.workflow
+                  ? member.id
+                  : member.id.replace(/^runtime-/, "");
             const working = memberId ? runtime.status === "running" : busy;
             return (
               <Button
@@ -136,7 +141,7 @@ export function AgentMemberSwitcher({
             );
           })}
         </AvatarGroup>
-        {activeMemberId ? (
+        {activeMemberId && activeMemberId !== profile.id ? (
           <span className="min-w-0 truncate text-xs text-muted-foreground">
             {members.find((member) => member.id === activeMemberId)?.name}
           </span>

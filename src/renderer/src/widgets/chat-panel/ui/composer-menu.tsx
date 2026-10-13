@@ -141,7 +141,7 @@ export function ComposerMenu({
   );
 
   return (
-    <PromptInputTools className="flex-wrap">
+    <PromptInputTools className="flex-nowrap">
       <PromptInputActionMenu open={open} onOpenChange={setOpen}>
         <PromptInputActionMenuTrigger
           aria-label={t("chat:composer.add")}
@@ -409,7 +409,6 @@ export function ComposerMenu({
           onClick={() => changeMode(DEFAULT_MODE_ID)}
         >
           <ActiveModeIcon />
-          <span className="max-w-20 truncate text-xs">{t(`chat:modes.${modeId}.label`)}</span>
           <XIcon className="size-3" />
         </PromptInputButton>
       )}
@@ -423,7 +422,6 @@ export function ComposerMenu({
           onClick={() => onGoalChange(false)}
         >
           <TargetIcon />
-          <span className="text-xs">{t("chat:goal.title")}</span>
           <XIcon className="size-3" />
         </PromptInputButton>
       )}
@@ -435,7 +433,7 @@ export function ComposerMenu({
             }
           >
             <GlobeIcon />
-            <span className="max-w-28 truncate text-xs">
+            <span className="sr-only">
               {t(`chat:search.engines.${searchSelection.engine}.label`)} ·{" "}
               {t(`chat:search.depths.${searchSelection.depth}.label`)}
             </span>
@@ -477,7 +475,7 @@ function ChatApprovalSelector() {
         }
       >
         <ShieldIcon />
-        <span className="max-w-24 truncate text-xs">{label}</span>
+        <span className="max-w-14 truncate text-xs">{label}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="w-64 overflow-hidden">
         <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">

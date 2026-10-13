@@ -13,7 +13,6 @@ import type { RequestContext } from "@mastra/core/request-context";
 import type { AnyWorkflow } from "@mastra/core/workflows";
 import { createWorkspaceTools } from "@mastra/core/workspace";
 import {
-  BACKGROUND_TASK_TIMEOUT_MS,
   delegationMemberIds,
   incompleteAgentResultMessage,
   isCompleteAgentResult,
@@ -37,11 +36,7 @@ import {
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
-import {
-  composeAgentInstructions,
-  DEFAULT_WORK_INSTRUCTIONS,
-  memberDelegationDescription,
-} from "./agent-instructions";
+import { composeAgentInstructions, memberDelegationDescription } from "./agent-instructions";
 import { getBrowserForRequest, mergeBrowserToolsForThread } from "./browser";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
@@ -232,7 +227,7 @@ function createWorkAgent(
         member: activeMember,
         defaultInstructions:
           profile.id === DEFAULT_AGENT_PROFILE_ID && !activeMember
-            ? [codingAgentBasePrompt(requestContext), DEFAULT_WORK_INSTRUCTIONS]
+            ? [codingAgentBasePrompt(requestContext)]
             : [],
         handoff: requestContext?.get(TEAM_HANDOFF_CONTEXT_KEY) as
           | import("../../shared/agent-contract").TeamHandoffState
@@ -395,7 +390,6 @@ function createWorkAgent(
               : []),
         ].map((agentName) => [agentName, { enabled: true, defaultDisposition: "foreground" }]),
       ),
-      waitTimeoutMs: BACKGROUND_TASK_TIMEOUT_MS,
     },
     // Workspace is always present; process.cwd() remains the official fallback
     // for direct calls that do not carry a thread workspace context.
@@ -440,7 +434,7 @@ function createWorkAgent(
           | AgentExecutionOptions<undefined>
           | undefined),
         maxProcessorRetries: retries,
-        untilIdle: { maxIdleMs: BACKGROUND_TASK_TIMEOUT_MS },
+        untilIdle: true,
         // Mastra otherwise stops delegated runs after five model calls.
         ...(member ? { stopWhen: [] } : {}),
         ...(profile.workflow?.strategy === "handoff"

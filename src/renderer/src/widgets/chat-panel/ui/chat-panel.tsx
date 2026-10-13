@@ -990,8 +990,7 @@ export function ChatPanel() {
     [subagents, t],
   );
   const multiAgentProfile = React.useMemo<AgentProfile | null>(() => {
-    if (agentSelection.type === "team") return agentSelection;
-    if (runtimeMembers.length === 0) return null;
+    if (agentSelection.type !== "team" && runtimeMembers.length === 0) return null;
     const rootMember: AgentMemberDefinition = {
       id: agentSelection.id,
       name: agentSelection.displayName || agentSelection.name,
@@ -1005,9 +1004,10 @@ export function ChatPanel() {
     };
     return {
       ...agentSelection,
-      type: "team",
-      members: [rootMember, ...runtimeMembers],
-      workflow: undefined,
+      members: [
+        rootMember,
+        ...(agentSelection.type === "team" ? agentSelection.members : runtimeMembers),
+      ],
     };
   }, [agentSelection, runtimeMembers]);
   const multiAgentMembers = multiAgentProfile?.members ?? [];
@@ -1044,10 +1044,10 @@ export function ChatPanel() {
     hasMultiAgentActivity && dismissedMemberActivitySignature !== memberActivitySignature;
   const allSubagentsFinished =
     subagents.length > 0 &&
-    subagents.every((subagent) => subagent.status === "completed" || subagent.status === "error");
-  // 普通 Agent 的成员组第一项是主 Agent 本身。选中它时继续走原始
+    subagents.every((subagent) => subagent.status !== "running" && subagent.status !== "suspended");
+  // 成员组第一项是主 Agent 本身。选中它时继续走原始
   // displayMessages -> MessageItem 渲染，确保与未打开成员视图完全一致。
-  const mainAgentMemberId = agentSelection.type === "agent" ? agentSelection.id : null;
+  const mainAgentMemberId = agentSelection.id;
   const activeMember =
     activeMemberId && activeMemberId !== mainAgentMemberId
       ? multiAgentMembers.find((member) => member.id === activeMemberId)
@@ -1557,7 +1557,7 @@ export function ChatPanel() {
             profile={multiAgentProfile}
             busy={isBusy}
             onSelect={(memberId) =>
-              setActiveMemberId((current) => (current === memberId ? null : memberId))
+              setActiveMemberId(memberId === agentSelection.id ? null : memberId)
             }
             onClose={
               allSubagentsFinished
@@ -1573,34 +1573,36 @@ export function ChatPanel() {
       ) : null}
       {hasQueueCard ? (
         <div className="mx-auto w-full max-w-3xl">
-          <Queue className="mx-auto w-[96%] rounded-b-none border-b-0 px-2 pt-1 pb-1">
-            {goalMode ? (
-              <GoalDraftPanel starting={isBusy} onCancel={() => setGoalMode(false)} />
-            ) : objective ? (
-              <GoalPanel
-                key={`goal:${activeThreadId}`}
-                objective={objective}
-                running={isBusy || visibleInteractions.length > 0}
-                canResume={
-                  agentSelection.workflow?.strategy !== "workflow" &&
-                  visibleInteractions.length === 0
-                }
-                onAction={handleGoalAction}
+          <ScrollArea className="mx-auto max-h-[min(22rem,45dvh)] w-[96%] rounded-xl">
+            <Queue className="w-full rounded-b-none border-b-0 px-2 pt-1 pb-1">
+              {goalMode ? (
+                <GoalDraftPanel starting={isBusy} onCancel={() => setGoalMode(false)} />
+              ) : objective ? (
+                <GoalPanel
+                  key={`goal:${activeThreadId}`}
+                  objective={objective}
+                  running={isBusy || visibleInteractions.length > 0}
+                  canResume={
+                    agentSelection.workflow?.strategy !== "workflow" &&
+                    visibleInteractions.length === 0
+                  }
+                  onAction={handleGoalAction}
+                />
+              ) : null}
+              <UserRequestQueuePanel
+                key={`requests:${activeThreadId}`}
+                onAction={actOnQueuedRequest}
+                onEditingChange={(editing) => {
+                  if (activeThreadIdRef.current === activeThreadId) setEditingQueue(editing);
+                }}
+                requests={queuedRequests}
               />
-            ) : null}
-            <UserRequestQueuePanel
-              key={`requests:${activeThreadId}`}
-              onAction={actOnQueuedRequest}
-              onEditingChange={(editing) => {
-                if (activeThreadIdRef.current === activeThreadId) setEditingQueue(editing);
-              }}
-              requests={queuedRequests}
-            />
-            <AgentQueuePanel
-              onClose={() => setDismissedQueueSignature(queueContentSignature)}
-              tasks={showAgentQueue ? visibleTasks : []}
-            />
-          </Queue>
+              <AgentQueuePanel
+                onClose={() => setDismissedQueueSignature(queueContentSignature)}
+                tasks={showAgentQueue ? visibleTasks : []}
+              />
+            </Queue>
+          </ScrollArea>
         </div>
       ) : null}
 

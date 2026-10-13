@@ -4,42 +4,13 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import {
   CHAT_LAYOUT_ID,
-  DRAWER_TRANSITION,
   PANEL_CLIP,
   TERMINAL_DEFAULT_HEIGHT,
   TERMINAL_MIN_HEIGHT,
 } from "@/shared/config";
-import { cn } from "@/shared/lib";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/shared/ui/resizable";
 import { ChatPanel } from "@/widgets/chat-panel";
 import { TerminalDrawer } from "@/widgets/terminal-drawer";
-
-function useDrawerTransition() {
-  const [ready, setReady] = React.useState(false);
-  const [resizing, setResizing] = React.useState(false);
-
-  React.useEffect(() => {
-    const frame = requestAnimationFrame(() => setReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-
-  const onPointerDown = React.useCallback(() => {
-    setResizing(true);
-    const stop = () => {
-      setResizing(false);
-      window.removeEventListener("pointerup", stop);
-      window.removeEventListener("pointercancel", stop);
-    };
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-  }, []);
-
-  return {
-    className: ready && !resizing ? DRAWER_TRANSITION : undefined,
-    resizing,
-    handleProps: { onPointerDown },
-  };
-}
 
 function drawerHandleProps(open: boolean) {
   return {
@@ -61,7 +32,6 @@ export function ChatPage({ userId }: { userId?: string }) {
     onlySaveAfterUserInteractions: true,
   });
   const terminalRef = usePanelRef();
-  const transition = useDrawerTransition();
 
   React.useEffect(() => {
     const panel = terminalRef.current;
@@ -75,12 +45,12 @@ export function ChatPage({ userId }: { userId?: string }) {
       orientation="vertical"
       defaultLayout={defaultLayout}
       onLayoutChanged={onLayoutChanged}
-      className={cn("min-h-0", transition.className)}
+      className="min-h-0"
     >
       <ResizablePanel style={PANEL_CLIP} className="flex min-h-0 flex-col">
         <ChatPanel />
       </ResizablePanel>
-      <ResizableHandle {...transition.handleProps} {...drawerHandleProps(terminalPanelOpen)} />
+      <ResizableHandle {...drawerHandleProps(terminalPanelOpen)} />
       <ResizablePanel
         panelRef={terminalRef}
         collapsible

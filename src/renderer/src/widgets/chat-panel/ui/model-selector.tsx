@@ -134,7 +134,7 @@ export function ChatModelSelector() {
             {/* 与审批(max-w-24)/检索(max-w-28)/模式(max-w-20)三个选择器同规:
                 标签给一个上限再 truncate。基类已有 truncate,但按钮按内容定宽,
                 没有上限时超长模型名会独自把整排工具栏顶宽。 */}
-            <ModelSelectorName className="max-w-28">
+            <ModelSelectorName className="max-w-24">
               {/* 换模型时逐字符解码收敛。key 绑定模型名:值一变就重挂载,
                   从而重新播放一次动画 —— 让"我切到哪个模型了"这件事有确认感 */}
               <HyperText

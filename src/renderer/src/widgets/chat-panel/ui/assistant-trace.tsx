@@ -107,6 +107,27 @@ function ToolRunningMatrix({ name }: { name: string }) {
   return <Dotm3x3_6 size={14} dotSize={1.8} colorPreset="solid-theme" />;
 }
 
+function toolDurationMs(part: ToolPart): number | undefined {
+  const providerMetadata = "callProviderMetadata" in part ? part.callProviderMetadata : undefined;
+  const mastra =
+    typeof providerMetadata === "object" && providerMetadata
+      ? (providerMetadata as Record<string, unknown>).mastra
+      : undefined;
+  const createdAt =
+    typeof mastra === "object" && mastra
+      ? (mastra as Record<string, unknown>).createdAt
+      : undefined;
+  const started = typeof createdAt === "number" ? createdAt : undefined;
+  const updated =
+    "updatedAt" in part && typeof part.updatedAt === "number" ? part.updatedAt : undefined;
+  if (started === undefined || updated === undefined || updated < started) return undefined;
+  return updated - started;
+}
+
+function formatDuration(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
 /**
  * 推理步骤:直接作为 ChainOfThoughtStep 渲染(脑图图标 + 折叠触发器 + ReasoningContent)。
  * ReasoningContent 内部由 Streamdown 增量渲染 Markdown,避免纯文本与富文本切换时的闪变。
@@ -290,6 +311,14 @@ const ToolStepItem = React.memo(function ToolStepItem({
           {errorText ?? t("chat:trace.callFailed")}
         </span>
       ) : null}
+      {toolDurationMs(part) !== undefined ? (
+        <span className="block text-[10px] tabular-nums text-muted-foreground">
+          {formatDuration(toolDurationMs(part) ?? 0)}
+          {active ? " · …" : ""}
+        </span>
+      ) : active ? (
+        <span className="block text-[10px] tabular-nums text-muted-foreground">…</span>
+      ) : null}
     </div>
   );
 
@@ -443,6 +472,13 @@ function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boo
   const { t } = useTranslation();
   const [open, setOpen] = useTraceDisclosure(showDetails);
   const active = tools.some((tool) => getTraceStepStatus(tool) === "active");
+  const durations = tools.flatMap((tool) => {
+    const duration = toolDurationMs(tool);
+    return duration === undefined ? [] : [duration];
+  });
+  const totalDuration = durations.length
+    ? durations.reduce((sum, duration) => sum + duration, 0)
+    : undefined;
   const toolTitle = t("chat:trace.toolCallsCount", {
     count: tools.length,
   });
@@ -454,7 +490,10 @@ function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boo
         <TaskTrigger className="w-full" title={toolTitle}>
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
             <WrenchIcon className="size-4" />
-            <p className="flex-1 text-left text-sm">{toolTitle}</p>
+            <p className="min-w-0 flex-1 text-left text-sm">{toolTitle}</p>
+            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+              {active ? "…" : totalDuration === undefined ? "—" : formatDuration(totalDuration)}
+            </span>
             <ChevronDownIcon className="size-4 transition-transform duration-200 group-data-[state=open]:rotate-180 group-data-[open]:rotate-180" />
           </div>
         </TaskTrigger>
