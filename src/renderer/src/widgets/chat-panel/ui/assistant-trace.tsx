@@ -4,6 +4,7 @@ import {
   ChevronDownIcon,
   FileCode2Icon,
   FileIcon,
+  PauseIcon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
@@ -117,15 +118,27 @@ function toolDurationMs(part: ToolPart): number | undefined {
     typeof mastra === "object" && mastra
       ? (mastra as Record<string, unknown>).createdAt
       : undefined;
-  const started = typeof createdAt === "number" ? createdAt : undefined;
+  const started =
+    typeof part.createdAt === "number"
+      ? part.createdAt
+      : typeof createdAt === "number"
+        ? createdAt
+        : undefined;
   const updated =
     "updatedAt" in part && typeof part.updatedAt === "number" ? part.updatedAt : undefined;
-  if (started === undefined || updated === undefined || updated < started) return undefined;
+  if (
+    started === undefined ||
+    updated === undefined ||
+    !Number.isFinite(started) ||
+    !Number.isFinite(updated) ||
+    updated < started
+  )
+    return undefined;
   return updated - started;
 }
 
 function formatDuration(ms: number): string {
-  return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 /**
@@ -178,16 +191,21 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
 const ToolStepItem = React.memo(function ToolStepItem({
   part,
   showDetails,
+  isStreaming,
 }: {
   part: ToolPart;
   showDetails: boolean;
+  isStreaming: boolean;
 }) {
   const { t } = useTranslation();
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
   const typescriptSandbox = name === "execute_typescript";
   const commandSandbox = name === "mastra_workspace_execute_command";
   const sandboxTool = typescriptSandbox || commandSandbox;
-  const active = getTraceStepStatus(part) === "active";
+  const pending = getTraceStepStatus(part) === "active";
+  const active = isStreaming && pending;
+  const unfinished =
+    !isStreaming && (part.state === "input-streaming" || part.state === "input-available");
   const [open, setOpen] = useTraceDisclosure(showDetails);
   const transportFailed = part.state === "output-error";
   const hasInput = part.input !== undefined;
@@ -196,9 +214,11 @@ const ToolStepItem = React.memo(function ToolStepItem({
     typescriptSandbox && output && typeof output === "object"
       ? (output as { success?: boolean; error?: { message?: string } })
       : undefined;
-  const failed = transportFailed || codeResult?.success === false;
+  const failed = transportFailed || codeResult?.success === false || unfinished;
   const errorText =
-    ("errorText" in part ? part.errorText : undefined) ?? codeResult?.error?.message;
+    ("errorText" in part ? part.errorText : undefined) ??
+    codeResult?.error?.message ??
+    (unfinished ? t("chat:trace.noRecordedResult") : undefined);
   const input = (part.input ?? {}) as Record<string, unknown>;
   const { user } = useAuth();
   const pluginSkills = usePluginSkills(
@@ -330,6 +350,8 @@ const ToolStepItem = React.memo(function ToolStepItem({
             <ToolRunningMatrix name={name} />
           ) : failed ? (
             <XIcon className="size-3.5 text-destructive" />
+          ) : pending ? (
+            <PauseIcon className="size-3.5 text-muted-foreground" />
           ) : (
             <CheckIcon className="size-3.5 text-emerald-500" />
           )}
@@ -358,7 +380,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
             {sandboxTool ? (
               <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
                 <SandboxHeader
-                  state={part.state}
+                  state={unfinished ? "output-error" : part.state}
                   title={
                     commandSandbox
                       ? t("chat:trace.workspaceCommand")
@@ -468,17 +490,40 @@ const ToolStepItem = React.memo(function ToolStepItem({
  * (圆点 + absolute 竖线)就是左侧时间线;少了它,工具组会贴到最左与 Header 平齐,
  * 和推理步骤错开一个图标列的宽度,层级就断了。
  */
-function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boolean }) {
+function ToolGroup({
+  tools,
+  showDetails,
+  isStreaming,
+}: {
+  tools: ToolPart[];
+  showDetails: boolean;
+  isStreaming: boolean;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useTraceDisclosure(showDetails);
-  const active = tools.some((tool) => getTraceStepStatus(tool) === "active");
+  const active = isStreaming && tools.some((tool) => getTraceStepStatus(tool) === "active");
+  const observedStart = React.useRef<number | null>(null);
+  const [observedMs, setObservedMs] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!active) {
+      if (observedStart.current !== null) setObservedMs(performance.now() - observedStart.current);
+      return;
+    }
+    if (observedStart.current === null) observedStart.current = performance.now();
+    setObservedMs(performance.now() - observedStart.current);
+    const timer = window.setInterval(() => {
+      if (observedStart.current !== null) setObservedMs(performance.now() - observedStart.current);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [active]);
   const durations = tools.flatMap((tool) => {
     const duration = toolDurationMs(tool);
     return duration === undefined ? [] : [duration];
   });
-  const totalDuration = durations.length
-    ? durations.reduce((sum, duration) => sum + duration, 0)
-    : undefined;
+  const totalDuration =
+    durations.length === tools.length
+      ? durations.reduce((sum, duration) => sum + duration, 0)
+      : undefined;
   const toolTitle = t("chat:trace.toolCallsCount", {
     count: tools.length,
   });
@@ -491,8 +536,25 @@ function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boo
           <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
             <WrenchIcon className="size-4" />
             <p className="min-w-0 flex-1 text-left text-sm">{toolTitle}</p>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-              {active ? "…" : totalDuration === undefined ? "—" : formatDuration(totalDuration)}
+            <span
+              className="shrink-0 text-[10px] tabular-nums text-muted-foreground"
+              title={t(
+                !active && totalDuration !== undefined
+                  ? "chat:trace.totalToolTime"
+                  : observedMs !== null
+                    ? "chat:trace.observedToolTime"
+                    : "chat:trace.unknownToolTime",
+              )}
+            >
+              {active
+                ? observedMs === null
+                  ? "…"
+                  : `≈${formatDuration(observedMs)} · …`
+                : totalDuration !== undefined
+                  ? formatDuration(totalDuration)
+                  : observedMs === null
+                    ? "—"
+                    : `≈${formatDuration(observedMs)}`}
             </span>
             <ChevronDownIcon className="size-4 transition-transform duration-200 group-data-[state=open]:rotate-180 group-data-[open]:rotate-180" />
           </div>
@@ -503,6 +565,7 @@ function ToolGroup({ tools, showDetails }: { tools: ToolPart[]; showDetails: boo
               key={`${tool.toolCallId}:${index}`}
               part={tool}
               showDetails={showDetails}
+              isStreaming={isStreaming}
             />
           ))}
         </TaskContent>
@@ -545,7 +608,7 @@ export function AssistantTrace({
     toolRun = [];
     items.push({
       key: `tools-${toolGroupIndex++}-${tools[0].toolCallId}`,
-      node: <ToolGroup tools={tools} showDetails={showDetails} />,
+      node: <ToolGroup tools={tools} showDetails={showDetails} isStreaming={isStreaming} />,
     });
   };
   parts.forEach((part, index) => {

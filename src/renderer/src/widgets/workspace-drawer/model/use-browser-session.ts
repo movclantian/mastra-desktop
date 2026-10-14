@@ -67,16 +67,15 @@ function mapBrowserPointerToViewport(
   };
 }
 
-export function useBrowserSession() {
+export function useBrowserSession(active: boolean) {
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
   const activeThreadId = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const activePanelTab = useWorkbenchStore((state) => state.activePanelTab);
-  const workspacePanelOpen = useWorkbenchStore((state) => state.workspacePanelOpen);
   const browserRequest = useWorkbenchStore((state) => state.browserRequest);
-  const viewActive = workspacePanelOpen && activePanelTab.kind === "browser";
+  const viewActive = active && activePanelTab.kind === "browser";
   const configQuery = useQuery(browserConfigQueryOptions(userId));
   const config = configQuery.data;
   const configReady = configQuery.isSuccess;
@@ -217,10 +216,7 @@ export function useBrowserSession() {
     setFrame(undefined);
     setFrameState("idle");
     void refreshState();
-    if (!stateUrl || nativeBrowser) return;
-    const timer = window.setInterval(() => void refreshState(), 1_500);
     return () => {
-      window.clearInterval(timer);
       keyboardQueueRef.current = [];
       if (keyboardFlushTimerRef.current !== undefined) {
         window.clearTimeout(keyboardFlushTimerRef.current);
@@ -228,6 +224,21 @@ export function useBrowserSession() {
       }
     };
   }, [invalidateFrame, refreshState, stateUrl, nativeBrowser]);
+
+  React.useEffect(() => {
+    if (!active || !stateUrl || nativeBrowser) return;
+    let stopped = false;
+    let timer: number;
+    const refresh = async () => {
+      if (!document.hidden) await refreshState();
+      if (!stopped) timer = window.setTimeout(refresh, 1_500);
+    };
+    void refresh();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
+  }, [active, nativeBrowser, refreshState, stateUrl]);
 
   React.useEffect(() => {
     void screencastAttempt;

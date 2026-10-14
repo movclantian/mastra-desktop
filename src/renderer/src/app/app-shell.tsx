@@ -36,7 +36,7 @@ function WorkspaceDrawerContainer({ open }: { open: boolean }) {
         open ? "opacity-100" : "pointer-events-none opacity-0",
       )}
     >
-      <WorkspaceDrawer />
+      <WorkspaceDrawer active={open} />
     </div>
   );
 }

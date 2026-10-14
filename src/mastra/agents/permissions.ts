@@ -35,7 +35,6 @@ export type { PermissionPolicy, PermissionRules, ToolCategory };
 /** 已认证会话与定时任务传给 Agent 的当前线程权限规则。 */
 
 export const SESSION_TOOL_POLICY_CONTEXT_KEY = "mastra-work:tool-policy";
-export const READ_ONLY_EXPERT_CONTEXT_KEY = "mastra-work:read-only-expert";
 
 /** Delegated runs have no Controller approval handler; resolve the same policy before execution. */
 export const requestToolApproval: RequireToolApprovalFn = ({ toolName, requestContext }) => {
@@ -161,7 +160,6 @@ export function resolveAgentActiveTools({
   profile,
   member,
   scheduled,
-  readOnlyExpert,
 }: {
   tools: string[];
   activeTools?: string[];
@@ -170,7 +168,6 @@ export function resolveAgentActiveTools({
   profile?: AgentProfile;
   member?: AgentMemberDefinition;
   scheduled: boolean;
-  readOnlyExpert: boolean;
 }): string[] {
   const coordinationTools = new Set(
     profile ? delegationMemberIds(profile, member).map((id) => `agent-${id}`) : [],
@@ -188,7 +185,6 @@ export function resolveAgentActiveTools({
       enabled.has(name) &&
       (!collaboration || coordinationTools.has(name)) &&
       (!mode.availableTools || mode.availableTools.includes(name) || coordinationTools.has(name)) &&
-      (!readOnlyExpert || READ_ONLY_TOOL_NAMES.includes(name)) &&
       (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
       (scheduled ? policy === "allow" : policy !== "deny")
     );

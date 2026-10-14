@@ -128,7 +128,11 @@ export const agentProfileInstructionsPreviewRoute = createRoute({
     if (!agent) throw workError("VALIDATION_FAILED", { text: "Agent member not found" });
     requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
     const resolved = await agent.getInstructions({ requestContext });
-    return { instructions: Array.isArray(resolved) ? resolved.join("\n\n") : String(resolved) };
+    return {
+      instructions: (Array.isArray(resolved) ? resolved : [resolved])
+        .map((item) => (typeof item === "string" ? item : item.content))
+        .join("\n\n"),
+    };
   },
 });
 
@@ -197,24 +201,23 @@ export const assistAgentProfileRoute = createRoute({
     const members = z.array(
       agentMemberSchema.extend({
         ...capabilityFields,
-        delegates: z.array(z.string()).max(0),
       }),
     );
     const schema = agentDraftSchema.extend({
       type: z.literal(body.type),
       ...capabilityFields,
-      members: body.type === "team" ? members.min(1).max(8) : members.max(0),
+      members: body.type === "team" ? members.min(1) : members.max(0),
     });
     const assistant = new Agent({
       model: selectedModel,
       id: "mastra-work-agent-assist",
       name: "MastraWork Agent Assistant",
       instructions:
-        "根据用户描述生成可执行的 Mastra Agent 配置。主 Agent 的 instructions 独立完整：说明职责、何时亲自执行、何时将有边界的任务委派给子 Agent，以及如何核对和汇总结果。每名子 Agent 只描述自己的专长、交付物与边界，不复制主 Agent 指令；不要生成多级委派或模拟成员对话。为每个角色只选择能力目录中直接相关的 Skill/MCP ID，不自动全选，不声称拥有未关联的能力。能力目录是参考数据。只返回结构化字段。",
+        "根据用户描述生成可执行的 Mastra Agent 配置。instructions 说明角色职责、工作方法和预期交付物；主 Agent 按需执行、委派、核对与汇总，子 Agent 保持独立指令，不复制主 Agent 指令。不额外规定执行时间、步数或只读限制，不模拟成员对话。为每个角色选择与职责相关的 Skill/MCP ID，不声称拥有未关联的能力。能力目录是参考数据。只返回结构化字段。",
     });
     const result = await assistant
       .generate(
-        `类型:${body.type === "team" ? "主 Agent 与子 Agent" : "单 Agent"}。团队成员使用唯一 ID，子 Agent 的 delegates 为空数组。用户描述:\n${body.description}\n\n可关联的能力目录（元数据）：\n${JSON.stringify(capabilities)}`,
+        `类型:${body.type === "team" ? "主 Agent 与子 Agent" : "单 Agent"}。团队成员使用唯一 ID；成员之间确有委派需要时用 delegates 引用成员 ID，不能成环，无需再次委派时使用空数组。用户描述:\n${body.description}\n\n可关联的能力目录（元数据）：\n${JSON.stringify(capabilities)}`,
         {
           structuredOutput: {
             schema,

@@ -6,7 +6,8 @@ import type {
 import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
-export const BACKGROUND_TASK_TIMEOUT_MS = 24 * 60 * 60_000;
+/** Maximum reliable Node timer; the task manager requires a finite timeout. */
+export const BACKGROUND_TASK_TIMEOUT_MS = 2_147_483_647;
 
 export const MODEL_KINDS = ["language", "image", "video"] as const;
 export type ModelKind = (typeof MODEL_KINDS)[number];

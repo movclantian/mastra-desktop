@@ -89,7 +89,7 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
 
 export async function listAgentProfiles(resourceId?: string): Promise<AgentProfile[]> {
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
-  if (!raw) return [DEFAULT_PROFILE];
+  if (!raw) return [structuredClone(DEFAULT_PROFILE)];
   const profiles = z
     .array(z.unknown())
     .parse(JSON.parse(raw))
@@ -106,7 +106,8 @@ export async function listAgentProfiles(resourceId?: string): Promise<AgentProfi
       }
     });
   return [
-    profiles.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ?? DEFAULT_PROFILE,
+    profiles.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ??
+      structuredClone(DEFAULT_PROFILE),
     ...profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID),
   ];
 }

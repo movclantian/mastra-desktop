@@ -1027,14 +1027,28 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
 
   React.useEffect(() => {
     if (!active || !activeThreadId) return;
-    const refresh = () => void refreshVisibleTree();
-    const timer = window.setInterval(refresh, 1000);
+    let stopped = false;
+    let refreshing = false;
+    let timer: number;
+    const refresh = () => {
+      if (refreshing) return;
+      refreshing = true;
+      void refreshVisibleTree().finally(() => {
+        refreshing = false;
+        if (!stopped) timer = window.setTimeout(refresh, 5_000);
+      });
+    };
+    refresh();
     const handleVisibilityChange = () => {
-      if (!document.hidden) refresh();
+      if (!document.hidden) {
+        window.clearTimeout(timer);
+        refresh();
+      }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      window.clearInterval(timer);
+      stopped = true;
+      window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [active, activeThreadId, refreshVisibleTree]);

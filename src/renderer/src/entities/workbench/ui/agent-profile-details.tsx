@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { BotAvatarState } from "bot-avatars";
 import { useId, useState } from "react";
+import { toast } from "sonner";
 import { fetchMcpServers, usePluginSkills } from "@/entities/skill";
 import { useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api";
@@ -106,7 +107,11 @@ export function AgentProfileDetails({
   const [selectedId, setSelectedId] = useState<string | null>(
     definition?.strategy === "handoff" ? (definition.entryMemberId ?? null) : null,
   );
+  const [instructionDrafts, setInstructionDrafts] = useState<Record<string, string | undefined>>(
+    {},
+  );
   const member = isTeam ? profile.members.find((item) => item.id === selectedId) : undefined;
+  const instructionKey = member ? `member:${member.id}` : "profile";
   const selected = member ?? profile;
   const name = member?.name ?? profile.displayName;
   const roster = [
@@ -191,17 +196,35 @@ export function AgentProfileDetails({
           <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
             {selected.description}
           </p>
+          <AgentInstructionsEditor
+            key={instructionKey}
+            profile={profile}
+            memberId={member?.id}
+            instructions={selected.instructions}
+            draft={instructionDrafts[instructionKey] ?? selected.instructions}
+            onDraftChange={(draft) =>
+              setInstructionDrafts((current) => ({ ...current, [instructionKey]: draft }))
+            }
+            onSaved={
+              onSaved
+                ? (updated) => {
+                    onSaved(updated);
+                    const saved = member
+                      ? updated.members.find((item) => item.id === member.id)?.instructions
+                      : updated.instructions;
+                    setInstructionDrafts((current) =>
+                      current[instructionKey]?.trim() === saved
+                        ? { ...current, [instructionKey]: undefined }
+                        : current,
+                    );
+                  }
+                : undefined
+            }
+          />
           <AgentCapabilitySelection
             key={member?.id ?? profile.id}
             profile={profile}
             memberId={member?.id}
-            onSaved={onSaved}
-          />
-          <AgentInstructionsEditor
-            key={`${profile.id}:${member?.id ?? "main"}:${profile.updatedAt}`}
-            profile={profile}
-            memberId={member?.id}
-            instructions={selected.instructions}
             onSaved={onSaved}
           />
           {member ? (
@@ -227,25 +250,31 @@ function AgentInstructionsEditor({
   profile,
   memberId,
   instructions,
+  draft,
+  onDraftChange,
   onSaved,
 }: {
   profile: AgentProfile;
   memberId?: string;
   instructions: string;
+  draft: string;
+  onDraftChange: (draft: string) => void;
   onSaved?: (profile: AgentProfile) => void;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [draft, setDraft] = useState(instructions);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const preview = useQuery({
     queryKey: ["agent-instructions", profile.id, memberId, profile.updatedAt],
     queryFn: () => fetchAgentInstructions(profile.id, memberId),
+    enabled: previewOpen,
   });
   const save = useMutation({
     mutationFn: () => updateAgentInstructions(profile.id, draft, memberId),
     onSuccess: async (updated) => {
-      await queryClient.invalidateQueries({ queryKey: qk.agents() });
       onSaved?.(updated);
+      toast.success(t("common:saved"));
+      await queryClient.invalidateQueries({ queryKey: qk.agents() });
     },
   });
   return (
@@ -254,8 +283,12 @@ function AgentInstructionsEditor({
       <Textarea
         aria-label={t("agentHub:instructions")}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        className="min-h-48 resize-y whitespace-pre-wrap"
+        disabled={!onSaved || save.isPending}
+        onChange={(event) => {
+          onDraftChange(event.target.value);
+          save.reset();
+        }}
+        className="min-h-48 max-h-[60dvh] resize-y whitespace-pre-wrap"
         maxLength={200_000}
       />
       {save.error ? (
@@ -266,22 +299,30 @@ function AgentInstructionsEditor({
       <Button
         size="sm"
         className="justify-self-start"
-        disabled={draft.trim() === instructions || !draft.trim() || save.isPending}
+        disabled={!onSaved || draft.trim() === instructions || !draft.trim() || save.isPending}
         onClick={() => save.mutate()}
       >
         {t("plugins:save")}
       </Button>
-      <Collapsible className="min-w-0 rounded-md border p-2">
+      <Collapsible
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        className="min-w-0 rounded-md border p-2"
+      >
         <CollapsibleTrigger render={<Button size="sm" variant="ghost" />}>
           {t("agentHub:resolvedInstructions")}
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-2">
           {preview.isPending ? <p role="status">{t("plugins:loading")}</p> : null}
-          {preview.error ? <p role="alert">{preview.error.message}</p> : null}
+          {preview.error ? (
+            <p role="alert" className="break-words">
+              {preview.error.message}
+            </p>
+          ) : null}
           {preview.data ? (
-            <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
-              {preview.data}
-            </pre>
+            <ScrollArea className="max-h-80 min-w-0 rounded-md bg-muted">
+              <pre className="whitespace-pre-wrap break-words p-3 text-xs">{preview.data}</pre>
+            </ScrollArea>
           ) : null}
           <p className="mt-2 text-xs text-muted-foreground">{t("agentHub:previewHint")}</p>
         </CollapsibleContent>

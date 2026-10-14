@@ -141,7 +141,7 @@ export function ComposerMenu({
   );
 
   return (
-    <PromptInputTools className="flex-nowrap">
+    <PromptInputTools className="shrink-0 flex-nowrap">
       <PromptInputActionMenu open={open} onOpenChange={setOpen}>
         <PromptInputActionMenuTrigger
           aria-label={t("chat:composer.add")}
@@ -475,7 +475,9 @@ function ChatApprovalSelector() {
         }
       >
         <ShieldIcon />
-        <span className="max-w-14 truncate text-xs">{label}</span>
+        <span className="max-w-14 truncate text-xs @max-[36rem]/prompt-footer:sr-only">
+          {label}
+        </span>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="w-64 overflow-hidden">
         <ScrollArea className="max-h-[min(24rem,calc(var(--available-height)-0.5rem))]">

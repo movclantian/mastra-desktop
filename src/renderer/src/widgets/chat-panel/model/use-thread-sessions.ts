@@ -152,12 +152,17 @@ function createThreadSession(
         role: current.role === "signal" ? ("user" as const) : current.role,
       };
       const converted = toAISdkMessages([message], { version: "v7" }) as WorkUIMessage[];
-      const toolUpdates = new Map(
+      const toolTimes = new Map(
         message.content.parts.flatMap((part) =>
           part.type === "tool-invocation" &&
           part.toolInvocation?.toolCallId &&
-          typeof part.updatedAt === "number"
-            ? [[part.toolInvocation.toolCallId, part.updatedAt] as const]
+          (typeof part.createdAt === "number" || typeof part.updatedAt === "number")
+            ? [
+                [
+                  part.toolInvocation.toolCallId,
+                  { createdAt: part.createdAt, updatedAt: part.updatedAt },
+                ] as const,
+              ]
             : [],
         ),
       );
@@ -184,8 +189,8 @@ function createThreadSession(
           );
           const parts: WorkUIMessage["parts"] = ui.parts.map((part, partIndex) => {
             if (isToolUIPart(part)) {
-              const updatedAt = toolUpdates.get(part.toolCallId);
-              const enriched: ToolPart = updatedAt === undefined ? part : { ...part, updatedAt };
+              const times = toolTimes.get(part.toolCallId);
+              const enriched: ToolPart = times === undefined ? part : { ...part, ...times };
               return mergeToolPart(tools.get(part.toolCallId), enriched);
             }
             // DB-message conversion marks reasoning as done; the live trailing part is still streaming.

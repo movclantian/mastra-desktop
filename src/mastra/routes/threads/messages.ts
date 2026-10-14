@@ -113,15 +113,20 @@ function restoreFileFilenames(
 export function workbenchMessages(messages: MastraDBMessage[]) {
   const history = normalizeChatHistoryMessages(messages);
   const timestamps = new Map(history.map((message) => [message.id, message.createdAt]));
-  const toolUpdates = new Map(
+  const toolTimes = new Map(
     history.map((message) => [
       message.id,
       new Map(
         message.content.parts.flatMap((part) =>
           part.type === "tool-invocation" &&
           part.toolInvocation?.toolCallId &&
-          typeof part.updatedAt === "number"
-            ? [[part.toolInvocation.toolCallId, part.updatedAt] as const]
+          (typeof part.createdAt === "number" || typeof part.updatedAt === "number")
+            ? [
+                [
+                  part.toolInvocation.toolCallId,
+                  { createdAt: part.createdAt, updatedAt: part.updatedAt },
+                ] as const,
+              ]
             : [],
         ),
       ),
@@ -139,9 +144,9 @@ export function workbenchMessages(messages: MastraDBMessage[]) {
       ...message,
       parts: [
         ...message.parts.map((part) => {
-          const updatedAt =
-            "toolCallId" in part ? toolUpdates.get(message.id)?.get(part.toolCallId) : undefined;
-          return updatedAt === undefined ? part : { ...part, updatedAt };
+          const times =
+            "toolCallId" in part ? toolTimes.get(message.id)?.get(part.toolCallId) : undefined;
+          return times === undefined ? part : { ...part, ...times };
         }),
         ...(media.success
           ? [{ type: "data-media-generation" as const, id: message.id, data: media.data }]

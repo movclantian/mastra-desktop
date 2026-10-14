@@ -957,7 +957,7 @@ export function ChatPromptInput({
           />
         </PromptInputBody>
         <PromptInputFooter
-          className="flex-nowrap gap-1 border-t border-border/40 px-2.5 pt-2 pb-2"
+          className="@container/prompt-footer min-w-0 flex-nowrap gap-1 border-t border-border/40 px-2.5 pt-2 pb-2"
           ref={footerRef}
         >
           <ComposerMenu
@@ -974,7 +974,7 @@ export function ChatPromptInput({
             goalAvailable={goalAvailable}
             busy={status === "submitted" || status === "streaming"}
           />
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
               <ChatContextUsage usage={usage} billingUsage={billingUsage} />

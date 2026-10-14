@@ -165,6 +165,7 @@ export function BrowserView({
     let lastBounds = "";
     let animationFrame = 0;
     const syncBounds = () => {
+      animationFrame = 0;
       const rect = surface.getBoundingClientRect();
       const next = {
         x: Math.max(0, Math.round(rect.left)),
@@ -177,14 +178,28 @@ export function BrowserView({
           : 0,
       };
       const signature = `${next.x}:${next.y}:${next.width}:${next.height}`;
-      if (viewActive) animationFrame = window.requestAnimationFrame(syncBounds);
       if (signature === lastBounds) return;
       lastBounds = signature;
       setBounds(next);
     };
-
+    const scheduleBounds = () => {
+      if (!animationFrame) animationFrame = window.requestAnimationFrame(syncBounds);
+    };
+    const resize = new ResizeObserver(scheduleBounds);
+    // Floating panels move without resizing their browser viewport.
+    const movement = new MutationObserver(scheduleBounds);
+    for (let element: HTMLElement | null = surface; element; element = element.parentElement) {
+      resize.observe(element);
+      movement.observe(element, { attributes: true, attributeFilter: ["style", "class"] });
+    }
+    window.addEventListener("resize", scheduleBounds);
+    window.addEventListener("scroll", scheduleBounds, true);
     syncBounds();
     return () => {
+      resize.disconnect();
+      movement.disconnect();
+      window.removeEventListener("resize", scheduleBounds);
+      window.removeEventListener("scroll", scheduleBounds, true);
       window.cancelAnimationFrame(animationFrame);
       setBounds({ x: 0, y: 0, width: 0, height: 0 });
     };

@@ -54,6 +54,7 @@ import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { AuxiliaryChat } from "@/widgets/chat-panel/ui/auxiliary-chat";
+import { parseWorkspaceTabDrag } from "../../../../../shared/workspace-contract";
 import { useBrowserSession } from "../model/use-browser-session";
 import { BrowserView } from "./browser-view";
 import { ChangesWorkspace } from "./changes-workspace";
@@ -108,7 +109,7 @@ function getInitialFloatingBounds(): FloatingBounds {
   return { x: defaultX, y: defaultY, width: defaultWidth, height: defaultHeight };
 }
 
-export function WorkspacePanelShell() {
+export function WorkspacePanelShell({ active }: { active: boolean }) {
   const { t } = useTranslation();
   const filePreview = useWorkbenchStore((store) => store.filePreview);
   const clearFilePreview = useWorkbenchStore((store) => store.clearFilePreview);
@@ -124,7 +125,7 @@ export function WorkspacePanelShell() {
   const setWorkspacePanelMode = useWorkbenchStore((store) => store.setWorkspacePanelMode);
   const setWorkspacePanelOpen = useWorkbenchStore((store) => store.setWorkspacePanelOpen);
   // 会话状态在面板层建立(无条件调用),浏览器视图按当前标签渲染
-  const browserSession = useBrowserSession();
+  const browserSession = useBrowserSession(active);
   const { action, closeBrowser, closeLastBrowserTab, state } = browserSession;
   const browserActive = activePanelTab.kind === "browser";
   React.useEffect(() => {
@@ -137,7 +138,6 @@ export function WorkspacePanelShell() {
       activatePanelTab({ kind: "browser", index: state.activeTabIndex });
     }
   }, [activePanelTab, activatePanelTab, browserSession.busy, state.active, state.activeTabIndex]);
-  const draggedTabRef = React.useRef<string | null>(null);
   const [draggingTabId, setDraggingTabId] = React.useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
   const reorderHintId = React.useId();
@@ -434,14 +434,9 @@ export function WorkspacePanelShell() {
                 event.preventDefault();
                 setDragOverTabId(null);
                 setDraggingTabId(null);
-                const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
-                if (rawData) {
-                  try {
-                    const data = JSON.parse(rawData);
-                    if (data.source === "terminal") {
-                      moveTerminalTab("terminal", "workspace", data.id, data.title);
-                    }
-                  } catch {}
+                const data = parseWorkspaceTabDrag(event.dataTransfer.getData(TAB_DND_TYPE));
+                if (data?.source === "terminal") {
+                  moveTerminalTab("terminal", "workspace", data.id, data.title);
                 }
               }}
             >
@@ -456,7 +451,6 @@ export function WorkspacePanelShell() {
                       <div
                         draggable
                         onDragStart={(event) => {
-                          draggedTabRef.current = tab.id;
                           setDraggingTabId(tab.id);
                           event.dataTransfer.setData(
                             TAB_DND_TYPE,
@@ -482,32 +476,16 @@ export function WorkspacePanelShell() {
                           event.stopPropagation();
                           setDragOverTabId(null);
                           setDraggingTabId(null);
-                          const rawData = event.dataTransfer.getData(TAB_DND_TYPE);
-                          if (rawData) {
-                            try {
-                              const data = JSON.parse(rawData);
-                              if (data.source === "workspace") {
-                                reorderPanelTab(data.id, tab.id);
-                              } else if (data.source === "terminal") {
-                                moveTerminalTab(
-                                  "terminal",
-                                  "workspace",
-                                  data.id,
-                                  data.title,
-                                  tab.id,
-                                );
-                              }
-                            } catch {
-                              if (draggedTabRef.current)
-                                reorderPanelTab(draggedTabRef.current, tab.id);
-                            }
-                          } else if (draggedTabRef.current) {
-                            reorderPanelTab(draggedTabRef.current, tab.id);
+                          const data = parseWorkspaceTabDrag(
+                            event.dataTransfer.getData(TAB_DND_TYPE),
+                          );
+                          if (data?.source === "workspace") {
+                            reorderPanelTab(data.id, tab.id);
+                          } else if (data?.source === "terminal") {
+                            moveTerminalTab("terminal", "workspace", data.id, data.title, tab.id);
                           }
-                          draggedTabRef.current = null;
                         }}
                         onDragEnd={() => {
-                          draggedTabRef.current = null;
                           setDraggingTabId(null);
                           setDragOverTabId(null);
                         }}
@@ -849,7 +827,10 @@ export function WorkspacePanelShell() {
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {panelTabs.map((tab) => {
             const selected =
-              !isWelcomeActive && activePanelTab.kind !== "browser" && activePanelTab.id === tab.id;
+              active &&
+              !isWelcomeActive &&
+              activePanelTab.kind !== "browser" &&
+              activePanelTab.id === tab.id;
             return (
               <div
                 className={cn("size-full", selected ? "block" : "hidden")}

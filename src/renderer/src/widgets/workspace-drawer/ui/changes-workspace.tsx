@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { Code2Icon, FileDiffIcon, RefreshCwIcon } from "lucide-react";
 import * as React from "react";
-import { fetchChangeContent } from "@/entities/workbench";
+import { fetchChangeContent, type WorkspaceFileChange } from "@/entities/workbench";
 import { useThreadChangesQuery } from "@/entities/workbench/model/queries/workspace";
 import { qk } from "@/entities/workbench/model/query-keys";
 import { useAuth } from "@/features/auth";
@@ -16,6 +16,8 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { groupWorkspaceChanges } from "../lib/changes";
 import { CodeChangeGroup as WorkspaceCodeChangeGroup } from "./code-changes";
 
+const EMPTY_CHANGES: WorkspaceFileChange[] = [];
+
 export function ChangesWorkspace({ active }: { active: boolean }) {
   const { t } = useTranslation();
   const { user: authUser } = useAuth();
@@ -27,7 +29,7 @@ export function ChangesWorkspace({ active }: { active: boolean }) {
     refetchInterval: active ? 1_000 : undefined,
     enabled: active,
   });
-  const changes = changesQuery.data ?? [];
+  const changes = changesQuery.data ?? EMPTY_CHANGES;
   const queryClient = useQueryClient();
   const [expandedFiles, setExpandedFiles] = React.useState<Set<string>>(new Set());
   const [expandedChanges, setExpandedChanges] = React.useState<Set<string>>(new Set());

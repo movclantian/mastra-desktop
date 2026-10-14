@@ -30,7 +30,6 @@ export interface AgentMemberRuntime {
 
 export function getAgentMemberRuntimes(
   profile: AgentProfile,
-
   invocations: TeamInvocation[] = [],
 ): Record<string, AgentMemberRuntime> {
   return Object.fromEntries(
@@ -115,6 +114,7 @@ export function AgentMemberSwitcher({
                   ? member.id
                   : member.id.replace(/^runtime-/, "");
             const working = memberId ? runtime.status === "running" : busy;
+            const status = memberId ? runtime.status : busy ? "running" : "idle";
             return (
               <Button
                 variant="ghost"
@@ -130,11 +130,11 @@ export function AgentMemberSwitcher({
                 <GeneratedAvatar
                   seed={memberId ? `${profile.id}:${memberId}` : profile.id}
                   name={member.name}
-                  state={working ? "working" : runtime.status === "idle" ? "default" : "sleeping"}
+                  state={working ? "working" : status === "idle" ? "default" : "sleeping"}
                   className={cn("size-8", active && "z-10 ring-2 ring-inset ring-primary")}
                 >
-                  <AvatarBadge className={memberStatusClass(runtime.status)}>
-                    {statusIcon(runtime.status, "size-2")}
+                  <AvatarBadge className={memberStatusClass(status)}>
+                    {statusIcon(status, "size-2")}
                   </AvatarBadge>
                 </GeneratedAvatar>
               </Button>

@@ -128,7 +128,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     } = server as McpSummary;
     setForm({ ...initial(), ...connection });
     setArgsText(server.args?.join("\n") ?? "");
-    setAllowedHostsText((server as { allowedHosts?: string[] }).allowedHosts?.join("\n") ?? "");
+    setAllowedHostsText(server.allowedHosts?.join("\n") ?? "");
 
     setHeadersText("");
     setEnvText("");
@@ -152,29 +152,39 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
     let oauth: McpFormServer["oauth"] = form.oauth
       ? { ...form.oauth, clientId: form.oauth.clientId?.trim() }
       : undefined;
-    if (form.transport === "http" && Object.keys(headers).length > 0) {
-      const purpose = mcpCredentialPurpose(id, "headers");
-      headerCredential = await window.api.credentials.put({
-        purpose,
-        value: JSON.stringify(headers),
-      });
-      headerKeys = Object.keys(headers);
-      created.push({ purpose, secretRef: headerCredential.credentialRef });
-    }
-    if ((form.transport === "stdio" || form.plugin) && Object.keys(env).length > 0) {
-      const purpose = mcpCredentialPurpose(id, "env");
-      envCredential = await window.api.credentials.put({ purpose, value: JSON.stringify(env) });
-      envKeys = Object.keys(env);
-      created.push({ purpose, secretRef: envCredential.credentialRef });
-    }
-    if (form.transport === "http" && oauthClientSecret.trim()) {
-      const purpose = mcpCredentialPurpose(id, "client-secret");
-      const clientSecretCredential = await window.api.credentials.put({
-        purpose,
-        value: oauthClientSecret.trim(),
-      });
-      oauth = { ...(oauth ?? { enabled: true }), clientSecretCredential };
-      created.push({ purpose, secretRef: clientSecretCredential.credentialRef });
+    try {
+      if (form.transport === "http" && Object.keys(headers).length > 0) {
+        const purpose = mcpCredentialPurpose(id, "headers");
+        headerCredential = await window.api.credentials.put({
+          purpose,
+          value: JSON.stringify(headers),
+        });
+        headerKeys = Object.keys(headers);
+        created.push({ purpose, secretRef: headerCredential.credentialRef });
+      }
+      if ((form.transport === "stdio" || form.plugin) && Object.keys(env).length > 0) {
+        const purpose = mcpCredentialPurpose(id, "env");
+        envCredential = await window.api.credentials.put({ purpose, value: JSON.stringify(env) });
+        envKeys = Object.keys(env);
+        created.push({ purpose, secretRef: envCredential.credentialRef });
+      }
+      if (form.transport === "http" && oauthClientSecret.trim()) {
+        const purpose = mcpCredentialPurpose(id, "client-secret");
+        const clientSecretCredential = await window.api.credentials.put({
+          purpose,
+          value: oauthClientSecret.trim(),
+        });
+        oauth = { ...(oauth ?? { enabled: true }), clientSecretCredential };
+        created.push({ purpose, secretRef: clientSecretCredential.credentialRef });
+      }
+    } catch (error) {
+      // No request has been sent, so these newly created credentials cannot be referenced yet.
+      await Promise.all(
+        created.map((credential) =>
+          window.api.credentials.delete(credential).catch(() => undefined),
+        ),
+      );
+      throw error;
     }
     return {
       server: {

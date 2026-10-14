@@ -388,7 +388,17 @@ export function AgentHubPage() {
             <DialogDescription>{t("agentHub:profileDetailsDescription")}</DialogDescription>
           </DialogHeader>
           {inspected ? (
-            <AgentProfileDetails key={inspected.id} profile={inspected} onSaved={setInspected} />
+            <AgentProfileDetails
+              key={inspected.id}
+              profile={inspected}
+              onSaved={(updated) =>
+                setInspected((current) =>
+                  current?.id === updated.id && current.updatedAt <= updated.updatedAt
+                    ? updated
+                    : current,
+                )
+              }
+            />
           ) : null}
           <DialogFooter className="shrink-0">
             <Button

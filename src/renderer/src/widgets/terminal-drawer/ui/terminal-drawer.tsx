@@ -23,6 +23,7 @@ import {
 } from "@/shared/ui/context-menu";
 import { PanelHeader, PanelSurface } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+import { parseWorkspaceTabDrag } from "../../../../../shared/workspace-contract";
 
 export function TerminalPanel() {
   const { t } = useTranslation();
@@ -50,7 +51,6 @@ export function TerminalPanel() {
   const [handledRequestId, setHandledRequestId] = React.useState<number | null>(null);
   const pendingRequest = terminalRequest?.id === handledRequestId ? null : terminalRequest;
 
-  const draggedSessionRef = React.useRef<string | null>(null);
   const [draggingSessionId, setDraggingSessionId] = React.useState<string | null>(null);
   const [dragOverSessionId, setDragOverSessionId] = React.useState<string | null>(null);
 
@@ -68,18 +68,14 @@ export function TerminalPanel() {
               e.preventDefault();
               setDragOverSessionId(null);
               setDraggingSessionId(null);
-              const rawData = e.dataTransfer.getData(TAB_DND_TYPE);
-              if (rawData) {
-                try {
-                  const data = JSON.parse(rawData);
-                  if (data.kind !== "terminal") {
-                    toast.info(t("workspace:onlyTerminalSupported"));
-                    return;
-                  }
-                  if (data.source === "workspace") {
-                    moveTerminalTab("workspace", "terminal", data.id, data.title);
-                  }
-                } catch {}
+              const data = parseWorkspaceTabDrag(e.dataTransfer.getData(TAB_DND_TYPE));
+              if (!data) return;
+              if (data.kind !== "terminal") {
+                toast.info(t("workspace:onlyTerminalSupported"));
+                return;
+              }
+              if (data.source === "workspace") {
+                moveTerminalTab("workspace", "terminal", data.id, data.title);
               }
             }}
           >
@@ -94,7 +90,6 @@ export function TerminalPanel() {
                     <div
                       draggable
                       onDragStart={(e) => {
-                        draggedSessionRef.current = id;
                         setDraggingSessionId(id);
                         e.dataTransfer.setData(
                           TAB_DND_TYPE,
@@ -120,30 +115,19 @@ export function TerminalPanel() {
                         e.stopPropagation();
                         setDragOverSessionId(null);
                         setDraggingSessionId(null);
-                        const rawData = e.dataTransfer.getData(TAB_DND_TYPE);
-                        if (rawData) {
-                          try {
-                            const data = JSON.parse(rawData);
-                            if (data.kind !== "terminal") {
-                              toast.info(t("workspace:onlyTerminalSupported"));
-                              return;
-                            }
-                            if (data.source === "terminal") {
-                              reorderSession(data.id, id);
-                            } else if (data.source === "workspace") {
-                              moveTerminalTab("workspace", "terminal", data.id, data.title, id);
-                            }
-                          } catch {
-                            if (draggedSessionRef.current)
-                              reorderSession(draggedSessionRef.current, id);
-                          }
-                        } else if (draggedSessionRef.current) {
-                          reorderSession(draggedSessionRef.current, id);
+                        const data = parseWorkspaceTabDrag(e.dataTransfer.getData(TAB_DND_TYPE));
+                        if (!data) return;
+                        if (data.kind !== "terminal") {
+                          toast.info(t("workspace:onlyTerminalSupported"));
+                          return;
                         }
-                        draggedSessionRef.current = null;
+                        if (data.source === "terminal") {
+                          reorderSession(data.id, id);
+                        } else {
+                          moveTerminalTab("workspace", "terminal", data.id, data.title, id);
+                        }
                       }}
                       onDragEnd={() => {
-                        draggedSessionRef.current = null;
                         setDraggingSessionId(null);
                         setDragOverSessionId(null);
                       }}

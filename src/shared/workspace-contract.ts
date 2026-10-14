@@ -13,6 +13,29 @@ export const WORKSPACE_CHANNELS = {
   openExternal: "workspace:open-external",
 } as const;
 
+const WorkspaceTabDragSchema = z.discriminatedUnion("source", [
+  z.strictObject({
+    source: z.literal("terminal"),
+    kind: z.literal("terminal"),
+    id: z.string().min(1),
+    title: z.string(),
+  }),
+  z.strictObject({
+    source: z.literal("workspace"),
+    kind: z.enum(["files", "changes", "chat", "terminal"]),
+    id: z.string().min(1),
+    title: z.string(),
+  }),
+]);
+
+export function parseWorkspaceTabDrag(raw: string) {
+  try {
+    return WorkspaceTabDragSchema.safeParse(JSON.parse(raw)).data;
+  } catch {
+    return undefined;
+  }
+}
+
 const WorkspaceAppSchema = z.enum(["vscode", "terminal", "explorer"]);
 
 const DetectedIdeSchema = z.strictObject({

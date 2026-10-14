@@ -1012,14 +1012,7 @@ export function ChatPanel() {
   }, [agentSelection, runtimeMembers]);
   const multiAgentMembers = multiAgentProfile?.members ?? [];
   const agentMemberRuntimes = React.useMemo(
-    () =>
-      multiAgentProfile
-        ? getAgentMemberRuntimes(
-            multiAgentProfile,
-
-            teamInvocations,
-          )
-        : {},
+    () => (multiAgentProfile ? getAgentMemberRuntimes(multiAgentProfile, teamInvocations) : {}),
     [multiAgentProfile, teamInvocations],
   );
   // Selected teams expose their members immediately; single agents expose actual specialists.

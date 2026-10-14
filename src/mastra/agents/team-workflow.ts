@@ -101,8 +101,6 @@ export function compileTeamWorkflow(
           abortSignal,
           memory: { thread, resource },
           context: context.get(TEAM_CONVERSATION_CONTEXT_KEY) as AgentExecutionOptions["context"],
-          toolCallConcurrency: 1,
-          untilIdle: true,
           requireToolApproval: requestToolApproval,
           tracingContext: observability.tracingContext,
         };
