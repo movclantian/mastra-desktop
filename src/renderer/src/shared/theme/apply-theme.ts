@@ -19,7 +19,6 @@ export function applyThemeToDocument(
   root.classList.add(isDark ? "dark" : "light");
   root.setAttribute("data-theme-preset", preset.id);
   root.setAttribute("data-theme-style", preset.styleKey);
-  if (preset.family) root.setAttribute("data-theme-family", preset.family);
   if (preset.generated) root.setAttribute("data-theme-generated", "true");
 
   const colorTokens: Record<string, string> = {
@@ -97,7 +96,6 @@ function persistBootSnapshot(
         dark: isDark,
         preset: preset.id,
         style: preset.styleKey,
-        family: preset.family ?? "",
         generated: preset.generated === true,
         colors: colorTokens,
         geometry: geometryTokens,

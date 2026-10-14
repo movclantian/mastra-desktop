@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 820" width="1280" height="820" font-family="'Segoe Print','Comic Sans MS','Bradley Hand','Xingkai SC','STXingkai','KaiTi','STKaiti','楷体',cursive" role="img" aria-label="MastraWork 架构总览">
+  <title>MastraWork 架构总览</title>
+  <defs>
+    <filter id="rough" x="-6%" y="-6%" width="112%" height="112%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="4" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="4.5"/>
+    </filter>
+    <filter id="roughS" x="-8%" y="-8%" width="116%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="11" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="3"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="5"/>
+      <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.05 0"/>
+    </filter>
+  </defs>
+
+  <!-- 纸面与纹理 -->
+  <rect width="1280" height="820" fill="#fffef5"/>
+  <rect width="1280" height="820" filter="url(#grain)"/>
+
+  <!-- 笔记本横线 -->
+  <g stroke="#a8c8e8" stroke-opacity="0.35" stroke-width="1" fill="none">
+    <path d="M0 120 H1280 M0 160 H1280 M0 200 H1280 M0 240 H1280 M0 280 H1280 M0 320 H1280 M0 360 H1280 M0 400 H1280 M0 440 H1280 M0 480 H1280 M0 520 H1280 M0 560 H1280 M0 600 H1280 M0 640 H1280 M0 680 H1280 M0 720 H1280 M0 760 H1280 M0 800 H1280"/>
+  </g>
+
+  <!-- 标题 -->
+  <path d="M50 34 C 200 26, 340 44, 470 30 L 472 66 C 340 80, 200 58, 52 70 Z" fill="#ffd93d" opacity="0.5" filter="url(#rough)" transform="rotate(-0.6 260 50)"/>
+  <text x="56" y="66" font-size="30" font-weight="700" fill="#2c2c2c">MastraWork 架构总览</text>
+  <path d="M56 82 q 11 6 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0 t 22 0" stroke="#ff6b6b" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <text x="56" y="106" font-size="14" fill="#2c2c2c" opacity="0.6">一个任务，四层协作，边界画在数据和服务上</text>
+
+  <!-- 左侧波浪括号 -->
+  <path d="M48 160 C 44 260, 52 360, 48 460 C 44 560, 52 660, 48 720" stroke="#2c2c2c" stroke-width="1.8" fill="none" opacity="0.6" stroke-linecap="round"/>
+  <text transform="translate(28,440) rotate(-90)" text-anchor="middle" font-size="13" letter-spacing="4" fill="#2c2c2c" opacity="0.55">工作区 · 线程边界</text>
+
+  <!-- 桌面集成层 -->
+  <rect x="88" y="140" width="1140" height="120" rx="14" fill="#fffef5" stroke="#2c2c2c" stroke-width="2" filter="url(#rough)" transform="rotate(-0.25 658 200)"/>
+  <rect x="91" y="143" width="1140" height="120" rx="14" fill="none" stroke="#2c2c2c" stroke-width="1" opacity="0.22" filter="url(#roughS)" transform="rotate(0.35 661 203)"/>
+  <rect x="108" y="162" width="152" height="76" rx="10" fill="#ff6b6b" fill-opacity="0.16" stroke="#ff6b6b" stroke-width="2" filter="url(#roughS)"/>
+  <text x="184" y="200" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">桌面集成层</text>
+  <text x="184" y="222" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Desktop Shell</text>
+  <g>
+    <rect x="336" y="180" width="150" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="352" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="364" y="205" font-size="13.5" fill="#2c2c2c">Electron 主进程</text>
+    <rect x="498" y="180" width="150" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="514" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="526" y="205" font-size="13.5" fill="#2c2c2c">原生浏览器视图</text>
+    <rect x="660" y="180" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="676" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="688" y="205" font-size="13.5" fill="#2c2c2c">PTY 终端</text>
+    <rect x="782" y="180" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="798" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="810" y="205" font-size="13.5" fill="#2c2c2c">系统通知</text>
+    <rect x="904" y="180" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="920" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="932" y="205" font-size="13.5" fill="#2c2c2c">凭据保险库</text>
+    <rect x="1026" y="180" width="120" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="1042" cy="200" r="3" fill="#ff6b6b"/>
+    <text x="1054" y="205" font-size="13.5" fill="#2c2c2c">跨平台安装包</text>
+  </g>
+  <path d="M640 272 L652 284 L664 272" stroke="#2c2c2c" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 工作流层 -->
+  <rect x="88" y="296" width="1140" height="120" rx="14" fill="#fffef5" stroke="#2c2c2c" stroke-width="2" filter="url(#rough)" transform="rotate(0.25 658 356)"/>
+  <rect x="91" y="299" width="1140" height="120" rx="14" fill="none" stroke="#2c2c2c" stroke-width="1" opacity="0.22" filter="url(#roughS)" transform="rotate(-0.35 661 359)"/>
+  <rect x="108" y="318" width="152" height="76" rx="10" fill="#4ecdc4" fill-opacity="0.16" stroke="#4ecdc4" stroke-width="2" filter="url(#roughS)"/>
+  <text x="184" y="356" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">工作流层</text>
+  <text x="184" y="378" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Workflow</text>
+  <g>
+    <rect x="327" y="336" width="190" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="343" cy="356" r="3" fill="#4ecdc4"/>
+    <text x="355" y="361" font-size="13.5" fill="#2c2c2c">主 Agent 与专家团队</text>
+    <rect x="529" y="336" width="170" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="545" cy="356" r="3" fill="#4ecdc4"/>
+    <text x="557" y="361" font-size="13.5" fill="#2c2c2c">委派 · 交接 · 并行</text>
+    <rect x="711" y="336" width="170" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="727" cy="356" r="3" fill="#4ecdc4"/>
+    <text x="739" y="361" font-size="13.5" fill="#2c2c2c">计划 · 构建 · 复查</text>
+    <rect x="893" y="336" width="100" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="909" cy="356" r="3" fill="#4ecdc4"/>
+    <text x="921" y="361" font-size="13.5" fill="#2c2c2c">工具分级</text>
+    <rect x="1005" y="336" width="150" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="1021" cy="356" r="3" fill="#4ecdc4"/>
+    <text x="1033" y="361" font-size="13.5" fill="#2c2c2c">人工询问与批准</text>
+  </g>
+  <path d="M640 428 L652 440 L664 428" stroke="#2c2c2c" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 框架层 -->
+  <rect x="88" y="452" width="1140" height="120" rx="14" fill="#fffef5" stroke="#2c2c2c" stroke-width="2" filter="url(#rough)" transform="rotate(-0.25 658 512)"/>
+  <rect x="91" y="455" width="1140" height="120" rx="14" fill="none" stroke="#2c2c2c" stroke-width="1" opacity="0.22" filter="url(#roughS)" transform="rotate(0.35 661 515)"/>
+  <rect x="108" y="474" width="152" height="76" rx="10" fill="#ffd93d" fill-opacity="0.16" stroke="#a98d16" stroke-width="2" filter="url(#roughS)"/>
+  <text x="184" y="512" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">框架层 · Mastra</text>
+  <text x="184" y="534" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Mastra Core</text>
+  <g>
+    <rect x="341" y="492" width="120" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="357" cy="512" r="3" fill="#a98d16"/>
+    <text x="369" y="517" font-size="13.5" fill="#2c2c2c">记忆 Memory</text>
+    <rect x="473" y="492" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="489" cy="512" r="3" fill="#a98d16"/>
+    <text x="501" y="517" font-size="13.5" fill="#2c2c2c">RAG 检索</text>
+    <rect x="595" y="492" width="130" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="611" cy="512" r="3" fill="#a98d16"/>
+    <text x="623" y="517" font-size="13.5" fill="#2c2c2c">MCP 客户端</text>
+    <rect x="737" y="492" width="120" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="753" cy="512" r="3" fill="#a98d16"/>
+    <text x="765" y="517" font-size="13.5" fill="#2c2c2c">可观测性</text>
+    <rect x="869" y="492" width="150" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="885" cy="512" r="3" fill="#a98d16"/>
+    <text x="897" y="517" font-size="13.5" fill="#2c2c2c">编辑器与 AST</text>
+    <rect x="1031" y="492" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="1047" cy="512" r="3" fill="#a98d16"/>
+    <text x="1059" y="517" font-size="13.5" fill="#2c2c2c">沙箱执行</text>
+  </g>
+  <path d="M640 584 L652 596 L664 584" stroke="#2c2c2c" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- 扩展层 -->
+  <rect x="88" y="608" width="1140" height="120" rx="14" fill="#fffef5" stroke="#2c2c2c" stroke-width="2" filter="url(#rough)" transform="rotate(0.25 658 668)"/>
+  <rect x="91" y="611" width="1140" height="120" rx="14" fill="none" stroke="#2c2c2c" stroke-width="1" opacity="0.22" filter="url(#roughS)" transform="rotate(-0.35 661 671)"/>
+  <rect x="108" y="630" width="152" height="76" rx="10" fill="#2c2c2c" fill-opacity="0.08" stroke="#2c2c2c" stroke-width="2" filter="url(#roughS)"/>
+  <text x="184" y="668" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">扩展层</text>
+  <text x="184" y="690" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Extensions</text>
+  <g>
+    <rect x="417" y="648" width="140" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="433" cy="668" r="3" fill="#2c2c2c"/>
+    <text x="445" y="673" font-size="13.5" fill="#2c2c2c">模型 Provider</text>
+    <rect x="569" y="648" width="140" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="585" cy="668" r="3" fill="#2c2c2c"/>
+    <text x="597" y="673" font-size="13.5" fill="#2c2c2c">MCP Server</text>
+    <rect x="721" y="648" width="120" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="737" cy="668" r="3" fill="#2c2c2c"/>
+    <text x="749" y="673" font-size="13.5" fill="#2c2c2c">技能与插件</text>
+    <rect x="853" y="648" width="90" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="869" cy="668" r="3" fill="#2c2c2c"/>
+    <text x="881" y="673" font-size="13.5" fill="#2c2c2c">资料库</text>
+    <rect x="955" y="648" width="110" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
+    <circle cx="971" cy="668" r="3" fill="#2c2c2c"/>
+    <text x="983" y="673" font-size="13.5" fill="#2c2c2c">网页检索</text>
+  </g>
+
+  <!-- 底部说明条 -->
+  <rect x="88" y="756" width="1140" height="48" rx="12" fill="#ffd93d" fill-opacity="0.22" stroke="#2c2c2c" stroke-width="1.8" filter="url(#rough)" transform="rotate(-0.2 658 780)"/>
+  <text x="658" y="785" font-size="13" fill="#2c2c2c" text-anchor="middle">本地数据 ~/.mastrawork · Mastra 服务本机 4111 端口 · 凭据由主进程保险库保管 · 存储可经 MASTRA_STORAGE_URL 调整</text>
+</svg>

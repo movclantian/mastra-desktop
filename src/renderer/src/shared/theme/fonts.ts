@@ -143,6 +143,33 @@ import "@fontsource/shippori-mincho/600.css";
 import "@fontsource/shippori-mincho/700.css";
 import "@fontsource/shippori-mincho/800.css";
 
+// ============================================================================
+// 注册表主题(tweakcn)补充字体 —— 覆盖 vercel/supabase/claude 等
+// registry 主题引用的字体族,保持离线自托管
+// ============================================================================
+import "@fontsource/open-sans/400.css";
+import "@fontsource/open-sans/600.css";
+import "@fontsource/open-sans/700.css";
+
+import "@fontsource/poppins/400.css";
+import "@fontsource/poppins/500.css";
+import "@fontsource/poppins/600.css";
+import "@fontsource/poppins/700.css";
+
+import "@fontsource/montserrat/400.css";
+import "@fontsource/montserrat/600.css";
+import "@fontsource/montserrat/700.css";
+import "@fontsource/montserrat/800.css";
+
+import "@fontsource/oxanium/400.css";
+import "@fontsource/oxanium/600.css";
+import "@fontsource/oxanium/700.css";
+
+import "@fontsource/architects-daughter/400.css";
+
+import "@fontsource/merriweather/400.css";
+import "@fontsource/merriweather/700.css";
+
 /**
  * 主题字体加载完成标记。
  * 供 ThemeProvider 在切换主题时用于诊断(可选)。

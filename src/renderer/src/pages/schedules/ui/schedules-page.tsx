@@ -276,10 +276,14 @@ export function SchedulesPage() {
         cron,
         timezone: draft.timezone.trim() || undefined,
         ...(draft.threadId ? { threadId: draft.threadId } : {}),
-        signalType: draft.signalType,
         tagName: draft.tagName.trim() || undefined,
-        ifActive: { behavior: draft.ifActive },
-        ifIdle: { behavior: draft.ifIdle },
+        ...(draft.threadId
+          ? {
+              signalType: draft.signalType,
+              ifActive: { behavior: draft.ifActive },
+              ifIdle: { behavior: draft.ifIdle },
+            }
+          : {}),
         ...(attributes ? { attributes } : {}),
         ...(providerOptions ? { providerOptions } : {}),
       };

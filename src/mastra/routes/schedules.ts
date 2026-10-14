@@ -116,7 +116,11 @@ export async function prepareScheduledRun({
   ) {
     return undefined;
   }
-  const { resourceId } = stored;
+  const resourceId =
+    stored.resourceId ??
+    (typeof stored.metadata?.ownerResourceId === "string"
+      ? stored.metadata.ownerResourceId
+      : undefined);
   if (!resourceId) throw workError("SCHEDULE_INVALID");
   const profileId = stored.metadata.profileId;
   const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === profileId);
@@ -223,7 +227,7 @@ function resourceIdFor(c: ContextWithMastra): string {
 function isOwnedSchedule(schedule: unknown, resourceId: string): schedule is ScheduleView {
   if (!schedule || typeof schedule !== "object" || !("agentId" in schedule)) return false;
   const candidate = schedule as ScheduleView;
-  return candidate.resourceId === resourceId;
+  return candidate.resourceId === resourceId || candidate.metadata?.ownerResourceId === resourceId;
 }
 
 async function ownedSchedule(c: ContextWithMastra, scheduleId: string): Promise<ScheduleView> {
@@ -256,6 +260,7 @@ const schedulesCreateRoute = registerApiRoute("/work/schedules", {
       throw workError("SCHEDULE_INVALID", {
         text: "Agent 定时任务仅支持单 Agent 和主管团队，显式流程请通过团队运行入口启动",
       });
+    const { signalType, ifActive, ifIdle, ...scheduleInput } = input;
     if (input.threadId) {
       const memory = await getWorkMemory(c.get("requestContext"));
       if (!(await getOwnedThread(memory, input.threadId, resourceId)))
@@ -263,10 +268,11 @@ const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     }
     try {
       const schedule = await c.get("mastra").schedules.create({
-        ...input,
+        ...scheduleInput,
         agentId: DEFAULT_AGENT_PROFILE_ID,
-        resourceId,
-        metadata: { profileId: profile.id },
+        ...(input.threadId ? { resourceId } : {}),
+        ...(input.threadId ? { signalType, ifActive, ifIdle } : {}),
+        metadata: { profileId: profile.id, ownerResourceId: resourceId },
       } satisfies CreateAgentScheduleInput);
       return c.json({ schedule }, 201);
     } catch (error) {

@@ -17,7 +17,6 @@
     root.classList.add(snap.dark ? "dark" : "light");
     if (snap.preset) root.setAttribute("data-theme-preset", String(snap.preset));
     if (snap.style) root.setAttribute("data-theme-style", String(snap.style));
-    if (snap.family) root.setAttribute("data-theme-family", String(snap.family));
     if (snap.generated) root.setAttribute("data-theme-generated", "true");
     for (const group of [snap.colors, snap.geometry, snap.typography]) {
       if (!group || typeof group !== "object") continue;

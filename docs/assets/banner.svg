@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" font-family="'Segoe Print','Comic Sans MS','Bradley Hand','Xingkai SC','STXingkai','KaiTi','STKaiti','楷体',cursive" role="img" aria-label="MastraWork 开源桌面 AI 工作台">
+  <title>MastraWork 开源桌面 AI 工作台</title>
+  <defs>
+    <filter id="rough" x="-6%" y="-6%" width="112%" height="112%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="4" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="4.5"/>
+    </filter>
+    <filter id="roughS" x="-8%" y="-8%" width="116%" height="116%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.05" numOctaves="3" seed="11" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="3"/>
+    </filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="5"/>
+      <feColorMatrix values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.05 0"/>
+    </filter>
+  </defs>
+
+  <!-- 纸面与纹理 -->
+  <rect width="1280" height="360" fill="#fffef5"/>
+  <rect width="1280" height="360" filter="url(#grain)"/>
+
+  <!-- 笔记本横线 -->
+  <g stroke="#a8c8e8" stroke-opacity="0.35" stroke-width="1" fill="none">
+    <path d="M0 32 H1280 M0 64 H1280 M0 96 H1280 M0 128 H1280 M0 160 H1280 M0 192 H1280 M0 224 H1280 M0 256 H1280 M0 288 H1280 M0 320 H1280 M0 352 H1280"/>
+  </g>
+
+  <!-- 红色边距线 -->
+  <path d="M90 8 C 88 120, 92 240, 90 352" stroke="#ff6b6b" stroke-opacity="0.28" stroke-width="1.5" fill="none"/>
+
+  <!-- 螺旋装订孔 -->
+  <g>
+    <circle cx="46" cy="44" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="44" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+    <circle cx="46" cy="104" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="104" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+    <circle cx="46" cy="164" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="164" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+    <circle cx="46" cy="224" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="224" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+    <circle cx="46" cy="284" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="284" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+    <circle cx="46" cy="344" r="8" fill="#fffef5" stroke="#2c2c2c" stroke-opacity="0.35" stroke-width="1.5"/>
+    <circle cx="46" cy="344" r="2.5" fill="#2c2c2c" opacity="0.18"/>
+  </g>
+
+  <!-- 眉题 -->
+  <text x="150" y="86" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="11" letter-spacing="2.5" fill="#2c2c2c" opacity="0.55">OPEN-SOURCE DESKTOP AI WORKBENCH</text>
+
+  <!-- 马克笔高亮 -->
+  <path d="M144 106 C 320 94, 470 116, 600 98 L 602 150 C 470 168, 320 142, 146 158 Z" fill="#ffd93d" opacity="0.5" filter="url(#rough)" transform="rotate(-0.7 372 128)"/>
+
+  <!-- 标题 -->
+  <text x="150" y="152" font-size="56" font-weight="700" fill="#2c2c2c">MastraWork</text>
+
+  <!-- 波浪下划线 -->
+  <path d="M152 170 q 12 7 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0 t 24 0" stroke="#ff6b6b" stroke-width="3" fill="none" stroke-linecap="round"/>
+
+  <!-- 小星星 -->
+  <path d="M556 96 Q557 105 566 106 Q557 107 556 116 Q555 107 546 106 Q555 105 556 96 Z" fill="#ffd93d" stroke="#a98d16" stroke-width="1"/>
+  <path d="M598 130 Q599 136 605 137 Q599 138 598 144 Q597 138 591 137 Q599 136 598 130 Z" fill="#ff6b6b" opacity="0.8"/>
+
+  <!-- 副标题 -->
+  <text x="150" y="210" font-size="19" fill="#2c2c2c" opacity="0.88">把 Agent、团队、工作区、终端、浏览器、MCP、</text>
+  <text x="150" y="240" font-size="19" fill="#2c2c2c" opacity="0.88">技能与资料库，放进同一个可检查的桌面工作流</text>
+
+  <!-- 徽章 pill -->
+  <g>
+    <rect x="140" y="274" width="112" height="32" rx="16" fill="#fffef5" stroke="#ff6b6b" stroke-width="1.8" filter="url(#roughS)"/>
+    <text x="196" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Apache-2.0</text>
+    <rect x="266" y="274" width="86" height="32" rx="16" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.8" filter="url(#roughS)"/>
+    <text x="309" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">v0.0.7</text>
+    <rect x="366" y="274" width="120" height="32" rx="16" fill="#fffef5" stroke="#4ecdc4" stroke-width="1.8" filter="url(#roughS)"/>
+    <text x="426" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Electron 44</text>
+    <rect x="500" y="274" width="122" height="32" rx="16" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.8" filter="url(#roughS)"/>
+    <text x="561" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Mastra 1.77</text>
+    <rect x="636" y="274" width="182" height="32" rx="16" fill="#fffef5" stroke="#a98d16" stroke-width="1.8" filter="url(#roughS)"/>
+    <text x="727" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Win / macOS / Linux</text>
+  </g>
+
+  <!-- 手绘终端 -->
+  <g transform="translate(848,56)">
+    <rect x="-26" y="-14" width="72" height="20" rx="2" fill="#ffd93d" opacity="0.45" filter="url(#roughS)" transform="rotate(-5 10 0)"/>
+    <rect x="0" y="0" width="372" height="248" rx="12" fill="#fffef5" stroke="#2c2c2c" stroke-width="2.2" filter="url(#rough)"/>
+    <rect x="3" y="3" width="372" height="248" rx="12" fill="none" stroke="#2c2c2c" stroke-width="1.1" opacity="0.3" filter="url(#roughS)" transform="rotate(0.5 186 124)"/>
+    <path d="M6 40 C 120 38, 250 42, 366 40" stroke="#2c2c2c" stroke-width="1.6" fill="none" opacity="0.7"/>
+    <circle cx="24" cy="20" r="6" fill="#ff6b6b" stroke="#2c2c2c" stroke-width="1.5" filter="url(#roughS)"/>
+    <circle cx="44" cy="20" r="6" fill="#ffd93d" stroke="#2c2c2c" stroke-width="1.5" filter="url(#roughS)"/>
+    <circle cx="64" cy="20" r="6" fill="#4ecdc4" stroke="#2c2c2c" stroke-width="1.5" filter="url(#roughS)"/>
+    <text x="84" y="24" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="11" fill="#2c2c2c" opacity="0.55">mastra-workbench</text>
+    <text x="20" y="72" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="12.5" fill="#2c2c2c">$ pnpm dev</text>
+    <path d="M118 76 h14" stroke="#2c2c2c" stroke-width="2" stroke-linecap="round"/>
+    <path d="M20 96 q 8 -5 16 0 t 16 0 t 16 0 t 16 0 t 16 0 t 16 0 t 16 0 t 16 0" stroke="#2c2c2c" stroke-width="1.6" fill="none" opacity="0.35" stroke-linecap="round"/>
+    <path d="M22 118 l6 7 l12 -14" stroke="#2a9d96" stroke-width="2.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="52" y="124" font-size="12.5" fill="#2c2c2c">计划已批准，进入构建</text>
+    <path d="M26 146 L34 132 L42 146 Z" fill="#ffd93d" stroke="#a98d16" stroke-width="1.6" stroke-linejoin="round"/>
+    <path d="M34 137 v5" stroke="#a98d16" stroke-width="1.8" stroke-linecap="round"/>
+    <circle cx="34" cy="144.5" r="1.1" fill="#a98d16"/>
+    <text x="52" y="144" font-size="12.5" fill="#2c2c2c">高风险命令等待确认</text>
+    <path d="M22 172 h16 m-6 -6 l6 6 l-6 6" stroke="#2c2c2c" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="52" y="176" font-size="12.5" fill="#2c2c2c">复查完成，差异可逐条查看</text>
+    <path d="M20 198 q 8 5 16 0 t 16 0 t 16 0 t 16 0 t 16 0 t 16 0 t 16 0" stroke="#2c2c2c" stroke-width="1.6" fill="none" opacity="0.3" stroke-linecap="round"/>
+    <text x="20" y="226" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="12.5" fill="#2c2c2c">$</text>
+    <path d="M38 230 h12" stroke="#2c2c2c" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <text x="1220" y="338" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="11" fill="#2c2c2c" opacity="0.45" text-anchor="end">github.com/movclantian/mastra-desktop</text>
+</svg>

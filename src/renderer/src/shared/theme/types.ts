@@ -16,21 +16,6 @@ type ThemeCategory =
   | "nature_warm"
   | "expressive";
 
-/**
- * 质感签名家族:CSS 侧以 [data-theme-family] 选择器按家族应用
- * 阴影/圆角/模糊/辉光/像素化等深度定制,颜色则全部经 token 变量派生。
- */
-export type ThemeFamily =
-  | "flat"
-  | "brutalism"
-  | "clay"
-  | "glass"
-  | "glow"
-  | "pixel"
-  | "paper"
-  | "mono"
-  | "aero";
-
 export interface ThemeColorTokens {
   background: string;
   foreground: string;
@@ -92,9 +77,7 @@ export interface ThemePreset {
   registrySource: string;
   /** 经 [data-theme-style] 暴露给 CSS;与 preset id 一致 */
   styleKey: string;
-  /** 质感签名家族,经 [data-theme-family] 暴露 */
-  family?: ThemeFamily;
-  /** 内置主题标记(氛围层等 CSS 仅作用于内置主题) */
+  /** 内置主题标记(经 [data-theme-generated] 暴露) */
   generated?: boolean;
   light: ThemeColorTokens;
   dark: ThemeColorTokens;
