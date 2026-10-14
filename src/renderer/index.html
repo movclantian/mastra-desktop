@@ -5,6 +5,8 @@
     <title>MastraWork</title>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <link rel="icon" type="image/png" href="./icon.png" />
+    <!-- 首帧主题引导:在 React 挂载前恢复上次会话的深浅色与全部 CSS 变量,消除启动白闪。 -->
+    <script src="./boot-theme.js"></script>
     <!-- Electron injects the CSP from the resolved renderer URL so a fallback
          Vite port cannot leave a stale ws://localhost:5173 policy behind. -->
     <link rel="preconnect" href="__FONT_STYLES_ORIGIN__" />

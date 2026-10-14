@@ -18,6 +18,7 @@ import {
   dialog,
   ipcMain,
   Notification,
+  nativeTheme,
   safeStorage,
   screen,
   session,
@@ -91,6 +92,7 @@ import {
   FONT_FILES_ORIGIN,
   FONT_STYLES_ORIGIN,
   SetMinimumWidthRequestSchema,
+  SetNativeThemeRequestSchema,
   WINDOW_CHANNELS,
   WindowControlActionSchema,
   type WindowState,
@@ -1187,6 +1189,10 @@ function bootstrap(): void {
       const window = BrowserWindow.fromWebContents(event.sender);
       if (!window) throw new Error("Window is unavailable");
       return readWindowState(window);
+    });
+    ipcMain.handle(WINDOW_CHANNELS.setNativeTheme, (event, value: unknown) => {
+      assertTrustedIpcSender(event);
+      nativeTheme.themeSource = SetNativeThemeRequestSchema.parse(value);
     });
     ipcMain.handle(WINDOW_CHANNELS.control, (event, value: unknown) => {
       assertTrustedIpcSender(event);

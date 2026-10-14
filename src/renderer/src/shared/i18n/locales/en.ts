@@ -1,3 +1,5 @@
+import { THEMES_PRESETS_EN } from "../../theme/generated/locales.generated";
+
 export const en = {
   plugins: {
     startingDiagnosis: "Creating a diagnosis conversation and sending the issue…",
@@ -1686,6 +1688,12 @@ export const en = {
         clay_glass: "Skeuo/Glass",
         scifi_dark: "Sci-Fi/Glow",
         pixel_retro: "Pixel/Arcade",
+        retroWave: "Retro Wave",
+        artistic: "Artistic",
+        professional: "Professional",
+        luxury: "Luxury",
+        natureWarm: "Nature/Warm",
+        expressive: "Expressive",
         subtle_textured: "Subtle Texture",
         minimal_modern: "Minimal Modern",
         editorial_paper: "Editorial Paper",
@@ -1693,6 +1701,7 @@ export const en = {
         vibrant_pop: "Vibrant Pop",
       },
       presets: {
+        ...THEMES_PRESETS_EN,
         default: {
           name: "Mastra Clean",
           categoryLabel: "Modern Minimal",
@@ -2491,6 +2500,7 @@ export const en = {
       executionFailed: "Execution failed",
       executing: "Executing...",
       callFailed: "Call failed",
+      noRecordedResult: "Execution stopped without a recorded result",
       workspaceCommand: "Workspace Command",
       typescriptScript: "TypeScript Workspace Script",
       code: "Code",
@@ -2499,6 +2509,12 @@ export const en = {
       generatingCode: "// Generating code...",
       waitingOutput: "Waiting for output…",
       toolCallsCount: "Tool calls · {{count}} steps",
+      totalToolTime:
+        "Sum of individual tool execution times (parallel calls are counted separately)",
+      observedToolTime:
+        "Approximate time since this view observed execution; earlier execution may be excluded",
+      unknownToolTime:
+        "Historical start/end times are missing or invalid; total duration is unavailable",
       taskStatus: {
         completed: "Completed",
         inProgress: "In progress",
@@ -3233,7 +3249,7 @@ export const en = {
     instructions: "Instructions",
     resolvedInstructions: "Full system prompt preview",
     previewHint:
-      "This preview uses the default context. Runs resolve workspace, mode and selected capabilities for the current thread.",
+      "Shows the saved role and Agent instructions resolved in the default context. Save edits to refresh this preview. Runs also incorporate the thread's mode, workspace, skills, memory, and tools.",
     saveInstructionsFailed: "Failed to save instructions",
     skills: "Skills",
     delegates: "May delegate to",

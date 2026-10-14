@@ -1,7 +1,9 @@
 import { i18n } from "@/shared/i18n";
-import type { ThemeInspirationPalette, ThemePreset } from "./types";
+import { GENERATED_PRESETS } from "./generated/presets.generated";
+import type { ThemeFamily, ThemeInspirationPalette, ThemePreset } from "./types";
 
-export const THEME_PRESETS: ThemePreset[] = [
+/** 人工精修的官方预设(18) */
+const HAND_CRAFTED_PRESETS: ThemePreset[] = [
   {
     id: "default",
     get name() {
@@ -17,6 +19,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "official",
     styleKey: "default",
+    family: "flat" as ThemeFamily,
     light: {
       background: "#ffffff",
       foreground: "#171717",
@@ -102,6 +105,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@boldkit",
     styleKey: "boldkit",
+    family: "brutalism" as ThemeFamily,
     light: {
       background: "#fefcf6",
       foreground: "#09090b",
@@ -186,6 +190,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@neobrutalism",
     styleKey: "neobrutalism",
+    family: "brutalism" as ThemeFamily,
     light: {
       background: "#fffdfa",
       foreground: "#000000",
@@ -270,6 +275,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@retroui",
     styleKey: "retroui",
+    family: "brutalism" as ThemeFamily,
     light: {
       background: "#faf6ee",
       foreground: "#1c1917",
@@ -354,6 +360,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@saaskit",
     styleKey: "saaskit",
+    family: "brutalism" as ThemeFamily,
     light: {
       background: "#f8fafc",
       foreground: "#0f172a",
@@ -438,6 +445,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@1st-pouf",
     styleKey: "pouf",
+    family: "clay" as ThemeFamily,
     light: {
       background: "#f7f3ff",
       foreground: "#2d2244",
@@ -522,6 +530,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@glasscn",
     styleKey: "glasscn",
+    family: "glass" as ThemeFamily,
     light: {
       background: "#f0f4f9",
       foreground: "#0f172a",
@@ -607,6 +616,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@einui",
     styleKey: "einui",
+    family: "glass" as ThemeFamily,
     light: {
       background: "#f4f6f8",
       foreground: "#111827",
@@ -691,6 +701,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@sabraman",
     styleKey: "sabraman",
+    family: "clay" as ThemeFamily,
     light: {
       background: "#e9e6df",
       foreground: "#2b2723",
@@ -775,6 +786,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@thegridcn",
     styleKey: "thegridcn",
+    family: "glow" as ThemeFamily,
     light: {
       background: "#f0f7fa",
       foreground: "#040d1a",
@@ -859,6 +871,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@gymnopedies",
     styleKey: "gymnopedies",
+    family: "glow" as ThemeFamily,
     light: {
       background: "#fcfaf7",
       foreground: "#231f1c",
@@ -943,6 +956,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@atroui",
     styleKey: "atroui",
+    family: "glow" as ThemeFamily,
     light: {
       background: "#faf7fe",
       foreground: "#140924",
@@ -1027,6 +1041,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@usva",
     styleKey: "usva",
+    family: "glow" as ThemeFamily,
     light: {
       background: "#f1f6f8",
       foreground: "#0a1924",
@@ -1111,6 +1126,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@8bitcn",
     styleKey: "8bitcn",
+    family: "pixel" as ThemeFamily,
     light: {
       background: "#f4f4f4",
       foreground: "#111111",
@@ -1195,6 +1211,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@pixelact-ui",
     styleKey: "pixelact",
+    family: "pixel" as ThemeFamily,
     light: {
       background: "#fbf7ee",
       foreground: "#2b2038",
@@ -1279,6 +1296,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@washiveil",
     styleKey: "washiveil",
+    family: "paper" as ThemeFamily,
     light: {
       background: "#f8f5ee",
       foreground: "#28231d",
@@ -1364,6 +1382,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@whiskeyjack",
     styleKey: "whiskeyjack",
+    family: "paper" as ThemeFamily,
     light: {
       background: "#f8fafc",
       foreground: "#0f172a",
@@ -1448,6 +1467,7 @@ export const THEME_PRESETS: ThemePreset[] = [
     },
     registrySource: "@magicui",
     styleKey: "motion",
+    family: "flat" as ThemeFamily,
     light: {
       background: "#fafafa",
       foreground: "#09090b",
@@ -1517,6 +1537,27 @@ export const THEME_PRESETS: ThemePreset[] = [
       textTransform: "none",
     },
   },
+];
+
+/**
+ * 全量预设 = 18 个官方精修 + 125 个内置预设。
+ * 生成预设的名称/分类/描述经 i18n getter 动态解析(与官方预设同模式)。
+ */
+function localizeGeneratedPresets(): ThemePreset[] {
+  return GENERATED_PRESETS.map((preset) => ({
+    ...preset,
+    get categoryLabel() {
+      return i18n.t(`settings:themes.presets.${preset.id}.categoryLabel`);
+    },
+    get description() {
+      return i18n.t(`settings:themes.presets.${preset.id}.desc`);
+    },
+  }));
+}
+
+export const THEME_PRESETS: ThemePreset[] = [
+  ...HAND_CRAFTED_PRESETS,
+  ...localizeGeneratedPresets(),
 ];
 
 export const THEME_INSPIRATIONS: ThemeInspirationPalette[] = [

@@ -8,6 +8,7 @@ import {
   DesktopSettingsPatchSchema,
   DesktopSettingsSchema,
   SetMinimumWidthRequestSchema,
+  SetNativeThemeRequestSchema,
   WINDOW_CHANNELS,
   type WindowControlAction,
   WindowControlActionSchema,
@@ -17,6 +18,12 @@ import {
 
 export function createWindowApi(ipcRenderer: IpcRenderer) {
   return {
+    setNativeTheme: async (mode: "light" | "dark" | "system"): Promise<void> => {
+      await ipcRenderer.invoke(
+        WINDOW_CHANNELS.setNativeTheme,
+        SetNativeThemeRequestSchema.parse(mode),
+      );
+    },
     control: async (action: WindowControlAction): Promise<void> => {
       await ipcRenderer.invoke(WINDOW_CHANNELS.control, WindowControlActionSchema.parse(action));
     },

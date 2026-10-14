@@ -1,3 +1,5 @@
+import { THEMES_PRESETS_ZH } from "../../theme/generated/locales.generated";
+
 export const zh = {
   plugins: {
     startingDiagnosis: "正在创建诊断会话并发送问题…",
@@ -1629,6 +1631,12 @@ export const zh = {
         clay_glass: "拟物/玻璃",
         scifi_dark: "科幻/发光",
         pixel_retro: "像素/游戏",
+        retroWave: "复古浪潮",
+        artistic: "艺术画风",
+        professional: "专业工具",
+        luxury: "奢华质感",
+        natureWarm: "自然/暖调",
+        expressive: "表现主义",
         subtle_textured: "精雕微质感",
         minimal_modern: "极简现代",
         editorial_paper: "纸面排版",
@@ -1636,6 +1644,7 @@ export const zh = {
         vibrant_pop: "潮流活力",
       },
       presets: {
+        ...THEMES_PRESETS_ZH,
         default: {
           name: "现代极简",
           categoryLabel: "现代极简",
@@ -2410,6 +2419,7 @@ export const zh = {
       executionFailed: "执行失败",
       executing: "正在执行...",
       callFailed: "调用失败",
+      noRecordedResult: "执行已停止，未收到工具结果",
       workspaceCommand: "工作区命令",
       typescriptScript: "TypeScript 工作区脚本",
       code: "代码",
@@ -2418,6 +2428,9 @@ export const zh = {
       generatingCode: "// 正在生成代码...",
       waitingOutput: "正在等待输出…",
       toolCallsCount: "工具调用 · {{count}} 步",
+      totalToolTime: "本组各工具执行耗时之和（并行调用分别计时）",
+      observedToolTime: "约计时间：从本次界面观察到运行开始计时，可能不包含此前的执行时间",
+      unknownToolTime: "历史记录缺少可信的起止时间，无法计算总耗时",
       taskStatus: {
         completed: "已完成",
         inProgress: "进行中",
@@ -3119,7 +3132,8 @@ export const zh = {
     executionSteps: "执行步骤",
     instructions: "指令",
     resolvedInstructions: "完整系统提示词预览",
-    previewHint: "预览使用当前默认上下文；执行时会按会话叠加工作区、模式、已选能力等动态上下文。",
+    previewHint:
+      "预览展示已保存的角色指令及默认上下文下解析出的 Agent 指令。修改后保存以刷新预览；执行时还会按会话加入模式、工作区、技能、记忆和工具等上下文。",
     saveInstructionsFailed: "保存指令失败",
     skills: "技能",
     delegates: "可委派成员",

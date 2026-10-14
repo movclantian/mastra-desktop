@@ -1,5 +1,5 @@
 import { Moon, Sun } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { flushSync } from "react-dom";
 import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
@@ -21,13 +21,10 @@ export interface AnimatedThemeTogglerProps extends React.ComponentPropsWithoutRe
   fromCenter?: boolean;
   /** When true, renders a text label next to the icon. */
   showLabel?: boolean;
-  /**
-   * Controlled theme value. When provided, the parent owns persistence
-   * (e.g. `next-themes`) and this component will not write to localStorage.
-   */
-  theme?: "light" | "dark";
-  /** Called on toggle. Pair with `theme` for controlled usage. */
-  onThemeChange?: (theme: "light" | "dark") => void;
+  /** Controlled theme value — the parent (ThemeProvider) owns persistence. */
+  theme: "light" | "dark";
+  /** Called on toggle. */
+  onThemeChange: (theme: "light" | "dark") => void;
 }
 
 function polygonCollapsed(point: string, vertexCount: number): string {
@@ -151,9 +148,7 @@ export const AnimatedThemeToggler = ({
   ...props
 }: AnimatedThemeTogglerProps) => {
   const shape = variant ?? "circle";
-  const isControlled = theme !== undefined;
-  const [internalIsDark, setInternalIsDark] = useState(false);
-  const isDark = isControlled ? theme === "dark" : internalIsDark;
+  const isDark = theme === "dark";
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isTransitioningRef = useRef(false);
   const activeAnimRef = useRef<Animation | null>(null);
@@ -173,24 +168,6 @@ export const AnimatedThemeToggler = ({
       root.style.removeProperty("--magicui-theme-vt-clip-from");
     };
   }, [cancelAnim]);
-
-  useEffect(() => {
-    if (isControlled) return;
-
-    const updateTheme = () => {
-      setInternalIsDark(document.documentElement.classList.contains("dark"));
-    };
-
-    updateTheme();
-
-    const observer = new MutationObserver(updateTheme);
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ["class"],
-    });
-
-    return () => observer.disconnect();
-  }, [isControlled]);
 
   const toggleTheme = useCallback(() => {
     const button = buttonRef.current;
@@ -220,16 +197,12 @@ export const AnimatedThemeToggler = ({
     const maxRadius = Math.hypot(Math.max(x, viewportWidth - x), Math.max(y, viewportHeight - y));
 
     const applyTheme = () => {
-      const newTheme = !isDark;
-      // Always toggle the class synchronously so the View Transitions API
-      // snapshots the new theme inside the startViewTransition callback.
+      const next = isDark ? "light" : "dark";
+      // Class flips synchronously so the View Transitions API snapshots the
+      // new theme inside the startViewTransition callback; the parent then
+      // re-applies the full preset via onThemeChange.
       document.documentElement.classList.toggle("dark");
-      if (isControlled) {
-        onThemeChange?.(newTheme ? "dark" : "light");
-      } else {
-        setInternalIsDark(newTheme);
-        localStorage.setItem("theme", newTheme ? "dark" : "light");
-      }
+      onThemeChange?.(next);
     };
 
     if (typeof document.startViewTransition !== "function") {
@@ -290,7 +263,7 @@ export const AnimatedThemeToggler = ({
         })
         .catch(() => {});
     }
-  }, [shape, fromCenter, duration, isDark, isControlled, onThemeChange, cancelAnim]);
+  }, [shape, fromCenter, duration, isDark, onThemeChange, cancelAnim]);
 
   return (
     <Button

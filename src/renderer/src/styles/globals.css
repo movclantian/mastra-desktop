@@ -1,4 +1,7 @@
 @import "../shared/ui/visual/dotmatrix/loader.css";
+/* 内置主题(×125)的家族质感签名与氛围层 */
+@import "./themes-families.css";
+@import "./generated-theme-ambients.css";
 
 /*
  * shadcn/ui Tailwind v4 官方暗色模式结构:
@@ -655,7 +658,7 @@
 [data-theme-style="pouf"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 9999px;
   box-shadow:
-    0 6px 14px -2px rgba(139, 92, 246, 0.25),
+    0 6px 14px -2px color-mix(in oklab, var(--primary) 25%, transparent),
     inset 0 2px 2px rgba(255, 255, 255, 0.7),
     inset 0 -2px 3px rgba(0, 0, 0, 0.12);
   transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -676,8 +679,8 @@
   border-radius: 1.25rem;
   border-color: var(--border);
   box-shadow:
-    0 10px 25px -5px rgba(139, 92, 246, 0.12),
-    0 8px 10px -6px rgba(139, 92, 246, 0.08),
+    0 10px 25px -5px color-mix(in oklab, var(--primary) 12%, transparent),
+    0 8px 10px -6px color-mix(in oklab, var(--primary) 8%, transparent),
     inset 0 1.5px 1.5px rgba(255, 255, 255, 0.85);
 }
 
@@ -699,7 +702,7 @@
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow:
-    0 8px 32px 0 rgba(2, 132, 199, 0.08),
+    0 8px 32px 0 color-mix(in oklab, var(--primary) 8%, transparent),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
 }
 
@@ -717,7 +720,7 @@
   backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.35);
   box-shadow:
-    0 4px 14px 0 rgba(2, 132, 199, 0.22),
+    0 4px 14px 0 color-mix(in oklab, var(--primary) 22%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.45);
   transition: all 0.15s ease;
 }
@@ -725,7 +728,7 @@
 [data-theme-style="glasscn"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
   transform: scale(0.97);
-  box-shadow: 0 2px 6px 0 rgba(2, 132, 199, 0.15);
+  box-shadow: 0 2px 6px 0 color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 /* --- @einui: 磨砂晶钻 (Frosted Acrylic) --- */
@@ -737,7 +740,7 @@
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   box-shadow:
-    0 10px 30px -10px rgba(5, 150, 105, 0.12),
+    0 10px 30px -10px color-mix(in oklab, var(--primary) 12%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
@@ -747,12 +750,12 @@
 .dark[data-theme-style="einui"] [data-slot="input-group"] {
   box-shadow:
     0 14px 40px -8px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 rgba(52, 211, 153, 0.18);
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 18%, transparent);
 }
 
 [data-theme-style="einui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   box-shadow:
-    0 4px 14px -2px rgba(5, 150, 105, 0.28),
+    0 4px 14px -2px color-mix(in oklab, var(--primary) 28%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.35);
   transition: all 0.15s ease;
 }
@@ -815,11 +818,11 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.25rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 16px -2px rgba(0, 240, 255, 0.35),
-    inset 0 0 10px rgba(0, 240, 255, 0.12);
+    0 0 16px -2px color-mix(in oklab, var(--primary) 35%, transparent),
+    inset 0 0 10px color-mix(in oklab, var(--primary) 12%, transparent);
   background-image:
-    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(color-mix(in oklab, var(--primary) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--primary) 3%, transparent) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
@@ -827,11 +830,11 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="thegridcn"] [data-slot="dialog-content"],
 .dark[data-theme-style="thegridcn"] [data-slot="popover-content"],
 .dark[data-theme-style="thegridcn"] [data-slot="input-group"] {
-  background-color: rgba(7, 14, 27, 0.92);
-  border-color: #00f0ff;
+  background-color: color-mix(in oklab, var(--primary) 4%, var(--card));
+  border-color: var(--primary);
   box-shadow:
-    0 0 20px -3px rgba(0, 240, 255, 0.45),
-    inset 0 0 12px rgba(0, 240, 255, 0.18);
+    0 0 20px -3px color-mix(in oklab, var(--primary) 45%, transparent),
+    inset 0 0 12px color-mix(in oklab, var(--primary) 18%, transparent);
 }
 
 [data-theme-style="thegridcn"]
@@ -839,7 +842,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.25rem;
   border: 1px solid var(--primary);
   box-shadow:
-    0 0 14px 0 rgba(0, 240, 255, 0.4),
+    0 0 14px 0 color-mix(in oklab, var(--primary) 40%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.5);
   font-family: var(--theme-font-sans);
   letter-spacing: 0.05em;
@@ -850,16 +853,16 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="thegridcn"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover {
   box-shadow:
-    0 0 22px 2px rgba(0, 240, 255, 0.7),
-    inset 0 0 8px rgba(0, 240, 255, 0.4);
+    0 0 22px 2px color-mix(in oklab, var(--primary) 70%, transparent),
+    inset 0 0 8px color-mix(in oklab, var(--primary) 40%, transparent);
 }
 
 [data-theme-style="thegridcn"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):active:not(:disabled) {
   transform: scale(0.97);
   box-shadow:
-    0 0 10px rgba(0, 240, 255, 0.3),
-    inset 0 0 14px rgba(0, 240, 255, 0.6);
+    0 0 10px color-mix(in oklab, var(--primary) 30%, transparent),
+    inset 0 0 14px color-mix(in oklab, var(--primary) 60%, transparent);
 }
 
 /* --- @gymnopedies: 萨蒂暗调静谧文学 (Literary Dark Glow) --- */
@@ -870,25 +873,25 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.375rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 24px rgba(226, 168, 85, 0.08),
-    inset 0 1px 0 rgba(226, 168, 85, 0.18);
+    0 0 24px color-mix(in oklab, var(--primary) 8%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 18%, transparent);
 }
 
 .dark[data-theme-style="gymnopedies"] [data-slot="card"],
 .dark[data-theme-style="gymnopedies"] [data-slot="dialog-content"],
 .dark[data-theme-style="gymnopedies"] [data-slot="popover-content"],
 .dark[data-theme-style="gymnopedies"] [data-slot="input-group"] {
-  background-color: #151210;
+  background-color: color-mix(in oklab, var(--primary) 4%, var(--card));
   box-shadow:
-    0 0 30px rgba(226, 168, 85, 0.06),
-    inset 0 1px 0 rgba(226, 168, 85, 0.2);
+    0 0 30px color-mix(in oklab, var(--primary) 6%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 20%, transparent);
 }
 
 [data-theme-style="gymnopedies"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.375rem;
   box-shadow:
-    0 2px 8px rgba(226, 168, 85, 0.18),
+    0 2px 8px color-mix(in oklab, var(--primary) 18%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.35);
   transition: all 0.15s ease;
 }
@@ -901,24 +904,24 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.5rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 20px -4px rgba(192, 132, 252, 0.25),
-    inset 0 1px 0 rgba(244, 63, 94, 0.2);
+    0 0 20px -4px color-mix(in oklab, var(--primary) 25%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--accent) 20%, transparent);
 }
 
 .dark[data-theme-style="atroui"] [data-slot="card"],
 .dark[data-theme-style="atroui"] [data-slot="dialog-content"],
 .dark[data-theme-style="atroui"] [data-slot="popover-content"],
 .dark[data-theme-style="atroui"] [data-slot="input-group"] {
-  background-color: #100a1c;
+  background-color: color-mix(in oklab, var(--primary) 6%, var(--card));
   box-shadow:
-    0 0 24px -2px rgba(192, 132, 252, 0.4),
-    inset 0 1px 0 rgba(244, 63, 94, 0.3);
+    0 0 24px -2px color-mix(in oklab, var(--primary) 40%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--accent) 30%, transparent);
 }
 
 [data-theme-style="atroui"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.5rem;
   box-shadow:
-    0 0 16px 0 rgba(192, 132, 252, 0.35),
+    0 0 16px 0 color-mix(in oklab, var(--primary) 35%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
   transition: all 0.15s ease;
 }
@@ -931,7 +934,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.75rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 12px 36px -8px rgba(45, 212, 191, 0.16),
+    0 12px 36px -8px color-mix(in oklab, var(--primary) 16%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.12);
 }
 
@@ -939,16 +942,16 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="usva"] [data-slot="dialog-content"],
 .dark[data-theme-style="usva"] [data-slot="popover-content"],
 .dark[data-theme-style="usva"] [data-slot="input-group"] {
-  background-color: #0c1520;
+  background-color: color-mix(in oklab, var(--primary) 5%, var(--card));
   box-shadow:
-    0 14px 44px -8px rgba(45, 212, 191, 0.22),
+    0 14px 44px -8px color-mix(in oklab, var(--primary) 22%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.15);
 }
 
 [data-theme-style="usva"] button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.75rem;
   box-shadow:
-    0 4px 16px 0 rgba(45, 212, 191, 0.25),
+    0 4px 16px 0 color-mix(in oklab, var(--primary) 25%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.3);
   transition: all 0.15s ease;
 }
@@ -1034,7 +1037,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--border);
   backdrop-filter: blur(12px);
   box-shadow:
-    0 4px 20px -2px rgba(139, 87, 42, 0.08),
+    0 4px 20px -2px color-mix(in oklab, var(--primary) 8%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.6);
 }
 
@@ -1051,7 +1054,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 9999px;
   box-shadow:
-    0 2px 6px rgba(139, 87, 42, 0.15),
+    0 2px 6px color-mix(in oklab, var(--primary) 15%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
   transition: all 0.15s ease;
 }
@@ -1070,7 +1073,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="whiskeyjack"] [data-slot="dialog-content"],
 .dark[data-theme-style="whiskeyjack"] [data-slot="popover-content"],
 .dark[data-theme-style="whiskeyjack"] [data-slot="input-group"] {
-  background-color: #0f172a;
+  background-color: color-mix(in oklab, var(--primary) 4%, var(--card));
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
@@ -1114,7 +1117,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="washiveil"] [data-slot="badge"] {
   border-radius: 9999px;
   border: 1px solid var(--border);
-  box-shadow: 0 1px 3px rgba(139, 87, 42, 0.1);
+  box-shadow: 0 1px 3px color-mix(in oklab, var(--primary) 10%, transparent);
   letter-spacing: 0.05em;
 }
 
@@ -1122,7 +1125,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 9999px;
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 0.8),
-    0 2px 5px rgba(139, 92, 246, 0.15);
+    0 2px 5px color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 [data-theme-style="glasscn"] [data-slot="badge"],
@@ -1141,7 +1144,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="thegridcn"] [data-slot="badge"] {
   border-radius: 0.25rem;
   border: 1px solid var(--primary);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--primary) 40%, transparent);
   font-family: var(--theme-font-sans);
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -1150,19 +1153,19 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="gymnopedies"] [data-slot="badge"] {
   border-radius: 0.25rem;
   border: 1px solid var(--border);
-  box-shadow: 0 0 10px rgba(226, 168, 85, 0.15);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 [data-theme-style="atroui"] [data-slot="badge"] {
   border-radius: 0.375rem;
   border: 1px solid var(--primary);
-  box-shadow: 0 0 12px rgba(192, 132, 252, 0.35);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--primary) 35%, transparent);
 }
 
 [data-theme-style="usva"] [data-slot="badge"] {
   border-radius: 0.5rem;
   border: 1px solid var(--border);
-  box-shadow: 0 2px 10px rgba(45, 212, 191, 0.15);
+  box-shadow: 0 2px 10px color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 /* 开关 (Switch) 体系适配 */
@@ -1183,7 +1186,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="thegridcn"] [data-slot="switch"] {
   border-radius: 0.25rem;
   border: 1px solid var(--primary);
-  box-shadow: 0 0 10px rgba(0, 240, 255, 0.35);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--primary) 35%, transparent);
 }
 
 [data-theme-style="sabraman"] [data-slot="switch"] {
@@ -1207,14 +1210,14 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="pouf"] [data-slot="tabs-trigger"][data-state="active"] {
   border-radius: 9999px;
   box-shadow:
-    0 4px 10px -2px rgba(139, 92, 246, 0.2),
+    0 4px 10px -2px color-mix(in oklab, var(--primary) 20%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.8);
 }
 
 [data-theme-style="thegridcn"] [data-slot="tabs-trigger"][data-state="active"] {
   border-radius: 0.25rem;
   border: 1px solid var(--primary);
-  box-shadow: 0 0 12px rgba(0, 240, 255, 0.5);
+  box-shadow: 0 0 12px color-mix(in oklab, var(--primary) 50%, transparent);
   font-family: var(--theme-font-sans);
   text-transform: uppercase;
 }
@@ -1222,7 +1225,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="washiveil"] [data-slot="tabs-trigger"][data-state="active"] {
   border-radius: 9999px;
   border: 1px solid var(--border);
-  box-shadow: 0 2px 6px rgba(139, 87, 42, 0.12);
+  box-shadow: 0 2px 6px color-mix(in oklab, var(--primary) 12%, transparent);
 }
 
 [data-theme-style="glasscn"] [data-slot="tabs-list"],
@@ -1260,7 +1263,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="thegridcn"] h2,
 [data-theme-style="thegridcn"] h3,
 [data-theme-style="thegridcn"] [data-slot="card-title"] {
-  text-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+  text-shadow: 0 0 12px color-mix(in oklab, var(--primary) 60%, transparent);
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
@@ -1456,7 +1459,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 1rem;
   border-color: var(--border);
   box-shadow:
-    0 4px 14px -2px rgba(139, 92, 246, 0.12),
+    0 4px 14px -2px color-mix(in oklab, var(--primary) 12%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.8);
 }
 
@@ -1465,7 +1468,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.5rem;
   box-shadow:
     inset 0 1px 2px rgba(0, 0, 0, 0.1),
-    0 1px 2px rgba(139, 92, 246, 0.15);
+    0 1px 2px color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 [data-theme-style="pouf"] [data-slot="menu-item"] {
@@ -1481,7 +1484,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.55);
   box-shadow:
-    0 8px 32px 0 rgba(2, 132, 199, 0.08),
+    0 8px 32px 0 color-mix(in oklab, var(--primary) 8%, transparent),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.6);
 }
 
@@ -1511,7 +1514,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   box-shadow:
-    0 10px 30px -10px rgba(5, 150, 105, 0.12),
+    0 10px 30px -10px color-mix(in oklab, var(--primary) 12%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
 
@@ -1522,7 +1525,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="einui"] [data-slot="command"] {
   box-shadow:
     0 14px 40px -8px rgba(0, 0, 0, 0.65),
-    inset 0 1px 0 rgba(52, 211, 153, 0.18);
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 18%, transparent);
 }
 
 [data-theme-style="einui"] [data-slot="menu-item"],
@@ -1577,11 +1580,11 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.25rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 14px -2px rgba(0, 240, 255, 0.4),
-    inset 0 0 8px rgba(0, 240, 255, 0.1);
+    0 0 14px -2px color-mix(in oklab, var(--primary) 40%, transparent),
+    inset 0 0 8px color-mix(in oklab, var(--primary) 10%, transparent);
   background-image:
-    linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+    linear-gradient(color-mix(in oklab, var(--primary) 3%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--primary) 3%, transparent) 1px, transparent 1px);
   background-size: 20px 20px;
 }
 
@@ -1589,7 +1592,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 [data-theme-style="thegridcn"] [data-slot="radio-group-item"],
 [data-theme-style="thegridcn"] [data-slot="menu-item"] {
   border-radius: 0.25rem;
-  box-shadow: 0 0 8px rgba(0, 240, 255, 0.3);
+  box-shadow: 0 0 8px color-mix(in oklab, var(--primary) 30%, transparent);
 }
 
 [data-theme-style="gymnopedies"] [data-slot="alert"],
@@ -1600,8 +1603,8 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.375rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 20px rgba(226, 168, 85, 0.1),
-    inset 0 1px 0 rgba(226, 168, 85, 0.15);
+    0 0 20px color-mix(in oklab, var(--primary) 10%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 15%, transparent);
 }
 
 [data-theme-style="gymnopedies"] [data-slot="menu-item"],
@@ -1618,8 +1621,8 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.5rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 0 18px -4px rgba(192, 132, 252, 0.3),
-    inset 0 1px 0 rgba(244, 63, 94, 0.15);
+    0 0 18px -4px color-mix(in oklab, var(--primary) 30%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--accent) 15%, transparent);
 }
 
 .dark[data-theme-style="atroui"] [data-slot="alert"],
@@ -1628,15 +1631,15 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="atroui"] [data-slot="calendar"],
 .dark[data-theme-style="atroui"] [data-slot="command"] {
   box-shadow:
-    0 0 22px -2px rgba(192, 132, 252, 0.45),
-    inset 0 1px 0 rgba(244, 63, 94, 0.25);
+    0 0 22px -2px color-mix(in oklab, var(--primary) 45%, transparent),
+    inset 0 1px 0 color-mix(in oklab, var(--accent) 25%, transparent);
 }
 
 [data-theme-style="atroui"] [data-slot="checkbox"],
 [data-theme-style="atroui"] [data-slot="radio-group-item"],
 [data-theme-style="atroui"] [data-slot="menu-item"] {
   border-radius: 0.5rem;
-  box-shadow: 0 0 10px rgba(192, 132, 252, 0.25);
+  box-shadow: 0 0 10px color-mix(in oklab, var(--primary) 25%, transparent);
 }
 
 [data-theme-style="usva"] [data-slot="alert"],
@@ -1647,7 +1650,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0.75rem;
   border: 1px solid var(--border);
   box-shadow:
-    0 8px 28px -6px rgba(45, 212, 191, 0.14),
+    0 8px 28px -6px color-mix(in oklab, var(--primary) 14%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.12);
 }
 
@@ -1657,7 +1660,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 .dark[data-theme-style="usva"] [data-slot="calendar"],
 .dark[data-theme-style="usva"] [data-slot="command"] {
   box-shadow:
-    0 10px 36px -6px rgba(45, 212, 191, 0.2),
+    0 10px 36px -6px color-mix(in oklab, var(--primary) 20%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.15);
 }
 
@@ -1680,7 +1683,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--border);
   backdrop-filter: blur(12px);
   box-shadow:
-    0 4px 18px -2px rgba(139, 87, 42, 0.08),
+    0 4px 18px -2px color-mix(in oklab, var(--primary) 8%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.5);
 }
 
@@ -1735,30 +1738,30 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border-radius: 0;
 }
 [data-theme-style="thegridcn"] ::-webkit-scrollbar-thumb {
-  box-shadow: 0 0 6px rgba(0, 240, 255, 0.4);
+  box-shadow: 0 0 6px color-mix(in oklab, var(--primary) 40%, transparent);
 }
 [data-theme-style="atroui"] ::-webkit-scrollbar-thumb {
-  box-shadow: 0 0 6px rgba(192, 132, 252, 0.4);
+  box-shadow: 0 0 6px color-mix(in oklab, var(--primary) 40%, transparent);
 }
 
 [data-theme-style="thegridcn"] ::selection {
-  background-color: rgba(0, 240, 255, 0.3);
+  background-color: color-mix(in oklab, var(--primary) 30%, transparent);
   color: var(--foreground);
 }
 [data-theme-style="atroui"] ::selection {
-  background-color: rgba(192, 132, 252, 0.3);
+  background-color: color-mix(in oklab, var(--primary) 30%, transparent);
   color: var(--foreground);
 }
 [data-theme-style="gymnopedies"] ::selection {
-  background-color: rgba(226, 168, 85, 0.25);
+  background-color: color-mix(in oklab, var(--primary) 25%, transparent);
   color: var(--foreground);
 }
 [data-theme-style="washiveil"] ::selection {
-  background-color: rgba(139, 87, 42, 0.2);
+  background-color: color-mix(in oklab, var(--primary) 20%, transparent);
   color: var(--foreground);
 }
 [data-theme-style="pouf"] ::selection {
-  background-color: rgba(139, 92, 246, 0.2);
+  background-color: color-mix(in oklab, var(--primary) 20%, transparent);
   color: var(--foreground);
 }
 

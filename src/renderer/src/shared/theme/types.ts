@@ -8,7 +8,28 @@ type ThemeCategory =
   | "scifi_dark"
   | "pixel_retro"
   | "oriental_desktop"
-  | "modern";
+  | "modern"
+  | "retro_wave"
+  | "artistic"
+  | "professional"
+  | "luxury"
+  | "nature_warm"
+  | "expressive";
+
+/**
+ * 质感签名家族:CSS 侧以 [data-theme-family] 选择器按家族应用
+ * 阴影/圆角/模糊/辉光/像素化等深度定制,颜色则全部经 token 变量派生。
+ */
+export type ThemeFamily =
+  | "flat"
+  | "brutalism"
+  | "clay"
+  | "glass"
+  | "glow"
+  | "pixel"
+  | "paper"
+  | "mono"
+  | "aero";
 
 export interface ThemeColorTokens {
   background: string;
@@ -69,25 +90,12 @@ export interface ThemePreset {
   categoryLabel: string;
   description: string;
   registrySource: string;
-  styleKey:
-    | "default"
-    | "boldkit"
-    | "neobrutalism"
-    | "retroui"
-    | "saaskit"
-    | "pouf"
-    | "glasscn"
-    | "einui"
-    | "sabraman"
-    | "thegridcn"
-    | "gymnopedies"
-    | "atroui"
-    | "usva"
-    | "8bitcn"
-    | "pixelact"
-    | "washiveil"
-    | "whiskeyjack"
-    | string;
+  /** 经 [data-theme-style] 暴露给 CSS;与 preset id 一致 */
+  styleKey: string;
+  /** 质感签名家族,经 [data-theme-family] 暴露 */
+  family?: ThemeFamily;
+  /** 内置主题标记(氛围层等 CSS 仅作用于内置主题) */
+  generated?: boolean;
   light: ThemeColorTokens;
   dark: ThemeColorTokens;
   geometry: ThemeGeometryTokens;
@@ -116,10 +124,6 @@ export interface ThemeInspirationPalette {
 export interface ThemeContextValue {
   mode: ThemeMode;
   setMode: (mode: ThemeMode) => void;
-  /** 兼容旧版 theme 字段 */
-  theme: ThemeMode;
-  /** 兼容旧版 setTheme 签名 */
-  setTheme: (theme: ThemeMode) => void;
   activePresetId: string;
   activePreset: ThemePreset;
   setPreset: (presetId: string) => void;

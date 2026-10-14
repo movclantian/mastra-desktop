@@ -48,7 +48,7 @@ const LIBRARY_PREVIEW_TOOLBAR = {
 
 export default React.memo(function LibraryFilePreview({ asset }: { asset: PreviewLibraryAsset }) {
   const { t, i18n } = useTranslation();
-  const { theme } = useTheme();
+  const { mode } = useTheme();
   const [loadedState, setLoadedState] = React.useState<{
     url: string;
     objectUrl: string | null;
@@ -119,7 +119,7 @@ export default React.memo(function LibraryFilePreview({ asset }: { asset: Previe
       fallback="inline"
       locale={i18n.language.startsWith("zh") ? "zh-CN" : "en-US"}
       plugins={plugins}
-      theme={theme === "system" ? "auto" : theme}
+      theme={mode === "system" ? "auto" : mode}
       toolbar={LIBRARY_PREVIEW_TOOLBAR}
     />
   );

@@ -61,6 +61,16 @@ export function ThemeProvider({
 
   const isDark = mode === "dark" || (mode === "system" && systemIsDark);
 
+  // 把用户显式选择的模式同步给主进程 nativeTheme,
+  // 让窗口边框、原生对话框与系统级界面跟随应用主题而非仅跟随 OS。
+  useEffect(() => {
+    try {
+      void window.api?.window?.setNativeTheme?.(mode);
+    } catch {
+      // 非 Electron 环境或桥接不可用时忽略。
+    }
+  }, [mode]);
+
   const activePreset: ThemePreset = useMemo(() => {
     return THEME_PRESETS.find((p) => p.id === activePresetId) ?? THEME_PRESETS[0];
   }, [activePresetId]);
@@ -180,8 +190,6 @@ export function ThemeProvider({
     () => ({
       mode,
       setMode,
-      theme: mode,
-      setTheme: setMode,
       activePresetId,
       activePreset,
       setPreset,

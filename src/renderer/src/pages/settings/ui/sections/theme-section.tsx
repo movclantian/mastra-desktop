@@ -15,6 +15,7 @@ import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import type { ThemeColorTokens } from "@/shared/theme";
 import { THEME_INSPIRATIONS, useTheme } from "@/shared/theme";
+import { withDerivedForegrounds } from "@/shared/theme/contrast";
 import { AnimatedThemeToggler } from "@/shared/ui/animated-theme-toggler";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -26,6 +27,37 @@ import { PanelHeader } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Slider } from "@/shared/ui/slider";
+
+// 分类筛选(与 ThemeCategory 联动,soft_brutalism/skeuomorphism 并入粗野/黏土组)
+type ThemeCategoryFilter =
+  | "all"
+  | "brutalism"
+  | "clay_glass"
+  | "scifi_dark"
+  | "pixel_retro"
+  | "oriental_desktop"
+  | "modern"
+  | "retro_wave"
+  | "artistic"
+  | "professional"
+  | "luxury"
+  | "nature_warm"
+  | "expressive";
+
+const CATEGORY_FILTERS: Array<{ id: ThemeCategoryFilter; labelKey: string }> = [
+  { id: "brutalism", labelKey: "settings:themes.categories.brutalism" },
+  { id: "clay_glass", labelKey: "settings:themes.categories.clay_glass" },
+  { id: "scifi_dark", labelKey: "settings:themes.categories.scifi_dark" },
+  { id: "pixel_retro", labelKey: "settings:themes.categories.pixel_retro" },
+  { id: "oriental_desktop", labelKey: "settings:themes.categoryOrientalDesktop" },
+  { id: "modern", labelKey: "settings:themes.categoryModern" },
+  { id: "retro_wave", labelKey: "settings:themes.categories.retroWave" },
+  { id: "artistic", labelKey: "settings:themes.categories.artistic" },
+  { id: "professional", labelKey: "settings:themes.categories.professional" },
+  { id: "luxury", labelKey: "settings:themes.categories.luxury" },
+  { id: "nature_warm", labelKey: "settings:themes.categories.natureWarm" },
+  { id: "expressive", labelKey: "settings:themes.categories.expressive" },
+];
 
 // 预设快速色彩选项
 const getQuickColorSwatches = (t: (k: string) => string) => [
@@ -128,15 +160,7 @@ export function ThemeSection() {
   const quickSwatches = React.useMemo(() => getQuickColorSwatches(t), [t]);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [categoryFilter, setCategoryFilter] = React.useState<
-    | "all"
-    | "brutalism"
-    | "clay_glass"
-    | "scifi_dark"
-    | "pixel_retro"
-    | "oriental_desktop"
-    | "modern"
-  >("all");
+  const [categoryFilter, setCategoryFilter] = React.useState<ThemeCategoryFilter>("all");
 
   const filteredPresets = React.useMemo(() => {
     return presets.filter((p) => {
@@ -152,10 +176,7 @@ export function ThemeSection() {
           (p.category === "brutalism" || p.category === "soft_brutalism")) ||
         (categoryFilter === "clay_glass" &&
           (p.category === "clay_glass" || p.category === "skeuomorphism")) ||
-        (categoryFilter === "scifi_dark" && p.category === "scifi_dark") ||
-        (categoryFilter === "pixel_retro" && p.category === "pixel_retro") ||
-        (categoryFilter === "oriental_desktop" && p.category === "oriental_desktop") ||
-        (categoryFilter === "modern" && p.category === "modern");
+        p.category === categoryFilter;
 
       return matchSearch && matchCategory;
     });
@@ -250,54 +271,17 @@ export function ThemeSection() {
                   >
                     {t("settings:themes.all")} ({presets.length})
                   </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "brutalism" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("brutalism")}
-                  >
-                    {t("settings:themes.categories.brutalism")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "clay_glass" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("clay_glass")}
-                  >
-                    {t("settings:themes.categories.clay_glass")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "scifi_dark" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("scifi_dark")}
-                  >
-                    {t("settings:themes.categories.scifi_dark")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "pixel_retro" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("pixel_retro")}
-                  >
-                    {t("settings:themes.categories.pixel_retro")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "oriental_desktop" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("oriental_desktop")}
-                  >
-                    {t("settings:themes.categoryOrientalDesktop")}
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant={categoryFilter === "modern" ? "secondary" : "ghost"}
-                    className="h-6 text-[11px] px-1.5"
-                    onClick={() => setCategoryFilter("modern")}
-                  >
-                    {t("settings:themes.categoryModern")}
-                  </Button>
+                  {CATEGORY_FILTERS.map((item) => (
+                    <Button
+                      key={item.id}
+                      size="xs"
+                      variant={categoryFilter === item.id ? "secondary" : "ghost"}
+                      className="h-6 text-[11px] px-1.5"
+                      onClick={() => setCategoryFilter(item.id)}
+                    >
+                      {t(item.labelKey)}
+                    </Button>
+                  ))}
                 </div>
               </div>
             ) : null}
@@ -790,25 +774,24 @@ export function ThemeSection() {
                     key={insp.id}
                     type="button"
                     onClick={() => {
-                      if (isDark) {
-                        updateActiveCustomization({
-                          darkColors: {
-                            primary: insp.primary,
-                            secondary: insp.secondary,
-                            accent: insp.accent,
-                            ...(insp.border ? { border: insp.border } : {}),
-                          },
-                        });
-                      } else {
-                        updateActiveCustomization({
-                          lightColors: {
-                            primary: insp.primary,
-                            secondary: insp.secondary,
-                            accent: insp.accent,
-                            ...(insp.border ? { border: insp.border } : {}),
-                          },
-                        });
-                      }
+                      // 自动派生 on-* 前景,避免亮色注入后按钮文字不可读
+                      const derived = withDerivedForegrounds({
+                        primary: insp.primary,
+                        secondary: insp.secondary,
+                        accent: insp.accent,
+                      });
+                      const payload = {
+                        primary: derived.primary,
+                        secondary: derived.secondary,
+                        accent: derived.accent,
+                        primaryForeground: derived.primaryForeground,
+                        secondaryForeground: derived.secondaryForeground,
+                        accentForeground: derived.accentForeground,
+                        ...(insp.border ? { border: insp.border } : {}),
+                      };
+                      updateActiveCustomization(
+                        isDark ? { darkColors: payload } : { lightColors: payload },
+                      );
                       toast.success(t("settings:themes.appliedPalette", { name: insp.name }));
                     }}
                     className="flex h-auto min-w-0 flex-col items-stretch gap-1.5 rounded-lg border bg-card p-2.5 text-left whitespace-normal transition-all hover:border-primary hover:shadow-xs"
@@ -830,7 +813,7 @@ export function ThemeSection() {
             </Card>
 
             {/* ------------------------------------------------------------- */}
-            {/* 模块 3: 核心色彩精细调控 (Fine-Grained Color Tuning) */}
+            {/* 模块 4: 核心色彩精细调控 (Fine-Grained Color Tuning) */}
             {/* ------------------------------------------------------------- */}
             <Card className="border shadow-xs">
               <CardHeader className="pb-3 pt-4 px-4">

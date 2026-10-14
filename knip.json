@@ -11,6 +11,7 @@
     "@/*": ["./src/renderer/src/*"]
   },
   "ignoreBinaries": ["attrib", "wt.exe", "x-terminal-emulator"],
+  "ignore": ["src/renderer/public/**"],
   "ignoreIssues": {
     "src/shared/credential-contract.ts": ["duplicates"],
     "src/shared/filesystem-contract.ts": ["duplicates"],

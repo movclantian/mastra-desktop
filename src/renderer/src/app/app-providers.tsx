@@ -22,8 +22,10 @@ export const queryClient = new QueryClient({
 
 function InnerProviders({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  // key 绑定用户 id:登录态从 anonymous → user 变化时强制重挂载,
+  // 让 useState 初始化器重新读取该用户的 localStorage 主题持久化。
   return (
-    <ThemeProvider userId={user?.id} defaultTheme="light">
+    <ThemeProvider key={user?.id ?? "anonymous"} userId={user?.id} defaultTheme="light">
       {children}
     </ThemeProvider>
   );

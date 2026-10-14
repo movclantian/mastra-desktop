@@ -10,7 +10,10 @@ export const WINDOW_CHANNELS = {
   notify: "window:notify",
   notificationClick: "window:notification-click",
   computerPermissions: "window:computer-permissions",
+  setNativeTheme: "window:set-native-theme",
 } as const;
+
+export const SetNativeThemeRequestSchema = z.enum(["light", "dark", "system"]);
 
 export const WindowControlActionSchema = z.enum(["minimize", "toggleMaximize", "close"]);
 export type WindowControlAction = z.infer<typeof WindowControlActionSchema>;
