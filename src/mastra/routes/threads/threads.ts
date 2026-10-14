@@ -494,7 +494,7 @@ const threadMessagesPageRoute = registerApiRoute("/work/threads/:threadId/messag
 });
 
 /** 纪要提取的「核心待办」Extractor:结构化输出,不写入 OM metadata(路由自己返回) */
-const threadTodosExtractor = new Extractor({
+const threadTodosExtractor = new Extractor<{ todos: string[] }>({
   name: "thread-todos",
   instructions: "从对话中提取仍然待办或需要跟进的核心事项,按优先级排列;没有待办则返回空数组。",
   schema: z.object({ todos: z.array(z.string()) }),

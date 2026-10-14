@@ -433,17 +433,27 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     return toolCalls.length > 0 ? [{ ...run, toolCalls }] : [];
   });
   const storedToolCalls = new Set(
-    storedSuspensions.flatMap((run) => run.toolCalls.map((tool) => tool.toolCallId)),
+    storedSuspensions.flatMap((run) =>
+      run.toolCalls.map((tool) => `${run.runId}:${tool.toolCallId}`),
+    ),
   );
-  const liveSuspensions = [...displayState.pendingSuspensions].flatMap(([toolCallId, tool]) => {
-    const pending = result.controllerSession.suspensions.get({ toolCallId });
+  const liveSuspensions = [...displayState.pendingSuspensions.values()].flatMap((tool) => {
+    if (
+      (tool.threadId && tool.threadId !== result.threadId) ||
+      (tool.resourceId && tool.resourceId !== result.resourceId)
+    )
+      return [];
+    const pending = result.controllerSession.suspensions.get({
+      toolCallId: tool.toolCallId,
+      runId: tool.runId,
+    });
     if (
       !pending ||
       pending.threadId !== result.threadId ||
       pending.resourceId !== result.resourceId
     )
       return [];
-    return [{ runId: pending.runId, toolCall: { ...tool, toolCallId, requiresApproval: false } }];
+    return [{ runId: pending.runId, toolCall: { ...tool, requiresApproval: false } }];
   });
   const activeRunId = result.controllerSession.getCurrentRunId();
   const liveApprovals = [...displayState.pendingApprovals].flatMap(([toolCallId, tool]) => {
@@ -458,10 +468,15 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       return [];
     return [{ runId: activeRunId, toolCall: { ...tool, toolCallId, requiresApproval: true } }];
   });
-  const suspendedRuns = [
+  const suspendedRuns: Array<{
+    runId: string;
+    toolCalls: Array<
+      (typeof storedSuspensions)[number]["toolCalls"][number] & { suspendPayload?: unknown }
+    >;
+  }> = [
     ...storedSuspensions,
     ...[...liveSuspensions, ...liveApprovals]
-      .filter(({ toolCall }) => !storedToolCalls.has(toolCall.toolCallId))
+      .filter(({ runId, toolCall }) => !storedToolCalls.has(`${runId}:${toolCall.toolCallId}`))
       .map(({ runId, toolCall }) => ({
         runId,
         toolCalls: [
@@ -477,7 +492,11 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     if (
       task.status !== "suspended" ||
       task.agentId !== result.agent.id ||
-      suspendedRuns.some((run) => run.toolCalls.some((tool) => tool.toolCallId === task.toolCallId))
+      suspendedRuns.some(
+        (run) =>
+          run.runId === task.runId &&
+          run.toolCalls.some((tool) => tool.toolCallId === task.toolCallId),
+      )
     )
       continue;
     const approval = z
