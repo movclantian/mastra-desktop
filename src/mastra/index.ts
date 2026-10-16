@@ -161,12 +161,24 @@ export const mastra = new Mastra({
     backpressure: "queue",
     // Dynamic team members inherit their timeout from the manager, not the static tool map.
     defaultTimeoutMs: BACKGROUND_TASK_TIMEOUT_MS,
+    defaultRetries: {
+      maxRetries: 1,
+      retryDelayMs: 1_000,
+      maxRetryDelayMs: 10_000,
+      retryableErrors: (error) =>
+        /terminated|other side closed|econnreset|epipe|und_err_|socket hang up/i.test(
+          error.message,
+        ),
+    },
     onTaskComplete: (task) => {
       logger.info("Background task completed", { taskId: task.id, threadId: task.threadId });
       scheduleIdleWorkspaceCleanup();
     },
     onTaskFailed: (task) => {
-      logger.error("Background task failed", {
+      // Tool failures are expected, inspectable task outcomes rather than app
+      // faults; keep them filterable in observability by entityType.
+      logger.warn("Background task failed", {
+        entityType: "tool",
         taskId: task.id,
         threadId: task.threadId,
         error: task.error,

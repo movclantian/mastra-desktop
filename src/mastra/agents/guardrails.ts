@@ -76,7 +76,7 @@ export const guardrailsConfigSchema = z
     jsonPromptInjection: z.boolean(),
     /** JSON provider options shared by the internal detector agents. */
     detectorProviderOptions: z.string().max(100_000),
-    /** 处理器重试上限(abort({retry:true}) 生效前提);0 = 不显式设置 */
+    /** 处理器重试上限(abort({retry:true}) 生效前提); */
     maxProcessorRetries: z.number().int().min(0).max(50),
 
     // --- UnicodeNormalizer(输入) --------------------------------------------
@@ -276,7 +276,8 @@ const INJECTION_TYPES = [
 const DEFAULT_CONFIG: GuardrailsUserConfig = {
   jsonPromptInjection: true,
   detectorProviderOptions: "{}",
-  maxProcessorRetries: 0,
+  // Keep transient stream failures recoverable without allowing an unbounded turn.
+  maxProcessorRetries: 3,
 
   unicode: true,
   unicodeStripControlChars: true,
@@ -392,11 +393,10 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
   prefillErrorHandler: true,
   streamErrorRetry: true,
   streamErrorRetryMax: 2,
-  // createCodingAgent() uses 3000ms for unknown errors. Network-reset
-  // matchers below keep their documented 1000ms exponential backoff.
+  // Unknown errors stay fail-fast; connection resets use the matcher below.
   streamErrorRetryDelayMs: 3_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
-  streamErrorRetryUnknown: true,
+  streamErrorRetryUnknown: false,
 };
 
 /** 读取护栏配置(app_config 表 key="guardrails";无记录或损坏时回落默认值) */
@@ -447,7 +447,11 @@ export async function saveGuardrailsConfig(
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
 
 function normalizeGuardrailsConfig(input: Partial<GuardrailsUserConfig>): GuardrailsUserConfig {
-  return guardrailsConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
+  const next = guardrailsConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
+  // 旧版把 0 当作「未显式设置」的哨兵值写进了存量配置；不升级的话，
+  // 处理器重试上限对已装用户永远停留在 0，瞬时流错误仍会一次失败即终。
+  if (input.maxProcessorRetries === 0) next.maxProcessorRetries = 3;
+  return next;
 }
 
 function scopeKey(resourceId?: string): string {
@@ -835,6 +839,8 @@ async function buildOutput(
  * Both error/output arrays are explicit; CyberRefusalHandler is not enabled.
  */
 function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
+  // Keep provider Retry-After limits independent from our exponential backoff cap.
+  const streamRetryBackoffMaxMs = 30_000;
   const processors: ErrorProcessorOrWorkflow[] = [];
   if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
   if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
@@ -854,12 +860,14 @@ function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
               const message = error instanceof Error ? error.message : "";
               return (
                 (typeof code === "string" && code.toUpperCase() === "ECONNRESET") ||
-                /econnreset|socket hang up/i.test(message)
+                /econnreset|socket hang up|terminated|other side closed|epipe|und_err_/i.test(
+                  message,
+                ) ||
+                (typeof code === "string" && /^(?:EPIPE|UND_ERR_)/i.test(code))
               );
             },
             maxRetries: cfg.streamErrorRetryMax,
-            delayMs: ({ retryCount }) =>
-              Math.min(1_000 * 2 ** retryCount, cfg.streamErrorRetryMaxRetryAfterMs),
+            delayMs: ({ retryCount }) => Math.min(1_000 * 2 ** retryCount, streamRetryBackoffMaxMs),
           },
         ],
       }),

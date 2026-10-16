@@ -163,7 +163,7 @@ export interface GuardrailsDraft {
 const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   jsonPromptInjection: true,
   detectorProviderOptions: "{}",
-  maxProcessorRetries: 0,
+  maxProcessorRetries: 3,
 
   unicode: true,
   unicodeStripControlChars: true,
@@ -313,7 +313,7 @@ const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
   streamErrorRetryMax: 2,
   streamErrorRetryDelayMs: 3_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
-  streamErrorRetryUnknown: true,
+  streamErrorRetryUnknown: false,
 };
 
 // --- 枚举选项(值为库接受的字面量,标签为中文说明) -------------------------
@@ -574,7 +574,7 @@ export function GuardrailsSection() {
         <NumberRow
           description={t("settings:guardrails.maxRetriesDesc")}
           max={50}
-          min={0}
+          min={1}
           onChange={(v) => patch({ maxProcessorRetries: v })}
           title={t("settings:guardrails.maxRetriesTitle")}
           value={draft.maxProcessorRetries}

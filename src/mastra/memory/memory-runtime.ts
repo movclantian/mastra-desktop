@@ -483,6 +483,10 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
                 : {}),
               observation: {
                 continuationHints: false,
+                // OM failures should not block the user's agent turn; keep the
+                // failed messages pending for a later observation cycle.
+                maxRetries: 3,
+                failurePolicy: "continue" as const,
                 instruction: [OM_STRUCTURED_OUTPUT_INSTRUCTION, config.omObserverInstruction.trim()]
                   .filter(Boolean)
                   .join("\n\n"),
@@ -504,6 +508,8 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
               },
               reflection: {
                 continuationHints: false,
+                maxRetries: 3,
+                failurePolicy: "continue" as const,
                 instruction: [
                   OM_STRUCTURED_OUTPUT_INSTRUCTION,
                   config.omReflectionInstruction.trim(),

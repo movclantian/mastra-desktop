@@ -307,6 +307,8 @@ function createWorkAgent(
       );
       return workflow ? { teamWorkflow: workflow } : {};
     },
+    // Delegations acknowledge immediately; the model can request foreground
+    // when it needs the child result before continuing.
     backgroundTasks: {
       tools: Object.fromEntries(
         [
@@ -317,7 +319,7 @@ function createWorkAgent(
             : fixedProfile?.type === "team" && fixedProfile.workflow?.strategy === "supervisor"
               ? fixedProfile.members.map(({ id }) => id)
               : []),
-        ].map((agentName) => [agentName, { enabled: true, defaultDisposition: "foreground" }]),
+        ].map((agentName) => [agentName, { enabled: true, defaultDisposition: "deferred" }]),
       ),
     },
     // Workspace is always present; process.cwd() remains the official fallback
