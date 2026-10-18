@@ -45,7 +45,7 @@ import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { FileTree, FileTreeFile, FileTreeFolder } from "@/shared/ui/ai-elements/file-tree";
 import { FileTypeIcon, FolderTypeIcon } from "@/shared/ui/ai-elements/file-type-icon";
-import { BlurFade } from "@/shared/ui/blur-fade";
+import { BlurFade, FADE_ONLY } from "@/shared/ui/blur-fade";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
@@ -448,7 +448,7 @@ export function DirectThreadItem({
   const isWorking = isThreadBusy(thread.id);
 
   return (
-    <BlurFade duration={0.2} blur="3px">
+    <BlurFade duration={0.2} variant={FADE_ONLY}>
       <SidebarMenuItem>
         <ContextMenu>
           <ContextMenuTrigger className="w-full">

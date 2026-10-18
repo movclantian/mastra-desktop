@@ -1342,10 +1342,11 @@ export function ChatPanel() {
         key={entry.key}
         message={message}
         onEdit={handleEdit}
-        onForkFromMessage={() => handleForkFromMessage(entry.sourceIds.at(-1) ?? message.id)}
+        forkMessageId={entry.sourceIds.at(-1) ?? message.id}
         onRetry={handleRetry}
         onRetrySend={handleRetrySend}
         onToggleReaction={handleToggleReaction}
+        onForkFromMessage={handleForkFromMessage}
         showAvatar={showAvatar}
         sendFailed={
           sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id

@@ -13,10 +13,12 @@ type MarginType = UseInViewOptions["margin"];
 interface BlurFadeProps extends MotionProps {
   children: React.ReactNode;
   className?: string;
-  variant?: {
-    hidden: { y: number };
-    visible: { y: number };
-  };
+  /**
+   * 覆盖默认变体。传入不带 filter 的变体即可关掉 blur 过渡 ——
+   * 整页容器上动 filter:blur() 会让每帧都重新栅格化整棵子树,
+   * 页面级转场应只用 opacity / transform。
+   */
+  variant?: Variants;
   duration?: number;
   delay?: number;
   offset?: number;
@@ -27,6 +29,17 @@ interface BlurFadeProps extends MotionProps {
 }
 
 const getFilter = (v: Variants[string]) => (typeof v === "function" ? undefined : v.filter);
+
+/**
+ * 只做透明度 + 位移的入场变体。
+ * 大块内容(整页、整条消息、线程列表)一律用它:filter:blur() 过渡会让
+ * 每一帧重新栅格化整棵子树,长内容上是切页/新消息到达时最明显的一次顿挫,
+ * 而视觉收益极小。
+ */
+export const FADE_ONLY: Variants = {
+  hidden: { opacity: 0, y: -4 },
+  visible: { opacity: 1, y: 0 },
+};
 
 export function BlurFade({
   children,

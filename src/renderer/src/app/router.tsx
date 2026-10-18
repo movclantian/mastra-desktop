@@ -18,21 +18,37 @@ import {
 } from "@tanstack/react-router";
 import * as React from "react";
 import { useAuth } from "@/features/auth";
-import { AgentHubPage } from "@/pages/agents";
 import { ChatPage } from "@/pages/chat";
-import { SchedulesPage } from "@/pages/schedules";
-import { PluginHubPage } from "@/pages/skills";
 import { useTranslation } from "@/shared/i18n";
 import { describeError } from "@/shared/lib/errors";
-import { BlurFade } from "@/shared/ui/blur-fade";
+import { BlurFade, FADE_ONLY } from "@/shared/ui/blur-fade";
 import { Button } from "@/shared/ui/button";
 import { WindowTitleBar } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { RootShell } from "./app-shell";
 
+/**
+ * 非首屏页面按路由切块。
+ * 首屏是 /chat(重定向入口),只有它保持同步导入;agents / skills / schedules
+ * 各自独立成块,不参与启动时的解析与执行。
+ */
 const KnowledgeLibraryPage = React.lazy(() =>
   import("@/pages/library").then((module) => ({ default: module.KnowledgeLibraryPage })),
 );
+const AgentHubPage = React.lazy(() =>
+  import("@/pages/agents").then((module) => ({ default: module.AgentHubPage })),
+);
+const PluginHubPage = React.lazy(() =>
+  import("@/pages/skills").then((module) => ({ default: module.PluginHubPage })),
+);
+const SchedulesPage = React.lazy(() =>
+  import("@/pages/schedules").then((module) => ({ default: module.SchedulesPage })),
+);
+
+/**
+ * 页面级转场只用 FADE_ONLY(opacity + 4px 位移),不再让整页子树做 blur 过渡 ——
+ * 每帧重新栅格化整页是切页时最明显的一次顿挫。
+ */
 
 function PanelFallback() {
   const { t } = useTranslation();
@@ -106,8 +122,10 @@ const chatRoute = createRoute({
 
 function AgentsRoute() {
   return (
-    <BlurFade key="agent-hub" duration={0.2} blur="3px" className="size-full">
-      <AgentHubPage />
+    <BlurFade key="agent-hub" duration={0.2} variant={FADE_ONLY} className="size-full">
+      <React.Suspense fallback={<PanelFallback />}>
+        <AgentHubPage />
+      </React.Suspense>
     </BlurFade>
   );
 }
@@ -121,12 +139,14 @@ const agentsRoute = createRoute({
 function SkillsRoute() {
   const search = skillsRoute.useSearch();
   return (
-    <BlurFade key="skill-hub" duration={0.2} blur="3px" className="size-full">
-      <PluginHubPage
-        key={`${search.view}:${search.component}`}
-        initialView={search.view}
-        initialComponent={search.component}
-      />
+    <BlurFade key="skill-hub" duration={0.2} variant={FADE_ONLY} className="size-full">
+      <React.Suspense fallback={<PanelFallback />}>
+        <PluginHubPage
+          key={`${search.view}:${search.component}`}
+          initialView={search.view}
+          initialComponent={search.component}
+        />
+      </React.Suspense>
     </BlurFade>
   );
 }
@@ -151,7 +171,7 @@ function LibraryRoute() {
   const { settings } = libraryRoute.useSearch();
   const navigate = libraryRoute.useNavigate();
   return (
-    <BlurFade key="library-hub" duration={0.2} blur="3px" className="size-full">
+    <BlurFade key="library-hub" duration={0.2} variant={FADE_ONLY} className="size-full">
       <React.Suspense fallback={<PanelFallback />}>
         <KnowledgeLibraryPage
           settingsOpen={settings === true}
@@ -176,8 +196,10 @@ const libraryRoute = createRoute({
 
 function SchedulesRoute() {
   return (
-    <BlurFade key="schedules" duration={0.2} blur="3px" className="size-full">
-      <SchedulesPage />
+    <BlurFade key="schedules" duration={0.2} variant={FADE_ONLY} className="size-full">
+      <React.Suspense fallback={<PanelFallback />}>
+        <SchedulesPage />
+      </React.Suspense>
     </BlurFade>
   );
 }

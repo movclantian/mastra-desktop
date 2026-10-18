@@ -495,7 +495,8 @@ function buildMemory(config: MemoryUserConfig, overrides: MemoryBuildOverrides):
                 // 'auto' 字面量 = 按模型多模态能力自动决定;on/off → true/false
                 observeAttachments:
                   config.omObserveAttachments === "auto"
-                    ? ("auto" as const)
+                    ? // URL-backed PDFs are rejected by several otherwise multimodal
+                      (["image/*"] as const)
                     : config.omObserveAttachments === "on",
                 messageTokens: budget.messageTokens,
                 modelSettings: {

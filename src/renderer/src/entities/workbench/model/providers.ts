@@ -4,7 +4,12 @@ import { toast } from "sonner";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { readErrorPayload } from "@/shared/lib";
-import { inferModelKind, type ModelKind } from "../../../../../shared/agent-contract";
+import {
+  catalogModelKeys,
+  inferModelKind,
+  type ModelKind,
+  modelLookupKeys,
+} from "../../../../../shared/agent-contract";
 
 export interface RegistryProvider {
   id: string;
@@ -398,21 +403,51 @@ export function invalidateProviderModelsCache(providerId: string): void {
 // 能力徽章
 // ---------------------------------------------------------------------------
 
+const catalogIndexCache = new WeakMap<CatalogProvider[], Map<string, CatalogModel[]>>();
+
+/** 目录按「精确 / 归一 / 压缩」三层建索引,只建一次(catalog 引用不变就复用)。 */
+function getCatalogIndex(catalog: CatalogProvider[]): Map<string, CatalogModel[]> {
+  const cached = catalogIndexCache.get(catalog);
+  if (cached) return cached;
+  const index = new Map<string, CatalogModel[]>();
+  for (const provider of catalog) {
+    for (const model of provider.models) {
+      for (const key of catalogModelKeys(model.id)) {
+        const bucket = index.get(key);
+        if (bucket) bucket.push(model);
+        else index.set(key, [model]);
+      }
+    }
+  }
+  catalogIndexCache.set(catalog, index);
+  return index;
+}
+
 function findCatalogModelsById(catalog: CatalogProvider[], modelId: string): CatalogModel[] {
-  const normalizedModelId = modelId.trim();
-  if (!normalizedModelId || /^(?:https?|wss?):\/\//i.test(normalizedModelId)) {
+  const trimmed = modelId.trim();
+  if (!trimmed || /^(?:https?|wss?):\/\//i.test(trimmed)) {
     return [];
   }
-  const exactModels = catalog
-    .flatMap((provider) => provider.models)
-    .filter((model) => model.id === normalizedModelId);
-  if (exactModels.length > 0) {
-    return exactModels;
+  const index = getCatalogIndex(catalog);
+  for (const key of modelLookupKeys(trimmed)) {
+    const hit = index.get(key);
+    if (hit?.length) return hit;
   }
-
-  // 只接受完整模型 ID。不能按 URL、路径最后一段或模糊名称回退,
-  // 否则自定义网关的同名模型会被错误映射到别的供应商。
   return [];
+}
+
+function findProviderCatalogModel(
+  provider: ProviderConfig,
+  modelId: string,
+  catalog: CatalogProvider[],
+): CatalogModel | undefined {
+  if (!provider.registryId) return undefined;
+  const models = catalog.find((item) => item.id === provider.registryId)?.models;
+  if (!models?.length) return undefined;
+  const exact = models.find((model) => model.id === modelId);
+  if (exact) return exact;
+  const keys = new Set(modelLookupKeys(modelId));
+  return models.find((model) => catalogModelKeys(model.id).some((key) => keys.has(key)));
 }
 
 export function getModelKind(
@@ -421,9 +456,7 @@ export function getModelKind(
   catalog: CatalogProvider[],
   discoveredKind?: ModelKind,
 ): ModelKind {
-  const exact = catalog
-    .find((item) => item.id === provider.registryId)
-    ?.models.find((model) => model.id === modelId);
+  const exact = findProviderCatalogModel(provider, modelId, catalog);
   const matches = new Set(
     findCatalogModelsById(catalog, modelId).flatMap((model) => (model.kind ? [model.kind] : [])),
   );
@@ -455,12 +488,8 @@ export function getModelCapabilities(
       structuredOutput: false,
     };
   }
-  const providerModel = provider.registryId
-    ? catalog
-        .find((p) => p.id === provider.registryId)
-        ?.models.find((m) => m.id === normalizedModelId)
-    : undefined;
-  // 自定义网关没有 registryId,但其模型 ID 仍可能来自 models.dev,只按完整 ID 匹配。
+  const providerModel = findProviderCatalogModel(provider, normalizedModelId, catalog);
+  // 自定义网关没有 registryId,但其模型 ID 仍可能来自 models.dev,按全目录匹配。
   const models = providerModel
     ? [providerModel]
     : findCatalogModelsById(catalog, normalizedModelId);
@@ -482,11 +511,7 @@ export function getModelContextWindow(
 ): number | undefined {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId || /^(?:https?|wss?):\/\//i.test(normalizedModelId)) return undefined;
-  const providerModel = provider.registryId
-    ? catalog
-        .find((p) => p.id === provider.registryId)
-        ?.models.find((m) => m.id === normalizedModelId)
-    : undefined;
+  const providerModel = findProviderCatalogModel(provider, normalizedModelId, catalog);
   if (providerModel?.contextWindow) {
     return providerModel.contextWindow;
   }

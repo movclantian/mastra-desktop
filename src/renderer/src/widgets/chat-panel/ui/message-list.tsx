@@ -35,7 +35,7 @@ import {
 } from "@/shared/ui/attachment";
 import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
-import { BlurFade } from "@/shared/ui/blur-fade";
+import { BlurFade, FADE_ONLY } from "@/shared/ui/blur-fade";
 import { Bubble, BubbleContent, BubbleReactions } from "@/shared/ui/bubble";
 import { Button, buttonVariants } from "@/shared/ui/button";
 import {
@@ -520,6 +520,7 @@ export const MessageItem = React.memo(function MessageItem({
   onRetrySend,
   onToggleReaction,
   onForkFromMessage,
+  forkMessageId,
 }: {
   message: UIMessage;
   isStreaming: boolean;
@@ -540,6 +541,12 @@ export const MessageItem = React.memo(function MessageItem({
   onToggleReaction?: (messageId: string, emoji: string) => void;
   /** 从该消息处创建分支(官方 cloneThread 的 messageFilter 截断点) */
   onForkFromMessage?: (messageId: string) => void;
+  /**
+   * 分支截断点覆盖。聚合助手消息的 id 是首条源消息 id,而"从这里分支"应截断在
+   * 整轮回复末尾(末条源消息)。由父层算好传入,**不要**在父层包一层内联箭头
+   * ——那会让每次渲染都产生新函数,直接击穿本组件的 memo。
+   */
+  forkMessageId?: string;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = React.useState(false);
@@ -644,7 +651,7 @@ export const MessageItem = React.memo(function MessageItem({
   if (isUser) {
     return (
       <MessageScrollerItem messageId={message.id} scrollAnchor>
-        <BlurFade duration={0.2} blur="3px">
+        <BlurFade duration={0.2} variant={FADE_ONLY}>
           <Message align="end">
             {/* 官方 message-group:分组中非末条消息渲染空头像占位,视觉上折叠连续消息 */}
             <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
@@ -735,7 +742,9 @@ export const MessageItem = React.memo(function MessageItem({
                             </ContextMenuItem>
                           ) : null}
                           {onForkFromMessage ? (
-                            <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
+                            <ContextMenuItem
+                              onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
+                            >
                               <GitForkIcon className="text-muted-foreground" />
                               <span>{t("chat:messages.forkFromMessage")}</span>
                             </ContextMenuItem>
@@ -778,7 +787,7 @@ export const MessageItem = React.memo(function MessageItem({
                       {onForkFromMessage ? (
                         <Button
                           aria-label={t("chat:messages.forkFromMessage")}
-                          onClick={() => onForkFromMessage(message.id)}
+                          onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
                           size="icon-xs"
                           title={t("chat:messages.forkFromMessage")}
                           type="button"
@@ -810,7 +819,7 @@ export const MessageItem = React.memo(function MessageItem({
 
   return (
     <MessageScrollerItem messageId={message.id}>
-      <BlurFade duration={0.2} blur="3px">
+      <BlurFade duration={0.2} variant={FADE_ONLY}>
         <Message>
           <MessageAvatar className="self-start group-has-data-[slot=message-footer]/message:translate-y-0">
             {speaker?.agentProfileId ? (
@@ -916,7 +925,9 @@ export const MessageItem = React.memo(function MessageItem({
                           </ContextMenuShortcut>
                         </ContextMenuItem>
                         {onForkFromMessage ? (
-                          <ContextMenuItem onClick={() => onForkFromMessage(message.id)}>
+                          <ContextMenuItem
+                            onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
+                          >
                             <GitForkIcon className="text-muted-foreground" />
                             <span>{t("chat:messages.forkFromMessage")}</span>
                           </ContextMenuItem>
@@ -1009,7 +1020,7 @@ export const MessageItem = React.memo(function MessageItem({
                   size="icon-xs"
                   aria-label={t("chat:messages.forkFromMessage")}
                   title={t("chat:messages.forkFromMessage")}
-                  onClick={() => onForkFromMessage(message.id)}
+                  onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
                 >
                   <GitForkIcon />
                 </Button>

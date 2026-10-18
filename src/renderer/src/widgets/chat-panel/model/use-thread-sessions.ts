@@ -252,6 +252,34 @@ function createThreadSession(
             : "ready",
     );
   };
+  /**
+   * display_state_changed 是每份快照全量推送,流式期间频率远高于屏幕刷新率。
+   * 逐条同步应用会让每次事件都克隆整条消息数组、重算派生列表、重渲染整个
+   * 会话面板 —— 而浏览器只会画出最后一帧,前面全部白做。这里按帧合并:
+   * 同一帧内只应用最后一份快照,其余丢弃(快照是自包含的,丢弃无损)。
+   */
+  let pendingDisplay: NativeDisplayState | null = null;
+  let displayFrame: number | null = null;
+  const cancelPendingDisplay = () => {
+    if (displayFrame !== null) {
+      cancelAnimationFrame(displayFrame);
+      displayFrame = null;
+    }
+    pendingDisplay = null;
+  };
+  const flushDisplay = () => {
+    const next = pendingDisplay;
+    cancelPendingDisplay();
+    if (!next || disposed) return;
+    applyDisplay(next);
+  };
+  const scheduleDisplay = (native: NativeDisplayState) => {
+    pendingDisplay = native;
+    // revision 在排期时就推进:合帧期间到达的 refresh 响应不会用旧快照覆盖新状态。
+    revision++;
+    if (displayFrame !== null) return;
+    displayFrame = requestAnimationFrame(flushDisplay);
+  };
   const refresh = async (signal = observationSignal) => {
     const requestRevision = ++refreshRevision;
     const startedAt = revision;
@@ -303,6 +331,8 @@ function createThreadSession(
           ? [...payload.messages, live]
           : payload.messages;
       });
+      // 合帧里可能还有更早到达的快照:先落地,再用本次拉取结果覆盖,避免新旧倒序。
+      flushDisplay();
       applyDisplay(payload.displayState);
     } else {
       // Keep newer live rows, not idle resume preludes absent from persisted history.
@@ -395,6 +425,13 @@ function createThreadSession(
           onEvent: (event) => {
             if (disposed || signal.aborted) return;
             if (!isKnownAgentControllerEvent(event)) return;
+            if (event.type === "display_state_changed") {
+              // 高频路径:合帧后由 rAF 统一应用。
+              scheduleDisplay(event.displayState);
+              return;
+            }
+            // 其余事件(尤其 agent_end / 工具挂起)都要读最新快照,先把合帧里的落地。
+            flushDisplay();
             if (event.type === "message_start") {
               revision++;
               applyMessage(
@@ -424,8 +461,7 @@ function createThreadSession(
               store.setState({ runError: undefined });
               setStatus("streaming");
             }
-            if (event.type === "display_state_changed") applyDisplay(event.displayState);
-            else if (event.type === "agent_end") {
+            if (event.type === "agent_end") {
               awaitingRun = false;
               reconcile();
             } else if (
@@ -789,6 +825,7 @@ function createThreadSession(
     },
     dispose() {
       disposed = true;
+      cancelPendingDisplay();
       connection.disconnect();
       runObserver?.abort();
     },

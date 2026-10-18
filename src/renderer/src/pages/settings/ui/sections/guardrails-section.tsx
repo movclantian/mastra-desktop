@@ -310,7 +310,8 @@ const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
 
   prefillErrorHandler: true,
   streamErrorRetry: true,
-  streamErrorRetryMax: 2,
+  // 与后端 DEFAULT_CONFIG.streamErrorRetryMax 及 maxProcessorRetries(3)保持一致。
+  streamErrorRetryMax: 3,
   streamErrorRetryDelayMs: 3_000,
   streamErrorRetryMaxRetryAfterMs: 30_000,
   streamErrorRetryUnknown: false,

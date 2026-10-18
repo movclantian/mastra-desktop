@@ -15,6 +15,9 @@ import { buildDisplayMessages } from "../lib/display";
 import type { WorkUIMessage } from "../model/types";
 import { MessageItem } from "./message-list";
 
+/** 只读子流不提供编辑/重试:用模块级常量,避免内联箭头击穿 MessageItem 的 memo。 */
+const noopMessageAction = () => undefined;
+
 export type AgentMemberRuntimeStatus = "idle" | "running" | "suspended" | "completed" | "error";
 
 export interface AgentMemberRuntime {
@@ -274,8 +277,8 @@ function InvocationTranscript({
               emptyReply && (running || detail.isPending || invocation.status === "error")
             }
             replyError={emptyReply && rawError ? failureText : undefined}
-            onEdit={() => undefined}
-            onRetry={() => undefined}
+            onEdit={noopMessageAction}
+            onRetry={noopMessageAction}
           />
         );
       })}

@@ -144,7 +144,11 @@ const READ_ONLY_TOOL_NAMES = [
   "ask_user",
 ];
 
-/** Workspace's beforeToolCall hook limits Plan writes to plans/*.md. */
+/** Match normalized workspace-relative paths, never paths outside the workspace. */
+export const PLAN_FILE_PATH_PATTERN =
+  /^(?!\.\.(?:[\\/]|$))(?:[^\\/:]+[\\/])*\.mastracode[\\/]plans[\\/][^\\/:]+\.md$/i;
+
+/** Workspace's beforeToolCall hook limits Plan writes to .mastracode/plans/*.md. */
 const PLAN_TOOL_NAMES = [
   ...READ_ONLY_TOOL_NAMES,
   "submit_plan",
@@ -244,8 +248,9 @@ const WORK_MODES: WorkMode[] = [
     instructions: `MODE: PLAN.
 Investigate before proposing anything. Read relevant files and use read-only tools. Ask the user with ask_user when a missing decision blocks reliable planning.
 Do not carry out the work in this mode. Your deliverable is a plan, not a change.
-Write the complete Markdown plan to plans/<name>.md with mastra_workspace_write_file, then call submit_plan with that workspace-relative path and wait for the user's decision. Parent directories are created automatically. If revising an existing plan, read it with mastra_workspace_read_file before overwriting and submitting it again.
-Only Markdown files directly inside plans/ may be written in this mode. You may not use task-state mutation, delete, edit, execute, browser mutation, MCP, or external side-effect tools in this mode.`,
+Write the complete Markdown plan to .mastracode/plans/<name>.md inside the target project with mastra_workspace_write_file. Paths are relative to the bound workspace: use .mastracode/plans/<name>.md when the workspace is the project itself, or <project>/.mastracode/plans/<name>.md when working on a project subdirectory . Parent directories are created automatically; a new project directory need not exist yet. Do not repeat the project prefix if it is already the workspace root.
+Wait for a successful write before calling submit_plan with the exact same workspace-relative path. Never submit a missing file or a path whose write failed. If revising an existing plan, read it with mastra_workspace_read_file before overwriting and submitting it again. Wait for the user's decision before implementation.
+Only Markdown files directly inside the project's .mastracode/plans/ directory may be written in this mode. Do not create implementation files (including HTML) or use the plan directory as the implementation output directory. You may not use task-state mutation, delete, edit, execute, browser mutation, MCP, or external side-effect tools in this mode.`,
   },
   {
     id: "build",

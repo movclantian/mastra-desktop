@@ -23,10 +23,12 @@ import {
 } from "ai";
 import { z } from "zod";
 import {
+  catalogModelKeys,
   enabledModelSelectionSchema,
   inferModelKind,
   MODEL_KINDS,
   type ModelKind,
+  modelLookupKeys,
 } from "../../shared/agent-contract";
 import {
   CredentialError,
@@ -139,9 +141,19 @@ export async function getModelTokenLimits(requestContext?: { get(key: string): u
   }
   const key = JSON.stringify([provider?.registryId ?? null, modelId]);
   if (limitsByModel.has(key)) return limitsByModel.get(key);
+  const lookupKeys = new Set(modelLookupKeys(modelId));
   const readLimits = (entry: unknown) => {
     const models = (entry as { models?: Record<string, unknown> } | undefined)?.models;
-    const model = models?.[modelId];
+    if (!models) return undefined;
+    let model = models[modelId];
+    if (!model) {
+      for (const [id, candidate] of Object.entries(models)) {
+        if (catalogModelKeys(id).some((catalogKey) => lookupKeys.has(catalogKey))) {
+          model = candidate;
+          break;
+        }
+      }
+    }
     return model ? modelLimitsSchema.safeParse(model).data?.limit : undefined;
   };
   const exact = provider?.registryId ? readLimits(catalog[provider.registryId]) : undefined;

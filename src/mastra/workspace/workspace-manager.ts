@@ -30,7 +30,7 @@ import {
 } from "@mastra/core/workspace";
 import { z } from "zod";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../shared/agent-contract";
-import { MODE_ID_CONTEXT_KEY } from "../agents/permissions";
+import { MODE_ID_CONTEXT_KEY, PLAN_FILE_PATH_PATTERN } from "../agents/permissions";
 import { listPluginSkills } from "../plugins/registry";
 import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
@@ -585,11 +585,16 @@ export async function getThreadWorkspace(
         if (mode === "plan" && params.workspaceToolName === WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE) {
           const { path } = z.object({ path: z.string() }).parse(params.input);
           const target = resolve(workspacePath, path);
-          if (!/^plans[\\/][^\\/:]+\.md$/i.test(relative(resolve(workspacePath), target))) {
-            throw new Error("Plan mode may only write Markdown files directly inside plans/.");
+          const planPath = relative(resolve(workspacePath), target);
+          if (!PLAN_FILE_PATH_PATTERN.test(planPath)) {
+            throw new Error(
+              "Plan mode may only write Markdown files directly inside .mastracode/plans/ at the workspace root or in a project subdirectory (e.g. pelican-bike/.mastracode/plans/animation.md). Implementation files must wait for Build mode.",
+            );
           }
           // Reject junctions and dangling links too; the built-in tool owns the actual write.
-          for (const entry of [resolve(workspacePath, "plans"), target]) {
+          const segments = planPath.split(sep);
+          for (let index = 1; index <= segments.length; index += 1) {
+            const entry = resolve(workspacePath, ...segments.slice(0, index));
             const info = await lstat(entry).catch((error: NodeJS.ErrnoException) => {
               if (error.code !== "ENOENT") throw error;
               return undefined;

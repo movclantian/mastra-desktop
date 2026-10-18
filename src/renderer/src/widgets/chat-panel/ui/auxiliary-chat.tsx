@@ -23,6 +23,10 @@ import { type AgentInteraction, asRecord, parseSuspendedRuns } from "../model/ty
 import { useSessionView, useThreadSessions } from "../model/use-thread-sessions";
 import { AgentInteractionPanel } from "./agent-panels";
 import { MessageItem } from "./message-list";
+
+/** 只读侧栏会话不提供编辑/重试:用模块级常量,避免内联箭头击穿 MessageItem 的 memo。 */
+const noopMessageAction = () => undefined;
+
 import {
   MessageQuoteCards,
   MessageSelectionScope,
@@ -151,8 +155,8 @@ function AuxiliaryThreadChat({
                       isStreaming={busy && index === display.length - 1}
                       emptyReply={entry.sourceIds.length === 0}
                       replyError={entry.sourceIds.length === 0 ? runError : undefined}
-                      onEdit={() => undefined}
-                      onRetry={() => undefined}
+                      onEdit={noopMessageAction}
+                      onRetry={noopMessageAction}
                     />
                   ))
                 ) : (

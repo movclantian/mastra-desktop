@@ -40,30 +40,49 @@ export function useIsInView<T extends HTMLElement = HTMLElement>(
   return { ref: localRef, isInView };
 }
 
+/**
+ * 窗口级 "竖滚 → 横滚" 转换。
+ *
+ * 这个监听必须是 passive:false 才能 preventDefault,副作用是**每一次**滚轮事件
+ * 都要等主线程跑完回调,合成器才能滚动。而旧实现沿祖先链对**每个**元素都做
+ * getComputedStyle + scrollWidth/clientHeight 读取 —— 这是一串强制同步布局,
+ * 聊天长列表里每次滚轮 tick 都触发全量重排,滚动自然发涩。
+ *
+ * 现在先用纯选择器(属性/类名,无布局)筛出"可能的横向滚动容器",只有命中的
+ * 元素才去读样式和尺寸。竖向滚动的主路径变成几次属性匹配就返回。
+ */
+const HORIZONTAL_SCROLL_HINT =
+  '[data-horizontal-scroll="true"], .overflow-auto, .overflow-x-auto, .overflow-x-scroll, .katex-display';
+
 export function useHorizontalWheelScroll() {
   React.useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX) || event.deltaY === 0) return;
+      if (event.deltaY === 0 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
 
-      let target = event.target as HTMLElement | null;
+      const start = event.target;
+      if (!(start instanceof Element)) return;
+
+      let target: Element | null = start;
       while (target && target !== document.body && target !== document.documentElement) {
-        const style = window.getComputedStyle(target);
-        const scrollableX =
-          (style.overflowX === "auto" || style.overflowX === "scroll") &&
-          target.scrollWidth > target.clientWidth;
-        const scrollableY =
-          (style.overflowY === "auto" || style.overflowY === "scroll") &&
-          target.scrollHeight > target.clientHeight;
+        if (target instanceof HTMLElement && target.matches(HORIZONTAL_SCROLL_HINT)) {
+          const style = window.getComputedStyle(target);
+          const scrollableX =
+            (style.overflowX === "auto" || style.overflowX === "scroll") &&
+            target.scrollWidth > target.clientWidth;
+          const scrollableY =
+            (style.overflowY === "auto" || style.overflowY === "scroll") &&
+            target.scrollHeight > target.clientHeight;
 
-        if (scrollableX && (!scrollableY || target.dataset.horizontalScroll === "true")) {
-          const canScroll =
-            event.deltaY > 0
-              ? target.scrollLeft < target.scrollWidth - target.clientWidth - 1
-              : target.scrollLeft > 1;
-          if (canScroll) {
-            target.scrollLeft += event.deltaY;
-            event.preventDefault();
-            return;
+          if (scrollableX && (!scrollableY || target.dataset.horizontalScroll === "true")) {
+            const canScroll =
+              event.deltaY > 0
+                ? target.scrollLeft < target.scrollWidth - target.clientWidth - 1
+                : target.scrollLeft > 1;
+            if (canScroll) {
+              target.scrollLeft += event.deltaY;
+              event.preventDefault();
+              return;
+            }
           }
         }
         target = target.parentElement;

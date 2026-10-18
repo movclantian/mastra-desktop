@@ -35,6 +35,74 @@ export function inferModelKind(
     return "image";
   return "language";
 }
+
+/**
+ * models.dev 目录的模型 ID 归一化。
+ */
+const MODEL_VARIANT_SUFFIX =
+  /-(?:preview|latest|exp|experimental|free|beta|alpha|thinking|reasoning|online|extended)(?:-\d{2}(?:-\d{2})?)?$/;
+
+export function stripModelIdPrefix(id: string): string {
+  const slash = id.lastIndexOf("/");
+  if (slash <= 0 || slash === id.length - 1) return id;
+  return id.slice(slash + 1);
+}
+
+/** 统一分隔符、剥离日期后缀;变体词保留(它有时是不同型号)。 */
+export function normalizeModelId(id: string): string {
+  let value = id.trim().toLowerCase();
+  if (!value) return "";
+  // `:free` / `@20250101` / `:70b` 这类尾部标签先转成分隔符,后面按需剥离
+  value = value.replace(/[@:]+/g, "-");
+  // 日期后缀:-20241022 或 -2024-10-22
+  value = value.replace(/-(?:19|20)\d{2}-?\d{2}-?\d{2}$/, "");
+  value = value.replace(/[\s._]+/g, "-");
+  return value.replace(/-{2,}/g, "-").replace(/^-+|-+$/g, "");
+}
+
+export function stripModelVariantSuffix(id: string): string {
+  let value = normalizeModelId(id);
+  for (let round = 0; round < 3 && MODEL_VARIANT_SUFFIX.test(value); round += 1) {
+    value = value.replace(MODEL_VARIANT_SUFFIX, "");
+  }
+  return value;
+}
+
+export function compactModelId(id: string): string {
+  return normalizeModelId(id).replace(/[^a-z0-9]/g, "");
+}
+
+export function modelLookupKeys(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const bare = stripModelIdPrefix(trimmed);
+  const candidates = bare === trimmed ? [trimmed] : [trimmed, bare];
+  const keys: string[] = [];
+  const push = (key: string) => {
+    if (!/^[a-z]:$/.test(key) && !keys.includes(key)) keys.push(key);
+  };
+  for (const candidate of candidates) push(`e:${candidate.toLowerCase()}`);
+  for (const candidate of candidates) push(`n:${normalizeModelId(candidate)}`);
+  for (const candidate of candidates) push(`s:${stripModelVariantSuffix(candidate)}`);
+  for (const candidate of candidates) push(`c:${compactModelId(candidate)}`);
+  return keys;
+}
+
+/** 目录侧键:一个模型同时挂在四层上,查询命中任意一层即可。 */
+export function catalogModelKeys(id: string): string[] {
+  const trimmed = id.trim();
+  if (!trimmed) return [];
+  return [
+    ...new Set(
+      [
+        `e:${trimmed.toLowerCase()}`,
+        `n:${normalizeModelId(trimmed)}`,
+        `s:${stripModelVariantSuffix(trimmed)}`,
+        `c:${compactModelId(trimmed)}`,
+      ].filter((key) => !/^[a-z]:$/.test(key)),
+    ),
+  ];
+}
 export const generatedMediaSchema = z.object({
   model: z.string(),
   prompt: z.string(),

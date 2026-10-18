@@ -12,6 +12,22 @@ files:
   # against the app-level production dependencies. Do not duplicate the
   # deployer's pnpm tree in app.asar.unpacked.
   - '!.mastra/output/node_modules/**'
+  # The pnpm collector drops these aliases when the same SDK versions are
+  # already present under their real package name. Mastra imports the aliases.
+  - from: node_modules/@ai-sdk/provider-v6
+    to: node_modules/@ai-sdk/provider-v6
+    filter:
+      - package.json
+      - 'LICENSE*'
+      - 'dist/**'
+      - '!**/*.map'
+  - from: node_modules/@ai-sdk/provider-v7
+    to: node_modules/@ai-sdk/provider-v7
+    filter:
+      - package.json
+      - 'LICENSE*'
+      - 'dist/**'
+      - '!**/*.map'
   - '!**/.vscode/**'
   # Source maps are useful for development but are not loaded by the packaged
   # runtime. Keeping them duplicated across app.asar and Mastra deploy output

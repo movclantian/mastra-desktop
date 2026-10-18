@@ -10,7 +10,7 @@ import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { electronApp, is, optimizer } from "@electron-toolkit/utils";
 import {
   app,
@@ -671,6 +671,7 @@ function ensureMastraRunning(): Promise<void> {
 
   mastraStartPromise = new Promise<void>((resolve, reject) => {
     let settled = false;
+    let recentOutput = "";
     const succeed = () => {
       if (settled) return;
       settled = true;
@@ -681,7 +682,10 @@ function ensureMastraRunning(): Promise<void> {
       settled = true;
       mastraStartPromise = null;
       void stopMastra();
-      reject(err);
+      const output = stripVTControlCharacters(recentOutput).trim();
+      reject(
+        output ? new Error(`${err.message}\n\nMastra 输出：\n${output}`, { cause: err }) : err,
+      );
     };
 
     void (async () => {
@@ -783,20 +787,23 @@ function ensureMastraRunning(): Promise<void> {
       mastraProcess = proc;
 
       proc.stdout?.on("data", (chunk: Buffer | string) => {
+        recentOutput = (recentOutput + String(chunk)).slice(-32_768);
         process.stdout.write(`[Mastra] ${String(chunk)}`);
       });
       proc.stderr?.on("data", (chunk: Buffer | string) => {
+        recentOutput = (recentOutput + String(chunk)).slice(-32_768);
         process.stderr.write(`[Mastra] ${String(chunk)}`);
       });
       proc.on("error", (err) => {
         fail(new Error(`Mastra 进程错误：${err.message}`));
       });
-      proc.on("exit", (code, signal) => {
+      // close follows stdout/stderr EOF, so the final error is included.
+      proc.on("close", (code, signal) => {
         if (isMastraStopping) return;
         const msg = `Mastra 进程退出(code=${code ?? "?"}, signal=${signal ?? "?"})`;
         if (settled) {
           console.error(msg);
-          showCrashDialog(msg);
+          showCrashDialog(`${msg}\n\n${stripVTControlCharacters(recentOutput).trim()}`);
         } else {
           fail(new Error(msg));
         }
