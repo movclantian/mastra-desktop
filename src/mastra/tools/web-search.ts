@@ -9,6 +9,7 @@
  * tools / instructions 消费(见 src/mastra/agents/work-agent.ts)。
  */
 
+import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
 import { createTool, webFetchTool } from "@mastra/core/tools";
@@ -30,12 +31,12 @@ import {
 import { getConfiguredMcpTools, getMcpConfig } from "../connections/mcp";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import {
-  archiveTextContent,
-  contentObjectReference,
-  contentReferenceText,
-  contentSummary,
-} from "../storage/content-objects";
-import { getAppConfig, setAppConfig } from "../storage/database";
+  getAppConfig,
+  getThreadArchiveFilesystem,
+  setAppConfig,
+  userIdFromContext,
+} from "../storage/database";
+import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/changes";
 
 interface WebSearchSelection {
   engine: SearchEngine;
@@ -120,10 +121,8 @@ const searchHitSchema = z.object({
   url: z.string(),
   snippet: z.string(),
   content: z.string().optional(),
-  contentObject: z
+  file: z
     .object({
-      objectId: z.string(),
-      sha256: z.string(),
       byteSize: z.number(),
       workspacePath: z.string(),
     })
@@ -141,25 +140,38 @@ async function archiveWebText(
   context: { requestContext?: { get?: (key: string) => unknown } },
   options: { source: string; contentType: string },
 ) {
-  const metadata = await archiveTextContent(text, context, {
-    kind: "web",
-    source: options.source,
-    contentType: options.contentType,
-  });
+  const userId = userIdFromContext(context.requestContext);
+  const threadId = context.requestContext?.get?.(WORKSPACE_THREAD_ID_CONTEXT_KEY);
+  if (!userId || typeof threadId !== "string" || !threadId) {
+    throw new Error("Web archiving requires an authenticated thread");
+  }
+  const filesystem = getThreadArchiveFilesystem(userId, threadId);
+  const path = `web/${randomUUID()}.${options.contentType.includes("markdown") ? "md" : "txt"}`;
+  await filesystem.writeFile(path, text, { overwrite: false });
+  const workspacePath = filesystem.resolveAbsolutePath(path);
+  if (!workspacePath) throw new Error("Invalid web archive path");
+  const byteSize = Buffer.byteLength(text);
   return {
-    summary: contentSummary(text),
-    contentObject: contentObjectReference(metadata),
-    readHint: contentReferenceText(metadata),
-    characterCount: metadata.characterCount ?? text.length,
-    byteSize: metadata.byteSize,
+    summary:
+      text.length <= 2_400
+        ? text
+        : `${text.slice(0, 1_200)}\n...[全文见归档文件]...\n${text.slice(-1_200)}`,
+    file: {
+      workspacePath,
+      threadId,
+      byteSize,
+      contentType: options.contentType,
+      source: options.source,
+    },
+    readHint: `Full content: mastra_workspace_read_file(path=${JSON.stringify(workspacePath)}, offset, limit) or mastra_workspace_grep(pattern, path=${JSON.stringify(workspacePath)}).`,
+    characterCount: text.length,
+    byteSize,
   };
 }
 
 const archivedFetchOutput = z.object({
   content: z.string(),
-  contentObject: z.object({
-    objectId: z.string(),
-    sha256: z.string(),
+  file: z.object({
     byteSize: z.number(),
     workspacePath: z.string(),
   }),
@@ -176,7 +188,7 @@ function createArchivedWebFetchTool() {
   return createTool({
     id: "web_fetch",
     description:
-      "读取一个公开网页并将完整正文保存为当前用户的内容对象。返回摘要和引用；使用返回的 workspacePath 调用官方 mastra_workspace_read_file 或 mastra_workspace_grep 获取全文。",
+      "读取一个公开网页并将完整正文保存为线程归档文件。返回摘要和文件路径；使用返回的 workspacePath 调用官方 mastra_workspace_read_file 或 mastra_workspace_grep 获取全文。",
     inputSchema: z.object({ url: z.url().describe("要读取的公开网页地址") }),
     outputSchema: archivedFetchOutput,
     execute: async ({ url }, context) => {
@@ -197,7 +209,7 @@ function createArchivedWebFetchTool() {
       });
       return {
         content: archived.summary,
-        contentObject: archived.contentObject,
+        file: archived.file,
         readHint: archived.readHint,
         characterCount: archived.characterCount,
         byteSize: archived.byteSize,
@@ -294,7 +306,7 @@ export const webSearchArchiveProcessor = {
         return {
           ...item,
           rawContent: archived.summary,
-          contentObject: archived.contentObject,
+          file: archived.file,
           characterCount: archived.characterCount,
           readHint: archived.readHint,
         };
@@ -417,9 +429,7 @@ function createFirecrawlTools(
       }),
       outputSchema: z.object({
         markdown: z.string(),
-        contentObject: z.object({
-          objectId: z.string(),
-          sha256: z.string(),
+        file: z.object({
           byteSize: z.number(),
           workspacePath: z.string(),
         }),
@@ -432,16 +442,15 @@ function createFirecrawlTools(
           onlyMainContent: onlyMainContent ?? true,
         });
         const markdown = result.markdown ?? "";
-        const metadata = await archiveTextContent(markdown, context, {
-          kind: "web",
+        const archived = await archiveWebText(markdown, context, {
           source: url,
           contentType: "text/markdown; charset=utf-8",
         });
         return {
-          markdown: contentSummary(markdown),
-          contentObject: contentObjectReference(metadata),
-          characterCount: metadata.characterCount ?? markdown.length,
-          readHint: contentReferenceText(metadata),
+          markdown: archived.summary,
+          file: archived.file,
+          characterCount: archived.characterCount,
+          readHint: archived.readHint,
         };
       },
     }),
@@ -523,7 +532,7 @@ export function webSearchInstructions(selection: WebSearchSelection): string {
 - Any question that depends on current facts, prices, releases, docs or news MUST be answered from search results, never from memory alone.
 - ${engineHint}
 - ${deepHint}
-- web_fetch reads one URL, saves the complete response as a user-scoped content object, and returns only a summary plus objectId/workspacePath. Use the official mastra_workspace_read_file for line ranges or mastra_workspace_grep for keyword/regex matches. It cannot reach localhost or private addresses, and returns isError instead of throwing — if it fails, say so rather than guessing the page content.
+- web_fetch reads one URL, saves the complete response as a thread archive file, and returns only a summary plus workspacePath. Use the official mastra_workspace_read_file for line ranges or mastra_workspace_grep for keyword/regex matches. It cannot reach localhost or private addresses, and returns isError instead of throwing — if it fails, say so rather than guessing the page content.
 - Cite with GitHub-flavored Markdown footnotes. Put the marker immediately after the claim it supports, e.g. "Node 24 became LTS in October 2025[^1]."
 - Define every marker you used at the very end of your reply, one per line, in this exact shape:
   [^1]: [Page title](https://exact-url-from-the-tool) — one short sentence on what this source says.

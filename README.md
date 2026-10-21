@@ -80,6 +80,7 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 计划阶段先把事情想清楚，读代码、查资料、出方案。方案定了再切到构建，改代码、跑命令、推进任务，每一步都留下记录，随时可以停下来回头看。复查阶段对照差异和工作记录验收，高风险的操作在这里需要人批准。图里画的是主干流程，每个模式具体放开了哪些工具，以应用内的实际设置和服务端检查为准。
 
 ## 界面截图
+
 <details open>
 <summary><strong>工作台与对话</strong></summary>
 
@@ -193,14 +194,14 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 主要选型列在下面。
 
-| 部分 | 选型 |
-| --- | --- |
-| 桌面外壳 | Electron 44、electron-vite、electron-builder |
-| 界面 | React 19、TypeScript、Tailwind CSS 4、CodeMirror 6、xterm |
-| Agent 框架 | Mastra 1.77（core、memory、rag、mcp、observability） |
-| 数据与检索 | libsql、DuckDB、fastembed 本地向量 |
-| 代码与文档 | Shiki 高亮、Mermaid、KaTeX、PDF 与 Office 解析 |
-| 工具链 | Biome、Knip、pnpm workspace |
+| 部分       | 选型                                                      |
+| ---------- | --------------------------------------------------------- |
+| 桌面外壳   | Electron 44、electron-vite、electron-builder              |
+| 界面       | React 19、TypeScript、Tailwind CSS 4、CodeMirror 6、xterm |
+| Agent 框架 | Mastra 1.77（core、memory、rag、mcp、observability）      |
+| 数据与检索 | libsql、DuckDB、fastembed 本地向量                        |
+| 代码与文档 | Shiki 高亮、Mermaid、KaTeX、PDF 与 Office 解析            |
+| 工具链     | Biome、Knip、pnpm workspace                               |
 
 <div align="center">
 
@@ -212,11 +213,11 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 ### 直接下载
 
-| 平台 | 安装包 |
-| --- | --- |
-| Windows | `MastraWork-0.0.7-setup.exe` |
-| macOS | `MastraWork-0.0.7.dmg` |
-| Linux | `MastraWork-0.0.7.AppImage`、`MastraWork-0.0.7.deb`、`MastraWork-0.0.7.snap` |
+| 平台    | 安装包                                                                       |
+| ------- | ---------------------------------------------------------------------------- |
+| Windows | `MastraWork-0.0.7-setup.exe`                                                 |
+| macOS   | `MastraWork-0.0.7.dmg`                                                       |
+| Linux   | `MastraWork-0.0.7.AppImage`、`MastraWork-0.0.7.deb`、`MastraWork-0.0.7.snap` |
 
 
 

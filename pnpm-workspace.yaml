@@ -3,7 +3,7 @@
 # workspace 配置只认白名单键(不含 dangerouslyAllowAllBuilds),必须显式 allowBuilds
 # 才能让 .mastra/output 里的 pnpm install 放行其构建(否则 ERR_PNPM_IGNORED_BUILDS)
 allowBuilds:
-  '@google/genai': true
+  "@google/genai": true
   agent-browser: true
   bufferutil: true
   edgedriver: true
@@ -19,6 +19,9 @@ allowBuilds:
 # 待这批版本发布满 1 天后即可恢复 1440(恢复后不影响已锁定的 lockfile)
 minimumReleaseAge: 0
 shamefullyHoist: true
+# CodeMirror classes have private fields; all extensions must share one view version.
+overrides:
+  "@codemirror/view": "6.43.15"
 # 统一 shiki 到 v4：streamdown 类型解析走根目录 v4，@streamdown/code 依赖声明是 ^3.19，
 # 不强制统一会产生两份 shiki 类型导致 PluginConfig 不兼容
 peerDependencyRules:

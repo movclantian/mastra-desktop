@@ -158,7 +158,6 @@ const queueMessageActionRoute = registerApiRoute(
       const result = await sessionFor(c, {
         resourceId,
         threadId: c.req.param("threadId"),
-        scope: "workbench",
       });
       const session = result.controllerSession;
       const queue = queueFor(session);
@@ -233,7 +232,6 @@ const getQueueRoute = registerApiRoute("/work/threads/:threadId/message-queue", 
     const result = await sessionFor(c, {
       resourceId: c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string,
       threadId: c.req.param("threadId"),
-      scope: "workbench",
     });
     return c.json({ requests: getSessionMessageQueue(result.controllerSession) });
   },

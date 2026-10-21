@@ -3,20 +3,20 @@ name: Build and release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
   pull_request:
     paths:
-      - '.github/workflows/release.yml'
-      - 'electron-builder.yml'
-      - 'electron.vite.config.ts'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'scripts/**'
-      - 'src/**'
-      - 'tsconfig*.json'
-      - 'build/**'
-      - 'resources/**'
+      - ".github/workflows/release.yml"
+      - "electron-builder.yml"
+      - "electron.vite.config.ts"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "scripts/**"
+      - "src/**"
+      - "tsconfig*.json"
+      - "build/**"
+      - "resources/**"
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      CI: 'true'
+      CI: "true"
       ONNXRUNTIME_NODE_INSTALL: skip
     steps:
       - name: Check out source
@@ -95,10 +95,10 @@ jobs:
             builder_args: --linux snap
             artifact_paths: dist/*.snap
     env:
-      CI: 'true'
+      CI: "true"
       ONNXRUNTIME_NODE_INSTALL: skip
       ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
-      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - name: Check out source
         uses: actions/checkout@v4

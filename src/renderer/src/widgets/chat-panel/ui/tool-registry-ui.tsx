@@ -41,7 +41,7 @@ import {
   WorkflowIcon,
 } from "lucide-react";
 import * as React from "react";
-import { contentObjectUrl } from "@/entities/workbench/api/workbench-api";
+import { workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
 import {
@@ -305,28 +305,16 @@ function MediaNote() {
   return <p className="text-muted-foreground text-xs">{t("chat:trace.mediaReturned")}</p>;
 }
 
-/** browser_screenshot:截图归档在用户内容目录,经 /work/contents 取回路由内联显示 */
-function ScreenshotDetail({
-  contentObject,
-  title,
-}: {
-  contentObject: Record<string, unknown>;
-  title?: string;
-}) {
+/** Screenshot archives share the owned thread's filesystem preview route. */
+function ScreenshotDetail({ file, title }: { file: Record<string, unknown>; title?: string }) {
   const { t } = useTranslation();
   const { user: authUser } = useAuth();
-  const userId = authUser?.id ?? "anonymous";
   const [failed, setFailed] = React.useState(false);
-  const objectId = asStr(contentObject.objectId);
-  const kind = asStr(contentObject.kind);
-  if (!objectId || !kind || failed) return null;
+  const path = asStr(file.workspacePath);
+  const threadId = asStr(file.threadId);
+  if (!authUser || !path || !threadId || failed) return null;
   const label = title ?? t("chat:trace.toolNames.browser_screenshot");
-  const src = contentObjectUrl(userId, {
-    objectId,
-    kind,
-    threadId: asStr(contentObject.threadId),
-    contentType: asStr(contentObject.contentType),
-  });
+  const src = workspaceRawFileUrl(threadId, authUser.id, path);
   return (
     <Dialog>
       <DialogTrigger
@@ -415,10 +403,10 @@ function ComputerDetail({ output }: { output: unknown }) {
       ))}
       {screenshots.map((value) => {
         const image = asRecord(value);
-        return image && asStr(image.objectId) ? (
+        return image && asStr(image.workspacePath) ? (
           <ScreenshotDetail
-            key={asStr(image.objectId)}
-            contentObject={image}
+            key={asStr(image.workspacePath)}
+            file={image}
             title={t("chat:trace.computerScreenshot")}
           />
         ) : null;
@@ -1078,10 +1066,10 @@ const browserUIs: Record<string, ToolUIDescriptor> = {
   browser_screenshot: {
     icon: CameraIcon,
     labelKey: "browser_screenshot",
-    // 截图原图归档为用户内容对象(contentObject 引用带取回路由所需字段),内联展示
+    // 原图保存在 Mastra 文件系统中,复用线程文件预览。
     detail: ({ output }) => {
-      const contentObject = asRecord(asRecord(output)?.contentObject);
-      return contentObject ? <ScreenshotDetail contentObject={contentObject} /> : null;
+      const file = asRecord(asRecord(output)?.file);
+      return file ? <ScreenshotDetail file={file} /> : null;
     },
   },
   browser_evaluate: {

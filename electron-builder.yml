@@ -6,60 +6,60 @@ directories:
 files:
   # 注意:自定义 files 会替换 electron-builder 的默认全量包含,
   # 必须显式带上应用自身的构建产物 out/(main/preload/renderer)
-  - 'out/**'
-  - '.mastra/output/**'
+  - "out/**"
+  - ".mastra/output/**"
   # The packaged Mastra entry runs from app.asar and resolves these imports
   # against the app-level production dependencies. Do not duplicate the
   # deployer's pnpm tree in app.asar.unpacked.
-  - '!.mastra/output/node_modules/**'
+  - "!.mastra/output/node_modules/**"
   # The pnpm collector drops these aliases when the same SDK versions are
   # already present under their real package name. Mastra imports the aliases.
   - from: node_modules/@ai-sdk/provider-v6
     to: node_modules/@ai-sdk/provider-v6
     filter:
       - package.json
-      - 'LICENSE*'
-      - 'dist/**'
-      - '!**/*.map'
+      - "LICENSE*"
+      - "dist/**"
+      - "!**/*.map"
   - from: node_modules/@ai-sdk/provider-v7
     to: node_modules/@ai-sdk/provider-v7
     filter:
       - package.json
-      - 'LICENSE*'
-      - 'dist/**'
-      - '!**/*.map'
-  - '!**/.vscode/**'
+      - "LICENSE*"
+      - "dist/**"
+      - "!**/*.map"
+  - "!**/.vscode/**"
   # Source maps are useful for development but are not loaded by the packaged
   # runtime. Keeping them duplicated across app.asar and Mastra deploy output
   # adds hundreds of MB and a large number of installer files.
-  - '!**/*.map'
-  - '!**/node_modules/@mastra/editor/dist/ee/**'
-  - '!**/node_modules/@mastra/editor/ee/**'
+  - "!**/*.map"
+  - "!**/node_modules/@mastra/editor/dist/ee/**"
+  - "!**/node_modules/@mastra/editor/ee/**"
   # fastembed.small uses CPU. Do not distribute optional CUDA/TensorRT providers.
-  - '!**/node_modules/onnxruntime-node/bin/napi-v6/**/libonnxruntime_providers_{cuda,tensorrt}.so'
+  - "!**/node_modules/onnxruntime-node/bin/napi-v6/**/libonnxruntime_providers_{cuda,tensorrt}.so"
   # Keep one files allowlist: platform-level exclusion-only lists create a
   # separate matcher that includes the entire project. Releases build natively,
   # so ${platform} is the runner OS and ${arch} is the target architecture.
-  - '!**/node_modules/onnxruntime-node/bin/napi-v6/!(${platform})/**'
-  - '!**/node_modules/onnxruntime-node/bin/napi-v6/${platform}/!(${arch})/**'
-  - '!**/node_modules/node-pty/prebuilds/!(${platform}-${arch})/**'
+  - "!**/node_modules/onnxruntime-node/bin/napi-v6/!(${platform})/**"
+  - "!**/node_modules/onnxruntime-node/bin/napi-v6/${platform}/!(${arch})/**"
+  - "!**/node_modules/node-pty/prebuilds/!(${platform}-${arch})/**"
   # Runtime ConPTY binaries live in prebuilds or build/Release.
-  - '!**/node_modules/node-pty/third_party/conpty/**'
-  - '!src/*'
-  - '!.mastra/.build/**'
-  - '!.mastra/dev.lock'
-  - '!.mastra/bundler-config.mjs'
-  - '!.mastra/mastra-packages.json'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - "!**/node_modules/node-pty/third_party/conpty/**"
+  - "!src/*"
+  - "!.mastra/.build/**"
+  - "!.mastra/dev.lock"
+  - "!.mastra/bundler-config.mjs"
+  - "!.mastra/mastra-packages.json"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
 asarUnpack:
   # Native terminals require unpacked executables.
-  - 'node_modules/node-pty/**'
+  - "node_modules/node-pty/**"
   # CUA's UniFFI loader needs real paths for its platform library and Node addon.
-  - 'node_modules/@trycua/**'
-  - 'node_modules/@ubjs/**'
+  - "node_modules/@trycua/**"
+  - "node_modules/@ubjs/**"
 win:
   executableName: mastrawork
 nsis:

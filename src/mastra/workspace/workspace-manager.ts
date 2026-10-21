@@ -32,7 +32,6 @@ import { z } from "zod";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../shared/agent-contract";
 import { MODE_ID_CONTEXT_KEY, PLAN_FILE_PATH_PATTERN } from "../agents/permissions";
 import { listPluginSkills } from "../plugins/registry";
-import { getContentObjectAccessPaths } from "../storage/content-objects";
 import {
   appStorage,
   clampInt,
@@ -41,6 +40,7 @@ import {
   DEFAULT_MASTRA_DATA_DIRECTORY,
   getAppConfig,
   getStorageDirectory,
+  getThreadArchiveFilesystem,
   setAppConfig,
   stringRecord,
 } from "../storage/database";
@@ -521,14 +521,14 @@ export function createWorkspaceFilesystem(
   resourceId?: string,
   threadId?: string,
 ): LocalFilesystem {
+  const archivePath =
+    resourceId && threadId ? getThreadArchiveFilesystem(resourceId, threadId).basePath : undefined;
+  if (archivePath) ensureDirectory(archivePath);
   return new LocalFilesystem({
     basePath: workspacePath,
     contained: true,
     readOnly: config.readOnly,
-    allowedPaths: [
-      ...config.allowedPaths,
-      ...(resourceId ? getContentObjectAccessPaths(resourceId, threadId) : []),
-    ],
+    allowedPaths: [...config.allowedPaths, ...(archivePath ? [archivePath] : [])],
   });
 }
 

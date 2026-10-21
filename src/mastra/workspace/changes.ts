@@ -1,19 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { appendFileSync, closeSync, openSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { BackgroundProcessConfig } from "@mastra/core/workspace";
-import {
-  type ContentObjectMetadata,
-  contentObjectReference,
-  createContentObjectWriter,
-  deleteContentObject,
-  putContentObject,
-  readContentObject,
-} from "../storage/content-objects";
+import { type BackgroundProcessConfig, FileNotFoundError } from "@mastra/core/workspace";
 import {
   AUTHENTICATED_USER_ID_CONTEXT_KEY,
   atomicWrite,
   getStorageDirectory,
+  getThreadArchiveFilesystem,
 } from "../storage/database";
 
 export interface WorkspaceFilesystem {
@@ -44,7 +38,9 @@ interface OutputWriter {
 }
 
 interface PendingOutput {
-  sink: Awaited<ReturnType<typeof createContentObjectWriter>>;
+  file: number;
+  workspacePath: string;
+  failure?: unknown;
   command: string;
   background: boolean;
   exitCode: number | null;
@@ -100,7 +96,14 @@ export function createWorkspaceOutputArchiveHooks(): {
     if (!stats.bytes) stats.lines++;
     for (const char of text) if (char === "\n") stats.lines++;
     stats.bytes += Buffer.byteLength(text, "utf8");
-    record.sink.append(`[${channel}] ${text}`);
+    if (!record.failure) {
+      try {
+        // Synchronous writes keep void process callbacks bounded instead of queueing output in RAM.
+        appendFileSync(record.file, `[${channel}] ${text}`);
+      } catch (error) {
+        record.failure = error;
+      }
+    }
   };
   const finish = async (callId: string, exitCode: number | null, error?: unknown) => {
     const record = pending.get(callId);
@@ -108,15 +111,17 @@ export function createWorkspaceOutputArchiveHooks(): {
     pending.delete(callId);
     record.restore?.();
     if (error) append(record, "stderr", String(error));
-    record.sink.append(`\nExit code: ${exitCode ?? "unknown"}\n`);
-    const metadata = await record.sink.finish();
+    try {
+      if (record.failure) throw record.failure;
+      appendFileSync(record.file, `\nExit code: ${exitCode ?? "unknown"}\n`);
+    } finally {
+      closeSync(record.file);
+    }
     await record.emit?.({
       type: "data-workspace-log",
-      id: metadata.objectId,
+      id: callId,
       data: {
-        ...contentObjectReference(metadata),
-        characterCount: metadata.characterCount ?? 0,
-        lineCount: metadata.lineCount ?? 0,
+        workspacePath: record.workspacePath,
         exitCode,
         stdout: record.stdout,
         stderr: record.stderr,
@@ -135,14 +140,14 @@ export function createWorkspaceOutputArchiveHooks(): {
         const callId = outputCallId(context);
         if (!userId || !threadId || !callId) return;
         const command = outputInputCommand(input);
+        const filesystem = getThreadArchiveFilesystem(userId, threadId);
+        const path = `logs/${randomUUID()}.txt`;
+        await filesystem.writeFile(path, "", { overwrite: false });
+        const workspacePath = filesystem.resolveAbsolutePath(path);
+        if (!workspacePath) throw new Error("Invalid log archive path");
         const record: PendingOutput = {
-          sink: await createContentObjectWriter({
-            userId,
-            threadId,
-            kind: "log",
-            contentType: "text/plain; charset=utf-8",
-            source: command,
-          }),
+          file: openSync(workspacePath, "a"),
+          workspacePath,
           command,
           background: outputContextRecord(input)?.background === true,
           exitCode: null,
@@ -164,7 +169,7 @@ export function createWorkspaceOutputArchiveHooks(): {
               if (item?.type === "data-sandbox-stdout") append(record, "stdout", data.output);
               if (item?.type === "data-sandbox-stderr") append(record, "stderr", data.output);
             }
-            // 逐行 stdout/stderr 仅用于实时展示:完整输出已写入内容对象,收尾的
+            // 逐行 stdout/stderr 仅用于实时展示:完整输出已写入归档文件,收尾的
             // data-workspace-log 才是持久化引用。按官方文档把 transient 作为 chunk
             // 属性传入(而非 writer.custom 的第二参数),使逐行块实时下发但不落库,
             // 避免高频输出撑爆消息历史。
@@ -218,11 +223,10 @@ const CHANGE_DIRECTORY = join(getStorageDirectory(), "users");
 type WorkspaceChangeKind = "created" | "modified" | "deleted";
 
 export interface WorkspaceChangeSnapshot {
-  objectId: string;
-  sha256: string;
+  path: string;
   byteSize: number;
   contentType: string;
-  encoding: ContentObjectMetadata["encoding"];
+  encoding: "utf8" | "binary";
 }
 
 export interface WorkspaceFileChange {
@@ -286,19 +290,14 @@ function toolCallId(context: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
-function snapshotReference(metadata: ContentObjectMetadata): WorkspaceChangeSnapshot {
-  return contentObjectReference(metadata);
-}
-
 function isSnapshot(value: unknown): value is WorkspaceChangeSnapshot {
   if (typeof value !== "object" || value === null) return false;
   const item = value as Partial<WorkspaceChangeSnapshot>;
   return (
-    typeof item.objectId === "string" &&
-    typeof item.sha256 === "string" &&
+    typeof item.path === "string" &&
     Number.isSafeInteger(item.byteSize) &&
     typeof item.contentType === "string" &&
-    typeof item.encoding === "string"
+    (item.encoding === "utf8" || item.encoding === "binary")
   );
 }
 
@@ -339,23 +338,10 @@ export async function listWorkspaceChanges(
 }
 
 export async function deleteWorkspaceChanges(threadId: string, userId?: string): Promise<void> {
-  const changes = await readChanges(threadId, userId);
   const owner = currentUserId(userId);
-  for (const change of changes) {
-    for (const [side, snapshot] of [
-      ["before", change.before],
-      ["after", change.after],
-    ] as const) {
-      if (snapshot) {
-        await deleteContentObject(snapshot.objectId, {
-          userId: owner,
-          threadId,
-          kind: side === "before" ? "change-before" : "change-after",
-        }).catch(() => undefined);
-      }
-    }
-  }
-  await rm(changesPath(threadId, owner), { force: true }).catch(() => undefined);
+  // The contained filesystem deletes only this user's thread archives, never the project.
+  await getThreadArchiveFilesystem(owner, threadId).rmdir(".", { recursive: true, force: true });
+  await rm(changesPath(threadId, owner), { force: true });
 }
 
 export async function readWorkspaceChangeContent(input: {
@@ -371,19 +357,19 @@ export async function readWorkspaceChangeContent(input: {
   if (!change) return null;
   const snapshot = change[input.side];
   if (!snapshot) return null;
-  const kind = input.side === "before" ? "change-before" : "change-after";
-  const content = await readContentObject(snapshot.objectId, {
-    userId: owner,
-    threadId: input.threadId,
-    kind,
-  });
+  const content = await getThreadArchiveFilesystem(owner, input.threadId)
+    .readFile(snapshot.path)
+    .catch((error) => {
+      if (error instanceof FileNotFoundError) return null;
+      throw error;
+    });
   if (!content) return null;
   if (snapshot.encoding === "binary") {
     return { metadata: snapshot, content: "", binary: true };
   }
   return {
     metadata: snapshot,
-    content: content.toString(snapshot.encoding),
+    content: Buffer.from(content).toString("utf8"),
     binary: false,
   };
 }
@@ -417,15 +403,15 @@ async function saveSnapshot(
   input: { userId: string; threadId: string; side: "before" | "after"; path: string },
 ): Promise<WorkspaceChangeSnapshot | null> {
   if (value === null) return null;
-  const metadata = await putContentObject(value, {
-    userId: input.userId,
-    threadId: input.threadId,
-    kind: input.side === "before" ? "change-before" : "change-after",
+  const filesystem = getThreadArchiveFilesystem(input.userId, input.threadId);
+  const path = `changes/${input.side}/${randomUUID()}`;
+  await filesystem.writeFile(path, value, { overwrite: false });
+  return {
+    path,
+    byteSize: Buffer.byteLength(value),
     contentType: Buffer.isBuffer(value) ? "application/octet-stream" : "text/plain; charset=utf-8",
     encoding: Buffer.isBuffer(value) ? "binary" : "utf8",
-    source: input.path,
-  });
-  return snapshotReference(metadata);
+  };
 }
 
 export async function recordWorkspaceChange(input: {

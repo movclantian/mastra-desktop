@@ -1,6 +1,6 @@
 /* ======== acidgraphics — 酸性图形 | btn:glowFill card:hardPop form:square tabs:block ======== */
 [data-theme-preset="acidgraphics"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--acid-green);
   border-radius: 2px;
   background: var(--acid-green);
@@ -152,7 +152,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== africantextile — 非洲织锦 | btn:press card:paper form:square tabs:block ======== */
 [data-theme-preset="africantextile"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--at-dark-wood);
   border-radius: 6px;
   box-shadow: 3px 3px 0 0 var(--at-dark-wood);
@@ -306,7 +306,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== antidesign — 反设计 | btn:outline card:hard form:square tabs:block ======== */
 [data-theme-preset="antidesign"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--anti-black);
   border-radius: 0px;
   background: transparent;
@@ -458,7 +458,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== applestyle — Apple 官网 | btn:pill card:hairline form:round tabs:pill ======== */
 [data-theme-preset="applestyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 9999px;
   background: var(--apple-blue);
@@ -602,7 +602,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== arcadecrt — 街机 CRT | btn:step card:panel form:pixel tabs:step ======== */
 [data-theme-preset="arcadecrt"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--arcade-crt-secondary);
   border-radius: 0;
   box-shadow:
@@ -764,7 +764,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== artdeco — 装饰艺术 | btn:metal card:frame form:square tabs:bracket ======== */
 [data-theme-preset="artdeco"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--deco-gold);
@@ -946,7 +946,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== artnouveau — 新艺术运动 | btn:ink card:frame form:round tabs:underline ======== */
 [data-theme-preset="artnouveau"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--an-green) 72%, transparent);
   border-radius: 8px;
   background: var(--an-gold);
@@ -1101,7 +1101,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== bauhaus — 包豪斯 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="bauhaus"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--bauhaus-black);
   border-radius: 0px;
   box-shadow: 4px 4px 0 0 var(--bauhaus-black);
@@ -1250,7 +1250,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== blueprint — 工程蓝图 | btn:outline card:panel form:square tabs:bracket ======== */
 [data-theme-preset="blueprint"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--blueprint-secondary);
   border-radius: 0px;
   background: transparent;
@@ -1408,7 +1408,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== brutalistweb — 初代网页 | btn:underline card:flat form:square tabs:underline ======== */
 [data-theme-preset="brutalistweb"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-bottom: 2px solid var(--bw-link);
   border-radius: 0;
@@ -1560,7 +1560,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== celshading — 赛璐璐动画 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="celshading"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--cel-ink);
   border-radius: 6px;
   box-shadow: 3px 3px 0 0 var(--cel-ink);
@@ -1707,7 +1707,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cinematicvideohero — 电影级首屏 | btn:grad card:glass form:round tabs:underline ======== */
 [data-theme-preset="cinematicvideohero"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--cv-gold), var(--cv-steel));
@@ -1870,7 +1870,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== claymorphism — 黏土拟物 | btn:clay card:clay form:soft tabs:pill ======== */
 [data-theme-preset="claymorphism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 16px;
   background: var(--clay-pink);
@@ -2042,7 +2042,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== collageart — 拼贴艺术 | btn:ink card:sticker form:square tabs:block ======== */
 [data-theme-preset="collageart"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--col-dark) 72%, transparent);
   border-radius: 2px;
   background: var(--col-red);
@@ -2193,7 +2193,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== comicstyle — 美式漫画 | btn:press card:sticker form:square tabs:block ======== */
 [data-theme-preset="comicstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--comic-black);
   border-radius: 10px;
   box-shadow: 3px 3px 0 0 var(--comic-black);
@@ -2346,7 +2346,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== constructivism — 构成主义 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="constructivism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--cstv-black);
   border-radius: 0px;
   box-shadow: 4px 4px 0 0 var(--cstv-black);
@@ -2492,7 +2492,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== corporateclean — 企业简洁 | btn:flat card:flat form:round tabs:underline ======== */
 [data-theme-preset="corporateclean"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--primary);
@@ -2642,7 +2642,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cottagecore — 田园牧歌 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="cottagecore"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--cottage-brown) 72%, transparent);
   border-radius: 10px;
   background: var(--cottage-green);
@@ -2964,7 +2964,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cyberanime — 赛博动画 | btn:glowFill card:glow form:glow tabs:bracket ======== */
 [data-theme-preset="cyberanime"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--ca-purple);
   border-radius: 8px;
   background: var(--ca-purple);
@@ -3126,7 +3126,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cyberchinese — 赛博中华 | btn:glowFill card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="cyberchinese"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--cc-vermilion);
   border-radius: 4px;
   background: var(--cc-vermilion);
@@ -3289,7 +3289,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cyberwafuu — 赛博和风 | btn:cut card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="cyberwafuu"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
   border: 1px solid var(--cw-vermillion);
   border-radius: 0;
@@ -3455,7 +3455,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== cyberpunkneon — 赛博朋克霓虹 | btn:cut card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="cyberpunkneon"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   clip-path: polygon(
     10px 0,
     100% 0,
@@ -3638,7 +3638,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== darkacademia — 暗色学院 | btn:ink card:frame form:square tabs:underline ======== */
 [data-theme-preset="darkacademia"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--da-brown) 72%, transparent);
   border-radius: 4px;
   background: var(--da-green);
@@ -3794,7 +3794,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== darkmode — 开发者暗色 | btn:flat card:glow form:round tabs:underline ======== */
 [data-theme-preset="darkmode"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--dark-mode-primary);
@@ -3951,7 +3951,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== datadense — 高密度数据 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="datadense"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--foreground) 18%, transparent);
   border-radius: 4px;
   box-shadow: none;
@@ -4107,7 +4107,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== developerterminal — 开发者终端 | btn:outline card:panel form:hairline tabs:bracket ======== */
 [data-theme-preset="developerterminal"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--foreground);
   border-radius: 2px;
   background: transparent;
@@ -4282,7 +4282,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== distillstyle — Distill 学术 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="distillstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--foreground) 18%, transparent);
   border-radius: 2px;
   box-shadow: 0 1px 2px color-mix(in oklab, #000000 5%, transparent);
@@ -4428,7 +4428,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== dopaminedesign — 多巴胺设计 | btn:gradGlow card:glow form:soft tabs:pill ======== */
 [data-theme-preset="dopaminedesign"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 12px;
   background: linear-gradient(
@@ -4591,7 +4591,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== editorial — 报刊编辑 | btn:underline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="editorial"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-bottom: 2px solid var(--primary);
   border-radius: 0;
@@ -4745,7 +4745,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== filmnoir — 黑色电影 | btn:outline card:frame form:square tabs:underline ======== */
 [data-theme-preset="filmnoir"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--film-noir-primary);
   border-radius: 0px;
   background: transparent;
@@ -4902,7 +4902,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== fluentdesign — Fluent 设计 | btn:flat card:glass form:round tabs:underline ======== */
 [data-theme-preset="fluentdesign"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 4px;
   background: var(--fluent-blue);
@@ -5062,7 +5062,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== freshmarket — 鲜境市集 | btn:press card:paper form:round tabs:block ======== */
 [data-theme-preset="freshmarket"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--fresh-market-secondary);
   border-radius: 8px;
   box-shadow: 2px 2px 0 0 var(--fresh-market-secondary);
@@ -5212,7 +5212,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== frutigeraero — Frutiger Aero | btn:glass card:glass form:bevel tabs:pill ======== */
 [data-theme-preset="frutigeraero"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, #ffffff 24%, transparent);
   border-radius: 10px;
   background: color-mix(in oklab, #ffffff 14%, transparent);
@@ -5410,7 +5410,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== gallerydark — 暗色画廊 | btn:hairline card:hairline form:square tabs:underline ======== */
 [data-theme-preset="gallerydark"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--foreground) 18%, transparent);
   border-radius: 0px;
   box-shadow: none;
@@ -5558,7 +5558,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== generativeart — 生成艺术 | btn:grad card:glow form:soft tabs:underline ======== */
 [data-theme-preset="generativeart"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--generative-art-primary), var(--generative-art-accent));
@@ -5719,7 +5719,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== geometricbold — 几何 bold | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="geometricbold"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--geometric-bold-primary);
   border-radius: 0px;
   box-shadow: 4px 4px 0 0 var(--geometric-bold-primary);
@@ -5872,7 +5872,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== ghiblistyle — 吉卜力风 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="ghiblistyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ghibli-brown) 72%, transparent);
   border-radius: 10px;
   background: var(--ghibli-sage);
@@ -6025,7 +6025,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== githubstyle — GitHub 风格 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="githubstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--gh-fg) 18%, transparent);
   border-radius: 6px;
   box-shadow: 0 1px 0 color-mix(in oklab, #000000 4%, transparent);
@@ -6172,7 +6172,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== glassmorphism — 玻璃拟态 | btn:glass card:glass form:soft tabs:pill ======== */
 [data-theme-preset="glassmorphism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, #ffffff 24%, transparent);
   border-radius: 16px;
   background: color-mix(in oklab, #ffffff 14%, transparent);
@@ -6344,7 +6344,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== glitchart — 故障艺术 | btn:glitch card:hard form:square tabs:step ======== */
 [data-theme-preset="glitchart"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--glitch-black);
   border-radius: 0;
   background: var(--glitch-white);
@@ -6680,7 +6680,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== gothiclolita — 哥特萝莉 | btn:metal card:frame form:round tabs:underline ======== */
 [data-theme-preset="gothiclolita"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--gl-purple);
@@ -6855,7 +6855,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== graffitistreet — 街头涂鸦 | btn:pressPop card:hard form:square tabs:block ======== */
 [data-theme-preset="graffitistreet"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--graf-dark);
   border-radius: 2px;
   box-shadow: 3px 3px 0 0 var(--graf-red);
@@ -7001,7 +7001,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== handdrawndoodle — 手绘涂鸦 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="handdrawndoodle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1.5px solid color-mix(in oklab, var(--doodle-ink) 72%, transparent);
   border-radius: 8px;
   background: var(--doodle-red);
@@ -7168,7 +7168,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== holographic — 全息幻彩 | btn:gradGlow card:glass form:soft tabs:pill ======== */
 [data-theme-preset="holographic"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 12px;
   background: linear-gradient(120deg, var(--holo-pink), var(--holo-cyan));
@@ -7358,7 +7358,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== immersivephoto — 沉浸影像 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="immersivephoto"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ip-ink) 18%, transparent);
   border-radius: 4px;
   box-shadow: 0 2px 10px color-mix(in oklab, #000000 10%, transparent);
@@ -7504,7 +7504,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== impressionistoil — 印象派油画 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="impressionistoil"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--imp-blue) 72%, transparent);
   border-radius: 8px;
   background: var(--imp-vermillion);
@@ -7657,7 +7657,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== indianfestive — 印度节庆 | btn:grad card:frame form:round tabs:block ======== */
 [data-theme-preset="indianfestive"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 6px;
   background: linear-gradient(135deg, var(--if-vermillion), var(--if-saffron));
@@ -7815,7 +7815,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== inkwash — 水墨 | btn:ink card:paper form:hairline tabs:underline ======== */
 [data-theme-preset="inkwash"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ink-text) 72%, transparent);
   border-radius: 2px;
   background: var(--ink-moss);
@@ -7967,7 +7967,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== islamicgeometric — 伊斯兰几何 | btn:outline card:frame form:square tabs:bracket ======== */
 [data-theme-preset="islamicgeometric"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--ig-blue);
   border-radius: 2px;
   background: transparent;
@@ -8129,7 +8129,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== japanesefresh — 日系清新 | btn:flat card:flat form:round tabs:underline ======== */
 [data-theme-preset="japanesefresh"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--jf-sky);
@@ -8459,7 +8459,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== kawaiiminimal — 可爱极简 | btn:clay card:clay form:soft tabs:pill ======== */
 [data-theme-preset="kawaiiminimal"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 14px;
   background: var(--kawaii-minimal-primary);
@@ -8631,7 +8631,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== kinetictypography — 动态字体 | btn:underline card:flat form:hairline tabs:underline ======== */
 [data-theme-preset="kinetictypography"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-bottom: 2px solid var(--kt-signal);
   border-radius: 0;
@@ -8793,7 +8793,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== koreanminimal — 韩系极简 | btn:flat card:flat form:round tabs:underline ======== */
 [data-theme-preset="koreanminimal"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--km-sage);
@@ -8943,7 +8943,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== latexpaper — LaTeX 论文 | btn:hairline card:frame form:hairline tabs:underline ======== */
 [data-theme-preset="latexpaper"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ltx-ink) 18%, transparent);
   border-radius: 0px;
   box-shadow: none;
@@ -9101,7 +9101,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== launchkeynote — 发布会 Keynote | btn:pill card:flat form:round tabs:pill ======== */
 [data-theme-preset="launchkeynote"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 9999px;
   background: var(--lk-blue);
@@ -9248,7 +9248,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== linearstyle — Linear 风格 | btn:flat card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="linearstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--linear-style-primary);
@@ -9404,7 +9404,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== liquidglass — 液态玻璃 | btn:glass card:glass form:soft tabs:pill ======== */
 [data-theme-preset="liquidglass"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, #ffffff 24%, transparent);
   border-radius: 18px;
   background: color-mix(in oklab, #ffffff 14%, transparent);
@@ -9584,7 +9584,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== luxelookbook — 轻奢型录 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="luxelookbook"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ll-ink) 18%, transparent);
   border-radius: 0px;
   box-shadow: none;
@@ -9730,7 +9730,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== luxuryretail — 奢侈零售 | btn:outline card:frame form:square tabs:underline ======== */
 [data-theme-preset="luxuryretail"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--luxury-retail-secondary);
   border-radius: 0px;
   background: transparent;
@@ -9887,7 +9887,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== macosvibrancy — macOS 活力 | btn:glass card:glass form:round tabs:pill ======== */
 [data-theme-preset="macosvibrancy"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, #ffffff 24%, transparent);
   border-radius: 10px;
   background: color-mix(in oklab, #ffffff 14%, transparent);
@@ -10047,7 +10047,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== magiccircle — 魔法阵 | btn:glow card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="magiccircle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--mc-gold);
   border-radius: 4px;
   background: color-mix(in oklab, var(--mc-gold) 12%, transparent);
@@ -10213,7 +10213,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== marbleluxury — 大理石奢华 | btn:metal card:frame form:square tabs:underline ======== */
 [data-theme-preset="marbleluxury"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--ml-gold);
@@ -10394,7 +10394,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== materialdesign — Material Design | btn:flat card:flat form:round tabs:underline ======== */
 [data-theme-preset="materialdesign"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--md-primary);
@@ -10554,7 +10554,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== maximalism — 极繁主义 | btn:gradGlow card:sticker form:soft tabs:block ======== */
 [data-theme-preset="maximalism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 10px;
   background: linear-gradient(120deg, var(--max-pink), var(--max-yellow));
@@ -10886,7 +10886,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== medievalmanuscript — 中世纪手抄本 | btn:ink card:frame form:square tabs:underline ======== */
 [data-theme-preset="medievalmanuscript"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ms-brown) 72%, transparent);
   border-radius: 2px;
   background: var(--ms-red);
@@ -11042,7 +11042,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== memphis — 孟菲斯 | btn:pressPop card:sticker form:square tabs:block ======== */
 [data-theme-preset="memphis"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid #1a1a1a;
   border-radius: 6px;
   box-shadow: 3px 3px 0 0 var(--memphis-red);
@@ -11195,7 +11195,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== midcenturymodern — 中世纪现代 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="midcenturymodern"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--mcm-charcoal);
   border-radius: 4px;
   box-shadow: 2px 2px 0 0 var(--mcm-charcoal);
@@ -11342,7 +11342,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== minimalistflat — 极简扁平 | btn:flat card:hairline form:square tabs:underline ======== */
 [data-theme-preset="minimalistflat"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 0px;
   background: var(--minimalist-flat-accent);
@@ -11497,7 +11497,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== moderngradient — 现代渐变 | btn:gradGlow card:glow form:soft tabs:pill ======== */
 [data-theme-preset="moderngradient"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 12px;
   background: linear-gradient(
@@ -11660,7 +11660,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== monochrome — 单色主义 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="monochrome"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--monochrome-text) 18%, transparent);
   border-radius: 2px;
   box-shadow: none;
@@ -11806,7 +11806,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== naturalorganic — 自然有机 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="naturalorganic"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--natural-organic-primary) 72%, transparent);
   border-radius: 8px;
   background: var(--natural-organic-accent);
@@ -11959,7 +11959,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neobrutalist — 新粗野主义 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="neobrutalist"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid #000000;
   border-radius: 0px;
   box-shadow: 5px 5px 0 0 #000000;
@@ -12108,7 +12108,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neobrutalistplayful — 俏皮新粗野 | btn:pressPop card:sticker form:square tabs:block ======== */
 [data-theme-preset="neobrutalistplayful"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid #1a1a1a;
   border-radius: 6px;
   box-shadow: 4px 4px 0 0 var(--playful-red);
@@ -12261,7 +12261,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neobrutalistsoft — 柔和新粗野 | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="neobrutalistsoft"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--soft-text);
   border-radius: 10px;
   box-shadow: 3px 3px 0 0 var(--soft-text);
@@ -12410,7 +12410,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neongradient — 霓虹渐变 | btn:gradGlow card:glow form:glow tabs:pill ======== */
 [data-theme-preset="neongradient"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 12px;
   background: linear-gradient(120deg, var(--neon-purple), var(--neon-cyan));
@@ -12570,7 +12570,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neonsamurai — 霓虹武士 | btn:cut card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="neonsamurai"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   clip-path: polygon(
     10px 0,
     100% 0,
@@ -12750,7 +12750,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neontokyo — 霓虹东京 | btn:glowFill card:glow form:glow tabs:bracket ======== */
 [data-theme-preset="neontokyo"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--neon-tokyo-primary);
   border-radius: 6px;
   background: var(--neon-tokyo-primary);
@@ -12912,7 +12912,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== neumorphism — 新拟态 | btn:inset card:inset form:inset tabs:inset ======== */
 [data-theme-preset="neumorphism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 14px;
   background: var(--neu-bg);
@@ -13093,7 +13093,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== notionstyle — Notion 风格 | btn:hairline card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="notionstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--notion-text) 18%, transparent);
   border-radius: 4px;
   box-shadow: none;
@@ -13556,7 +13556,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== oversizedtypography — 超大字号 | btn:underline card:flat form:hairline tabs:underline ======== */
 [data-theme-preset="oversizedtypography"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-bottom: 2px solid var(--primary);
   border-radius: 0;
@@ -13712,7 +13712,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== papercraft — 纸艺手工 | btn:press card:paper form:square tabs:block ======== */
 [data-theme-preset="papercraft"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--paper-craft-accent);
   border-radius: 8px;
   box-shadow: 2px 2px 0 0 var(--paper-craft-accent);
@@ -13863,7 +13863,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== particle — 粒子星尘 | btn:glow card:glow form:glow tabs:underline ======== */
 [data-theme-preset="particle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--particle-accent);
   border-radius: 8px;
   background: color-mix(in oklab, var(--particle-accent) 12%, transparent);
@@ -14029,7 +14029,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== pastelgoth — 粉彩哥特 | btn:glowFill card:glow form:soft tabs:underline ======== */
 [data-theme-preset="pastelgoth"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--pg-lavender);
   border-radius: 6px;
   background: var(--pg-lavender);
@@ -14189,7 +14189,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== pixelanime — 像素动画 | btn:step card:frame form:pixel tabs:step ======== */
 [data-theme-preset="pixelanime"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--pa-deep);
   border-radius: 0;
   box-shadow:
@@ -14349,7 +14349,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== pixelart — 像素艺术 | btn:step card:frame form:pixel tabs:step ======== */
 [data-theme-preset="pixelart"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--pixel-dark);
   border-radius: 0;
   box-shadow:
@@ -14661,7 +14661,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== retrovintage — 复古怀旧 | btn:ink card:paper form:square tabs:block ======== */
 [data-theme-preset="retrovintage"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--retro-vintage-primary) 72%, transparent);
   border-radius: 4px;
   background: var(--retro-vintage-accent);
@@ -14813,7 +14813,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== risograph — 孔版印刷 | btn:pressPop card:paper form:square tabs:block ======== */
 [data-theme-preset="risograph"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid #2a2a2a;
   border-radius: 2px;
   box-shadow: 2px 2px 0 0 var(--riso-pink);
@@ -14966,7 +14966,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== scandinavian — 北欧简约 | btn:flat card:hairline form:square tabs:underline ======== */
 [data-theme-preset="scandinavian"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 4px;
   background: var(--scandinavian-accent);
@@ -15117,7 +15117,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== scifihud — 科幻 HUD | btn:cut card:panel form:glow tabs:bracket ======== */
 [data-theme-preset="scifihud"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   clip-path: polygon(
     12px 0,
     100% 0,
@@ -15300,7 +15300,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== shadergradient — 着色器渐变 | btn:gradGlow card:glass form:glow tabs:pill ======== */
 [data-theme-preset="shadergradient"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 12px;
   background: linear-gradient(120deg, var(--sg-violet), var(--sg-cyan));
@@ -15466,7 +15466,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== shopifyclean — Shopify 简洁 | btn:flat card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="shopifyclean"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--primary);
@@ -15616,7 +15616,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== shoujomanga — 少女漫画 | btn:clay card:clay form:soft tabs:pill ======== */
 [data-theme-preset="shoujomanga"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 14px;
   background: var(--shoujo-pink);
@@ -15788,7 +15788,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== sketchstyle — 素描手稿 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="sketchstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1.5px solid color-mix(in oklab, var(--sketch-dark) 72%, transparent);
   border-radius: 4px;
   background: var(--sketch-red);
@@ -15952,7 +15952,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== skeuomorphism — 经典拟物 | btn:bevel card:bevel form:bevel tabs:inset ======== */
 [data-theme-preset="skeuomorphism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--skeu-leather) 45%, transparent);
   border-radius: 6px;
   background: linear-gradient(
@@ -16321,7 +16321,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== solarpunk — 太阳朋克 | btn:grad card:glass form:round tabs:pill ======== */
 [data-theme-preset="solarpunk"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--solarpunk-primary), var(--solarpunk-secondary));
@@ -16481,7 +16481,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== steampunk — 蒸汽朋克 | btn:metal card:bevel form:bevel tabs:bracket ======== */
 [data-theme-preset="steampunk"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--steampunk-primary);
@@ -16682,7 +16682,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== stripestyle — Stripe 风格 | btn:grad card:hairline form:hairline tabs:underline ======== */
 [data-theme-preset="stripestyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: linear-gradient(135deg, var(--stripe-purple), var(--stripe-cyan));
@@ -16833,7 +16833,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== studiobold — 工作室 bold | btn:press card:hard form:square tabs:block ======== */
 [data-theme-preset="studiobold"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--foreground);
   border-radius: 0px;
   box-shadow: 5px 5px 0 0 var(--foreground);
@@ -16980,7 +16980,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== surrealism — 超现实主义 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="surrealism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--sr-midnight) 72%, transparent);
   border-radius: 6px;
   background: var(--sr-gold);
@@ -17133,7 +17133,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== swissposter — 瑞士海报 | btn:outline card:hard form:square tabs:block ======== */
 [data-theme-preset="swissposter"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 2px solid var(--sp-black);
   border-radius: 0px;
   background: transparent;
@@ -17282,7 +17282,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== swissstyle — 瑞士风格 | btn:hairline card:hairline form:square tabs:underline ======== */
 [data-theme-preset="swissstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--swiss-black) 18%, transparent);
   border-radius: 0px;
   box-shadow: none;
@@ -17430,7 +17430,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== synthwave — 合成器浪潮 | btn:gradGlow card:glow form:glow tabs:bracket ======== */
 [data-theme-preset="synthwave"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 6px;
   background: linear-gradient(120deg, var(--synth-pink), var(--synth-cyan));
@@ -17595,7 +17595,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== terracotta — 赤陶土艺 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="terracotta"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--terracotta-earth) 72%, transparent);
   border-radius: 8px;
   background: var(--terracotta-primary);
@@ -17748,7 +17748,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== tropicalparadise — 热带天堂 | btn:flat card:flat form:round tabs:pill ======== */
 [data-theme-preset="tropicalparadise"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 10px;
   background: var(--tp-teal);
@@ -17894,7 +17894,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== ukiyoedigital — 浮世绘数字 | btn:ink card:paper form:square tabs:underline ======== */
 [data-theme-preset="ukiyoedigital"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--ue-indigo) 72%, transparent);
   border-radius: 2px;
   background: var(--ue-vermilion);
@@ -18048,7 +18048,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== vaporwave — 蒸汽波 | btn:gradGlow card:glass form:glow tabs:pill ======== */
 [data-theme-preset="vaporwave"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 6px;
   background: linear-gradient(120deg, var(--vapor-pink), var(--vapor-cyan));
@@ -18214,7 +18214,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== vhsaesthetic — VHS 录像带 | btn:glitch card:hard form:square tabs:step ======== */
 [data-theme-preset="vhsaesthetic"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--vhs-aesthetic-secondary);
   border-radius: 0;
   background: var(--card);
@@ -18377,7 +18377,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== victorianbotanical — 维多利亚植物 | btn:ink card:frame form:square tabs:underline ======== */
 [data-theme-preset="victorianbotanical"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--vb-green) 72%, transparent);
   border-radius: 2px;
   background: var(--vb-gold);
@@ -18533,7 +18533,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== visualnovel — 视觉小说 | btn:flat card:frame form:round tabs:underline ======== */
 [data-theme-preset="visualnovel"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--vn-indigo);
@@ -18689,7 +18689,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== wabisabi — 侘寂 | btn:ink card:paper form:hairline tabs:underline ======== */
 [data-theme-preset="wabisabi"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--wabi-text) 72%, transparent);
   border-radius: 2px;
   background: var(--wabi-moss);
@@ -18841,7 +18841,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== warmdashboard — 暖调工作台 | btn:flat card:flat form:round tabs:underline ======== */
 [data-theme-preset="warmdashboard"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 0;
   border-radius: 8px;
   background: var(--warm-teal);
@@ -18991,7 +18991,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== warmorganic — 暖调有机 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="warmorganic"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--warm-organic-ink) 72%, transparent);
   border-radius: 8px;
   background: var(--warm-organic-terracotta);
@@ -19144,7 +19144,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== watercolorart — 水彩画 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="watercolorart"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--wc-ochre) 72%, transparent);
   border-radius: 10px;
   background: var(--wc-cerulean);
@@ -19297,7 +19297,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== watercolorstyle — 水彩风 | btn:ink card:paper form:round tabs:underline ======== */
 [data-theme-preset="watercolorstyle"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--wc-blue) 72%, transparent);
   border-radius: 10px;
   background: var(--wc-blue);
@@ -19450,7 +19450,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== witchcore — 女巫核心 | btn:glow card:frame form:glow tabs:bracket ======== */
 [data-theme-preset="witchcore"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid var(--witchcore-accent);
   border-radius: 4px;
   background: color-mix(in oklab, var(--witchcore-accent) 12%, transparent);
@@ -19817,7 +19817,7 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* ======== zengarden — 禅意庭院 | btn:ink card:paper form:hairline tabs:underline ======== */
 [data-theme-preset="zengarden"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   border: 1px solid color-mix(in oklab, var(--zen-text) 72%, transparent);
   border-radius: 4px;
   background: var(--zen-moss);

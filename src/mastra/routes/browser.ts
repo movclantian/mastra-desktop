@@ -44,7 +44,7 @@ function browserState(browser: WorkBrowser, threadId: string) {
       const selectedTabIndex = visibleTabs.findIndex(
         ({ index }) => index === (state?.activeTabIndex ?? 0),
       );
-      const activeVisibleTab = visibleTabs[selectedTabIndex >= 0 ? selectedTabIndex : 0];
+      const activeVisibleTab = visibleTabs[Math.max(selectedTabIndex, 0)];
       return BrowserStateSchema.parse({
         active: hasSession && tabs.length > 0,
         status: browser.status,
@@ -55,7 +55,7 @@ function browserState(browser: WorkBrowser, threadId: string) {
               ? null
               : currentUrl,
         tabs,
-        activeTabIndex: selectedTabIndex >= 0 ? selectedTabIndex : 0,
+        activeTabIndex: Math.max(selectedTabIndex, 0),
         closeReason: state?.closeReason,
         activeUrlChangeSource: state?.activeUrlChangeSource,
       });

@@ -39,8 +39,12 @@ import {
 import { MODELS_DEV_API_URL } from "../../shared/proxy-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import { errorText, workError } from "../errors";
-import { readContentObject } from "../storage/content-objects";
-import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
+import {
+  getAppConfig,
+  getThreadArchiveFilesystem,
+  setAppConfig,
+  userIdFromContext,
+} from "../storage/database";
 
 const REGISTRY_GATEWAY = new ModelsDevGateway(PROVIDER_REGISTRY);
 
@@ -198,19 +202,16 @@ function screenshotMiddleware(resourceId?: string): LanguageModelMiddleware {
       !resourceId ||
       parts.length !== 3 ||
       parts.some((part) => !part) ||
+      !/^[0-9a-f-]{36}\.(?:png|jpg|webp)$/i.test(parts[2]) ||
       parts[0] !== resourceId ||
       url.host ||
       url.search ||
       url.hash
     )
       throw new Error("Screenshot does not belong to the authenticated user");
-    const bytes = await readContentObject(parts[2], {
-      userId: resourceId,
-      threadId: parts[1],
-      kind: "screenshot",
-    });
-    if (!bytes) throw new Error("Screenshot content is missing");
-    return bytes;
+    return Buffer.from(
+      await getThreadArchiveFilesystem(resourceId, parts[1]).readFile(`screenshots/${parts[2]}`),
+    );
   };
   return {
     async overrideSupportedUrls({ model }) {

@@ -767,7 +767,7 @@
 
 /* --- @sabraman: 经典拟物化 (Skeuomorphism) --- */
 [data-theme-style="sabraman"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
   background-image: linear-gradient(to bottom, rgba(255, 255, 255, 0.22), rgba(0, 0, 0, 0.15));
   box-shadow:
     0 2px 5px rgba(0, 0, 0, 0.2),
@@ -1928,14 +1928,14 @@ button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]) {
 
 /* 8.2 neobrutalism 官方签名: hover 位移抬升 + 阴影加深 */
 [data-theme-style="neobrutalism"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled) {
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled) {
   transform: translate(-1px, -1px);
   box-shadow: 5px 5px 0px var(--border);
 }
 
 /* 8.3 像素主题官方签名: hover 前景/背景反色 */
 [data-theme-style="8bitcn"]
-button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled),
+  button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled),
 [data-theme-style="pixelact"]
   button[data-slot="button"]:not([class*="ghost"]):not([class*="link"]):hover:not(:disabled) {
   background-color: var(--foreground);
@@ -2149,9 +2149,9 @@ html.smooth-cursor-mode .cursor-grabbing {
 
 /* 仅在纯文本编辑区(Input/Textarea/富文本/代码编辑器)内保留高精度原生 I-beam 文本光标 */
 html.smooth-cursor-mode
-input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not(
-  [type="radio"]
-):not([type="range"]):not([type="file"]),
+  input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not(
+    [type="radio"]
+  ):not([type="range"]):not([type="file"]),
 html.smooth-cursor-mode textarea,
 html.smooth-cursor-mode [contenteditable="true"],
 html.smooth-cursor-mode [contenteditable="true"] *,

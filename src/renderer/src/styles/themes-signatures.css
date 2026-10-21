@@ -1187,6 +1187,7 @@
 [data-theme-preset="brutalistweb"] *,
 [data-theme-preset="brutalistweb"] *::before,
 [data-theme-preset="brutalistweb"] *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: This preset intentionally overrides component and inline radii. */
   border-radius: 0 !important;
 }
 
@@ -1368,6 +1369,7 @@
 
 [data-theme-preset="celshading"] .cel-impact:active {
   transform: scaleX(1.1) scaleY(0.9) translate(2px, 4px);
+  /* biome-ignore lint/complexity/noImportantStyles: Pressed impact controls must override component and inline shadows. */
   box-shadow: none !important;
   transition-duration: 75ms;
 }

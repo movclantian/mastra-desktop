@@ -16,7 +16,6 @@ import {
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
-import { contentObjectRoute } from "./contents";
 import { conversationWorkflowRoutes } from "./conversation-runs";
 import {
   guardrailsConfigRoute,
@@ -90,7 +89,6 @@ import {
 export const workRoutes = [
   ...pluginRoutes,
   ...conversationWorkflowRoutes,
-  contentObjectRoute,
   inlineCompletionRoute,
   inlineEditRoute,
   authLoginRoute,

@@ -6,6 +6,9 @@ import type {
 import { z } from "zod";
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
+export function workbenchSessionId(resourceId: string, threadId: string): string {
+  return JSON.stringify(["workbench", resourceId, threadId]);
+}
 /** Maximum reliable Node timer; the task manager requires a finite timeout. */
 export const BACKGROUND_TASK_TIMEOUT_MS = 2_147_483_647;
 

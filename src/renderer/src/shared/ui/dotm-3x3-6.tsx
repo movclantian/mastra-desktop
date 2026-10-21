@@ -1,10 +1,13 @@
-import type { DotAnimationResolver } from "@/shared/ui/visual/dotmatrix/core";
-
-("use client");
+"use client";
 
 import type { CSSProperties } from "react";
 
-import { createDotm3x3Component } from "@/shared/ui/visual/dotmatrix/core";
+import {
+  type DotAnimationResolver,
+  DotMatrix3Base,
+  type DotMatrixCommonProps,
+} from "@/shared/ui/visual/dotmatrix/core";
+import { useDotMatrixPhases, usePrefersReducedMotion } from "@/shared/ui/visual/dotmatrix/hooks";
 
 const animationResolver: DotAnimationResolver = ({
   isActive,
@@ -31,4 +34,33 @@ const animationResolver: DotAnimationResolver = ({
   return { className: "dmx-center-ripple-3", style };
 };
 
-export const Dotm3x3_6 = createDotm3x3Component("Dotm3x3_6", animationResolver, 1.75);
+export function Dotm3x3_6({
+  pattern = "full",
+  dotShape = "circle",
+  animated = true,
+  hoverAnimated = false,
+  speed = 1.75,
+  ...rest
+}: DotMatrixCommonProps) {
+  const reducedMotion = usePrefersReducedMotion();
+  const { phase, onMouseEnter, onMouseLeave } = useDotMatrixPhases({
+    animated: Boolean(animated && !reducedMotion),
+    hoverAnimated: Boolean(hoverAnimated && !reducedMotion),
+    speed,
+  });
+
+  return (
+    <DotMatrix3Base
+      {...rest}
+      speed={speed}
+      pattern={pattern}
+      dotShape={dotShape}
+      animated={animated}
+      phase={phase}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      reducedMotion={reducedMotion}
+      animationResolver={animationResolver}
+    />
+  );
+}

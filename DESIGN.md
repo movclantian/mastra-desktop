@@ -1,179 +1,180 @@
 ---
+
 name: Mastra Desktop
 version: 0.0.6
 description: >-
-  Design system for mastra-desktop, a local-first multi-agent coding workbench
-  (Electron + React + Mastra). UI is built on shadcn/ui "base-nova" over
-  @base-ui/react (NOT Radix) with Tailwind CSS v4 and OKLCH/neutral semantic
-  tokens. A runtime theme engine swaps 18+ presets via [data-theme-style].
-  MANDATORY RULE / 强制规则: before writing ANY UI code you MUST retrieve and read
-  the prefix-matching component under docs/examples/ (the <name>.mdx spec plus
-  every <name>-*.tsx demo). 在写 UI 代码前必须检索并阅读 docs/examples/ 下的前缀匹配组件。
+Design system for mastra-desktop, a local-first multi-agent coding workbench
+(Electron + React + Mastra). UI is built on shadcn/ui "base-nova" over
+@base-ui/react (NOT Radix) with Tailwind CSS v4 and OKLCH/neutral semantic
+tokens. A runtime theme engine swaps 18+ presets via [data-theme-style].
+MANDATORY RULE / 强制规则: before writing ANY UI code you MUST retrieve and read
+the prefix-matching component under docs/examples/ (the <name>.mdx spec plus
+every <name>-*.tsx demo). 在写 UI 代码前必须检索并阅读 docs/examples/ 下的前缀匹配组件。
 colors:
-  background: "#ffffff"
-  foreground: "#171717"
-  primary: "#171717"
-  on-primary: "#fafafa"
-  secondary: "#f5f5f5"
-  on-secondary: "#171717"
-  muted: "#f5f5f5"
-  on-muted: "#737373"
-  accent: "#f5f5f5"
-  on-accent: "#171717"
-  destructive: "#dc2626"
-  on-destructive: "#fafafa"
-  border: "#e5e5e5"
-  input: "#e5e5e5"
-  ring: "#a3a3a3"
-  card: "#ffffff"
-  on-card: "#171717"
-  popover: "#ffffff"
-  on-popover: "#171717"
-  sidebar: "#fafafa"
-  on-sidebar: "#171717"
-  sidebar-border: "#e5e5e5"
+background: "#ffffff"
+foreground: "#171717"
+primary: "#171717"
+on-primary: "#fafafa"
+secondary: "#f5f5f5"
+on-secondary: "#171717"
+muted: "#f5f5f5"
+on-muted: "#737373"
+accent: "#f5f5f5"
+on-accent: "#171717"
+destructive: "#dc2626"
+on-destructive: "#fafafa"
+border: "#e5e5e5"
+input: "#e5e5e5"
+ring: "#a3a3a3"
+card: "#ffffff"
+on-card: "#171717"
+popover: "#ffffff"
+on-popover: "#171717"
+sidebar: "#fafafa"
+on-sidebar: "#171717"
+sidebar-border: "#e5e5e5"
 typography:
-  h1:
-    fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-    fontSize: 1.5rem
-    fontWeight: "600"
-    letterSpacing: -0.015em
-  h2:
-    fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-    fontSize: 1.25rem
-    fontWeight: "600"
-    letterSpacing: -0.015em
-  h3:
-    fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-    fontSize: 1rem
-    fontWeight: "600"
-    letterSpacing: -0.015em
-  body-md:
-    fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-    fontSize: 0.875rem
-    fontWeight: "400"
-    letterSpacing: -0.015em
-  body-sm:
-    fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
-    fontSize: 0.75rem
-    fontWeight: "400"
-    letterSpacing: -0.015em
-  code:
-    fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace'
-    fontSize: 0.8125rem
+h1:
+fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+fontSize: 1.5rem
+fontWeight: "600"
+letterSpacing: -0.015em
+h2:
+fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+fontSize: 1.25rem
+fontWeight: "600"
+letterSpacing: -0.015em
+h3:
+fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+fontSize: 1rem
+fontWeight: "600"
+letterSpacing: -0.015em
+body-md:
+fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+fontSize: 0.875rem
+fontWeight: "400"
+letterSpacing: -0.015em
+body-sm:
+fontFamily: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif
+fontSize: 0.75rem
+fontWeight: "400"
+letterSpacing: -0.015em
+code:
+fontFamily: '"JetBrains Mono", "SF Mono", Consolas, monospace'
+fontSize: 0.8125rem
 rounded:
-  sm: 6px
-  md: 8px
-  lg: 10px
-  xl: 14px
-  2xl: 18px
-  full: 9999px
+sm: 6px
+md: 8px
+lg: 10px
+xl: 14px
+2xl: 18px
+full: 9999px
 spacing:
-  xs: 4px
-  sm: 8px
-  md: 12px
-  lg: 16px
-  xl: 24px
-  2xl: 32px
+xs: 4px
+sm: 8px
+md: 12px
+lg: 16px
+xl: 24px
+2xl: 32px
 components:
-  app-shell:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.body-md}"
-    padding: "{spacing.lg}"
-  page-heading:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    typography: "{typography.h1}"
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
-    rounded: "{rounded.md}"
-    height: 36px
-    padding: "{spacing.lg}"
-  button-outline:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    height: 36px
-  button-destructive:
-    backgroundColor: "{colors.destructive}"
-    textColor: "{colors.on-destructive}"
-    rounded: "{rounded.md}"
-    height: 36px
-  card:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.on-card}"
-    rounded: "{rounded.lg}"
-    padding: "{spacing.xl}"
-    typography: "{typography.h3}"
-  dialog:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.on-card}"
-    rounded: "{rounded.xl}"
-    padding: "{spacing.2xl}"
-    typography: "{typography.h2}"
-  popover:
-    backgroundColor: "{colors.popover}"
-    textColor: "{colors.on-popover}"
-    rounded: "{rounded.lg}"
-    padding: "{spacing.md}"
-  menu-item:
-    backgroundColor: "{colors.popover}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    padding: "{spacing.sm}"
-  input:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    height: 36px
-    padding: "{spacing.md}"
-    typography: "{typography.body-md}"
-  badge:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
-    rounded: "{rounded.full}"
-    typography: "{typography.body-sm}"
-    padding: "{spacing.xs}"
-  chip-secondary:
-    backgroundColor: "{colors.secondary}"
-    textColor: "{colors.on-secondary}"
-    rounded: "{rounded.sm}"
-  chip-accent:
-    backgroundColor: "{colors.accent}"
-    textColor: "{colors.on-accent}"
-    rounded: "{rounded.sm}"
-  muted-text:
-    backgroundColor: "{colors.background}"
-    textColor: "{colors.on-muted}"
-    typography: "{typography.body-sm}"
-  muted-panel:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    padding: "{spacing.md}"
-  sidebar:
-    backgroundColor: "{colors.sidebar}"
-    textColor: "{colors.on-sidebar}"
-    width: 256px
-    padding: "{spacing.md}"
-    typography: "{typography.body-md}"
-  divider:
-    backgroundColor: "{colors.border}"
-    height: 1px
-    width: 100%
-  code-block:
-    backgroundColor: "{colors.muted}"
-    textColor: "{colors.foreground}"
-    rounded: "{rounded.md}"
-    padding: "{spacing.md}"
-    typography: "{typography.code}"
-  panel-raised:
-    backgroundColor: "{colors.card}"
-    textColor: "{colors.on-card}"
-    rounded: "{rounded.2xl}"
-    padding: "{spacing.xs}"
+app-shell:
+backgroundColor: "{colors.background}"
+textColor: "{colors.foreground}"
+typography: "{typography.body-md}"
+padding: "{spacing.lg}"
+page-heading:
+backgroundColor: "{colors.background}"
+textColor: "{colors.foreground}"
+typography: "{typography.h1}"
+button-primary:
+backgroundColor: "{colors.primary}"
+textColor: "{colors.on-primary}"
+rounded: "{rounded.md}"
+height: 36px
+padding: "{spacing.lg}"
+button-outline:
+backgroundColor: "{colors.background}"
+textColor: "{colors.foreground}"
+rounded: "{rounded.md}"
+height: 36px
+button-destructive:
+backgroundColor: "{colors.destructive}"
+textColor: "{colors.on-destructive}"
+rounded: "{rounded.md}"
+height: 36px
+card:
+backgroundColor: "{colors.card}"
+textColor: "{colors.on-card}"
+rounded: "{rounded.lg}"
+padding: "{spacing.xl}"
+typography: "{typography.h3}"
+dialog:
+backgroundColor: "{colors.card}"
+textColor: "{colors.on-card}"
+rounded: "{rounded.xl}"
+padding: "{spacing.2xl}"
+typography: "{typography.h2}"
+popover:
+backgroundColor: "{colors.popover}"
+textColor: "{colors.on-popover}"
+rounded: "{rounded.lg}"
+padding: "{spacing.md}"
+menu-item:
+backgroundColor: "{colors.popover}"
+textColor: "{colors.foreground}"
+rounded: "{rounded.md}"
+padding: "{spacing.sm}"
+input:
+backgroundColor: "{colors.background}"
+textColor: "{colors.foreground}"
+rounded: "{rounded.md}"
+height: 36px
+padding: "{spacing.md}"
+typography: "{typography.body-md}"
+badge:
+backgroundColor: "{colors.primary}"
+textColor: "{colors.on-primary}"
+rounded: "{rounded.full}"
+typography: "{typography.body-sm}"
+padding: "{spacing.xs}"
+chip-secondary:
+backgroundColor: "{colors.secondary}"
+textColor: "{colors.on-secondary}"
+rounded: "{rounded.sm}"
+chip-accent:
+backgroundColor: "{colors.accent}"
+textColor: "{colors.on-accent}"
+rounded: "{rounded.sm}"
+muted-text:
+backgroundColor: "{colors.background}"
+textColor: "{colors.on-muted}"
+typography: "{typography.body-sm}"
+muted-panel:
+backgroundColor: "{colors.muted}"
+textColor: "{colors.foreground}"
+rounded: "{rounded.md}"
+padding: "{spacing.md}"
+sidebar:
+backgroundColor: "{colors.sidebar}"
+textColor: "{colors.on-sidebar}"
+width: 256px
+padding: "{spacing.md}"
+typography: "{typography.body-md}"
+divider:
+backgroundColor: "{colors.border}"
+height: 1px
+width: 100%
+code-block:
+backgroundColor: "{colors.muted}"
+textColor: "{colors.foreground}"
+rounded: "{rounded.md}"
+padding: "{spacing.md}"
+typography: "{typography.code}"
+panel-raised:
+backgroundColor: "{colors.card}"
+textColor: "{colors.on-card}"
+rounded: "{rounded.2xl}"
+padding: "{spacing.xs}"
 ---
 
 # Mastra Desktop — DESIGN.md
@@ -191,7 +192,6 @@ hard gate, not a suggestion — the answers below are derived from those files,
 which are the authoritative source of truth for this project's component API.
 
 Given a target component named `<name>` (e.g. `button`, `data-table`, `input-group`):
-
 1. **Locate the spec** — read `docs/examples/<name>.mdx`. It carries the YAML
    frontmatter (`title`, `description`, `base`, `component`), the variant
    gallery, the install command (`npx shadcn@latest add <name>`), and the
@@ -228,7 +228,6 @@ dense tooling views (code, diffs, file trees, task queues). The visual language 
 but fully re-skinnable at runtime.
 
 Design priorities, in order:
-
 1. **Legibility & density over decoration.** This is a pro tool; prefer compact
    spacing, clear hierarchy, and `tabular-nums` for numeric/terminal data.
 2. **Reuse the documented component.** Every primitive already exists in
@@ -259,7 +258,6 @@ roles in **OKLCH**. Dark mode is driven by the `.dark` class on `<html>`
 `prefers-color-scheme` directly.
 
 Role usage:
-
 - `background` / `foreground` — app shell base surface and its default text.
 - `card` / `popover` (+ `-foreground`) — elevated containers, dialogs, menus.
 - `primary` / `primary-foreground` — the single strongest action (default button,
@@ -275,7 +273,6 @@ Role usage:
   for effect components (`animated-gradient-text`, `rainbow-button`, `shine-border`).
 
 Rules:
-
 - **Do not hardcode hex/rgb/hsl** in components. Use `bg-*`, `text-*`, `border-*`
   semantic utilities, or `var(--token)` / `color-mix(in oklab, …)` when a raw
   reference is unavoidable (as the theme CSS does).
@@ -295,7 +292,6 @@ Rules:
 ## Typography
 
 Two families, both theme-overridable via CSS variables set by `apply-theme.ts`:
-
 - **Sans** — `--theme-font-sans`, default `system-ui, -apple-system, "Segoe UI",
   Roboto, "Helvetica Neue", sans-serif`. Applied to `body`.
 - **Mono** — `--theme-font-mono`, default `"JetBrains Mono", "SF Mono", Consolas,
@@ -303,17 +299,16 @@ Two families, both theme-overridable via CSS variables set by `apply-theme.ts`:
 
 Scale (Tailwind v4 rem base, 1rem = 16px):
 
-| Role        | Size       | Weight | Notes                                  |
-| ----------- | ---------- | ------ | -------------------------------------- |
-| Page title  | `text-2xl`/`text-3xl` | `--theme-heading-weight` (600) | headings use `letter-spacing: -0.02em` |
-| Section (h2)| `text-xl`  | 600    | tight tracking                         |
-| Card title  | `text-base`| 600    | `[data-slot="card-title"]`             |
-| Body        | `text-sm` (14px) | 400 | the app's default reading size         |
-| Caption/muted | `text-xs` (12px) | 400 | labels, timestamps, meta             |
-| Code        | `text-[13px]` mono | 400 | CodeMirror / `<pre>` / `kbd`         |
+| Role          | Size                  | Weight                         | Notes                                  |
+| ------------- | --------------------- | ------------------------------ | -------------------------------------- |
+| Page title    | `text-2xl`/`text-3xl` | `--theme-heading-weight` (600) | headings use `letter-spacing: -0.02em` |
+| Section (h2)  | `text-xl`             | 600                            | tight tracking                         |
+| Card title    | `text-base`           | 600                            | `[data-slot="card-title"]`             |
+| Body          | `text-sm` (14px)      | 400                            | the app's default reading size         |
+| Caption/muted | `text-xs` (12px)      | 400                            | labels, timestamps, meta               |
+| Code          | `text-[13px]` mono    | 400                            | CodeMirror / `<pre>` / `kbd`           |
 
 Rules:
-
 - Headings (`h1–h6`) inherit `font-weight: var(--theme-heading-weight)` and
   `letter-spacing: var(--theme-letter-spacing)` — do not override per component.
 - Global body letter-spacing is `var(--theme-letter-spacing, normal)`
@@ -332,7 +327,6 @@ The app is a fixed desktop shell: `html, body, #root { height: 100% }` and
 rely on document scrolling.
 
 Structure & key measures:
-
 - **Sidebar** — width `--sidebar-width: 16rem` (256px), collapsed
   `--sidebar-width-icon: 3rem` (48px). Build with the `sidebar` family
   (`docs/examples/sidebar-*.tsx`, 13 demos).
@@ -345,7 +339,6 @@ Structure & key measures:
   Keep it tight: this is a pro tool, avoid marketing-scale whitespace.
 
 Rules:
-
 - **Every scrollable region uses `ScrollArea`** (`@/shared/ui/scroll-area`), never
   a raw `overflow-auto` div, so the themed slim scrollbar applies. Horizontal
   scrollbars are 2px, vertical 6px.
@@ -363,7 +356,6 @@ Depth is expressed through **borders first, shadows second**, and both are
 theme-driven so presets can radically change the feel.
 
 Tokens set at runtime by `apply-theme.ts`:
-
 - `--radius` (default `10px`) drives the whole rounded scale (see Shapes).
 - `--theme-border-width` (default `1px`; brutalism/pixel presets force `2px`).
   Global `.border*` utilities read this variable.
@@ -372,7 +364,6 @@ Tokens set at runtime by `apply-theme.ts`:
   an offset hard shadow `Nx N 0px var(--border)`.
 
 Shadow conventions by theme family (all in `globals.css`):
-
 - **Default / SaaS / whiskeyjack** — flat, hairline borders, near-invisible soft shadow.
 - **Brutalism** (`boldkit`, `neobrutalism`, `retroui`, `saaskit`) — solid borders +
   hard offset shadows; buttons translate on `:active`; `neobrutalism` lifts on `:hover`.
@@ -384,7 +375,6 @@ Shadow conventions by theme family (all in `globals.css`):
   hard `2–3px` black/border shadows, **no transitions** (instant state jumps).
 
 Rules:
-
 - Reach for `border-border` before `shadow-*`. Reserve elevation for genuine
   layering: `popover`/`dropdown`/`dialog`/`sheet`/`tooltip` above page content.
 - Use the standard shadow utilities (`shadow-xs/sm/md/lg`) — they are remapped per
@@ -396,19 +386,18 @@ Rules:
 Corner radius derives from one variable, `--radius` (default `0.625rem` = `10px`),
 mapped in `@theme inline`:
 
-| Token        | Formula              | Default | Tailwind class |
-| ------------ | -------------------- | ------- | -------------- |
-| `rounded-sm` | `--radius × 0.6`     | 6px     | `rounded-sm`   |
-| `rounded-md` | `--radius × 0.8`     | 8px     | `rounded-md`   |
-| `rounded-lg` | `--radius × 1`       | 10px    | `rounded-lg`   |
-| `rounded-xl` | `--radius × 1.4`     | 14px    | `rounded-xl`   |
-| `rounded-2xl`| `--radius × 1.8`     | 18px    | `rounded-2xl`  |
-| `rounded-3xl`| `--radius × 2.2`     | 22px    | `rounded-3xl`  |
-| `rounded-4xl`| `--radius × 2.6`     | 26px    | `rounded-4xl`  |
-| `rounded-full` | —                  | 9999px  | pills, avatars |
+| Token          | Formula          | Default | Tailwind class |
+| -------------- | ---------------- | ------- | -------------- |
+| `rounded-sm`   | `--radius × 0.6` | 6px     | `rounded-sm`   |
+| `rounded-md`   | `--radius × 0.8` | 8px     | `rounded-md`   |
+| `rounded-lg`   | `--radius × 1`   | 10px    | `rounded-lg`   |
+| `rounded-xl`   | `--radius × 1.4` | 14px    | `rounded-xl`   |
+| `rounded-2xl`  | `--radius × 1.8` | 18px    | `rounded-2xl`  |
+| `rounded-3xl`  | `--radius × 2.2` | 22px    | `rounded-3xl`  |
+| `rounded-4xl`  | `--radius × 2.6` | 26px    | `rounded-4xl`  |
+| `rounded-full` | —                | 9999px  | pills, avatars |
 
 Conventions:
-
 - Controls (button, input, select) → `rounded-md`. Cards, dialogs, popovers →
   `rounded-lg`/`rounded-xl`. Badges, avatars, pill toggles → `rounded-full`.
 - Presets override these: pixel themes force `0`; `pouf`/`washiveil` buttons force
@@ -425,7 +414,6 @@ workflow, read `<name>.mdx` + all `<name>-*.tsx` before touching it.** Import fr
 demos, do not assume Radix's `data-state="open|closed"` everywhere.
 
 Documented families (64) with demo counts — use this as the prefix-match index:
-
 - **Actions & input**: `button` (24), `button-group` (11), `toggle` (12),
   `toggle-group` (7), `input` (46), `input-group` (23), `input-otp` (9),
   `textarea` (5), `native-select` (4), `select` (6), `combobox` (11),
@@ -445,7 +433,6 @@ Documented families (64) with demo counts — use this as the prefix-match index
   `questionnaire` (14).
 
 Not in `docs/examples/` — read the source under `src/renderer/src/shared/ui/`:
-
 - **Magic UI / animate-ui effects**: `animated-beam`, `animated-gradient-text`,
   `animated-list`, `animated-shiny-text`, `animated-tabs`, `blur-fade`,
   `code-comparison`, `dot-pattern`, `flickering-grid`, `grid-pattern`,
@@ -460,7 +447,6 @@ Not in `docs/examples/` — read the source under `src/renderer/src/shared/ui/`:
 - **`visual/dotmatrix/`** loaders (`dotm-*`, `core.tsx`, `hooks.ts`, `loader.css`).
 
 Component authoring rules:
-
 - Every rendered sub-element carries its `data-slot="<slot>"` attribute — the theme
   engine targets these selectors (`[data-slot="card"]`, `[data-slot="button"]`, …).
   Omitting `data-slot` silently breaks preset styling.
@@ -477,7 +463,6 @@ Component authoring rules:
 ## Do's and Don'ts
 
 **Do**
-
 - ✅ **Retrieve and read the prefix-matching `docs/examples/<name>.mdx` +
   `<name>-*.tsx` before writing any UI code.** 在写 UI 代码前必须检索并阅读
   `docs/examples/` 下的前缀匹配组件。 This is non-negotiable.
@@ -490,7 +475,6 @@ Component authoring rules:
 - ✅ Validate this file after edits: `npx @google/design.md lint DESIGN.md`.
 
 **Don't**
-
 - ❌ Don't write UI from generic shadcn/Radix memory — this project is `base-nova`
   on `@base-ui/react`; props and state attributes differ.
 - ❌ Don't hardcode hex/rgb colors, `box-shadow`, `letter-spacing`, or `border-radius`

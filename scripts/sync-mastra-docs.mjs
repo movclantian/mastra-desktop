@@ -110,6 +110,11 @@ function fetchUpstreamDocs(options) {
 }
 
 function removeTemp(dir) {
+  const target = resolve(dir);
+  const tempRoot = resolve(os.tmpdir());
+  if (dirname(target) !== tempRoot || !target.startsWith(join(tempRoot, "mastra-docs-"))) {
+    throw new Error(`不安全的临时目录: ${target}`);
+  }
   try {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   } catch {
@@ -151,12 +156,12 @@ const before = snapshot(localDocsDir);
 
 const { tmpRoot, upstreamDir, commit } = fetchUpstreamDocs(options);
 try {
-  // 先复制到暂存目录,再整体替换,避免中途失败留下残缺的 docs/en。
-  const stagingDir = join(projectRoot, "docs", ".en-sync-staging");
-  fs.rmSync(stagingDir, { recursive: true, force: true });
-  fs.cpSync(upstreamDir, stagingDir, { recursive: true });
-  fs.rmSync(localDocsDir, { recursive: true, force: true });
-  fs.renameSync(stagingDir, localDocsDir);
+  // Windows 文件索引器可能锁住目录;复制成功后才删除过期文件,不先移除本地文档。
+  const upstream = snapshot(upstreamDir);
+  fs.cpSync(upstreamDir, localDocsDir, { recursive: true });
+  for (const file of before.keys()) {
+    if (!upstream.has(file)) fs.unlinkSync(join(localDocsDir, ...file.split("/")));
+  }
 
   fs.writeFileSync(
     join(projectRoot, "docs", ".mastra-docs-sync.json"),

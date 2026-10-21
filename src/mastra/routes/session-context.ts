@@ -4,7 +4,7 @@ import type { Agent, AgentExecutionOptions } from "@mastra/core/agent";
 import type { Session as ControllerSession } from "@mastra/core/agent-controller";
 import type { ContextWithMastra } from "@mastra/core/server";
 import { z } from "zod";
-import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
+import { TEAM_PROFILE_CONTEXT_KEY, workbenchSessionId } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   ensureProfileAgentsRegistered,
@@ -53,10 +53,6 @@ import {
   type OwnedThread,
   type ThreadMetadata,
 } from "./threads/shared";
-
-function scopeOf(value: string | undefined): string {
-  return value?.trim() || "workbench";
-}
 
 export interface SessionRouteResult {
   controllerSession: ControllerSession;
@@ -149,7 +145,7 @@ export async function prepareWorkbenchMessage(
     vision: options.attachmentCapabilities?.vision === true,
     audio: options.attachmentCapabilities?.audio === true,
   });
-  const result = await sessionFor(c, { threadId, resourceId, scope: "workbench" });
+  const result = await sessionFor(c, { threadId, resourceId });
   const selectedModel = { id: result.controllerSession.model.get() };
   const selection = await resolveModelSelection(selectedModel.id, resourceId);
   if (!selection) throw workError("MODEL_NOT_CONFIGURED");
@@ -197,7 +193,6 @@ export async function getWorkbenchSession(
   c: ContextWithMastra,
   threadId: string,
   resourceId: string,
-  scope?: string,
 ) {
   const requestContext = c.get("requestContext");
   const memory = await getWorkMemory(requestContext);
@@ -216,9 +211,9 @@ export async function getWorkbenchSession(
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, workspacePath);
   }
   const session = await controller.createSession({
+    id: workbenchSessionId(resourceId, threadId),
     resourceId,
     threadId,
-    scope: JSON.stringify([scopeOf(scope), threadId]),
     requestContext,
   });
   requestContext.set(SESSION_TOOL_POLICY_CONTEXT_KEY, (toolName: string) =>
@@ -239,11 +234,10 @@ export async function getWorkbenchSession(
 
 export async function sessionFor(
   c: ContextWithMastra,
-  target?: { threadId: string; resourceId: string; scope: string },
+  target?: { threadId: string; resourceId: string },
 ): Promise<SessionRouteResult> {
   const threadId = target?.threadId ?? c.req.param("threadId");
   const resourceId = target?.resourceId ?? c.req.query("resourceId");
-  const scope = target?.scope ?? scopeOf(c.req.param("scope"));
   if (!resourceId || !threadId)
     throw workError("VALIDATION_FAILED", { text: "resourceId and threadId are required" });
   const memory = await getWorkMemory(c.get("requestContext"));
@@ -269,7 +263,7 @@ export async function sessionFor(
   if (metadata.workspacePath) {
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, metadata.workspacePath);
   }
-  const controllerSession = await getWorkbenchSession(c, threadId, resourceId, scope);
+  const controllerSession = await getWorkbenchSession(c, threadId, resourceId);
   const agent = c.get("mastra").getAgentController("workbench")?.getCurrentAgent(controllerSession);
   if (!agent) throw new Error("Workbench AgentController is not registered");
   return { controllerSession, agent, memory, resourceId, threadId, thread };

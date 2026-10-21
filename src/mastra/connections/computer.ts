@@ -14,8 +14,12 @@ import {
   type ComputerProbe,
   DEFAULT_COMPUTER_CONFIG,
 } from "../../shared/computer-contract";
-import { contentObjectReference, putContentObject } from "../storage/content-objects";
-import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
+import {
+  getAppConfig,
+  getThreadArchiveFilesystem,
+  setAppConfig,
+  userIdFromContext,
+} from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 
 const CONFIG_KEY = "computer";
@@ -35,9 +39,8 @@ const resultSchema = z.object({
   degraded: z.boolean(),
   screenshots: z.array(
     z.object({
-      objectId: z.string(),
-      kind: z.string(),
-      threadId: z.string().optional(),
+      workspacePath: z.string(),
+      threadId: z.string(),
       contentType: z.string(),
       imageUrl: z.string(),
     }),
@@ -422,17 +425,20 @@ export async function getComputerTools(context?: {
             );
           }
           const screenshots = [];
+          const filesystem = getThreadArchiveFilesystem(userId, threadId);
           for (const image of result.images) {
-            const saved = await putContentObject(Buffer.from(image.dataBase64, "base64"), {
-              userId,
-              threadId,
-              kind: "screenshot",
-              contentType: image.mimeType,
-              encoding: "binary",
+            const filename = `${randomUUID()}.${image.mimeType === "image/jpeg" ? "jpg" : image.mimeType === "image/webp" ? "webp" : "png"}`;
+            const path = `screenshots/${filename}`;
+            await filesystem.writeFile(path, Buffer.from(image.dataBase64, "base64"), {
+              overwrite: false,
             });
+            const workspacePath = filesystem.resolveAbsolutePath(path);
+            if (!workspacePath) throw new Error("Invalid screenshot archive path");
             screenshots.push({
-              ...contentObjectReference(saved),
-              imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${saved.objectId}`,
+              workspacePath,
+              threadId,
+              contentType: image.mimeType,
+              imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${filename}`,
             });
           }
           return {

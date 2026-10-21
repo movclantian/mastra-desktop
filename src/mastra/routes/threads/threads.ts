@@ -6,7 +6,7 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { TABLE_MESSAGES, TABLE_THREAD_STATE } from "@mastra/core/storage";
 import { Extractor } from "@mastra/memory";
 import { z } from "zod";
-import { DEFAULT_AGENT_PROFILE_ID } from "../../../shared/agent-contract";
+import { DEFAULT_AGENT_PROFILE_ID, workbenchSessionId } from "../../../shared/agent-contract";
 import { closeBrowserThreadSessions } from "../../agents/browser";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import {
@@ -619,7 +619,7 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
               url,
             });
         }
-        const archived = record(output.contentObject);
+        const archived = record(output.file);
         if (name === "browser_screenshot" && typeof archived.workspacePath === "string") {
           add({
             id: archived.workspacePath,
@@ -913,8 +913,8 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
   if (threadId && c.req.method === "DELETE") {
     await assertNoActiveConversationRun(resourceId, threadId);
     const controller = c.get("mastra").getAgentController("workbench");
-    const scope = JSON.stringify(["workbench", threadId]);
-    const session = await controller?.getSessionByResource(resourceId, scope);
+    const sessionId = workbenchSessionId(resourceId, threadId);
+    const session = await controller?.getSession(sessionId, c.get("requestContext"));
     // Signal the main abort first; cancelling children also releases a parent waiting on them.
     await Promise.all([
       session ? abortWorkbenchSession(session) : undefined,
@@ -923,7 +923,7 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
         threadId,
       }),
     ]);
-    await controller?.deleteSession({ resourceId, scope });
+    await controller?.deleteSession({ sessionId });
     await deleteRelatedThreadData(c, memory, resourceId, threadId);
     await memory.settled();
   }

@@ -37,8 +37,12 @@ import {
 } from "../../shared/browser-contract";
 import { browserCredentialPurpose } from "../../shared/credential-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
-import { contentObjectReference, putContentObject } from "../storage/content-objects";
-import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
+import {
+  getAppConfig,
+  getThreadArchiveFilesystem,
+  setAppConfig,
+  userIdFromContext,
+} from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 
 const BROWSER_CONFIG_KEY = "browser";
@@ -77,17 +81,18 @@ export async function mergeBrowserToolsForThread<T extends object>(
         const { base64, ...metadata } = result;
         const userId = userIdFromContext(context?.requestContext);
         if (!userId) throw new Error("Screenshot storage requires an authenticated user");
-        const image = await putContentObject(Buffer.from(base64, "base64"), {
-          userId,
-          threadId,
-          kind: "screenshot",
-          contentType: "image/png",
-          encoding: "binary",
-        });
+        const filesystem = getThreadArchiveFilesystem(userId, threadId);
+        const filename = `${randomUUID()}.png`;
+        const path = `screenshots/${filename}`;
+        await filesystem.writeFile(path, Buffer.from(base64, "base64"), { overwrite: false });
         return {
           ...metadata,
-          imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${image.objectId}`,
-          contentObject: contentObjectReference(image),
+          imageUrl: `mastra-image:///${encodeURIComponent(userId)}/${encodeURIComponent(threadId)}/${filename}`,
+          file: {
+            workspacePath: filesystem.resolveAbsolutePath(path),
+            threadId,
+            contentType: "image/png",
+          },
         };
       },
       ...(name === "browser_screenshot"

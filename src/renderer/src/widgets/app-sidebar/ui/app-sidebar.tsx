@@ -355,10 +355,11 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     .map(([path, groupThreads]) => ({
       path,
       threads: groupThreads,
-      latestRequestAt: groupThreads.reduce(
-        (max, thread) => (threadActivityAt(thread) > max ? threadActivityAt(thread) : max),
-        "",
-      ),
+      latestRequestAt: groupThreads.reduce((latest, thread) => {
+        const activity = threadActivityAt(thread);
+        if (activity > latest) return activity;
+        return latest;
+      }, ""),
     }))
     .sort(
       (a, b) => b.latestRequestAt.localeCompare(a.latestRequestAt) || a.path.localeCompare(b.path),

@@ -1,7 +1,7 @@
 import { type ClientOptions, MastraClient } from "@mastra/client-js";
 import { i18n } from "@/shared/i18n";
 import { apiError, readErrorPayload } from "@/shared/lib";
-
+import { workbenchSessionId } from "../../../../shared/agent-contract";
 import { type BrowserConfig, BrowserConfigSchema } from "../../../../shared/browser-contract";
 import { DEFAULT_MASTRA_SERVER_URL } from "../../../../shared/proxy-contract";
 
@@ -27,9 +27,7 @@ export function getWorkbenchClientSession(
         ...options,
       })
     : mastraClient;
-  return client
-    .getAgentController("workbench")
-    .session(resourceId, JSON.stringify(["workbench", threadId]));
+  return client.getAgentController("workbench").session(workbenchSessionId(resourceId, threadId));
 }
 
 export type ApiRequestInit = Omit<RequestInit, "body"> & {

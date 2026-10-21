@@ -11,7 +11,7 @@ import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
-import { isUserChatMessage } from "../../shared/agent-contract";
+import { isUserChatMessage, workbenchSessionId } from "../../shared/agent-contract";
 import type { DesktopNotification } from "../../shared/window-contract";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { parsePermissionRules, TOOL_CATEGORIES, toolCategoryOf } from "../agents/permissions";
@@ -211,11 +211,24 @@ export async function workbenchControllerMiddleware(
 ) {
   const match = c.req.path.match(/^\/api\/agent-controller\/workbench\/sessions\/([^/]+)(\/.*)?$/);
   if (!match) return next();
-  const resourceId = decodeURIComponent(match[1]);
+  const sessionId = decodeURIComponent(match[1]);
+  let identity: unknown;
+  try {
+    identity = JSON.parse(sessionId);
+  } catch {
+    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session id" });
+  }
+  const parsed = z
+    .tuple([z.literal("workbench"), z.string().trim().min(1), z.string().trim().min(1)])
+    .safeParse(identity);
+  if (!parsed.success || sessionId !== workbenchSessionId(parsed.data[1], parsed.data[2])) {
+    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session id" });
+  }
+  const [, resourceId, threadId] = parsed.data;
   if (resourceId !== c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY)) {
     throw workError("AUTH_FORBIDDEN");
   }
-  // Resource identity comes from login; each workbench scope stays bound to one thread.
+  // Session ids identify runtimes; authenticated resources still own their threads.
   const operation = match[2] ?? "";
   if (
     operation === "/resource" ||
@@ -224,21 +237,13 @@ export async function workbenchControllerMiddleware(
   ) {
     throw workError("AUTH_FORBIDDEN");
   }
-  let scope: unknown;
-  try {
-    scope = JSON.parse(c.req.query("sessionScope") ?? "null");
-  } catch {
-    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session scope" });
-  }
-  const parsed = z.tuple([z.literal("workbench"), z.string().trim().min(1)]).safeParse(scope);
-  if (!parsed.success || c.req.query("sessionScope") !== JSON.stringify(parsed.data)) {
-    throw workError("VALIDATION_FAILED", { text: "Invalid workbench session scope" });
-  }
-  const threadId = parsed.data[1];
   // Mastra's downstream handler clones the raw request, so leave its body unread.
   const body = c.req.raw.body
     ? z.record(z.string(), z.unknown()).parse(await c.req.raw.clone().json())
     : undefined;
+  if (body?.resourceId !== undefined && body.resourceId !== resourceId) {
+    throw workError("AUTH_FORBIDDEN");
+  }
   const messageContext = z
     .object({
       [WORK_MESSAGE_OPTIONS_CONTEXT_KEY]: workbenchMessageOptionsSchema.optional(),
@@ -259,7 +264,7 @@ export async function workbenchControllerMiddleware(
         resourceId,
         messageContext[WORK_MESSAGE_OPTIONS_CONTEXT_KEY],
       )
-    : await sessionFor(c, { resourceId, threadId, scope: parsed.data[0] });
+    : await sessionFor(c, { resourceId, threadId });
   if (["/messages", "/steer", "/follow-up"].includes(operation) && c.req.method === "POST") {
     await assertNoActiveConversationRun(resourceId, threadId);
     const profile = await getAgentProfile(
@@ -908,7 +913,7 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
       .parse(await c.req.json());
     const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
     const threadId = c.req.param("threadId");
-    const result = await sessionFor(c, { threadId, resourceId, scope: "workbench" });
+    const result = await sessionFor(c, { threadId, resourceId });
     const target = { threadId };
     const current = await result.agent.getObjective(target);
     if (!current) throw workError("VALIDATION_FAILED", { text: "当前会话没有目标" });
@@ -981,7 +986,6 @@ const teamInvocationDetailRoute = registerApiRoute(
       const result = await sessionFor(c, {
         threadId: c.req.param("threadId"),
         resourceId,
-        scope: "workbench",
       });
       const detail = await getTeamInvocationDetail(
         resourceId,
@@ -1015,7 +1019,6 @@ const sessionHandoffRoute = registerApiRoute("/work/sessions/:scope/threads/:thr
     const result = await sessionFor(c, {
       threadId: c.req.param("threadId"),
       resourceId,
-      scope: "workbench",
     });
     const body = handoffInputSchema.parse(await c.req.json());
     const state = await persistentDisplayState(c, result);

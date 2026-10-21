@@ -16,6 +16,7 @@ import { dirname, isAbsolute, join, parse, resolve } from "node:path";
 import { type Client, createClient } from "@libsql/client";
 import type { IMastraLogger } from "@mastra/core/logger";
 import { MastraCompositeStore } from "@mastra/core/storage";
+import { LocalFilesystem } from "@mastra/core/workspace";
 import { DuckDBStore } from "@mastra/duckdb";
 import { LibSQLStore } from "@mastra/libsql";
 import { z } from "zod";
@@ -30,6 +31,20 @@ export const AUTHENTICATED_USER_ID_CONTEXT_KEY = "userId";
 export function userIdFromContext(context?: RequestContextLike): string | undefined {
   const value = context?.get?.(AUTHENTICATED_USER_ID_CONTEXT_KEY);
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** Private thread archives use Mastra's containment and filesystem operations. */
+export function getThreadArchiveFilesystem(userId: string, threadId: string): LocalFilesystem {
+  const segment = (value: string) => {
+    if (!value.trim() || value === "." || value === ".." || value.includes("\0")) {
+      throw new Error("Invalid archive scope");
+    }
+    return encodeURIComponent(value);
+  };
+  return new LocalFilesystem({
+    basePath: join(getStorageDirectory(), "archives", segment(userId), segment(threadId)),
+    contained: true,
+  });
 }
 
 /**

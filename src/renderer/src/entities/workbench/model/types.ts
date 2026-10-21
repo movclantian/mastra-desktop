@@ -70,8 +70,7 @@ export interface TreeEntry {
 type WorkspaceChangeKind = "created" | "modified" | "deleted";
 
 export interface WorkspaceChangeSnapshot {
-  objectId: string;
-  sha256: string;
+  path: string;
   byteSize: number;
   contentType: string;
   encoding: string;

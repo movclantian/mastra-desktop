@@ -64,15 +64,7 @@ export interface MessageFileReference {
 }
 
 interface WorkspaceLogData {
-  objectId: string;
-  sha256: string;
-  byteSize: number;
-  contentType: string;
-  encoding: string;
-  storagePath: string;
   workspacePath: string;
-  characterCount: number;
-  lineCount: number;
   exitCode: number | null;
   stdout: { lines: number; bytes: number };
   stderr: { lines: number; bytes: number };
