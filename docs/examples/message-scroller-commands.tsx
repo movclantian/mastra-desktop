@@ -3,8 +3,8 @@
 import * as React from "react"
 
 import { createChat, getMessageText } from "@/lib/ai"
-import { Bubble, BubbleContent } from "@/styles/base-rhea/ui/bubble"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Bubble, BubbleContent } from "@/styles/radix-rhea/ui/bubble"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -12,16 +12,15 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
+} from "@/styles/radix-rhea/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuTrigger,
-} from "@/styles/base-rhea/ui/dropdown-menu"
-import { Message, MessageContent } from "@/styles/base-rhea/ui/message"
+} from "@/styles/radix-rhea/ui/dropdown-menu"
+import { Message, MessageContent } from "@/styles/radix-rhea/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -30,7 +29,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
   useMessageScroller,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 
 const chat = createChat()
   .user(
@@ -132,30 +131,28 @@ function CommandMenu() {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={<Button type="button" variant="secondary" />}
-      >
-        Jump to...
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="secondary">
+          Jump to...
+        </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" side="bottom" className="w-64">
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>Conversations</DropdownMenuLabel>
-          {userMessages.map((message) => (
-            <DropdownMenuItem
-              key={message.id}
-              onClick={() =>
-                scrollToMessage(message.id, {
-                  align: "start",
-                  behavior: "smooth",
-                })
-              }
-            >
-              <span className="line-clamp-1 min-w-0">
-                {getTrimmedMessageText(message)}
-              </span>
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
+        <DropdownMenuLabel>Conversations</DropdownMenuLabel>
+        {userMessages.map((message) => (
+          <DropdownMenuItem
+            key={message.id}
+            onSelect={() =>
+              scrollToMessage(message.id, {
+                align: "start",
+                behavior: "smooth",
+              })
+            }
+          >
+            <span className="line-clamp-1 min-w-0">
+              {getTrimmedMessageText(message)}
+            </span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   )

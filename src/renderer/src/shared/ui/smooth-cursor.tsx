@@ -111,6 +111,7 @@ export function SmoothCursor({
   const [isEnabled, setIsEnabled] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [isOverNativeControl, setIsOverNativeControl] = useState(false);
+  const isOverNativeControlRef = useRef(false);
   const useCustomCursor = isEnabled && !hasRunningTask;
 
   // ⚡ 0 延迟核心：坐标使用 useMotionValue 直接映射，彻底剔除物理弹簧的滞后计算
@@ -170,6 +171,8 @@ export function SmoothCursor({
     if (!isEnabled) return;
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
+    let moveFrame = 0;
+    let pendingMove: { x: number; y: number; target: EventTarget | null } | null = null;
 
     const updateVelocity = (currentPos: Position) => {
       const currentTime = Date.now();
@@ -186,10 +189,8 @@ export function SmoothCursor({
       lastMousePos.current = currentPos;
     };
 
-    const handlePointerMove = (e: PointerEvent) => {
-      if (!isTrackablePointer(e.pointerType)) return;
-
-      const currentPos = { x: e.clientX, y: e.clientY };
+    const processPointerMove = (move: { x: number; y: number; target: EventTarget | null }) => {
+      const currentPos = { x: move.x, y: move.y };
       hasPointerPosition.current = true;
       if (hasRunningTask) {
         lastMousePos.current = currentPos;
@@ -199,15 +200,18 @@ export function SmoothCursor({
 
       setIsVisible(true);
 
-      // ⚡ 立即无延迟更新光标绝对坐标 (0ms lag)
+      // Keep one cursor update per frame even when the browser emits more pointer events.
       cursorX.set(currentPos.x);
       cursorY.set(currentPos.y);
 
       // Text inputs and the native title bar use the system cursor.
-      const target = e.target as Element | null;
-      setIsOverNativeControl(isNativeCursorTarget(target));
+      const target = move.target as Element | null;
+      const nextIsOverNativeControl = isNativeCursorTarget(target);
+      if (nextIsOverNativeControl !== isOverNativeControlRef.current) {
+        isOverNativeControlRef.current = nextIsOverNativeControl;
+        setIsOverNativeControl(nextIsOverNativeControl);
+      }
 
-      // 计算速度与动态倾斜角
       updateVelocity(currentPos);
       const speed = Math.sqrt(velocity.current.x ** 2 + velocity.current.y ** 2);
 
@@ -229,6 +233,17 @@ export function SmoothCursor({
           scale.set(1);
         }, 120);
       }
+    };
+
+    const handlePointerMove = (e: PointerEvent) => {
+      if (!isTrackablePointer(e.pointerType)) return;
+      pendingMove = { x: e.clientX, y: e.clientY, target: e.target };
+      if (moveFrame) return;
+      moveFrame = requestAnimationFrame(() => {
+        moveFrame = 0;
+        if (pendingMove) processPointerMove(pendingMove);
+        pendingMove = null;
+      });
     };
 
     const handleMouseDown = () => {
@@ -261,6 +276,7 @@ export function SmoothCursor({
       window.removeEventListener("mouseup", handleMouseUp);
       document.removeEventListener("mouseleave", handleMouseLeave);
       document.removeEventListener("mouseenter", handleMouseEnter);
+      if (moveFrame) cancelAnimationFrame(moveFrame);
       if (timeout !== null) clearTimeout(timeout);
     };
   }, [cursorX, cursorY, hasRunningTask, rotation, scale, isEnabled]);
@@ -276,8 +292,10 @@ export function SmoothCursor({
       className="smooth-cursor-container"
       style={{
         position: "fixed",
-        left: cursorX,
-        top: cursorY,
+        left: 0,
+        top: 0,
+        x: cursorX,
+        y: cursorY,
         translateX: "-50%",
         translateY: "-50%",
         rotate: rotation,

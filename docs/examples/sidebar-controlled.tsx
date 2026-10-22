@@ -11,7 +11,7 @@ import {
   SendIcon,
 } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Sidebar,
   SidebarContent,
@@ -23,7 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const projects = [
   {
@@ -66,9 +66,11 @@ export default function AppSidebar() {
               <SidebarMenu>
                 {projects.map((project) => (
                   <SidebarMenuItem key={project.name}>
-                    <SidebarMenuButton render={<a href={project.url} />}>
-                      <project.icon />
-                      <span>{project.name}</span>
+                    <SidebarMenuButton asChild>
+                      <a href={project.url}>
+                        <project.icon />
+                        <span>{project.name}</span>
+                      </a>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ))}

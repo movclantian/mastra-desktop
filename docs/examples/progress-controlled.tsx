@@ -2,18 +2,18 @@
 
 import * as React from "react"
 
-import { Progress } from "@/styles/base-nova/ui/progress"
-import { Slider } from "@/styles/base-nova/ui/slider"
+import { Progress } from "@/styles/radix-nova/ui/progress"
+import { Slider } from "@/styles/radix-nova/ui/slider"
 
 export function ProgressControlled() {
-  const [value, setValue] = React.useState(50)
+  const [value, setValue] = React.useState([50])
 
   return (
     <div className="flex w-full max-w-sm flex-col gap-4">
-      <Progress value={value} className="w-full" />
+      <Progress value={value[0]} />
       <Slider
         value={value}
-        onValueChange={(value) => setValue(value as number)}
+        onValueChange={setValue}
         min={0}
         max={100}
         step={1}

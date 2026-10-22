@@ -19,7 +19,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const projects = [
   {
@@ -66,11 +66,13 @@ export default function AppSidebar() {
                 {projects.map((project) => (
                   <SidebarMenuItem key={project.name}>
                     <SidebarMenuButton
-                      render={<a href={project.url} />}
+                      asChild
                       className="group-has-[[data-state=open]]/menu-item:bg-sidebar-accent"
                     >
-                      <project.icon />
-                      <span>{project.name}</span>
+                      <a href={project.url}>
+                        <project.icon />
+                        <span>{project.name}</span>
+                      </a>
                     </SidebarMenuButton>
                     <SidebarMenuBadge>{project.badge}</SidebarMenuBadge>
                   </SidebarMenuItem>

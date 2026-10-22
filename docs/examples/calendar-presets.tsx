@@ -3,9 +3,9 @@
 import * as React from "react"
 import { addDays } from "date-fns"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { Calendar } from "@/styles/base-nova/ui/calendar"
-import { Card, CardContent, CardFooter } from "@/styles/base-nova/ui/card"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Calendar } from "@/styles/radix-nova/ui/calendar"
+import { Card, CardContent, CardFooter } from "@/styles/radix-nova/ui/card"
 
 export function CalendarWithPresets() {
   const [date, setDate] = React.useState<Date | undefined>(

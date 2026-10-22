@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Sheet,
   SheetClose,
@@ -8,7 +8,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "@/styles/base-nova/ui/sheet"
+} from "@/styles/radix-nova/ui/sheet"
 
 const SHEET_SIDES = ["top", "right", "bottom", "left"] as const
 
@@ -17,10 +17,10 @@ export default function SheetSide() {
     <div className="flex flex-wrap gap-2">
       {SHEET_SIDES.map((side) => (
         <Sheet key={side}>
-          <SheetTrigger
-            render={<Button variant="outline" className="capitalize" />}
-          >
-            {side}
+          <SheetTrigger asChild>
+            <Button variant="outline" className="capitalize">
+              {side}
+            </Button>
           </SheetTrigger>
           <SheetContent
             side={side}
@@ -49,8 +49,8 @@ export default function SheetSide() {
             </div>
             <SheetFooter>
               <Button type="submit">Save changes</Button>
-              <SheetClose render={<Button variant="outline" />}>
-                Cancel
+              <SheetClose asChild>
+                <Button variant="outline">Cancel</Button>
               </SheetClose>
             </SheetFooter>
           </SheetContent>

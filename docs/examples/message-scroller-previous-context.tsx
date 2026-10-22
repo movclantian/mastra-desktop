@@ -14,7 +14,7 @@ import {
 
 import { createChat, getMessageText } from "@/lib/ai"
 import { MessageAnimated } from "@/components/message-animated"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -23,32 +23,32 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
+} from "@/styles/radix-rhea/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/styles/base-rhea/ui/dropdown-menu"
+} from "@/styles/radix-rhea/ui/dropdown-menu"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-} from "@/styles/base-rhea/ui/input-group"
+} from "@/styles/radix-rhea/ui/input-group"
 import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-} from "@/styles/base-rhea/ui/message-scroller"
-import { Slider } from "@/styles/base-rhea/ui/slider"
+} from "@/styles/radix-rhea/ui/message-scroller"
+import { Slider } from "@/styles/radix-rhea/ui/slider"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-rhea/ui/tooltip"
+} from "@/styles/radix-rhea/ui/tooltip"
 
 const DEFAULT_PEEK = 64
 
@@ -107,22 +107,20 @@ export function MessageScrollerPreviousContext() {
             </CardDescription>
             <CardAction>
               <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      aria-label="Reset context example"
-                      disabled={isBusy}
-                      onClick={() => {
-                        setMessages(initialMessages)
-                        setPeek(DEFAULT_PEEK)
-                        setDemoKey((key) => key + 1)
-                      }}
-                    />
-                  }
-                >
-                  <RotateCwIcon />
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Reset context example"
+                    disabled={isBusy}
+                    onClick={() => {
+                      setMessages(initialMessages)
+                      setPeek(DEFAULT_PEEK)
+                      setDemoKey((key) => key + 1)
+                    }}
+                  >
+                    <RotateCwIcon />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Reset</p>
@@ -177,17 +175,15 @@ export function MessageScrollerPreviousContext() {
                 </div>
                 <InputGroupAddon align="block-end" className="pt-1">
                   <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <InputGroupButton
-                          aria-label="Add files"
-                          type="button"
-                          size="icon-sm"
-                          variant="outline"
-                        />
-                      }
-                    >
-                      <PlusIcon />
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton
+                        aria-label="Add files"
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                      >
+                        <PlusIcon />
+                      </InputGroupButton>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"
@@ -224,13 +220,9 @@ export function MessageScrollerPreviousContext() {
                       max={128}
                       step={1}
                       disabled={isBusy}
-                      onValueChange={(value) => {
-                        const nextValue = Array.isArray(value)
-                          ? value[0]
-                          : value
-
-                        setPeek(nextValue ?? DEFAULT_PEEK)
-                      }}
+                      onValueChange={(value) =>
+                        setPeek(value[0] ?? DEFAULT_PEEK)
+                      }
                     />
                   </div>
                   <InputGroupButton

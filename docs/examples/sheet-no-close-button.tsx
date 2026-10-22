@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Sheet,
   SheetContent,
@@ -6,13 +6,13 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "@/styles/base-nova/ui/sheet"
+} from "@/styles/radix-nova/ui/sheet"
 
 export default function SheetNoCloseButton() {
   return (
     <Sheet>
-      <SheetTrigger render={<Button variant="outline" />}>
-        Open Sheet
+      <SheetTrigger asChild>
+        <Button variant="outline">Open Sheet</Button>
       </SheetTrigger>
       <SheetContent showCloseButton={false}>
         <SheetHeader>

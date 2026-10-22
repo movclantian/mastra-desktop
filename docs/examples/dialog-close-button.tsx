@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -8,14 +8,16 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
-import { Input } from "@/styles/base-nova/ui/input"
-import { Label } from "@/styles/base-nova/ui/label"
+} from "@/styles/radix-nova/ui/dialog"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 
 export function DialogCloseButton() {
   return (
     <Dialog>
-      <DialogTrigger render={<Button variant="outline" />}>Share</DialogTrigger>
+      <DialogTrigger asChild>
+        <Button variant="outline">Share</Button>
+      </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Share link</DialogTitle>
@@ -36,7 +38,9 @@ export function DialogCloseButton() {
           </div>
         </div>
         <DialogFooter className="sm:justify-start">
-          <DialogClose render={<Button type="button" />}>Close</DialogClose>
+          <DialogClose asChild>
+            <Button type="button">Close</Button>
+          </DialogClose>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -671,7 +671,7 @@ export const en = {
       behaviorDesc: "Changes are saved immediately and apply on this computer.",
       showWorkDetails: "Show File Modification Details",
       showWorkDetailsDesc:
-        "Automatically expand tools and reasoning to show each change and its result.",
+        "Expand traces, tools and reasoning by default when enabled; collapse them when disabled. You can still toggle them manually. Each new run reapplies this setting.",
       scheduledTaskNotifications: "Scheduled Task Result Notifications",
       scheduledTaskNotificationsDesc:
         "Show a system notification when a scheduled task finishes producing its results.",
@@ -2496,6 +2496,18 @@ export const en = {
       streamInterruptedDetail: "Stream response interrupted: {{detail}}",
     },
     trace: {
+      thought: "Thought",
+      toolAction: { running: "Running", ran: "Ran", failed: "Failed to run", denied: "Denied" },
+      exitCode: "Exit code: {{code}}",
+      failedCount: "{{count}} failed",
+      sourcesCount: "Used {{count}} sources",
+      opensNewTab: " (opens in a new tab)",
+      subagentStatus: {
+        running: "Running",
+        completed: "Completed",
+        suspended: "Awaiting input",
+        error: "Failed",
+      },
       noReasoningSummary: "This model did not return a visible reasoning summary",
       executionFailed: "Execution failed",
       executing: "Executing...",
@@ -2569,7 +2581,9 @@ export const en = {
         task_update: "Update task",
         task_complete: "Complete task",
         task_check: "Check tasks",
+        execute_typescript: "Run TypeScript",
         computer: "Computer use",
+        browser: "Browser",
         browser_goto: "Navigate",
         browser_snapshot: "Page snapshot",
         browser_click: "Click element",

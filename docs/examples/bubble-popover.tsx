@@ -4,8 +4,8 @@ import {
   Bubble,
   BubbleContent,
   BubbleReactions,
-} from "@/styles/base-rhea/ui/bubble"
-import { Button } from "@/styles/base-rhea/ui/button"
+} from "@/styles/radix-rhea/ui/bubble"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Popover,
   PopoverContent,
@@ -13,7 +13,7 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from "@/styles/base-rhea/ui/popover"
+} from "@/styles/radix-rhea/ui/popover"
 
 export function BubblePopoverDemo() {
   return (
@@ -25,17 +25,15 @@ export function BubblePopoverDemo() {
         <BubbleContent>Failed to run the command.</BubbleContent>
         <BubbleReactions>
           <Popover>
-            <PopoverTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Show error details"
-                  className="aria-expanded:text-destructive"
-                />
-              }
-            >
-              <InfoIcon />
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Show error details"
+                className="aria-expanded:text-destructive"
+              >
+                <InfoIcon />
+              </Button>
             </PopoverTrigger>
             <PopoverContent>
               <PopoverHeader>

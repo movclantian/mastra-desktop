@@ -25,13 +25,16 @@ export function WindowTitleBar({ children, className, ...props }: React.Componen
   const { t } = useTranslation();
   const [state, setState] = React.useState<WindowState>({ maximized: false, fullscreen: false });
   React.useEffect(() => {
+    const windowApi = window.api?.window;
+    if (!windowApi) return;
+
     let active = true;
     let receivedUpdate = false;
-    const unsubscribe = window.api.window.onStateChange((next) => {
+    const unsubscribe = windowApi.onStateChange((next) => {
       receivedUpdate = true;
       setState(next);
     });
-    void window.api.window
+    void windowApi
       .getState()
       .then((next) => {
         if (active && !receivedUpdate) setState(next);
@@ -65,35 +68,39 @@ export function WindowTitleBar({ children, className, ...props }: React.Componen
       className={cn("app-drag relative z-50 h-(--app-titlebar-height) pr-0", className)}
     >
       {children ?? <span className="min-w-0 flex-1 truncate text-sm font-medium">MastraWork</span>}
-      <div
-        role="group"
-        aria-label={t("topbar:windowControls")}
-        className="app-no-drag ml-2 flex h-full shrink-0 items-stretch border-l border-border"
-      >
-        {controls.map(({ action, Icon, label }) => (
-          <Button
-            key={action}
-            data-slot="window-control"
-            type="button"
-            variant="ghost"
-            size="icon"
-            className={cn(
-              "h-full w-11 rounded-none border-0 px-0 active:translate-y-0 active:scale-100 focus-visible:ring-inset",
-              action === "close" &&
-                "hover:bg-destructive hover:text-white dark:hover:bg-destructive",
-            )}
-            aria-label={label}
-            title={label}
-            onClick={() => {
-              void window.api.window
-                .control(action)
-                .catch((error) => toastError(error, t("topbar:windowControlError")));
-            }}
-          >
-            <Icon className="size-4" />
-          </Button>
-        ))}
-      </div>
+      {window.api?.window ? (
+        <div
+          role="group"
+          aria-label={t("topbar:windowControls")}
+          className="app-no-drag ml-2 flex h-full shrink-0 items-stretch border-l border-border"
+        >
+          {controls.map(({ action, Icon, label }) => (
+            <Button
+              key={action}
+              data-slot="window-control"
+              type="button"
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "h-full w-11 rounded-none border-0 px-0 active:translate-y-0 active:scale-100 focus-visible:ring-inset",
+                action === "close" &&
+                  "hover:bg-destructive hover:text-white dark:hover:bg-destructive",
+              )}
+              aria-label={label}
+              title={label}
+              onClick={() => {
+                const windowApi = window.api?.window;
+                if (!windowApi) return;
+                void windowApi
+                  .control(action)
+                  .catch((error) => toastError(error, t("topbar:windowControlError")));
+              }}
+            >
+              <Icon className="size-4" />
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </PanelHeader>
   );
 }

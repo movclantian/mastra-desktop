@@ -3,12 +3,12 @@ import { BoldIcon, ItalicIcon, UnderlineIcon } from "lucide-react"
 import {
   ToggleGroup,
   ToggleGroupItem,
-} from "@/styles/base-nova/ui/toggle-group"
+} from "@/styles/radix-nova/ui/toggle-group"
 
 export function ToggleGroupVertical() {
   return (
     <ToggleGroup
-      multiple
+      type="multiple"
       orientation="vertical"
       spacing={1}
       defaultValue={["bold", "italic"]}

@@ -1,20 +1,20 @@
 "use client"
 
 import { createChat, getMessageText } from "@/lib/ai"
-import { Bubble, BubbleContent } from "@/styles/base-rhea/ui/bubble"
+import { Bubble, BubbleContent } from "@/styles/radix-rhea/ui/bubble"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
+} from "@/styles/radix-rhea/ui/card"
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/styles/base-rhea/ui/hover-card"
-import { Message, MessageContent } from "@/styles/base-rhea/ui/message"
+} from "@/styles/radix-rhea/ui/hover-card"
+import { Message, MessageContent } from "@/styles/radix-rhea/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -24,7 +24,7 @@ import {
   MessageScrollerViewport,
   useMessageScroller,
   useMessageScrollerVisibility,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 
 const chat = createChat()
   .user("Review the incident handoff and tell me what to read first.", {
@@ -129,23 +129,21 @@ function TranscriptOutline() {
   const { currentAnchorId } = useMessageScrollerVisibility()
 
   return (
-    <HoverCard>
-      <HoverCardTrigger
-        render={
-          <button
-            type="button"
-            aria-label="Open transcript outline"
-            className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-          />
-        }
-      >
-        {userMessages.map((message) => (
-          <span
-            key={message.id}
-            data-current={message.id === currentAnchorId}
-            className="h-0.5 w-4 rounded-full bg-muted-foreground/40 data-[current=true]:bg-foreground"
-          />
-        ))}
+    <HoverCard openDelay={0} closeDelay={0}>
+      <HoverCardTrigger asChild>
+        <button
+          type="button"
+          aria-label="Open transcript outline"
+          className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-md transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {userMessages.map((message) => (
+            <span
+              key={message.id}
+              data-current={message.id === currentAnchorId}
+              className="h-0.5 w-4 rounded-full bg-muted-foreground/40 data-[current=true]:bg-foreground"
+            />
+          ))}
+        </button>
       </HoverCardTrigger>
       <HoverCardContent
         align="center"

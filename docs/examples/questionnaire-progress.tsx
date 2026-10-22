@@ -15,7 +15,7 @@ import {
   QuestionnaireProgress,
   QuestionnaireSubmit,
   QuestionnaireTitle,
-} from "@/styles/base-nova/ui/questionnaire"
+} from "@/styles/radix-nova/ui/questionnaire"
 
 const items = [
   { name: "scope", required: true },

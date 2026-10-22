@@ -1,4 +1,4 @@
-import { ArchiveIcon, PencilIcon, ShareIcon, TrashIcon } from "lucide-react"
+import { PencilIcon, ShareIcon, TrashIcon } from "lucide-react"
 
 import {
   ContextMenu,
@@ -7,7 +7,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/styles/base-nova/ui/context-menu"
+} from "@/styles/radix-nova/ui/context-menu"
 
 export function ContextMenuDestructive() {
   return (

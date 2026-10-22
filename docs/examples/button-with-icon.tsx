@@ -1,17 +1,11 @@
-import { IconGitBranch, IconGitFork } from "@tabler/icons-react"
+import { IconGitBranch } from "@tabler/icons-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 
 export default function ButtonWithIcon() {
   return (
-    <div className="flex gap-2">
-      <Button variant="outline">
-        <IconGitBranch data-icon="inline-start" /> New Branch
-      </Button>
-      <Button variant="outline">
-        Fork
-        <IconGitFork data-icon="inline-end" />
-      </Button>
-    </div>
+    <Button variant="outline" size="sm">
+      <IconGitBranch /> New Branch
+    </Button>
   )
 }

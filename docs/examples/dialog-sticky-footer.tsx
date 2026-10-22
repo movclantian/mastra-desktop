@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -8,13 +8,13 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
+} from "@/styles/radix-nova/ui/dialog"
 
 export function DialogStickyFooter() {
   return (
     <Dialog>
-      <DialogTrigger render={<Button variant="outline" />}>
-        Sticky Footer
+      <DialogTrigger asChild>
+        <Button variant="outline">Sticky Footer</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
@@ -38,7 +38,9 @@ export function DialogStickyFooter() {
           ))}
         </div>
         <DialogFooter>
-          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+          <DialogClose asChild>
+            <Button variant="outline">Close</Button>
+          </DialogClose>
         </DialogFooter>
       </DialogContent>
     </Dialog>

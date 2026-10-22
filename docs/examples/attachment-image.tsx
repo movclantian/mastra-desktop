@@ -10,7 +10,7 @@ import {
   AttachmentMedia,
   AttachmentTitle,
   AttachmentTrigger,
-} from "@/styles/base-rhea/ui/attachment"
+} from "@/styles/radix-rhea/ui/attachment"
 
 const images = [
   {
@@ -51,16 +51,14 @@ export function AttachmentImage() {
                 <XIcon />
               </AttachmentAction>
             </AttachmentActions>
-            <AttachmentTrigger
-              render={
-                <a
-                  href={image.src}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Open ${image.name}`}
-                />
-              }
-            />
+            <AttachmentTrigger asChild>
+              <a
+                href={image.src}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open ${image.name}`}
+              />
+            </AttachmentTrigger>
           </Attachment>
         ))}
       </AttachmentGroup>

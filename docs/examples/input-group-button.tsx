@@ -14,12 +14,12 @@ import {
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
+} from "@/styles/radix-nova/ui/input-group"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
+} from "@/styles/radix-nova/ui/popover"
 
 export default function InputGroupButtonExample() {
   const { copyToClipboard, isCopied } = useCopyToClipboard()
@@ -44,10 +44,12 @@ export default function InputGroupButtonExample() {
       </InputGroup>
       <InputGroup className="[--radius:9999px]">
         <Popover>
-          <PopoverTrigger render={<InputGroupAddon />}>
-            <InputGroupButton variant="secondary" size="icon-xs">
-              <IconInfoCircle />
-            </InputGroupButton>
+          <PopoverTrigger asChild>
+            <InputGroupAddon>
+              <InputGroupButton variant="secondary" size="icon-xs">
+                <IconInfoCircle />
+              </InputGroupButton>
+            </InputGroupAddon>
           </PopoverTrigger>
           <PopoverContent
             align="start"

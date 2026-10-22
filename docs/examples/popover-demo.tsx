@@ -1,17 +1,17 @@
-import { Button } from "@/styles/base-nova/ui/button"
-import { Input } from "@/styles/base-nova/ui/input"
-import { Label } from "@/styles/base-nova/ui/label"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
+} from "@/styles/radix-nova/ui/popover"
 
 export default function PopoverDemo() {
   return (
     <Popover>
-      <PopoverTrigger render={<Button variant="outline" />}>
-        Open popover
+      <PopoverTrigger asChild>
+        <Button variant="outline">Open popover</Button>
       </PopoverTrigger>
       <PopoverContent className="w-80">
         <div className="grid gap-4">

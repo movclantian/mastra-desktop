@@ -8,8 +8,7 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
-} from "@/styles/base-nova/ui/field"
-import { Label } from "@/styles/base-nova/ui/label"
+} from "@/styles/radix-nova/ui/field"
 import {
   Select,
   SelectContent,
@@ -17,17 +16,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-nova/ui/select"
-import { Switch } from "@/styles/base-nova/ui/switch"
-
-const items = [
-  { label: "Select a fruit", value: null },
-  { label: "Apple", value: "apple" },
-  { label: "Banana", value: "banana" },
-  { label: "Blueberry", value: "blueberry" },
-  { label: "Grapes", value: "grapes" },
-  { label: "Pineapple", value: "pineapple" },
-]
+} from "@/styles/radix-nova/ui/select"
+import { Switch } from "@/styles/radix-nova/ui/switch"
 
 export function SelectAlignItem() {
   const [alignItemWithTrigger, setAlignItemWithTrigger] = React.useState(true)
@@ -48,17 +38,19 @@ export function SelectAlignItem() {
         />
       </Field>
       <Field>
-        <Select items={items} defaultValue="banana">
+        <Select defaultValue="banana">
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
-          <SelectContent alignItemWithTrigger={alignItemWithTrigger}>
+          <SelectContent
+            position={alignItemWithTrigger ? "item-aligned" : "popper"}
+          >
             <SelectGroup>
-              {items.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
+              <SelectItem value="apple">Apple</SelectItem>
+              <SelectItem value="banana">Banana</SelectItem>
+              <SelectItem value="blueberry">Blueberry</SelectItem>
+              <SelectItem value="grapes">Grapes</SelectItem>
+              <SelectItem value="pineapple">Pineapple</SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>

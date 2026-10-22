@@ -675,23 +675,25 @@ function TreeRows({
             icon={<FileTypeIcon name={entry.name} />}
             name={entry.name}
             path={entry.path}
+            actions={
+              <FileTreeActions className="opacity-0 group-hover/file:opacity-100 transition-opacity">
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                  title={t("workspace:previewDirectly")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectFile?.(entry.path, "preview");
+                  }}
+                >
+                  <EyeIcon className="size-3" />
+                </Button>
+              </FileTreeActions>
+            }
           >
             <FileTypeIcon name={entry.name} />
             <span className="truncate flex-1 min-w-0">{entry.name}</span>
-            <FileTreeActions className="opacity-0 group-hover/file:opacity-100 transition-opacity">
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="size-5 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                title={t("workspace:previewDirectly")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSelectFile?.(entry.path, "preview");
-                }}
-              >
-                <EyeIcon className="size-3" />
-              </Button>
-            </FileTreeActions>
           </FileTreeFile>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">

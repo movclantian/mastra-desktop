@@ -14,7 +14,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 export default function AppSidebar() {
   return (
@@ -38,21 +38,27 @@ export default function AppSidebar() {
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton render={<a href="#" />}>
-                    <FrameIcon />
-                    <span>Design Engineering</span>
+                  <SidebarMenuButton asChild>
+                    <a href="#">
+                      <FrameIcon />
+                      <span>Design Engineering</span>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton render={<a href="#" />}>
-                    <PieChartIcon />
-                    <span>Sales & Marketing</span>
+                  <SidebarMenuButton asChild>
+                    <a href="#">
+                      <PieChartIcon />
+                      <span>Sales & Marketing</span>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton render={<a href="#" />}>
-                    <MapIcon />
-                    <span>Travel</span>
+                  <SidebarMenuButton asChild>
+                    <a href="#">
+                      <MapIcon />
+                      <span>Travel</span>
+                    </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>

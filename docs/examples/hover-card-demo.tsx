@@ -1,24 +1,15 @@
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/styles/base-nova/ui/avatar"
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
-} from "@/styles/base-nova/ui/hover-card"
+} from "@/styles/radix-nova/ui/hover-card"
 
 export default function HoverCardDemo() {
   return (
-    <HoverCard>
-      <HoverCardTrigger
-        delay={10}
-        closeDelay={100}
-        render={<Button variant="link" />}
-      >
-        Hover Here
+    <HoverCard openDelay={10} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <Button variant="link">Hover Here</Button>
       </HoverCardTrigger>
       <HoverCardContent className="flex w-64 flex-col gap-0.5">
         <div className="font-semibold">@nextjs</div>

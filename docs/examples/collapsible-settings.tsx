@@ -3,21 +3,21 @@
 import * as React from "react"
 import { MaximizeIcon, MinimizeIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/styles/base-nova/ui/card"
+} from "@/styles/radix-nova/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/styles/base-nova/ui/collapsible"
-import { Field, FieldGroup, FieldLabel } from "@/styles/base-nova/ui/field"
-import { Input } from "@/styles/base-nova/ui/input"
+} from "@/styles/radix-nova/ui/collapsible"
+import { Field, FieldGroup, FieldLabel } from "@/styles/radix-nova/ui/field"
+import { Input } from "@/styles/radix-nova/ui/input"
 
 export function CollapsibleSettings() {
   const [isOpen, setIsOpen] = React.useState(false)
@@ -62,8 +62,10 @@ export function CollapsibleSettings() {
               </Field>
             </CollapsibleContent>
           </FieldGroup>
-          <CollapsibleTrigger render={<Button variant="outline" size="icon" />}>
-            {isOpen ? <MinimizeIcon /> : <MaximizeIcon />}
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" size="icon">
+              {isOpen ? <MinimizeIcon /> : <MaximizeIcon />}
+            </Button>
           </CollapsibleTrigger>
         </Collapsible>
       </CardContent>

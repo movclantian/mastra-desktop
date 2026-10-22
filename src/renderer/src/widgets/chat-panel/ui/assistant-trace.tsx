@@ -1,13 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  FileCode2Icon,
-  FileIcon,
-  PauseIcon,
-  WrenchIcon,
-  XIcon,
-} from "lucide-react";
+import { BrainIcon, CheckIcon, FileIcon, PauseIcon, XIcon } from "lucide-react";
 import * as React from "react";
 import { fetchMcpServers, usePluginSkills } from "@/entities/skill";
 import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
@@ -17,16 +9,7 @@ import {
   ChainOfThought,
   ChainOfThoughtContent,
   ChainOfThoughtHeader,
-  ChainOfThoughtStep,
 } from "@/shared/ui/ai-elements/chain-of-thought";
-import {
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockCopyButton,
-  CodeBlockFilename,
-  CodeBlockHeader,
-  CodeBlockTitle,
-} from "@/shared/ui/ai-elements/code-block";
 import {
   Reasoning,
   ReasoningContent,
@@ -45,49 +28,60 @@ import {
 } from "@/shared/ui/ai-elements/sandbox";
 import {
   StackTrace,
-  StackTraceActions,
   StackTraceContent,
   StackTraceCopyButton,
   StackTraceError,
   StackTraceErrorMessage,
   StackTraceErrorType,
-  StackTraceExpandButton,
   StackTraceFrames,
   StackTraceHeader,
 } from "@/shared/ui/ai-elements/stack-trace";
-import {
-  Task,
-  TaskContent,
-  TaskItem,
-  TaskItemFile,
-  TaskTrigger,
-} from "@/shared/ui/ai-elements/task";
+import { Task, TaskContent, TaskItemFile, TaskTrigger } from "@/shared/ui/ai-elements/task";
 import { ToolInput, ToolOutput, type ToolPart } from "@/shared/ui/ai-elements/tool";
-import { Button } from "@/shared/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+} from "@/shared/ui/code-block";
+import { CodeFile } from "@/shared/ui/code-file";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
 import { DotmHex1 } from "@/shared/ui/dotm-hex-1";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
 import { DotmTriangle2 } from "@/shared/ui/dotm-triangle-2";
-import { getTraceStepStatus, type TracePart } from "../model/types";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/shared/ui/trace";
+import { asRecord, getToolTraceState, getTraceStepStatus, type TracePart } from "../model/types";
 import { getToolUI } from "./tool-registry-ui";
 
 const MediaGeneration = React.lazy(() => import("./media-generation"));
 
-function useTraceDisclosure(showDetails: boolean) {
-  const [open, setOpen] = React.useState(showDetails);
-  React.useEffect(() => setOpen(showDetails), [showDetails]);
-  return [open, setOpen] as const;
+export function useTraceDisclosure(showDetails: boolean, isStreaming: boolean) {
+  const [state, setState] = React.useState({ showDetails, isStreaming, open: showDetails });
+  // Reset every disclosure for a new run or preference change, not for each token.
+  if (state.showDetails !== showDetails || state.isStreaming !== isStreaming) {
+    setState({
+      showDetails,
+      isStreaming,
+      open: state.showDetails !== showDetails || isStreaming ? showDetails : state.open,
+    });
+  }
+  const setOpen = React.useCallback((open: boolean) => {
+    setState((current) => ({ ...current, open }));
+  }, []);
+  return [state.open, setOpen] as const;
 }
 
-// ---------------------------------------------------------------------------
-// 执行轨迹:推理步骤走官方 ChainOfThought 渲染;工具步骤按 docs/aielements/
-// task.tsx 的 Task 模式 —— 连续的工具 part 归为一组,整组渲染成一个 Task
-// (折叠触发器 + TaskContent 左边框时间线 + TaskItem 单行摘要)。
-// 组件仍按 part 引用 memo:AI SDK 流式更新时未变更的 part 保持引用稳定
-// (AI SDK v5 特性),已完成步骤可跳过重渲染,这是流式不卡顿的根治手段。
-// ---------------------------------------------------------------------------
+// Trace provides shared disclosure, status and nested step layout.
 
 /**
  * 运行中指示器按工具类别分派点阵动效 —— 同一个转圈无法区分"在跑代码"
@@ -142,7 +136,7 @@ function formatDuration(ms: number): string {
 }
 
 /**
- * 推理步骤:直接作为 ChainOfThoughtStep 渲染(脑图图标 + 折叠触发器 + ReasoningContent)。
+ * 推理步骤由 Trace 展开,正文使用 Streamdown。
  * ReasoningContent 内部由 Streamdown 增量渲染 Markdown,避免纯文本与富文本切换时的闪变。
  */
 const ReasoningStepItem = React.memo(function ReasoningStepItem({
@@ -155,38 +149,41 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
   showDetails: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useTraceDisclosure(showDetails);
+  const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
   const active = getTraceStepStatus(part) === "active";
   const partStreaming = isStreaming && active;
 
+  if (!part.text)
+    return (
+      <TraceLine status={partStreaming ? "running" : undefined}>
+        <TraceIcon>
+          <BrainIcon />
+        </TraceIcon>
+        <TraceTitle>{t(partStreaming ? "common:thinking" : "chat:trace.thought")}</TraceTitle>
+      </TraceLine>
+    );
+
   return (
-    <ChainOfThoughtStep label="" status={partStreaming ? "active" : "complete"}>
-      {/* 默认折叠:流式期间触发行内滚出最新一行推理(点开展示全文) */}
-      <Reasoning className="mb-0" isStreaming={partStreaming} open={open} onOpenChange={setOpen}>
-        <div className="flex min-w-0 items-center gap-2">
-          {/* 折叠态也把最新一行推理流式滚进触发行(仅一行,不展开正文) */}
-          <ReasoningTrigger className="min-w-0" streamingText={part.text} />
-          {/* 三角波点阵 = 模型正在思考,与工具执行态的点阵形态明确区分 */}
-          {partStreaming ? (
-            <DotmTriangle2 size={14} dotSize={1.8} colorPreset="solid-theme" />
-          ) : null}
-        </div>
-        {/*
-         * 流式与完成态统一走 ReasoningContent(Streamdown):Streamdown 为流式
-         * 增量解析设计,块级 memo,每 token 只重解析尾部未完成块 —— 与主回答
-         * (MessageResponse)同一条渲染路径,不存在"每 token 全量重跑"。
-         * 之前流式态用纯文本、结束后切 Markdown,会造成完成瞬间的排版闪变。
-         */}
-        <ReasoningContent>{part.text || t("chat:trace.noReasoningSummary")}</ReasoningContent>
-      </Reasoning>
-    </ChainOfThoughtStep>
+    <Reasoning className="mb-0" isStreaming={partStreaming} open={open} onOpenChange={setOpen}>
+      <div className="flex min-w-0 items-center gap-2">
+        {/* 折叠态也把最新一行推理流式滚进触发行(仅一行,不展开正文) */}
+        <ReasoningTrigger className="min-w-0" streamingText={part.text} />
+        {/* 三角波点阵 = 模型正在思考,与工具执行态的点阵形态明确区分 */}
+        {partStreaming ? <DotmTriangle2 size={14} dotSize={1.8} colorPreset="solid-theme" /> : null}
+      </div>
+      {/*
+       * 流式与完成态统一走 ReasoningContent(Streamdown):Streamdown 为流式
+       * 增量解析设计,块级 memo,每 token 只重解析尾部未完成块 —— 与主回答
+       * (MessageResponse)同一条渲染路径,不存在"每 token 全量重跑"。
+       * 之前流式态用纯文本、结束后切 Markdown,会造成完成瞬间的排版闪变。
+       */}
+      <ReasoningContent>{part.text || t("chat:trace.noReasoningSummary")}</ReasoningContent>
+    </Reasoning>
   );
 });
 
 /**
- * 工具步骤:TaskItem 单行摘要(状态图标 + 工具名 + 关键参数)。
- * 有参数或输出时整行可点,展开显示 ToolInput/ToolOutput 的 JSON 详情
- * (默认收起,需要时再看,不再无条件倾倒原始数据)。
+ * 工具摘要和输出采用 Trace;详情开关允许在输出到达前查看输入。
  */
 const ToolStepItem = React.memo(function ToolStepItem({
   part,
@@ -201,25 +198,23 @@ const ToolStepItem = React.memo(function ToolStepItem({
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
   const typescriptSandbox = name === "execute_typescript";
   const commandSandbox = name === "mastra_workspace_execute_command";
-  const sandboxTool = typescriptSandbox || commandSandbox;
-  const pending = getTraceStepStatus(part) === "active";
-  const active = isStreaming && pending;
-  const unfinished =
-    !isStreaming && (part.state === "input-streaming" || part.state === "input-available");
-  const [open, setOpen] = useTraceDisclosure(showDetails);
+  const { active, failed, denied, unfinished, exitCode } = getToolTraceState(part, isStreaming);
+  const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
+  const [sandboxOpen, setSandboxOpen] = useTraceDisclosure(showDetails, isStreaming);
+  const [stackOpen, setStackOpen] = useTraceDisclosure(showDetails, isStreaming);
   const transportFailed = part.state === "output-error";
   const hasInput = part.input !== undefined;
   const output = "output" in part ? part.output : undefined;
+  const terminalOutput = typeof output === "string" ? output : part.terminal?.output;
   const codeResult =
     typescriptSandbox && output && typeof output === "object"
       ? (output as { success?: boolean; error?: { message?: string } })
       : undefined;
-  const failed = transportFailed || codeResult?.success === false || unfinished;
   const errorText =
     ("errorText" in part ? part.errorText : undefined) ??
     codeResult?.error?.message ??
     (unfinished ? t("chat:trace.noRecordedResult") : undefined);
-  const input = (part.input ?? {}) as Record<string, unknown>;
+  const input = asRecord(part.input) ?? {};
   const { user } = useAuth();
   const pluginSkills = usePluginSkills(
     name === "skill" || name === "skill_read" ? user?.id : undefined,
@@ -249,7 +244,11 @@ const ToolStepItem = React.memo(function ToolStepItem({
   )?.[1];
   const hint = typeof hintValue === "string" ? hintValue : undefined;
   const hintLabel = hint ? (hint.length > 64 ? `${hint.slice(0, 64)}…` : hint) : null;
-  const hasDetails = hasInput || output !== undefined || Boolean(errorText);
+  const hasDetails =
+    output !== undefined ||
+    Boolean(terminalOutput) ||
+    Boolean(errorText) ||
+    (showDetails && hasInput);
 
   // 专属 UI 注册表:命中则用本地化标签 + 精选参数摘要,详情可整体替换;
   // 未命中的工具保持通用展示(原始名 + 自动参数提示 + JSON 详情)。
@@ -275,13 +274,10 @@ const ToolStepItem = React.memo(function ToolStepItem({
   const customDetail = failed ? undefined : ui?.detail?.({ input, output });
 
   const sandboxOutput = React.useMemo(() => {
-    if (!sandboxTool) return "";
+    if (!typescriptSandbox) return "";
     if (transportFailed) return errorText ?? t("chat:trace.executionFailed");
     if (output === undefined) return active ? t("chat:trace.executing") : "";
     if (typeof output === "string") return output;
-    if (commandSandbox) {
-      return typeof output === "string" ? output : JSON.stringify(output, null, 2);
-    }
     const record = output && typeof output === "object" ? (output as Record<string, unknown>) : {};
     const lines = Array.isArray(record.logs)
       ? record.logs.filter((line): line is string => typeof line === "string")
@@ -297,20 +293,23 @@ const ToolStepItem = React.memo(function ToolStepItem({
       );
     }
     return lines.join("\n");
-  }, [active, commandSandbox, errorText, transportFailed, output, sandboxTool, t]);
+  }, [active, errorText, transportFailed, output, typescriptSandbox, t]);
 
   const summary = (
-    <div className="min-w-0 space-y-1">
+    <span className="block min-w-0 space-y-1">
       {/* 标签、文件徽章、参数 chips 同处一个可换行 flex 行:放得下就同行,
           放不下才折行 —— 之前徽章单独一行,工具只有一个路径参数时必然换行 */}
-      <div
+      <span
         className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 break-words"
         title={ui ? name : undefined}
       >
-        <span className="shrink-0">
+        <span className="min-w-0 [overflow-wrap:anywhere]">
           {ui ? (
             <ui.icon className="mr-1 inline size-3.5 text-muted-foreground align-[-2px]" />
           ) : null}
+          {t(
+            `chat:trace.toolAction.${denied ? "denied" : active ? "running" : failed ? "failed" : "ran"}`,
+          )}{" "}
           {ui ? t(`chat:trace.toolNames.${ui.labelKey}`) : name}
         </span>
         {files.map((path) => (
@@ -325,7 +324,12 @@ const ToolStepItem = React.memo(function ToolStepItem({
             {chip}
           </span>
         ))}
-      </div>
+      </span>
+      {exitCode !== undefined && exitCode !== 0 ? (
+        <span className="block text-destructive text-xs">
+          {t("chat:trace.exitCode", { code: exitCode })}
+        </span>
+      ) : null}
       {failed ? (
         <span className="block text-destructive text-xs">
           {errorText ?? t("chat:trace.callFailed")}
@@ -339,157 +343,137 @@ const ToolStepItem = React.memo(function ToolStepItem({
       ) : active ? (
         <span className="block text-[10px] tabular-nums text-muted-foreground">…</span>
       ) : null}
-    </div>
+    </span>
   );
 
-  return (
-    <Collapsible open={open} onOpenChange={setOpen} className="w-full">
-      <TaskItem className="flex items-start gap-2">
-        <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
-          {active ? (
-            <ToolRunningMatrix name={name} />
-          ) : failed ? (
-            <XIcon className="size-3.5 text-destructive" />
-          ) : pending ? (
-            <PauseIcon className="size-3.5 text-muted-foreground" />
-          ) : (
-            <CheckIcon className="size-3.5 text-emerald-500" />
-          )}
-        </span>
-        {hasDetails ? (
-          <CollapsibleTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="xs"
-                className="group/trigger flex h-auto min-w-0 flex-1 items-start justify-between gap-2 p-0 text-left whitespace-normal"
-                type="button"
-              />
-            }
-          >
-            <div className="min-w-0 flex-1">{summary}</div>
-            <ChevronDownIcon className="mt-1 size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[panel-open]/trigger:rotate-180 group-data-[open]/trigger:rotate-180" />
-          </CollapsibleTrigger>
+  const line = (
+    <TraceLine
+      className="w-full items-start"
+      status={active ? "running" : failed ? "error" : undefined}
+    >
+      <TraceIcon className="mt-0.5">
+        {active ? (
+          <ToolRunningMatrix name={name} />
+        ) : failed ? (
+          <XIcon className="size-3.5 text-destructive" />
+        ) : denied ? (
+          <PauseIcon className="size-3.5 text-muted-foreground" />
         ) : (
-          <div className="min-w-0 flex-1">{summary}</div>
+          <CheckIcon className="size-3.5 text-emerald-500" />
         )}
-      </TaskItem>
-      {hasDetails ? (
-        <CollapsibleContent className="overflow-hidden transition-[height,opacity] duration-200 ease-out">
-          <div className="mt-1 min-w-0 max-w-full space-y-2 pl-3">
-            {sandboxTool ? (
-              <Sandbox className="mb-0 min-w-0 max-w-full" defaultOpen>
-                <SandboxHeader
-                  state={unfinished ? "output-error" : part.state}
-                  title={
-                    commandSandbox
-                      ? t("chat:trace.workspaceCommand")
-                      : t("chat:trace.typescriptScript")
-                  }
-                />
-                <SandboxContent className="min-w-0">
-                  <SandboxTabs defaultValue="code">
-                    <SandboxTabsBar>
-                      <SandboxTabsList>
-                        <SandboxTabsTrigger value="code">{t("chat:trace.code")}</SandboxTabsTrigger>
-                        <SandboxTabsTrigger value="output">
-                          {t("chat:trace.output")}
-                        </SandboxTabsTrigger>
-                      </SandboxTabsList>
-                    </SandboxTabsBar>
-                    <SandboxTabContent value="code">
-                      <CodeBlock
-                        className="min-w-0 max-w-full rounded-none border-0"
-                        code={
-                          commandSandbox
-                            ? typeof input.command === "string"
-                              ? input.command
-                              : t("chat:trace.generatingCommand")
-                            : typeof input.code === "string"
-                              ? input.code
-                              : t("chat:trace.generatingCode")
-                        }
-                        language={commandSandbox ? "bash" : "typescript"}
-                        showLineNumbers
+      </TraceIcon>
+      <TraceTitle className="flex-1 whitespace-normal">{summary}</TraceTitle>
+    </TraceLine>
+  );
+
+  if (!hasDetails) return line;
+
+  return (
+    <TraceCollapsible open={open} onOpenChange={setOpen} className="w-full">
+      <TraceCollapsibleTrigger className="w-full items-start" aria-label={name}>
+        {line}
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent keepMounted>
+        <div className="min-w-0 max-w-full space-y-2">
+          {commandSandbox ? (
+            <Trace>
+              {typeof input.command === "string" ? (
+                <CodeBlock size="sm">
+                  <CodeBlockActions>
+                    <CodeBlockCopyButton value={input.command} />
+                  </CodeBlockActions>
+                  <CodeBlockContent wrap>{input.command}</CodeBlockContent>
+                </CodeBlock>
+              ) : null}
+              {terminalOutput || errorText ? (
+                <CodeBlock size="sm" variant={failed ? "destructive" : "default"}>
+                  <CodeBlockActions>
+                    <CodeBlockCopyButton value={terminalOutput || errorText || ""} />
+                  </CodeBlockActions>
+                  <CodeBlockContent wrap className="max-h-64">
+                    {terminalOutput || errorText}
+                  </CodeBlockContent>
+                </CodeBlock>
+              ) : null}
+            </Trace>
+          ) : typescriptSandbox ? (
+            <Sandbox
+              className="mb-0 min-w-0 max-w-full"
+              open={sandboxOpen}
+              onOpenChange={setSandboxOpen}
+            >
+              <SandboxHeader
+                state={denied ? "output-denied" : failed ? "output-error" : part.state}
+                title={t("chat:trace.typescriptScript")}
+              />
+              <SandboxContent className="min-w-0">
+                <SandboxTabs defaultValue="code">
+                  <SandboxTabsBar>
+                    <SandboxTabsList>
+                      <SandboxTabsTrigger value="code">{t("chat:trace.code")}</SandboxTabsTrigger>
+                      <SandboxTabsTrigger value="output">
+                        {t("chat:trace.output")}
+                      </SandboxTabsTrigger>
+                    </SandboxTabsList>
+                  </SandboxTabsBar>
+                  <SandboxTabContent value="code">
+                    <CodeFile
+                      className="min-w-0 max-w-full rounded-none border-0"
+                      code={
+                        typeof input.code === "string" ? input.code : t("chat:trace.generatingCode")
+                      }
+                      language="typescript"
+                      lineNumbers
+                      filename="script.ts"
+                    />
+                  </SandboxTabContent>
+                  <SandboxTabContent value="output">
+                    {failed ? (
+                      <StackTrace
+                        className="rounded-none border-0"
+                        open={stackOpen}
+                        onOpenChange={setStackOpen}
+                        trace={sandboxOutput || errorText || t("chat:trace.executionFailed")}
                       >
-                        <CodeBlockHeader>
-                          <CodeBlockTitle>
-                            <FileCode2Icon className="size-3.5" />
-                            <CodeBlockFilename>
-                              {commandSandbox ? "command.sh" : "script.ts"}
-                            </CodeBlockFilename>
-                          </CodeBlockTitle>
-                          <CodeBlockActions>
-                            <CodeBlockCopyButton size="icon-xs" />
-                          </CodeBlockActions>
-                        </CodeBlockHeader>
-                      </CodeBlock>
-                    </SandboxTabContent>
-                    <SandboxTabContent value="output">
-                      {failed ? (
-                        <StackTrace
-                          className="rounded-none border-0"
-                          defaultOpen
-                          trace={sandboxOutput || errorText || t("chat:trace.executionFailed")}
-                        >
-                          <StackTraceHeader>
-                            <StackTraceError>
-                              <StackTraceErrorType />
-                              <StackTraceErrorMessage />
-                            </StackTraceError>
-                            <StackTraceActions>
-                              <StackTraceCopyButton />
-                              <StackTraceExpandButton />
-                            </StackTraceActions>
-                          </StackTraceHeader>
-                          <StackTraceContent>
-                            <StackTraceFrames />
-                          </StackTraceContent>
-                        </StackTrace>
-                      ) : (
-                        <CodeBlock
-                          className="min-w-0 max-w-full rounded-none border-0"
-                          code={sandboxOutput || t("chat:trace.waitingOutput")}
-                          language="log"
-                        >
-                          <CodeBlockHeader>
-                            <CodeBlockTitle>
-                              <FileCode2Icon className="size-3.5" />
-                              <CodeBlockFilename>output.log</CodeBlockFilename>
-                            </CodeBlockTitle>
-                            <CodeBlockActions>
-                              <CodeBlockCopyButton size="icon-xs" />
-                            </CodeBlockActions>
-                          </CodeBlockHeader>
-                        </CodeBlock>
-                      )}
-                    </SandboxTabContent>
-                  </SandboxTabs>
-                </SandboxContent>
-              </Sandbox>
-            ) : customDetail ? (
-              customDetail
-            ) : (
-              <>
-                {hasInput ? <ToolInput input={part.input} /> : null}
-                {output !== undefined || failed ? (
-                  <ToolOutput errorText={errorText} output={output} />
-                ) : null}
-              </>
-            )}
-          </div>
-        </CollapsibleContent>
-      ) : null}
-    </Collapsible>
+                        <StackTraceHeader action={<StackTraceCopyButton />}>
+                          <StackTraceError>
+                            <StackTraceErrorType />
+                            <StackTraceErrorMessage />
+                          </StackTraceError>
+                        </StackTraceHeader>
+                        <StackTraceContent>
+                          <StackTraceFrames />
+                        </StackTraceContent>
+                      </StackTrace>
+                    ) : (
+                      <CodeFile
+                        className="min-w-0 max-w-full rounded-none border-0"
+                        code={sandboxOutput || t("chat:trace.waitingOutput")}
+                        language="log"
+                        filename="output.log"
+                      />
+                    )}
+                  </SandboxTabContent>
+                </SandboxTabs>
+              </SandboxContent>
+            </Sandbox>
+          ) : customDetail ? (
+            customDetail
+          ) : (
+            <>
+              {hasInput ? <ToolInput input={part.input} /> : null}
+              {output !== undefined || failed ? (
+                <ToolOutput errorText={errorText} output={output} />
+              ) : null}
+            </>
+          )}
+        </div>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
   );
 });
 
-/**
- * 工具组:连续的工具 part 归为一组,渲染成一个 Task(折叠头 + 时间线)。
- * 必须和推理步骤一样包在 ChainOfThoughtStep 里 —— 那层的 `div.relative` 图标列
- * (圆点 + absolute 竖线)就是左侧时间线;少了它,工具组会贴到最左与 Header 平齐,
- * 和推理步骤错开一个图标列的宽度,层级就断了。
- */
+/** Consecutive tool parts share one expandable Trace group. */
 function ToolGroup({
   tools,
   showDetails,
@@ -500,8 +484,8 @@ function ToolGroup({
   isStreaming: boolean;
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useTraceDisclosure(showDetails);
-  const active = isStreaming && tools.some((tool) => getTraceStepStatus(tool) === "active");
+  const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
+  const active = tools.some((tool) => getToolTraceState(tool, isStreaming).active);
   const observedStart = React.useRef<number | null>(null);
   const [observedMs, setObservedMs] = React.useState<number | null>(null);
   React.useEffect(() => {
@@ -529,48 +513,50 @@ function ToolGroup({
   });
 
   return (
-    <ChainOfThoughtStep label="" status={active ? "active" : "complete"}>
-      <Task className="w-full" open={open} onOpenChange={setOpen}>
-        {/* w-full:折叠头占满整行,chevron 与外层 Header 的一样右对齐 */}
-        <TaskTrigger className="w-full" title={toolTitle}>
-          <div className="flex w-full cursor-pointer items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground">
-            <WrenchIcon className="size-4" />
-            <p className="min-w-0 flex-1 text-left text-sm">{toolTitle}</p>
-            <span
-              className="shrink-0 text-[10px] tabular-nums text-muted-foreground"
-              title={t(
-                !active && totalDuration !== undefined
-                  ? "chat:trace.totalToolTime"
-                  : observedMs !== null
-                    ? "chat:trace.observedToolTime"
-                    : "chat:trace.unknownToolTime",
-              )}
-            >
-              {active
-                ? observedMs === null
-                  ? "…"
-                  : `≈${formatDuration(observedMs)} · …`
-                : totalDuration !== undefined
-                  ? formatDuration(totalDuration)
-                  : observedMs === null
-                    ? "—"
-                    : `≈${formatDuration(observedMs)}`}
-            </span>
-            <ChevronDownIcon className="size-4 transition-transform duration-200 group-data-[state=open]:rotate-180 group-data-[open]:rotate-180" />
-          </div>
-        </TaskTrigger>
-        <TaskContent>
-          {tools.map((tool, index) => (
-            <ToolStepItem
-              key={`${tool.toolCallId}:${index}`}
-              part={tool}
-              showDetails={showDetails}
-              isStreaming={isStreaming}
-            />
-          ))}
-        </TaskContent>
-      </Task>
-    </ChainOfThoughtStep>
+    <Task className="w-full" open={open} onOpenChange={setOpen}>
+      <TaskTrigger
+        className="w-full"
+        title={toolTitle}
+        status={
+          active
+            ? "running"
+            : tools.some((tool) => getToolTraceState(tool, isStreaming).failed)
+              ? "error"
+              : undefined
+        }
+      >
+        <TraceDescription
+          className="text-[10px]"
+          title={t(
+            !active && totalDuration !== undefined
+              ? "chat:trace.totalToolTime"
+              : observedMs !== null
+                ? "chat:trace.observedToolTime"
+                : "chat:trace.unknownToolTime",
+          )}
+        >
+          {active
+            ? observedMs === null
+              ? "…"
+              : `≈${formatDuration(observedMs)} · …`
+            : totalDuration !== undefined
+              ? formatDuration(totalDuration)
+              : observedMs === null
+                ? "—"
+                : `≈${formatDuration(observedMs)}`}
+        </TraceDescription>
+      </TaskTrigger>
+      <TaskContent>
+        {tools.map((tool, index) => (
+          <ToolStepItem
+            key={`${tool.toolCallId}:${index}`}
+            part={tool}
+            showDetails={showDetails}
+            isStreaming={isStreaming}
+          />
+        ))}
+      </TaskContent>
+    </Task>
   );
 }
 
@@ -583,10 +569,17 @@ export function AssistantTrace({
 }) {
   const { t } = useTranslation();
   const showDetails = useDesktopSettingsQuery().data?.showWorkDetails ?? false;
-  const [open, setOpen] = useTraceDisclosure(showDetails);
+  const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
   const reasoningCount = parts.filter((part) => part.type === "reasoning").length;
   const toolCount = parts.length - reasoningCount;
-  const active = isStreaming && parts.some((part) => getTraceStepStatus(part) === "active");
+  const failedCount = parts.filter(
+    (part) => part.type !== "reasoning" && getToolTraceState(part, isStreaming).failed,
+  ).length;
+  const active = parts.some((part) =>
+    part.type === "reasoning"
+      ? isStreaming && getTraceStepStatus(part) === "active"
+      : getToolTraceState(part, isStreaming).active,
+  );
   const reasoningPart = parts.findLast(
     (part) => part.type === "reasoning" && getTraceStepStatus(part) === "active",
   );
@@ -629,7 +622,7 @@ export function AssistantTrace({
   return (
     <>
       <ChainOfThought className="max-w-full" onOpenChange={setOpen} open={open}>
-        <ChainOfThoughtHeader>
+        <ChainOfThoughtHeader status={active ? "running" : failedCount ? "error" : undefined}>
           <span className="flex min-w-0 items-center gap-2">
             <span className="shrink-0">
               {active
@@ -639,12 +632,14 @@ export function AssistantTrace({
                     summary: summary || t("chat:trace.executionTrace"),
                   })}
             </span>
+            {failedCount ? (
+              <span className="text-destructive">
+                {t("chat:trace.failedCount", { count: failedCount })}
+              </span>
+            ) : null}
             {!open && streamingText ? <ReasoningStreamingPreview text={streamingText} /> : null}
           </span>
         </ChainOfThoughtHeader>
-        {/* 不额外缩进:每个步骤自带 ChainOfThoughtStep 的图标列,圆点正好落在
-          Header 的 BrainIcon 那一列,步骤正文与 Header 文字起点对齐;
-          再往内一层的层级由工具组 TaskContent 自带的时间线承担 */}
         <ChainOfThoughtContent>
           {items.map((item) => (
             <React.Fragment key={item.key}>{item.node}</React.Fragment>

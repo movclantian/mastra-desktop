@@ -145,6 +145,7 @@ export function useWindowMinWidth({
 }) {
   const latest = React.useRef({ contentMinWidth, reservedWidth });
   latest.current = { contentMinWidth, reservedWidth };
+  const lastReportedWidth = React.useRef<number | null>(null);
 
   const report = React.useCallback(() => {
     const element = elementRef.current;
@@ -152,7 +153,10 @@ export function useWindowMinWidth({
     const { contentMinWidth, reservedWidth } = latest.current;
     if (contentMinWidth <= 0) return;
     const chrome = window.innerWidth - element.clientWidth;
-    window.api?.window.setMinimumWidth?.(contentMinWidth + chrome + reservedWidth);
+    const width = contentMinWidth + chrome + reservedWidth;
+    if (lastReportedWidth.current === width) return;
+    lastReportedWidth.current = width;
+    window.api?.window.setMinimumWidth?.(width);
   }, [elementRef]);
 
   React.useEffect(() => {

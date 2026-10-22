@@ -285,7 +285,10 @@ function ProviderListSidebar({
     disabled: boolean | undefined,
     onSelectItem: () => void,
   ) => (
-    <SidebarMenuItem key={key}>
+    <SidebarMenuItem
+      key={key}
+      className="[content-visibility:auto] [contain-intrinsic-size:0_2.25rem]"
+    >
       <SidebarMenuButton
         isActive={isActive}
         onClick={onSelectItem}
@@ -1096,18 +1099,43 @@ function ModelListSection({
   }, [provider.enabledModels]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? models.filter(
-        (m) =>
-          m.id.toLowerCase().includes(normalizedQuery) ||
-          m.name.toLowerCase().includes(normalizedQuery),
-      )
-    : models;
-  const enabledIds = new Set(provider.enabledModels.map((model) => model.id));
-  const orderedModels = [...filtered].sort(
-    (a, b) => Number(enabledIds.has(b.id)) - Number(enabledIds.has(a.id)),
+  const filtered = React.useMemo(
+    () =>
+      normalizedQuery
+        ? models.filter(
+            (m) =>
+              m.id.toLowerCase().includes(normalizedQuery) ||
+              m.name.toLowerCase().includes(normalizedQuery),
+          )
+        : models,
+    [models, normalizedQuery],
+  );
+  const enabledIds = React.useMemo(
+    () => new Set(provider.enabledModels.map((model) => model.id)),
+    [provider.enabledModels],
+  );
+  const orderedModels = React.useMemo(
+    () => [...filtered].sort((a, b) => Number(enabledIds.has(b.id)) - Number(enabledIds.has(a.id))),
+    [enabledIds, filtered],
   );
   const canAddCustom = normalizedQuery.length > 0 && filtered.length === 0;
+
+  const modelRows = React.useMemo(
+    () =>
+      orderedModels.map((model) => {
+        const kind = getModelKind(provider, model.id, catalog, model.kind);
+        return {
+          model,
+          enabled: enabledIds.has(model.id),
+          kind,
+          isCustomModel: !initialModelIds.has(model.id),
+          caps: getModelCapabilities(provider, model.id, catalog),
+          contextWindow: getModelContextWindow(provider, model.id, catalog),
+          displayName: getModelDisplayName(model),
+        };
+      }),
+    [catalog, enabledIds, initialModelIds, orderedModels, provider],
+  );
 
   const patchProvider = (patch: Partial<ProviderConfig>) => {
     setProviders(providers.map((p) => (p.id === provider.id ? { ...p, ...patch } : p)));
@@ -1179,74 +1207,72 @@ function ModelListSection({
           <p className="px-4 py-2 text-xs text-muted-foreground">
             {t("settings:providers.modelKindHint")}
           </p>
-          {orderedModels.map((model) => {
-            const enabled = enabledIds.has(model.id);
-            const kind = getModelKind(provider, model.id, catalog, model.kind);
-            const isCustomModel = !initialModelIds.has(model.id);
-            const caps = getModelCapabilities(provider, model.id, catalog);
-            const contextWindow = getModelContextWindow(provider, model.id, catalog);
-            // 内置供应商的 name === id,只渲染一行避免重复
-            const displayName = getModelDisplayName(model);
-            return (
-              <div key={model.id} className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-                <div className="min-w-0 flex-1">
-                  <p className="break-words text-sm" title={displayName}>
-                    {displayName}
-                  </p>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                    <CapabilityBadges caps={caps} />
-                    {contextWindow ? (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px]"
-                        title={`${contextWindow.toLocaleString("en-US")} tokens`}
-                      >
-                        {t("settings:providers.context", {
-                          size: formatModelContextWindow(contextWindow),
-                        })}
-                      </Badge>
-                    ) : null}
+          {modelRows.map(
+            ({ model, enabled, kind, isCustomModel, caps, contextWindow, displayName }) => {
+              return (
+                <div
+                  key={model.id}
+                  className="flex flex-wrap items-center gap-2 px-4 py-2.5 [content-visibility:auto] [contain-intrinsic-size:0_4.5rem]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="break-words text-sm" title={displayName}>
+                      {displayName}
+                    </p>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+                      <CapabilityBadges caps={caps} />
+                      {contextWindow ? (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px]"
+                          title={`${contextWindow.toLocaleString("en-US")} tokens`}
+                        >
+                          {t("settings:providers.context", {
+                            size: formatModelContextWindow(contextWindow),
+                          })}
+                        </Badge>
+                      ) : null}
+                    </div>
                   </div>
+                  <Badge
+                    variant="secondary"
+                    className="shrink-0 text-[10px]"
+                    title={t("settings:providers.modelKind")}
+                  >
+                    {t(`settings:providers.modelKinds.${kind}`)}
+                  </Badge>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    disabled={testingId !== null || kind !== "language"}
+                    onClick={() => void runTest(model.id)}
+                    aria-label={`${t("settings:providers.testModel")} ${model.id}`}
+                    title={`${t("settings:providers.testModel")} ${model.id}`}
+                  >
+                    {testingId === model.id ? (
+                      <DotmCircular4 size={15} dotSize={1.7} colorPreset="solid-theme" />
+                    ) : (
+                      <FlaskConicalIcon />
+                    )}
+                  </Button>
+                  <Switch
+                    checked={enabled}
+                    onCheckedChange={(nextEnabled) => {
+                      const enabledModels = nextEnabled
+                        ? provider.enabledModels.some((m) => m.id === model.id)
+                          ? provider.enabledModels
+                          : [...provider.enabledModels, { ...model, kind }]
+                        : provider.enabledModels.filter((m) => m.id !== model.id);
+                      patchProvider({ enabledModels });
+                      if (!nextEnabled && isCustomModel) {
+                        setModels((current) => current.filter((item) => item.id !== model.id));
+                      }
+                    }}
+                    aria-label={`${t("settings:providers.enableModel")} ${displayName}`}
+                  />
                 </div>
-                <Badge
-                  variant="secondary"
-                  className="shrink-0 text-[10px]"
-                  title={t("settings:providers.modelKind")}
-                >
-                  {t(`settings:providers.modelKinds.${kind}`)}
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  disabled={testingId !== null || kind !== "language"}
-                  onClick={() => void runTest(model.id)}
-                  aria-label={`${t("settings:providers.testModel")} ${model.id}`}
-                  title={`${t("settings:providers.testModel")} ${model.id}`}
-                >
-                  {testingId === model.id ? (
-                    <DotmCircular4 size={15} dotSize={1.7} colorPreset="solid-theme" />
-                  ) : (
-                    <FlaskConicalIcon />
-                  )}
-                </Button>
-                <Switch
-                  checked={enabled}
-                  onCheckedChange={(nextEnabled) => {
-                    const enabledModels = nextEnabled
-                      ? provider.enabledModels.some((m) => m.id === model.id)
-                        ? provider.enabledModels
-                        : [...provider.enabledModels, { ...model, kind }]
-                      : provider.enabledModels.filter((m) => m.id !== model.id);
-                    patchProvider({ enabledModels });
-                    if (!nextEnabled && isCustomModel) {
-                      setModels((current) => current.filter((item) => item.id !== model.id));
-                    }
-                  }}
-                  aria-label={`${t("settings:providers.enableModel")} ${displayName}`}
-                />
-              </div>
-            );
-          })}
+              );
+            },
+          )}
           {filtered.length === 0 && !canAddCustom ? (
             <p className="px-4 py-6 text-center text-sm text-muted-foreground">
               {t("settings:providers.noMatchingModels")}

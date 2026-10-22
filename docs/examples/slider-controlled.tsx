@@ -2,8 +2,8 @@
 
 import * as React from "react"
 
-import { Label } from "@/styles/base-nova/ui/label"
-import { Slider } from "@/styles/base-nova/ui/slider"
+import { Label } from "@/styles/radix-nova/ui/label"
+import { Slider } from "@/styles/radix-nova/ui/slider"
 
 export function SliderControlled() {
   const [value, setValue] = React.useState([0.3, 0.7])
@@ -19,7 +19,7 @@ export function SliderControlled() {
       <Slider
         id="slider-demo-temperature"
         value={value}
-        onValueChange={(value) => setValue(value as number[])}
+        onValueChange={setValue}
         min={0}
         max={1}
         step={0.1}

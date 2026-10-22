@@ -15,8 +15,8 @@ import {
   AttachmentDescription,
   AttachmentMedia,
   AttachmentTitle,
-} from "@/styles/base-rhea/ui/attachment"
-import { Spinner } from "@/styles/base-rhea/ui/spinner"
+} from "@/styles/radix-rhea/ui/attachment"
+import { Spinner } from "@/styles/radix-rhea/ui/spinner"
 
 export function AttachmentStates() {
   return (

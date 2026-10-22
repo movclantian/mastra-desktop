@@ -2,12 +2,12 @@
 
 import * as React from "react"
 
-import { Calendar } from "@/styles/base-nova/ui/calendar"
-import { Card, CardContent } from "@/styles/base-nova/ui/card"
+import { Calendar } from "@/styles/radix-nova/ui/calendar"
+import { Card, CardContent } from "@/styles/radix-nova/ui/card"
 
 export function CalendarWeekNumbers() {
   const [date, setDate] = React.useState<Date | undefined>(
-    new Date(new Date().getFullYear(), 0, 12)
+    new Date(new Date().getFullYear(), 1, 3)
   )
 
   return (

@@ -1,19 +1,18 @@
 import Image from "next/image"
 
-import { AspectRatio } from "@/styles/base-nova/ui/aspect-ratio"
+import { AspectRatio } from "@/styles/radix-nova/ui/aspect-ratio"
 
 export function AspectRatioSquare() {
   return (
-    <AspectRatio
-      ratio={1 / 1}
-      className="w-full max-w-[12rem] rounded-lg bg-muted"
-    >
-      <Image
-        src="https://avatar.vercel.sh/shadcn1"
-        alt="Photo"
-        fill
-        className="rounded-lg object-cover grayscale dark:brightness-20"
-      />
-    </AspectRatio>
+    <div className="w-full max-w-[12rem]">
+      <AspectRatio ratio={1 / 1} className="rounded-lg bg-muted">
+        <Image
+          src="https://avatar.vercel.sh/shadcn1"
+          alt="Photo"
+          fill
+          className="rounded-lg object-cover grayscale dark:brightness-20"
+        />
+      </AspectRatio>
+    </div>
   )
 }

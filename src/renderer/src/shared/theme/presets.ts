@@ -1522,7 +1522,7 @@ const HAND_CRAFTED_PRESETS: ThemePreset[] = [
 ];
 
 /**
- * 全量预设 = 18 个官方精修 + 144 个内置预设(125 视觉指纹 + 19 registry)。
+ * 全量预设 = 18 个官方精修 + 143 个内置预设(124 视觉指纹 + 19 registry)。
  * 生成预设的名称/分类/描述经 i18n getter 动态解析(与官方预设同模式)。
  */
 const GENERATED_CATEGORY_KEY: Record<string, string> = {

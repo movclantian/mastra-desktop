@@ -29,6 +29,7 @@ import {
   type QueuedRequest,
   type WorkMessageMetadata,
   type WorkUIMessage,
+  withTerminalEvent,
 } from "./types";
 
 type NativeDisplayState = Extract<
@@ -432,6 +433,19 @@ function createThreadSession(
             }
             // 其余事件(尤其 agent_end / 工具挂起)都要读最新快照,先把合帧里的落地。
             flushDisplay();
+            if (event.type === "shell_output" || event.type === "command_exit") {
+              revision++;
+              setMessages((messages) =>
+                messages.map((message) =>
+                  message.parts.some(
+                    (part) => isToolUIPart(part) && part.toolCallId === event.toolCallId,
+                  )
+                    ? { ...message, parts: withTerminalEvent(message.parts, event) }
+                    : message,
+                ),
+              );
+              return;
+            }
             if (event.type === "message_start") {
               revision++;
               applyMessage(

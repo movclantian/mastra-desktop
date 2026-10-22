@@ -4,14 +4,14 @@ import * as React from "react"
 import { format } from "date-fns"
 import { ChevronDownIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { Calendar } from "@/styles/base-nova/ui/calendar"
-import { Field, FieldLabel } from "@/styles/base-nova/ui/field"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Calendar } from "@/styles/radix-nova/ui/calendar"
+import { Field, FieldLabel } from "@/styles/radix-nova/ui/field"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
+} from "@/styles/radix-nova/ui/popover"
 
 export function DataPickerWithDropdowns() {
   const [date, setDate] = React.useState<Date>()
@@ -23,17 +23,15 @@ export function DataPickerWithDropdowns() {
         <FieldLabel htmlFor="date-picker-with-dropdowns-desktop">
           Date
         </FieldLabel>
-        <PopoverTrigger
-          render={
-            <Button
-              variant="outline"
-              id="date-picker-with-dropdowns-desktop"
-              className="justify-start px-2.5 font-normal"
-            />
-          }
-        >
-          <ChevronDownIcon className="ml-auto" />
-          {date ? format(date, "PPP") : <span>Pick a date</span>}
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            id="date-picker-with-dropdowns-desktop"
+            className="justify-start px-2.5 font-normal"
+          >
+            {date ? format(date, "PPP") : <span>Pick a date</span>}
+            <ChevronDownIcon className="ml-auto" />
+          </Button>
         </PopoverTrigger>
         <PopoverContent className="w-auto p-0" align="start">
           <Calendar

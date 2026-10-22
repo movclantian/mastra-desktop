@@ -6,105 +6,58 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-nova/ui/select"
-
-const northAmerica = [
-  { label: "Eastern Standard Time", value: "est" },
-  { label: "Central Standard Time", value: "cst" },
-  { label: "Mountain Standard Time", value: "mst" },
-  { label: "Pacific Standard Time", value: "pst" },
-  { label: "Alaska Standard Time", value: "akst" },
-  { label: "Hawaii Standard Time", value: "hst" },
-]
-
-const europeAfrica = [
-  { label: "Greenwich Mean Time", value: "gmt" },
-  { label: "Central European Time", value: "cet" },
-  { label: "Eastern European Time", value: "eet" },
-  { label: "Western European Summer Time", value: "west" },
-  { label: "Central Africa Time", value: "cat" },
-  { label: "East Africa Time", value: "eat" },
-]
-
-const asia = [
-  { label: "Moscow Time", value: "msk" },
-  { label: "India Standard Time", value: "ist" },
-  { label: "China Standard Time", value: "cst_china" },
-  { label: "Japan Standard Time", value: "jst" },
-  { label: "Korea Standard Time", value: "kst" },
-  { label: "Indonesia Central Standard Time", value: "ist_indonesia" },
-]
-
-const australiaPacific = [
-  { label: "Australian Western Standard Time", value: "awst" },
-  { label: "Australian Central Standard Time", value: "acst" },
-  { label: "Australian Eastern Standard Time", value: "aest" },
-  { label: "New Zealand Standard Time", value: "nzst" },
-  { label: "Fiji Time", value: "fjt" },
-]
-
-const southAmerica = [
-  { label: "Argentina Time", value: "art" },
-  { label: "Bolivia Time", value: "bot" },
-  { label: "Brasilia Time", value: "brt" },
-  { label: "Chile Standard Time", value: "clt" },
-]
-
-const items = [
-  { label: "Select a timezone", value: null },
-  ...northAmerica,
-  ...europeAfrica,
-  ...asia,
-  ...australiaPacific,
-  ...southAmerica,
-]
+} from "@/styles/radix-nova/ui/select"
 
 export function SelectScrollable() {
   return (
-    <Select items={items}>
+    <Select>
       <SelectTrigger className="w-full max-w-64">
-        <SelectValue />
+        <SelectValue placeholder="Select a timezone" />
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>
           <SelectLabel>North America</SelectLabel>
-          {northAmerica.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="est">Eastern Standard Time</SelectItem>
+          <SelectItem value="cst">Central Standard Time</SelectItem>
+          <SelectItem value="mst">Mountain Standard Time</SelectItem>
+          <SelectItem value="pst">Pacific Standard Time</SelectItem>
+          <SelectItem value="akst">Alaska Standard Time</SelectItem>
+          <SelectItem value="hst">Hawaii Standard Time</SelectItem>
         </SelectGroup>
         <SelectGroup>
           <SelectLabel>Europe & Africa</SelectLabel>
-          {europeAfrica.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="gmt">Greenwich Mean Time</SelectItem>
+          <SelectItem value="cet">Central European Time</SelectItem>
+          <SelectItem value="eet">Eastern European Time</SelectItem>
+          <SelectItem value="west">Western European Summer Time</SelectItem>
+          <SelectItem value="cat">Central Africa Time</SelectItem>
+          <SelectItem value="eat">East Africa Time</SelectItem>
         </SelectGroup>
         <SelectGroup>
           <SelectLabel>Asia</SelectLabel>
-          {asia.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="msk">Moscow Time</SelectItem>
+          <SelectItem value="ist">India Standard Time</SelectItem>
+          <SelectItem value="cst_china">China Standard Time</SelectItem>
+          <SelectItem value="jst">Japan Standard Time</SelectItem>
+          <SelectItem value="kst">Korea Standard Time</SelectItem>
+          <SelectItem value="ist_indonesia">
+            Indonesia Central Standard Time
+          </SelectItem>
         </SelectGroup>
         <SelectGroup>
           <SelectLabel>Australia & Pacific</SelectLabel>
-          {australiaPacific.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="awst">Australian Western Standard Time</SelectItem>
+          <SelectItem value="acst">Australian Central Standard Time</SelectItem>
+          <SelectItem value="aest">Australian Eastern Standard Time</SelectItem>
+          <SelectItem value="nzst">New Zealand Standard Time</SelectItem>
+          <SelectItem value="fjt">Fiji Time</SelectItem>
         </SelectGroup>
         <SelectGroup>
           <SelectLabel>South America</SelectLabel>
-          {southAmerica.map((item) => (
-            <SelectItem key={item.value} value={item.value}>
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="art">Argentina Time</SelectItem>
+          <SelectItem value="bot">Bolivia Time</SelectItem>
+          <SelectItem value="brt">Brasilia Time</SelectItem>
+          <SelectItem value="clt">Chile Standard Time</SelectItem>
         </SelectGroup>
       </SelectContent>
     </Select>

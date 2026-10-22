@@ -59,12 +59,14 @@ import { MessageScrollerItem } from "@/shared/ui/message-scroller";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { WordRotate } from "@/shared/ui/word-rotate";
 import { mediaGenerationStateSchema } from "../../../../../shared/agent-contract";
 import { fetchChatAssetBlob } from "../api/chat-api";
 import {
   buildCitationEntries,
   createCitationRehypePlugins,
+  getMessageSources,
   withResolvedFootnotes,
 } from "../lib/citation-utils";
 import {
@@ -77,7 +79,7 @@ import {
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
 import { AssistantAvatar, UserAvatar } from "./avatars";
-import { CitationProvider, FootnoteCitation } from "./citations";
+import { CitationProvider, FootnoteCitation, MessageSources } from "./citations";
 import { MessageLink } from "./message-selection";
 
 const MediaGeneration = React.lazy(() => import("./media-generation"));
@@ -551,6 +553,12 @@ export const MessageItem = React.memo(function MessageItem({
   const { t } = useTranslation();
   const [editing, setEditing] = React.useState(false);
   const [editText, setEditText] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+  React.useEffect(() => {
+    if (!copied) return;
+    const timeout = window.setTimeout(() => setCopied(false), 2000);
+    return () => window.clearTimeout(timeout);
+  }, [copied]);
   const isUser = message.role === "user";
   const speaker = message.metadata as import("../model/types").WorkMessageMetadata | undefined;
   const mediaPart = message.parts.find((part) => part.type === "data-media-generation");
@@ -586,16 +594,21 @@ export const MessageItem = React.memo(function MessageItem({
   const reactions = getMessageReactions(message);
   const citationEntries = buildCitationEntries(message.parts);
   const actionFooterClassName =
-    "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
+    "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/message:pointer-events-auto group-hover/message:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100";
   const bubbleActionFooterClassName =
-    "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/actions:pointer-events-auto group-hover/actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100";
+    "gap-1 px-0 opacity-0 transition-opacity duration-150 pointer-events-none group-hover/actions:pointer-events-auto group-hover/actions:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100";
   const hideActions = isStreaming || isGenerating || emptyReply;
   const canReact = !hideActions && onToggleReaction !== undefined;
   const isMac = React.useMemo(() => isMacPlatform(), []);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(text);
-    toast.success(t("chat:messages.copiedToClipboard"));
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        toast.success(t("chat:messages.copiedToClipboard"));
+      })
+      .catch(() => toast.error(t("common:error")));
   };
 
   const handleUserBubbleKeyDown = (event: React.KeyboardEvent) => {
@@ -967,47 +980,65 @@ export const MessageItem = React.memo(function MessageItem({
                   return null;
                 })()}
             </CitationProvider>
+            <MessageSources sources={getMessageSources(message.parts, citationEntries)} />
             <MessageFooter
               className={hideActions ? `${actionFooterClassName} invisible` : actionFooterClassName}
             >
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t("chat:messages.copyContent")}
-                title={t("chat:messages.copyContent")}
-                onClick={handleCopy}
-              >
-                <CopyIcon />
-              </Button>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label={t(copied ? "common:copied" : "chat:messages.copyContent")}
+                      onClick={handleCopy}
+                    />
+                  }
+                >
+                  {copied ? <CheckIcon /> : <CopyIcon />}
+                </TooltipTrigger>
+                <TooltipContent>{t("chat:messages.copyContent")}</TooltipContent>
+              </Tooltip>
               {canReact ? (
                 <>
-                  {/* 官方 message-actions:助手消息 Like / Dislike 评分操作 */}
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t("chat:messages.like")}
-                    aria-pressed={hasUserReaction(reactions, "👍", userId)}
-                    title={t("chat:messages.like")}
-                    className={
-                      hasUserReaction(reactions, "👍", userId) ? "text-primary" : undefined
-                    }
-                    onClick={() => onToggleReaction?.(message.id, "👍")}
-                  >
-                    <ThumbsUpIcon />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={t("chat:messages.dislike")}
-                    aria-pressed={hasUserReaction(reactions, "👎", userId)}
-                    title={t("chat:messages.dislike")}
-                    className={
-                      hasUserReaction(reactions, "👎", userId) ? "text-primary" : undefined
-                    }
-                    onClick={() => onToggleReaction?.(message.id, "👎")}
-                  >
-                    <ThumbsDownIcon />
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t("chat:messages.like")}
+                          aria-pressed={hasUserReaction(reactions, "👍", userId)}
+                          className={
+                            hasUserReaction(reactions, "👍", userId) ? "text-primary" : undefined
+                          }
+                          onClick={() => onToggleReaction?.(message.id, "👍")}
+                        />
+                      }
+                    >
+                      <ThumbsUpIcon />
+                    </TooltipTrigger>
+                    <TooltipContent>{t("chat:messages.like")}</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          aria-label={t("chat:messages.dislike")}
+                          aria-pressed={hasUserReaction(reactions, "👎", userId)}
+                          className={
+                            hasUserReaction(reactions, "👎", userId) ? "text-primary" : undefined
+                          }
+                          onClick={() => onToggleReaction?.(message.id, "👎")}
+                        />
+                      }
+                    >
+                      <ThumbsDownIcon />
+                    </TooltipTrigger>
+                    <TooltipContent>{t("chat:messages.dislike")}</TooltipContent>
+                  </Tooltip>
                   <ReactionPickerButton
                     messageId={message.id}
                     onToggleReaction={onToggleReaction}
@@ -1015,27 +1046,39 @@ export const MessageItem = React.memo(function MessageItem({
                 </>
               ) : null}
               {onForkFromMessage ? (
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t("chat:messages.forkFromMessage")}
-                  title={t("chat:messages.forkFromMessage")}
-                  onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
-                >
-                  <GitForkIcon />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={t("chat:messages.forkFromMessage")}
+                        onClick={() => onForkFromMessage(forkMessageId ?? message.id)}
+                      />
+                    }
+                  >
+                    <GitForkIcon />
+                  </TooltipTrigger>
+                  <TooltipContent>{t("chat:messages.forkFromMessage")}</TooltipContent>
+                </Tooltip>
               ) : null}
               {!readOnly && (!media || media.status === "complete") ? (
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label={t("chat:messages.retry")}
-                  title={t("chat:messages.retry")}
-                  onClick={() => onRetry(message.id)}
-                  disabled={hideActions}
-                >
-                  <RefreshCcwIcon />
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label={t("chat:messages.retry")}
+                        onClick={() => onRetry(message.id)}
+                        disabled={hideActions}
+                      />
+                    }
+                  >
+                    <RefreshCcwIcon />
+                  </TooltipTrigger>
+                  <TooltipContent>{t("chat:messages.retry")}</TooltipContent>
+                </Tooltip>
               ) : null}
             </MessageFooter>
           </MessageContent>

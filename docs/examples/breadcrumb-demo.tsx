@@ -8,31 +8,33 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "@/styles/base-nova/ui/breadcrumb"
-import { Button } from "@/styles/base-nova/ui/button"
+} from "@/styles/radix-nova/ui/breadcrumb"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/styles/base-nova/ui/dropdown-menu"
+} from "@/styles/radix-nova/ui/dropdown-menu"
 
 export function BreadcrumbDemo() {
   return (
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink render={<a href="#" />}>Home</BreadcrumbLink>
+          <BreadcrumbLink asChild>
+            <Link href="#">Home</Link>
+          </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
           <DropdownMenu>
-            <DropdownMenuTrigger
-              render={<Button size="icon-sm" variant="ghost" />}
-            >
-              <BreadcrumbEllipsis />
-              <span className="sr-only">Toggle menu</span>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon-sm" variant="ghost">
+                <BreadcrumbEllipsis />
+                <span className="sr-only">Toggle menu</span>
+              </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuGroup>
@@ -45,7 +47,9 @@ export function BreadcrumbDemo() {
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
-          <BreadcrumbLink render={<a href="#" />}>Components</BreadcrumbLink>
+          <BreadcrumbLink asChild>
+            <Link href="#">Components</Link>
+          </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>

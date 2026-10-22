@@ -13,7 +13,7 @@ import {
   ComboboxList,
   ComboboxValue,
   useComboboxAnchor,
-} from "@/styles/base-nova/ui/combobox"
+} from "@/styles/radix-nova/ui/combobox"
 
 const frameworks = [
   "Next.js",

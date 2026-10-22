@@ -3,11 +3,11 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/styles/base-nova/ui/accordion"
+} from "@/styles/radix-nova/ui/accordion"
 
 export default function AccordionDisabled() {
   return (
-    <Accordion className="w-full">
+    <Accordion type="single" collapsible className="w-full">
       <AccordionItem value="item-1">
         <AccordionTrigger>Can I access my account history?</AccordionTrigger>
         <AccordionContent>

@@ -3,21 +3,30 @@
 import * as React from "react"
 import { ArrowRightIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { ButtonGroup } from "@/styles/base-nova/ui/button-group"
-import { Input } from "@/styles/base-nova/ui/input"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { ButtonGroup } from "@/styles/radix-nova/ui/button-group"
+import { Input } from "@/styles/radix-nova/ui/input"
 import {
   Select,
   SelectContent,
   SelectGroup,
   SelectItem,
   SelectTrigger,
-} from "@/styles/base-nova/ui/select"
+} from "@/styles/radix-nova/ui/select"
 
 const CURRENCIES = [
-  { label: "US Dollar", value: "$" },
-  { label: "Euro", value: "€" },
-  { label: "British Pound", value: "£" },
+  {
+    value: "$",
+    label: "US Dollar",
+  },
+  {
+    value: "€",
+    label: "Euro",
+  },
+  {
+    value: "£",
+    label: "British Pound",
+  },
 ]
 
 export default function ButtonGroupSelect() {
@@ -26,18 +35,16 @@ export default function ButtonGroupSelect() {
   return (
     <ButtonGroup>
       <ButtonGroup>
-        <Select
-          items={CURRENCIES}
-          value={currency}
-          onValueChange={(value) => setCurrency(value as string)}
-        >
+        <Select value={currency} onValueChange={setCurrency}>
           <SelectTrigger className="font-mono">{currency}</SelectTrigger>
-          <SelectContent alignItemWithTrigger={false} align="start">
+          <SelectContent className="min-w-24">
             <SelectGroup>
-              {CURRENCIES.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.value}{" "}
-                  <span className="text-muted-foreground">{item.label}</span>
+              {CURRENCIES.map((currency) => (
+                <SelectItem key={currency.value} value={currency.value}>
+                  {currency.value}{" "}
+                  <span className="text-muted-foreground">
+                    {currency.label}
+                  </span>
                 </SelectItem>
               ))}
             </SelectGroup>

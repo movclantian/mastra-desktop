@@ -1,12 +1,10 @@
-import { Button } from "@/shared/ui/button";
-
-("use client");
+"use client";
 
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { cn } from "@/shared/lib";
-import { Badge } from "@/shared/ui/badge";
+import { Button } from "@/shared/ui/button";
 import type { CarouselApi } from "@/shared/ui/carousel";
 import { Carousel, CarouselContent, CarouselItem } from "@/shared/ui/carousel";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
@@ -21,7 +19,7 @@ export type InlineCitationCardProps = ComponentProps<typeof HoverCard>;
 
 export const InlineCitationCard = (props: InlineCitationCardProps) => <HoverCard {...props} />;
 
-export type InlineCitationCardTriggerProps = ComponentProps<typeof Badge> & {
+export type InlineCitationCardTriggerProps = ComponentProps<typeof Button> & {
   sources: string[];
   label?: ReactNode;
 };
@@ -33,12 +31,13 @@ export const InlineCitationCardTrigger = ({
   ...props
 }: InlineCitationCardTriggerProps) => (
   <HoverCardTrigger
-    closeDelay={0}
-    delay={0}
+    closeDelay={200}
+    delay={200}
     render={
-      <Badge
-        render={<Button variant="ghost" size="icon-xs" type="button" />}
-        className={cn("ml-1 cursor-pointer rounded-full", className)}
+      <Button
+        size="xs"
+        type="button"
+        className={cn("ml-1 inline-flex h-5 rounded-full px-1.5 text-xs align-baseline", className)}
         variant="secondary"
         {...props}
       />
@@ -47,7 +46,8 @@ export const InlineCitationCardTrigger = ({
     {label ??
       (sources[0] ? (
         <>
-          {new URL(sources[0]).hostname} {sources.length > 1 && `+${sources.length - 1}`}
+          {URL.canParse(sources[0]) ? new URL(sources[0]).hostname : sources[0]}{" "}
+          {sources.length > 1 && `+${sources.length - 1}`}
         </>
       ) : (
         "unknown"
@@ -224,22 +224,16 @@ export const InlineCitationCarouselNext = ({
 };
 
 export type InlineCitationSourceProps = ComponentProps<"div"> & {
-  title?: string;
-  url?: string;
   description?: string;
 };
 
 export const InlineCitationSource = ({
-  title,
-  url,
   description,
   className,
   children,
   ...props
 }: InlineCitationSourceProps) => (
   <div className={cn("space-y-1", className)} {...props}>
-    {title && <h4 className="truncate font-medium text-sm leading-tight">{title}</h4>}
-    {url && <p className="truncate break-all text-muted-foreground text-xs">{url}</p>}
     {description && (
       <p className="line-clamp-3 text-muted-foreground text-sm leading-relaxed">{description}</p>
     )}

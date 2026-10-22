@@ -3,8 +3,8 @@
 import * as React from "react"
 import { RotateCwIcon } from "lucide-react"
 
-import { Bubble, BubbleContent } from "@/styles/base-rhea/ui/bubble"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Bubble, BubbleContent } from "@/styles/radix-rhea/ui/bubble"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -13,13 +13,13 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
-import { Marker, MarkerContent } from "@/styles/base-rhea/ui/marker"
+} from "@/styles/radix-rhea/ui/card"
+import { Marker, MarkerContent } from "@/styles/radix-rhea/ui/marker"
 import {
   Message,
   MessageContent,
   MessageHeader,
-} from "@/styles/base-rhea/ui/message"
+} from "@/styles/radix-rhea/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -27,12 +27,12 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-rhea/ui/tooltip"
+} from "@/styles/radix-rhea/ui/tooltip"
 
 const currentUser = "Grace"
 
@@ -119,22 +119,20 @@ export function MessageScrollerGroupChat() {
             </CardDescription>
             <CardAction>
               <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Reset conversation"
-                      disabled={rockyTurn === "idle"}
-                      onClick={() => {
-                        setRockyTurn("idle")
-                        setDemoKey((key) => key + 1)
-                      }}
-                    />
-                  }
-                >
-                  <RotateCwIcon />
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Reset conversation"
+                    disabled={rockyTurn === "idle"}
+                    onClick={() => {
+                      setRockyTurn("idle")
+                      setDemoKey((key) => key + 1)
+                    }}
+                  >
+                    <RotateCwIcon />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Reset</p>

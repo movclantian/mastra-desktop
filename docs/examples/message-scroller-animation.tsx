@@ -14,7 +14,7 @@ import {
   type MessageAnimationId,
 } from "@/lib/message-animations"
 import { MessageAnimated } from "@/components/message-animated"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -23,21 +23,21 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
+} from "@/styles/radix-rhea/ui/card"
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/styles/base-rhea/ui/empty"
+} from "@/styles/radix-rhea/ui/empty"
 import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 import {
   Select,
   SelectContent,
@@ -45,7 +45,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-rhea/ui/select"
+} from "@/styles/radix-rhea/ui/select"
 
 const chat = createChat()
   .user("Can user messages pop in like iMessage without breaking anchoring?")
@@ -146,7 +146,7 @@ export function MessageScrollerAnimation() {
             <SelectTrigger aria-label="Animation preset">
               <SelectValue>{preset.name}</SelectValue>
             </SelectTrigger>
-            <SelectContent align="start" side="top">
+            <SelectContent align="start" side="top" position="popper">
               <SelectGroup>
                 {Object.values(MESSAGE_ANIMATIONS).map((animation) => (
                   <SelectItem key={animation.id} value={animation.id}>

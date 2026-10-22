@@ -215,6 +215,14 @@ export function TerminalSession({
     term.open(el);
     xtermRef.current = term;
     fitRef.current = fit;
+    let fitFrame = 0;
+    const scheduleFit = () => {
+      if (fitFrame) return;
+      fitFrame = requestAnimationFrame(() => {
+        fitFrame = 0;
+        fitTerminal();
+      });
+    };
     const themeObserver = new MutationObserver(() => {
       term.options.theme = readTerminalTheme();
     });
@@ -222,7 +230,7 @@ export function TerminalSession({
       attributes: true,
       attributeFilter: ["class", "data-theme", "style"],
     });
-    const resizeObserver = new ResizeObserver(fitTerminal);
+    const resizeObserver = new ResizeObserver(scheduleFit);
     resizeObserver.observe(el);
     const api = getTerminalApi();
 
@@ -303,6 +311,7 @@ export function TerminalSession({
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(fitFrame);
       unsubscribe?.();
       resizeObserver.disconnect();
       themeObserver.disconnect();

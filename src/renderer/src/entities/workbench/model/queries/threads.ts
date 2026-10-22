@@ -309,7 +309,10 @@ export function useActiveThreadResolver(threads: WorkThread[] | undefined): void
     // An initially empty account is resolved too; later creation owns its navigation.
     resolvedRef.current = true;
     const current = urlThread ?? useWorkbenchStore.getState().lastKnownThreadId;
-    if (current && threads.some((thread) => thread.id === current)) return;
+    if (current && threads.some((thread) => thread.id === current)) {
+      if (!urlThread) void selectThread(current);
+      return;
+    }
     const latest = [...threads].sort(
       (left, right) =>
         threadActivityAt(right).localeCompare(threadActivityAt(left)) ||

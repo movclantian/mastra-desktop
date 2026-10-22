@@ -3,7 +3,7 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/styles/base-nova/ui/accordion"
+} from "@/styles/radix-nova/ui/accordion"
 
 const items = [
   {
@@ -28,7 +28,11 @@ const items = [
 
 export function AccordionMultiple() {
   return (
-    <Accordion multiple className="max-w-lg" defaultValue={["notifications"]}>
+    <Accordion
+      type="multiple"
+      className="max-w-lg"
+      defaultValue={["notifications"]}
+    >
       {items.map((item) => (
         <AccordionItem key={item.value} value={item.value}>
           <AccordionTrigger>{item.trigger}</AccordionTrigger>

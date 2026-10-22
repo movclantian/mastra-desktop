@@ -13,7 +13,7 @@ import {
   QuestionnaireItem,
   QuestionnaireSubmit,
   QuestionnaireTitle,
-} from "@/styles/base-nova/ui/questionnaire"
+} from "@/styles/radix-nova/ui/questionnaire"
 
 const items = [
   {

@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const projects = [
   {
@@ -97,9 +97,11 @@ async function NavProjects() {
     <SidebarMenu>
       {projects.map((project) => (
         <SidebarMenuItem key={project.name}>
-          <SidebarMenuButton render={<a href={project.url} />}>
-            <project.icon />
-            <span>{project.name}</span>
+          <SidebarMenuButton asChild>
+            <a href={project.url}>
+              <project.icon />
+              <span>{project.name}</span>
+            </a>
           </SidebarMenuButton>
         </SidebarMenuItem>
       ))}

@@ -1,5 +1,3 @@
-"use client"
-
 import { ChevronDownIcon, MoreHorizontal } from "lucide-react"
 
 import {
@@ -8,33 +6,31 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/styles/base-nova/ui/dropdown-menu"
+} from "@/styles/radix-nova/ui/dropdown-menu"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
+} from "@/styles/radix-nova/ui/input-group"
 
-export function InputGroupDropdown() {
+export default function InputGroupDropdown() {
   return (
     <div className="grid w-full max-w-sm gap-4">
       <InputGroup>
         <InputGroupInput placeholder="Enter file name" />
         <InputGroupAddon align="inline-end">
           <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <InputGroupButton
-                  variant="ghost"
-                  aria-label="More"
-                  size="icon-xs"
-                />
-              }
-            >
-              <MoreHorizontal />
+            <DropdownMenuTrigger asChild>
+              <InputGroupButton
+                variant="ghost"
+                aria-label="More"
+                size="icon-xs"
+              >
+                <MoreHorizontal />
+              </InputGroupButton>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={8} alignOffset={-4}>
+            <DropdownMenuContent align="end">
               <DropdownMenuGroup>
                 <DropdownMenuItem>Settings</DropdownMenuItem>
                 <DropdownMenuItem>Copy path</DropdownMenuItem>
@@ -44,18 +40,16 @@ export function InputGroupDropdown() {
           </DropdownMenu>
         </InputGroupAddon>
       </InputGroup>
-      <InputGroup>
+      <InputGroup className="[--radius:1rem]">
         <InputGroupInput placeholder="Enter search query" />
         <InputGroupAddon align="inline-end">
           <DropdownMenu>
-            <DropdownMenuTrigger
-              render={
-                <InputGroupButton variant="ghost" className="pr-1.5! text-xs" />
-              }
-            >
-              Search In... <ChevronDownIcon className="size-3" />
+            <DropdownMenuTrigger asChild>
+              <InputGroupButton variant="ghost" className="pr-1.5! text-xs">
+                Search In... <ChevronDownIcon className="size-3" />
+              </InputGroupButton>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" sideOffset={8} alignOffset={-4}>
+            <DropdownMenuContent align="end" className="[--radius:0.95rem]">
               <DropdownMenuGroup>
                 <DropdownMenuItem>Documentation</DropdownMenuItem>
                 <DropdownMenuItem>Blog Posts</DropdownMenuItem>

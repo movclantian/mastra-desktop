@@ -1,6 +1,4 @@
-import { ChevronRightIcon } from "lucide-react"
-
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Card,
   CardContent,
@@ -8,41 +6,26 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-nova/ui/card"
+} from "@/styles/radix-nova/ui/card"
 
 export function CardSmall() {
-  const featureName = "Scheduled reports"
-
   return (
-    <Card size="sm" className="mx-auto w-full max-w-xs">
+    <Card size="sm" className="mx-auto w-full max-w-sm">
       <CardHeader>
-        <CardTitle>{featureName}</CardTitle>
+        <CardTitle>Small Card</CardTitle>
         <CardDescription>
-          Weekly snapshots. No more manual exports.
+          This card uses the small size variant.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <ul className="grid gap-2 py-2 text-sm">
-          <li className="flex gap-2">
-            <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <span>Choose a schedule (daily, or weekly).</span>
-          </li>
-          <li className="flex gap-2">
-            <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <span>Send to channels or specific teammates.</span>
-          </li>
-          <li className="flex gap-2">
-            <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <span>Include charts, tables, and key metrics.</span>
-          </li>
-        </ul>
+        <p>
+          The card component supports a size prop that can be set to
+          &quot;sm&quot; for a more compact appearance.
+        </p>
       </CardContent>
-      <CardFooter className="flex-col gap-2">
-        <Button size="sm" className="w-full">
-          Set up scheduled reports
-        </Button>
+      <CardFooter>
         <Button variant="outline" size="sm" className="w-full">
-          See what&apos;s new
+          Action
         </Button>
       </CardFooter>
     </Card>

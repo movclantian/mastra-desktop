@@ -111,7 +111,7 @@ export function GoalPanel({
         action={
           <div className="flex shrink-0 items-center gap-0.5">
             {objective.status !== "done" &&
-              (running ? (
+              (objective.status === "active" && running ? (
                 <Button
                   type="button"
                   size="icon-xs"
@@ -130,7 +130,7 @@ export function GoalPanel({
                   variant="ghost"
                   aria-label={t("chat:goal.resume")}
                   title={t(exhausted ? "chat:goal.budgetExhausted" : "chat:goal.resume")}
-                  disabled={pending || exhausted || !canResume}
+                  disabled={pending || running || exhausted || !canResume}
                   onClick={() => void act({ action: "resume" })}
                 >
                   <PlayIcon />

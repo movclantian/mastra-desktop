@@ -4,13 +4,13 @@ import {
   Bubble,
   BubbleContent,
   BubbleReactions,
-} from "@/styles/base-rhea/ui/bubble"
-import { Button } from "@/styles/base-rhea/ui/button"
+} from "@/styles/radix-rhea/ui/bubble"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-rhea/ui/tooltip"
+} from "@/styles/radix-rhea/ui/tooltip"
 
 export function BubbleTooltipDemo() {
   return (
@@ -20,10 +20,12 @@ export function BubbleTooltipDemo() {
       </Bubble>
       <Bubble align="end">
         <BubbleContent>Yes, removed it from the registry.</BubbleContent>
-        <BubbleReactions>
+        <BubbleReactions className="p-0">
           <Tooltip>
-            <TooltipTrigger render={<Button variant="ghost" size="icon-xs" />}>
-              <CheckIcon />
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-xs">
+                <CheckIcon />
+              </Button>
             </TooltipTrigger>
             <TooltipContent>Read on Jan 5, 2026 at 4:32 PM</TooltipContent>
           </Tooltip>

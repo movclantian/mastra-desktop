@@ -14,7 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/styles/base-nova/ui/dropdown-menu"
+} from "@/styles/radix-nova/ui/dropdown-menu"
 import {
   Sidebar,
   SidebarContent,
@@ -26,7 +26,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const projects = [
   {
@@ -68,16 +68,20 @@ export default function AppSidebar() {
                 {projects.map((project) => (
                   <SidebarMenuItem key={project.name}>
                     <SidebarMenuButton
-                      render={<a href={project.url} />}
+                      asChild
                       className="group-has-[[data-state=open]]/menu-item:bg-sidebar-accent"
                     >
-                      <project.icon />
-                      <span>{project.name}</span>
+                      <a href={project.url}>
+                        <project.icon />
+                        <span>{project.name}</span>
+                      </a>
                     </SidebarMenuButton>
                     <DropdownMenu>
-                      <DropdownMenuTrigger render={<SidebarMenuAction />}>
-                        <MoreHorizontalIcon />
-                        <span className="sr-only">More</span>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuAction>
+                          <MoreHorizontalIcon />
+                          <span className="sr-only">More</span>
+                        </SidebarMenuAction>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent side="right" align="start">
                         <DropdownMenuItem>

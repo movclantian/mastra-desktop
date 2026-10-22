@@ -1,8 +1,7 @@
-import { CheckCircleIcon, CircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
-
-("use client");
+"use client";
 
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
+import { CheckCircleIcon, CircleIcon, ClockIcon, XCircleIcon } from "lucide-react";
 
 import type { ComponentProps, ReactNode } from "react";
 import { isValidElement } from "react";
@@ -10,11 +9,12 @@ import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 
-import { CodeBlock } from "./code-block";
+import { CodeBlock, CodeBlockContent } from "@/shared/ui/code-block";
 
 export type ToolPart = (ToolUIPart | DynamicToolUIPart) & {
   createdAt?: number;
   updatedAt?: number;
+  terminal?: { output: string; exitCode?: number };
 };
 
 const statusIcons: Record<ToolPart["state"], ReactNode> = {
@@ -44,7 +44,11 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => (
       {i18n.t("common:parameters")}
     </h4>
     <div className="rounded-md bg-muted/50">
-      <CodeBlock code={JSON.stringify(input, null, 2)} language="json" />
+      <CodeBlock size="sm">
+        <CodeBlockContent wrap className="max-h-64">
+          {JSON.stringify(input, null, 2)}
+        </CodeBlockContent>
+      </CodeBlock>
     </div>
   </div>
 );
@@ -59,28 +63,29 @@ export const ToolOutput = ({ className, output, errorText, ...props }: ToolOutpu
     return null;
   }
 
-  let Output = <div>{output as ReactNode}</div>;
-
-  if (typeof output === "object" && !isValidElement(output)) {
-    Output = <CodeBlock code={JSON.stringify(output, null, 2)} language="json" />;
-  } else if (typeof output === "string") {
-    Output = <CodeBlock code={output} language="json" />;
-  }
-
   return (
     <div className={cn("space-y-2", className)} {...props}>
       <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
         {errorText ? i18n.t("common:error") : i18n.t("common:result")}
       </h4>
-      <div
-        className={cn(
-          "overflow-x-auto rounded-md text-xs [&_table]:w-full",
-          errorText ? "bg-destructive/10 text-destructive" : "bg-muted/50 text-foreground",
-        )}
-      >
-        {errorText && <div>{errorText}</div>}
-        {Output}
-      </div>
+      {errorText ? (
+        <CodeBlock size="sm" variant="destructive">
+          <CodeBlockContent wrap className="max-h-64">
+            {errorText}
+          </CodeBlockContent>
+        </CodeBlock>
+      ) : null}
+      {output !== undefined ? (
+        isValidElement(output) ? (
+          output
+        ) : (
+          <CodeBlock size="sm">
+            <CodeBlockContent wrap className="max-h-64">
+              {typeof output === "string" ? output : JSON.stringify(output, null, 2)}
+            </CodeBlockContent>
+          </CodeBlock>
+        )
+      ) : null}
     </div>
   );
 };

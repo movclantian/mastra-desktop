@@ -1,20 +1,18 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
+} from "@/styles/radix-nova/ui/dialog"
 
 export function DialogNoCloseButton() {
   return (
     <Dialog>
-      <DialogTrigger render={<Button variant="outline" />}>
-        No Close Button
+      <DialogTrigger asChild>
+        <Button variant="outline">No Close Button</Button>
       </DialogTrigger>
       <DialogContent showCloseButton={false}>
         <DialogHeader>

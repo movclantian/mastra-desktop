@@ -1,13 +1,13 @@
 import { ChevronRightIcon, FileIcon, FolderIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { Card, CardContent, CardHeader } from "@/styles/base-nova/ui/card"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Card, CardContent, CardHeader } from "@/styles/radix-nova/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/styles/base-nova/ui/collapsible"
-import { Tabs, TabsList, TabsTrigger } from "@/styles/base-nova/ui/tabs"
+} from "@/styles/radix-nova/ui/collapsible"
+import { Tabs, TabsList, TabsTrigger } from "@/styles/radix-nova/ui/tabs"
 
 type FileTreeItem = { name: string } | { name: string; items: FileTreeItem[] }
 
@@ -68,18 +68,16 @@ export function CollapsibleFileTree() {
     if ("items" in fileItem) {
       return (
         <Collapsible key={fileItem.name}>
-          <CollapsibleTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="group w-full justify-start transition-none hover:bg-accent hover:text-accent-foreground"
-              />
-            }
-          >
-            <ChevronRightIcon className="transition-transform group-data-[state=open]:rotate-90" />
-            <FolderIcon />
-            {fileItem.name}
+          <CollapsibleTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="group w-full justify-start transition-none hover:bg-accent hover:text-accent-foreground"
+            >
+              <ChevronRightIcon className="transition-transform group-data-[state=open]:rotate-90" />
+              <FolderIcon />
+              {fileItem.name}
+            </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-1 ml-5 style-lyra:ml-4">
             <div className="flex flex-col gap-1">

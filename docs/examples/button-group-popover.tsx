@@ -1,12 +1,12 @@
 import { BotIcon, ChevronDownIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { ButtonGroup } from "@/styles/base-nova/ui/button-group"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { ButtonGroup } from "@/styles/radix-nova/ui/button-group"
 import {
   Field,
   FieldDescription,
   FieldLabel,
-} from "@/styles/base-nova/ui/field"
+} from "@/styles/radix-nova/ui/field"
 import {
   Popover,
   PopoverContent,
@@ -14,8 +14,8 @@ import {
   PopoverHeader,
   PopoverTitle,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
-import { Textarea } from "@/styles/base-nova/ui/textarea"
+} from "@/styles/radix-nova/ui/popover"
+import { Textarea } from "@/styles/radix-nova/ui/textarea"
 
 export default function ButtonGroupPopover() {
   return (
@@ -24,12 +24,10 @@ export default function ButtonGroupPopover() {
         <BotIcon /> Copilot
       </Button>
       <Popover>
-        <PopoverTrigger
-          render={
-            <Button variant="outline" size="icon" aria-label="Open Popover" />
-          }
-        >
-          <ChevronDownIcon />
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="icon" aria-label="Open Popover">
+            <ChevronDownIcon />
+          </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="rounded-xl text-sm">
           <PopoverHeader>

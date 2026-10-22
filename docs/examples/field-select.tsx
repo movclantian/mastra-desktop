@@ -2,7 +2,7 @@ import {
   Field,
   FieldDescription,
   FieldLabel,
-} from "@/styles/base-nova/ui/field"
+} from "@/styles/radix-nova/ui/field"
 import {
   Select,
   SelectContent,
@@ -10,35 +10,26 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-nova/ui/select"
-
-const items = [
-  { label: "Choose department", value: null },
-  { label: "Engineering", value: "engineering" },
-  { label: "Design", value: "design" },
-  { label: "Marketing", value: "marketing" },
-  { label: "Sales", value: "sales" },
-  { label: "Customer Support", value: "support" },
-  { label: "Human Resources", value: "hr" },
-  { label: "Finance", value: "finance" },
-  { label: "Operations", value: "operations" },
-]
+} from "@/styles/radix-nova/ui/select"
 
 export default function FieldSelect() {
   return (
     <Field className="w-full max-w-xs">
       <FieldLabel>Department</FieldLabel>
-      <Select items={items}>
+      <Select>
         <SelectTrigger>
-          <SelectValue />
+          <SelectValue placeholder="Choose department" />
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
-            {items.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
+            <SelectItem value="engineering">Engineering</SelectItem>
+            <SelectItem value="design">Design</SelectItem>
+            <SelectItem value="marketing">Marketing</SelectItem>
+            <SelectItem value="sales">Sales</SelectItem>
+            <SelectItem value="support">Customer Support</SelectItem>
+            <SelectItem value="hr">Human Resources</SelectItem>
+            <SelectItem value="finance">Finance</SelectItem>
+            <SelectItem value="operations">Operations</SelectItem>
           </SelectGroup>
         </SelectContent>
       </Select>

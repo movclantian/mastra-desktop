@@ -1338,22 +1338,6 @@
   color: #fff;
 }
 
-/* ===== outrun ===== */
-
-[data-theme-preset="outrun"] {
-  --theme-transition-duration: 120ms;
-  --theme-transition-easing: linear;
-}
-
-[data-theme-preset="outrun"] [data-slot="card"] {
-  border: 1px solid rgba(255, 0, 110, 0.5);
-  background-image:
-    linear-gradient(rgba(0, 212, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.05) 1px, transparent 1px);
-  background-size: 20px 20px;
-  box-shadow: 0 0 16px rgba(255, 0, 110, 0.25);
-}
-
 /* ===== oversized-typography ===== */
 
 [data-theme-preset="oversizedtypography"] {

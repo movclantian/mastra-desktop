@@ -1,32 +1,6 @@
-import React, { type ComponentPropsWithoutRef, useEffect, useRef, useState } from "react";
+import React, { type ComponentPropsWithoutRef, useEffect, useRef } from "react";
 
 import { cn } from "@/shared/lib";
-
-interface MousePosition {
-  x: number;
-  y: number;
-}
-
-function MousePosition(): MousePosition {
-  const [mousePosition, setMousePosition] = useState<MousePosition>({
-    x: 0,
-    y: 0,
-  });
-
-  useEffect(() => {
-    const handleMouseMove = (event: MouseEvent) => {
-      setMousePosition({ x: event.clientX, y: event.clientY });
-    };
-
-    window.addEventListener("mousemove", handleMouseMove);
-
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-    };
-  }, []);
-
-  return mousePosition;
-}
 
 interface ParticlesProps extends ComponentPropsWithoutRef<"div"> {
   className?: string;
@@ -86,8 +60,8 @@ export const Particles: React.FC<ParticlesProps> = ({
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const context = useRef<CanvasRenderingContext2D | null>(null);
   const circles = useRef<Circle[]>([]);
-  const mousePosition = MousePosition();
   const mouse = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const pointer = useRef<{ x: number; y: number } | null>(null);
   const canvasSize = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
   const rafID = useRef<number | null>(null);
@@ -101,7 +75,29 @@ export const Particles: React.FC<ParticlesProps> = ({
       context.current = canvasRef.current.getContext("2d");
     }
     initCanvasRef.current();
-    animateRef.current();
+    let inView = true;
+    let reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const start = () => {
+      if (inView && !reducedMotion && rafID.current === null) animateRef.current();
+    };
+    const visibility = new IntersectionObserver(([entry]) => {
+      inView = entry.isIntersecting;
+      if (!inView && rafID.current !== null) {
+        window.cancelAnimationFrame(rafID.current);
+        rafID.current = null;
+      } else start();
+    });
+    if (canvasRef.current) visibility.observe(canvasRef.current);
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMotionPreferenceChange = (event: MediaQueryListEvent) => {
+      reducedMotion = event.matches;
+      if (reducedMotion && rafID.current !== null) {
+        window.cancelAnimationFrame(rafID.current);
+        rafID.current = null;
+      } else start();
+    };
+    motionPreference.addEventListener("change", onMotionPreferenceChange);
+    start();
 
     const handleResize = () => {
       if (resizeTimeout.current) {
@@ -122,12 +118,27 @@ export const Particles: React.FC<ParticlesProps> = ({
         clearTimeout(resizeTimeout.current);
       }
       window.removeEventListener("resize", handleResize);
+      visibility.disconnect();
+      motionPreference.removeEventListener("change", onMotionPreferenceChange);
     };
   }, [color]);
 
   useEffect(() => {
-    onMouseMoveRef.current();
-  }, [mousePosition.x, mousePosition.y]);
+    let frame = 0;
+    const handleMouseMove = (event: MouseEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+      if (!frame)
+        frame = window.requestAnimationFrame(() => {
+          frame = 0;
+          onMouseMoveRef.current();
+        });
+    };
+    window.addEventListener("mousemove", handleMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.cancelAnimationFrame(frame);
+    };
+  }, []);
 
   useEffect(() => {
     initCanvasRef.current();
@@ -139,11 +150,11 @@ export const Particles: React.FC<ParticlesProps> = ({
   };
 
   const onMouseMove = () => {
-    if (canvasRef.current) {
+    if (canvasRef.current && pointer.current) {
       const rect = canvasRef.current.getBoundingClientRect();
       const { w, h } = canvasSize.current;
-      const x = mousePosition.x - rect.left - w / 2;
-      const y = mousePosition.y - rect.top - h / 2;
+      const x = pointer.current.x - rect.left - w / 2;
+      const y = pointer.current.y - rect.top - h / 2;
       const inside = x < w / 2 && x > -w / 2 && y < h / 2 && y > -h / 2;
       if (inside) {
         mouse.current.x = x;
@@ -161,7 +172,7 @@ export const Particles: React.FC<ParticlesProps> = ({
       canvasRef.current.height = canvasSize.current.h * dpr;
       canvasRef.current.style.width = `${canvasSize.current.w}px`;
       canvasRef.current.style.height = `${canvasSize.current.h}px`;
-      context.current.scale(dpr, dpr);
+      context.current.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       // Clear existing particles and create new ones with exact quantity
       circles.current = [];
@@ -284,7 +295,10 @@ export const Particles: React.FC<ParticlesProps> = ({
         drawCircle(newCircle);
       }
     });
-    rafID.current = window.requestAnimationFrame(animateRef.current);
+    rafID.current = window.requestAnimationFrame(() => {
+      rafID.current = null;
+      animateRef.current();
+    });
   };
 
   initCanvasRef.current = initCanvas;

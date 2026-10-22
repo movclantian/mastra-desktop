@@ -11,7 +11,7 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
+} from "@/styles/radix-nova/ui/input-group"
 
 export default function InputGroupIcon() {
   return (

@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Card,
   CardAction,
@@ -11,13 +11,13 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-nova/ui/card"
-import { Input } from "@/styles/base-nova/ui/input"
-import { Label } from "@/styles/base-nova/ui/label"
+} from "@/styles/radix-nova/ui/card"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 import {
   ToggleGroup,
   ToggleGroupItem,
-} from "@/styles/base-nova/ui/toggle-group"
+} from "@/styles/radix-nova/ui/toggle-group"
 
 const spacingOptions = [
   {
@@ -51,10 +51,11 @@ export function CardSpacing() {
   return (
     <div className="mx-auto grid w-full max-w-sm gap-4">
       <ToggleGroup
-        value={[spacing]}
+        type="single"
+        value={spacing}
         onValueChange={(value) => {
-          if (value[0]) {
-            setSpacing(value[0])
+          if (value) {
+            setSpacing(value)
           }
         }}
         variant="outline"

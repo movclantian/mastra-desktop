@@ -1,5 +1,5 @@
 /**
- * 内置主题预设(125)的 i18n 词条(zh/en),键名与预设 id 一一对应。
+ * 内置主题预设(124)的 i18n 词条(zh/en),键名与预设 id 一一对应。
  */
 
 export const THEMES_PRESETS_ZH = {
@@ -422,11 +422,6 @@ export const THEMES_PRESETS_ZH = {
     name: "欧普艺术",
     categoryLabel: "__i18n_category__expressive",
     desc: "以炽热红为主色调的版式排印主题,源自「欧普艺术」风格语汇,深浅色双形态完整适配。",
-  },
-  outrun: {
-    name: "Outrun",
-    categoryLabel: "__i18n_category__retro_wave",
-    desc: "以艳丽粉为主色调的辉光氛围主题,源自「Outrun」风格语汇,深浅色双形态完整适配。",
   },
   oversizedtypography: {
     name: "超大字号",
@@ -1145,11 +1140,6 @@ export const THEMES_PRESETS_EN = {
     name: "Op Art",
     categoryLabel: "__i18n_category__expressive",
     desc: 'A editorial type theme led by fiery red, derived from the "Op Art" style vocabulary with full light/dark support.',
-  },
-  outrun: {
-    name: "Outrun",
-    categoryLabel: "__i18n_category__retro_wave",
-    desc: 'A ambient glow theme led by electric pink, derived from the "Outrun" style vocabulary with full light/dark support.',
   },
   oversizedtypography: {
     name: "Oversized Typography",

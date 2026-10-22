@@ -214,15 +214,15 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
     const startX = e.clientX;
     const startY = e.clientY;
     const initialBounds = { ...floatingBoundsRef.current };
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
+    let moveFrame = 0;
+    let pendingMove: PointerEvent | null = null;
+    const applyMove = (moveEvent: PointerEvent) => {
       const dx = moveEvent.clientX - startX;
       const dy = moveEvent.clientY - startY;
       const maxX = Math.max(0, window.innerWidth - initialBounds.width);
       const maxY = Math.max(48, window.innerHeight - 48);
       const nextX = Math.min(Math.max(0, initialBounds.x + dx), maxX);
       const nextY = Math.min(Math.max(48, initialBounds.y + dy), maxY);
-
       setFloatingBounds((prev) => {
         const next = { ...prev, x: nextX, y: nextY };
         floatingBoundsRef.current = next;
@@ -230,7 +230,21 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
       });
     };
 
-    const onPointerUp = () => {
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      pendingMove = moveEvent;
+      if (moveFrame) return;
+      moveFrame = window.requestAnimationFrame(() => {
+        moveFrame = 0;
+        if (!pendingMove) return;
+        applyMove(pendingMove);
+      });
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (moveFrame) window.cancelAnimationFrame(moveFrame);
+      moveFrame = 0;
+      applyMove(pendingMove ?? event);
+      pendingMove = null;
       setActiveInteraction(null);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
@@ -256,8 +270,9 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
     const startX = e.clientX;
     const startY = e.clientY;
     const initial = { ...floatingBoundsRef.current };
-
-    const onPointerMove = (moveEvent: PointerEvent) => {
+    let moveFrame = 0;
+    let pendingMove: PointerEvent | null = null;
+    const applyMove = (moveEvent: PointerEvent) => {
       const dx = moveEvent.clientX - startX;
       const dy = moveEvent.clientY - startY;
 
@@ -266,7 +281,6 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
       let newX = initial.x;
       let newY = initial.y;
 
-      // 水平方向计算
       if (direction.includes("r")) {
         newWidth = Math.max(MIN_FLOATING_WIDTH, initial.width + dx);
         newWidth = Math.min(newWidth, window.innerWidth - newX);
@@ -282,7 +296,6 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
         }
       }
 
-      // 垂直方向计算
       if (direction.includes("b")) {
         newHeight = Math.max(MIN_FLOATING_HEIGHT, initial.height + dy);
         newHeight = Math.min(newHeight, window.innerHeight - newY);
@@ -305,7 +318,21 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
       });
     };
 
-    const onPointerUp = () => {
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      pendingMove = moveEvent;
+      if (moveFrame) return;
+      moveFrame = window.requestAnimationFrame(() => {
+        moveFrame = 0;
+        if (!pendingMove) return;
+        applyMove(pendingMove);
+      });
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      if (moveFrame) window.cancelAnimationFrame(moveFrame);
+      moveFrame = 0;
+      applyMove(pendingMove ?? event);
+      pendingMove = null;
       setActiveInteraction(null);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);

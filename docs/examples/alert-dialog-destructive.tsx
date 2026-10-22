@@ -11,15 +11,15 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/styles/base-nova/ui/alert-dialog"
-import { Button } from "@/styles/base-nova/ui/button"
+} from "@/styles/radix-nova/ui/alert-dialog"
+import { Button } from "@/styles/radix-nova/ui/button"
 
 export function AlertDialogDestructive() {
   return (
     <AlertDialog>
-      <AlertDialogTrigger
-        render={<Button variant="destructive">Delete Chat</Button>}
-      />
+      <AlertDialogTrigger asChild>
+        <Button variant="destructive">Delete Chat</Button>
+      </AlertDialogTrigger>
       <AlertDialogContent size="sm">
         <AlertDialogHeader>
           <AlertDialogMedia className="bg-destructive/10 text-destructive dark:bg-destructive/20 dark:text-destructive">

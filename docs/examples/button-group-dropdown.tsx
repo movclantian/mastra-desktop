@@ -11,8 +11,8 @@ import {
   VolumeOffIcon,
 } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { ButtonGroup } from "@/styles/base-nova/ui/button-group"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { ButtonGroup } from "@/styles/radix-nova/ui/button-group"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,17 +20,17 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/styles/base-nova/ui/dropdown-menu"
+} from "@/styles/radix-nova/ui/dropdown-menu"
 
 export default function ButtonGroupDropdown() {
   return (
     <ButtonGroup>
       <Button variant="outline">Follow</Button>
       <DropdownMenu>
-        <DropdownMenuTrigger
-          render={<Button variant="outline" className="pl-2!" />}
-        >
-          <ChevronDownIcon />
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" className="pl-2!">
+            <ChevronDownIcon />
+          </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-44">
           <DropdownMenuGroup>

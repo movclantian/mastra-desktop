@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -8,17 +8,17 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
-import { Field, FieldGroup } from "@/styles/base-nova/ui/field"
-import { Input } from "@/styles/base-nova/ui/input"
-import { Label } from "@/styles/base-nova/ui/label"
+} from "@/styles/radix-nova/ui/dialog"
+import { Field, FieldGroup } from "@/styles/radix-nova/ui/field"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 
 export function DialogDemo() {
   return (
     <Dialog>
       <form>
-        <DialogTrigger render={<Button variant="outline" />}>
-          Open Dialog
+        <DialogTrigger asChild>
+          <Button variant="outline">Open Dialog</Button>
         </DialogTrigger>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
@@ -39,8 +39,8 @@ export function DialogDemo() {
             </Field>
           </FieldGroup>
           <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>
-              Cancel
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
             </DialogClose>
             <Button type="submit">Save changes</Button>
           </DialogFooter>

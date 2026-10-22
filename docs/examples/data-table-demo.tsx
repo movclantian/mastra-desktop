@@ -22,8 +22,8 @@ import {
 } from "@tanstack/react-table"
 import { ArrowUpDown, ChevronDown, MoreHorizontal } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { Checkbox } from "@/styles/base-nova/ui/checkbox"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Checkbox } from "@/styles/radix-nova/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -31,10 +31,9 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/styles/base-nova/ui/dropdown-menu"
-import { Input } from "@/styles/base-nova/ui/input"
+} from "@/styles/radix-nova/ui/dropdown-menu"
+import { Input } from "@/styles/radix-nova/ui/input"
 import {
   Table,
   TableBody,
@@ -42,7 +41,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/styles/base-nova/ui/table"
+} from "@/styles/radix-nova/ui/table"
 
 // New in v9: declare the features this table uses — anything you don't
 // register is tree-shaken out of the bundle.
@@ -106,9 +105,9 @@ export const columns = columnHelper.columns([
     id: "select",
     header: ({ table }) => (
       <Checkbox
-        checked={table.getIsAllPageRowsSelected()}
-        indeterminate={
-          table.getIsSomePageRowsSelected() && !table.getIsAllPageRowsSelected()
+        checked={
+          table.getIsAllPageRowsSelected() ||
+          (table.getIsSomePageRowsSelected() && "indeterminate")
         }
         onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
         aria-label="Select all"
@@ -166,13 +165,13 @@ export const columns = columnHelper.columns([
 
       return (
         <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="ghost" size="icon-xs" />}
-          >
-            <span className="sr-only">Open menu</span>
-            <MoreHorizontal />
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-xs">
+              <span className="sr-only">Open menu</span>
+              <MoreHorizontal />
+            </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end" className="w-40">
             <DropdownMenuGroup>
               <DropdownMenuLabel>Actions</DropdownMenuLabel>
               <DropdownMenuItem
@@ -181,7 +180,6 @@ export const columns = columnHelper.columns([
                 Copy payment ID
               </DropdownMenuItem>
             </DropdownMenuGroup>
-            <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem>View customer</DropdownMenuItem>
               <DropdownMenuItem>View payment details</DropdownMenuItem>
@@ -230,12 +228,12 @@ export function DataTableDemo() {
           className="max-w-sm"
         />
         <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button variant="outline" className="ml-auto" />}
-          >
-            Columns <ChevronDown />
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="ml-auto">
+              Columns <ChevronDown />
+            </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuContent align="end">
             <DropdownMenuGroup>
               {table
                 .getAllColumns()

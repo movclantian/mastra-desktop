@@ -3,19 +3,19 @@
 import * as React from "react"
 import { AudioLinesIcon, PlusIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
-import { ButtonGroup } from "@/styles/base-nova/ui/button-group"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { ButtonGroup } from "@/styles/radix-nova/ui/button-group"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
+} from "@/styles/radix-nova/ui/input-group"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-nova/ui/tooltip"
+} from "@/styles/radix-nova/ui/tooltip"
 
 export default function ButtonGroupInputGroup() {
   const [voiceEnabled, setVoiceEnabled] = React.useState(false)
@@ -37,18 +37,16 @@ export default function ButtonGroupInputGroup() {
           />
           <InputGroupAddon align="inline-end">
             <Tooltip>
-              <TooltipTrigger
-                render={
-                  <InputGroupButton
-                    onClick={() => setVoiceEnabled(!voiceEnabled)}
-                    size="icon-xs"
-                    data-active={voiceEnabled}
-                    className="data-[active=true]:bg-orange-100 data-[active=true]:text-orange-700 dark:data-[active=true]:bg-orange-800 dark:data-[active=true]:text-orange-100"
-                    aria-pressed={voiceEnabled}
-                  />
-                }
-              >
-                <AudioLinesIcon />
+              <TooltipTrigger asChild>
+                <InputGroupButton
+                  onClick={() => setVoiceEnabled(!voiceEnabled)}
+                  size="icon-xs"
+                  data-active={voiceEnabled}
+                  className="data-[active=true]:bg-orange-100 data-[active=true]:text-orange-700 dark:data-[active=true]:bg-orange-800 dark:data-[active=true]:text-orange-100"
+                  aria-pressed={voiceEnabled}
+                >
+                  <AudioLinesIcon />
+                </InputGroupButton>
               </TooltipTrigger>
               <TooltipContent>Voice Mode</TooltipContent>
             </Tooltip>

@@ -6,7 +6,7 @@ import {
   InputOTP,
   InputOTPGroup,
   InputOTPSlot,
-} from "@/styles/base-nova/ui/input-otp"
+} from "@/styles/radix-nova/ui/input-otp"
 
 export function InputOTPFourDigits() {
   return (

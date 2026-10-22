@@ -164,7 +164,7 @@ export function SettingCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-all duration-200 hover:border-border/80">
+    <section className="w-full overflow-hidden rounded-xl border border-border bg-card shadow-xs transition-colors duration-200 hover:border-border/80">
       <header className="border-b border-border/60 bg-muted/40 px-4 py-3">
         <div className="flex items-center justify-between gap-2">
           <p className="min-w-0 text-sm font-medium">{title}</p>

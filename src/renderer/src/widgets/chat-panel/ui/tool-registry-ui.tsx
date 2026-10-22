@@ -10,7 +10,6 @@ import {
   ClockIcon,
   CodeXmlIcon,
   DatabaseIcon,
-  FileCode2Icon,
   FileDownIcon,
   FilePenLineIcon,
   FilePlus2Icon,
@@ -44,15 +43,8 @@ import * as React from "react";
 import { workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
-import {
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockCopyButton,
-  CodeBlockFilename,
-  CodeBlockHeader,
-  CodeBlockTitle,
-} from "@/shared/ui/ai-elements/code-block";
 import { Button } from "@/shared/ui/button";
+import { CodeFile } from "@/shared/ui/code-file";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   Dialog,
@@ -68,7 +60,7 @@ import { MessageLink } from "./message-selection";
 // ---------------------------------------------------------------------------
 // 每个工具的专属 UI 注册表:图标 + 本地化标签 + 关键参数摘要 + 展开详情。
 // 注册表只做「展示」,不改变 ToolStepItem 的状态/折叠行为;未注册的工具
-// 走通用回退(原始工具名 + 参数提示 + ToolInput/ToolOutput JSON)。
+// 走前缀或通用回退(原始工具名 + 参数提示 + ToolInput/ToolOutput JSON)。
 // ---------------------------------------------------------------------------
 
 type ToolSummary = { chips?: string[]; files?: string[] };
@@ -110,7 +102,7 @@ const queryChips = (input: Record<string, unknown>, ...keys: string[]): string[]
   return value ? [value] : [];
 };
 
-type CodeLanguage = React.ComponentProps<typeof CodeBlock>["language"];
+type CodeLanguage = string;
 
 const EXT_LANG: Record<string, CodeLanguage> = {
   ts: "typescript",
@@ -158,30 +150,6 @@ const capped = (text: string): string =>
 
 const outputText = (output: unknown): string | undefined =>
   typeof output === "string" ? output : asString(asRecord(output)?.text);
-
-function CodeFile({
-  code,
-  language,
-  filename,
-}: {
-  code: string;
-  language: CodeLanguage;
-  filename?: string;
-}) {
-  return (
-    <CodeBlock className="min-w-0 max-w-full" code={code} language={language}>
-      <CodeBlockHeader>
-        <CodeBlockTitle>
-          <FileCode2Icon className="size-3.5" />
-          {filename ? <CodeBlockFilename>{filename}</CodeBlockFilename> : null}
-        </CodeBlockTitle>
-        <CodeBlockActions>
-          <CodeBlockCopyButton size="icon-xs" />
-        </CodeBlockActions>
-      </CodeBlockHeader>
-    </CodeBlock>
-  );
-}
 
 /** 搜索/检索类结果列表:tavily/firecrawl/library 共用,字段名做防御性兼容 */
 function ResultsDetail({ output }: { output: unknown }) {
@@ -929,6 +897,15 @@ const workspaceUIs: Record<string, ToolUIDescriptor> = {
 
 // --- 浏览器工具 -------------------------------------------------------------
 
+const browserUI: ToolUIDescriptor = {
+  icon: GlobeIcon,
+  labelKey: "browser",
+  summarize: (_input, _output, name) => ({
+    chips: [name.slice("browser_".length)].filter(Boolean),
+  }),
+  detail: browserDetail,
+};
+
 const browserUIs: Record<string, ToolUIDescriptor> = {
   browser_goto: {
     icon: GlobeIcon,
@@ -1172,6 +1149,10 @@ const webUIs: Record<string, ToolUIDescriptor> = {
 };
 
 const miscUIs: Record<string, ToolUIDescriptor> = {
+  execute_typescript: {
+    icon: CodeXmlIcon,
+    labelKey: "execute_typescript",
+  },
   signal_subscribe: {
     icon: RadioIcon,
     labelKey: "signal_subscribe",
@@ -1300,6 +1281,7 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
 /** 逐字注册表未命中时按前缀兜底;详情统一走 RecordDetail(非对象输出回退通用 JSON) */
 const PREFIX_UIS: Array<{ prefix: string; descriptor: ToolUIDescriptor }> = [
   { prefix: "computer_", descriptor: computerUI },
+  { prefix: "browser_", descriptor: browserUI },
   {
     prefix: "mastra_workspace_computer_",
     descriptor: {

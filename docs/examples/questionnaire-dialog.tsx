@@ -3,7 +3,7 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogClose,
@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
+} from "@/styles/radix-nova/ui/dialog"
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -27,7 +27,7 @@ import {
   QuestionnaireProgress,
   QuestionnaireSubmit,
   QuestionnaireTitle,
-} from "@/styles/base-nova/ui/questionnaire"
+} from "@/styles/radix-nova/ui/questionnaire"
 
 const items = [
   { name: "scope", required: true },
@@ -50,8 +50,8 @@ export function QuestionnaireDialog() {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" />}>
-        Open clarification
+      <DialogTrigger asChild>
+        <Button variant="outline">Open clarification</Button>
       </DialogTrigger>
       <DialogContent>
         <Questionnaire
@@ -108,8 +108,10 @@ export function QuestionnaireDialog() {
           </QuestionnaireItem>
 
           <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>
-              Cancel
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                Cancel
+              </Button>
             </DialogClose>
             <QuestionnaireActions>
               <QuestionnairePrevious />

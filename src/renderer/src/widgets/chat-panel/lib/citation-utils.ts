@@ -176,6 +176,21 @@ export function buildCitationEntries(parts: UIMessage["parts"]): CitationEntries
   return entries;
 }
 
+export function getMessageSources(
+  parts: UIMessage["parts"],
+  entries: CitationEntries,
+): CitationSource[] {
+  const sources = new Map<string, CitationSource>();
+  for (const group of entries.values()) {
+    for (const source of group) if (isUsableUrl(source.url)) sources.set(source.url, source);
+  }
+  for (const part of parts) {
+    if (part.type !== "source-url" || !isUsableUrl(part.url) || sources.has(part.url)) continue;
+    sources.set(part.url, { url: part.url, title: part.title || hostnameOf(part.url) });
+  }
+  return [...sources.values()];
+}
+
 export function withResolvedFootnotes(
   text: string,
   entries: CitationEntries,

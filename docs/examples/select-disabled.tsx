@@ -5,33 +5,23 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-nova/ui/select"
+} from "@/styles/radix-nova/ui/select"
 
 export function SelectDisabled() {
-  const items = [
-    { label: "Select a fruit", value: null },
-    { label: "Apple", value: "apple" },
-    { label: "Banana", value: "banana" },
-    { label: "Blueberry", value: "blueberry" },
-    { label: "Grapes", value: "grapes", disabled: true },
-    { label: "Pineapple", value: "pineapple" },
-  ]
   return (
-    <Select items={items} disabled>
+    <Select disabled>
       <SelectTrigger className="w-full max-w-48">
-        <SelectValue />
+        <SelectValue placeholder="Select a fruit" />
       </SelectTrigger>
       <SelectContent>
         <SelectGroup>
-          {items.map((item) => (
-            <SelectItem
-              key={item.value}
-              value={item.value}
-              disabled={item.disabled}
-            >
-              {item.label}
-            </SelectItem>
-          ))}
+          <SelectItem value="apple">Apple</SelectItem>
+          <SelectItem value="banana">Banana</SelectItem>
+          <SelectItem value="blueberry">Blueberry</SelectItem>
+          <SelectItem value="grapes" disabled>
+            Grapes
+          </SelectItem>
+          <SelectItem value="pineapple">Pineapple</SelectItem>
         </SelectGroup>
       </SelectContent>
     </Select>

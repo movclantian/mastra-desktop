@@ -3,11 +3,11 @@ import { Bold, Italic, Underline } from "lucide-react"
 import {
   ToggleGroup,
   ToggleGroupItem,
-} from "@/styles/base-nova/ui/toggle-group"
+} from "@/styles/radix-nova/ui/toggle-group"
 
 export function ToggleGroupDisabled() {
   return (
-    <ToggleGroup disabled>
+    <ToggleGroup disabled type="multiple">
       <ToggleGroupItem value="bold" aria-label="Toggle bold">
         <Bold />
       </ToggleGroupItem>

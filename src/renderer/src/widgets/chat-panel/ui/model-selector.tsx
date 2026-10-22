@@ -28,11 +28,17 @@ import {
   CommandItem,
   CommandList,
 } from "@/shared/ui/command";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { HyperText } from "@/shared/ui/hyper-text";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollArea } from "@/shared/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 
 export function ChatModelSelector() {
   const { t } = useTranslation();
@@ -77,6 +83,7 @@ export function ChatModelSelector() {
   const handleSelect = (providerId: string, modelId: string, modelName: string) => {
     const provider = providers.find((p) => p.id === providerId);
     if (!provider) return;
+    setOpen(false);
     const caps = getModelCapabilities(provider, modelId, catalog);
     const efforts = getReasoningEfforts(provider);
     if (modelSelection?.providerId === providerId && modelSelection.modelId === modelId) return;
@@ -287,42 +294,42 @@ export function ChatModelSelector() {
             <span className="min-w-0 flex-1 break-words text-xs">
               {t("chat:models.reasoningEffort")}
             </span>
-            <Select
-              value={
-                currentEffort && efforts.includes(currentEffort as ReasoningEffort)
-                  ? currentEffort
-                  : null
-              }
-              onValueChange={(effort) => {
-                if (effort && efforts.includes(effort as ReasoningEffort))
-                  handleEffortChange(
-                    selectedProvider,
-                    selectedModel.id,
-                    selectedModel.name,
-                    effort,
-                  );
-              }}
-            >
-              <SelectTrigger
-                className="w-auto min-w-24 max-w-full"
-                aria-label={t("chat:models.reasoningEffort")}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <PromptInputButton
+                    variant="outline"
+                    size="sm"
+                    aria-label={t("chat:models.reasoningEffort")}
+                  />
+                }
               >
-                <SelectValue
-                  placeholder={t(
-                    currentEffort === "off"
-                      ? "chat:models.efforts.none"
-                      : "chat:models.efforts.provider-default",
-                  )}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {efforts.map((effort) => (
-                  <SelectItem key={effort} value={effort}>
-                    {t(`chat:models.efforts.${effort}`, REASONING_EFFORT_LABELS[effort])}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                {t(
+                  `chat:models.efforts.${currentEffort === "off" ? "none" : (currentEffort ?? "provider-default")}`,
+                )}
+                <ChevronDownIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuRadioGroup
+                  value={currentEffort ?? ""}
+                  onValueChange={(effort) => {
+                    if (efforts.includes(effort as ReasoningEffort))
+                      handleEffortChange(
+                        selectedProvider,
+                        selectedModel.id,
+                        selectedModel.name,
+                        effort,
+                      );
+                  }}
+                >
+                  {efforts.map((effort) => (
+                    <DropdownMenuRadioItem key={effort} value={effort} closeOnClick>
+                      {t(`chat:models.efforts.${effort}`, REASONING_EFFORT_LABELS[effort])}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         ) : null}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t p-2">

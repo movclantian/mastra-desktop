@@ -1,7 +1,7 @@
 import { IconFolderCode } from "@tabler/icons-react"
 import { ArrowUpRightIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Empty,
   EmptyContent,
@@ -9,7 +9,7 @@ import {
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/styles/base-nova/ui/empty"
+} from "@/styles/radix-nova/ui/empty"
 
 export default function EmptyDemo() {
   return (
@@ -30,12 +30,13 @@ export default function EmptyDemo() {
       </EmptyContent>
       <Button
         variant="link"
-        render={<a href="#" />}
+        asChild
         className="text-muted-foreground"
         size="sm"
-        nativeButton={false}
       >
-        Learn More <ArrowUpRightIcon />
+        <a href="#">
+          Learn More <ArrowUpRightIcon />
+        </a>
       </Button>
     </Empty>
   )

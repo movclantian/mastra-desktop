@@ -13,6 +13,7 @@ import {
 } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
+import { Progress } from "@/shared/ui/progress";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { SlidingNumber } from "@/shared/ui/sliding-number";
 
@@ -236,8 +237,10 @@ export const ContextTrigger = ({ children, className, ...props }: ContextTrigger
   const percentNumber = getUsagePercent(input.total, maxTokens);
 
   return (
-    <HoverCardTrigger closeDelay={0} delay={0}>
-      {children ?? (
+    <HoverCardTrigger
+      closeDelay={200}
+      delay={200}
+      render={
         <Button
           className={cn(
             "h-7 gap-1 px-2 text-xs font-normal text-muted-foreground hover:text-foreground",
@@ -245,9 +248,13 @@ export const ContextTrigger = ({ children, className, ...props }: ContextTrigger
           )}
           size="sm"
           type="button"
-          variant="ghost"
+          variant="outline"
           {...props}
-        >
+        />
+      }
+    >
+      {children ?? (
+        <>
           <span className="flex items-center gap-0.5 font-medium tabular-nums">
             {usage?.inputTokens === undefined ? (
               "—"
@@ -258,7 +265,7 @@ export const ContextTrigger = ({ children, className, ...props }: ContextTrigger
             )}
           </span>
           <ContextIcon />
-        </Button>
+        </>
       )}
     </HoverCardTrigger>
   );
@@ -285,7 +292,6 @@ export const ContextContentHeader = ({
 }: ContextContentHeaderProps) => {
   const { t } = useTranslation();
   const { input, maxTokens, usage } = useContextValue();
-  const metrics = getContextUsageMetrics(input, t);
   const percentNumber = getUsagePercent(input.total, maxTokens);
   const cachePercent = input.hasCacheDetails
     ? formatUsagePercent(getUsagePercent(input.cacheRead, input.total))
@@ -322,27 +328,11 @@ export const ContextContentHeader = ({
               <span>{t("chat:context.cacheRatio", { ratio: cachePercent })}</span>
             </p>
           </div>
-          <div
+          <Progress
             aria-label={t("chat:context.categoryUsage")}
-            aria-valuemax={PERCENT_MAX}
-            aria-valuemin={0}
-            aria-valuenow={usage?.inputTokens === undefined ? undefined : percentNumber}
-            className="flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted"
-            role="progressbar"
-          >
-            {metrics.map((metric) => {
-              const percent = getUsagePercent(metric.tokens, maxTokens);
-              if (percent <= 0) return null;
-              return (
-                <span
-                  aria-label={`${metric.label} ${formatUsagePercent(percent)}`}
-                  className={cn("h-full shrink-0", CONTEXT_USAGE_COLOR_CLASSES[metric.color])}
-                  key={metric.id}
-                  style={{ width: `${percent}%` }}
-                />
-              );
-            })}
-          </div>
+            value={usage?.inputTokens === undefined ? null : percentNumber}
+            className="[&_[data-slot=progress-track]]:h-1.5"
+          />
         </>
       )}
     </div>

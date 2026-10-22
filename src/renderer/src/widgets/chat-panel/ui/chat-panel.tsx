@@ -1592,6 +1592,7 @@ export function ChatPanel() {
                 requests={queuedRequests}
               />
               <AgentQueuePanel
+                isStreaming={isBusy}
                 onClose={() => setDismissedQueueSignature(queueContentSignature)}
                 tasks={showAgentQueue ? visibleTasks : []}
               />

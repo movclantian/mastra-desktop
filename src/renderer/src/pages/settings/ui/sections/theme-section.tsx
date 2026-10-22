@@ -294,7 +294,10 @@ export function ThemeSection() {
                 const isActive = activePresetId === preset.id;
                 const colors = isDark ? preset.dark : preset.light;
                 return (
-                  <SidebarMenuItem key={preset.id}>
+                  <SidebarMenuItem
+                    key={preset.id}
+                    className="[content-visibility:auto] [contain-intrinsic-size:0_4.5rem]"
+                  >
                     <SidebarMenuButton
                       isActive={isActive}
                       onClick={() => setPreset(preset.id)}
@@ -794,7 +797,7 @@ export function ThemeSection() {
                       );
                       toast.success(t("settings:themes.appliedPalette", { name: insp.name }));
                     }}
-                    className="flex h-auto min-w-0 flex-col items-stretch gap-1.5 rounded-lg border bg-card p-2.5 text-left whitespace-normal transition-all hover:border-primary hover:shadow-xs"
+                    className="flex h-auto min-w-0 flex-col items-stretch gap-1.5 rounded-lg border bg-card p-2.5 text-left whitespace-normal transition-all hover:border-primary hover:shadow-xs [content-visibility:auto] [contain-intrinsic-size:0_5rem]"
                   >
                     <div className="flex h-5 w-full overflow-hidden rounded-md border">
                       <span className="w-1/3 h-full" style={{ backgroundColor: insp.primary }} />

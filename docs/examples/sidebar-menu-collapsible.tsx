@@ -6,7 +6,7 @@ import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from "@/styles/base-nova/ui/collapsible"
+} from "@/styles/radix-nova/ui/collapsible"
 import {
   Sidebar,
   SidebarContent,
@@ -19,7 +19,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const items = [
   {
@@ -164,18 +164,20 @@ export default function AppSidebar() {
                     defaultOpen={index === 0}
                   >
                     <SidebarMenuItem>
-                      <CollapsibleTrigger render={<SidebarMenuButton />}>
-                        <span>{item.title}</span>
-                        <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton>
+                          <span>{item.title}</span>
+                          <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                        </SidebarMenuButton>
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
                           {item.items.map((subItem, subIndex) => (
                             <SidebarMenuSubItem key={subIndex}>
-                              <SidebarMenuSubButton
-                                render={<a href={subItem.url} />}
-                              >
-                                <span>{subItem.title}</span>
+                              <SidebarMenuSubButton asChild>
+                                <a href={subItem.url}>
+                                  <span>{subItem.title}</span>
+                                </a>
                               </SidebarMenuSubButton>
                             </SidebarMenuSubItem>
                           ))}

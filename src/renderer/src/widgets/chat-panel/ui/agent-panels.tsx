@@ -27,10 +27,8 @@ import {
   PlanFooter,
   PlanHeader,
   PlanTitle,
-  PlanTrigger,
 } from "@/shared/ui/ai-elements/plan";
 import {
-  QueueItem,
   QueueItemContent,
   QueueItemIndicator,
   QueueList,
@@ -41,6 +39,7 @@ import {
 } from "@/shared/ui/ai-elements/queue";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { CodeBlock, CodeBlockContent } from "@/shared/ui/code-block";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +49,14 @@ import {
   DialogTitle,
 } from "@/shared/ui/dialog";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemMedia,
+  ItemTitle,
+} from "@/shared/ui/item";
 import { PulsatingButton } from "@/shared/ui/pulsating-button";
 import {
   Questionnaire,
@@ -66,6 +73,7 @@ import {
 } from "@/shared/ui/questionnaire";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
+import { TraceDescription, TraceIcon, TraceLine } from "@/shared/ui/trace";
 import {
   type AgentInteraction,
   type AgentTask,
@@ -377,78 +385,68 @@ export function WorkflowRunPanel({
   );
 }
 
-export function AgentQueuePanel({ tasks, onClose }: { tasks: AgentTask[]; onClose?: () => void }) {
+export function AgentQueuePanel({
+  tasks,
+  isStreaming,
+  onClose,
+}: {
+  tasks: AgentTask[];
+  isStreaming: boolean;
+  onClose?: () => void;
+}) {
   const { t } = useTranslation();
-  // This is the last rendering boundary. Do not assume upstream message or
-  // display-state projections were the only producers: reconnects and queued
-  // snapshots can still replay the same id directly into this component.
   const visibleTasks = React.useMemo(() => normalizeAgentTasks(tasks), [tasks]);
-  if (visibleTasks.length === 0) return null;
-  const completed =
-    visibleTasks.length > 0 && visibleTasks.every((task) => task.status === "completed");
-
-  return (
-    <>
-      {/* 只渲染 QueueSection,与 UserRequestQueuePanel 的排队请求 section 同住
-          一张 Queue 卡片(由 chat/panel.tsx 统一包裹),保持两个队列的视觉一体。 */}
-      {visibleTasks.length > 0 ? (
-        <QueueSection defaultOpen>
-          <QueueSectionTrigger
-            action={
-              completed && onClose ? (
-                <Button
-                  aria-label={t("common:close")}
-                  className="size-7 shrink-0 text-muted-foreground"
-                  onClick={onClose}
-                  size="icon"
-                  title={t("common:close")}
-                  type="button"
-                  variant="ghost"
-                >
-                  <XIcon className="size-4" />
-                </Button>
-              ) : null
-            }
-            className="px-2 py-1"
-          >
-            <QueueSectionLabel
-              count={visibleTasks.length}
-              label={t("chat:panels.task")}
-              icon={<SparklesIcon className="size-4" />}
-            />
-          </QueueSectionTrigger>
-          <QueueSectionContent>
-            <QueueList className="mt-1">
-              {visibleTasks.map((task, index) => {
-                const completed = task.status === "completed";
-                return (
-                  <QueueItem className="px-2 py-1" key={`${task.id}:${index}`}>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <QueueItemIndicator
-                        completed={completed}
-                        className={
-                          task.status === "in_progress" ? "border-primary bg-primary/20" : undefined
-                        }
-                      />
-                      <QueueItemContent className="line-clamp-none" completed={completed}>
-                        {task.content}
-                      </QueueItemContent>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {completed
-                          ? t("chat:panels.completed")
-                          : task.status === "in_progress"
-                            ? t("chat:panels.inProgress")
-                            : t("chat:panels.pending")}
-                      </span>
-                    </div>
-                  </QueueItem>
-                );
-              })}
-            </QueueList>
-          </QueueSectionContent>
-        </QueueSection>
-      ) : null}
-    </>
+  const sections = [
+    { completed: false, tasks: visibleTasks.filter((task) => task.status !== "completed") },
+    { completed: true, tasks: visibleTasks.filter((task) => task.status === "completed") },
+  ];
+  return sections.map((section) =>
+    section.tasks.length ? (
+      <QueueSection key={String(section.completed)} defaultOpen={!section.completed}>
+        <QueueSectionTrigger
+          action={
+            section.completed && !sections[0].tasks.length && onClose ? (
+              <Button
+                aria-label={t("common:close")}
+                onClick={onClose}
+                size="icon-xs"
+                variant="ghost"
+              >
+                <XIcon />
+              </Button>
+            ) : null
+          }
+        >
+          <QueueSectionLabel
+            count={section.tasks.length}
+            label={t(section.completed ? "chat:panels.completed" : "chat:panels.pending")}
+            icon={<SparklesIcon />}
+          />
+        </QueueSectionTrigger>
+        <QueueSectionContent>
+          <QueueList>
+            {section.tasks.map((task) => (
+              <TraceLine
+                key={task.id}
+                className="w-full items-start"
+                status={isStreaming && task.status === "in_progress" ? "running" : undefined}
+              >
+                <QueueItemIndicator
+                  completed={section.completed}
+                  inProgress={task.status === "in_progress"}
+                />
+                <QueueItemContent completed={section.completed}>{task.content}</QueueItemContent>
+                {task.status === "in_progress" ? (
+                  <TraceDescription className="text-xs">
+                    {t("chat:panels.inProgress")}
+                  </TraceDescription>
+                ) : null}
+              </TraceLine>
+            ))}
+          </QueueList>
+        </QueueSectionContent>
+      </QueueSection>
+    ) : null,
   );
 }
 
@@ -629,24 +627,21 @@ function AgentPlanPanel({
     return (
       <Plan className="rounded-lg" defaultOpen>
         <PlanHeader>
-          <div className="min-w-0">
-            <div className="mb-1 flex items-center gap-2">
-              <FileCheck2Icon className="size-4 shrink-0 text-primary" />
-              <PlanTitle>{title}</PlanTitle>
-            </div>
-            <PlanDescription>
-              {t(
-                interaction.planDecision === "approved"
-                  ? "chat:panels.planApprovedDesc"
-                  : interaction.planDecision === "rejected"
-                    ? "chat:panels.planRejectedDesc"
-                    : interaction.planDecision === "revision"
-                      ? "chat:panels.planRevisionDesc"
-                      : "chat:panels.planUnknownDesc",
-              )}
-            </PlanDescription>
-          </div>
-          <PlanTrigger />
+          <TraceIcon>
+            <FileCheck2Icon />
+          </TraceIcon>
+          <PlanTitle>{title}</PlanTitle>
+          <PlanDescription className="w-full">
+            {t(
+              interaction.planDecision === "approved"
+                ? "chat:panels.planApprovedDesc"
+                : interaction.planDecision === "rejected"
+                  ? "chat:panels.planRejectedDesc"
+                  : interaction.planDecision === "revision"
+                    ? "chat:panels.planRevisionDesc"
+                    : "chat:panels.planUnknownDesc",
+            )}
+          </PlanDescription>
         </PlanHeader>
         <PlanContent className="pt-0">
           <ScrollArea className="max-h-72 rounded-md border bg-muted/20 p-3">
@@ -676,14 +671,11 @@ function AgentPlanPanel({
   return (
     <Plan className="mb-2" defaultOpen>
       <PlanHeader>
-        <div className="min-w-0">
-          <div className="mb-1 flex items-center gap-2">
-            <FileCheck2Icon className="size-4 shrink-0 text-primary" />
-            <PlanTitle>{title}</PlanTitle>
-          </div>
-          <PlanDescription>{t("chat:panels.planSubmittedDesc")}</PlanDescription>
-        </div>
-        <PlanTrigger />
+        <TraceIcon>
+          <FileCheck2Icon />
+        </TraceIcon>
+        <PlanTitle>{title}</PlanTitle>
+        <PlanDescription className="w-full">{t("chat:panels.planSubmittedDesc")}</PlanDescription>
       </PlanHeader>
       <PlanContent className="space-y-3 pt-0">
         <ScrollArea className="max-h-72 rounded-md border bg-muted/20 p-3">
@@ -766,79 +758,78 @@ function AgentApprovalPanel({
   const category = interaction.category;
 
   return (
-    <div className="mb-2 rounded-xl border border-amber-500/40 bg-background p-3 shadow-xs">
-      <div className="flex items-start gap-2">
-        <ShieldAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-sm font-medium">{t("chat:panels.toolWaitingApproval", { label })}</p>
-            {category ? (
-              <Badge className="text-[10px]" variant="outline">
-                {CATEGORY_META[category].label}
-              </Badge>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {t("chat:panels.confirmBeforeContinue")}
-          </p>
-          {interaction.args !== undefined ? (
-            <ScrollArea className="mt-2 max-h-32 rounded-md border bg-muted/30 p-2">
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs">
-                {JSON.stringify(interaction.args, null, 2)}
-              </pre>
-            </ScrollArea>
+    <Item variant="outline" size="sm" className="mb-2 min-w-0">
+      <ItemMedia variant="icon">
+        <ShieldAlertIcon />
+      </ItemMedia>
+      <ItemContent className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <ItemTitle className="line-clamp-none break-words">
+            {t("chat:panels.toolWaitingApproval", { label })}
+          </ItemTitle>
+          {category ? (
+            <Badge className="text-[10px]" variant="outline">
+              {CATEGORY_META[category].label}
+            </Badge>
           ) : null}
-          {/* 拒绝理由会代替工具结果回给模型(human-in-the-loop.mdx「Explaining a decline」),
-              模型据此调整而不是盲目重试;留空则回落官方默认文案。 */}
-          <Textarea
-            aria-label={t("chat:panels.rejectReason")}
-            className="mt-2 min-h-16"
-            disabled={busy}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder={t("chat:panels.rejectPlaceholder")}
-            value={reason}
-          />
-          <div className="mt-3 flex flex-wrap justify-end gap-2">
-            <Button
-              disabled={busy}
-              onClick={() =>
-                onResume({ approved: false, ...(reason.trim() ? { reason: reason.trim() } : {}) })
-              }
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              {t("chat:panels.reject")}
-            </Button>
-            {category && onAlwaysAllow ? (
-              <Button
-                disabled={busy}
-                onClick={async () => {
-                  await onAlwaysAllow(category);
-                  onResume({ approved: true });
-                }}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                {t("chat:panels.alwaysAllowCategory", { category: CATEGORY_META[category].label })}
-              </Button>
-            ) : null}
-            {/* 阻塞式审批:Agent 正停在这里等人点。脉冲把主操作从"拒绝/始终允许"里区分出来 */}
-            <PulsatingButton
-              className="h-8 rounded-md px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={busy}
-              duration="2s"
-              distance="6px"
-              onClick={() => onResume({ approved: true })}
-              type="button"
-            >
-              {t("chat:panels.approveExecution")}
-            </PulsatingButton>
-          </div>
         </div>
-      </div>
-    </div>
+        <ItemDescription className="line-clamp-none">
+          {t("chat:panels.confirmBeforeContinue")}
+        </ItemDescription>
+        {interaction.args !== undefined ? (
+          <CodeBlock size="sm">
+            <CodeBlockContent wrap className="max-h-32">
+              {JSON.stringify(interaction.args, null, 2)}
+            </CodeBlockContent>
+          </CodeBlock>
+        ) : null}
+        {/* 拒绝理由会代替工具结果回给模型(human-in-the-loop.mdx「Explaining a decline」),
+              模型据此调整而不是盲目重试;留空则回落官方默认文案。 */}
+        <Textarea
+          aria-label={t("chat:panels.rejectReason")}
+          className="mt-2 min-h-16"
+          disabled={busy}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder={t("chat:panels.rejectPlaceholder")}
+          value={reason}
+        />
+      </ItemContent>
+      <ItemActions className="w-full flex-wrap justify-end">
+        <Button
+          disabled={busy}
+          onClick={() =>
+            onResume({ approved: false, ...(reason.trim() ? { reason: reason.trim() } : {}) })
+          }
+          size="sm"
+          type="button"
+          variant="outline"
+        >
+          {t("chat:panels.reject")}
+        </Button>
+        {category && onAlwaysAllow ? (
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              await onAlwaysAllow(category);
+              onResume({ approved: true });
+            }}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
+            {t("chat:panels.alwaysAllowCategory", { category: CATEGORY_META[category].label })}
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          disabled={busy}
+          onClick={() => onResume({ approved: true })}
+          type="button"
+        >
+          {t("chat:panels.approveExecution")}
+        </Button>
+      </ItemActions>
+    </Item>
   );
 }
 

@@ -6,7 +6,7 @@ import {
   Bubble,
   BubbleContent,
   BubbleGroup,
-} from "@/styles/base-rhea/ui/bubble"
+} from "@/styles/radix-rhea/ui/bubble"
 
 export function BubbleLinkButtonDemo() {
   return (
@@ -16,36 +16,28 @@ export function BubbleLinkButtonDemo() {
       </Bubble>
       <BubbleGroup>
         <Bubble variant="tinted" align="end">
-          <BubbleContent
-            render={
-              <button onClick={() => toast("You clicked forgot password")} />
-            }
-          >
-            I forgot my password
+          <BubbleContent asChild>
+            <button onClick={() => toast("You clicked forgot password")}>
+              I forgot my password
+            </button>
           </BubbleContent>
         </Bubble>
         <Bubble variant="tinted" align="end">
-          <BubbleContent
-            render={
-              <button
-                onClick={() => toast("You clicked help with subscription")}
-              />
-            }
-          >
-            I need help with my subscription
+          <BubbleContent asChild>
+            <button onClick={() => toast("You clicked help with subscription")}>
+              I need help with my subscription
+            </button>
           </BubbleContent>
         </Bubble>
         <Bubble variant="tinted" align="end">
-          <BubbleContent
-            render={
-              <button
-                onClick={() =>
-                  toast("You clicked something else. Talk to a human.")
-                }
-              />
-            }
-          >
-            Something else. Talk to a human.
+          <BubbleContent asChild>
+            <button
+              onClick={() =>
+                toast("You clicked something else. Talk to a human.")
+              }
+            >
+              Something else. Talk to a human.
+            </button>
           </BubbleContent>
         </Bubble>
       </BubbleGroup>

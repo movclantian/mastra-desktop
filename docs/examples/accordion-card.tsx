@@ -3,14 +3,14 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/styles/base-nova/ui/accordion"
+} from "@/styles/radix-nova/ui/accordion"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/styles/base-nova/ui/card"
+} from "@/styles/radix-nova/ui/card"
 
 const items = [
   {
@@ -44,7 +44,7 @@ export default function AccordionCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Accordion defaultValue={["plans"]}>
+        <Accordion type="single" collapsible defaultValue="plans">
           {items.map((item) => (
             <AccordionItem key={item.value} value={item.value}>
               <AccordionTrigger>{item.trigger}</AccordionTrigger>

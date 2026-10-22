@@ -449,7 +449,7 @@ export function DirectThreadItem({
 
   return (
     <BlurFade duration={0.2} variant={FADE_ONLY}>
-      <SidebarMenuItem>
+      <SidebarMenuItem className="[content-visibility:auto] [contain-intrinsic-size:0_2.25rem]">
         <ContextMenu>
           <ContextMenuTrigger className="w-full">
             <SidebarMenuButton
@@ -624,7 +624,7 @@ export function WorkspaceGroup({
 
   return (
     <Collapsible className="group/collapsible" onOpenChange={setOpen} open={open}>
-      <SidebarMenuItem>
+      <SidebarMenuItem className="[content-visibility:auto] [contain-intrinsic-size:0_2.25rem]">
         <ContextMenu>
           <ContextMenuTrigger className="w-full">
             <CollapsibleTrigger render={<SidebarMenuButton tooltip={path} className="!pr-2" />}>

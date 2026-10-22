@@ -14,7 +14,7 @@ import {
 
 import { createChat, getMessageText } from "@/lib/ai"
 import { MessageAnimated } from "@/components/message-animated"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -23,38 +23,38 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
+} from "@/styles/radix-rhea/ui/card"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/styles/base-rhea/ui/dropdown-menu"
+} from "@/styles/radix-rhea/ui/dropdown-menu"
 import {
   Empty,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-} from "@/styles/base-rhea/ui/empty"
+} from "@/styles/radix-rhea/ui/empty"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-} from "@/styles/base-rhea/ui/input-group"
+} from "@/styles/radix-rhea/ui/input-group"
 import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
   MessageScrollerProvider,
   MessageScrollerViewport,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-rhea/ui/tooltip"
+} from "@/styles/radix-rhea/ui/tooltip"
 
 const chat = createChat()
   .user(
@@ -103,18 +103,16 @@ export function MessageScrollerDemo() {
             <CardDescription>How can I help you today?</CardDescription>
             <CardAction>
               <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      aria-label="Reset conversation"
-                      onClick={() => setMessages(initialMessages)}
-                      disabled={isBusy}
-                    />
-                  }
-                >
-                  <RotateCwIcon />
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Reset conversation"
+                    onClick={() => setMessages(initialMessages)}
+                    disabled={isBusy}
+                  >
+                    <RotateCwIcon />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Reset</p>
@@ -184,17 +182,15 @@ export function MessageScrollerDemo() {
                 </div>
                 <InputGroupAddon align="block-end" className="pt-1">
                   <DropdownMenu>
-                    <DropdownMenuTrigger
-                      render={
-                        <InputGroupButton
-                          aria-label="Add files"
-                          type="button"
-                          size="icon-sm"
-                          variant="outline"
-                        />
-                      }
-                    >
-                      <PlusIcon />
+                    <DropdownMenuTrigger asChild>
+                      <InputGroupButton
+                        aria-label="Add files"
+                        type="button"
+                        size="icon-sm"
+                        variant="outline"
+                      >
+                        <PlusIcon />
+                      </InputGroupButton>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"

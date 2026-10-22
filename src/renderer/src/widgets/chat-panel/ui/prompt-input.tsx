@@ -20,13 +20,6 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
 import {
-  Attachment,
-  AttachmentInfo,
-  AttachmentPreview,
-  AttachmentRemove,
-  Attachments,
-} from "@/shared/ui/ai-elements/attachments";
-import {
   PromptInput,
   PromptInputBody,
   PromptInputCommand,
@@ -63,6 +56,15 @@ import {
   QueueSectionLabel,
   QueueSectionTrigger,
 } from "@/shared/ui/ai-elements/queue";
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/shared/ui/attachment";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
@@ -96,7 +98,7 @@ function PromptInputAttachments({
     <div className="min-w-0 w-full">
       {/* 横向滚动胶囊(inline variant),超出输入框宽度时左右滚动 */}
       <ScrollArea className="w-full" orientation="horizontal">
-        <Attachments className="w-max gap-1.5 pb-1" variant="inline">
+        <AttachmentGroup className="w-max gap-1.5 pb-1">
           {attachments.files.map((file) => (
             <Attachment
               className="max-w-64"
@@ -105,21 +107,28 @@ function PromptInputAttachments({
                   ? `${t("chat:prompt.localAttachment")}: ${file.localPath}`
                   : undefined
               }
-              data={file}
+              size="sm"
+              state={
+                file.uploadState === "ready"
+                  ? "done"
+                  : file.uploadState === "error"
+                    ? "error"
+                    : "uploading"
+              }
               key={file.id}
-              onRemove={() => {
-                attachments.remove(file.id);
-                const reference = references.find((item) => item.url === file.url);
-                if (reference) {
-                  for (const source of referencedSources.sources) {
-                    if (source.sourceId === reference.id) referencedSources.remove(source.id);
-                  }
-                }
-                onRemoveReference(file.url);
-              }}
             >
-              <AttachmentPreview />
-              <AttachmentInfo className="text-xs" />
+              <AttachmentMedia variant={file.mediaType?.startsWith("image/") ? "image" : "icon"}>
+                {file.mediaType?.startsWith("image/") ? (
+                  <img src={file.url} alt={file.filename ?? t("chat:file")} />
+                ) : file.mediaType?.startsWith("video/") ? (
+                  <video src={file.url} muted className="size-full object-cover" />
+                ) : (
+                  <FileIcon />
+                )}
+              </AttachmentMedia>
+              <AttachmentContent>
+                <AttachmentTitle>{file.filename ?? t("chat:file")}</AttachmentTitle>
+              </AttachmentContent>
               <span
                 className="shrink-0 text-xs text-muted-foreground"
                 role="status"
@@ -145,14 +154,29 @@ function PromptInputAttachments({
                   />
                 )}
               </span>
-              <AttachmentRemove
-                label={t("chat:prompt.removeAttachment", {
-                  filename: file.filename ?? t("chat:file"),
-                })}
-              />
+              <AttachmentActions>
+                <AttachmentAction
+                  type="button"
+                  onClick={() => {
+                    attachments.remove(file.id);
+                    const reference = references.find((item) => item.url === file.url);
+                    if (reference) {
+                      for (const source of referencedSources.sources) {
+                        if (source.sourceId === reference.id) referencedSources.remove(source.id);
+                      }
+                    }
+                    onRemoveReference(file.url);
+                  }}
+                  aria-label={t("chat:prompt.removeAttachment", {
+                    filename: file.filename ?? t("chat:file"),
+                  })}
+                >
+                  <XIcon />
+                </AttachmentAction>
+              </AttachmentActions>
             </Attachment>
           ))}
-        </Attachments>
+        </AttachmentGroup>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
     </div>
@@ -879,8 +903,7 @@ export function ChatPromptInput({
     ...(attachmentCapabilities?.audio ? ["audio/*"] : []),
   ].join(",");
   return (
-    // PromptInputGlow(BorderBeam)常驻包裹输入框:生成期间边缘随机流光,
-    // 结束后内建淡出;常驻挂载避免输入框 remount 丢焦点,空闲零视觉残留
+    // 输入框与常驻流光层分离,保留焦点和输入状态,结束后内建淡出。
     <PromptInputGlow status={status}>
       <PromptInput
         globalDrop

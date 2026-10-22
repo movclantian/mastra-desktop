@@ -67,13 +67,17 @@ export function HyperText({
   const resolvedText =
     typeof children === "string" ? children : (text ?? (children != null ? String(children) : ""));
 
-  const [displayText, setDisplayText] = useState<string[]>(() => resolvedText.split(""));
   const [isAnimating, setIsAnimating] = useState(false);
   const iterationCount = useRef(0);
   const elementRef = useRef<HTMLElement | null>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    setDisplayText(resolvedText.split(""));
+    if (textRef.current) {
+      for (const [index, node] of Array.from(textRef.current.children).entries()) {
+        node.textContent = (resolvedText[index] ?? "").toUpperCase();
+      }
+    }
   }, [resolvedText]);
 
   const handleAnimationTrigger = () => {
@@ -125,15 +129,18 @@ export function HyperText({
 
         iterationCount.current = progress * maxIterations;
 
-        setDisplayText((currentText) =>
-          currentText.map((letter, index) =>
-            letter === " "
-              ? letter
-              : index <= iterationCount.current
-                ? (resolvedText[index] ?? "")
-                : characterSet[getRandomInt(characterSet.length)],
-          ),
-        );
+        if (textRef.current) {
+          for (const [index, node] of Array.from(textRef.current.children).entries()) {
+            const letter = resolvedText[index] ?? "";
+            node.textContent = (
+              letter === " "
+                ? letter
+                : index <= iterationCount.current
+                  ? letter
+                  : characterSet[getRandomInt(characterSet.length)]
+            ).toUpperCase();
+          }
+        }
 
         if (progress < 1) {
           animationFrameId = requestAnimationFrame(animate);
@@ -159,13 +166,15 @@ export function HyperText({
       onMouseEnter={handleAnimationTrigger}
       {...props}
     >
-      <AnimatePresence>
-        {displayText.map((letter, index) => (
-          <motion.span key={index} className={cn("font-mono", letter === " " ? "w-3" : "")}>
-            {letter.toUpperCase()}
-          </motion.span>
-        ))}
-      </AnimatePresence>
+      <span ref={textRef} className="font-mono">
+        <AnimatePresence>
+          {resolvedText.split("").map((letter, index) => (
+            <motion.span key={index} className={cn(letter === " " ? "w-3" : "")}>
+              {letter.toUpperCase()}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </span>
     </MotionComponent>
   );
 }

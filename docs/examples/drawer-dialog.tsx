@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
+import { cn } from "cn"
 
-import { cn } from "@/lib/utils"
 import { useMediaQuery } from "@/hooks/use-media-query"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-rhea/ui/dialog"
+} from "@/styles/radix-nova/ui/dialog"
 import {
   Drawer,
   DrawerClose,
@@ -22,9 +22,9 @@ import {
   DrawerHeader,
   DrawerTitle,
   DrawerTrigger,
-} from "@/styles/base-rhea/ui/drawer"
-import { Input } from "@/styles/base-rhea/ui/input"
-import { Label } from "@/styles/base-rhea/ui/label"
+} from "@/styles/radix-nova/ui/drawer"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 
 export function DrawerDialogDemo() {
   const [open, setOpen] = React.useState(false)
@@ -33,8 +33,8 @@ export function DrawerDialogDemo() {
   if (isDesktop) {
     return (
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogTrigger render={<Button variant="outline" />}>
-          Edit Profile
+        <DialogTrigger asChild>
+          <Button variant="outline">Edit Profile</Button>
         </DialogTrigger>
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
@@ -52,8 +52,8 @@ export function DrawerDialogDemo() {
 
   return (
     <Drawer open={open} onOpenChange={setOpen}>
-      <DrawerTrigger render={<Button variant="outline" />}>
-        Edit Profile
+      <DrawerTrigger asChild>
+        <Button variant="outline">Edit Profile</Button>
       </DrawerTrigger>
       <DrawerContent>
         <DrawerHeader className="text-left">
@@ -62,7 +62,12 @@ export function DrawerDialogDemo() {
             Make changes to your profile here. Click save when you&apos;re done.
           </DrawerDescription>
         </DrawerHeader>
-        <ProfileForm className="p-4" />
+        <ProfileForm className="px-4" />
+        <DrawerFooter className="pt-2">
+          <DrawerClose asChild>
+            <Button variant="outline">Cancel</Button>
+          </DrawerClose>
+        </DrawerFooter>
       </DrawerContent>
     </Drawer>
   )

@@ -1,7 +1,7 @@
-import { Button } from "@/styles/base-nova/ui/button"
-import { Spinner } from "@/styles/base-nova/ui/spinner"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Spinner } from "@/styles/radix-nova/ui/spinner"
 
-export default function ButtonLoading() {
+export default function ButtonSpinner() {
   return (
     <div className="flex gap-2">
       <Button variant="outline" disabled>

@@ -1,18 +1,27 @@
 "use client";
 
-import { ChevronDownIcon, PaperclipIcon } from "lucide-react";
+import { CircleCheckIcon, CircleDotIcon, CircleIcon, PaperclipIcon } from "lucide-react";
 import { type ComponentProps, forwardRef, type ReactNode } from "react";
 import { cn } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/shared/ui/trace";
 
-export type QueueItemProps = ComponentProps<"li">;
+export type QueueItemProps = ComponentProps<"div">;
 
-export const QueueItem = forwardRef<HTMLLIElement, QueueItemProps>(
+export const QueueItem = forwardRef<HTMLDivElement, QueueItemProps>(
   ({ className, ...props }, ref) => (
-    <li
+    <div
       className={cn(
-        "group flex flex-col gap-1 rounded-md px-3 text-sm transition-colors hover:bg-muted",
+        "group flex min-w-0 w-full flex-col gap-1 rounded-md px-3 hover:bg-muted",
         className,
       )}
       ref={ref}
@@ -25,23 +34,18 @@ QueueItem.displayName = "QueueItem";
 
 export type QueueItemIndicatorProps = ComponentProps<"span"> & {
   completed?: boolean;
+  inProgress?: boolean;
 };
 
 export const QueueItemIndicator = ({
   completed = false,
+  inProgress = false,
   className,
   ...props
 }: QueueItemIndicatorProps) => (
-  <span
-    className={cn(
-      "mt-0.5 inline-block size-2.5 rounded-full border",
-      completed
-        ? "border-muted-foreground/20 bg-muted-foreground/10"
-        : "border-muted-foreground/50",
-      className,
-    )}
-    {...props}
-  />
+  <TraceIcon className={className} {...props}>
+    {completed ? <CircleCheckIcon /> : inProgress ? <CircleDotIcon /> : <CircleIcon />}
+  </TraceIcon>
 );
 
 export type QueueItemContentProps = ComponentProps<"span"> & {
@@ -53,9 +57,9 @@ export const QueueItemContent = ({
   className,
   ...props
 }: QueueItemContentProps) => (
-  <span
+  <TraceTitle
     className={cn(
-      "grow break-words",
+      "grow whitespace-normal break-words",
       completed ? "text-muted-foreground/50 line-through" : "text-muted-foreground",
       className,
     )}
@@ -63,7 +67,7 @@ export const QueueItemContent = ({
   />
 );
 
-export type QueueItemDescriptionProps = ComponentProps<"div"> & {
+export type QueueItemDescriptionProps = ComponentProps<typeof TraceDescription> & {
   completed?: boolean;
 };
 
@@ -72,9 +76,9 @@ export const QueueItemDescription = ({
   className,
   ...props
 }: QueueItemDescriptionProps) => (
-  <div
+  <TraceDescription
     className={cn(
-      "ml-6 text-xs",
+      "ml-6 whitespace-normal break-words text-xs",
       completed ? "text-muted-foreground/40 line-through" : "text-muted-foreground",
       className,
     )}
@@ -93,7 +97,7 @@ export type QueueItemActionProps = Omit<ComponentProps<typeof Button>, "variant"
 export const QueueItemAction = ({ className, ...props }: QueueItemActionProps) => (
   <Button
     className={cn(
-      "size-auto rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted-foreground/10 hover:text-foreground group-hover:opacity-100",
+      "size-auto rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted-foreground/10 hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
       className,
     )}
     size="icon"
@@ -135,17 +139,13 @@ export const QueueItemFile = ({ children, className, ...props }: QueueItemFilePr
 
 export type QueueListProps = ComponentProps<"div">;
 
-export const QueueList = ({ children, className, ...props }: QueueListProps) => (
-  <div className={cn("mt-2 -mb-1", className)} {...props}>
-    <ul>{children}</ul>
-  </div>
-);
+export const QueueList = (props: QueueListProps) => <Trace {...props} />;
 
 // QueueSection - collapsible section container
-export type QueueSectionProps = ComponentProps<typeof Collapsible>;
+export type QueueSectionProps = ComponentProps<typeof TraceCollapsible>;
 
 export const QueueSection = ({ className, defaultOpen = true, ...props }: QueueSectionProps) => (
-  <Collapsible className={cn(className)} defaultOpen={defaultOpen} {...props} />
+  <TraceCollapsible className={cn(className)} defaultOpen={defaultOpen} {...props} />
 );
 
 // QueueSectionTrigger - section header/trigger
@@ -160,7 +160,7 @@ export const QueueSectionTrigger = ({
   ...props
 }: QueueSectionTriggerProps) => (
   <div className="flex min-w-0 items-center gap-1">
-    <CollapsibleTrigger
+    <TraceCollapsibleTrigger
       render={
         <Button
           variant="ghost"
@@ -175,7 +175,7 @@ export const QueueSectionTrigger = ({
       }
     >
       {children}
-    </CollapsibleTrigger>
+    </TraceCollapsibleTrigger>
     {action}
   </div>
 );
@@ -194,26 +194,25 @@ export const QueueSectionLabel = ({
   className,
   ...props
 }: QueueSectionLabelProps) => (
-  <span className={cn("flex items-center gap-2", className)} {...props}>
-    <ChevronDownIcon className="size-4 transition-transform group-data-[state=closed]:-rotate-90" />
-    {icon}
-    <span>
+  <TraceLine className={className} {...props}>
+    {icon ? <TraceIcon>{icon}</TraceIcon> : null}
+    <TraceTitle>
       {count} {label}
-    </span>
-  </span>
+    </TraceTitle>
+  </TraceLine>
 );
 
 // QueueSectionContent - collapsible content area
-export type QueueSectionContentProps = ComponentProps<typeof CollapsibleContent>;
+export type QueueSectionContentProps = ComponentProps<typeof TraceCollapsibleContent>;
 
 export const QueueSectionContent = ({ className, ...props }: QueueSectionContentProps) => (
-  <CollapsibleContent className={cn(className)} {...props} />
+  <TraceCollapsibleContent className={cn(className)} {...props} />
 );
 
 export type QueueProps = ComponentProps<"div">;
 
 export const Queue = ({ className, ...props }: QueueProps) => (
-  <div
+  <Trace
     className={cn(
       "flex flex-col gap-2 rounded-xl border border-border bg-background px-3 pt-2 pb-2 shadow-xs",
       className,

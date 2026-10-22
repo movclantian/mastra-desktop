@@ -83,7 +83,7 @@ function ScrollFadeEdgeTags() {
       {tags.map((tag) => (
         <div
           key={tag}
-          className="shrink-0 rounded-lg bg-muted px-3 py-2.5 text-sm"
+          className="shrink-0 rounded-xl bg-muted px-4 py-2.5 text-sm"
         >
           {tag}
         </div>

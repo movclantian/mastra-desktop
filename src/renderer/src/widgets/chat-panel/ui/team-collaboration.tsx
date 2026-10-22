@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ProfileAvatar } from "@/entities/workbench/ui/agent-profile-details";
 import { useTranslation } from "@/shared/i18n";
 import { MessageResponse } from "@/shared/ui/ai-elements/message";
+import { ToolInput, ToolOutput } from "@/shared/ui/ai-elements/tool";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
@@ -17,6 +18,15 @@ import { NativeSelect, NativeSelectOption } from "@/shared/ui/native-select";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Textarea } from "@/shared/ui/textarea";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceLine,
+  TraceTitle,
+} from "@/shared/ui/trace";
 import type {
   AgentProfile,
   TeamHandoff,
@@ -40,45 +50,39 @@ function RuntimeStep({
       ? String(step.output.text)
       : undefined;
   return (
-    <Collapsible defaultOpen={expanded} className="min-w-0 rounded-md border p-2">
-      <CollapsibleTrigger
-        render={
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-auto max-w-full justify-start whitespace-normal break-words"
-          />
-        }
-      >
-        {label} · {step?.status ?? t("agentHub:waiting")}
-        {step?.progress ? ` · ${step.progress.completedCount}/${step.progress.totalCount}` : ""}
-      </CollapsibleTrigger>
-      <CollapsibleContent className="grid min-w-0 gap-2 pt-2">
-        {step?.error ? (
-          <p className="whitespace-pre-wrap break-words text-xs text-destructive">{step.error}</p>
-        ) : null}
-        <Collapsible>
-          <CollapsibleTrigger render={<Button variant="ghost" size="xs" />}>
-            {t("agentHub:input")}
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <pre className="whitespace-pre-wrap break-all text-xs">
-              {JSON.stringify(step?.input, null, 2)}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
-        <div className="min-w-0 text-xs">
-          <p className="font-medium">{t("agentHub:output")}</p>
-          {output ? (
+    <Trace>
+      <TraceCollapsible defaultOpen={expanded || step?.status === "failed"}>
+        <TraceCollapsibleTrigger>
+          <TraceLine
+            status={
+              step?.status === "running"
+                ? "running"
+                : step?.status === "failed"
+                  ? "error"
+                  : step?.status === "suspended"
+                    ? "pending"
+                    : undefined
+            }
+          >
+            <TraceTitle className="whitespace-normal break-words">{label}</TraceTitle>
+            <TraceDescription>{step?.status ?? t("agentHub:waiting")}</TraceDescription>
+            {step?.progress ? (
+              <TraceDescription>
+                {step.progress.completedCount}/{step.progress.totalCount}
+              </TraceDescription>
+            ) : null}
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="space-y-2">
+          {step?.input !== undefined ? <ToolInput input={step.input} /> : null}
+          {output && !step?.error ? (
             <MessageResponse>{output}</MessageResponse>
           ) : (
-            <pre className="whitespace-pre-wrap break-all">
-              {JSON.stringify(step?.output, null, 2)}
-            </pre>
+            <ToolOutput output={step?.output} errorText={step?.error} />
           )}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
   );
 }
 

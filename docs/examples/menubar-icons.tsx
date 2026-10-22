@@ -16,7 +16,7 @@ import {
   MenubarSeparator,
   MenubarShortcut,
   MenubarTrigger,
-} from "@/styles/base-nova/ui/menubar"
+} from "@/styles/radix-nova/ui/menubar"
 
 export function MenubarIcons() {
   return (

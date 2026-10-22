@@ -1,4 +1,6 @@
+import { ExternalLinkIcon, LinkIcon } from "lucide-react";
 import * as React from "react";
+import { libraryAssetFromUrl } from "@/entities/library";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import {
@@ -17,6 +19,15 @@ import {
   InlineCitationSource,
 } from "@/shared/ui/ai-elements/inline-citation";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/shared/ui/trace";
 import { type CitationEntries, type CitationSource, findFootnoteIds } from "../lib/citation-utils";
 import { MessageLink } from "./message-selection";
 
@@ -108,10 +119,26 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
                       href={source.url}
                       title={source.title}
                       className="break-words text-left text-sm font-medium text-primary underline underline-offset-2"
+                      target="_blank"
+                      rel="noopener noreferrer"
                     >
                       {source.title}
+                      {!libraryAssetFromUrl(source.url) ? (
+                        <span className="sr-only">{t("chat:trace.opensNewTab")}</span>
+                      ) : null}
                     </MessageLink>
-                    <InlineCitationSource description={source.description} url={source.url}>
+                    <MessageLink
+                      href={source.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block h-auto break-all text-xs text-muted-foreground underline underline-offset-2"
+                    >
+                      {source.url}
+                      {!libraryAssetFromUrl(source.url) ? (
+                        <span className="sr-only">{t("chat:trace.opensNewTab")}</span>
+                      ) : null}
+                    </MessageLink>
+                    <InlineCitationSource description={source.description}>
                       {source.quote ? (
                         <InlineCitationQuote>{source.quote}</InlineCitationQuote>
                       ) : null}
@@ -124,5 +151,59 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
         </InlineCitationCardBody>
       </InlineCitationCard>
     </InlineCitation>
+  );
+}
+
+export function MessageSources({ sources }: { sources: CitationSource[] }) {
+  const { t } = useTranslation();
+  if (!sources.length) return null;
+  return (
+    <Trace>
+      <TraceCollapsible>
+        <TraceCollapsibleTrigger>
+          <TraceLine>
+            <TraceIcon>
+              <LinkIcon />
+            </TraceIcon>
+            <TraceTitle>{t("chat:trace.sourcesCount", { count: sources.length })}</TraceTitle>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <ScrollArea className="max-h-64">
+            <Trace>
+              {sources.map((source) => {
+                const external = !libraryAssetFromUrl(source.url);
+                return (
+                  <MessageLink
+                    key={source.url}
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block h-auto min-w-0 text-left"
+                  >
+                    <TraceLine>
+                      <TraceIcon>
+                        <LinkIcon />
+                      </TraceIcon>
+                      <TraceTitle className="whitespace-normal break-words">
+                        {source.title}
+                      </TraceTitle>
+                      {external ? (
+                        <>
+                          <TraceIcon>
+                            <ExternalLinkIcon />
+                          </TraceIcon>
+                          <span className="sr-only">{t("chat:trace.opensNewTab")}</span>
+                        </>
+                      ) : null}
+                    </TraceLine>
+                  </MessageLink>
+                );
+              })}
+            </Trace>
+          </ScrollArea>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
   );
 }

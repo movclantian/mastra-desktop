@@ -12,7 +12,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from "@/styles/base-nova/ui/context-menu"
+} from "@/styles/radix-nova/ui/context-menu"
 
 export function ContextMenuIcons() {
   return (

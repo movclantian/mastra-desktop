@@ -3,7 +3,7 @@ import {
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
-} from "@/styles/base-nova/ui/accordion"
+} from "@/styles/radix-nova/ui/accordion"
 
 const items = [
   {
@@ -29,8 +29,10 @@ const items = [
 export default function AccordionBorders() {
   return (
     <Accordion
+      type="single"
+      collapsible
       className="max-w-lg rounded-lg border"
-      defaultValue={["billing"]}
+      defaultValue="billing"
     >
       {items.map((item) => (
         <AccordionItem

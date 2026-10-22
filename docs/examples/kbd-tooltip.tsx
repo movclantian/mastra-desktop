@@ -1,27 +1,27 @@
-import { Button } from "@/styles/base-nova/ui/button"
-import { ButtonGroup } from "@/styles/base-nova/ui/button-group"
-import { Kbd, KbdGroup } from "@/styles/base-nova/ui/kbd"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { ButtonGroup } from "@/styles/radix-nova/ui/button-group"
+import { Kbd, KbdGroup } from "@/styles/radix-nova/ui/kbd"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-nova/ui/tooltip"
+} from "@/styles/radix-nova/ui/tooltip"
 
 export default function KbdTooltip() {
   return (
     <div className="flex flex-wrap gap-4">
       <ButtonGroup>
         <Tooltip>
-          <TooltipTrigger render={<Button variant="outline" />}>
-            Save
+          <TooltipTrigger asChild>
+            <Button variant="outline">Save</Button>
           </TooltipTrigger>
           <TooltipContent>
             Save Changes <Kbd>S</Kbd>
           </TooltipContent>
         </Tooltip>
         <Tooltip>
-          <TooltipTrigger render={<Button variant="outline" />}>
-            Print
+          <TooltipTrigger asChild>
+            <Button variant="outline">Print</Button>
           </TooltipTrigger>
           <TooltipContent>
             Print Document{" "}

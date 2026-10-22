@@ -11,8 +11,8 @@ import { useTheme } from "@/shared/theme";
  * (submitted → streaming)不重掷;生成结束(→ ready/error)交给组件内建的
  * 0.5s 淡出动画回到不可见空态。
  *
- * BorderBeam 常驻挂载(不随生成卸载),避免包裹层变化导致输入框 remount
- * 丢焦点;空闲时效果层 display:none / 伪元素无 content,零视觉残留。
+ * BorderBeam 常驻为独立装饰层,输入框不随动画重挂载;
+ * 空闲时效果层 display:none / 伪元素无 content,零视觉残留。
  */
 
 type ChatRuntimeStatus = "ready" | "submitted" | "streaming" | "error";
@@ -38,6 +38,10 @@ const STRENGTH_RANGE = 0.3;
  * 在这里统一放大,再补一档 saturation / brightness 让颜色更饱和鲜亮。
  */
 const BEAM_INTENSITY_STYLE = {
+  position: "absolute",
+  inset: 0,
+  pointerEvents: "none",
+  overflow: "visible",
   "--beam-stroke-opacity": 1.8,
   "--beam-inner-opacity": 1.4,
   "--beam-bloom-opacity": 2.5,
@@ -92,22 +96,24 @@ export function PromptInputGlow({
   }, [status]);
 
   return (
-    <BorderBeam
-      active={active}
-      brightness={BEAM_BRIGHTNESS}
-      borderRadius={resolvedGeometry.radius}
-      colorVariant={config.colorVariant}
-      hueRange={BEAM_HUE_RANGE}
-      saturation={BEAM_SATURATION}
-      size={config.size}
-      strength={config.strength}
-      theme={isDark ? "dark" : "light"}
-      // 1) 组件默认 overflow:hidden 会裁掉 SkillAwareTextarea 渲染在输入框
-      //    上方的 / 与 @ 命令下拉浮层;效果层自带 clip-path 自裁剪,放开安全
-      // 2) --beam-*-opacity 放大各效果层透明度,让颜色更鲜亮
-      style={{ overflow: "visible", ...BEAM_INTENSITY_STYLE }}
-    >
+    <div className="relative">
       {children}
-    </BorderBeam>
+      {/* Keep live input content out of the decoration's child-dependent effects. */}
+      <BorderBeam
+        active={active}
+        aria-hidden="true"
+        brightness={BEAM_BRIGHTNESS}
+        borderRadius={resolvedGeometry.radius}
+        colorVariant={config.colorVariant}
+        hueRange={BEAM_HUE_RANGE}
+        saturation={BEAM_SATURATION}
+        size={config.size}
+        strength={config.strength}
+        theme={isDark ? "dark" : "light"}
+        style={BEAM_INTENSITY_STYLE}
+      >
+        {null}
+      </BorderBeam>
+    </div>
   );
 }

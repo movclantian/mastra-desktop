@@ -1,4 +1,4 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -6,13 +6,13 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-nova/ui/dialog"
+} from "@/styles/radix-nova/ui/dialog"
 
 export function DialogScrollableContent() {
   return (
     <Dialog>
-      <DialogTrigger render={<Button variant="outline" />}>
-        Scrollable Content
+      <DialogTrigger asChild>
+        <Button variant="outline">Scrollable Content</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

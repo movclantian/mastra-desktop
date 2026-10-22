@@ -1,6 +1,10 @@
 import { BookOpenCheck, GitBranchIcon, SearchIcon } from "lucide-react"
 
-import { Marker, MarkerContent, MarkerIcon } from "@/styles/base-rhea/ui/marker"
+import {
+  Marker,
+  MarkerContent,
+  MarkerIcon,
+} from "@/styles/radix-rhea/ui/marker"
 
 export function MarkerIconDemo() {
   return (

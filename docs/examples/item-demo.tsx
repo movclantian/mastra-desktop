@@ -1,6 +1,6 @@
 import { BadgeCheckIcon, ChevronRightIcon } from "lucide-react"
 
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Item,
   ItemActions,
@@ -8,7 +8,7 @@ import {
   ItemDescription,
   ItemMedia,
   ItemTitle,
-} from "@/styles/base-nova/ui/item"
+} from "@/styles/radix-nova/ui/item"
 
 export function ItemDemo() {
   return (
@@ -26,16 +26,18 @@ export function ItemDemo() {
           </Button>
         </ItemActions>
       </Item>
-      <Item variant="outline" size="sm" render={<a href="#" />}>
-        <ItemMedia>
-          <BadgeCheckIcon className="size-5" />
-        </ItemMedia>
-        <ItemContent>
-          <ItemTitle>Your profile has been verified.</ItemTitle>
-        </ItemContent>
-        <ItemActions>
-          <ChevronRightIcon className="size-4" />
-        </ItemActions>
+      <Item variant="outline" size="sm" asChild>
+        <a href="#">
+          <ItemMedia>
+            <BadgeCheckIcon className="size-5" />
+          </ItemMedia>
+          <ItemContent>
+            <ItemTitle>Your profile has been verified.</ItemTitle>
+          </ItemContent>
+          <ItemActions>
+            <ChevronRightIcon className="size-4" />
+          </ItemActions>
+        </a>
       </Item>
     </div>
   )

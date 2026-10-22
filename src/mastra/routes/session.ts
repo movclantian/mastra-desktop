@@ -954,9 +954,12 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
     } else {
       if (body.action === "update" && !body.objective)
         throw workError("VALIDATION_FAILED", { text: "目标不能为空" });
-      await result.agent.updateObjectiveOptions({ ...target, status: "paused" });
-      await abortWorkbenchSession(result.controllerSession);
-      await cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, result);
+      // A finished/paused goal does not own a later conversation run.
+      if (current.status === "active") {
+        await result.agent.updateObjectiveOptions({ ...target, status: "paused" });
+        await abortWorkbenchSession(result.controllerSession);
+        await cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, result);
+      }
       if (body.action === "clear") await result.agent.clearObjective(target);
       else if (body.action === "update" && body.objective) {
         if (body.objective !== current.objective) {
@@ -971,7 +974,8 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
           status: "paused",
           maxRuns: body.maxRuns ?? current.maxRuns ?? 50,
         });
-      } else await result.agent.updateObjectiveOptions({ ...target, status: "paused" });
+      } else if (current.status === "active")
+        await result.agent.updateObjectiveOptions({ ...target, status: "paused" });
     }
     return c.json({ objective: (await result.agent.getObjective(target)) ?? null });
   },

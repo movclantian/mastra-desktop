@@ -3,14 +3,14 @@
 import * as React from "react"
 import Autoplay from "embla-carousel-autoplay"
 
-import { Card, CardContent } from "@/styles/base-nova/ui/card"
+import { Card, CardContent } from "@/styles/radix-nova/ui/card"
 import {
   Carousel,
   CarouselContent,
   CarouselItem,
   CarouselNext,
   CarouselPrevious,
-} from "@/styles/base-nova/ui/carousel"
+} from "@/styles/radix-nova/ui/carousel"
 
 export default function CarouselPlugin() {
   const plugin = React.useRef(

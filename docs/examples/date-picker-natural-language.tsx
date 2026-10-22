@@ -4,19 +4,19 @@ import * as React from "react"
 import { parseDate } from "chrono-node"
 import { CalendarIcon } from "lucide-react"
 
-import { Calendar } from "@/styles/base-nova/ui/calendar"
-import { Field, FieldLabel } from "@/styles/base-nova/ui/field"
+import { Calendar } from "@/styles/radix-nova/ui/calendar"
+import { Field, FieldLabel } from "@/styles/radix-nova/ui/field"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
+} from "@/styles/radix-nova/ui/input-group"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
+} from "@/styles/radix-nova/ui/popover"
 
 function formatDate(date: Date | undefined) {
   if (!date) {
@@ -61,18 +61,16 @@ export function DatePickerNaturalLanguage() {
         />
         <InputGroupAddon align="inline-end">
           <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger
-              render={
-                <InputGroupButton
-                  id="date-picker"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Select date"
-                />
-              }
-            >
-              <CalendarIcon />
-              <span className="sr-only">Select date</span>
+            <PopoverTrigger asChild>
+              <InputGroupButton
+                id="date-picker"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Select date"
+              >
+                <CalendarIcon />
+                <span className="sr-only">Select date</span>
+              </InputGroupButton>
             </PopoverTrigger>
             <PopoverContent
               className="w-auto overflow-hidden p-0"

@@ -1,23 +1,23 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-nova/ui/tooltip"
+} from "@/styles/radix-nova/ui/tooltip"
 
 export function TooltipDisabled() {
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger render={<span className="inline-block w-fit" />}>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-block w-fit">
           <Button variant="outline" disabled>
             Disabled
           </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>This feature is currently unavailable</p>
-        </TooltipContent>
-      </Tooltip>
-    </>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>This feature is currently unavailable</p>
+      </TooltipContent>
+    </Tooltip>
   )
 }

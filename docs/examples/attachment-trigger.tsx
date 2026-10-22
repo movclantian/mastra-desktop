@@ -9,7 +9,7 @@ import {
   AttachmentMedia,
   AttachmentTitle,
   AttachmentTrigger,
-} from "@/styles/base-rhea/ui/attachment"
+} from "@/styles/radix-rhea/ui/attachment"
 import {
   Dialog,
   DialogContent,
@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/styles/base-rhea/ui/dialog"
+} from "@/styles/radix-rhea/ui/dialog"
 
 export function AttachmentTriggerDemo() {
   return (
@@ -39,11 +39,9 @@ export function AttachmentTriggerDemo() {
               <XIcon />
             </AttachmentAction>
           </AttachmentActions>
-          <DialogTrigger
-            render={
-              <AttachmentTrigger aria-label="Preview research-summary.pdf" />
-            }
-          />
+          <DialogTrigger asChild>
+            <AttachmentTrigger aria-label="Preview research-summary.pdf" />
+          </DialogTrigger>
         </Attachment>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

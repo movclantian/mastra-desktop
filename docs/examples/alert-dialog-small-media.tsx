@@ -11,15 +11,15 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/styles/base-nova/ui/alert-dialog"
-import { Button } from "@/styles/base-nova/ui/button"
+} from "@/styles/radix-nova/ui/alert-dialog"
+import { Button } from "@/styles/radix-nova/ui/button"
 
 export function AlertDialogSmallWithMedia() {
   return (
     <AlertDialog>
-      <AlertDialogTrigger
-        render={<Button variant="outline">Show Dialog</Button>}
-      />
+      <AlertDialogTrigger asChild>
+        <Button variant="outline">Show Dialog</Button>
+      </AlertDialogTrigger>
 
       <AlertDialogContent size="sm">
         <AlertDialogHeader>

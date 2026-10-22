@@ -109,6 +109,7 @@ export function useBrowserSession(active: boolean) {
   const pointerMoveAtRef = React.useRef(0);
   const keyboardQueueRef = React.useRef<BrowserKeyboardRequest[]>([]);
   const keyboardFlushTimerRef = React.useRef<number | undefined>(undefined);
+  const nativeBoundsRef = React.useRef<string>("");
   const keyboardSendChainRef = React.useRef<Promise<void>>(Promise.resolve());
   const stateUrl = activeThreadId ? browserResourceUrl(activeThreadId, userId) : "";
 
@@ -662,6 +663,9 @@ export function useBrowserSession(active: boolean) {
   const setNativeBounds = React.useCallback(
     (bounds: { x: number; y: number; width: number; height: number }) => {
       if (!nativeBrowser || !activeThreadId) return;
+      const signature = `${userId}:${activeThreadId}:${bounds.x}:${bounds.y}:${bounds.width}:${bounds.height}`;
+      if (nativeBoundsRef.current === signature) return;
+      nativeBoundsRef.current = signature;
       nativeBrowser.setBounds({ resourceId: userId, threadId: activeThreadId, ...bounds });
     },
     [activeThreadId, nativeBrowser, userId],

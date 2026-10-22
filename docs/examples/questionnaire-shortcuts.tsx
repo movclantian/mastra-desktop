@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import {
   NativeSelect,
   NativeSelectOption,
-} from "@/styles/base-nova/ui/native-select"
+} from "@/styles/radix-nova/ui/native-select"
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -17,7 +17,7 @@ import {
   QuestionnaireItem,
   QuestionnaireSubmit,
   QuestionnaireTitle,
-} from "@/styles/base-nova/ui/questionnaire"
+} from "@/styles/radix-nova/ui/questionnaire"
 
 const items = [
   {

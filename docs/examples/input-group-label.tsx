@@ -5,13 +5,13 @@ import {
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
-} from "@/styles/base-nova/ui/input-group"
-import { Label } from "@/styles/base-nova/ui/label"
+} from "@/styles/radix-nova/ui/input-group"
+import { Label } from "@/styles/radix-nova/ui/label"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-nova/ui/tooltip"
+} from "@/styles/radix-nova/ui/tooltip"
 
 export default function InputGroupLabel() {
   return (
@@ -29,17 +29,15 @@ export default function InputGroupLabel() {
             Email
           </Label>
           <Tooltip>
-            <TooltipTrigger
-              render={
-                <InputGroupButton
-                  variant="ghost"
-                  aria-label="Help"
-                  className="ml-auto rounded-full"
-                  size="icon-xs"
-                />
-              }
-            >
-              <InfoIcon />
+            <TooltipTrigger asChild>
+              <InputGroupButton
+                variant="ghost"
+                aria-label="Help"
+                className="ml-auto rounded-full"
+                size="icon-xs"
+              >
+                <InfoIcon />
+              </InputGroupButton>
             </TooltipTrigger>
             <TooltipContent>
               <p>We&apos;ll use this to send you notifications</p>

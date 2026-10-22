@@ -12,7 +12,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarProvider,
-} from "@/styles/base-nova/ui/sidebar"
+} from "@/styles/radix-nova/ui/sidebar"
 
 const items = [
   {
@@ -152,16 +152,18 @@ export default function AppSidebar() {
               <SidebarMenu>
                 {items.map((item, index) => (
                   <SidebarMenuItem key={index}>
-                    <SidebarMenuButton render={<a href={item.url} />}>
-                      <span>{item.title}</span>
+                    <SidebarMenuButton asChild>
+                      <a href={item.url}>
+                        <span>{item.title}</span>
+                      </a>
                     </SidebarMenuButton>
                     <SidebarMenuSub>
                       {item.items.map((subItem, subIndex) => (
                         <SidebarMenuSubItem key={subIndex}>
-                          <SidebarMenuSubButton
-                            render={<a href={subItem.url} />}
-                          >
-                            <span>{subItem.title}</span>
+                          <SidebarMenuSubButton asChild>
+                            <a href={subItem.url}>
+                              <span>{subItem.title}</span>
+                            </a>
                           </SidebarMenuSubButton>
                         </SidebarMenuSubItem>
                       ))}

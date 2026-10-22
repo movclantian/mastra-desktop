@@ -1,6 +1,6 @@
-import { Button } from "@/styles/base-nova/ui/button"
-import { Input } from "@/styles/base-nova/ui/input"
-import { Label } from "@/styles/base-nova/ui/label"
+import { Button } from "@/styles/radix-nova/ui/button"
+import { Input } from "@/styles/radix-nova/ui/input"
+import { Label } from "@/styles/radix-nova/ui/label"
 import {
   Sheet,
   SheetClose,
@@ -10,12 +10,14 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "@/styles/base-nova/ui/sheet"
+} from "@/styles/radix-nova/ui/sheet"
 
 export default function SheetDemo() {
   return (
     <Sheet>
-      <SheetTrigger render={<Button variant="outline" />}>Open</SheetTrigger>
+      <SheetTrigger asChild>
+        <Button variant="outline">Open</Button>
+      </SheetTrigger>
       <SheetContent>
         <SheetHeader>
           <SheetTitle>Edit profile</SheetTitle>
@@ -35,7 +37,9 @@ export default function SheetDemo() {
         </div>
         <SheetFooter>
           <Button type="submit">Save changes</Button>
-          <SheetClose render={<Button variant="outline" />}>Close</SheetClose>
+          <SheetClose asChild>
+            <Button variant="outline">Close</Button>
+          </SheetClose>
         </SheetFooter>
       </SheetContent>
     </Sheet>

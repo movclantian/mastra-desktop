@@ -1,4 +1,4 @@
-import { Field, FieldError, FieldLabel } from "@/styles/base-nova/ui/field"
+import { Field, FieldError, FieldLabel } from "@/styles/radix-nova/ui/field"
 import {
   Select,
   SelectContent,
@@ -6,30 +6,21 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/styles/base-nova/ui/select"
-
-const items = [
-  { label: "Select a fruit", value: null },
-  { label: "Apple", value: "apple" },
-  { label: "Banana", value: "banana" },
-  { label: "Blueberry", value: "blueberry" },
-]
+} from "@/styles/radix-nova/ui/select"
 
 export function SelectInvalid() {
   return (
     <Field data-invalid className="w-full max-w-48">
       <FieldLabel>Fruit</FieldLabel>
-      <Select items={items}>
+      <Select>
         <SelectTrigger aria-invalid>
-          <SelectValue />
+          <SelectValue placeholder="Select a fruit" />
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
-            {items.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
+            <SelectItem value="apple">Apple</SelectItem>
+            <SelectItem value="banana">Banana</SelectItem>
+            <SelectItem value="blueberry">Blueberry</SelectItem>
           </SelectGroup>
         </SelectContent>
       </Select>

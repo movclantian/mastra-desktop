@@ -2,11 +2,6 @@
 
 import * as React from "react"
 import Link from "next/link"
-import {
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-} from "lucide-react"
 
 import {
   NavigationMenu,
@@ -16,7 +11,7 @@ import {
   NavigationMenuList,
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
-} from "@/styles/base-nova/ui/navigation-menu"
+} from "@/styles/radix-nova/ui/navigation-menu"
 
 const components: { title: string; href: string; description: string }[] = [
   {
@@ -93,44 +88,8 @@ export default function NavigationMenuDemo() {
           </NavigationMenuContent>
         </NavigationMenuItem>
         <NavigationMenuItem>
-          <NavigationMenuTrigger>With Icon</NavigationMenuTrigger>
-          <NavigationMenuContent>
-            <ul className="grid w-[200px]">
-              <li>
-                <NavigationMenuLink
-                  render={
-                    <Link href="#" className="flex-row items-center gap-2" />
-                  }
-                >
-                  <CircleAlertIcon />
-                  Backlog
-                </NavigationMenuLink>
-                <NavigationMenuLink
-                  render={
-                    <Link href="#" className="flex-row items-center gap-2" />
-                  }
-                >
-                  <CircleDashedIcon />
-                  To Do
-                </NavigationMenuLink>
-                <NavigationMenuLink
-                  render={
-                    <Link href="#" className="flex-row items-center gap-2" />
-                  }
-                >
-                  <CircleCheckIcon />
-                  Done
-                </NavigationMenuLink>
-              </li>
-            </ul>
-          </NavigationMenuContent>
-        </NavigationMenuItem>
-        <NavigationMenuItem>
-          <NavigationMenuLink
-            render={<Link href="/docs" />}
-            className={navigationMenuTriggerStyle()}
-          >
-            Docs
+          <NavigationMenuLink asChild className={navigationMenuTriggerStyle()}>
+            <Link href="/docs">Docs</Link>
           </NavigationMenuLink>
         </NavigationMenuItem>
       </NavigationMenuList>
@@ -146,11 +105,13 @@ function ListItem({
 }: React.ComponentPropsWithoutRef<"li"> & { href: string }) {
   return (
     <li {...props}>
-      <NavigationMenuLink render={<Link href={href} />}>
-        <div className="flex flex-col gap-1 text-sm">
-          <div className="leading-none font-medium">{title}</div>
-          <div className="line-clamp-2 text-muted-foreground">{children}</div>
-        </div>
+      <NavigationMenuLink asChild>
+        <Link href={href}>
+          <div className="flex flex-col gap-1 text-sm">
+            <div className="leading-none font-medium">{title}</div>
+            <div className="line-clamp-2 text-muted-foreground">{children}</div>
+          </div>
+        </Link>
       </NavigationMenuLink>
     </li>
   )

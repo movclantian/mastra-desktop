@@ -1,4 +1,4 @@
-import { Slider } from "@/styles/base-nova/ui/slider"
+import { Slider } from "@/styles/radix-nova/ui/slider"
 
 export function SliderRange() {
   return (

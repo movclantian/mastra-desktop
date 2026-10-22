@@ -1,39 +1,43 @@
-import { Button } from "@/styles/base-nova/ui/button"
+import { Button } from "@/styles/radix-nova/ui/button"
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/styles/base-nova/ui/popover"
+} from "@/styles/radix-nova/ui/popover"
 
 export function PopoverAlignments() {
   return (
-    <>
-      <div className="flex gap-6">
-        <Popover>
-          <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+    <div className="flex gap-6">
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm">
             Start
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-40">
-            Aligned to start
-          </PopoverContent>
-        </Popover>
-        <Popover>
-          <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-40">
+          Aligned to start
+        </PopoverContent>
+      </Popover>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm">
             Center
-          </PopoverTrigger>
-          <PopoverContent align="center" className="w-40">
-            Aligned to center
-          </PopoverContent>
-        </Popover>
-        <Popover>
-          <PopoverTrigger render={<Button variant="outline" size="sm" />}>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="center" className="w-40">
+          Aligned to center
+        </PopoverContent>
+      </Popover>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button variant="outline" size="sm">
             End
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-40">
-            Aligned to end
-          </PopoverContent>
-        </Popover>
-      </div>
-    </>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-40">
+          Aligned to end
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }

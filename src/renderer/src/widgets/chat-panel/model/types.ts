@@ -121,6 +121,7 @@ export function mergeToolPart(previous: MessagePart | undefined, incoming: ToolP
   const input = asRecord(latest.input);
   return {
     ...latest,
+    terminal: (latest as ToolPart).terminal ?? (previous as ToolPart).terminal,
     input:
       latest.input === undefined || (input && Object.keys(input).length === 0)
         ? (latest === incoming ? previous : incoming).input
@@ -1009,9 +1010,7 @@ function getCompletedInteraction(messageId: string, part: ToolPart): AgentIntera
  * 文本是助手可见回复的边界。两个文本块之间紧邻的推理与工具调用属于同一条执行轨迹,
  * 既保留服务端发送顺序,也不会把最终文本塞进 ChainOfThoughtStep。
  *
- * 子 Agent 的派发/状态转场(data-tool-agent)是独立的事件行:渲染为
- * Marker variant="separator" 分隔行锚定转场(官方 message-scroller-group-chat),
- * 不混入推理轨迹。
+ * 子 Agent 的完整只读会话由成员面板展示,不伪造父消息中的工具输出。
  */
 export function getAssistantSegments(
   parts: UIMessage["parts"],
@@ -1019,6 +1018,17 @@ export function getAssistantSegments(
 ): AssistantSegment[] {
   const segments: AssistantSegment[] = [];
   let traceParts: TracePart[] = [];
+  const commandExits = new Map(
+    parts.flatMap((part) => {
+      const record = part as unknown as JsonRecord;
+      const data = asRecord(record.data);
+      return part.type === "data-workspace-log" &&
+        typeof record.id === "string" &&
+        typeof data?.exitCode === "number"
+        ? [[record.id, data.exitCode] as const]
+        : [];
+    }),
+  );
 
   const flushTrace = () => {
     if (traceParts.length > 0) {
@@ -1059,8 +1069,24 @@ export function getAssistantSegments(
 
     // Queue shows current task state; the trace retains the calls that changed it.
     // Completed prompt interactions are rendered separately above.
-    if (isToolUIPart(part) && !isPromptManagedToolName(getToolName(part))) {
-      traceParts.push(part);
+    if (
+      isToolUIPart(part) &&
+      part.state !== "approval-requested" &&
+      !isPromptManagedToolName(getToolName(part))
+    ) {
+      const exitCode = commandExits.get(part.toolCallId);
+      traceParts.push(
+        exitCode === undefined
+          ? part
+          : {
+              ...part,
+              terminal: {
+                ...(part as ToolPart).terminal,
+                output: (part as ToolPart).terminal?.output ?? "",
+                exitCode,
+              },
+            },
+      );
     }
   });
   flushTrace();
@@ -1073,10 +1099,62 @@ export function getTraceStepStatus(part: TracePart): "active" | "complete" {
     return part.state === "streaming" ? "active" : "complete";
   }
 
-  return part.state === "input-streaming" ||
+  if (
+    part.state === "output-denied" ||
+    (part.state === "approval-responded" && part.approval.approved === false)
+  )
+    return "complete";
+
+  return (part.state === "output-available" && part.preliminary === true) ||
+    part.state === "input-streaming" ||
     part.state === "input-available" ||
     part.state === "approval-requested" ||
     part.state === "approval-responded"
     ? "active"
     : "complete";
+}
+
+export function getToolTraceState(part: ToolPart, isStreaming: boolean) {
+  const name = getToolName(part);
+  const output = "output" in part ? part.output : undefined;
+  // Mastra's command tool returns text, with a final exit-code line on failure.
+  const exitCode =
+    part.terminal?.exitCode ??
+    (name === "mastra_workspace_execute_command" && typeof output === "string"
+      ? Number(/(?:^|\n)Exit code: (-?\d+)\s*$/.exec(output)?.[1] ?? 0)
+      : undefined);
+  const denied =
+    part.state === "output-denied" ||
+    (part.state === "approval-responded" && part.approval.approved === false);
+  const pending = getTraceStepStatus(part) === "active";
+  const unfinished = !isStreaming && pending && part.state !== "approval-requested";
+  const failed =
+    part.state === "output-error" ||
+    (name === "execute_typescript" && asRecord(output)?.success === false) ||
+    (exitCode !== undefined && exitCode !== 0) ||
+    (name === "mastra_workspace_execute_command" &&
+      part.terminal?.exitCode === undefined &&
+      typeof output === "string" &&
+      /(?:^|\n)Error: [^\n]+\s*$/.test(output)) ||
+    unfinished;
+  return { active: isStreaming && pending && !failed, denied, failed, unfinished, exitCode };
+}
+
+export function withTerminalEvent(
+  parts: WorkUIMessage["parts"],
+  event: { toolCallId: string } & (
+    | { type: "shell_output"; output: string }
+    | { type: "command_exit"; exitCode: number }
+  ),
+): WorkUIMessage["parts"] {
+  return parts.map((part) => {
+    if (!isToolUIPart(part) || part.toolCallId !== event.toolCallId) return part;
+    const previous = (part as ToolPart).terminal ?? { output: "" };
+    // shortcut: preview keeps the last 65536 characters; raise for longer previews, full logs stay archived.
+    const terminal =
+      event.type === "shell_output"
+        ? { ...previous, output: (previous.output + event.output).slice(-64 * 1024) }
+        : { ...previous, exitCode: event.exitCode };
+    return { ...part, terminal };
+  });
 }

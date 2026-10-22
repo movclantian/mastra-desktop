@@ -5,8 +5,8 @@ import { RotateCwIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { createChat, getMessageText } from "@/lib/ai"
-import { Bubble, BubbleContent } from "@/styles/base-rhea/ui/bubble"
-import { Button } from "@/styles/base-rhea/ui/button"
+import { Bubble, BubbleContent } from "@/styles/radix-rhea/ui/bubble"
+import { Button } from "@/styles/radix-rhea/ui/button"
 import {
   Card,
   CardAction,
@@ -15,9 +15,9 @@ import {
   CardFooter,
   CardHeader,
   CardTitle,
-} from "@/styles/base-rhea/ui/card"
-import { Marker, MarkerContent } from "@/styles/base-rhea/ui/marker"
-import { Message, MessageContent } from "@/styles/base-rhea/ui/message"
+} from "@/styles/radix-rhea/ui/card"
+import { Marker, MarkerContent } from "@/styles/radix-rhea/ui/marker"
+import { Message, MessageContent } from "@/styles/radix-rhea/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -25,12 +25,12 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
-} from "@/styles/base-rhea/ui/message-scroller"
+} from "@/styles/radix-rhea/ui/message-scroller"
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@/styles/base-rhea/ui/tooltip"
+} from "@/styles/radix-rhea/ui/tooltip"
 
 const chat = createChat()
   .user("Can you summarize the incident channel?")
@@ -74,22 +74,20 @@ export function MessageScrollerLoadHistory() {
             </CardDescription>
             <CardAction>
               <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      aria-label="Reset loaded messages"
-                      disabled={visibleCount === INITIAL_VISIBLE_COUNT}
-                      onClick={() => {
-                        setVisibleCount(INITIAL_VISIBLE_COUNT)
-                        setDemoKey((key) => key + 1)
-                      }}
-                    />
-                  }
-                >
-                  <RotateCwIcon />
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    aria-label="Reset loaded messages"
+                    disabled={visibleCount === INITIAL_VISIBLE_COUNT}
+                    onClick={() => {
+                      setVisibleCount(INITIAL_VISIBLE_COUNT)
+                      setDemoKey((key) => key + 1)
+                    }}
+                  >
+                    <RotateCwIcon />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Reset</p>

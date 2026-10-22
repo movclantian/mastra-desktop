@@ -28,7 +28,7 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isInView, setIsInView] = useState(false);
-  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const canvasSize = useRef({ width: 0, height: 0 });
 
   const memoizedColor = useMemo(() => {
     const toRGBA = (color: string) => {
@@ -121,7 +121,7 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
       const updateCanvasSize = () => {
         const newWidth = width || container.clientWidth;
         const newHeight = height || container.clientHeight;
-        setCanvasSize({ width: newWidth, height: newHeight });
+        canvasSize.current = { width: newWidth, height: newHeight };
         gridParams = setupCanvas(canvas, newWidth, newHeight);
       };
 
@@ -132,6 +132,10 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
         if (!isInView || !gridParams) return;
 
         const deltaTime = (time - lastTime) / 1000;
+        if (deltaTime < 1 / 30) {
+          animationFrameId = requestAnimationFrame(animate);
+          return;
+        }
         lastTime = time;
 
         updateSquares(gridParams.squares, deltaTime);
@@ -180,14 +184,7 @@ export const FlickeringGrid: React.FC<FlickeringGridProps> = ({
 
   return (
     <div ref={containerRef} className={cn(`h-full w-full ${className}`)} {...props}>
-      <canvas
-        ref={canvasRef}
-        className="pointer-events-none"
-        style={{
-          width: canvasSize.width,
-          height: canvasSize.height,
-        }}
-      />
+      <canvas ref={canvasRef} className="pointer-events-none size-full" />
     </div>
   );
 };
