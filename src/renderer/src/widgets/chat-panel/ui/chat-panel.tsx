@@ -4,6 +4,7 @@ import { type FileUIPart, isToolUIPart, type LanguageModelUsage } from "ai";
 import { GitBranchIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { usePluginSkills } from "@/entities/skill";
 import type { AgentMemberDefinition, AgentProfile, ToolCategory } from "@/entities/workbench";
 import {
   buildReasoningRequest,
@@ -36,6 +37,7 @@ import { Button } from "@/shared/ui/button";
 import { DotPattern } from "@/shared/ui/dot-pattern";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "@/shared/ui/item";
+import { Marker, MarkerContent } from "@/shared/ui/marker";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -94,6 +96,7 @@ import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
 import { MessageItem } from "./message-list";
 import { MessageSelectionScope } from "./message-selection";
 import { ChatPromptInput, UserRequestQueuePanel } from "./prompt-input";
+import { PromptSuggestions } from "./prompt-suggestions";
 import { ChatWorkspaceSelector } from "./workspace-selector";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
@@ -102,6 +105,33 @@ const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>
   "cancelled",
   "timed_out",
 ]);
+
+/** 本地日期键(yyyy-mm-dd),用于跨天分隔判断。 */
+function dayKey(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
+}
+
+function messageDay(message: WorkUIMessage): string | undefined {
+  return dayKey(message.metadata?.createdAt);
+}
+
+/** 今天/昨天用相对词,更早的日期按本地习惯显示。 */
+function formatMessageDay(day: string, t: ReturnType<typeof useTranslation>["t"]): string {
+  const now = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (day === dayKey(now.toISOString())) return t("chat:messages.today");
+  if (day === dayKey(yesterday.toISOString())) return t("chat:messages.yesterday");
+  const [year, month, date] = day.split("-").map(Number);
+  return new Date(year, month - 1, date).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
 
 function mergeBackgroundTaskSnapshot(
   current: BackgroundTaskState[],
@@ -264,6 +294,7 @@ export function ChatPanel() {
   const { user: authUser } = useAuth();
   const user = authUser ?? { id: "anonymous", name: "Guest", email: "guest@example.com" };
   const userId = user?.id ?? "anonymous";
+  const pluginSkills = usePluginSkills(user?.id);
   const threads = useThreadsQuery(userId).data ?? [];
   // URL ?thread= 即当前线程(真相在 Router)
   const activeThreadId = useRouterState({
@@ -411,6 +442,12 @@ export function ChatPanel() {
   // 工作区路径/锁定状态同样经 ref 透传给 请求回调
   const pendingWorkspacePathRef = React.useRef(pendingWorkspacePath);
   pendingWorkspacePathRef.current = pendingWorkspacePath;
+  const pendingWorkspaceSource = useWorkbenchStore((state) => state.pendingWorkspaceSource);
+  const clearPendingWorkspaceSource = useWorkbenchStore(
+    (state) => state.clearPendingWorkspaceSource,
+  );
+  const pendingWorkspaceSourceRef = React.useRef(pendingWorkspaceSource);
+  pendingWorkspaceSourceRef.current = pendingWorkspaceSource;
   const workspaceLockedRef = React.useRef(false);
   // useThreadSessions 在本文件稍后才拿到 reloadMessages/reloadDisplayState；用 ref
   // 连接流生命周期与面板的服务端真相对账，避免把后定义的回调放进 Hook 闭包。
@@ -423,7 +460,12 @@ export function ChatPanel() {
   const buildRequestBodyRef = React.useRef<(threadId: string) => Record<string, unknown>>(
     () => ({}),
   );
-  buildRequestBodyRef.current = () => ({
+  buildRequestBodyRef.current = (threadId) => ({
+    ...(pendingWorkspaceSourceRef.current?.threadId === threadId &&
+    pendingWorkspaceSourceRef.current.sourceThreadId &&
+    !workspaceLockedRef.current
+      ? { workspaceSourceThreadId: pendingWorkspaceSourceRef.current.sourceThreadId }
+      : {}),
     // 思考等级:标准 modelSettings.reasoning(max 档退回 providerOptions)
     ...(!isMediaModel &&
     selectedProvider &&
@@ -479,8 +521,8 @@ export function ChatPanel() {
   const messagesRef = React.useRef(messages);
   messagesRef.current = messages;
 
-  // 工作区锁定:线程已绑定目录或已有消息往来;锁定后隐藏 promptInput 选择器
-  const workspaceLocked = Boolean(activeThread?.metadata.workspacePath) || messages.length > 0;
+  // Implicit default directories remain replaceable until the first message is sent.
+  const workspaceLocked = activeThread?.metadata.workspaceExplicit === true || messages.length > 0;
   workspaceLockedRef.current = workspaceLocked;
 
   // 首条消息会在服务端请求开始时锁定工作区,但线程列表仍是旧快照。
@@ -876,8 +918,10 @@ export function ChatPanel() {
   const handledPanelToolCallsRef = React.useRef(new Map<string, string>());
   React.useEffect(() => {
     const handled = handledPanelToolCallsRef.current;
-    const turnStart = messages.findLastIndex((message) => message.role === "user");
-    for (const [index, message] of messages.entries()) {
+    let turnStart = messages.length - 1;
+    while (turnStart >= 0 && messages[turnStart].role !== "user") turnStart -= 1;
+    for (let index = turnStart + 1; index < messages.length; index += 1) {
+      const message = messages[index];
       for (const part of message.parts) {
         if (!isToolUIPart(part) || part.state === "input-streaming") continue;
         const key = `${activeThreadId}:${part.toolCallId}`;
@@ -886,7 +930,7 @@ export function ChatPanel() {
         handled.set(key, part.state);
         // History is inert. A call observed live may finish in the same update
         // that makes the session idle, so still reveal its completed file.
-        if (index <= turnStart || (!isBusy && previousState !== "input-available")) continue;
+        if (!isBusy && previousState !== "input-available") continue;
         const toolName = getToolName(part);
         if (!toolName) continue;
         if (toolName.startsWith("browser_")) {
@@ -1020,10 +1064,17 @@ export function ChatPanel() {
     [persistedInteractions, resolvedInteractionKeys],
   );
   const visibleInteractions = interactions;
-  const displayMessages = React.useMemo(
-    () => buildDisplayMessages(messages, isBusy),
-    [messages, isBusy],
-  );
+  const displayMessagesRef = React.useRef<DisplayMessage[]>([]);
+  const displayMessagesThreadRef = React.useRef<string | null>(activeThreadId);
+  if (displayMessagesThreadRef.current !== activeThreadId) {
+    displayMessagesThreadRef.current = activeThreadId;
+    displayMessagesRef.current = [];
+  }
+  const displayMessages = React.useMemo(() => {
+    const next = buildDisplayMessages(messages, isBusy, displayMessagesRef.current);
+    displayMessagesRef.current = next;
+    return next;
+  }, [activeThreadId, isBusy, messages]);
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
   const outlineEntries = React.useMemo(
@@ -1252,6 +1303,7 @@ export function ChatPanel() {
         replyError={entry.sourceIds.length === 0 ? runError : undefined}
         key={entry.key}
         message={message}
+        pluginSkills={pluginSkills.data}
         onEdit={handleEdit}
         forkMessageId={entry.sourceIds.at(-1) ?? message.id}
         onRetry={handleRetry}
@@ -1259,6 +1311,7 @@ export function ChatPanel() {
         onToggleReaction={handleToggleReaction}
         onForkFromMessage={handleForkFromMessage}
         showAvatar={showAvatar}
+        subagentInvocations={subagents}
         sendFailed={
           sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id
         }
@@ -1288,7 +1341,7 @@ export function ChatPanel() {
         return;
       }
       if (!(text || files.length > 0 || (message.skills ?? []).length > 0)) return;
-      const submittedOptions = buildRequestBodyRef.current(activeThreadIdRef.current ?? "");
+      let submittedOptions = buildRequestBodyRef.current(activeThreadIdRef.current ?? "");
       const clientMessageId = crypto.randomUUID();
 
       if (isBusy || queuedRequests.length > 0) {
@@ -1354,6 +1407,13 @@ export function ChatPanel() {
         }
         initialSend.threadId = thread.id;
         targetThreadId = thread.id;
+        const workspaceSource = useWorkbenchStore.getState().pendingWorkspaceSource;
+        if (workspaceSource?.threadId === thread.id && workspaceSource.sourceThreadId) {
+          submittedOptions = {
+            ...submittedOptions,
+            workspaceSourceThreadId: workspaceSource.sourceThreadId,
+          };
+        }
       }
 
       if (!targetThreadId) {
@@ -1407,6 +1467,7 @@ export function ChatPanel() {
       await invalidateThreads(userId);
       // 工作区选定已随首条消息上传,清空待选状态(选择器此后不再渲染)
       if (consumesWorkspaceSelection) setPendingWorkspacePath(null);
+      clearPendingWorkspaceSource(targetThreadId);
     } finally {
       submittingRef.current = false;
     }
@@ -1476,6 +1537,18 @@ export function ChatPanel() {
           />
         </div>
       ) : null}
+      {/* 提示建议条:官方 Suggestion pattern,位于 Queue 卡片上方。
+          点击即作为普通消息发送(与输入框回车同一条路径)。 */}
+      <PromptSuggestions
+        busy={isBusy}
+        fallbackModel={
+          modelSelection ? `${modelSelection.providerId}/${modelSelection.modelId}` : undefined
+        }
+        messages={messages}
+        onSelect={(suggestion) =>
+          void handleSubmit({ text: suggestion, files: [] }, () => undefined)
+        }
+      />
       {hasQueueCard ? (
         <div className="mx-auto w-full max-w-3xl">
           <ScrollArea className="mx-auto max-h-[min(22rem,45dvh)] w-[96%] rounded-xl">
@@ -1529,6 +1602,7 @@ export function ChatPanel() {
             ) : null}
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
+              activeThreadId={activeThreadId}
               goalAvailable={goalAvailable}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
@@ -1744,17 +1818,28 @@ export function ChatPanel() {
                     ) : (
                       // Waiting and streamed replies share a turn key, so the scroller sees
                       // a growing row rather than a removed placeholder plus a new sibling.
-                      displayMessages.map((entry, index) =>
-                        renderMessageItem(
+                      displayMessages.map((entry, index) => {
+                        const item = renderMessageItem(
                           entry,
                           entry.message.role !== "user" ||
                             displayMessages[index + 1]?.message.role !== "user",
-                        ),
-                      )
+                        );
+                        // 官方 Marker(separator):跨天的消息之间插一条日期分隔,
+                        // 让长会话的时间线可读。同日消息不插入,避免刷屏。
+                        const day = messageDay(entry.message);
+                        const previousDay =
+                          index > 0 ? messageDay(displayMessages[index - 1].message) : undefined;
+                        if (!day || day === previousDay) return item;
+                        return (
+                          <React.Fragment key={entry.key}>
+                            <Marker className="my-3" variant="separator">
+                              <MarkerContent>{formatMessageDay(day, t)}</MarkerContent>
+                            </Marker>
+                            {item}
+                          </React.Fragment>
+                        );
+                      })
                     )}
-                    {/* 压缩进行中 Marker(marker-status / marker-shimmer):仅压缩期间显示。
-                      完成态不再在此渲染 —— 摘要消息已位于线程头部,由消息流中的
-                      CompactedMessageCard 展示(分隔线 + 摘要 + 可展开折叠历史)。 */}
                   </MessageScrollerContent>
                 </MessageScrollerViewport>
                 <MessageScrollerButton />

@@ -12,7 +12,10 @@ import * as React from "react";
 import { toast } from "sonner";
 import {
   useDesktopSettingsQuery,
+  useProviderConfigQuery,
+  useSuggestionConfigQuery,
   useUpdateDesktopSettings,
+  useUpdateSuggestionConfig,
 } from "@/entities/workbench/model/queries/config";
 import { useTranslation } from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
@@ -20,7 +23,12 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
+import {
+  DEFAULT_SUGGESTION_CONFIG,
+  type SuggestionConfig,
+} from "../../../../../../shared/agent-contract";
 import {
   fetchProxySettings,
   type ProxyConfig,
@@ -192,6 +200,7 @@ export function GeneralSection() {
           <p className="text-xs text-muted-foreground">{t("common:loading")}</p>
         )}
       </SettingCard>
+      <SuggestionSettingsCard />
       {/* 界面语言 */}
       <SettingCard
         title={t("settings:general.languageTitle")}
@@ -536,5 +545,89 @@ export function GeneralSection() {
         </div>
       </SettingCard>
     </div>
+  );
+}
+
+/**
+ * 提示建议:输入区上方的一排可点击短提示(官方 Suggestion pattern)。
+ * 开关与生成模型存在服务端 app_config,因此与本地桌面设置分开成卡。
+ */
+function SuggestionSettingsCard() {
+  const { t } = useTranslation();
+  const suggestionConfig = useSuggestionConfigQuery();
+  const updateSuggestionConfig = useUpdateSuggestionConfig();
+  const providers = useProviderConfigQuery().data?.providers ?? [];
+
+  const config = suggestionConfig.data ?? DEFAULT_SUGGESTION_CONFIG;
+  const modelItems = React.useMemo(
+    () => [
+      { value: "", label: t("settings:suggestions.modelSession") },
+      ...providers
+        .filter((provider) => !provider.disabled && provider.enabledModels.length > 0)
+        .flatMap((provider) =>
+          provider.enabledModels.map((model) => ({
+            value: `${provider.id}/${model.id}`,
+            label: `${provider.name} · ${model.name}`,
+          })),
+        ),
+    ],
+    [providers, t],
+  );
+
+  const save = (patch: Partial<SuggestionConfig>) => {
+    updateSuggestionConfig.mutate(
+      { ...config, ...patch },
+      { onError: (error) => toastError(error, t("common:error")) },
+    );
+  };
+
+  return (
+    <SettingCard
+      title={t("settings:suggestions.title")}
+      description={t("settings:suggestions.desc")}
+    >
+      {suggestionConfig.isError ? (
+        <Button onClick={() => void suggestionConfig.refetch()} variant="outline" size="sm">
+          {t("common:retry")}
+        </Button>
+      ) : suggestionConfig.data ? (
+        <>
+          <SettingRow
+            title={t("settings:suggestions.enabled")}
+            description={t("settings:suggestions.enabledDesc")}
+          >
+            <Switch
+              aria-label={t("settings:suggestions.enabled")}
+              checked={config.enabled}
+              disabled={updateSuggestionConfig.isPending}
+              onCheckedChange={(checked) => save({ enabled: checked })}
+            />
+          </SettingRow>
+          <SettingRow
+            title={t("settings:suggestions.model")}
+            description={t("settings:suggestions.modelDesc")}
+          >
+            <Select
+              items={modelItems}
+              onValueChange={(value) => value !== null && save({ model: value })}
+              value={config.model}
+            >
+              <SelectTrigger className="w-64 max-w-full shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {modelItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t("common:loading")}</p>
+      )}
+    </SettingCard>
   );
 }

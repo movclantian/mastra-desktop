@@ -143,6 +143,9 @@ export interface WorkbenchStore {
   openAuxiliaryChat: (threadId: string) => void;
   pendingPrompt: string | null;
   setPendingPrompt: (prompt: string | null) => void;
+  pendingWorkspaceSource: { threadId: string; sourceThreadId: string } | null;
+  setPendingWorkspaceSource: (threadId: string, sourceThreadId: string) => void;
+  clearPendingWorkspaceSource: (threadId?: string) => void;
   pendingLibraryFiles: Array<FileUIPart & { byteSize?: number }>;
   queueLibraryFiles: (files: Array<FileUIPart & { byteSize?: number }>) => void;
   clearPendingLibraryFiles: () => void;
@@ -339,6 +342,15 @@ export const useWorkbenchStore = create<WorkbenchStore>((set, get) => ({
     })),
   pendingPrompt: null,
   setPendingPrompt: (prompt) => set({ pendingPrompt: prompt }),
+  pendingWorkspaceSource: null,
+  setPendingWorkspaceSource: (threadId, sourceThreadId) =>
+    set({ pendingWorkspaceSource: { threadId, sourceThreadId } }),
+  clearPendingWorkspaceSource: (threadId) =>
+    set((state) =>
+      !threadId || state.pendingWorkspaceSource?.threadId === threadId
+        ? { pendingWorkspaceSource: null }
+        : state,
+    ),
   pendingLibraryFiles: [],
   queueLibraryFiles: (files) =>
     set((state) => {
@@ -795,6 +807,7 @@ export function resetWorkbenchStore(): void {
     workspaceByThread: {},
     pendingJump: null,
     pendingPrompt: null,
+    pendingWorkspaceSource: null,
     messageQuotes: {},
     pendingLibraryFiles: [],
     busyThreadIds: {},

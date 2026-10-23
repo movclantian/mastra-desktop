@@ -27,7 +27,14 @@ import {
 } from "@/shared/ui/ai-elements/queue";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
-import { CodeBlock, CodeBlockContent } from "@/shared/ui/code-block";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/shared/ui/code-block";
 import {
   Item,
   ItemActions,
@@ -453,6 +460,13 @@ function AgentApprovalPanel({
         </ItemDescription>
         {interaction.args !== undefined ? (
           <CodeBlock size="sm">
+            {/* 官方 CodeBlock 标题栏:标注这是哪个工具的参数,避免裸 JSON 失去归属 */}
+            <CodeBlockHeader>
+              <CodeBlockTitle>{t("chat:panels.toolArguments", { label })}</CodeBlockTitle>
+              <CodeBlockActions>
+                <CodeBlockCopyButton value={JSON.stringify(interaction.args, null, 2)} />
+              </CodeBlockActions>
+            </CodeBlockHeader>
             <CodeBlockContent wrap className="max-h-32">
               {JSON.stringify(interaction.args, null, 2)}
             </CodeBlockContent>

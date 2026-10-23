@@ -17,7 +17,6 @@ import {
 import { search as searchEmojis } from "node-emoji";
 import * as React from "react";
 import { toast } from "sonner";
-import { usePluginSkills } from "@/entities/skill";
 import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
 import { formatShortcutDisplay, isMacPlatform } from "@/shared/config/shortcut-menu";
 import { useTranslation } from "@/shared/i18n";
@@ -61,7 +60,9 @@ import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { WordRotate } from "@/shared/ui/word-rotate";
+import type { TeamInvocation } from "../../../../../shared/agent-contract";
 import { mediaGenerationStateSchema } from "../../../../../shared/agent-contract";
+import type { PluginSkill } from "../../../../../shared/plugin-contract";
 import { fetchChatAssetBlob } from "../api/chat-api";
 import {
   buildCitationEntries,
@@ -514,6 +515,7 @@ export const MessageItem = React.memo(function MessageItem({
   onRetry,
   onEdit,
   userId,
+  pluginSkills = [],
   readOnly = false,
   showAvatar = true,
   sendFailed = false,
@@ -523,6 +525,7 @@ export const MessageItem = React.memo(function MessageItem({
   onToggleReaction,
   onForkFromMessage,
   forkMessageId,
+  subagentInvocations,
 }: {
   message: UIMessage;
   isStreaming: boolean;
@@ -531,6 +534,7 @@ export const MessageItem = React.memo(function MessageItem({
   onRetry: (messageId: string) => void;
   onEdit: (messageId: string, text: string) => void;
   userId: string;
+  pluginSkills?: PluginSkill[];
   readOnly?: boolean;
   /** MessageGroup 分组中隐藏头像:连续同一发送者仅末条展示头像(官方 message-group) */
   showAvatar?: boolean;
@@ -549,6 +553,8 @@ export const MessageItem = React.memo(function MessageItem({
    * ——那会让每次渲染都产生新函数,直接击穿本组件的 memo。
    */
   forkMessageId?: string;
+  /** 子代理调用:在 trace 内按 toolCallId 匹配,渲染官方 Subagent 行 */
+  subagentInvocations?: TeamInvocation[];
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = React.useState(false);
@@ -588,7 +594,6 @@ export const MessageItem = React.memo(function MessageItem({
         (value): value is string => typeof value === "string" && value.length > 0,
       )
     : [];
-  const pluginSkills = usePluginSkills(userId);
   const fileReferences = getMessageFileReferences(message);
   const files = getMessageFiles(message, fileReferences);
   const reactions = getMessageReactions(message);
@@ -709,7 +714,7 @@ export const MessageItem = React.memo(function MessageItem({
                           variant="outline"
                         >
                           <SparklesIcon className="size-3" />
-                          {pluginSkills.data?.find((item) => item.id === skill)?.displayName ??
+                          {pluginSkills.find((item) => item.id === skill)?.displayName ??
                             t("plugins:unavailableSkill")}
                         </Badge>
                       ))}
@@ -899,6 +904,7 @@ export const MessageItem = React.memo(function MessageItem({
                     key={segment.key}
                     isStreaming={isStreaming}
                     parts={segment.parts}
+                    subagentInvocations={subagentInvocations}
                   />
                 ) : segment.type === "interaction" ? (
                   <AgentInteractionHistory interaction={segment.interaction} key={segment.key} />

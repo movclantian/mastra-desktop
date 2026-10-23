@@ -117,6 +117,19 @@ export function formatShortcutDisplay(keys: string[], isMac: boolean): string {
 }
 
 /**
+ * 逐键返回快捷键,供 KbdGroup 渲染成一排独立键帽。
+ * Mac 上组合键按官方习惯连写(⌘K),Win/Linux 上每个键单独成帽(Ctrl)(K)。
+ */
+export function formatShortcutKeys(keys: string[], isMac: boolean): string[] {
+  if (!keys || keys.length === 0) return [];
+  if (isMac) {
+    const joined = keys.map((k) => formatKeySymbol(k, true)).join("");
+    return [joined];
+  }
+  return keys.map((k) => formatKeySymbol(k, false));
+}
+
+/**
  * 判断当前事件触发源是否为输入类控件
  */
 export function isEditableTarget(target: EventTarget | null): boolean {

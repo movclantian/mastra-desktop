@@ -37,13 +37,9 @@ import {
   StackTraceHeader,
 } from "@/shared/ui/ai-elements/stack-trace";
 import { Task, TaskContent, TaskItemFile, TaskTrigger } from "@/shared/ui/ai-elements/task";
+import { Terminal } from "@/shared/ui/ai-elements/terminal";
+import { parseTestOutput, TestResults } from "@/shared/ui/ai-elements/test-results";
 import { ToolInput, ToolOutput, type ToolPart } from "@/shared/ui/ai-elements/tool";
-import {
-  CodeBlock,
-  CodeBlockActions,
-  CodeBlockContent,
-  CodeBlockCopyButton,
-} from "@/shared/ui/code-block";
 import { CodeFile } from "@/shared/ui/code-file";
 import { Dotm3x3_6 } from "@/shared/ui/dotm-3x3-6";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
@@ -51,7 +47,6 @@ import { DotmHex1 } from "@/shared/ui/dotm-hex-1";
 import { DotmSquare10 } from "@/shared/ui/dotm-square-10";
 import { DotmTriangle2 } from "@/shared/ui/dotm-triangle-2";
 import {
-  Trace,
   TraceCollapsible,
   TraceCollapsibleContent,
   TraceCollapsibleTrigger,
@@ -60,25 +55,24 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/shared/ui/trace";
+import type { TeamInvocation } from "../../../../../shared/agent-contract";
 import { asRecord, getToolTraceState, getTraceStepStatus, type TracePart } from "../model/types";
 import { getToolUI } from "./tool-registry-ui";
 
 const MediaGeneration = React.lazy(() => import("./media-generation"));
 
 export function useTraceDisclosure(showDetails: boolean, isStreaming: boolean) {
-  const [state, setState] = React.useState({ showDetails, isStreaming, open: showDetails });
-  // Reset every disclosure for a new run or preference change, not for each token.
-  if (state.showDetails !== showDetails || state.isStreaming !== isStreaming) {
-    setState({
-      showDetails,
-      isStreaming,
-      open: state.showDetails !== showDetails || isStreaming ? showDetails : state.open,
-    });
-  }
-  const setOpen = React.useCallback((open: boolean) => {
-    setState((current) => ({ ...current, open }));
-  }, []);
-  return [state.open, setOpen] as const;
+  const [open, setOpen] = React.useState(showDetails);
+  const previous = React.useRef({ showDetails, isStreaming });
+
+  React.useEffect(() => {
+    const showDetailsChanged = previous.current.showDetails !== showDetails;
+    const streamingStarted = !previous.current.isStreaming && isStreaming;
+    if (showDetailsChanged || streamingStarted) setOpen(showDetails);
+    previous.current = { showDetails, isStreaming };
+  }, [isStreaming, showDetails]);
+
+  return [open, setOpen] as const;
 }
 
 // Trace provides shared disclosure, status and nested step layout.
@@ -135,6 +129,14 @@ function formatDuration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+/** 子代理显示名:委托记录只带 memberId,内置角色用本地化名,其余直接用 id。 */
+function subagentMemberName(invocation: TeamInvocation): string {
+  const id = invocation.memberId;
+  if (id === "explorer") return "Explorer";
+  if (id === "reviewer") return "Reviewer";
+  return id;
+}
+
 /**
  * 推理步骤由 Trace 展开,正文使用 Streamdown。
  * ReasoningContent 内部由 Streamdown 增量渲染 Markdown,避免纯文本与富文本切换时的闪变。
@@ -185,6 +187,85 @@ const ReasoningStepItem = React.memo(function ReasoningStepItem({
 /**
  * 工具摘要和输出采用 Trace;详情开关允许在输出到达前查看输入。
  */
+/**
+ * Subagent pattern(官方 docs/examples/subagent.mdx):
+ * 一次子代理委托是一行 Trace,展开后是它自己的完整消息流。
+ * 与「成员视图」页面的区别:这里按 toolCallId 精确挂在该次委托的位置上,
+ * 不用切页就能在 trace 里看到子代理说了什么。
+ */
+const SubagentStepItem = React.memo(function SubagentStepItem({
+  invocation,
+  memberName,
+  showDetails,
+  isStreaming,
+}: {
+  invocation: TeamInvocation;
+  memberName: string;
+  showDetails: boolean;
+  isStreaming: boolean;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
+  const running = invocation.status === "running";
+  const status = running
+    ? "running"
+    : invocation.status === "error"
+      ? "error"
+      : invocation.status === "suspended"
+        ? "pending"
+        : undefined;
+  const duration =
+    invocation.endedAt && invocation.startedAt
+      ? Date.parse(invocation.endedAt) - Date.parse(invocation.startedAt)
+      : undefined;
+
+  return (
+    <TraceCollapsible className="w-full" open={open} onOpenChange={setOpen}>
+      <TraceCollapsibleTrigger className="w-full items-start">
+        <TraceLine className="w-full items-start" status={status}>
+          <TraceIcon className="mt-0.5">
+            {running ? (
+              <DotmCircular4 size={14} dotSize={1.6} colorPreset="solid-theme" />
+            ) : invocation.status === "error" ? (
+              <XIcon className="size-3.5 text-destructive" />
+            ) : (
+              <CheckIcon className="size-3.5 text-emerald-500" />
+            )}
+          </TraceIcon>
+          <TraceTitle className="flex-1 whitespace-normal">
+            {t(
+              running
+                ? "chat:trace.subagentRunning"
+                : invocation.status === "error"
+                  ? "chat:trace.subagentFailed"
+                  : "chat:trace.subagentRan",
+              { name: memberName },
+            )}
+          </TraceTitle>
+          {duration !== undefined && Number.isFinite(duration) && duration >= 0 ? (
+            <TraceDescription className="text-[10px]">{formatDuration(duration)}</TraceDescription>
+          ) : null}
+        </TraceLine>
+      </TraceCollapsibleTrigger>
+      <TraceCollapsibleContent>
+        {invocation.prompt ? (
+          <p className="mb-2 min-w-0 whitespace-pre-wrap break-words text-xs text-muted-foreground">
+            {invocation.prompt}
+          </p>
+        ) : null}
+        {invocation.text ? (
+          <p className="min-w-0 whitespace-pre-wrap break-words">{invocation.text}</p>
+        ) : null}
+        {invocation.error ? (
+          <p className="mt-1 min-w-0 whitespace-pre-wrap break-words text-destructive text-xs">
+            {invocation.error}
+          </p>
+        ) : null}
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
+  );
+});
+
 const ToolStepItem = React.memo(function ToolStepItem({
   part,
   showDetails,
@@ -249,6 +330,13 @@ const ToolStepItem = React.memo(function ToolStepItem({
     Boolean(terminalOutput) ||
     Boolean(errorText) ||
     (showDetails && hasInput);
+
+  // 命令输出解析为测试结果时走官方 Test Results 形态;解析不出返回 null。
+  const testRun = React.useMemo(() => {
+    if (!commandSandbox || active) return null;
+    const text = terminalOutput || errorText;
+    return typeof text === "string" && text ? parseTestOutput(text) : null;
+  }, [active, commandSandbox, errorText, terminalOutput]);
 
   // 专属 UI 注册表:命中则用本地化标签 + 精选参数摘要,详情可整体替换;
   // 未命中的工具保持通用展示(原始名 + 自动参数提示 + JSON 详情)。
@@ -376,26 +464,19 @@ const ToolStepItem = React.memo(function ToolStepItem({
       <TraceCollapsibleContent>
         <div className="min-w-0 max-w-full space-y-2">
           {commandSandbox ? (
-            <Trace>
-              {typeof input.command === "string" ? (
-                <CodeBlock size="sm">
-                  <CodeBlockActions>
-                    <CodeBlockCopyButton value={input.command} />
-                  </CodeBlockActions>
-                  <CodeBlockContent wrap>{input.command}</CodeBlockContent>
-                </CodeBlock>
-              ) : null}
-              {terminalOutput || errorText ? (
-                <CodeBlock size="sm" variant={failed ? "destructive" : "default"}>
-                  <CodeBlockActions>
-                    <CodeBlockCopyButton value={terminalOutput || errorText || ""} />
-                  </CodeBlockActions>
-                  <CodeBlockContent wrap className="max-h-64">
-                    {terminalOutput || errorText}
-                  </CodeBlockContent>
-                </CodeBlock>
-              ) : null}
-            </Trace>
+            /* 官方 Terminal pattern:命令 + 流式输出 + 退出码状态。
+               若输出可解析为测试结果,改用官方 Test Results pattern
+               (按套件/用例分组、失败自带错误),否则保持终端形态。 */
+            testRun ? (
+              <TestResults isStreaming={active} run={testRun} />
+            ) : (
+              <Terminal
+                command={typeof input.command === "string" ? input.command : name}
+                exitCode={exitCode}
+                isStreaming={active}
+                output={terminalOutput || errorText || ""}
+              />
+            )
           ) : typescriptSandbox ? (
             <Sandbox
               className="mb-0 min-w-0 max-w-full"
@@ -474,14 +555,16 @@ const ToolStepItem = React.memo(function ToolStepItem({
 });
 
 /** Consecutive tool parts share one expandable Trace group. */
-function ToolGroup({
+const ToolGroup = React.memo(function ToolGroup({
   tools,
   showDetails,
   isStreaming,
+  subagentInvocations,
 }: {
   tools: ToolPart[];
   showDetails: boolean;
   isStreaming: boolean;
+  subagentInvocations?: TeamInvocation[];
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useTraceDisclosure(showDetails, isStreaming);
@@ -547,25 +630,45 @@ function ToolGroup({
         </TraceDescription>
       </TaskTrigger>
       <TaskContent>
-        {tools.map((tool, index) => (
-          <ToolStepItem
-            key={`${tool.toolCallId}:${index}`}
-            part={tool}
-            showDetails={showDetails}
-            isStreaming={isStreaming}
-          />
-        ))}
+        {tools.map((tool, index) => {
+          // 委托调用改走官方 Subagent 行:同一条工具调用,展示的是子代理的
+          // 完整消息而不是工具 JSON。
+          const invocation = subagentInvocations?.find(
+            (call) => call.toolCallId === tool.toolCallId,
+          );
+          if (invocation) {
+            return (
+              <SubagentStepItem
+                key={`${tool.toolCallId}:${index}`}
+                invocation={invocation}
+                memberName={subagentMemberName(invocation)}
+                showDetails={showDetails}
+                isStreaming={isStreaming}
+              />
+            );
+          }
+          return (
+            <ToolStepItem
+              key={`${tool.toolCallId}:${index}`}
+              part={tool}
+              showDetails={showDetails}
+              isStreaming={isStreaming}
+            />
+          );
+        })}
       </TaskContent>
     </Task>
   );
-}
+});
 
-export function AssistantTrace({
+export const AssistantTrace = React.memo(function AssistantTrace({
   parts,
   isStreaming,
+  subagentInvocations,
 }: {
   parts: TracePart[];
   isStreaming: boolean;
+  subagentInvocations?: TeamInvocation[];
 }) {
   const { t } = useTranslation();
   const showDetails = useDesktopSettingsQuery().data?.showWorkDetails ?? false;
@@ -601,7 +704,14 @@ export function AssistantTrace({
     toolRun = [];
     items.push({
       key: `tools-${toolGroupIndex++}-${tools[0].toolCallId}`,
-      node: <ToolGroup tools={tools} showDetails={showDetails} isStreaming={isStreaming} />,
+      node: (
+        <ToolGroup
+          tools={tools}
+          showDetails={showDetails}
+          isStreaming={isStreaming}
+          subagentInvocations={subagentInvocations}
+        />
+      ),
     });
   };
   parts.forEach((part, index) => {
@@ -664,4 +774,4 @@ export function AssistantTrace({
       })}
     </>
   );
-}
+});

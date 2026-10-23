@@ -13,6 +13,7 @@ export const qk = {
   catalog: () => ["catalog"] as const,
   agents: () => ["agents"] as const,
   toolsConfig: () => ["tools-config"] as const,
+  suggestionConfig: () => ["suggestion-config"] as const,
   recentWorkspaces: (userId: string) => ["recent-workspaces", userId] as const,
   treeEntries: (threadId: string, path: string) => ["tree-entries", threadId, path] as const,
   threadChanges: (threadId: string) => ["thread-changes", threadId] as const,

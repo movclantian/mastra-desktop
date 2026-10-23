@@ -61,12 +61,15 @@ import {
   AttachmentAction,
   AttachmentActions,
   AttachmentContent,
+  AttachmentDescription,
   AttachmentGroup,
   AttachmentMedia,
   AttachmentTitle,
+  AttachmentTrigger,
 } from "@/shared/ui/attachment";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/shared/ui/dialog";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { Textarea } from "@/shared/ui/textarea";
 import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../api/chat-api";
@@ -81,6 +84,7 @@ import { ChatContextUsage } from "./context-usage";
 import { MessageQuoteCards, quotedPrompt, useMessageQuotes } from "./message-selection";
 import { ChatModelSelector } from "./model-selector";
 import { PromptInputGlow } from "./prompt-input-glow";
+import { ReasoningEffortSelector } from "./reasoning-effort-selector";
 
 function PromptInputAttachments({
   references,
@@ -92,6 +96,9 @@ function PromptInputAttachments({
   const { t } = useTranslation();
   const attachments = usePromptInputAttachments();
   const referencedSources = usePromptInputReferencedSources();
+  const [previewImage, setPreviewImage] = React.useState<{ url: string; title: string } | null>(
+    null,
+  );
   if (attachments.files.length === 0) return null;
 
   return (
@@ -128,7 +135,28 @@ function PromptInputAttachments({
               </AttachmentMedia>
               <AttachmentContent>
                 <AttachmentTitle>{file.filename ?? t("chat:file")}</AttachmentTitle>
+                {/* 官方状态机:失败原因写进 Description,不让状态只靠颜色传达 */}
+                {file.uploadState === "error" ? (
+                  <AttachmentDescription className="line-clamp-2 whitespace-normal">
+                    {file.uploadError || t("chat:prompt.attachmentFailed")}
+                  </AttachmentDescription>
+                ) : file.uploadState === "uploading" ? (
+                  <AttachmentDescription>
+                    {t("chat:prompt.attachmentUploading")}
+                  </AttachmentDescription>
+                ) : null}
               </AttachmentContent>
+              {/* 图片附件:整卡作为触发器打开大图预览 */}
+              {file.mediaType?.startsWith("image/") ? (
+                <AttachmentTrigger
+                  aria-label={t("chat:prompt.previewAttachment", {
+                    filename: file.filename ?? t("chat:file"),
+                  })}
+                  onClick={() =>
+                    setPreviewImage({ url: file.url, title: file.filename ?? t("chat:file") })
+                  }
+                />
+              ) : null}
               <span
                 className="shrink-0 text-xs text-muted-foreground"
                 role="status"
@@ -179,6 +207,23 @@ function PromptInputAttachments({
         </AttachmentGroup>
         <ScrollBar orientation="horizontal" />
       </ScrollArea>
+      {/* 官方 Attachment Trigger 预览:图片附件整卡可点开大图 */}
+      <Dialog open={previewImage !== null} onOpenChange={(next) => !next && setPreviewImage(null)}>
+        <DialogContent className="max-w-[min(90vw,56rem)] p-2">
+          <DialogHeader>
+            <DialogTitle className="truncate text-sm">
+              {previewImage?.title ?? t("chat:file")}
+            </DialogTitle>
+          </DialogHeader>
+          {previewImage ? (
+            <img
+              alt={previewImage.title}
+              className="max-h-[80vh] w-full object-contain"
+              src={previewImage.url}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -745,6 +790,7 @@ export function UserRequestQueuePanel({
 
 export function ChatPromptInput({
   activeThread,
+  activeThreadId,
   usage,
   billingUsage,
   onSubmit,
@@ -757,6 +803,8 @@ export function ChatPromptInput({
   onGoalModeChange,
 }: {
   activeThread: boolean;
+  /** 当前线程:思考力度菜单按线程设置读写 */
+  activeThreadId: string | null;
   goalAvailable: boolean;
   goalMode: boolean;
   onGoalModeChange: (enabled: boolean) => void;
@@ -1003,6 +1051,8 @@ export function ChatPromptInput({
               <ChatContextUsage usage={usage} billingUsage={billingUsage} />
             </div>
             <ChatModelSelector />
+            {/* 官方 Model Selector:模型与思考力度是两个并列菜单 */}
+            <ReasoningEffortSelector threadId={activeThreadId} />
             <PromptInputSubmit
               disabled={
                 status !== "streaming" &&

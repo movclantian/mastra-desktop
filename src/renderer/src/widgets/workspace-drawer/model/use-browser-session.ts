@@ -227,7 +227,7 @@ export function useBrowserSession(active: boolean) {
   }, [invalidateFrame, refreshState, stateUrl, nativeBrowser]);
 
   React.useEffect(() => {
-    if (!active || !stateUrl || nativeBrowser) return;
+    if (!viewActive || !stateUrl || nativeBrowser) return;
     let stopped = false;
     let timer: number;
     const refresh = async () => {
@@ -239,7 +239,7 @@ export function useBrowserSession(active: boolean) {
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [active, nativeBrowser, refreshState, stateUrl]);
+  }, [nativeBrowser, refreshState, stateUrl, viewActive]);
 
   React.useEffect(() => {
     void screencastAttempt;

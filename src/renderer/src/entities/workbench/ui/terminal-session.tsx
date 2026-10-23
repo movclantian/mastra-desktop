@@ -180,6 +180,10 @@ export function TerminalSession({
   }, []);
 
   React.useEffect(() => {
+    if (!active) {
+      setStatus("exited");
+      return;
+    }
     const el = containerRef.current;
     if (!el) return;
     let disposed = false;
@@ -323,7 +327,7 @@ export function TerminalSession({
       fitRef.current = null;
       term.dispose();
     };
-  }, [sessionId, workingDirectory, targetThreadId, userId, restart, fitTerminal]);
+  }, [active, sessionId, workingDirectory, targetThreadId, userId, restart, fitTerminal]);
 
   React.useEffect(() => {
     if (!active) return;

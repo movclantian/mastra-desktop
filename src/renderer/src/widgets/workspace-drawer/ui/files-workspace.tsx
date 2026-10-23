@@ -903,13 +903,14 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
   }, [activeThreadId, fetchTreeEntries]);
 
   React.useEffect(() => {
+    if (!active) return;
     fileSelectionIdRef.current++;
     setSelectedPath(undefined);
     setOpenFiles([]);
     setActiveFilePath(undefined);
     setLoadingPaths(new Set());
     void refreshTree();
-  }, [refreshTree]);
+  }, [active, refreshTree]);
 
   // 编辑器状态 → editor state lane:模型据此知道用户正在看哪个文件、有没有
   // 未保存改动,不必再靠工具去猜(等价于 IDE 的 opened-file / selection 上下文)。
@@ -1288,10 +1289,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
     );
   }, []);
 
-  if (!activeThread?.metadata.workspacePath) {
+  if (!activeThread) {
     return (
-      /* 等待绑定 = 呼吸涟漪。背景层与 Empty 同级,不塞进 Empty 内部,
-         否则会顶开 EmptyMedia 的居中定位 */
       <div className="relative flex h-full min-h-0 items-center justify-center overflow-hidden">
         <Ripple
           className="pointer-events-none opacity-60"
@@ -1304,14 +1303,8 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
             <EmptyMedia variant="icon">
               <FolderTreeIcon />
             </EmptyMedia>
-            <EmptyTitle>
-              {!activeThread ? t("workspace:notSelectedSession") : t("workspace:notBoundWorkspace")}
-            </EmptyTitle>
-            <EmptyDescription>
-              {!activeThread
-                ? t("workspace:selectOrCreateSessionDesc")
-                : t("workspace:sendFirstMessageDesc")}
-            </EmptyDescription>
+            <EmptyTitle>{t("workspace:notSelectedSession")}</EmptyTitle>
+            <EmptyDescription>{t("workspace:selectOrCreateSessionDesc")}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       </div>
@@ -1447,7 +1440,7 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
             ) : activeFile ? (
               <div className="relative size-full">
                 {openFiles
-                  .filter((item) => !item.isBinary)
+                  .filter((item) => item.path === activeFilePath && !item.isBinary)
                   .map((item) => (
                     <div
                       className={cn(
@@ -1519,12 +1512,15 @@ export function FilesWorkspace({ active, tabId }: { active: boolean; tabId: stri
         <aside className={cn("flex size-full min-w-0 flex-col bg-muted/20", !treeOpen && "hidden")}>
           <PanelHeader className="h-10 bg-muted/60 px-3 text-xs font-medium">
             <FolderTreeIcon className="size-4 text-muted-foreground" />
-            <span className="min-w-0 flex-1 truncate" title={activeThread.metadata.workspacePath}>
+            <span
+              className="min-w-0 flex-1 truncate"
+              title={activeThread.metadata.workspacePath ?? t("workspace:defaultWorkspace")}
+            >
               {activeThread.metadata.workspacePath
                 ?.replaceAll("\\", "/")
                 .split("/")
                 .filter(Boolean)
-                .at(-1)}
+                .at(-1) ?? t("workspace:defaultWorkspace")}
             </span>
 
             {/* 更多文件管理操作 */}

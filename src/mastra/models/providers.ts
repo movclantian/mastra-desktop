@@ -652,6 +652,7 @@ export async function createProviderModel(
           providerId: route.providerId,
           apiKey,
         });
+  // Mastra and direct AI SDK dependencies resolve distinct v7 provider type copies.
   return wrapLanguageModel({
     model,
     ...(route.providerId === "custom" ? { providerId: provider.id } : {}),
@@ -666,7 +667,7 @@ export async function createProviderModel(
           ]
         : []),
     ],
-  });
+  }) as unknown as GatewayLanguageModel;
 }
 
 /** The connection protocol selects the official SDK; credentials never leave the host. */

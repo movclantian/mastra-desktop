@@ -862,11 +862,13 @@ export function useThreadSessions(
   return { getThreadSession, retainActive };
 }
 
-export function useSessionView(session: ThreadSession | null) {
-  const snapshot = useStore(session?.store ?? emptyStore);
+export function useSessionView(session: ThreadSession | null, enabled = true) {
+  const snapshot = useStore(enabled ? (session?.store ?? emptyStore) : emptyStore);
   React.useEffect(() => {
-    if (session) void session.connect().catch(() => undefined);
-  }, [session]);
+    if (!session || !enabled) return;
+    void session.connect().catch(() => undefined);
+    return () => session.disconnect();
+  }, [enabled, session]);
   const setMessages = React.useCallback(
     (update: MessageUpdate) => session?.setMessages(update),
     [session],

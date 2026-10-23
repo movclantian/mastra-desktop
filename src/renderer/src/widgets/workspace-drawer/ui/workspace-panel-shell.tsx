@@ -16,7 +16,12 @@ import {
 } from "lucide-react";
 import * as React from "react";
 import { TerminalSession } from "@/entities/workbench";
+import {
+  useCreateThreadMutation,
+  useSelectThread,
+} from "@/entities/workbench/model/queries/threads";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
+import { useAuth } from "@/features/auth";
 import { formatShortcutDisplay, isMacPlatform } from "@/features/command-palette";
 import { TAB_DND_TYPE } from "@/shared/config";
 import { useTranslation } from "@/shared/i18n";
@@ -111,6 +116,10 @@ function getInitialFloatingBounds(): FloatingBounds {
 
 export function WorkspacePanelShell({ active }: { active: boolean }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const userId = user?.id ?? "anonymous";
+  const createThreadMutation = useCreateThreadMutation(userId);
+  const selectThread = useSelectThread();
   const filePreview = useWorkbenchStore((store) => store.filePreview);
   const clearFilePreview = useWorkbenchStore((store) => store.clearFilePreview);
   const activePanelTab = useWorkbenchStore((store) => store.activePanelTab);
@@ -174,14 +183,44 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
     );
   };
 
-  const createPanelTab = (kind: "browser" | "terminal" | "files" | "changes") => {
-    if (kind !== "browser") {
-      addPanelTab(kind);
-      return;
+  const ensureActiveThread = React.useCallback(async () => {
+    const current = useWorkbenchStore.getState().lastKnownThreadId;
+    if (current) return current;
+    const thread = await createThreadMutation
+      .mutateAsync({ deferSelection: true })
+      .catch(() => null);
+    if (!thread) return null;
+    await selectThread(thread.id);
+    return thread.id;
+  }, [createThreadMutation.mutateAsync, selectThread]);
+
+  const createNewSession = React.useCallback(async () => {
+    const sourceThreadId = useWorkbenchStore.getState().lastKnownThreadId;
+    const thread = await createThreadMutation
+      .mutateAsync({ deferSelection: true })
+      .catch(() => null);
+    if (!thread) return;
+    if (sourceThreadId) {
+      useWorkbenchStore.getState().setPendingWorkspaceSource(thread.id, sourceThreadId);
     }
-    // Dispatch creation before revealing the surface; ensure() then reuses this first tab.
-    void action("new-tab");
-    activatePanelTab({ kind: "browser", index: state.tabs.length });
+    await selectThread(thread.id);
+  }, [createThreadMutation.mutateAsync, selectThread]);
+
+  const openWorkspaceTab = (kind: "browser" | "terminal" | "files" | "changes") => {
+    void ensureActiveThread().then((threadId) => {
+      if (!threadId) return;
+      if (kind !== "browser") {
+        addPanelTab(kind);
+        return;
+      }
+      // Dispatch creation before revealing the surface; ensure() then reuses this first tab.
+      void action("new-tab");
+      activatePanelTab({ kind: "browser", index: state.tabs.length });
+    });
+  };
+
+  const createPanelTab = (kind: "browser" | "terminal" | "files" | "changes") => {
+    openWorkspaceTab(kind);
   };
   const [floatingBounds, setFloatingBounds] =
     React.useState<FloatingBounds>(getInitialFloatingBounds);
@@ -658,15 +697,15 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
                           </ContextMenuSubTrigger>
                           <ContextMenuSubContent className="w-44">
                             <ContextMenuGroup>
-                              <ContextMenuItem onClick={() => addPanelTab("files")}>
+                              <ContextMenuItem onClick={() => openWorkspaceTab("files")}>
                                 <FolderTreeIcon className="text-muted-foreground" />
                                 <span>{t("workspace:files")}</span>
                               </ContextMenuItem>
-                              <ContextMenuItem onClick={() => addPanelTab("terminal")}>
+                              <ContextMenuItem onClick={() => openWorkspaceTab("terminal")}>
                                 <TerminalIcon className="text-muted-foreground" />
                                 <span>{t("workspace:terminal")}</span>
                               </ContextMenuItem>
-                              <ContextMenuItem onClick={() => addPanelTab("changes")}>
+                              <ContextMenuItem onClick={() => openWorkspaceTab("changes")}>
                                 <FileDiffIcon className="text-muted-foreground" />
                                 <span>{t("workspace:codeChanges")}</span>
                               </ContextMenuItem>
@@ -872,10 +911,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
               activePanelTab.id === tab.id;
             if (!selected && !mountedPanelTabIds.has(tab.id)) return null;
             return (
-              <div
-                className={cn("size-full", selected ? "block" : "hidden")}
-                key={`${tab.id}:${activeThreadId ?? "none"}`}
-              >
+              <div className={cn("size-full", selected ? "block" : "hidden")} key={tab.id}>
                 {tab.kind === "files" ? (
                   <div className="relative size-full">
                     <div
@@ -938,12 +974,14 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
               </div>
             );
           })}
-          <div className={cn("size-full", !isWelcomeActive && browserActive ? "block" : "hidden")}>
-            <BrowserView
-              onCloseBrowser={closeBrowserAndReturnToLocalTab}
-              session={browserSession}
-            />
-          </div>
+          {!isWelcomeActive && browserActive ? (
+            <div className="size-full">
+              <BrowserView
+                onCloseBrowser={closeBrowserAndReturnToLocalTab}
+                session={browserSession}
+              />
+            </div>
+          ) : null}
           {isWelcomeActive ? (
             <div className="flex size-full flex-col items-center justify-center p-6 select-none">
               <Empty className="max-w-sm w-full p-0">
@@ -966,7 +1004,33 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
                           variant="ghost"
                           className="h-auto whitespace-normal"
                           type="button"
-                          onClick={() => addPanelTab("files")}
+                          onClick={() => void createNewSession()}
+                        />
+                      }
+                    >
+                      <ItemMedia variant="icon">
+                        <PlusIcon className="size-4 text-foreground" />
+                      </ItemMedia>
+                      <ItemContent className="min-w-0 flex-1">
+                        <ItemTitle className="text-xs font-medium">
+                          {t("sidebar:newThreadInWorkspace")}
+                        </ItemTitle>
+                        <ItemDescription className="truncate text-xs text-muted-foreground">
+                          {t("workspace:newSessionDesc")}
+                        </ItemDescription>
+                      </ItemContent>
+                    </Item>
+
+                    <Item
+                      variant="outline"
+                      size="sm"
+                      className="cursor-pointer transition-colors hover:bg-muted/70"
+                      render={
+                        <Button
+                          variant="ghost"
+                          className="h-auto whitespace-normal"
+                          type="button"
+                          onClick={() => openWorkspaceTab("files")}
                         />
                       }
                     >
@@ -1018,7 +1082,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
                           variant="ghost"
                           className="h-auto whitespace-normal"
                           type="button"
-                          onClick={() => addPanelTab("terminal")}
+                          onClick={() => openWorkspaceTab("terminal")}
                         />
                       }
                     >
@@ -1044,7 +1108,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
                           variant="ghost"
                           className="h-auto whitespace-normal"
                           type="button"
-                          onClick={() => addPanelTab("changes")}
+                          onClick={() => openWorkspaceTab("changes")}
                         />
                       }
                     >

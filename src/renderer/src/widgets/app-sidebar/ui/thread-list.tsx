@@ -604,6 +604,7 @@ export function WorkspaceGroup({
   const selectThread = useSelectThread();
   const setActiveThreadId = (id: string | null) => selectThread(id);
   const setTerminalPanelOpen = useWorkbenchStore((state) => state.setTerminalPanelOpen);
+  const setPendingWorkspaceSource = useWorkbenchStore((state) => state.setPendingWorkspaceSource);
   const isThreadBusy = useIsThreadBusy(userId);
   const sorted = sortThreads(threads);
   const [open, setOpen] = React.useState(false);
@@ -615,8 +616,11 @@ export function WorkspaceGroup({
   };
 
   const handleCreateThreadInWorkspace = async () => {
-    const newThread = await createThreadMutation.mutateAsync(undefined).catch(() => null);
+    const newThread = await createThreadMutation
+      .mutateAsync({ deferSelection: true })
+      .catch(() => null);
     if (newThread) {
+      if (threads[0]) setPendingWorkspaceSource(newThread.id, threads[0].id);
       setActiveThreadId(newThread.id);
       toast.success(t("sidebar:createdWorkspaceThread"));
     }

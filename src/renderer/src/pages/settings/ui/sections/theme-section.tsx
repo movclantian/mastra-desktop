@@ -290,65 +290,69 @@ export function ThemeSection() {
           {/* 主题列表 */}
           <ScrollArea className="min-h-0 flex-1 p-2">
             <SidebarMenu>
-              {filteredPresets.map((preset) => {
-                const isActive = activePresetId === preset.id;
-                const colors = isDark ? preset.dark : preset.light;
-                return (
-                  <SidebarMenuItem
-                    key={preset.id}
-                    className="[content-visibility:auto] [contain-intrinsic-size:0_4.5rem]"
-                  >
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setPreset(preset.id)}
-                      tooltip={preset.name}
-                      className={cn(
-                        "h-auto py-2 px-2 flex-col items-start gap-1 cursor-pointer transition-colors",
-                        isActive && "bg-sidebar-accent border border-sidebar-border shadow-xs",
-                      )}
-                    >
-                      <div className="flex w-full items-center justify-between gap-1.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          {/* 缩略色块三色 Pill */}
-                          <div
-                            className="flex h-4 w-6 shrink-0 overflow-hidden rounded-xs border"
-                            style={{ borderColor: colors.border }}
-                          >
-                            <span
-                              className="w-1/3 h-full"
-                              style={{ backgroundColor: colors.background }}
-                            />
-                            <span
-                              className="w-1/3 h-full"
-                              style={{ backgroundColor: colors.primary }}
-                            />
-                            <span
-                              className="w-1/3 h-full"
-                              style={{ backgroundColor: colors.accent }}
-                            />
-                          </div>
-                          <span className="font-semibold text-xs truncate group-data-[collapsible=icon]/sidebar:hidden">
-                            {preset.name}
-                          </span>
-                        </div>
-                        {isActive ? (
-                          <CheckIcon className="size-3.5 text-primary shrink-0 group-data-[collapsible=icon]/sidebar:hidden" />
-                        ) : null}
-                      </div>
-
-                      <div className="flex w-full items-center justify-between gap-1 text-[11px] text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
-                        <span className="truncate">{preset.englishName}</span>
-                        <Badge
-                          variant={preset.category === "brutalism" ? "default" : "secondary"}
-                          className="h-4 text-[10px] px-1 font-mono shrink-0"
+              {React.useMemo(
+                () =>
+                  filteredPresets.map((preset) => {
+                    const isActive = activePresetId === preset.id;
+                    const colors = isDark ? preset.dark : preset.light;
+                    return (
+                      <SidebarMenuItem
+                        key={preset.id}
+                        className="[content-visibility:auto] [contain-intrinsic-size:0_4.5rem]"
+                      >
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setPreset(preset.id)}
+                          tooltip={preset.name}
+                          className={cn(
+                            "h-auto py-2 px-2 flex-col items-start gap-1 cursor-pointer transition-colors",
+                            isActive && "bg-sidebar-accent border border-sidebar-border shadow-xs",
+                          )}
                         >
-                          {preset.registrySource}
-                        </Badge>
-                      </div>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+                          <div className="flex w-full items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-2 min-w-0">
+                              {/* 缩略色块三色 Pill */}
+                              <div
+                                className="flex h-4 w-6 shrink-0 overflow-hidden rounded-xs border"
+                                style={{ borderColor: colors.border }}
+                              >
+                                <span
+                                  className="w-1/3 h-full"
+                                  style={{ backgroundColor: colors.background }}
+                                />
+                                <span
+                                  className="w-1/3 h-full"
+                                  style={{ backgroundColor: colors.primary }}
+                                />
+                                <span
+                                  className="w-1/3 h-full"
+                                  style={{ backgroundColor: colors.accent }}
+                                />
+                              </div>
+                              <span className="font-semibold text-xs truncate group-data-[collapsible=icon]/sidebar:hidden">
+                                {preset.name}
+                              </span>
+                            </div>
+                            {isActive ? (
+                              <CheckIcon className="size-3.5 text-primary shrink-0 group-data-[collapsible=icon]/sidebar:hidden" />
+                            ) : null}
+                          </div>
+
+                          <div className="flex w-full items-center justify-between gap-1 text-[11px] text-muted-foreground group-data-[collapsible=icon]/sidebar:hidden">
+                            <span className="truncate">{preset.englishName}</span>
+                            <Badge
+                              variant={preset.category === "brutalism" ? "default" : "secondary"}
+                              className="h-4 text-[10px] px-1 font-mono shrink-0"
+                            >
+                              {preset.registrySource}
+                            </Badge>
+                          </div>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  }),
+                [activePresetId, filteredPresets, isDark, setPreset],
+              )}
             </SidebarMenu>
           </ScrollArea>
 

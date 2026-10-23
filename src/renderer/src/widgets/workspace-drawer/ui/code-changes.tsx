@@ -154,9 +154,6 @@ function CodeChangeRow({
         <div className="mt-2 flex items-center gap-1.5 px-1 text-[10px] text-muted-foreground">
           <Code2Icon className="size-3" />
           <span>{change.toolName.replace(/^mastra_workspace_/, "")}</span>
-          {change.toolCallId ? (
-            <span className="truncate font-mono">{change.toolCallId}</span>
-          ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>

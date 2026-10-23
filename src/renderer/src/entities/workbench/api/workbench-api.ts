@@ -2,7 +2,11 @@ import { toast } from "sonner";
 import { apiFetch, getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
-import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
+import {
+  DEFAULT_AGENT_PROFILE_ID,
+  type SuggestionConfig,
+  SuggestionConfigSchema,
+} from "../../../../../shared/agent-contract";
 import type { WorkspaceApp } from "../../../../../shared/workspace-contract";
 import type { ProviderConfig } from "../model/providers";
 import type {
@@ -454,6 +458,46 @@ export async function saveWorkspaceFile(
     `/work/threads/${encodeURIComponent(threadId)}/file?${new URLSearchParams({ resourceId, path })}`,
     { method: "PUT", body: { content } },
     i18n.t("workspace:saveFailed"),
+  );
+}
+
+// ---- Prompt Suggestions API --------------------------------------------------
+
+export function fetchSuggestionConfig(): Promise<SuggestionConfig> {
+  return requestJson<SuggestionConfig>(
+    "/work/suggestions/config",
+    {},
+    i18n.t("settings:suggestions.loadFailed"),
+  );
+}
+
+export function saveSuggestionConfig(config: SuggestionConfig): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(
+    "/work/suggestions/config",
+    { method: "POST", body: SuggestionConfigSchema.parse(config) },
+    i18n.t("settings:suggestions.saveFailed"),
+  );
+}
+
+export interface SuggestionMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/** 生成下一步提示建议;服务端未启用或生成失败时返回空数组。 */
+export function fetchPromptSuggestions(
+  messages: SuggestionMessage[],
+  fallbackModel?: string,
+  signal?: AbortSignal,
+): Promise<{ suggestions: string[] }> {
+  return requestJson<{ suggestions: string[] }>(
+    "/work/suggestions",
+    {
+      method: "POST",
+      body: { messages, ...(fallbackModel ? { fallbackModel } : {}) },
+      ...(signal ? { signal } : {}),
+    },
+    i18n.t("settings:suggestions.generateFailed"),
   );
 }
 

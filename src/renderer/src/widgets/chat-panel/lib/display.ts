@@ -10,6 +10,8 @@ export interface DisplayMessage {
   message: WorkUIMessage;
   sourceIds: string[];
   key: string;
+  turnId: string;
+  sourceMessages: WorkUIMessage[];
 }
 
 /**
@@ -18,12 +20,38 @@ export interface DisplayMessage {
  * not a conversation turn for the user. Keep all parts in order while making
  * consecutive assistant rows one visual message.
  */
-export function buildDisplayMessages(messages: WorkUIMessage[], pending = false): DisplayMessage[] {
+export function buildDisplayMessages(
+  messages: WorkUIMessage[],
+  pending = false,
+  previous: DisplayMessage[] = [],
+): DisplayMessage[] {
   const display: DisplayMessage[] = [];
   let toolPositions = new Map<string, number>();
-
   let turnId = "initial";
-  for (const message of messages) {
+  let messageOffset = 0;
+
+  for (let index = 0; index < previous.length; index += 1) {
+    const cached = previous[index];
+    if (cached.sourceMessages.length === 0) break;
+    const matches = cached.sourceMessages.every(
+      (source, sourceIndex) => messages[messageOffset + sourceIndex] === source,
+    );
+    if (!matches) break;
+    const nextMessage = messages[messageOffset + cached.sourceMessages.length];
+    if (
+      index === previous.length - 1 &&
+      cached.message.role === "assistant" &&
+      nextMessage?.role === "assistant"
+    )
+      break;
+    display.push(cached);
+    messageOffset += cached.sourceMessages.length;
+    turnId = cached.turnId;
+    toolPositions = new Map();
+  }
+
+  for (let messageIndex = messageOffset; messageIndex < messages.length; messageIndex += 1) {
+    const message = messages[messageIndex];
     if (message.role !== "assistant") turnId = message.id;
     const previous = display.at(-1);
     const previousMessage = previous?.message;
@@ -41,6 +69,7 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
     ) {
       entry = previous;
       entry.sourceIds.push(message.id);
+      entry.sourceMessages.push(message);
       // Identity is stamped when a run finishes; missing live metadata is not a new speaker.
       entry.message.metadata = {
         ...previousMessage.metadata,
@@ -54,6 +83,8 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
       entry = {
         message: { ...message, parts: [] },
         sourceIds: [message.id],
+        sourceMessages: [message],
+        turnId,
         key:
           message.role === "assistant"
             ? previousMessage?.role === "assistant"
@@ -86,7 +117,13 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
   ) {
     // Preserve the reply row through pending, failure and idle snapshots.
     const id = `reply-${turnId}`;
-    display.push({ key: id, sourceIds: [], message: { id, role: "assistant", parts: [] } });
+    display.push({
+      key: id,
+      sourceIds: [],
+      sourceMessages: [],
+      turnId,
+      message: { id, role: "assistant", parts: [] },
+    });
   }
   return display;
 }

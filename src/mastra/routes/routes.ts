@@ -1,10 +1,16 @@
 import { inlineCompletionRoute, inlineEditRoute } from "../workspace/inline-edit";
+
 /**
  * MastraWork 工作台 API 路由汇总。
  * 注意:Mastra 保留 /api 前缀给内置路由,自定义路由统一使用 /work/*。
  * apiRoutes 在 src/mastra/index.ts 注册。
  */
 
+import {
+  saveSuggestionsConfigRoute,
+  suggestionsConfigRoute,
+  suggestPromptsRoute,
+} from "../suggestions/suggestions";
 import {
   agentProfileCapabilitiesRoute,
   agentProfileInstructionsPreviewRoute,
@@ -161,5 +167,8 @@ export const workRoutes = [
   saveThreadFileRoute,
   toolsConfigRoute,
   saveToolsConfigRoute,
+  suggestionsConfigRoute,
+  saveSuggestionsConfigRoute,
+  suggestPromptsRoute,
   usageSummaryRoute,
 ];

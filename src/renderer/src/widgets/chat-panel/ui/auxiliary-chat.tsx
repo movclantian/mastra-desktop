@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpIcon, SquareIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { usePluginSkills } from "@/entities/skill";
 import { useInvalidateThreads, useThreadsQuery } from "@/entities/workbench/model/queries/threads";
 import type { WorkThread } from "@/entities/workbench/model/types";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
@@ -38,19 +39,29 @@ import {
 export function AuxiliaryChat({ threadId, active }: { threadId: string; active: boolean }) {
   const { user } = useAuth();
   const userId = user?.id ?? "anonymous";
+  const pluginSkills = usePluginSkills(user?.id);
   const threadsQuery = useThreadsQuery(userId);
   const thread = threadsQuery.data?.find((item) => item.id === threadId);
-  return thread ? <AuxiliaryThreadChat thread={thread} userId={userId} active={active} /> : null;
+  return thread ? (
+    <AuxiliaryThreadChat
+      thread={thread}
+      userId={userId}
+      active={active}
+      pluginSkills={pluginSkills.data}
+    />
+  ) : null;
 }
 
 function AuxiliaryThreadChat({
   thread,
   userId,
   active,
+  pluginSkills,
 }: {
   thread: WorkThread;
   userId: string;
   active: boolean;
+  pluginSkills: ReturnType<typeof usePluginSkills>["data"];
 }) {
   const { t } = useTranslation();
   const threadId = thread.id;
@@ -66,6 +77,7 @@ function AuxiliaryThreadChat({
     queryKey: ["auxiliary-interactions", userId, threadId],
     queryFn: async () =>
       parseSuspendedRuns((await fetchDisplayState(threadId, userId)).displayState?.suspendedRuns),
+    enabled: active,
   });
   const { getThreadSession } = useThreadSessions(
     userId,
@@ -77,7 +89,7 @@ function AuxiliaryThreadChat({
     },
   );
   const session = getThreadSession(threadId);
-  const { messages, status, runError } = useSessionView(session);
+  const { messages, status, runError } = useSessionView(session, active);
   const busy = status === "submitted" || status === "streaming";
   const interactions = interactionsQuery.data ?? [];
   const display = React.useMemo(() => buildDisplayMessages(messages, busy), [messages, busy]);
@@ -150,6 +162,7 @@ function AuxiliaryThreadChat({
                       key={entry.key}
                       message={entry.message}
                       userId={userId}
+                      pluginSkills={pluginSkills}
                       readOnly
                       isGenerating={busy}
                       isStreaming={busy && index === display.length - 1}

@@ -40,32 +40,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/shared/ui/dialog";
+import { Kbd, KbdGroup } from "@/shared/ui/kbd";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import type { WorkspaceApp } from "../../../../shared/workspace-contract";
 import {
   buildShortcutMenuGroups,
   CORE_SHORTCUT_SPECS,
   focusChatPromptInput,
-  formatShortcutDisplay,
+  formatShortcutKeys,
   isEditableTarget,
   isMacPlatform,
   matchesShortcut,
   type ShortcutMenuItem,
   type ShortcutSpec,
 } from "./shortcut-menu";
-
-function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
-  return (
-    <kbd
-      data-slot="kbd"
-      className={cn(
-        "pointer-events-none inline-flex h-5 w-fit shrink-0 items-center justify-center rounded border border-border/70 bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground select-none shadow-2xs",
-        className,
-      )}
-      {...props}
-    />
-  );
-}
 
 /**
  * 顶部导航栏命令面板快速触发按钮 (参考 VS Code / Linear / Raycast 交互风格)
@@ -368,10 +356,10 @@ function ShortcutsHelpDialog({
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                   {specs.map((spec) => {
-                    const primaryDisplay = formatShortcutDisplay(spec.keys, isMac);
-                    const secondaryDisplay = spec.secondaryKeys
-                      ? formatShortcutDisplay(spec.secondaryKeys, isMac)
-                      : null;
+                    const primaryKeys = formatShortcutKeys(spec.keys, isMac);
+                    const secondaryKeys = spec.secondaryKeys
+                      ? formatShortcutKeys(spec.secondaryKeys, isMac)
+                      : [];
                     return (
                       <div
                         key={spec.id}
@@ -386,15 +374,23 @@ function ShortcutsHelpDialog({
                           </p>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          {primaryDisplay ? (
-                            <Kbd>{primaryDisplay}</Kbd>
+                          {primaryKeys.length > 0 ? (
+                            <KbdGroup>
+                              {primaryKeys.map((key) => (
+                                <Kbd key={key}>{key}</Kbd>
+                              ))}
+                            </KbdGroup>
                           ) : (
                             <span className="text-[10px] text-muted-foreground">—</span>
                           )}
-                          {secondaryDisplay ? (
+                          {secondaryKeys.length > 0 ? (
                             <>
                               <span className="text-[10px] text-muted-foreground">/</span>
-                              <Kbd>{secondaryDisplay}</Kbd>
+                              <KbdGroup>
+                                {secondaryKeys.map((key) => (
+                                  <Kbd key={key}>{key}</Kbd>
+                                ))}
+                              </KbdGroup>
                             </>
                           ) : null}
                         </div>

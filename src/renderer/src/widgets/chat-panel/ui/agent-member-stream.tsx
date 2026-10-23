@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon, XIcon } from "lucide-react";
+import { usePluginSkills } from "@/entities/skill";
 import type { AgentProfile } from "@/entities/workbench";
 import { useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api/client";
@@ -180,6 +181,8 @@ export function AgentMemberMessageView({
   profile: AgentProfile;
 }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const pluginSkills = usePluginSkills(user?.id);
   return (
     <div className="flex min-w-0 flex-col gap-4" data-agent-member-view>
       {runtime.entries.length === 0 ? (
@@ -192,6 +195,7 @@ export function AgentMemberMessageView({
             threadId={threadId}
             invocation={entry.invocation}
             member={member}
+            pluginSkills={pluginSkills.data}
             profile={profile}
           />
         ) : null,
@@ -204,11 +208,13 @@ function InvocationTranscript({
   threadId,
   invocation,
   member,
+  pluginSkills,
   profile,
 }: {
   threadId: string;
   invocation: TeamInvocation;
   member: AgentProfile["members"][number];
+  pluginSkills: ReturnType<typeof usePluginSkills>["data"];
   profile: AgentProfile;
 }) {
   const { user } = useAuth();
@@ -278,7 +284,7 @@ function InvocationTranscript({
           <TraceDescription>{(duration / 1000).toFixed(1)} s</TraceDescription>
         ) : null}
       </TraceLine>
-      <div className="mt-2 mb-1 ml-[calc(--spacing(2)-1px)] min-w-0 border-l pr-1 pl-4 leading-relaxed wrap-break-word text-muted-foreground">
+      <div className="mt-2 mb-1 min-w-0 pr-1 leading-relaxed wrap-break-word text-muted-foreground">
         <div className="flex min-w-0 flex-col gap-2">
           {display.map((entry, index) => {
             const isPrompt = entry.message.role === "user";
@@ -298,6 +304,7 @@ function InvocationTranscript({
                   },
                 }}
                 userId={user?.id ?? ""}
+                pluginSkills={pluginSkills}
                 readOnly
                 isGenerating={running}
                 isStreaming={running && index === display.length - 1 && !isPrompt}

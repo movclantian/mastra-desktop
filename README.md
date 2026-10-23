@@ -223,7 +223,7 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 ### 从源码运行
 
-需要 Windows、macOS 或 Linux，Node.js `>=22.19.0 <23`，pnpm `12.11.2`。推荐用 Corepack 把 pnpm 版本钉死，免得升级后对不上。
+需要 Windows、macOS 或 Linux，Node.js `>=22.19.0`，pnpm `12.11.2`。推荐用 Corepack 把 pnpm 版本钉死，免得升级后对不上。
 
 ```sh
 corepack enable

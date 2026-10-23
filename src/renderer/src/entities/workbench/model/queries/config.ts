@@ -5,8 +5,15 @@
  * 保存成功后 setQueryData 更新缓存(不 invalidate,避免覆盖编辑)。
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SuggestionConfig } from "../../../../../../shared/agent-contract";
 import type { DesktopSettingsPatch } from "../../../../../../shared/window-contract";
-import { fetchAgents, fetchProviderConfig, fetchToolsConfig } from "../../api/workbench-api";
+import {
+  fetchAgents,
+  fetchProviderConfig,
+  fetchSuggestionConfig,
+  fetchToolsConfig,
+  saveSuggestionConfig,
+} from "../../api/workbench-api";
 import { loadModelCatalog } from "../providers";
 import { qk } from "../query-keys";
 
@@ -55,5 +62,21 @@ export function useToolsConfigQuery() {
   return useQuery({
     queryKey: qk.toolsConfig(),
     queryFn: fetchToolsConfig,
+  });
+}
+
+export function useSuggestionConfigQuery() {
+  return useQuery({
+    queryKey: qk.suggestionConfig(),
+    queryFn: fetchSuggestionConfig,
+    staleTime: Infinity,
+  });
+}
+
+export function useUpdateSuggestionConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (config: SuggestionConfig) => saveSuggestionConfig(config),
+    onSuccess: (_result, config) => queryClient.setQueryData(qk.suggestionConfig(), config),
   });
 }

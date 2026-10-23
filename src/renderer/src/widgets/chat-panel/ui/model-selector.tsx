@@ -1,6 +1,6 @@
 import { useNavigate, useRouterState } from "@tanstack/react-router";
-import { BoxesIcon, BrainIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
-import { useState } from "react";
+import { BoxesIcon, ChevronDownIcon, SettingsIcon } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   CapabilityBadges,
   formatModelContextWindow,
@@ -9,8 +9,6 @@ import {
   getModelDisplayName,
   getModelKind,
   getReasoningEfforts,
-  REASONING_EFFORT_LABELS,
-  type ReasoningEffort,
 } from "@/entities/workbench";
 import { useCatalogQuery } from "@/entities/workbench/model/queries/config";
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
@@ -28,13 +26,6 @@ import {
   CommandItem,
   CommandList,
 } from "@/shared/ui/command";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@/shared/ui/dropdown-menu";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { HyperText } from "@/shared/ui/hyper-text";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
@@ -66,8 +57,35 @@ export function ChatModelSelector() {
     activeThreadId,
   );
 
-  const activeProviders = providers.filter(
-    (provider) => !provider.disabled && provider.enabledModels.length > 0,
+  const activeProviders = useMemo(
+    () => providers.filter((provider) => !provider.disabled && provider.enabledModels.length > 0),
+    [providers],
+  );
+  const modelOptionsByProvider = useMemo(
+    () =>
+      new Map(
+        activeProviders.map((provider) => [
+          provider.id,
+          [...provider.enabledModels]
+            .sort(
+              (left, right) =>
+                Number(
+                  modelSelection?.providerId === provider.id && modelSelection.modelId === right.id,
+                ) -
+                Number(
+                  modelSelection?.providerId === provider.id && modelSelection.modelId === left.id,
+                ),
+            )
+            .map((model) => ({
+              model,
+              displayName: getModelDisplayName(model),
+              caps: getModelCapabilities(provider, model.id, catalog),
+              kind: getModelKind(provider, model.id, catalog),
+              contextWindow: getModelContextWindow(provider, model.id, catalog),
+            })),
+        ]),
+      ),
+    [activeProviders, catalog, modelSelection],
   );
   const selectedProvider = providers.find((p) => p.id === modelSelection?.providerId);
   const selectedModel = selectedProvider?.enabledModels.find(
@@ -99,28 +117,6 @@ export function ChatModelSelector() {
         : "off",
     });
   };
-
-  const handleEffortChange = (
-    provider: (typeof providers)[number],
-    modelId: string,
-    modelName: string,
-    effort: string,
-  ) => {
-    // 调整思考等级隐含选中该模型
-    setModelSelection({
-      providerId: provider.id,
-      modelId,
-      modelName: getModelDisplayName({ id: modelId, name: modelName }),
-      reasoningEffort: effort as ReasoningEffort,
-    });
-  };
-
-  const selectedCaps =
-    selectedProvider && modelSelection
-      ? getModelCapabilities(selectedProvider, modelSelection.modelId, catalog)
-      : undefined;
-  const efforts = selectedProvider ? getReasoningEfforts(selectedProvider) : [];
-  const currentEffort = modelSelection?.reasoningEffort;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -179,23 +175,8 @@ export function ChatModelSelector() {
             <CommandEmpty>{t("chat:models.noMatches")}</CommandEmpty>
             {activeProviders.map((provider) => (
               <CommandGroup key={provider.id} heading={provider.name}>
-                {[...provider.enabledModels]
-                  .sort(
-                    (left, right) =>
-                      Number(
-                        modelSelection?.providerId === provider.id &&
-                          modelSelection.modelId === right.id,
-                      ) -
-                      Number(
-                        modelSelection?.providerId === provider.id &&
-                          modelSelection.modelId === left.id,
-                      ),
-                  )
-                  .map((model) => {
-                    const displayName = getModelDisplayName(model);
-                    const caps = getModelCapabilities(provider, model.id, catalog);
-                    const kind = getModelKind(provider, model.id, catalog);
-                    const contextWindow = getModelContextWindow(provider, model.id, catalog);
+                {(modelOptionsByProvider.get(provider.id) ?? []).map(
+                  ({ model, displayName, caps, kind, contextWindow }) => {
                     const isSelected =
                       modelSelection?.providerId === provider.id &&
                       modelSelection.modelId === model.id;
@@ -209,7 +190,7 @@ export function ChatModelSelector() {
                                 provider.name,
                                 provider.registryId ?? "",
                                 model.id,
-                                getModelDisplayName(model),
+                                displayName,
                               ]}
                               data-checked={isSelected}
                               onSelect={() => handleSelect(provider.id, model.id, model.name)}
@@ -283,55 +264,12 @@ export function ChatModelSelector() {
                         </HoverCardContent>
                       </HoverCard>
                     );
-                  })}
+                  },
+                )}
               </CommandGroup>
             ))}
           </CommandList>
         </Command>
-        {selectedProvider && selectedModel && selectedCaps?.reasoning && efforts.length > 0 ? (
-          <div className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-t p-2">
-            <BrainIcon className="size-4 shrink-0" />
-            <span className="min-w-0 flex-1 break-words text-xs">
-              {t("chat:models.reasoningEffort")}
-            </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <PromptInputButton
-                    variant="outline"
-                    size="sm"
-                    aria-label={t("chat:models.reasoningEffort")}
-                  />
-                }
-              >
-                {t(
-                  `chat:models.efforts.${currentEffort === "off" ? "none" : (currentEffort ?? "provider-default")}`,
-                )}
-                <ChevronDownIcon />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuRadioGroup
-                  value={currentEffort ?? ""}
-                  onValueChange={(effort) => {
-                    if (efforts.includes(effort as ReasoningEffort))
-                      handleEffortChange(
-                        selectedProvider,
-                        selectedModel.id,
-                        selectedModel.name,
-                        effort,
-                      );
-                  }}
-                >
-                  {efforts.map((effort) => (
-                    <DropdownMenuRadioItem key={effort} value={effort} closeOnClick>
-                      {t(`chat:models.efforts.${effort}`, REASONING_EFFORT_LABELS[effort])}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : null}
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t p-2">
           <Button
             variant="ghost"
