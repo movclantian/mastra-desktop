@@ -162,6 +162,7 @@ function AuxiliaryThreadChat({
                       key={entry.key}
                       message={entry.message}
                       userId={userId}
+                      threadId={threadId}
                       pluginSkills={pluginSkills}
                       readOnly
                       isGenerating={busy}

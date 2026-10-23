@@ -9,6 +9,7 @@ import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
 import { AnimatedTabs, AnimatedTabsPanel } from "@/shared/ui/animated-tabs";
+import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Calendar } from "@/shared/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
@@ -29,7 +30,7 @@ import {
   PaginationPrevious,
 } from "@/shared/ui/pagination";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { ScrollArea } from "@/shared/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
 import { SlidingNumber } from "@/shared/ui/sliding-number";
 import {
   Table,
@@ -123,6 +124,9 @@ const chartConfig = {
   get totalTokens() {
     return { label: i18n.t("settings:usage.table.totalTokens"), color: "#a855f7" };
   },
+  get requests() {
+    return { label: i18n.t("settings:usage.table.requestsCount"), color: "#3b82f6" };
+  },
 } satisfies ChartConfig;
 
 function formatNumber(value: number | null): string {
@@ -133,6 +137,86 @@ function formatCost(value: number | null, unit: string | null): string {
   return value === null || !unit
     ? "—"
     : `${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(value)} ${unit}`;
+}
+
+function formatProfileValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value) ?? "";
+  } catch {
+    return String(value);
+  }
+}
+
+function PreferenceValue({
+  value,
+  depth = 0,
+}: {
+  value: unknown;
+  depth?: number;
+}): React.JSX.Element {
+  if (value === null || value === undefined)
+    return <span className="text-xs text-muted-foreground">—</span>;
+  if (typeof value === "string")
+    return (
+      <p className="min-w-0 whitespace-pre-wrap break-words text-xs leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
+        {value}
+      </p>
+    );
+  if (typeof value === "number" || typeof value === "boolean")
+    return <span className="break-words text-xs tabular-nums">{String(value)}</span>;
+  if (depth >= 2)
+    return (
+      <p className="min-w-0 whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
+        {formatProfileValue(value)}
+      </p>
+    );
+  if (Array.isArray(value))
+    return value.length ? (
+      <ul className="flex min-w-0 flex-wrap gap-1.5">
+        {value.map((item, index) => (
+          <li key={index} className="min-w-0 max-w-full">
+            {item === null || ["string", "number", "boolean"].includes(typeof item) ? (
+              <Badge
+                variant="secondary"
+                className="max-w-full whitespace-normal break-words font-normal"
+              >
+                {item === null ? "—" : String(item)}
+              </Badge>
+            ) : (
+              <PreferenceValue value={item} depth={depth + 1} />
+            )}
+          </li>
+        ))}
+      </ul>
+    ) : (
+      <span className="text-xs text-muted-foreground">—</span>
+    );
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length ? (
+      <dl className="grid min-w-0 grid-cols-[minmax(4rem,auto)_minmax(0,1fr)] items-start gap-x-2 gap-y-1.5">
+        {entries.map(([key, item]) => (
+          <React.Fragment key={key}>
+            <dt className="min-w-0">
+              <Badge
+                variant="outline"
+                className="max-w-full whitespace-normal break-words font-normal"
+              >
+                {key}
+              </Badge>
+            </dt>
+            <dd className="min-w-0">
+              <PreferenceValue value={item} depth={depth + 1} />
+            </dd>
+          </React.Fragment>
+        ))}
+      </dl>
+    ) : (
+      <span className="text-xs text-muted-foreground">—</span>
+    );
+  }
+  return <span className="break-words text-xs">{String(value)}</span>;
 }
 
 function formatDuration(ms: number): string {
@@ -265,6 +349,10 @@ export function UsageSection() {
     costUnit: null,
   };
   const activity = activityForRange(range, summary?.activity ?? []);
+  const trend = summary?.trend ?? [];
+  const hasTokenTrend = trend.some(
+    (point) => point.totalTokens != null || point.inputTokens != null || point.outputTokens != null,
+  );
   const averageLatencyMs = totals.requests
     ? Math.round(totals.totalLatencyMs / totals.requests)
     : 0;
@@ -276,14 +364,6 @@ export function UsageSection() {
     const start = (safeRequestsPage - 1) * PAGE_SIZE;
     return requestsList.slice(start, start + PAGE_SIZE);
   }, [requestsList, safeRequestsPage]);
-  const formatProfileValue = (value: unknown): string => {
-    if (typeof value === "string") return value;
-    try {
-      return JSON.stringify(value) ?? "";
-    } catch {
-      return String(value);
-    }
-  };
 
   /**
    * 数值型指标走动态数字:Token 总量用 SlidingNumber(里程表逐位翻页,
@@ -333,11 +413,17 @@ export function UsageSection() {
           <Popover>
             <PopoverTrigger
               render={
-                <Button variant="outline" size="sm" className="justify-start font-normal">
-                  <CalendarIcon />
-                  {range.from
-                    ? `${format(range.from, "yyyy-MM-dd")} - ${format(range.to ?? range.from, "yyyy-MM-dd")}`
-                    : t("settings:usage.selectDate")}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="max-w-full min-w-0 justify-start font-normal"
+                >
+                  <CalendarIcon className="shrink-0" />
+                  <span className="min-w-0 truncate">
+                    {range.from
+                      ? `${format(range.from, "yyyy-MM-dd")} - ${format(range.to ?? range.from, "yyyy-MM-dd")}`
+                      : t("settings:usage.selectDate")}
+                  </span>
                 </Button>
               }
             />
@@ -363,7 +449,7 @@ export function UsageSection() {
       </div>
 
       <Card>
-        <CardContent className="grid min-w-0 gap-4 p-4 md:grid-cols-[minmax(180px,0.8fr)_minmax(0,1.2fr)]">
+        <CardContent className="grid min-w-0 gap-4 p-4 xl:grid-cols-[minmax(16rem,0.8fr)_minmax(0,1.2fr)]">
           <div className="min-w-0 space-y-2">
             <p className="text-sm font-semibold">{t("settings:usage.accountInfo")}</p>
             <div className="space-y-1 text-xs">
@@ -407,21 +493,26 @@ export function UsageSection() {
                   {profile.extractors.map((item) => (
                     <div
                       key={`${item.threadId}:${item.slug}`}
-                      className="min-w-0 border-b border-border/60 pb-2 last:border-0 last:pb-0"
+                      className="min-w-0 space-y-2 rounded-md border border-border/60 bg-muted/10 p-3"
                     >
-                      <div className="flex min-w-0 items-baseline justify-between gap-2">
-                        <span className="truncate text-xs font-medium" title={item.name}>
+                      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                        <Badge
+                          variant="outline"
+                          className="max-w-full whitespace-normal break-words font-medium"
+                        >
                           {item.name}
-                        </span>
+                        </Badge>
                         <span className="shrink-0 text-[10px] text-muted-foreground">
-                          {new Date(item.updatedAt).toLocaleDateString("zh-CN")}
+                          {new Date(item.updatedAt).toLocaleDateString(
+                            i18n.resolvedLanguage ?? i18n.language,
+                          )}
                         </span>
                       </div>
-                      <p className="break-words text-xs text-muted-foreground">
-                        {formatProfileValue(item.value)}
-                      </p>
+                      <div className="min-w-0 rounded-sm bg-background/60 p-2.5">
+                        <PreferenceValue value={item.value} />
+                      </div>
                       <p
-                        className="truncate text-[10px] text-muted-foreground/70"
+                        className="min-w-0 break-words text-[10px] text-muted-foreground/70 [overflow-wrap:anywhere]"
                         title={item.threadTitle}
                       >
                         {t("settings:usage.source")}
@@ -438,7 +529,7 @@ export function UsageSection() {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {stats.map((stat) => (
           <Card key={stat.label} className="min-w-0">
             <CardContent className="flex min-w-0 flex-col gap-1 p-3">
@@ -456,92 +547,122 @@ export function UsageSection() {
           <CardTitle className="text-sm">{t("settings:usage.activityTitle")}</CardTitle>
         </CardHeader>
         <CardContent className="min-w-0 pb-4">
-          <ScrollArea orientation="horizontal" className="w-full">
-            <TooltipProvider>
-              <ActivityCalendar
-                data={activity}
-                colorScheme={isDark ? "dark" : "light"}
-                theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
-                labels={{
-                  totalCount: t("settings:usage.requestCount", {
-                    count: "{{count}}",
-                  }),
-                }}
-                blockSize={12}
-                blockMargin={3}
-                blockRadius={3}
-                showWeekdayLabels
-                showTotalCount
-                renderBlock={(block, item) => {
-                  const activityItem = item as Activity & { tokens?: number | null };
-                  return (
-                    <Tooltip key={item.date}>
-                      <TooltipTrigger render={block} />
-                      <TooltipContent className="text-xs">
-                        <div className="flex flex-col gap-0.5">
-                          <span className="font-semibold">{item.date}</span>
-                          <span>
-                            {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
-                          </span>
-                          {activityItem.tokens !== undefined ? (
-                            <span>Token：{formatNumber(activityItem.tokens)}</span>
-                          ) : null}
-                        </div>
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                }}
-              />
-            </TooltipProvider>
+          <ScrollArea orientation="horizontal" className="w-full min-w-0">
+            <div className="min-w-max px-1">
+              <TooltipProvider>
+                <ActivityCalendar
+                  data={activity}
+                  colorScheme={isDark ? "dark" : "light"}
+                  theme={{ light: ["var(--muted)", "#60a5fa"], dark: ["#2a2a2a", "#60a5fa"] }}
+                  labels={{
+                    totalCount: t("settings:usage.requestCount", {
+                      count: "{{count}}",
+                    }),
+                  }}
+                  blockSize={12}
+                  blockMargin={3}
+                  blockRadius={3}
+                  showWeekdayLabels
+                  showTotalCount
+                  renderBlock={(block, item) => {
+                    const activityItem = item as Activity & { tokens?: number | null };
+                    return (
+                      <Tooltip key={item.date}>
+                        <TooltipTrigger render={block} />
+                        <TooltipContent className="text-xs">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold">{item.date}</span>
+                            <span>
+                              {t("settings:usage.table.requestsCount")}：{formatNumber(item.count)}
+                            </span>
+                            {activityItem.tokens !== undefined ? (
+                              <span>Token：{formatNumber(activityItem.tokens)}</span>
+                            ) : null}
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  }}
+                />
+              </TooltipProvider>
+            </div>
+            <ScrollBar orientation="horizontal" />
           </ScrollArea>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm">{t("settings:usage.trendTitle")}</CardTitle>
-          <span className="text-xs text-muted-foreground">{t("settings:usage.byDay")}</span>
+        <CardHeader className="flex min-w-0 flex-wrap items-center justify-between gap-2 pb-2">
+          <CardTitle className="min-w-0 break-words text-sm">
+            {t("settings:usage.trendTitle")}
+          </CardTitle>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
+              {hasTokenTrend ? t("settings:usage.chartTokens") : t("settings:usage.chartRequests")}
+            </Badge>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {t("settings:usage.byDay")}
+            </span>
+          </div>
         </CardHeader>
-        <CardContent className="min-w-0">
-          <ChartContainer config={chartConfig} className="h-[240px] w-full">
-            <AreaChart
-              accessibilityLayer
-              data={summary?.trend ?? []}
-              margin={{ left: 4, right: 8, top: 8 }}
+        <CardContent className="min-w-0 overflow-hidden">
+          {trend.length ? (
+            <ChartContainer config={chartConfig} className="h-56 min-h-0 w-full min-w-0 md:h-60">
+              <AreaChart accessibilityLayer data={trend} margin={{ left: 4, right: 8, top: 8 }}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(value) => String(value).slice(5)}
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={24}
+                />
+                <ChartTooltip content={<ChartTooltipContent />} />
+                {hasTokenTrend ? (
+                  <>
+                    <Area
+                      dataKey="totalTokens"
+                      type="monotone"
+                      fill="var(--color-totalTokens)"
+                      fillOpacity={0.18}
+                      stroke="var(--color-totalTokens)"
+                      strokeWidth={2}
+                    />
+                    <Line
+                      dataKey="inputTokens"
+                      type="monotone"
+                      stroke="var(--color-inputTokens)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                    <Line
+                      dataKey="outputTokens"
+                      type="monotone"
+                      stroke="var(--color-outputTokens)"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </>
+                ) : (
+                  <Line
+                    dataKey="requests"
+                    type="monotone"
+                    stroke="var(--color-requests)"
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                )}
+              </AreaChart>
+            </ChartContainer>
+          ) : (
+            <div
+              role="status"
+              className="flex h-56 min-w-0 items-center justify-center rounded-md border border-dashed px-4 text-center text-sm text-muted-foreground md:h-60"
             >
-              <CartesianGrid vertical={false} />
-              <XAxis
-                dataKey="date"
-                tickLine={false}
-                axisLine={false}
-                tickMargin={8}
-                minTickGap={24}
-              />
-              <ChartTooltip content={<ChartTooltipContent />} />
-              <Area
-                dataKey="totalTokens"
-                type="monotone"
-                fill="var(--color-totalTokens)"
-                fillOpacity={0.18}
-                stroke="var(--color-totalTokens)"
-                strokeWidth={2}
-              />
-              <Line
-                dataKey="inputTokens"
-                type="monotone"
-                stroke="var(--color-inputTokens)"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                dataKey="outputTokens"
-                type="monotone"
-                stroke="var(--color-outputTokens)"
-                strokeWidth={2}
-                dot={false}
-              />
-            </AreaChart>
-          </ChartContainer>
+              {loading ? t("common:loading") : t("settings:usage.trendNoData")}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -551,7 +672,7 @@ export function UsageSection() {
           onChange={(value) => setDetailTab(value as UsageDetailTab)}
           layoutId="usage-detail"
           aria-label={t("settings:usage.tabs.ariaLabel")}
-          className="w-fit"
+          className="w-full max-w-full overflow-x-auto"
           tabs={[
             { id: "requests", label: t("settings:usage.tabs.requests") },
             { id: "providers", label: t("settings:usage.tabs.providers") },

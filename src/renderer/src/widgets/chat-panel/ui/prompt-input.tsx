@@ -76,6 +76,8 @@ import { fetchChatAssetBlob, fetchChatLibraryAssets, fetchChatSkills } from "../
 import {
   type MessageFileReference,
   type MessageQueueAction,
+  type ObservationalMemoryActivityEvent,
+  type ObservationalMemoryStatusEvent,
   type QueuedRequest,
   referenceBadgeClass,
 } from "../model/types";
@@ -791,8 +793,12 @@ export function UserRequestQueuePanel({
 export function ChatPromptInput({
   activeThread,
   activeThreadId,
+  userId,
+  threadBudgetPercent,
   usage,
   billingUsage,
+  omStatus,
+  omActivity,
   onSubmit,
   status,
   onStop,
@@ -805,11 +811,15 @@ export function ChatPromptInput({
   activeThread: boolean;
   /** 当前线程:思考力度菜单按线程设置读写 */
   activeThreadId: string | null;
+  userId: string;
+  threadBudgetPercent?: number;
   goalAvailable: boolean;
   goalMode: boolean;
   onGoalModeChange: (enabled: boolean) => void;
   usage: LanguageModelUsage | undefined;
   billingUsage?: LanguageModelUsage;
+  omStatus?: ObservationalMemoryStatusEvent;
+  omActivity?: ObservationalMemoryActivityEvent;
   onSubmit: (
     message: {
       text: string;
@@ -1048,7 +1058,15 @@ export function ChatPromptInput({
           <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1">
             {/* 「0% + 进度环」没有可截断的文字,压窄只会变形 */}
             <div className="shrink-0">
-              <ChatContextUsage usage={usage} billingUsage={billingUsage} />
+              <ChatContextUsage
+                usage={usage}
+                billingUsage={billingUsage}
+                userId={userId}
+                threadId={activeThreadId}
+                threadBudgetPercent={threadBudgetPercent}
+                omStatus={omStatus}
+                omActivity={omActivity}
+              />
             </div>
             <ChatModelSelector />
             {/* 官方 Model Selector:模型与思考力度是两个并列菜单 */}

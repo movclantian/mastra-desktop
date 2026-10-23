@@ -2,7 +2,11 @@ import type { ToolsInput } from "@mastra/core/agent";
 /** 子 Agent 与主 Agent 共用当前请求模型。 */
 import { Agent } from "@mastra/core/agent";
 import { resolveCurrentSpan, SpanType } from "@mastra/core/observability";
-import type { InputProcessorOrWorkflow, Processor } from "@mastra/core/processors";
+import {
+  type InputProcessorOrWorkflow,
+  type Processor,
+  TokenLimiterProcessor,
+} from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
 import {
   askUserTool,
@@ -23,8 +27,13 @@ import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
 import { getComputerTools } from "../connections/computer";
 import { getConfiguredMcpTools } from "../connections/mcp";
 import { getNotificationInboxTool } from "../harness/signals";
-import { getMemory } from "../memory/memory-runtime";
-import { resolveAgentModel } from "../models/providers";
+import {
+  getContextWindowPercent,
+  getMemory,
+  getMemoryConfig,
+  memoryTokenBudget,
+} from "../memory/memory-runtime";
+import { getModelTokenLimits, resolveAgentModel } from "../models/providers";
 import { listPluginSkills } from "../plugins/registry";
 import {
   libraryDocumentChunkerTool,
@@ -301,6 +310,18 @@ export async function buildInputPipeline(
   profile?: AgentProfile,
   member?: AgentMemberDefinition,
 ): Promise<InputProcessorOrWorkflow[]> {
+  const resourceId = userIdFromContext(requestContext);
+  const [guardrails, memoryConfig, modelLimits] = await Promise.all([
+    getGuardrailsConfig(resourceId),
+    getMemoryConfig(resourceId),
+    getModelTokenLimits(requestContext),
+  ]);
+  const contextWindowPercent = await getContextWindowPercent(
+    requestContext,
+    resourceId,
+    memoryConfig.contextWindowPercent,
+  );
+  const modelInputTokens = memoryTokenBudget(modelLimits, contextWindowPercent).inputTokens;
   return [
     teamInvocationProcessor,
     ...(profile && delegationMemberIds(profile, member).length ? [teamProgressProcessor] : []),
@@ -309,5 +330,11 @@ export async function buildInputPipeline(
     agentsMdProcessor,
     ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),
     codeModeProcessor(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true),
+    new TokenLimiterProcessor({
+      limit: guardrails.tokenLimitInput
+        ? Math.min(guardrails.tokenLimitInputValue, modelInputTokens)
+        : modelInputTokens,
+      trimMode: guardrails.tokenLimitTrimMode,
+    }),
   ];
 }

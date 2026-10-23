@@ -10,6 +10,7 @@ import {
   LogOutIcon,
   MonitorIcon,
   PaletteIcon,
+  RadioIcon,
   SearchIcon,
   ServerIcon,
   ShieldCheckIcon,
@@ -38,6 +39,7 @@ import {
 import {
   AboutSection,
   BrowserSection,
+  ChannelsSection,
   ComputerSection,
   GeneralSection,
   GuardrailsSection,
@@ -57,6 +59,7 @@ import {
 
 const PRIMARY_SECTIONS = [
   { id: "general", icon: SlidersHorizontalIcon },
+  { id: "channels", icon: RadioIcon },
   { id: "browser", icon: GlobeIcon },
   { id: "computer", icon: MonitorIcon },
   { id: "memory", icon: BrainIcon },
@@ -97,6 +100,11 @@ const SEARCH_ITEMS: Array<{
     section: "browser",
     title: "settings:browser.title",
     description: "settings:browser.desc",
+  },
+  {
+    section: "channels",
+    title: "settings:channels.title",
+    description: "settings:channels.desc",
   },
   {
     section: "memory",
@@ -355,6 +363,7 @@ export function SettingsPage() {
                   <div className="flex min-w-0 flex-col gap-4 p-4">
                     {section === "general" ? <GeneralSection /> : null}
                     {section === "browser" ? <BrowserSection /> : null}
+                    {section === "channels" ? <ChannelsSection /> : null}
                     {section === "computer" ? <ComputerSection /> : null}
                     {section === "memory" ? <MemorySection /> : null}
                     {section === "tools" ? <ToolsSection /> : null}

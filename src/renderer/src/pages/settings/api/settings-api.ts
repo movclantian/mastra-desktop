@@ -112,17 +112,7 @@ export function saveGuardrailsConfig<T extends Record<string, unknown>>(config: 
   );
 }
 
-export function fetchMemoryConfig<T>(): Promise<T> {
-  return requestJson<T>("/work/memory", {}, i18n.t("settings:api.fetchMemoryFailed"));
-}
-
-export function saveMemoryConfig<T extends Record<string, unknown>>(config: T): Promise<void> {
-  return requestJson<void>(
-    "/work/memory",
-    { method: "POST", body: config },
-    i18n.t("settings:api.saveMemoryFailed"),
-  );
-}
+export { fetchMemoryConfig, saveMemoryConfig } from "@/entities/workbench/api/workbench-api";
 
 export function fetchMemoryProfile<T>(): Promise<T> {
   return requestJson<T>(
@@ -147,3 +137,5 @@ export async function saveProxySettings(config: ProxyConfig): Promise<ProxySetRe
 export async function testProxyConnectivity(url?: string): Promise<ProxyTestResult> {
   return window.api.proxy.test(url);
 }
+
+export { fetchChannels, saveChannelsConfig } from "./channels-api";

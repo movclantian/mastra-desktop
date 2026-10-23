@@ -9,9 +9,11 @@ import type { SuggestionConfig } from "../../../../../../shared/agent-contract";
 import type { DesktopSettingsPatch } from "../../../../../../shared/window-contract";
 import {
   fetchAgents,
+  fetchMemoryConfig,
   fetchProviderConfig,
   fetchSuggestionConfig,
   fetchToolsConfig,
+  saveMemoryConfig,
   saveSuggestionConfig,
 } from "../../api/workbench-api";
 import { loadModelCatalog } from "../providers";
@@ -38,6 +40,22 @@ export function useProviderConfigQuery() {
     queryKey: qk.providerConfig(),
     queryFn: fetchProviderConfig,
     staleTime: Infinity,
+  });
+}
+
+export function useMemoryConfigQuery() {
+  return useQuery({
+    queryKey: qk.memoryConfig(),
+    queryFn: () => fetchMemoryConfig<Record<string, unknown>>(),
+    staleTime: Infinity,
+  });
+}
+
+export function useSaveMemoryConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: saveMemoryConfig,
+    onSuccess: (_result, config) => queryClient.setQueryData(qk.memoryConfig(), config),
   });
 }
 

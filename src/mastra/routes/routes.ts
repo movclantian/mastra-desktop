@@ -23,6 +23,15 @@ import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from 
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import {
+  channelPlatformsRoute,
+  channelsConfigRoute,
+  channelWebhookRoutes,
+  deleteChannelSecretRoute,
+  probeChannelRoute,
+  refreshChannelsRoute,
+  saveChannelsConfigRoute,
+} from "./channels";
+import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
   saveGuardrailsConfigRoute,
@@ -107,6 +116,13 @@ export const workRoutes = [
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
+  channelPlatformsRoute,
+  channelsConfigRoute,
+  saveChannelsConfigRoute,
+  probeChannelRoute,
+  refreshChannelsRoute,
+  deleteChannelSecretRoute,
+  ...channelWebhookRoutes,
   ...computerRoutes,
   ...proxyRoutes,
   ...threadRoutes,

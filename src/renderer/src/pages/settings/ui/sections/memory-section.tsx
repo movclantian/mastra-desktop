@@ -1,7 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { nanoid } from "nanoid";
 import * as React from "react";
 import { toast } from "sonner";
+import { qk } from "@/entities/workbench/model/query-keys";
 import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -52,6 +54,7 @@ const MEMORY_TEXT_KEYS = new Set([
 ]);
 
 export interface MemoryDraft {
+  contextWindowPercent: number;
   lastMessages: number;
   readOnly: boolean;
   semanticRecall: boolean;
@@ -94,6 +97,7 @@ interface OmExtractorDraft {
 }
 
 const DEFAULT_MEMORY_DRAFT: MemoryDraft = {
+  contextWindowPercent: 100,
   lastMessages: 20,
   readOnly: false,
   semanticRecall: false,
@@ -573,6 +577,7 @@ function ExtractorCardList({
 
 export function MemorySection() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   const [draft, setDraft] = React.useState<MemoryDraft>(DEFAULT_MEMORY_DRAFT);
   const [loaded, setLoaded] = React.useState(false);
 
@@ -597,6 +602,7 @@ export function MemorySection() {
     const timer = window.setTimeout(() => {
       void saveMemoryConfig({ ...draft })
         .then(() => {
+          queryClient.setQueryData(qk.memoryConfig(), draft);
           const before = prevSavedRef.current;
           prevSavedRef.current = draft;
           const changed =
@@ -620,7 +626,7 @@ export function MemorySection() {
         .catch(() => toast.error(t("settings:memory.autoSaveFailed")));
     }, 800);
     return () => window.clearTimeout(timer);
-  }, [draft, loaded, t]);
+  }, [draft, loaded, queryClient, t]);
 
   const restore = (...keys: Array<keyof MemoryDraft>) =>
     setDraft((current) => ({

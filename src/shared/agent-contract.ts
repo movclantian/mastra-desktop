@@ -337,15 +337,22 @@ export function validateAgentTeam(profile: Pick<AgentProfile, "type" | "members"
 
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";
 
-/** 提示建议:是否在输入区展示建议,以及用哪个模型生成(空串沿用会话模型)。 */
+/** 提示建议:生成开关、模型与触发时机(空串沿用会话模型)。 */
+export const SUGGESTION_STRATEGIES = ["request", "turn"] as const;
+export type SuggestionStrategy = (typeof SUGGESTION_STRATEGIES)[number];
 export const SuggestionConfigSchema = z
   .object({
     enabled: z.boolean(),
     model: z.string().max(512),
+    strategy: z.enum(SUGGESTION_STRATEGIES).default("turn"),
   })
   .strict();
 export type SuggestionConfig = z.infer<typeof SuggestionConfigSchema>;
-export const DEFAULT_SUGGESTION_CONFIG: SuggestionConfig = { enabled: false, model: "" };
+export const DEFAULT_SUGGESTION_CONFIG: SuggestionConfig = {
+  enabled: false,
+  model: "",
+  strategy: "turn",
+};
 export const MAX_PROMPT_SUGGESTIONS = 4;
 
 export const SEARCH_ENGINES = ["tavily", "firecrawl", "anysearch"] as const;

@@ -108,6 +108,18 @@ export function useArchiveThreadMutation(userId: string) {
   );
 }
 
+export function useUpdateThreadContextWindowMutation(userId: string) {
+  return useOptimisticThreadMutation(
+    userId,
+    (thread, { threadId, percent }: { threadId: string; percent: number | null }) =>
+      thread.id === threadId
+        ? { ...thread, metadata: { ...thread.metadata, contextWindowPercent: percent } }
+        : thread,
+    ({ threadId, percent }) =>
+      updateThread(threadId, userId, { metadata: { contextWindowPercent: percent } }),
+  );
+}
+
 export function useRenameThreadMutation(userId: string) {
   return useOptimisticThreadMutation(
     userId,

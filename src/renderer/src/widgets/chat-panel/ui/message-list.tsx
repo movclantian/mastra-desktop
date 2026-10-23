@@ -515,6 +515,7 @@ export const MessageItem = React.memo(function MessageItem({
   onRetry,
   onEdit,
   userId,
+  threadId,
   pluginSkills = [],
   readOnly = false,
   showAvatar = true,
@@ -534,6 +535,7 @@ export const MessageItem = React.memo(function MessageItem({
   onRetry: (messageId: string) => void;
   onEdit: (messageId: string, text: string) => void;
   userId: string;
+  threadId?: string;
   pluginSkills?: PluginSkill[];
   readOnly?: boolean;
   /** MessageGroup 分组中隐藏头像:连续同一发送者仅末条展示头像(官方 message-group) */
@@ -904,6 +906,7 @@ export const MessageItem = React.memo(function MessageItem({
                     key={segment.key}
                     isStreaming={isStreaming}
                     parts={segment.parts}
+                    threadId={threadId}
                     subagentInvocations={subagentInvocations}
                   />
                 ) : segment.type === "interaction" ? (

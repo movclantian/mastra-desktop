@@ -62,6 +62,8 @@ type OmExtractorUserConfig = z.infer<typeof omExtractorConfigSchema>;
 
 export const memoryConfigSchema = z
   .object({
+    /** User-selected share of the model's listed context window used for this app's active budget. */
+    contextWindowPercent: z.number().int().min(20).max(100),
     /** options.lastMessages — OM 关闭时每次请求注入的最近消息数,默认 20 */
     lastMessages: z.number().int().min(1).max(500),
     /** options.readOnly — 只读记忆(不保存新消息,不注册 updateWorkingMemory 工具) */
@@ -159,6 +161,7 @@ const DEFAULT_WORKING_MEMORY_SCHEMA = `{
 `;
 
 const DEFAULT_CONFIG: MemoryUserConfig = {
+  contextWindowPercent: 100,
   // 短对话模式才使用 lastMessages;OM 开启时由 OM 自己管理原始消息窗口。
   lastMessages: 20,
   // 默认保留完整的对话写入链路,仅关闭时才会影响持久化。
@@ -320,18 +323,50 @@ function getMemoryRuntime(resourceId?: string): MemoryRuntime {
 
 interface MemoryBuildOverrides {
   memoryScope?: "thread" | "resource";
-  budget: { messageTokens: number; observationTokens: number; maxOutputTokens: number };
+  budget: {
+    inputTokens: number;
+    messageTokens: number;
+    observationTokens: number;
+    maxOutputTokens: number;
+  };
 }
 
-/** Leave room for model output, system/tools and OM's default 1.2× buffering headroom. */
-function memoryTokenBudget(limits: Awaited<ReturnType<typeof getModelTokenLimits>>) {
+/** Existing chats can override the user's context window default per thread. */
+export async function getContextWindowPercent(
+  requestContext: { get(key: string): unknown } | undefined,
+  resourceId: string | undefined,
+  fallback: number,
+): Promise<number> {
+  const controller = requestContext?.get("controller") as
+    | { session?: { thread?: { getId?: () => string | undefined } } }
+    | undefined;
+  const threadId = controller?.session?.thread?.getId?.();
+  if (!threadId || !resourceId) return fallback;
+  const store = await appStorage.getStore("memory");
+  const thread = await store?.getThreadById({ threadId, resourceId });
+  if (thread?.resourceId !== resourceId) return fallback;
+  const value = (thread?.metadata as Record<string, unknown> | undefined)?.contextWindowPercent;
+  return typeof value === "number" && Number.isInteger(value) && value >= 20 && value <= 100
+    ? value
+    : fallback;
+}
+
+/** Reserve output capacity, then scale OM thresholds and the final prompt limit together. */
+export function memoryTokenBudget(
+  limits: Awaited<ReturnType<typeof getModelTokenLimits>>,
+  contextWindowPercent = 100,
+) {
   // An unlisted model has no discoverable capacity; use a conservative 32K planning window.
-  const context = limits?.context ?? 32_768;
+  const reportedContext = limits?.context ?? 32_768;
+  const context = Math.floor(
+    reportedContext * (Math.min(100, Math.max(20, contextWindowPercent)) / 100),
+  );
   const outputReserve = Math.min(limits?.output ?? context / 4, context / 2);
-  const input = Math.min(limits?.input ?? context, context - outputReserve);
+  const input = Math.min(limits?.input ?? reportedContext, context - outputReserve);
   return {
+    inputTokens: Math.max(1, Math.floor(input)),
     messageTokens: Math.max(1, Math.floor(input * 0.4)),
-    observationTokens: Math.max(1, Math.floor(input * 0.2)),
+    observationTokens: Math.max(1, Math.floor(input * 0.3)),
     maxOutputTokens: Math.max(
       1,
       Math.floor(Math.min(limits?.output ?? 8_192, input * 0.1, 16_384)),
@@ -350,8 +385,16 @@ export async function getMemory(options?: {
   const resourceId = userIdFromContext(options?.requestContext as RequestContextLike);
   const config = await getMemoryConfig(resourceId);
   const runtime = getMemoryRuntime(resourceId);
+  const contextWindowPercent = config.observationalMemory
+    ? await getContextWindowPercent(
+        options?.requestContext,
+        resourceId,
+        config.contextWindowPercent,
+      )
+    : config.contextWindowPercent;
   const budget = memoryTokenBudget(
     config.observationalMemory ? await getModelTokenLimits(options?.requestContext) : undefined,
+    contextWindowPercent,
   );
   // Share by capacity, not thread/model identity; two simultaneous models retain their own budgets.
   const key = JSON.stringify([options?.memoryScope ?? "default", budget]);

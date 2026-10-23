@@ -17,7 +17,7 @@
  * 再手工添加会造成历史二次注入;其参数在设置面板「记忆」页配置。
  *
  * 顺序原则(guardrails.mdx「Speed up guardrails」):
- * - 输入:零成本处理器在前,LLM 检测器居中,TokenLimiter 收尾保证上下文可容纳,
+ * - 输入:零成本处理器在前,LLM 检测器居中,
  *   只作用于 processLLMRequest 的(工具裁剪 / 兼容 / 响应缓存)排在最后
  * - 输出:BatchParts 与 TokenLimiter 先跑,再交给按块调用 LLM 的重处理器
  */
@@ -157,7 +157,7 @@ export const guardrailsConfigSchema = z
     batchPartsMaxWaitTime: z.number().int().min(0).max(120_000),
     batchPartsEmitOnNonText: z.boolean(),
 
-    // --- TokenLimiterProcessor(输入 / 输出各一份) ---------------------------
+    // --- TokenLimiterProcessor(输入的手动附加上限 / 输出各一份) ---------------
     tokenLimitInput: z.boolean(),
     tokenLimitInputValue: z.number().int().min(1).max(2_000_000),
     tokenLimitTrimMode: z.enum(["best-fit", "contiguous"]),
@@ -617,8 +617,9 @@ function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetec
 
 /**
  * 输入处理器数组。顺序即执行顺序(processors.mdx「Execution order」):
- * 规范化 → 正则 → 注入检测 → 语言 → 审核 → PII → 成本 → Token 上限 →
+ * 规范化 → 正则 → 注入检测 → 语言 → 审核 → PII → 成本 →
  * 运行时搜索 → processLLMRequest 类(工具裁剪 / 供应商兼容 / 响应缓存)。
+ * 最终 model-aware 上限由 subagents.ts 在所有输入处理器之后统一追加。
  */
 async function buildInput(
   cfg: GuardrailsUserConfig,
@@ -703,16 +704,6 @@ async function buildInput(
     } catch {
       // 观测存储不支持成本聚合:静默跳过(设置面板的状态接口会提示不可用)
     }
-  }
-
-  // TokenLimiter 收尾:前面的处理器可能增删消息,最后一步才能保证上下文可容纳
-  if (cfg.tokenLimitInput && cfg.tokenLimitInputValue > 0) {
-    processors.push(
-      new TokenLimiterProcessor({
-        limit: cfg.tokenLimitInputValue,
-        trimMode: cfg.tokenLimitTrimMode,
-      }),
-    );
   }
 
   if (cfg.toolCallFilter) {

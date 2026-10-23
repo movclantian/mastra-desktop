@@ -15,6 +15,7 @@ import { Button } from "@/shared/ui/button";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/shared/ui/hover-card";
 import { Progress } from "@/shared/ui/progress";
 import { ScrollArea } from "@/shared/ui/scroll-area";
+import { Slider } from "@/shared/ui/slider";
 import { SlidingNumber } from "@/shared/ui/sliding-number";
 
 const PERCENT_MAX = 100;
@@ -59,6 +60,10 @@ type ModelId = string;
 
 interface ContextSchema {
   maxTokens: number;
+  budgetPercent?: number;
+  budgetDisabled?: boolean;
+  onBudgetPercentChange?: (percent: number) => void;
+  onBudgetPercentCommit?: (percent: number) => void;
   usage?: LanguageModelUsage;
   billingUsage?: LanguageModelUsage;
   modelId?: ModelId;
@@ -74,7 +79,7 @@ interface InputTokenBreakdown {
   unclassified: number;
 }
 
-type ContextValue = ContextSchema & { input: InputTokenBreakdown };
+type ContextValue = ContextSchema & { budgetTokens: number; input: InputTokenBreakdown };
 
 const ContextContext = createContext<ContextValue | null>(null);
 
@@ -170,6 +175,10 @@ export type ContextProps = ComponentProps<typeof HoverCard> & ContextSchema;
 
 export const Context = ({
   maxTokens,
+  budgetPercent = 100,
+  budgetDisabled = false,
+  onBudgetPercentChange,
+  onBudgetPercentCommit,
   usage,
   billingUsage,
   modelId,
@@ -177,8 +186,30 @@ export const Context = ({
   ...props
 }: ContextProps) => {
   const contextValue = useMemo(
-    () => ({ catalog, input: splitInputTokens(usage), maxTokens, modelId, usage, billingUsage }),
-    [catalog, maxTokens, modelId, usage, billingUsage],
+    () => ({
+      catalog,
+      input: splitInputTokens(usage),
+      maxTokens,
+      budgetTokens: Math.max(1, Math.floor((maxTokens * budgetPercent) / 100)),
+      budgetPercent,
+      budgetDisabled,
+      onBudgetPercentChange,
+      onBudgetPercentCommit,
+      modelId,
+      usage,
+      billingUsage,
+    }),
+    [
+      catalog,
+      maxTokens,
+      budgetPercent,
+      budgetDisabled,
+      onBudgetPercentChange,
+      onBudgetPercentCommit,
+      modelId,
+      usage,
+      billingUsage,
+    ],
   );
 
   return (
@@ -189,9 +220,9 @@ export const Context = ({
 };
 
 const ContextIcon = () => {
-  const { input, maxTokens } = useContextValue();
+  const { input, budgetTokens } = useContextValue();
   const circumference = 2 * Math.PI * ICON_RADIUS;
-  const usedPercent = getUsagePercent(input.total, maxTokens) / PERCENT_MAX;
+  const usedPercent = getUsagePercent(input.total, budgetTokens) / PERCENT_MAX;
   const dashOffset = circumference * (1 - usedPercent);
 
   return (
@@ -233,8 +264,8 @@ const ContextIcon = () => {
 export type ContextTriggerProps = ComponentProps<typeof Button>;
 
 export const ContextTrigger = ({ children, className, ...props }: ContextTriggerProps) => {
-  const { input, maxTokens, usage } = useContextValue();
-  const percentNumber = getUsagePercent(input.total, maxTokens);
+  const { input, budgetTokens, usage } = useContextValue();
+  const percentNumber = getUsagePercent(input.total, budgetTokens);
 
   return (
     <HoverCardTrigger
@@ -291,8 +322,8 @@ export const ContextContentHeader = ({
   ...props
 }: ContextContentHeaderProps) => {
   const { t } = useTranslation();
-  const { input, maxTokens, usage } = useContextValue();
-  const percentNumber = getUsagePercent(input.total, maxTokens);
+  const { input, budgetTokens, usage } = useContextValue();
+  const percentNumber = getUsagePercent(input.total, budgetTokens);
   const cachePercent = input.hasCacheDetails
     ? formatUsagePercent(getUsagePercent(input.cacheRead, input.total))
     : "—";
@@ -323,7 +354,7 @@ export const ContextContentHeader = ({
                 {usage?.inputTokens === undefined ? "—" : formatCompactTokens(input.total)}
               </span>
               <span>/</span>
-              <span>{formatCompactTokens(maxTokens)}</span>
+              <span>{formatCompactTokens(budgetTokens)}</span>
               <span aria-hidden="true">·</span>
               <span>{t("chat:context.cacheRatio", { ratio: cachePercent })}</span>
             </p>
@@ -353,7 +384,7 @@ export type ContextContentBreakdownProps = ComponentProps<"div">;
 
 export const ContextContentBreakdown = ({ className, ...props }: ContextContentBreakdownProps) => {
   const { t } = useTranslation();
-  const { input, maxTokens, usage } = useContextValue();
+  const { input, budgetTokens, usage } = useContextValue();
   const metrics = getContextUsageMetrics(input, t);
 
   if (usage?.inputTokens === undefined)
@@ -362,7 +393,7 @@ export const ContextContentBreakdown = ({ className, ...props }: ContextContentB
   return (
     <div className={cn("w-full space-y-1.5", className)} role="list" {...props}>
       {metrics.map((metric) => {
-        const percent = getUsagePercent(metric.tokens, maxTokens);
+        const percent = getUsagePercent(metric.tokens, budgetTokens);
         return (
           <div
             className="flex min-w-0 items-center justify-between gap-3 text-xs"
@@ -386,6 +417,54 @@ export const ContextContentBreakdown = ({ className, ...props }: ContextContentB
           </div>
         );
       })}
+    </div>
+  );
+};
+
+export const ContextContentWindowControl = () => {
+  const { t } = useTranslation();
+  const {
+    maxTokens,
+    budgetPercent = 100,
+    budgetDisabled = false,
+    onBudgetPercentChange,
+    onBudgetPercentCommit,
+  } = useContextValue();
+  if (!onBudgetPercentChange || !onBudgetPercentCommit) return null;
+  const budgetTokens = Math.max(1, Math.floor((maxTokens * budgetPercent) / 100));
+  const valueFromSlider = (value: number | readonly number[]) =>
+    typeof value === "number" ? value : (value[0] ?? budgetPercent);
+
+  return (
+    <div className="space-y-2 border-t border-border/60 px-3 py-3">
+      <div className="flex min-w-0 items-baseline justify-between gap-3">
+        <span className="text-xs font-medium text-foreground">
+          {t("chat:context.windowBudget")}
+        </span>
+        <span className="shrink-0 font-mono text-[11px] tabular-nums text-muted-foreground">
+          {t("chat:context.windowBudgetValue", {
+            percent: budgetPercent,
+            tokens: formatCompactTokens(budgetTokens),
+          })}
+        </span>
+      </div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {t("chat:context.windowBudgetDescription")}
+      </p>
+      <Slider
+        aria-label={t("chat:context.windowBudget")}
+        disabled={budgetDisabled}
+        max={100}
+        min={20}
+        step={5}
+        value={[budgetPercent]}
+        onValueChange={(value) => onBudgetPercentChange(valueFromSlider(value))}
+        onValueCommitted={(value) => onBudgetPercentCommit(valueFromSlider(value))}
+      />
+      <div className="flex justify-between text-[10px] tabular-nums text-muted-foreground">
+        <span>20%</span>
+        <span>100%</span>
+      </div>
     </div>
   );
 };

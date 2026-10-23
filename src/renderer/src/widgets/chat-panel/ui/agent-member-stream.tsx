@@ -304,6 +304,7 @@ function InvocationTranscript({
                   },
                 }}
                 userId={user?.id ?? ""}
+                threadId={threadId}
                 pluginSkills={pluginSkills}
                 readOnly
                 isGenerating={running}

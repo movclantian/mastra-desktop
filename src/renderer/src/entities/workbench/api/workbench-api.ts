@@ -266,6 +266,20 @@ export async function searchMemory(resourceId: string, query: string): Promise<M
   });
 }
 
+// ---- Memory config API -------------------------------------------------------
+
+export function fetchMemoryConfig<T>(): Promise<T> {
+  return requestJson<T>("/work/memory", {}, i18n.t("settings:api.fetchMemoryFailed"));
+}
+
+export function saveMemoryConfig(config: Record<string, unknown>): Promise<void> {
+  return requestJson<void>(
+    "/work/memory",
+    { method: "POST", body: config },
+    i18n.t("settings:api.saveMemoryFailed"),
+  );
+}
+
 // ---- Providers & Tools API ---------------------------------------------------
 
 export async function fetchProviderConfig(): Promise<{

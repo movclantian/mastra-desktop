@@ -151,6 +151,8 @@ export type ThreadMetadata = {
   /** Mastra Session.model persists one selected router ID per thread. */
   currentModelId?: string;
   reasoningEffort?: string;
+  /** Per-thread context budget share of the selected model's listed window. */
+  contextWindowPercent?: number | null;
   /**
    * 线程绑定的工作区目录(绝对路径)。首条消息时锁定:
    * - 显式绑定:用户在 promptInput 选择器选定的本地目录

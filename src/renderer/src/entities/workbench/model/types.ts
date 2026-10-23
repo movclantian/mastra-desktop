@@ -26,6 +26,8 @@ export interface ThreadMetadata {
   /** Mastra Session.model persists one selected router ID per thread. */
   currentModelId?: string;
   reasoningEffort?: string;
+  /** Per-thread share of the selected model's listed context window. */
+  contextWindowPercent?: number | null;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;

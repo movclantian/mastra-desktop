@@ -10,6 +10,7 @@ export const qk = {
   threadContext: (userId: string, threadId: string | null) =>
     ["thread-context", userId, threadId] as const,
   providerConfig: () => ["provider-config"] as const,
+  memoryConfig: () => ["memory-config"] as const,
   catalog: () => ["catalog"] as const,
   agents: () => ["agents"] as const,
   toolsConfig: () => ["tools-config"] as const,

@@ -17,7 +17,13 @@ import {
   useUpdateDesktopSettings,
   useUpdateSuggestionConfig,
 } from "@/entities/workbench/model/queries/config";
-import { useTranslation } from "@/shared/i18n";
+import {
+  getInterfaceLanguageMode,
+  type InterfaceLanguageMode,
+  i18n,
+  setInterfaceLanguageMode,
+  useTranslation,
+} from "@/shared/i18n";
 import { cn, toastError } from "@/shared/lib";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -40,7 +46,9 @@ import {
 import { SettingCard, SettingRow } from "../controls";
 
 export function GeneralSection() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
+  const [languageMode, setLanguageMode] =
+    React.useState<InterfaceLanguageMode>(getInterfaceLanguageMode);
   const desktopSettings = useDesktopSettingsQuery();
   const updateDesktopSettings = useUpdateDesktopSettings();
   const [loading, setLoading] = React.useState(true);
@@ -208,26 +216,34 @@ export function GeneralSection() {
         action={
           <Badge variant="outline" className="text-[11px] font-normal">
             {t("settings:general.currentLang", {
-              lang: i18n.language.startsWith("en")
-                ? t("settings:general.langEn")
-                : t("settings:general.langZh"),
+              lang:
+                languageMode === "auto"
+                  ? t("settings:general.languageAuto") +
+                    " · " +
+                    (i18n.language.startsWith("en")
+                      ? t("settings:general.langEn")
+                      : t("settings:general.langZh"))
+                  : languageMode === "en"
+                    ? t("settings:general.langEn")
+                    : t("settings:general.langZh"),
             })}
           </Badge>
         }
       >
         <div className="py-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             {/* 中文 */}
             <Button
               variant="ghost"
-              aria-pressed={!i18n.language.startsWith("en")}
+              aria-pressed={languageMode === "zh"}
               onClick={() => {
-                void i18n.changeLanguage("zh");
+                setLanguageMode("zh");
+                void setInterfaceLanguageMode("zh");
                 toast.success(t("settings:general.switchedToZh"));
               }}
               className={cn(
                 "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
-                !i18n.language.startsWith("en")
+                languageMode === "zh"
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
               )}
@@ -238,7 +254,7 @@ export function GeneralSection() {
                     <LanguagesIcon
                       className={cn(
                         "size-4",
-                        !i18n.language.startsWith("en") ? "text-primary" : "text-muted-foreground",
+                        languageMode === "zh" ? "text-primary" : "text-muted-foreground",
                       )}
                     />
                     <span className="text-xs font-semibold text-foreground">
@@ -248,7 +264,7 @@ export function GeneralSection() {
                       {t("settings:general.langZhSub")}
                     </span>
                   </div>
-                  {!i18n.language.startsWith("en") ? (
+                  {languageMode === "zh" ? (
                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">
                       {t("common:selected")}
                     </Badge>
@@ -263,14 +279,15 @@ export function GeneralSection() {
             {/* 英文 */}
             <Button
               variant="ghost"
-              aria-pressed={i18n.language.startsWith("en")}
+              aria-pressed={languageMode === "en"}
               onClick={() => {
-                void i18n.changeLanguage("en");
+                setLanguageMode("en");
+                void setInterfaceLanguageMode("en");
                 toast.success(t("settings:general.switchedToEn"));
               }}
               className={cn(
                 "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
-                i18n.language.startsWith("en")
+                languageMode === "en"
                   ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
                   : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
               )}
@@ -281,7 +298,7 @@ export function GeneralSection() {
                     <LanguagesIcon
                       className={cn(
                         "size-4",
-                        i18n.language.startsWith("en") ? "text-primary" : "text-muted-foreground",
+                        languageMode === "en" ? "text-primary" : "text-muted-foreground",
                       )}
                     />
                     <span className="text-xs font-semibold text-foreground">
@@ -291,7 +308,7 @@ export function GeneralSection() {
                       {t("settings:general.langEnSub")}
                     </span>
                   </div>
-                  {i18n.language.startsWith("en") ? (
+                  {languageMode === "en" ? (
                     <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 font-normal">
                       {t("common:selected")}
                     </Badge>
@@ -299,6 +316,46 @@ export function GeneralSection() {
                 </div>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   {t("settings:general.langEnDesc")}
+                </p>
+              </div>
+            </Button>
+            <Button
+              variant="ghost"
+              aria-pressed={languageMode === "auto"}
+              onClick={() => {
+                setLanguageMode("auto");
+                void setInterfaceLanguageMode("auto");
+                toast.success(t("settings:general.switchedToAuto"));
+              }}
+              className={cn(
+                "relative flex h-auto min-w-0 flex-col items-stretch justify-between text-left whitespace-normal rounded-lg border p-3.5 cursor-pointer transition-all select-none",
+                languageMode === "auto"
+                  ? "border-primary bg-primary/5 text-foreground ring-1 ring-primary/40 shadow-xs"
+                  : "border-border hover:bg-muted/50 text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <div className="w-full">
+                <div className="mb-1.5 flex items-center gap-2">
+                  <LanguagesIcon
+                    className={cn(
+                      "size-4",
+                      languageMode === "auto" ? "text-primary" : "text-muted-foreground",
+                    )}
+                  />
+                  <span className="text-xs font-semibold text-foreground">
+                    {t("settings:general.languageAuto")}
+                  </span>
+                  {languageMode === "auto" ? (
+                    <Badge
+                      variant="secondary"
+                      className="ml-auto h-4 px-1.5 py-0 text-[10px] font-normal"
+                    >
+                      {t("common:selected")}
+                    </Badge>
+                  ) : null}
+                </div>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {t("settings:general.languageAutoDesc")}
                 </p>
               </div>
             </Button>
@@ -313,7 +370,7 @@ export function GeneralSection() {
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="text-[11px] font-normal">
               {savedConfig.mode === "system"
-                ? `${t("common:current")}：${t("settings:general.proxySystem")}`
+                ? `${t("common:current")}：${t("settings:general.proxyAuto")}`
                 : savedConfig.mode === "direct"
                   ? `${t("common:current")}：${t("settings:general.proxyDirect")}`
                   : `${t("common:current")}：${t("settings:general.proxyManual")} (${savedConfig.url || t("common:empty")})`}
@@ -345,7 +402,7 @@ export function GeneralSection() {
                     )}
                   />
                   <span className="text-xs font-semibold text-foreground">
-                    {t("settings:general.proxySystem")}
+                    {t("settings:general.proxyAuto")}
                   </span>
                   {mode === "system" ? (
                     <Badge
@@ -357,7 +414,7 @@ export function GeneralSection() {
                   ) : null}
                 </div>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  {t("settings:general.proxySystemDesc")}
+                  {t("settings:general.proxyAutoDesc")}
                 </p>
               </div>
             </Button>
@@ -561,7 +618,7 @@ function SuggestionSettingsCard() {
   const config = suggestionConfig.data ?? DEFAULT_SUGGESTION_CONFIG;
   const modelItems = React.useMemo(
     () => [
-      { value: "", label: t("settings:suggestions.modelSession") },
+      { value: "", label: t("settings:general.suggestions.modelRequest") },
       ...providers
         .filter((provider) => !provider.disabled && provider.enabledModels.length > 0)
         .flatMap((provider) =>
@@ -583,8 +640,8 @@ function SuggestionSettingsCard() {
 
   return (
     <SettingCard
-      title={t("settings:suggestions.title")}
-      description={t("settings:suggestions.desc")}
+      title={t("settings:general.suggestions.title")}
+      description={t("settings:general.suggestions.desc")}
     >
       {suggestionConfig.isError ? (
         <Button onClick={() => void suggestionConfig.refetch()} variant="outline" size="sm">
@@ -593,19 +650,52 @@ function SuggestionSettingsCard() {
       ) : suggestionConfig.data ? (
         <>
           <SettingRow
-            title={t("settings:suggestions.enabled")}
-            description={t("settings:suggestions.enabledDesc")}
+            title={t("settings:general.suggestions.enabled")}
+            description={t("settings:general.suggestions.enabledDesc")}
           >
             <Switch
-              aria-label={t("settings:suggestions.enabled")}
+              aria-label={t("settings:general.suggestions.enabled")}
               checked={config.enabled}
               disabled={updateSuggestionConfig.isPending}
               onCheckedChange={(checked) => save({ enabled: checked })}
             />
           </SettingRow>
           <SettingRow
-            title={t("settings:suggestions.model")}
-            description={t("settings:suggestions.modelDesc")}
+            title={t("settings:general.suggestions.strategy")}
+            description={t("settings:general.suggestions.strategyDesc")}
+          >
+            <Select
+              items={[
+                {
+                  value: "request",
+                  label: t("settings:general.suggestions.strategyRequest"),
+                },
+                {
+                  value: "turn",
+                  label: t("settings:general.suggestions.strategyTurn"),
+                },
+              ]}
+              value={config.strategy}
+              onValueChange={(value) => {
+                if (value === "request" || value === "turn") save({ strategy: value });
+              }}
+            >
+              <SelectTrigger className="w-64 max-w-full shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="request">
+                  {t("settings:general.suggestions.strategyRequest")}
+                </SelectItem>
+                <SelectItem value="turn">
+                  {t("settings:general.suggestions.strategyTurn")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+          <SettingRow
+            title={t("settings:general.suggestions.model")}
+            description={t("settings:general.suggestions.modelDesc")}
           >
             <Select
               items={modelItems}

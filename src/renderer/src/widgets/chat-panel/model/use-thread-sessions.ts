@@ -25,6 +25,8 @@ import {
 import {
   type MessageQueueAction,
   mergeToolPart,
+  type ObservationalMemoryActivityEvent,
+  type ObservationalMemoryStatusEvent,
   type QueuedRequest,
   type WorkMessageMetadata,
   type WorkUIMessage,
@@ -47,6 +49,8 @@ interface SessionView {
   connectionError?: string;
   runError?: string;
   native?: NativeDisplayState;
+  omStatus?: ObservationalMemoryStatusEvent;
+  omActivity?: ObservationalMemoryActivityEvent;
 }
 interface MessageInput {
   text?: string;
@@ -465,8 +469,28 @@ function createThreadSession(
             if (event.type === "agent_start") {
               failed = false;
               awaitingRun = false;
-              store.setState({ runError: undefined });
+              store.setState({ runError: undefined, omStatus: undefined, omActivity: undefined });
               setStatus("streaming");
+            }
+            if (event.type === "om_status") {
+              store.setState({ omStatus: event });
+              return;
+            }
+            if (
+              event.type === "om_observation_start" ||
+              event.type === "om_observation_end" ||
+              event.type === "om_observation_failed" ||
+              event.type === "om_reflection_start" ||
+              event.type === "om_reflection_end" ||
+              event.type === "om_reflection_failed" ||
+              event.type === "om_buffering_start" ||
+              event.type === "om_buffering_end" ||
+              event.type === "om_buffering_failed" ||
+              event.type === "om_activation" ||
+              event.type === "om_model_changed"
+            ) {
+              store.setState({ omActivity: event });
+              return;
             }
             if (event.type === "agent_end") {
               awaitingRun = false;

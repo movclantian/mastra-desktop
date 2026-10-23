@@ -397,6 +397,44 @@ const WORK_ERRORS = {
     status: 404,
     text: "Browser session not found",
   },
+
+  // ---- 频道(routes/channels + channels/)--------------------------------
+  CHANNEL_PLATFORM_UNKNOWN: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 404,
+    text: "未知的频道平台",
+  },
+  CHANNEL_NOT_CONFIGURED: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "该频道尚未启用或凭据不完整",
+  },
+  CHANNEL_CREDENTIAL_UNAVAILABLE: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 409,
+    text: "频道凭据不可用，请重新填写后保存",
+  },
+  CHANNEL_ADAPTER_FAILED: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.THIRD_PARTY,
+    status: 502,
+    text: "频道适配器初始化失败",
+  },
+  CHANNEL_RUNTIME_FAILED: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.SYSTEM,
+    status: 500,
+    text: "频道运行时启动失败，请检查日志后重试",
+  },
+  CHANNEL_OWNER_MISMATCH: {
+    domain: ErrorDomain.MASTRA_SERVER,
+    category: ErrorCategory.USER,
+    status: 403,
+    text: "频道配置属于另一个桌面账户",
+  },
 } as const satisfies Record<string, WorkErrorDefinition>;
 
 export type WorkErrorCode = keyof typeof WORK_ERRORS;

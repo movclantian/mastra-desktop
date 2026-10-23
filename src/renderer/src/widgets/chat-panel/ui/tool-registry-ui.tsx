@@ -1,3 +1,4 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AppWindowIcon,
   ArrowLeftIcon,
@@ -39,10 +40,14 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import * as React from "react";
-import { workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
+import { fetchChangeContent, workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
+import { useThreadChangesQuery } from "@/entities/workbench/model/queries/workspace";
+import { qk } from "@/entities/workbench/model/query-keys";
+import type { WorkspaceFileChange } from "@/entities/workbench/model/types";
 import { useAuth } from "@/features/auth";
 import { useTranslation } from "@/shared/i18n";
 import { Button } from "@/shared/ui/button";
+import { CodeComparison } from "@/shared/ui/code-comparison";
 import { CodeFile } from "@/shared/ui/code-file";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
@@ -70,7 +75,14 @@ export type ToolUIDescriptor = {
   labelKey: string;
   summarize?: (input: Record<string, unknown>, output: unknown, name: string) => ToolSummary;
   /** 展开后的详情;返回 undefined/null 时回退到通用 ToolInput/ToolOutput */
-  detail?: (ctx: { input: Record<string, unknown>; output: unknown }) => React.ReactNode;
+  detail?: (ctx: {
+    input: Record<string, unknown>;
+    output: unknown;
+    threadId?: string;
+    toolCallId?: string;
+    userId?: string;
+    isStreaming?: boolean;
+  }) => React.ReactNode;
 };
 
 const asStr = (value: unknown): string | undefined =>
@@ -205,30 +217,102 @@ function PairDetail({
   oldText,
   newText,
   language,
+  filename,
 }: {
   oldText?: string;
   newText?: string;
   language: CodeLanguage;
+  filename?: string;
+}) {
+  const beforeCode = oldText ?? "";
+  const afterCode = newText ?? "";
+  if (!beforeCode && !afterCode) return null;
+  return (
+    <CodeComparison
+      beforeCode={capped(beforeCode)}
+      afterCode={capped(afterCode)}
+      filename={filename}
+      language={language}
+    />
+  );
+}
+
+function WorkspaceMutationDiff({
+  threadId,
+  toolCallId,
+  userId,
+  path,
+  language,
+  oldText,
+  newText,
+  isStreaming,
+}: {
+  threadId?: string;
+  toolCallId?: string;
+  userId: string;
+  path?: string;
+  language: CodeLanguage;
+  oldText?: string;
+  newText?: string;
+  isStreaming: boolean;
 }) {
   const { t } = useTranslation();
-  return (
-    <div className="space-y-1">
-      {oldText ? (
-        <CodeFile
-          code={capped(oldText)}
-          filename={t("chat:trace.oldContent")}
-          language={language}
-        />
-      ) : null}
-      {newText ? (
-        <CodeFile
-          code={capped(newText)}
-          filename={t("chat:trace.newContent")}
-          language={language}
-        />
-      ) : null}
-    </div>
-  );
+  const queryClient = useQueryClient();
+  const changes = useThreadChangesQuery(userId, threadId ?? null, {
+    enabled: Boolean(threadId && toolCallId),
+  });
+  const change = changes.data?.find((item) => item.toolCallId === toolCallId);
+  const retriedChangeRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!isStreaming || !changes.isSuccess || change || retriedChangeRef.current) return;
+    retriedChangeRef.current = true;
+    const timer = window.setTimeout(() => void changes.refetch(), 300);
+    return () => window.clearTimeout(timer);
+  }, [change, changes.isSuccess, changes.refetch, isStreaming]);
+  const binary = change?.before?.encoding === "binary" || change?.after?.encoding === "binary";
+  const content = useQuery({
+    queryKey: ["workspace-tool-diff", userId, threadId, change?.id ?? "pending"],
+    enabled: Boolean(threadId && change && !binary),
+    staleTime: Infinity,
+    queryFn: async () => {
+      if (!threadId || !change) return null;
+      const readSide = (side: "before" | "after", snapshot: WorkspaceFileChange["before"]) =>
+        snapshot && snapshot.encoding !== "binary"
+          ? queryClient.fetchQuery({
+              queryKey: qk.changeContent(threadId, change.id, side),
+              queryFn: () => fetchChangeContent(threadId, change.id, userId, side),
+              staleTime: Infinity,
+            })
+          : Promise.resolve(null);
+      const [before, after] = await Promise.all([
+        readSide("before", change.before),
+        readSide("after", change.after),
+      ]);
+      if (
+        (change.before && change.before.encoding !== "binary" && !before) ||
+        (change.after && change.after.encoding !== "binary" && !after)
+      )
+        return null;
+      return { before: before?.content ?? "", after: after?.content ?? "" };
+    },
+  });
+
+  if (binary)
+    return <p className="text-xs text-muted-foreground">{t("workspace:binarySnapshot")}</p>;
+  if (content.data)
+    return (
+      <CodeComparison
+        beforeCode={capped(content.data.before)}
+        afterCode={capped(content.data.after)}
+        filename={change?.path ?? path}
+        language={language}
+      />
+    );
+  if (content.isPending && change)
+    return (
+      <p className="py-2 text-xs text-muted-foreground">{t("workspace:readingFullSnapshot")}</p>
+    );
+  return <PairDetail oldText={oldText} newText={newText} filename={path} language={language} />;
 }
 
 function TextDetail({ text, language = "log" }: { text: string; language?: CodeLanguage }) {
@@ -703,23 +787,32 @@ const workspaceUIs: Record<string, ToolUIDescriptor> = {
     icon: FilePlus2Icon,
     labelKey: "write_file",
     summarize: (input) => ({ files: pathFiles(input) }),
-    detail: ({ input }) => {
-      const content = asStr(input.content);
-      const path = pickStr(input, "path");
-      return content ? (
-        <CodeFile code={capped(content)} filename={path} language={langOf(path)} />
-      ) : null;
-    },
+    detail: ({ input, threadId, toolCallId, userId, isStreaming }) => (
+      <WorkspaceMutationDiff
+        threadId={threadId}
+        toolCallId={toolCallId}
+        userId={userId ?? "anonymous"}
+        path={pickStr(input, "path")}
+        language={langOf(pickStr(input, "path"))}
+        newText={asStr(input.content)}
+        isStreaming={isStreaming ?? false}
+      />
+    ),
   },
   mastra_workspace_edit_file: {
     icon: FilePenLineIcon,
     labelKey: "edit_file",
     summarize: (input) => ({ files: pathFiles(input) }),
-    detail: ({ input }) => (
-      <PairDetail
+    detail: ({ input, threadId, toolCallId, userId, isStreaming }) => (
+      <WorkspaceMutationDiff
+        threadId={threadId}
+        toolCallId={toolCallId}
+        userId={userId ?? "anonymous"}
+        path={pickStr(input, "path")}
         language={langOf(pickStr(input, "path"))}
         newText={asStr(input.newString)}
         oldText={asStr(input.oldString)}
+        isStreaming={isStreaming ?? false}
       />
     ),
   },

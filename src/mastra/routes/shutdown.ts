@@ -16,6 +16,7 @@ import type { Mastra } from "@mastra/core/mastra";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { closeAllBrowsers } from "../agents/browser";
 import { isDesktopControlRequest } from "../auth";
+import { closeChannelRuntime } from "../channels/runtime";
 import { closeComputerConnections } from "../connections/computer";
 import { closeMcpConnections } from "../connections/mcp";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
@@ -96,6 +97,7 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
     closeAllBrowsers(),
     closeComputerConnections(),
     closeMcpConnections(),
+    closeChannelRuntime(),
   ]);
   signal.throwIfAborted();
   await mastra.shutdown({ drainTimeout: 0 });

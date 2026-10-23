@@ -270,10 +270,12 @@ const ToolStepItem = React.memo(function ToolStepItem({
   part,
   showDetails,
   isStreaming,
+  threadId,
 }: {
   part: ToolPart;
   showDetails: boolean;
   isStreaming: boolean;
+  threadId?: string;
 }) {
   const { t } = useTranslation();
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.replace("tool-", "");
@@ -359,7 +361,16 @@ const ToolStepItem = React.memo(function ToolStepItem({
           ? [hintLabel]
           : [];
   const files = customSummary ? (customSummary.files ?? []) : filePaths;
-  const customDetail = failed ? undefined : ui?.detail?.({ input, output });
+  const customDetail = failed
+    ? undefined
+    : ui?.detail?.({
+        input,
+        output,
+        threadId,
+        toolCallId: part.toolCallId,
+        userId: user?.id,
+        isStreaming,
+      });
 
   const sandboxOutput = React.useMemo(() => {
     if (!typescriptSandbox) return "";
@@ -454,6 +465,22 @@ const ToolStepItem = React.memo(function ToolStepItem({
     </TraceLine>
   );
 
+  if (commandSandbox) {
+    if (testRun) return <TestResults isStreaming={active} run={testRun} />;
+    return (
+      <Terminal
+        command={
+          typeof input.command === "string"
+            ? input.command
+            : t("chat:trace.toolNames.execute_command")
+        }
+        exitCode={exitCode}
+        isStreaming={active}
+        output={terminalOutput || errorText || ""}
+      />
+    );
+  }
+
   if (!hasDetails) return line;
 
   return (
@@ -463,21 +490,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
       </TraceCollapsibleTrigger>
       <TraceCollapsibleContent>
         <div className="min-w-0 max-w-full space-y-2">
-          {commandSandbox ? (
-            /* 官方 Terminal pattern:命令 + 流式输出 + 退出码状态。
-               若输出可解析为测试结果,改用官方 Test Results pattern
-               (按套件/用例分组、失败自带错误),否则保持终端形态。 */
-            testRun ? (
-              <TestResults isStreaming={active} run={testRun} />
-            ) : (
-              <Terminal
-                command={typeof input.command === "string" ? input.command : name}
-                exitCode={exitCode}
-                isStreaming={active}
-                output={terminalOutput || errorText || ""}
-              />
-            )
-          ) : typescriptSandbox ? (
+          {typescriptSandbox ? (
             <Sandbox
               className="mb-0 min-w-0 max-w-full"
               open={sandboxOpen}
@@ -559,11 +572,13 @@ const ToolGroup = React.memo(function ToolGroup({
   tools,
   showDetails,
   isStreaming,
+  threadId,
   subagentInvocations,
 }: {
   tools: ToolPart[];
   showDetails: boolean;
   isStreaming: boolean;
+  threadId?: string;
   subagentInvocations?: TeamInvocation[];
 }) {
   const { t } = useTranslation();
@@ -594,6 +609,27 @@ const ToolGroup = React.memo(function ToolGroup({
   const toolTitle = t("chat:trace.toolCallsCount", {
     count: tools.length,
   });
+
+  if (tools.length === 1) {
+    const tool = tools[0];
+    if (!tool) return null;
+    const invocation = subagentInvocations?.find((call) => call.toolCallId === tool.toolCallId);
+    return invocation ? (
+      <SubagentStepItem
+        invocation={invocation}
+        memberName={subagentMemberName(invocation)}
+        showDetails={showDetails}
+        isStreaming={isStreaming}
+      />
+    ) : (
+      <ToolStepItem
+        part={tool}
+        showDetails={showDetails}
+        isStreaming={isStreaming}
+        threadId={threadId}
+      />
+    );
+  }
 
   return (
     <Task className="w-full" open={open} onOpenChange={setOpen}>
@@ -653,6 +689,7 @@ const ToolGroup = React.memo(function ToolGroup({
               part={tool}
               showDetails={showDetails}
               isStreaming={isStreaming}
+              threadId={threadId}
             />
           );
         })}
@@ -664,10 +701,12 @@ const ToolGroup = React.memo(function ToolGroup({
 export const AssistantTrace = React.memo(function AssistantTrace({
   parts,
   isStreaming,
+  threadId,
   subagentInvocations,
 }: {
   parts: TracePart[];
   isStreaming: boolean;
+  threadId?: string;
   subagentInvocations?: TeamInvocation[];
 }) {
   const { t } = useTranslation();
@@ -709,6 +748,7 @@ export const AssistantTrace = React.memo(function AssistantTrace({
           tools={tools}
           showDetails={showDetails}
           isStreaming={isStreaming}
+          threadId={threadId}
           subagentInvocations={subagentInvocations}
         />
       ),

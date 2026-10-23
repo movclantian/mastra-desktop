@@ -502,6 +502,8 @@ export function ChatPanel() {
     setMessages,
     status: sessionStatus,
     native,
+    omStatus,
+    omActivity,
     queuedRequests,
     connection,
     connectionError,
@@ -1316,6 +1318,7 @@ export function ChatPanel() {
           sendFailed && failedUserMessage !== undefined && entry.message.id === failedUserMessage.id
         }
         userId={user.id}
+        threadId={activeThreadId ?? undefined}
       />
     );
   };
@@ -1545,6 +1548,8 @@ export function ChatPanel() {
           modelSelection ? `${modelSelection.providerId}/${modelSelection.modelId}` : undefined
         }
         messages={messages}
+        requestBlocked={queuedRequests.length > 0 || visibleInteractions.length > 0}
+        threadId={activeThreadId}
         onSelect={(suggestion) =>
           void handleSubmit({ text: suggestion, files: [] }, () => undefined)
         }
@@ -1603,11 +1608,15 @@ export function ChatPanel() {
             <ChatPromptInput
               activeThread={Boolean(activeThread)}
               activeThreadId={activeThreadId}
+              userId={user.id}
+              threadBudgetPercent={activeThread?.metadata.contextWindowPercent ?? undefined}
               goalAvailable={goalAvailable}
               goalMode={goalMode}
               onGoalModeChange={setGoalMode}
               usage={latestUsage}
               billingUsage={billingUsage}
+              omStatus={omStatus}
+              omActivity={omActivity}
               onSubmit={handleSubmit}
               status={status}
               onStop={handleStop}

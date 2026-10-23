@@ -1,3 +1,4 @@
+import type { KnownAgentControllerEvent } from "@mastra/client-js";
 import {
   type FileUIPart,
   getToolName as getAISDKToolName,
@@ -32,6 +33,28 @@ export interface WorkMessageMetadata {
   /** 消息表情反应(官方 BubbleReactions),随消息 metadata 持久化 */
   reactions?: MessageReaction[];
 }
+
+export type ObservationalMemoryStatusEvent = Extract<
+  KnownAgentControllerEvent,
+  { type: "om_status" }
+>;
+export type ObservationalMemoryActivityEvent = Extract<
+  KnownAgentControllerEvent,
+  {
+    type:
+      | "om_observation_start"
+      | "om_observation_end"
+      | "om_observation_failed"
+      | "om_reflection_start"
+      | "om_reflection_end"
+      | "om_reflection_failed"
+      | "om_buffering_start"
+      | "om_buffering_end"
+      | "om_buffering_failed"
+      | "om_activation"
+      | "om_model_changed";
+  }
+>;
 
 export interface MessageReaction {
   emoji: string;

@@ -1,5 +1,11 @@
 import type { MetricRecord, MetricsFilter, ObservabilityStorage } from "@mastra/core/storage";
-import { getProvidersConfig, routerPrefix, type UserProviderConfig } from "./models/providers";
+import { catalogModelKeys, modelLookupKeys } from "../shared/agent-contract";
+import {
+  fetchModelsDevCatalog,
+  getProvidersConfig,
+  routerPrefix,
+  type UserProviderConfig,
+} from "./models/providers";
 import { appStorage } from "./storage/database";
 
 const INPUT_TOKENS_METRIC = "mastra_model_total_input_tokens";
@@ -125,16 +131,28 @@ function modelCost(metrics: MetricRecord[]): UsageCost {
   return summarizeCost(metrics.map(costOf));
 }
 
+function canUseModelsDevCost(metrics: MetricRecord[]): boolean {
+  return (
+    metrics.length > 0 &&
+    metrics.every(
+      (metric) =>
+        metric.costMetadata?.error === "no_matching_model" ||
+        metric.costMetadata?.error === "no_matching_tier" ||
+        (!metric.costMetadata && metric.estimatedCost == null && !metric.costUnit),
+    )
+  );
+}
+
 const PROVIDER_KIND_SUFFIX =
   /\.(?:chat|responses|messages|generateContent|completion|embedding|textEmbedding|image|audio)$/i;
 
-function providerLabel(
+function configuredProvider(
   rawValue: string | null | undefined,
   configuredProviders: UserProviderConfig[],
-): string {
+): UserProviderConfig | undefined {
   const raw = rawValue?.trim() || "unknown";
   const namespace = raw.replace(PROVIDER_KIND_SUFFIX, "");
-  const configured = configuredProviders.find(
+  return configuredProviders.find(
     (provider) =>
       provider.name.trim() === raw ||
       provider.name.trim() === namespace ||
@@ -142,7 +160,122 @@ function providerLabel(
       provider.registryId === namespace ||
       routerPrefix(provider) === namespace,
   );
-  return configured?.name ?? namespace;
+}
+
+function providerLabel(
+  rawValue: string | null | undefined,
+  configuredProviders: UserProviderConfig[],
+): string {
+  const raw = rawValue?.trim() || "unknown";
+  const namespace = raw.replace(PROVIDER_KIND_SUFFIX, "");
+  return configuredProvider(rawValue, configuredProviders)?.name ?? namespace;
+}
+
+// shortcut: uses base rates instead of cache/tier pricing; add detailed metrics if precision matters.
+function modelDevPrice(
+  catalog: Awaited<ReturnType<typeof fetchModelsDevCatalog>> | undefined,
+  rawProvider: string,
+  modelId: string,
+  inputTokens: number | null,
+  outputTokens: number | null,
+  configuredProviders: UserProviderConfig[],
+): UsageCost | null {
+  if (!catalog || !modelId || inputTokens === null || outputTokens === null) return null;
+  if (
+    !Number.isFinite(inputTokens) ||
+    inputTokens < 0 ||
+    !Number.isFinite(outputTokens) ||
+    outputTokens < 0
+  )
+    return null;
+  const modelKeyPriority = new Map(modelLookupKeys(modelId).map((key, index) => [key, index]));
+  const findPrice = (provider: unknown) => {
+    if (!provider || typeof provider !== "object" || Array.isArray(provider))
+      return { matched: false as const };
+    const models = (provider as { models?: unknown }).models;
+    if (!models || typeof models !== "object" || Array.isArray(models))
+      return { matched: false as const };
+    const matches = Object.entries(models as Record<string, unknown>).flatMap(([id, model]) => {
+      const priorities = catalogModelKeys(id).flatMap((key) => {
+        const priority = modelKeyPriority.get(key);
+        return priority === undefined ? [] : [priority];
+      });
+      return priorities.length ? [{ model, priority: Math.min(...priorities) }] : [];
+    });
+    if (!matches.length) return { matched: false as const };
+    const priority = Math.min(...matches.map((match) => match.priority));
+    const bestMatches = matches.filter((match) => match.priority === priority);
+    if (bestMatches.length !== 1) return { matched: true as const, priority };
+    const cost = (bestMatches[0].model as { cost?: unknown } | null)?.cost;
+    if (!cost || typeof cost !== "object") return { matched: true as const, priority };
+    const { input, output } = cost as { input?: unknown; output?: unknown };
+    if (
+      typeof input !== "number" ||
+      !Number.isFinite(input) ||
+      input < 0 ||
+      typeof output !== "number" ||
+      !Number.isFinite(output) ||
+      output < 0
+    )
+      return { matched: true as const, priority };
+    return { matched: true as const, priority, input, output };
+  };
+
+  const rawNamespace = (rawProvider.trim() || "unknown").replace(PROVIDER_KIND_SUFFIX, "");
+  const configured = configuredProvider(rawProvider, configuredProviders);
+  const preferredId = configured?.registryId ?? rawNamespace;
+  if (Object.hasOwn(catalog, preferredId)) {
+    const preferred = findPrice(catalog[preferredId]);
+    if (preferred.matched) {
+      if (preferred.input === undefined || preferred.output === undefined) return null;
+      const cost = (inputTokens * preferred.input + outputTokens * preferred.output) / 1_000_000;
+      return Number.isFinite(cost) ? { cost, costUnit: "USD" } : null;
+    }
+  }
+
+  // A custom gateway has no reliable registry identity; use a global match only if unique.
+  const matches = Object.values(catalog)
+    .map(findPrice)
+    .filter((price) => price.matched);
+  if (!matches.length) return null;
+  const bestPriority = Math.min(
+    ...matches.map((match) => match.priority ?? Number.POSITIVE_INFINITY),
+  );
+  const bestMatches = matches.filter((match) => match.priority === bestPriority);
+  if (
+    bestMatches.length !== 1 ||
+    bestMatches[0].input === undefined ||
+    bestMatches[0].output === undefined
+  )
+    return null;
+  const cost =
+    (inputTokens * bestMatches[0].input + outputTokens * bestMatches[0].output) / 1_000_000;
+  if (!Number.isFinite(cost)) return null;
+  return {
+    cost,
+    costUnit: "USD",
+  };
+}
+
+function estimatedCost(
+  metrics: MetricRecord[],
+  rawProvider: string,
+  modelId: string,
+  configuredProviders: UserProviderConfig[],
+  catalog: Awaited<ReturnType<typeof fetchModelsDevCatalog>> | undefined,
+): UsageCost {
+  const recorded = modelCost(metrics);
+  if (recorded.cost !== null || !canUseModelsDevCost(metrics)) return recorded;
+  return (
+    modelDevPrice(
+      catalog,
+      rawProvider,
+      modelId,
+      metricValue(metrics, INPUT_TOKENS_METRIC),
+      metricValue(metrics, OUTPUT_TOKENS_METRIC),
+      configuredProviders,
+    ) ?? recorded
+  );
 }
 
 async function listAllMetrics(
@@ -226,17 +359,34 @@ export async function getUsageSummary(
     }
   }
 
+  const needsModelsDevCatalog = durations.some((duration) => {
+    const key = spanKey(duration);
+    const metrics = key ? (tokensBySpan.get(key) ?? []) : [];
+    const model = metrics.find((metric) => metric.model)?.model ?? duration.model;
+    return (
+      Boolean(model?.trim() && model.trim().toLowerCase() !== "unknown") &&
+      canUseModelsDevCost(metrics) &&
+      metricValue(metrics, INPUT_TOKENS_METRIC) !== null &&
+      metricValue(metrics, OUTPUT_TOKENS_METRIC) !== null
+    );
+  });
+  const catalog = needsModelsDevCatalog
+    ? await fetchModelsDevCatalog().catch(() => undefined)
+    : undefined;
+
   const rows = durations.map((duration, index): UsageRequest => {
     const key = spanKey(duration);
     const metrics = key ? (tokensBySpan.get(key) ?? []) : [];
     const inputTokens = metricValue(metrics, INPUT_TOKENS_METRIC);
     const outputTokens = metricValue(metrics, OUTPUT_TOKENS_METRIC);
+    const rawProvider =
+      metrics.find((metric) => metric.provider)?.provider ?? duration.provider ?? "unknown";
+    const model = metrics.find((metric) => metric.model)?.model ?? duration.model ?? "unknown";
     return {
       id: key ?? duration.metricId ?? `uncorrelated-${index}`,
       createdAt: new Date(duration.timestamp).toISOString(),
-      provider:
-        metrics.find((metric) => metric.provider)?.provider ?? duration.provider ?? "unknown",
-      model: metrics.find((metric) => metric.model)?.model ?? duration.model ?? "unknown",
+      provider: rawProvider,
+      model,
       inputTokens,
       outputTokens,
       totalTokens: sumKnown([inputTokens, outputTokens]),
@@ -246,7 +396,7 @@ export async function getUsageSummary(
           ? duration.labels.status
           : null,
       source: "observability",
-      ...modelCost(metrics),
+      ...estimatedCost(metrics, rawProvider, model, configuredProviders, catalog),
     };
   });
 

@@ -3,7 +3,7 @@
  * 官方:docs/examples/suggestion.mdx —— 建议是一句可直接发送的短提示,
  * 点击即发,省去输入。本模块负责两件事:
  * 1. 读写用户级配置(app_config key = "suggestions"):开关 + 生成用模型;
- * 2. 依据最近对话生成建议(独立小模型调用,不进入主 Agent 的会话)。
+ * 2. 依据最近对话生成建议(独立模型调用,不进入主 Agent 的会话)。
  * 生成失败不影响对话本身,前端按空列表处理。
  */
 
@@ -90,7 +90,7 @@ const suggestRequestSchema = z
           .strict(),
       )
       .max(40),
-    /** 当前会话模型,配置未指定模型时作为回退 */
+    /** 当前请求模型,配置未指定模型时作为回退 */
     fallbackModel: z.string().max(512).optional(),
   })
   .strict();
