@@ -8,7 +8,6 @@ import { requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { GeneratedAvatar } from "@/shared/ui/avatar";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -42,57 +41,6 @@ export function ProfileAvatar({
   );
 }
 
-/** Shared, literal projection of the saved execution definition. */
-function TeamWorkflowSteps({ profile }: { profile: AgentProfile }) {
-  const { t } = useTranslation();
-  const name = (id: string) => profile.members.find((member) => member.id === id)?.name ?? id;
-  const definition = profile.workflow;
-  if (!definition) return null;
-  return (
-    <ol className="grid min-w-0 gap-2">
-      {definition.steps.map((step, index) => (
-        <li key={step.id} className="grid min-w-0 gap-1 rounded-md border p-2 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">
-              {index + 1} · {t(`agentHub:stepKinds.${step.kind}`)}
-            </Badge>
-            <span className="break-all">{step.id}</span>
-          </div>
-          {step.kind === "approval" ? (
-            <p className="break-words">
-              {step.approval.title}: {step.approval.description}
-            </p>
-          ) : (
-            <>
-              <p className="break-words">
-                {step.kind === "council"
-                  ? `${step.memberIds.map(name).join(" ∥ ")} → ${name(step.judgeMemberId)}`
-                  : step.kind === "branch"
-                    ? `${step.condition.operator} “${step.condition.value}” → ${name(step.branch.onTrueMemberId)} / ${name(step.branch.onFalseMemberId)}`
-                    : step.kind === "loop"
-                      ? `${name(step.memberId)} · ${step.loop.mode} · ${step.loop.mode === "foreach" ? `${t("agentHub:concurrency")}: ${step.loop.concurrency}` : `${step.condition?.operator} “${step.condition?.value}” · ${t("agentHub:maxIterations")}: ${step.loop.maxIterations}`}`
-                      : name(step.memberId)}
-              </p>
-              <p>
-                {t("agentHub:stepContext")}: {t(`agentHub:contexts.${step.context}`)} ·{" "}
-                {t("agentHub:retries")}: {step.retries}
-              </p>
-              {step.prompt ? (
-                <p className="whitespace-pre-wrap break-words">{step.prompt}</p>
-              ) : null}
-            </>
-          )}
-          {index > 0 ? (
-            <p className="break-all text-muted-foreground">
-              {t("agentHub:dependsOn")}: {definition.steps[index - 1].id}
-            </p>
-          ) : null}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 export function AgentProfileDetails({
   profile,
   onSaved,
@@ -102,17 +50,17 @@ export function AgentProfileDetails({
 }) {
   const { t } = useTranslation();
   const detailsId = useId();
-  const definition = profile.workflow;
   const isTeam = profile.type === "team";
-  const [selectedId, setSelectedId] = useState<string | null>(
-    definition?.strategy === "handoff" ? (definition.entryMemberId ?? null) : null,
-  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [instructionDrafts, setInstructionDrafts] = useState<Record<string, string | undefined>>(
     {},
   );
   const member = isTeam ? profile.members.find((item) => item.id === selectedId) : undefined;
   const instructionKey = member ? `member:${member.id}` : "profile";
   const selected = member ?? profile;
+  // The default Agent's Explorer/Reviewer are prebuilt agents; their role prompts
+  // are system-managed even though they appear in the team roster.
+  const canEditInstructions = !(profile.id === DEFAULT_AGENT_PROFILE_ID && member);
   const name = member?.name ?? profile.displayName;
   const roster = [
     { id: null, name: profile.displayName, profession: profile.profession },
@@ -127,7 +75,7 @@ export function AgentProfileDetails({
           : "flex flex-col",
       )}
     >
-      {isTeam && definition ? (
+      {isTeam ? (
         <ScrollArea className="min-h-0 min-w-0 rounded-md border">
           <nav aria-label={t("agentHub:teamRoster")} className="grid min-w-0 gap-1 p-1">
             {roster.map((item) => (
@@ -151,30 +99,9 @@ export function AgentProfileDetails({
                   <span className="break-words text-sm font-normal text-muted-foreground">
                     {item.id === null ? t("chat:agents.mainAgent") : item.profession}
                   </span>
-                  {definition.strategy === "handoff" && item.id === definition.entryMemberId ? (
-                    <span className="text-xs text-primary">{t("agentHub:initialExpert")}</span>
-                  ) : null}
                 </span>
               </Button>
             ))}
-            {definition.steps.length ? (
-              <Collapsible className="mt-1 min-w-0 border-t px-2 py-2">
-                <CollapsibleTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      className="h-auto max-w-full justify-start whitespace-normal break-words"
-                    />
-                  }
-                >
-                  {t("agentHub:executionSteps")}
-                </CollapsibleTrigger>
-                <CollapsibleContent className="pt-2">
-                  <TeamWorkflowSteps profile={profile} />
-                </CollapsibleContent>
-              </Collapsible>
-            ) : null}
           </nav>
         </ScrollArea>
       ) : null}
@@ -196,6 +123,11 @@ export function AgentProfileDetails({
           <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
             {selected.description}
           </p>
+          {!canEditInstructions ? (
+            <p className="text-xs text-muted-foreground">
+              {t("agentHub:builtinMemberInstructions")}
+            </p>
+          ) : null}
           <AgentInstructionsEditor
             key={instructionKey}
             profile={profile}
@@ -206,7 +138,7 @@ export function AgentProfileDetails({
               setInstructionDrafts((current) => ({ ...current, [instructionKey]: draft }))
             }
             onSaved={
-              onSaved
+              onSaved && canEditInstructions
                 ? (updated) => {
                     onSaved(updated);
                     const saved = member

@@ -439,7 +439,7 @@ Not in `docs/examples/` — read the source under `src/renderer/src/shared/ui/`:
   `hyper-text`, `interactive-hover-button`, `magic-card`, `marquee`, `meteors`,
   `neon-gradient-card`, `number-ticker`, `orbiting-circles`, `particles`,
   `pulsating-button`, `rainbow-button`, `ripple`, `shimmer-button`,
-  `shine-border`, `sliding-number`, `sparkles-text`, `smooth-cursor`, `panel`.
+  `shine-border`, `sliding-number`, `sparkles-text`, `panel`.
 - **`ai-elements/`** (chat building blocks): `prompt-input`, `reasoning`, `tool`,
   `task`, `chain-of-thought`, `code-block`, `context`, `file-tree`,
   `file-type-icon`, `inline-citation`, `model-selector`, `plan`, `queue`,

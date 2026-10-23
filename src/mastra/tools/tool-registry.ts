@@ -31,7 +31,6 @@ const DIRECT_TOOL_NAMES = new Set([
   CODE_MODE_ID,
   "ask_user",
   "submit_plan",
-  "handoff",
   "generate_image",
   "generate_video",
 ]);
@@ -173,7 +172,7 @@ export function codeModeProcessor(scheduled = false): InputProcessor {
             role: "system",
             content:
               mode.instructions +
-              "\nThe program is isolated: no filesystem, network, process or module access. Use only the declared external functions. Tools not declared here remain direct calls, including user questions, approvals, handoffs and provider-executed tools. Use native tool calls for background execution, resuming suspended runs, or work exceeding the 30-second Code Mode budget. If a batch fails after a write or delegation, inspect completed results before retrying; never blindly replay the whole batch.",
+              "\nThe program is isolated: no filesystem, network, process or module access. Use only the declared external functions. Tools not declared here remain direct calls, including user questions, approvals, subagent delegations and provider-executed tools. Use native tool calls for background execution, resuming suspended runs, or work exceeding the 30-second Code Mode budget. If a batch fails after a write or delegation, inspect completed results before retrying; never blindly replay the whole batch.",
           },
         ],
       };

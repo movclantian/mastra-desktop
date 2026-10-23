@@ -1,6 +1,6 @@
 /**
  * 工作台原生 Controller HTTP 上下文与产品会话操作：
- * 工作区绑定、持久权限、历史恢复、模型偏好、工作流和工作台状态。
+ * 工作区绑定、持久权限、历史恢复、模型偏好和工作台状态。
  * 官方文档:docs/en/docs/harness/agent-controller.mdx(sessions 章节)。
  */
 import { getGoalActivityDurationMs } from "@mastra/core/agent";
@@ -13,7 +13,6 @@ import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { isUserChatMessage, workbenchSessionId } from "../../shared/agent-contract";
 import type { DesktopNotification } from "../../shared/window-contract";
-import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../agents/custom";
 import { parsePermissionRules, TOOL_CATEGORIES, toolCategoryOf } from "../agents/permissions";
 import {
   createWorkMessageSignal,
@@ -25,11 +24,6 @@ import {
   getTeamInvocationDetail,
   listTeamInvocations,
 } from "../agents/team-activity";
-import {
-  getTeamHandoffState,
-  handoffInputSchema,
-  transferTeamHandoff,
-} from "../agents/team-handoff";
 import { errorText, workError } from "../errors";
 import {
   desktopEvents,
@@ -41,10 +35,8 @@ import { appStorage, getLibsqlClient } from "../storage/database";
 import { cancelThreadBackgroundTasks, ensureTaskExecutorAvailable } from "./background-tasks";
 import {
   activeThreadMediaGeneration,
-  activeThreadWorkflow,
   assertNoActiveConversationRun,
   cancelConversationRuns,
-  listThreadWorkflowRuns,
   reconcileMediaMessages,
   startConversationRun,
 } from "./conversation-runs";
@@ -267,17 +259,10 @@ export async function workbenchControllerMiddleware(
     : await sessionFor(c, { resourceId, threadId });
   if (["/messages", "/steer", "/follow-up"].includes(operation) && c.req.method === "POST") {
     await assertNoActiveConversationRun(resourceId, threadId);
-    const profile = await getAgentProfile(
-      c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
-      resourceId,
-    );
     const selection = await resolveModelSelection(result.controllerSession.model.get(), resourceId);
-    if (
-      operation !== "/messages" &&
-      (profile.workflow?.strategy === "workflow" || selection?.model.kind !== "language")
-    )
+    if (operation !== "/messages" && selection?.model.kind !== "language")
       throw workError("VALIDATION_FAILED", {
-        text: "生成或团队流程进行中请先停止，再发送新的请求",
+        text: "图片或视频生成不支持后续消息，请等待生成结束",
       });
   }
   if (operation === "/messages" && c.req.method === "POST") {
@@ -286,13 +271,9 @@ export async function workbenchControllerMiddleware(
     if (!(text.trim() || options.files?.length || options.skillNames?.length))
       throw workError("SESSION_INPUT_REQUIRED");
     const selection = await resolveModelSelection(result.controllerSession.model.get(), resourceId);
-    const profile = await getAgentProfile(
-      result.thread.metadata?.agentProfileId as string | undefined,
-      resourceId,
-    );
-    if (selection?.model.kind !== "language" || profile.workflow?.strategy === "workflow") {
+    if (selection?.model.kind !== "language") {
       if (options.goal)
-        throw workError("VALIDATION_FAILED", { text: "生成和显式团队流程不使用目标模式" });
+        throw workError("VALIDATION_FAILED", { text: "图片或视频生成不使用目标模式" });
       c.res = await startConversationRun(c, result, text);
       return;
     }
@@ -419,14 +400,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
         })
       ).tasks
     : [];
-  const workflowRuns = await listThreadWorkflowRuns(result.resourceId, result.threadId);
   const backgroundSuspended = backgroundTasks.some((task) => task.status === "suspended");
-  const workflowSuspended = workflowRuns.some((run) =>
-    ["suspended", "paused"].includes(run.status ?? ""),
-  );
-  const workflowRunning =
-    Boolean(activeThreadWorkflow(result.resourceId, result.threadId)) ||
-    workflowRuns.some((run) => ["pending", "running", "waiting"].includes(run.status ?? ""));
   const activeMediaGeneration = activeThreadMediaGeneration(result.resourceId, result.threadId);
   const storedSuspensions = runs.flatMap((run) => {
     const toolCalls = run.toolCalls.flatMap((toolCall) => {
@@ -591,7 +565,6 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
         );
       } else if (
         parentActive ||
-        workflowRunning ||
         backgroundTasks.some((task) => task.status === "pending" || task.status === "running")
       ) {
         call.status = "running";
@@ -628,10 +601,9 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
     activeRunId: result.agent.getActiveThreadRunId(result),
     status: result.agent.getActiveThreadRunId(result)
       ? "running"
-      : suspendedRuns.length > 0 || backgroundSuspended || workflowSuspended
+      : suspendedRuns.length > 0 || backgroundSuspended
         ? "suspended"
         : backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
-            workflowRunning ||
             activeMediaGeneration
           ? "running"
           : "idle",
@@ -649,17 +621,7 @@ async function persistentDisplayState(c: ContextWithMastra, result: SessionRoute
       : null,
     suspendedRuns,
     backgroundTasks,
-    workflowRuns,
     teamInvocations,
-    handoff: await getTeamHandoffState(
-      await getAgentProfile(
-        result.thread.metadata?.agentProfileId as string | undefined,
-        result.resourceId,
-      ),
-      result.resourceId,
-      result.threadId,
-    ),
-    activeWorkflow: activeThreadWorkflow(result.resourceId, result.threadId),
     activeMediaGeneration,
   };
 }
@@ -691,7 +653,7 @@ const sessionAbortRoute = registerApiRoute("/work/sessions/:scope/threads/:threa
     const objective = await result.agent.getObjective({ threadId: result.threadId });
     if (objective?.status === "active")
       await result.agent.updateObjectiveOptions({ threadId: result.threadId, status: "paused" });
-    await cancelConversationRuns(c, result);
+    await cancelConversationRuns(result);
     await abortWorkbenchSession(result.controllerSession);
     await cancelThreadBackgroundTasks(c.get("mastra").backgroundTaskManager, result);
     if (objective?.status === "active")
@@ -926,14 +888,6 @@ const sessionGoalRoute = registerApiRoute("/work/sessions/:scope/threads/:thread
       }
       await assertNoActiveConversationRun(resourceId, threadId);
       await prepareWorkbenchMessage(c, threadId, resourceId, body.options);
-      const profile = await getAgentProfile(
-        c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
-        resourceId,
-      );
-      if (profile.workflow?.strategy === "workflow")
-        throw workError("VALIDATION_FAILED", {
-          text: "目标模式用于 Agent 和主管团队，显式流程请从团队入口运行",
-        });
       const maxRuns = body.maxRuns ?? current.maxRuns ?? 50;
       if (current.runsUsed >= maxRuns)
         throw workError("VALIDATION_FAILED", { text: "目标评估次数已用完，请先提高次数上限" });
@@ -1016,37 +970,7 @@ const teamInvocationDetailRoute = registerApiRoute(
   },
 );
 
-const sessionHandoffRoute = registerApiRoute("/work/sessions/:scope/threads/:threadId/handoff", {
-  method: "POST",
-  handler: async (c) => {
-    const resourceId = c.get("requestContext").get(MASTRA_RESOURCE_ID_KEY) as string;
-    const result = await sessionFor(c, {
-      threadId: c.req.param("threadId"),
-      resourceId,
-    });
-    const body = handoffInputSchema.parse(await c.req.json());
-    const state = await persistentDisplayState(c, result);
-    if (
-      state.status !== "idle" ||
-      result.controllerSession.stream.isActive() ||
-      result.controllerSession.run.getRunId()
-    )
-      throw workError("VALIDATION_FAILED", { text: "请等待当前运行或审批结束后交接" });
-    const profile = await getAgentProfile(
-      result.thread.metadata?.agentProfileId as string | undefined,
-      resourceId,
-    );
-    try {
-      await transferTeamHandoff(profile, resourceId, result.threadId, body);
-    } catch (cause) {
-      throw workError("VALIDATION_FAILED", { text: errorText(cause), cause });
-    }
-    return c.json({ handoff: await getTeamHandoffState(profile, resourceId, result.threadId) });
-  },
-});
-
 export const sessionRoutes = [
-  sessionHandoffRoute,
   teamInvocationDetailRoute,
   desktopNotificationsRoute,
   sessionGoalRoute,

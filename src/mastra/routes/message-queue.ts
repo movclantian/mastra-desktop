@@ -55,8 +55,6 @@ async function prepareQueueMessage(c: ContextWithMastra, text: string, options: 
     c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
     resourceId,
   );
-  if (profile.workflow?.strategy === "workflow")
-    throw workError("VALIDATION_FAILED", { text: "显式团队流程不接受后续消息排队" });
   const session = result.controllerSession;
   await session.thread.ensureSubscription(threadId, result.agent, c.get("requestContext"));
   session.ensureFollowUpBinding(result.agent, resourceId, threadId);

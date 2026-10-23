@@ -37,7 +37,6 @@ import {
   TerminalIcon,
   TextSearchIcon,
   Trash2Icon,
-  WorkflowIcon,
 } from "lucide-react";
 import * as React from "react";
 import { workspaceRawFileUrl } from "@/entities/workbench/api/workbench-api";
@@ -1271,11 +1270,6 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
       return text ? <CodeFile code={capped(text)} filename={path} language={langOf(path)} /> : null;
     },
   },
-  "workflow-teamWorkflow": {
-    icon: WorkflowIcon,
-    labelKey: "team_workflow",
-    detail: ({ output }) => recordDetail(output),
-  },
 };
 
 /** 逐字注册表未命中时按前缀兜底;详情统一走 RecordDetail(非对象输出回退通用 JSON) */
@@ -1296,15 +1290,6 @@ const PREFIX_UIS: Array<{ prefix: string; descriptor: ToolUIDescriptor }> = [
       icon: SearchIcon,
       labelKey: "anysearch",
       summarize: (input) => ({ chips: queryChips(input) }),
-      detail: ({ output }) => recordDetail(output),
-    },
-  },
-  {
-    prefix: "workflow-",
-    descriptor: {
-      icon: WorkflowIcon,
-      labelKey: "workflow",
-      summarize: (_input, _output, name) => ({ chips: [name.slice("workflow-".length)] }),
       detail: ({ output }) => recordDetail(output),
     },
   },

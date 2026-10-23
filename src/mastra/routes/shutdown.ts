@@ -66,7 +66,7 @@ async function drainRuns(mastra: Mastra, signal: AbortSignal): Promise<void> {
         agent.abortThreadStream({ ...run, clearPendingSignals: true });
       }
     }
-    await drainConversationRuns(mastra);
+    await drainConversationRuns();
     if (!active) return;
     await delay(20, undefined, { signal });
   }

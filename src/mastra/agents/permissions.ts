@@ -176,15 +176,11 @@ export function resolveAgentActiveTools({
   const coordinationTools = new Set(
     profile ? delegationMemberIds(profile, member).map((id) => `agent-${id}`) : [],
   );
-  const supervisor = !member && profile?.workflow?.strategy === "supervisor";
-  if (supervisor && profile?.workflow?.steps.length) coordinationTools.add("workflow-teamWorkflow");
-  if (!member && profile?.workflow?.strategy === "handoff") coordinationTools.add("handoff");
   const enabled = new Set(activeTools ?? tools);
   for (const name of coordinationTools) enabled.add(name);
   return tools.filter((name) => {
     const policy = rules.tools[name] ?? rules.categories[toolCategoryOf(name)];
-    const collaboration =
-      name.startsWith("agent-") || name.startsWith("workflow-") || name === "handoff";
+    const collaboration = name.startsWith("agent-");
     return (
       enabled.has(name) &&
       (!collaboration || coordinationTools.has(name)) &&

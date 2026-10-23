@@ -142,6 +142,20 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
   const [dragOverTabId, setDragOverTabId] = React.useState<string | null>(null);
   const reorderHintId = React.useId();
   const [tabAnnouncement, setTabAnnouncement] = React.useState("");
+  const [mountedPanelTabIds, setMountedPanelTabIds] = React.useState<Set<string>>(() => new Set());
+  React.useEffect(() => {
+    const activeId =
+      activePanelTab.kind === "browser" || activePanelTab.kind === "welcome"
+        ? undefined
+        : activePanelTab.id;
+    setMountedPanelTabIds((current) => {
+      const next = new Set([...current].filter((id) => panelTabs.some((tab) => tab.id === id)));
+      if (activeId) next.add(activeId);
+      return next.size === current.size && [...current].every((id) => next.has(id))
+        ? current
+        : next;
+    });
+  }, [activePanelTab, panelTabs]);
   const selectedTabIndex = panelTabs.findIndex(
     (tab) => "id" in activePanelTab && tab.id === activePanelTab.id,
   );
@@ -848,9 +862,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
             <PanelRightCloseIcon />
           </Button>
         </PanelHeader>
-        {/* 所有标签内容常驻,靠 hidden 切换:xterm 卸载会丢 scrollback 与会话,
-          文件树卸载会丢展开层级。浏览器网页由稳定挂载的隔离 guest 承载,
-          Agent 通过命名管道 RPC 观察和操作它。 */}
+        {/* 首次选中后常驻,切换时保留 xterm scrollback 与文件树展开状态。 */}
         <div className="relative min-h-0 flex-1 overflow-hidden">
           {panelTabs.map((tab) => {
             const selected =
@@ -858,6 +870,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
               !isWelcomeActive &&
               activePanelTab.kind !== "browser" &&
               activePanelTab.id === tab.id;
+            if (!selected && !mountedPanelTabIds.has(tab.id)) return null;
             return (
               <div
                 className={cn("size-full", selected ? "block" : "hidden")}

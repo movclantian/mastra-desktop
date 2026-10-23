@@ -17,7 +17,9 @@ import {
 } from "../workspace/changes";
 import {
   createWorkspaceFilesystem,
+  ensureDirectory,
   getWorkspaceConfig,
+  implicitThreadWorkspacePath,
   listRecentWorkspaces,
   saveWorkspaceConfig,
   workspaceConfigSchema,
@@ -137,10 +139,13 @@ async function ownedWorkspace(c: ContextWithMastra) {
   if (!threadId || !resourceId) return null;
   const memory = await getWorkMemory(c.get("requestContext"));
   const thread = await getOwnedThread(memory, threadId, resourceId);
+  if (!thread) return null;
   const metadata = thread?.metadata as ThreadMetadata | undefined;
-  if (!metadata?.workspacePath) return null;
+  const workspacePath =
+    metadata?.workspacePath ?? (await implicitThreadWorkspacePath(threadId, resourceId));
+  ensureDirectory(workspacePath);
   try {
-    const root = await realpath(resolve(metadata.workspacePath));
+    const root = await realpath(resolve(workspacePath));
     const config = await getWorkspaceConfig(resourceId);
     return {
       root,

@@ -294,32 +294,46 @@ export function useSyncThreadToStore(threadId: string | null): void {
 }
 
 /**
- * 首屏兜底解析(原 refreshThreads 的 resolve 语义):线程列表首次到位后,
- * 若既无 URL thread 也无有效 localStorage thread,选中最近发起请求的线程。
- * 仅触发一次;之后的失效刷新不会误切线程。
+ * 首屏兜底解析:列表首次到位后恢复有效线程,否则选中最近的未归档线程;
+ * 空账户则创建草稿线程,确保首页始终有可用会话。
  */
-export function useActiveThreadResolver(threads: WorkThread[] | undefined): void {
+export function useActiveThreadResolver(userId: string, threads: WorkThread[] | undefined): void {
   const urlThread = useRouterState({
     select: (state) => (state.location.search as { thread?: string }).thread ?? null,
   });
   const selectThread = useSelectThread();
+  const createThreadMutation = useCreateThreadMutation(userId);
   const resolvedRef = useRef(false);
+  const resolvedUserIdRef = useRef(userId);
   useEffect(() => {
-    if (resolvedRef.current || !threads) return;
-    // An initially empty account is resolved too; later creation owns its navigation.
+    if (resolvedUserIdRef.current !== userId) {
+      resolvedUserIdRef.current = userId;
+      resolvedRef.current = false;
+    }
+    if (resolvedRef.current || !threads || createThreadMutation.isPending) return;
     resolvedRef.current = true;
     const current = urlThread ?? useWorkbenchStore.getState().lastKnownThreadId;
     if (current && threads.some((thread) => thread.id === current)) {
       if (!urlThread) void selectThread(current);
       return;
     }
-    const latest = [...threads].sort(
-      (left, right) =>
-        threadActivityAt(right).localeCompare(threadActivityAt(left)) ||
-        left.id.localeCompare(right.id),
-    )[0];
+    const latest = threads
+      .filter((thread) => !thread.metadata?.archivedAt)
+      .sort(
+        (left, right) =>
+          threadActivityAt(right).localeCompare(threadActivityAt(left)) ||
+          left.id.localeCompare(right.id),
+      )[0];
     if (latest) selectThread(latest.id);
-  }, [selectThread, threads, urlThread]);
+    else void createThreadMutation.mutateAsync();
+  }, [
+    createThreadMutation.isPending,
+    createThreadMutation.mutateAsync,
+    selectThread,
+    threads,
+    urlThread,
+    userId,
+  ]);
 }
 
 /** Start a dedicated troubleshooting conversation through the native message endpoint. */

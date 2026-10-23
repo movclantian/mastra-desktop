@@ -42,7 +42,7 @@ export function ChainOfThoughtContent({
   ...props
 }: ComponentProps<typeof TraceCollapsibleContent>) {
   return (
-    <TraceCollapsibleContent keepMounted {...props}>
+    <TraceCollapsibleContent {...props}>
       <Trace>{children}</Trace>
     </TraceCollapsibleContent>
   );

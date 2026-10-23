@@ -373,7 +373,7 @@ const ToolStepItem = React.memo(function ToolStepItem({
       <TraceCollapsibleTrigger className="w-full items-start" aria-label={name}>
         {line}
       </TraceCollapsibleTrigger>
-      <TraceCollapsibleContent keepMounted>
+      <TraceCollapsibleContent>
         <div className="min-w-0 max-w-full space-y-2">
           {commandSandbox ? (
             <Trace>

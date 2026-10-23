@@ -85,6 +85,7 @@ export const agentProfileCapabilitiesRoute = createRoute({
       mcpServers,
       memberId,
       resourceId,
+      mastra,
     );
     unregisterProfileAgents(mastra, agentId, resourceId);
     await ensureProfileAgentsRegistered(mastra, agent, resourceId);
@@ -106,7 +107,13 @@ export const agentProfileInstructionsRoute = createRoute({
     .strict(),
   handler: async ({ agentId, instructions, memberId, requestContext, mastra }) => {
     const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    const agent = await setAgentProfileInstructions(agentId, instructions, memberId, resourceId);
+    const agent = await setAgentProfileInstructions(
+      agentId,
+      instructions,
+      memberId,
+      resourceId,
+      mastra,
+    );
     unregisterProfileAgents(mastra, agentId, resourceId);
     await ensureProfileAgentsRegistered(mastra, agent, resourceId);
     return { agent };
@@ -147,7 +154,7 @@ export const deleteAgentProfileRoute = createRoute({
   handler: async (params) => {
     const agentId = params.agentId;
     const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
-    await deleteAgentProfile(agentId, resourceId);
+    await deleteAgentProfile(agentId, resourceId, params.mastra);
     unregisterProfileAgents(params.mastra, agentId, resourceId);
     return { ok: true };
   },
@@ -238,9 +245,6 @@ export const assistAgentProfileRoute = createRoute({
       {
         ...generated,
         name: generated.displayName,
-        ...(body.type === "team"
-          ? { workflow: { strategy: "supervisor" as const, steps: [] } }
-          : {}),
       },
       resourceId,
     );

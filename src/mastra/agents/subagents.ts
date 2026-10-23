@@ -16,6 +16,7 @@ import {
   type AgentMemberDefinition,
   type AgentProfile,
   BACKGROUND_TASK_TIMEOUT_MS,
+  defaultAgentMember,
   delegationMemberIds,
 } from "../../shared/agent-contract";
 import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
@@ -89,15 +90,14 @@ function specialistInstructions(role: string, requestContext: RequestContextLike
  * 探索子 Agent (docs/en/docs/subagents.mdx):
  * 快速搜集信息、探查环境与资料。
  */
+const explorerMember = defaultAgentMember("explorer");
+
 const explorerAgent = new Agent({
   id: "explorer",
-  name: "Explorer",
-  description: "快速搜集信息、探查环境与资料,并给出结构化汇总。",
+  name: explorerMember.name,
+  description: explorerMember.description,
   instructions: ({ requestContext }) =>
-    specialistInstructions(
-      "你是探索专家 Explorer。围绕任务追踪相关证据，区分事实与推断，给出可直接供主管采用的结论和路径/行号。",
-      requestContext,
-    ),
+    specialistInstructions(explorerMember.instructions, requestContext),
   model: resolveAgentModel,
   tools: ({ requestContext }) => resolveSharedTools(requestContext),
   memory: ({ requestContext }) => getMemory({ requestContext }),
@@ -126,15 +126,14 @@ const explorerAgent = new Agent({
  * 审查子 Agent (docs/en/docs/subagents.mdx):
  * 审查代码变更、规范与缺陷。
  */
+const reviewerMember = defaultAgentMember("reviewer");
+
 const reviewerAgent = new Agent({
   id: "reviewer",
-  name: "Reviewer",
-  description: "审查代码变更、规范、边界条件与缺陷风险,给出针对性的改进建议。",
+  name: reviewerMember.name,
+  description: reviewerMember.description,
   instructions: ({ requestContext }) =>
-    specialistInstructions(
-      "你是审查专家 Reviewer。根据任务检查正确性、边界条件和实际风险。核对上下文和调用方后再报告缺陷，说明触发条件、影响与证据。不要把个人风格偏好或测试样例的命名当成缺陷；没有实质问题就直接说明。",
-      requestContext,
-    ),
+    specialistInstructions(reviewerMember.instructions, requestContext),
   model: resolveAgentModel,
   tools: ({ requestContext }) => resolveSharedTools(requestContext),
   memory: ({ requestContext }) => getMemory({ requestContext }),

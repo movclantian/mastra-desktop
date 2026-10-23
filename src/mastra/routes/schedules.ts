@@ -15,7 +15,6 @@ import type {
 } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
-import { TEAM_PROFILE_CONTEXT_KEY } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
@@ -27,7 +26,6 @@ import {
   parsePermissionRules,
   resolveMode,
 } from "../agents/permissions";
-import { getTeamHandoffState, TEAM_HANDOFF_CONTEXT_KEY } from "../agents/team-handoff";
 import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents/work-agent";
 import { errorText, WorkApiError, workError } from "../errors";
 import {
@@ -126,10 +124,6 @@ export async function prepareScheduledRun({
   const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === profileId);
   if (!profile?.enabled)
     throw workError("SCHEDULE_INVALID", { text: "安排关联的 Agent 不存在或已停用" });
-  if (profile.workflow?.strategy === "workflow")
-    throw workError("SCHEDULE_INVALID", {
-      text: "Agent 定时任务不能启动显式团队流程，请使用团队运行入口",
-    });
   const requestContext = new RequestContext();
   requestContext.set(AUTHENTICATED_USER_ID_CONTEXT_KEY, resourceId);
   requestContext.set(MASTRA_RESOURCE_ID_KEY, resourceId);
@@ -199,8 +193,6 @@ export async function prepareScheduledRun({
           [AUTHENTICATED_USER_ID_CONTEXT_KEY]: resourceId,
           [MASTRA_RESOURCE_ID_KEY]: resourceId,
           [AGENT_PROFILE_CONTEXT_KEY]: profile.id,
-          [TEAM_PROFILE_CONTEXT_KEY]: profile,
-          [TEAM_HANDOFF_CONTEXT_KEY]: await getTeamHandoffState(profile, resourceId, threadId),
           [REQUEST_MODEL_ID_CONTEXT_KEY]: modelId,
           [MODE_ID_CONTEXT_KEY]: mode.id,
           [PERMISSION_RULES_CONTEXT_KEY]: parsePermissionRules(metadata.permissionRules),
@@ -256,10 +248,6 @@ const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     const input = parsed.data;
     const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === input.agentId);
     if (!profile?.enabled) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
-    if (profile.workflow?.strategy === "workflow")
-      throw workError("SCHEDULE_INVALID", {
-        text: "Agent 定时任务仅支持单 Agent 和主管团队，显式流程请通过团队运行入口启动",
-      });
     const { signalType, ifActive, ifIdle, ...scheduleInput } = input;
     if (input.threadId) {
       const memory = await getWorkMemory(c.get("requestContext"));

@@ -152,6 +152,9 @@ export const mastra = new Mastra({
   },
   backgroundTasks: {
     enabled: true,
+    // AgentController starts idle runs with `untilIdle: true`, which overrides
+    // per-agent maxIdleMs. This global value keeps long delegations attached.
+    untilIdleMaxIdleMs: BACKGROUND_TASK_TIMEOUT_MS,
     // The original task executor captures request-scoped model, workspace,
     // tools, and result callbacks. Mastra only persists args, so a static
     // executor cannot safely replace that closure after restart.

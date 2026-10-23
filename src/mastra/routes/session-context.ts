@@ -4,7 +4,7 @@ import type { Agent, AgentExecutionOptions } from "@mastra/core/agent";
 import type { Session as ControllerSession } from "@mastra/core/agent-controller";
 import type { ContextWithMastra } from "@mastra/core/server";
 import { z } from "zod";
-import { TEAM_PROFILE_CONTEXT_KEY, workbenchSessionId } from "../../shared/agent-contract";
+import { workbenchSessionId } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   ensureProfileAgentsRegistered,
@@ -19,7 +19,6 @@ import {
   TOOL_CATEGORIES,
 } from "../agents/permissions";
 import { WORK_MESSAGE_OPTIONS_CONTEXT_KEY, workMessageMetadataSchema } from "../agents/processors";
-import { getTeamHandoffState, TEAM_HANDOFF_CONTEXT_KEY } from "../agents/team-handoff";
 import { SESSION_EXECUTION_CONTEXT_KEY, SKILL_NAMES_CONTEXT_KEY } from "../agents/work-agent";
 import { workError } from "../errors";
 import {
@@ -132,7 +131,6 @@ export async function prepareWorkbenchMessage(
       metadata: { ...metadata, ...patch },
     });
   }
-  if (profile.type === "team") requestContext.set(TEAM_PROFILE_CONTEXT_KEY, profile);
   requestContext.set(WORK_MESSAGE_OPTIONS_CONTEXT_KEY, options);
   requestContext.set(SKILL_NAMES_CONTEXT_KEY, options.skillNames ?? []);
   if (options.attachmentTokenBudget !== undefined) {
@@ -255,11 +253,6 @@ export async function sessionFor(
   requestContext.set(LIBRARY_THREAD_CONTEXT_KEY, threadId);
   requestContext.set(LIBRARY_ORIGIN_CONTEXT_KEY, new URL(c.req.url).origin);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
-  requestContext.set(TEAM_PROFILE_CONTEXT_KEY, profile);
-  requestContext.set(
-    TEAM_HANDOFF_CONTEXT_KEY,
-    await getTeamHandoffState(profile, resourceId, threadId),
-  );
   if (metadata.workspacePath) {
     requestContext.set(WORKSPACE_PATH_CONTEXT_KEY, metadata.workspacePath);
   }

@@ -6,13 +6,20 @@
  * 工具审批与 deny 的执行点遵循 docs/en/docs/agents/human-in-the-loop.mdx。
  */
 import { resolve } from "node:path";
-import type { Agent, AgentExecutionOptions, DelegationConfig } from "@mastra/core/agent";
+import type {
+  Agent,
+  AgentExecutionOptions,
+  DelegationConfig,
+  MastraDBMessage,
+} from "@mastra/core/agent";
 import { createCodingAgent } from "@mastra/core/coding-agent";
+import { createScorer } from "@mastra/core/evals";
 import type { RequestContext } from "@mastra/core/request-context";
-import type { AnyWorkflow } from "@mastra/core/workflows";
+import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { createWorkspaceTools } from "@mastra/core/workspace";
 import {
   BACKGROUND_TASK_TIMEOUT_MS,
+  DEFAULT_AGENT_MEMBERS,
   delegationMemberIds,
   incompleteAgentResultMessage,
   isCompleteAgentResult,
@@ -22,7 +29,7 @@ import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
 import { REQUEST_MODEL_ID_CONTEXT_KEY, resolveAgentModel } from "../models/providers";
 import { libraryIndexSignals } from "../rag/document/indexing";
-import { userIdFromContext } from "../storage/database";
+import { appStorage, userIdFromContext } from "../storage/database";
 import {
   parseWebSearchSelection,
   WEB_SEARCH_CONTEXT_KEY,
@@ -43,7 +50,6 @@ import {
   type AgentMemberDefinition,
   type AgentProfile,
   DEFAULT_AGENT_PROFILE_ID,
-  ensureProfileAgentsRegistered,
   getAgentProfile,
   loadManagedSkill,
   profileAgentRuntimeId,
@@ -56,18 +62,9 @@ import {
   buildGuardrailOutputProcessors,
   getGuardrailsConfig,
 } from "./guardrails";
-import { requestToolApproval, resolveRequestMode } from "./permissions";
+import { MODE_ID_CONTEXT_KEY, requestToolApproval, resolveRequestMode } from "./permissions";
 import { buildInputPipeline, resolveSharedTools, workSubagents } from "./subagents";
-import { teamDelegation, teamInvocationProcessor } from "./team-activity";
-import {
-  activeHandoffMember,
-  agentIdentityProcessor,
-  HANDOFF_COMPLETE_CONTEXT_KEY,
-  refreshHandoffIdentity,
-  TEAM_HANDOFF_CONTEXT_KEY,
-  teamHandoffTool,
-} from "./team-handoff";
-import { TEAM_WORKFLOW_CONTEXT_KEY } from "./team-workflow";
+import { agentIdentityProcessor, teamDelegation, teamInvocationProcessor } from "./team-activity";
 
 export const SESSION_EXECUTION_CONTEXT_KEY = "mastra-work:execution-options";
 
@@ -89,6 +86,83 @@ function agentEnvironment(requestContext?: RequestContext): string {
     model: controller?.session?.modelId ?? modelId,
   })}`;
 }
+
+type TaskCompletionInput = {
+  threadId?: string;
+  customContext?: Record<string, unknown>;
+  messages?: MastraDBMessage[];
+};
+
+/** Only grade the task list when this turn actually used the task tools. */
+function hasTaskActivity(messages: MastraDBMessage[] | undefined): boolean {
+  if (!messages?.length) return false;
+  let lastUser = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      lastUser = index;
+      break;
+    }
+  }
+  return messages
+    .slice(lastUser + 1)
+    .some((message) =>
+      message.content?.parts?.some(
+        (part) =>
+          part.type === "tool-invocation" &&
+          typeof part.toolInvocation?.toolName === "string" &&
+          part.toolInvocation.toolName.startsWith("task_"),
+      ),
+    );
+}
+
+/**
+ * Deterministic completion check for work tracked in the native task list.
+ * It adds no model call: a final answer is accepted only after every task is
+ * marked completed. When storage is temporarily unavailable the check passes
+ * rather than failing an otherwise valid run.
+ */
+const taskCompletionScorer = createScorer({
+  id: "task-list-completion",
+  description: "Require the persisted task list to have no pending or in-progress items.",
+})
+  .analyze(async ({ run }) => {
+    const hasText = typeof run.output === "string" && run.output.trim().length > 0;
+    const input = run.input as TaskCompletionInput | undefined;
+    const mode = input?.customContext?.[MODE_ID_CONTEXT_KEY];
+    // The task queue is a BUILD-mode contract; PLAN/REVIEW answers must not be
+    // held back by a task list left over from an earlier build turn.
+    if (typeof mode === "string" && mode !== "build") {
+      return { hasText, incomplete: [] as string[] };
+    }
+    if (!hasTaskActivity(input?.messages)) {
+      return { hasText, incomplete: [] as string[] };
+    }
+    const threadId = input?.threadId;
+    if (!threadId) return { hasText, incomplete: [] as string[] };
+    try {
+      const store = await appStorage.getStore("threadState");
+      const tasks = await store?.getState<TaskItem[]>({ threadId, type: TASK_STATE_TYPE });
+      return {
+        hasText,
+        incomplete: (tasks ?? [])
+          .filter((task) => task.status !== "completed")
+          .map((task) => task.content),
+      };
+    } catch {
+      return { hasText, incomplete: [] as string[] };
+    }
+  })
+  .generateScore(({ results }) => {
+    const analysis = results.analyzeStepResult;
+    return analysis.hasText && analysis.incomplete.length === 0 ? 1 : 0;
+  })
+  .generateReason(({ results }) => {
+    const analysis = results.analyzeStepResult;
+    if (!analysis.hasText) return "The response is empty; finish the task before stopping.";
+    if (analysis.incomplete.length)
+      return `The task list still has unfinished items: ${analysis.incomplete.join("; ")}. Complete them or remove them from the plan before finishing.`;
+    return "All tracked tasks are complete.";
+  });
 
 const WORK_DELEGATION: DelegationConfig = {
   hookErrorStrategy: "throw",
@@ -132,6 +206,18 @@ function createWorkAgent(
     );
   };
 
+  // The default roster is served by the prebuilt Explorer/Reviewer agents; the
+  // default profile's members are metadata for the prompt and UI. Custom teams
+  // resolve their own member agents.
+  const resolveMembers = (
+    profile: AgentProfile,
+    requestContext?: RequestContext,
+  ): Record<string, Agent> => {
+    if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
+    if (profile.type !== "team") return {};
+    return resolveProfileMembers(profile, resourceScope ?? userIdFromContext(requestContext));
+  };
+
   return createCodingAgent({
     id: member
       ? profileAgentRuntimeId(fixedProfile as AgentProfile, member.id, resourceScope)
@@ -152,15 +238,7 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           userIdFromContext(requestContext),
         ));
-      if (!member) await refreshHandoffIdentity(profile, requestContext);
-      const activeMember = member ?? activeHandoffMember(profile, requestContext);
-      const instructions = composeAgentInstructions({
-        profile,
-        member: activeMember,
-        handoff: requestContext?.get(TEAM_HANDOFF_CONTEXT_KEY) as
-          | import("../../shared/agent-contract").TeamHandoffState
-          | null,
-      });
+      const instructions = composeAgentInstructions({ profile, member });
       instructions.push(agentEnvironment(requestContext));
       if (member || requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true)
         instructions.push(resolveRequestMode(requestContext).instructions);
@@ -173,10 +251,7 @@ function createWorkAgent(
         instructions.push(webSearchInstructions(selection));
       }
       const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
-      if (
-        (!member || requestContext?.get(TEAM_WORKFLOW_CONTEXT_KEY) === true) &&
-        Array.isArray(selectedSkills)
-      ) {
+      if (!member && Array.isArray(selectedSkills)) {
         const activated = await Promise.all(
           selectedSkills
             .filter(
@@ -236,16 +311,13 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           resourceId,
         ));
-      if (!member) await refreshHandoffIdentity(profile, requestContext);
-      const activeMember = member ?? activeHandoffMember(profile, requestContext);
       const configuredPaths =
         profile.id === DEFAULT_AGENT_PROFILE_ID
           ? await getManagedSkillPaths(resourceId)
-          : await resolveManagedSkillPaths(activeMember?.skills ?? profile.skills, resourceId);
+          : await resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
       const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
       const selectedPaths =
-        (!member || requestContext?.get(TEAM_WORKFLOW_CONTEXT_KEY) === true) &&
-        Array.isArray(selectedSkills)
+        !member && Array.isArray(selectedSkills)
           ? await resolveManagedSkillPaths(
               selectedSkills.filter(
                 (value): value is string => typeof value === "string" && value.trim().length > 0,
@@ -265,7 +337,7 @@ function createWorkAgent(
       return buildInputPipeline(requestContext, profile, member);
     },
     outputProcessors: async ({ requestContext }) => [
-      agentIdentityProcessor(member),
+      agentIdentityProcessor(fixedProfile, member),
       teamInvocationProcessor,
       webSearchArchiveProcessor,
       ...(await buildGuardrailOutputProcessors(requestContext)),
@@ -284,42 +356,19 @@ function createWorkAgent(
         ));
       const delegates = delegationMemberIds(profile, member);
       if (!delegates.length) return {};
-      const members =
-        profile.id === DEFAULT_AGENT_PROFILE_ID
-          ? workSubagents
-          : resolveProfileMembers(profile, resourceScope ?? userIdFromContext(requestContext));
+      const members = resolveMembers(profile, requestContext);
       return Object.fromEntries(Object.entries(members).filter(([id]) => delegates.includes(id)));
-    },
-    workflows: async ({ requestContext, mastra }): Promise<Record<string, AnyWorkflow>> => {
-      if (member) return {};
-      const profile =
-        fixedProfile ??
-        (await getAgentProfile(
-          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
-          userIdFromContext(requestContext),
-        ));
-      if (profile.workflow?.strategy !== "supervisor") return {};
-      if (!mastra) throw new Error("Team workflows require Mastra registration");
-      const { workflow } = ensureProfileAgentsRegistered(
-        mastra,
-        profile,
-        resourceScope ?? userIdFromContext(requestContext),
-      );
-      return workflow ? { teamWorkflow: workflow } : {};
     },
     // Delegations acknowledge immediately; the model can request foreground
     // when it needs the child result before continuing.
     backgroundTasks: {
       tools: Object.fromEntries(
-        [
-          "explorer",
-          "reviewer",
-          ...(member
-            ? member.delegates
-            : fixedProfile?.type === "team" && fixedProfile.workflow?.strategy === "supervisor"
-              ? fixedProfile.members.map(({ id }) => id)
-              : []),
-        ].map((agentName) => [agentName, { enabled: true, defaultDisposition: "deferred" }]),
+        (member
+          ? member.delegates
+          : fixedProfile
+            ? delegationMemberIds(fixedProfile)
+            : DEFAULT_AGENT_MEMBERS.map(({ id }) => id)
+        ).map((agentName) => [agentName, { enabled: true, defaultDisposition: "deferred" }]),
       ),
     },
     // Workspace is always present; process.cwd() remains the official fallback
@@ -332,15 +381,12 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           userIdFromContext(requestContext),
         ));
-      const activeMember = member ?? activeHandoffMember(profile, requestContext);
       const tools = await resolveSharedTools(
         requestContext,
         profile.id === DEFAULT_AGENT_PROFILE_ID
           ? undefined
-          : (activeMember?.mcpServers ?? profile.mcpServers),
+          : (member?.mcpServers ?? profile.mcpServers),
       );
-      if (!member && profile.workflow?.strategy === "handoff")
-        tools.handoff = teamHandoffTool(profile);
       const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
       return mergeBrowserToolsForThread(tools, threadId, () =>
         getBrowserForRequest(requestContext),
@@ -356,11 +402,17 @@ function createWorkAgent(
       const { maxProcessorRetries: retries } = await getGuardrailsConfig(
         userIdFromContext(requestContext),
       );
-      if (!member && profile.workflow?.strategy === "handoff") {
-        await refreshHandoffIdentity(profile, requestContext);
-        requestContext?.delete(HANDOFF_COMPLETE_CONTEXT_KEY);
-      }
       return {
+        // A per-message isTaskComplete policy from the session still overrides this default.
+        ...(!member
+          ? {
+              isTaskComplete: {
+                scorers: [taskCompletionScorer],
+                strategy: "all" as const,
+                timeout: 10_000,
+              },
+            }
+          : {}),
         ...(requestContext?.get(SESSION_EXECUTION_CONTEXT_KEY) as
           | AgentExecutionOptions<undefined>
           | undefined),
@@ -368,18 +420,10 @@ function createWorkAgent(
         untilIdle: { maxIdleMs: BACKGROUND_TASK_TIMEOUT_MS },
         // Mastra otherwise stops delegated runs after five model calls.
         ...(member ? { stopWhen: [] } : {}),
-        ...(profile.workflow?.strategy === "handoff"
-          ? {
-              stopWhen: () => requestContext?.get(HANDOFF_COMPLETE_CONTEXT_KEY) === true,
-              toolCallConcurrency: 1,
-            }
-          : {}),
         delegation: teamDelegation(
           WORK_DELEGATION,
           profile,
-          profile.type === "team"
-            ? resolveProfileMembers(profile, resourceScope ?? userIdFromContext(requestContext))
-            : workSubagents,
+          resolveMembers(profile, requestContext),
           member?.id,
         ),
         requireToolApproval: requestToolApproval,

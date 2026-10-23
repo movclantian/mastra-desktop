@@ -9,7 +9,7 @@ export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 export function workbenchSessionId(resourceId: string, threadId: string): string {
   return JSON.stringify(["workbench", resourceId, threadId]);
 }
-/** Maximum reliable Node timer; the task manager requires a finite timeout. */
+/** Maximum reliable Node timer; task manager and idle wrapper require finite timeouts. */
 export const BACKGROUND_TASK_TIMEOUT_MS = 2_147_483_647;
 
 export const MODEL_KINDS = ["language", "image", "video"] as const;
@@ -130,19 +130,13 @@ export const mediaGenerationStateSchema = z.object({
 });
 export type MediaGenerationState = z.infer<typeof mediaGenerationStateSchema>;
 
-/** Shared execution identity; consumers must not import the workflow implementation for it. */
-export const TEAM_PROFILE_CONTEXT_KEY = "mastra-work:team-profile";
-
 /** The same roster drives native agent tools, prompts and mode visibility. */
 export function delegationMemberIds(
   profile: AgentProfile,
   member?: AgentMemberDefinition,
 ): string[] {
   if (member) return member.delegates;
-  if (profile.id === DEFAULT_AGENT_PROFILE_ID) return ["explorer", "reviewer"];
-  return profile.type === "team" && profile.workflow?.strategy === "supervisor"
-    ? profile.members.map((candidate) => candidate.id)
-    : [];
+  return profile.type === "team" ? profile.members.map((candidate) => candidate.id) : [];
 }
 
 /** Workbench projection of pending native Agent signals, never a second execution queue. */
@@ -168,13 +162,6 @@ const identifier = z
   .string()
   .trim()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/);
-const conditionSchema = z
-  .object({
-    operator: z.enum(["contains", "equals", "not_contains"]),
-    value: z.string().min(1),
-  })
-  .strict();
-
 export const agentMemberSchema = z
   .object({
     id: identifier,
@@ -190,75 +177,46 @@ export const agentMemberSchema = z
   })
   .strict();
 
-const stepBase = {
-  id: identifier,
-  prompt: z.string().optional(),
-  context: z.enum(["request", "previous"]).default("previous"),
-  retries: z.number().int().min(0).max(5).default(0),
-};
-
-const agentWorkflowStepSchema = z.discriminatedUnion("kind", [
-  z.object({ ...stepBase, kind: z.literal("agent"), memberId: identifier }).strict(),
-  z
-    .object({
-      ...stepBase,
-      kind: z.literal("council"),
-      memberIds: z.array(identifier).min(2),
-      judgeMemberId: identifier,
-    })
-    .strict(),
-  z
-    .object({
-      id: identifier,
-      kind: z.literal("approval"),
-      approval: z.object({ title: z.string().min(1), description: z.string() }).strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...stepBase,
-      kind: z.literal("branch"),
-      condition: conditionSchema,
-      branch: z.object({ onTrueMemberId: identifier, onFalseMemberId: identifier }).strict(),
-    })
-    .strict(),
-  z
-    .object({
-      ...stepBase,
-      kind: z.literal("loop"),
-      memberId: identifier,
-      condition: conditionSchema.optional(),
-      loop: z.discriminatedUnion("mode", [
-        z
-          .object({
-            mode: z.enum(["until", "while"]),
-            maxIterations: z.number().int().min(1).max(20),
-          })
-          .strict(),
-        z
-          .object({
-            mode: z.literal("foreach"),
-            concurrency: z.number().int().min(1).max(8).default(1),
-          })
-          .strict(),
-      ]),
-    })
-    .strict(),
-]);
-
-// Strategy selects the entry point. Councils and supervisors compose inside the graph.
-export const agentWorkflowSchema = z
-  .object({
-    strategy: z.enum(["supervisor", "workflow", "handoff"]),
-    entryMemberId: identifier.optional(),
-    steps: z.array(agentWorkflowStepSchema),
-  })
-  .strict();
-
 export type AgentMemberDefinition = z.infer<typeof agentMemberSchema>;
-export type AgentWorkflowStep = z.infer<typeof agentWorkflowStepSchema>;
-export type AgentWorkflowCondition = z.infer<typeof conditionSchema>;
-type AgentWorkflowDefinition = z.infer<typeof agentWorkflowSchema>;
+
+/**
+ * Built-in supervisor roster. The same definitions drive the default profile,
+ * the Explorer/Reviewer agents and the delegation prompt, so descriptions and
+ * role instructions cannot drift apart.
+ */
+export const DEFAULT_AGENT_MEMBERS: AgentMemberDefinition[] = [
+  {
+    id: "explorer",
+    name: "Explorer",
+    profession: "探索专家",
+    description: "快速搜集信息、探查环境与资料，并给出结构化汇总。",
+    instructions:
+      "你是探索专家 Explorer。围绕任务追踪相关证据，区分事实与推断，给出可直接供主管采用的结论和路径/行号。",
+    skills: [],
+    mcpServers: [],
+    memoryScope: "thread",
+    delegates: [],
+  },
+  {
+    id: "reviewer",
+    name: "Reviewer",
+    profession: "审查专家",
+    description: "审查代码变更、规范、边界条件与缺陷风险，给出针对性的改进建议。",
+    instructions:
+      "你是审查专家 Reviewer。根据任务检查正确性、边界条件和实际风险。核对上下文和调用方后再报告缺陷，说明触发条件、影响与证据。不要把个人风格偏好或测试样例的命名当成缺陷；没有实质问题就直接说明。",
+    skills: [],
+    mcpServers: [],
+    memoryScope: "thread",
+    delegates: [],
+  },
+];
+
+export function defaultAgentMember(id: "explorer" | "reviewer"): AgentMemberDefinition {
+  const member = DEFAULT_AGENT_MEMBERS.find((candidate) => candidate.id === id);
+  if (!member) throw new Error(`Unknown default agent member: ${id}`);
+  return member;
+}
+
 type AgentProfileType = "agent" | "team";
 
 export interface AgentProfile {
@@ -272,7 +230,6 @@ export interface AgentProfile {
   skills: string[];
   mcpServers: string[];
   members: AgentMemberDefinition[];
-  workflow?: AgentWorkflowDefinition;
   categoryId?: string;
   tags: string[];
   quickPrompts: string[];
@@ -291,8 +248,6 @@ export interface TeamInvocation {
   parentInvocationId?: string;
   runId: string;
   toolCallId: string;
-  workflowRunId?: string;
-  stepId?: string;
   prompt: string;
   status: "running" | "suspended" | "completed" | "error";
   startedAt: string;
@@ -305,7 +260,7 @@ export interface TeamInvocation {
   memoryResourceId?: string;
 }
 
-/** A partial answer followed by another tool call or a token cutoff is not a final handoff. */
+/** A partial answer followed by another tool call or a token cutoff is not a final answer. */
 export function isCompleteAgentResult(result: { text: string; finishReason?: string }): boolean {
   return (
     Boolean(result.text.trim()) &&
@@ -360,28 +315,9 @@ export function isUserChatMessage(message: {
   );
 }
 
-export interface TeamHandoff {
-  id: number;
-  profileId: string;
-  fromMemberId: string;
-  toMemberId: string;
-  reason: string;
-  context: string;
-  createdAt: string;
-}
-
-export interface TeamHandoffState {
-  profileId: string;
-  activeMemberId: string;
-  history: TeamHandoff[];
-}
-
-export function validateAgentTeam(
-  profile: Pick<AgentProfile, "type" | "members" | "workflow">,
-): void {
+export function validateAgentTeam(profile: Pick<AgentProfile, "type" | "members">): void {
   if (profile.type !== "team") {
-    if (profile.members.length || profile.workflow)
-      throw new Error("单 Agent 不能配置团队成员或流程");
+    if (profile.members.length) throw new Error("单 Agent 不能配置团队成员");
     return;
   }
   const members = new Map(profile.members.map((member) => [member.id, member]));
@@ -397,55 +333,6 @@ export function validateAgentTeam(
     visited.add(id);
   };
   for (const id of members.keys()) visit(id, []);
-  const definition = profile.workflow;
-  if (!definition) throw new Error("团队必须选择执行方式");
-  if (definition.strategy === "handoff") {
-    if (!definition.entryMemberId || !members.has(definition.entryMemberId))
-      throw new Error("交接团队必须指定有效的初始专家");
-    if (definition.steps.length || profile.members.some((member) => member.delegates.length))
-      throw new Error("交接团队由当前专家负责，不能配置主管委派或显式流程步骤");
-    if (members.size < 2) throw new Error("交接团队至少需要两位专家");
-  } else if (definition.entryMemberId) throw new Error("仅交接团队可指定初始专家");
-  if (definition.strategy === "workflow" && !definition.steps.length)
-    throw new Error("显式流程至少需要一个步骤");
-  const ids = new Set<string>();
-  for (const step of definition.steps) {
-    const generated = [
-      step.id,
-      ...(step.kind === "council"
-        ? [
-            ...step.memberIds.map((id) => `${step.id}-${id}`),
-            `${step.id}-opinions`,
-            `${step.id}-synthesis`,
-          ]
-        : step.kind === "branch"
-          ? [`${step.id}-true`, `${step.id}-false`, `${step.id}-merge`]
-          : step.kind === "loop"
-            ? [`${step.id}-items`, `${step.id}-merge`]
-            : []),
-    ];
-    for (const id of generated) {
-      if (["workflow-input", "workflow-result"].includes(id) || ids.has(id))
-        throw new Error(`重复或保留的步骤 ID: ${id}`);
-      ids.add(id);
-    }
-    const targets =
-      step.kind === "approval"
-        ? []
-        : step.kind === "branch"
-          ? [step.branch.onTrueMemberId, step.branch.onFalseMemberId]
-          : step.kind === "council"
-            ? [...step.memberIds, step.judgeMemberId]
-            : [step.memberId];
-    for (const id of targets)
-      if (!members.has(id)) throw new Error(`步骤 ${step.id} 引用了不存在的成员 ${id}`);
-    if (step.kind === "council" && new Set(step.memberIds).size !== step.memberIds.length)
-      throw new Error(`评议 ${step.id} 的成员不能重复`);
-    if (step.kind === "loop" && step.loop.mode !== "foreach" && !step.condition)
-      throw new Error(`循环 ${step.id} 缺少条件`);
-    if (step.kind === "loop" && step.loop.mode === "foreach" && step.condition)
-      throw new Error(`foreach ${step.id} 不接受循环终止条件`);
-  }
 }
 
 export const PERMISSION_RULES_CONTEXT_KEY = "mastra-work:permission-rules";

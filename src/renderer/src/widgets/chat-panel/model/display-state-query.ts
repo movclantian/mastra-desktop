@@ -1,7 +1,7 @@
 /**
- * 产品任务/工作流面板的持久化快照；原生 Session 事件触发刷新，
- * 活跃目标的实时耗时、独立运行的工作流定期读取状态。
- * 命令式读取(如 resume 前的过期预检)用 fetchDisplayStateQuery。
+ * 任务、目标与子代理 invocation 的持久化快照；原生 Session 事件触发刷新，
+ * 活跃目标与后台任务定期读取状态。
+ * 命令式读取(如 resume 前的过期预检)用 useFetchDisplayStateQuery。
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";

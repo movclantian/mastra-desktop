@@ -1,14 +1,11 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { getToolName, isToolUIPart } from "ai";
 import { AlertCircleIcon, CheckCircle2Icon, CircleIcon, XIcon } from "lucide-react";
 import type { AgentProfile } from "@/entities/workbench";
-import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
 import { useAuth } from "@/features/auth";
 import { requestJson } from "@/shared/api/client";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { AvatarBadge, AvatarGroup, GeneratedAvatar } from "@/shared/ui/avatar";
-import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { CodeBlock, CodeBlockContent } from "@/shared/ui/code-block";
 import { DotmCircular5 } from "@/shared/ui/dotm-circular-5";
@@ -26,7 +23,6 @@ import {
 import type { TeamInvocation } from "../../../../../shared/agent-contract";
 import { buildDisplayMessages } from "../lib/display";
 import type { WorkUIMessage } from "../model/types";
-import { useTraceDisclosure } from "./assistant-trace";
 import { MessageItem } from "./message-list";
 
 /** 只读子流不提供编辑/重试:用模块级常量,避免内联箭头击穿 MessageItem 的 memo。 */
@@ -52,11 +48,7 @@ export function getAgentMemberRuntimes(
   return Object.fromEntries(
     profile.members.map((member) => {
       const entries: AgentMemberRuntime["entries"] = invocations
-        .filter(
-          (call) =>
-            call.profileId === profile.id &&
-            call.memberId === (profile.workflow ? member.id : member.id.replace(/^runtime-/, "")),
-        )
+        .filter((call) => call.profileId === profile.id && call.memberId === member.id)
         .map((call) => ({
           id: call.id,
           label: call.prompt,
@@ -124,12 +116,7 @@ export function AgentMemberSwitcher({
           {orderedMembers.map((member) => {
             const runtime = runtimes[member.id] ?? { status: "idle", entries: [] };
             const active = member.id === (activeMemberId ?? profile.id);
-            const memberId =
-              member.id === profile.id
-                ? undefined
-                : profile.workflow
-                  ? member.id
-                  : member.id.replace(/^runtime-/, "");
+            const memberId = member.id === profile.id ? undefined : member.id;
             const working = memberId ? runtime.status === "running" : busy;
             const status = memberId ? runtime.status : busy ? "running" : "idle";
             return (
@@ -227,8 +214,6 @@ function InvocationTranscript({
   const { user } = useAuth();
   const { t } = useTranslation();
   const running = invocation.status === "running";
-  const showDetails = useDesktopSettingsQuery().data?.showWorkDetails ?? false;
-  const [open, setOpen] = useTraceDisclosure(showDetails, running);
   const detail = useQuery({
     queryKey: [
       "team-invocation",
@@ -250,11 +235,6 @@ function InvocationTranscript({
   const parent = profile.members.find((item) => item.id === invocation.parentMemberId);
   const promptId = `${invocation.id}:prompt`;
   const transcript = detail.data?.messages ?? [];
-  const tools = [
-    ...new Set(
-      transcript.flatMap((message) => message.parts.filter(isToolUIPart).map(getToolName)),
-    ),
-  ];
   const messages: WorkUIMessage[] =
     transcript[0]?.role === "user"
       ? [{ ...transcript[0], id: promptId }, ...transcript.slice(1)]
@@ -278,101 +258,85 @@ function InvocationTranscript({
     : undefined;
   return (
     <Trace>
-      <TraceCollapsible open={open} onOpenChange={setOpen}>
-        <TraceCollapsibleTrigger className="w-full">
-          <TraceLine
-            className="flex-1 flex-wrap"
-            status={
-              running
-                ? "running"
-                : invocation.status === "error"
-                  ? "error"
-                  : invocation.status === "suspended"
-                    ? "pending"
-                    : undefined
-            }
-          >
-            <TraceIcon>{statusIcon(invocation.status)}</TraceIcon>
-            <TraceTitle className="flex-1 whitespace-normal">
-              {member.name} · {t(`chat:trace.subagentStatus.${invocation.status}`)}
-            </TraceTitle>
-            {duration !== undefined && Number.isFinite(duration) && duration >= 0 ? (
-              <TraceDescription>{(duration / 1000).toFixed(1)} s</TraceDescription>
-            ) : null}
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent keepMounted>
-          <div className="flex min-w-0 flex-col gap-2">
-            <div className="flex flex-wrap gap-1.5">
-              <Badge variant="secondary">{invocation.agentId}</Badge>
-              {tools.map((tool) => (
-                <Badge
-                  key={tool}
-                  variant="outline"
-                  className="max-w-full whitespace-normal break-all font-mono"
-                >
-                  {tool}
-                </Badge>
-              ))}
-            </div>
-            {display.map((entry, index) => {
-              const isPrompt = entry.message.role === "user";
-              const emptyReply = entry.sourceIds.length === 0;
-              return (
-                <MessageItem
-                  key={entry.key}
-                  message={{
-                    ...entry.message,
-                    metadata: {
-                      ...entry.message.metadata,
-                      agentProfileId: invocation.profileId,
-                      teamMemberId: isPrompt ? parent?.id : invocation.memberId,
-                      agentDisplayName: isPrompt
-                        ? (parent?.name ?? profile.displayName)
-                        : member.name,
-                    },
-                  }}
-                  userId={user?.id ?? ""}
-                  readOnly
-                  isGenerating={running}
-                  isStreaming={running && index === display.length - 1 && !isPrompt}
-                  emptyReply={
-                    emptyReply && (running || detail.isPending || invocation.status === "error")
-                  }
-                  replyError={emptyReply && rawError ? failureText : undefined}
-                  onEdit={noopMessageAction}
-                  onRetry={noopMessageAction}
-                />
-              );
-            })}
-            {rawError ? (
-              <TraceCollapsible className="flex min-w-0 flex-col gap-1 text-sm">
-                {detail.error || display.at(-1)?.sourceIds.length ? (
-                  <p role="status" className="flex items-start gap-2 text-destructive">
-                    <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
-                    <span className="min-w-0 [overflow-wrap:anywhere]">{failureText}</span>
-                  </p>
-                ) : null}
-                {invocation.error ? (
-                  <p className="text-muted-foreground">{t("chat:memberStream.progressRetained")}</p>
-                ) : null}
-                <TraceCollapsibleTrigger>
-                  <TraceLine status="error">
-                    <TraceTitle>{t("chat:memberStream.errorDetails")}</TraceTitle>
-                  </TraceLine>
-                </TraceCollapsibleTrigger>
-                <TraceCollapsibleContent>
-                  <CodeBlock size="sm" variant="destructive">
-                    <CodeBlockContent wrap className="max-h-40">
-                      {rawError}
-                    </CodeBlockContent>
-                  </CodeBlock>
-                </TraceCollapsibleContent>
-              </TraceCollapsible>
-            ) : null}
-          </div>
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
+      <TraceLine
+        className="flex-1 flex-wrap"
+        status={
+          running
+            ? "running"
+            : invocation.status === "error"
+              ? "error"
+              : invocation.status === "suspended"
+                ? "pending"
+                : undefined
+        }
+      >
+        <TraceIcon>{statusIcon(invocation.status)}</TraceIcon>
+        <TraceTitle className="flex-1 whitespace-normal">
+          {member.name} · {t(`chat:trace.subagentStatus.${invocation.status}`)}
+        </TraceTitle>
+        {duration !== undefined && Number.isFinite(duration) && duration >= 0 ? (
+          <TraceDescription>{(duration / 1000).toFixed(1)} s</TraceDescription>
+        ) : null}
+      </TraceLine>
+      <div className="mt-2 mb-1 ml-[calc(--spacing(2)-1px)] min-w-0 border-l pr-1 pl-4 leading-relaxed wrap-break-word text-muted-foreground">
+        <div className="flex min-w-0 flex-col gap-2">
+          {display.map((entry, index) => {
+            const isPrompt = entry.message.role === "user";
+            const emptyReply = entry.sourceIds.length === 0;
+            return (
+              <MessageItem
+                key={entry.key}
+                message={{
+                  ...entry.message,
+                  metadata: {
+                    ...entry.message.metadata,
+                    agentProfileId: invocation.profileId,
+                    teamMemberId: isPrompt ? parent?.id : invocation.memberId,
+                    agentDisplayName: isPrompt
+                      ? (parent?.name ?? profile.displayName)
+                      : member.name,
+                  },
+                }}
+                userId={user?.id ?? ""}
+                readOnly
+                isGenerating={running}
+                isStreaming={running && index === display.length - 1 && !isPrompt}
+                emptyReply={
+                  emptyReply && (running || detail.isPending || invocation.status === "error")
+                }
+                replyError={emptyReply && rawError ? failureText : undefined}
+                onEdit={noopMessageAction}
+                onRetry={noopMessageAction}
+              />
+            );
+          })}
+          {rawError ? (
+            <TraceCollapsible className="flex min-w-0 flex-col gap-1 text-sm">
+              {detail.error || display.at(-1)?.sourceIds.length ? (
+                <p role="status" className="flex items-start gap-2 text-destructive">
+                  <AlertCircleIcon className="mt-0.5 size-4 shrink-0" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{failureText}</span>
+                </p>
+              ) : null}
+              {invocation.error ? (
+                <p className="text-muted-foreground">{t("chat:memberStream.progressRetained")}</p>
+              ) : null}
+              <TraceCollapsibleTrigger>
+                <TraceLine status="error">
+                  <TraceTitle>{t("chat:memberStream.errorDetails")}</TraceTitle>
+                </TraceLine>
+              </TraceCollapsibleTrigger>
+              <TraceCollapsibleContent>
+                <CodeBlock size="sm" variant="destructive">
+                  <CodeBlockContent wrap className="max-h-40">
+                    {rawError}
+                  </CodeBlockContent>
+                </CodeBlock>
+              </TraceCollapsibleContent>
+            </TraceCollapsible>
+          ) : null}
+        </div>
+      </div>
     </Trace>
   );
 }

@@ -1586,7 +1586,6 @@ export const en = {
       actionButtonsTitle: "Action Buttons & Micro-interactions",
       buttonShimmerTitle: "Shimmer Metallic Sweep",
       buttonRainbowTitle: "Rainbow Gradient Sweep",
-      exploreWorkflow: "Explore Workflows",
       pulsatingTitle: "Pulsating Glow",
       cardSpotlightTitle: "MagicCard Spotlight",
       cardSpotlightDesc:
@@ -1659,7 +1658,7 @@ export const en = {
       landLoginSubmit: "Login / register page submit button",
       landAgentCreate: "Agent Hub 'Create Agent / Team with AI'",
       landCardAction: "Agent card 'Use', Skill card 'Install'",
-      landToolApprove: "Tool approval 'Approve', suspended workflow 'Resume'",
+      landToolApprove: "Tool approval 'Approve', suspended Agent or subagent 'Resume'",
       landTogglerChevron:
         "ThemeToggler → Top-right theme toggle on login page; AnimatedChevron → Tool step collapse arrow",
       landMagicCard: "Agent Hub cards, Skills market cards",
@@ -2061,7 +2060,7 @@ export const en = {
     notBoundWorkspace: "No workspace attached",
     selectOrCreateSessionDesc: "Select or create a session to display its workspace here.",
     sendFirstMessageDesc:
-      "After sending the first message, the attached workspace will be displayed here.",
+      "The default workspace is ready to browse as soon as a session is selected.",
     saveFileShortcut: "Save file (Ctrl+S)",
     readFileFailed: "Failed to read file",
     saveFailed: "Failed to save",
@@ -2161,7 +2160,6 @@ export const en = {
       title: "Goal",
       sendAsGoal: "Send as a goal",
       sendHint: "Continue until complete or the evaluation budget is used",
-      workflowUnavailable: "Explicit team workflows have their own run entry",
       composerHint:
         "Goal mode · Describe the task and success criteria. Up to 50 evaluations by default.",
       pause: "Pause goal",
@@ -2222,8 +2220,8 @@ export const en = {
         "The original has left the queue. Your edits are kept for copying to avoid sending it twice.",
       queueSyncFailed: "Unable to sync the queue. Check your connection.",
       queueActionFailed: "Unable to update queue",
-      workflowQueueUnavailable:
-        "Generation and team workflows do not support queued messages. Wait for the current task to finish.",
+      mediaQueueUnavailable:
+        "Image or video generation does not support queued messages. Wait for generation to finish.",
       partialFilesAdded: "Some files were not added: attachment limit or context budget reached",
       removeAttachment: "Remove {{filename}}",
       skillRefAria: "Skill reference {{name}}",
@@ -2438,7 +2436,7 @@ export const en = {
       selectPlaceholder: "Select workspace directory (optional)",
       menuLabel: "Workspace Directory (Locked on first message)",
       defaultDirectoryHint:
-        "Uses default directory if unset (agent working dir only, no file tree)",
+        "Uses the session's default workspace if unset (available to the file tree)",
       recentlyUsed: "Recently Used",
       chooseLocalDir: "Choose local directory…",
       clearTooltip: "Clear selection (revert to default)",
@@ -2615,8 +2613,6 @@ export const en = {
         skill_search: "Search skills",
         skill_read: "Read skill",
         mcp: "MCP tool",
-        team_workflow: "Team workflow",
-        workflow: "Workflow",
       },
     },
     context: {
@@ -2639,29 +2635,7 @@ export const en = {
       },
     },
     panels: {
-      workflowStatus: {
-        running: "Running",
-        success: "Completed",
-        failed: "Failed",
-        suspended: "Waiting Approval",
-        canceled: "Cancelled",
-        paused: "Paused",
-        pending: "Queued",
-        waiting: "Waiting",
-        tripwire: "Blocked",
-        bailed: "Aborted",
-        skipped: "Skipped",
-      },
-      resumeWorkflow: "Resume Workflow",
-      restartWorkflow: "Restart Workflow",
-      cancelWorkflow: "Cancel Workflow",
-      startedAt: "Started {{time}}",
       unknown: "Unknown",
-      step: "Step",
-      workflowRunStatus: "Workflow Run Status",
-      recentRun: "Recent Run",
-      resumeDesc: "Fill in the JSON resume data required for current suspended step.",
-      invalidJson: "Resume data must be valid JSON.",
       task: "Task",
       tool: "Tool",
       completed: "Completed",
@@ -2702,10 +2676,6 @@ export const en = {
       approveExecution: "Approve",
       executeTypescript: "Execute Multi-tool Script",
       backgroundTaskDescription: "Background task: {{name}}",
-      workflowStarted: "Workflow started",
-      stepStarted: "Step started",
-      stepSuspended: "Step suspended",
-      stepStatus: "Step {{status}}",
       inProgress: "In progress",
       delegatedTask: "Delegated task",
     },
@@ -2742,11 +2712,11 @@ export const en = {
         archDesc: "Scan directory structure, analyze core dependencies and module layering",
         archPrompt:
           "Please analyze the workspace directory architecture and core module relationships in detail, and provide a layered design summary.",
-        workflowTitle: "⚡ Orchestrate Multi-Agent Workflow",
-        workflowDesc:
-          "Build a pipeline with subagent dispatching, state observation, and auto-summarization",
-        workflowPrompt:
-          "Please help me plan and design a multi-agent collaborative workflow, defining clear roles and responsibilities.",
+        delegationTitle: "⚡ Coordinate Agent Delegation",
+        delegationDesc:
+          "Configure a main Agent, member responsibilities and native subagent delegation",
+        delegationPrompt:
+          "Please help me design an Agent team, defining its main Agent, members, responsibilities and delegation relationships.",
         testTitle: "🧪 Generate Tests & Types",
         testDesc: "Automatically supply rigorous TypeScript contracts and unit test suites",
         testPrompt:
@@ -2769,7 +2739,6 @@ export const en = {
       ],
       toastLoadEarlierFailed: "Failed to load earlier messages, please try again later",
       toastReactionFailed: "Failed to save reaction",
-      toastWorkflowFailed: "Workflow operation failed",
       toastToolExpired: "This tool interaction has expired and was removed from pending tasks",
       toastToolFailed: "Failed to continue agent tool call, please try again",
       toastBranchCreated: "Branch created: {{title}}",
@@ -3257,10 +3226,9 @@ export const en = {
     profileDetailsDescription:
       "Inspect saved responsibilities, Skill/MCP links, members and execution structure.",
     teamRoster: "Team agents",
-    supervisor: "Supervisor",
-    teamOverview: "Team overview",
-    executionSteps: "Execution steps",
     instructions: "Instructions",
+    builtinMemberInstructions:
+      "Built-in member instructions are managed by the system and cannot be edited.",
     resolvedInstructions: "Full system prompt preview",
     previewHint:
       "Shows the saved role and Agent instructions resolved in the default context. Save edits to refresh this preview. Runs also incorporate the thread's mode, workspace, skills, memory, and tools.",
@@ -3270,44 +3238,6 @@ export const en = {
     none: "None",
     memoryScope: "Memory scope",
     memoryScopes: { thread: "Isolated invocation thread", resource: "Member resource" },
-    strategies: { supervisor: "Supervisor", workflow: "Workflow", handoff: "Handoff" },
-    strategyDescriptions: {
-      supervisor:
-        "The supervisor assigns tasks and combines results; optional workflows are invoked as needed.",
-      workflow:
-        "Each message follows these dependencies; council members answer independently in parallel.",
-      handoff:
-        "The active specialist owns the conversation. After transfer, the successor receives the next message.",
-    },
-    stepKinds: {
-      agent: "Member",
-      council: "Independent council → synthesis",
-      branch: "Branch",
-      loop: "Loop",
-      approval: "Approval",
-    },
-    contexts: { request: "Original request", previous: "Original request + previous result" },
-    stepContext: "Input",
-    retries: "Retries",
-    dependsOn: "Depends on",
-    concurrency: "Concurrency",
-    maxIterations: "Maximum iterations",
-    delegationHistory: "Supervisor delegations",
-    councilOpinions: "Independent opinions",
-    synthesis: "Synthesis",
-    waiting: "Waiting",
-    input: "Input",
-    output: "Output",
-    approve: "Approve and continue",
-    decline: "Decline",
-    feedback: "Approval feedback (optional)",
-    currentExpert: "Active specialist",
-    handoff: "Hand off",
-    handoffReason: "Reason for transfer",
-    handoffContext: "Context for the next specialist",
-    handoffHistory: "Handoff history",
-    handoffDescription: "A handoff changes who receives subsequent messages.",
-    initialExpert: "Initial specialist",
     describePromptRequired: "Please describe the desired Agent or team first",
     aiCreateSuccess: "Agent created with {{skills}} skills and {{mcp}} MCP servers linked",
     aiCapabilitiesHint:
@@ -3342,7 +3272,7 @@ export const en = {
     nextPage: "Next",
     aiCreateModalTitle: "AI Create {{type}}",
     aiCreateModalDesc:
-      "Describe the goal, domain, and workflow. AI will generate the configuration and create it directly.",
+      "Describe the goal, domain, and Agent responsibilities. AI will generate the configuration and create it directly.",
     createType: "Creation Type",
     agent: "Agent",
     team: "Agent Team",
@@ -3520,16 +3450,6 @@ export const en = {
     SESSION_FOLLOW_UP_BLOCKED: {
       title: "Failed to queue follow-up message",
       hint: "Please retry later",
-    },
-    WORKFLOW_NOT_FOUND: {
-      title: "Workflow not found or deleted",
-    },
-    WORKFLOW_RUN_NOT_FOUND: {
-      title: "Workflow run record not found or does not belong to this session",
-    },
-    WORKFLOW_RUN_INVALID_STATE: {
-      title: "Workflow current state does not support this operation",
-      hint: "Please refresh run status and retry",
     },
     BACKGROUND_TASKS_DISABLED: {
       title: "Background tasks are not enabled",

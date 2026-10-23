@@ -8,14 +8,12 @@ import { Extractor } from "@mastra/memory";
 import { z } from "zod";
 import { DEFAULT_AGENT_PROFILE_ID, workbenchSessionId } from "../../../shared/agent-contract";
 import { closeBrowserThreadSessions } from "../../agents/browser";
-import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "../../agents/custom";
 import {
   createWorkMessageSignal,
   WORK_MESSAGE_OPTIONS_CONTEXT_KEY,
   workMessageMetadataSchema,
 } from "../../agents/processors";
 import { deleteTeamInvocations, listTeamInvocations } from "../../agents/team-activity";
-import { deleteTeamHandoffs } from "../../agents/team-handoff";
 import { closeComputerConnections } from "../../connections/computer";
 import { getMcpConfig } from "../../connections/mcp";
 import { workError } from "../../errors";
@@ -34,11 +32,13 @@ import {
 } from "../../rag/storage/assets";
 import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
-import { deleteThreadWorkspace } from "../../workspace/workspace-manager";
+import {
+  deleteThreadWorkspace,
+  implicitThreadWorkspacePath,
+} from "../../workspace/workspace-manager";
 import { cancelThreadBackgroundTasks } from "../background-tasks";
 import {
   activeThreadMediaGeneration,
-  activeThreadWorkflow,
   assertNoActiveConversationRun,
   startConversationRun,
 } from "../conversation-runs";
@@ -123,16 +123,11 @@ const rewriteThreadMessageRoute = registerApiRoute(
         recalled.messages.slice(boundary).map((entry) => entry.id),
       );
       result.controllerSession.displayState.resetThread();
-      const profile = await getAgentProfile(
-        c.get("requestContext").get(AGENT_PROFILE_CONTEXT_KEY) as string,
-        resourceId,
-      );
       const selection = await resolveModelSelection(
         result.controllerSession.model.get(),
         resourceId,
       );
-      if (selection?.model.kind !== "language" || profile.workflow?.strategy === "workflow")
-        return startConversationRun(c, result, content);
+      if (selection?.model.kind !== "language") return startConversationRun(c, result, content);
       observeSessionWork(
         c,
         result.controllerSession,
@@ -946,7 +941,6 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
       deleteThreadWorkspace(threadId, thread.metadata, resourceId),
       releaseThreadAssets(resourceId, threadId),
       deleteTeamInvocations(resourceId, threadId),
-      deleteTeamHandoffs(resourceId, threadId),
     ]);
   }
   if (!threadId && c.req.method === "GET") {
@@ -982,22 +976,30 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
     );
     c.res = c.json({
       ...payload,
-      threads: payload.threads.map((item: { id: string; metadata?: Record<string, unknown> }) => ({
-        ...item,
-        lastUserRequestAt: lastUserRequests.get(item.id) ?? null,
-        metadata: {
-          ...item.metadata,
-          isWorking:
-            active.has(item.id) ||
-            Boolean(activeThreadWorkflow(resourceId, item.id)) ||
-            Boolean(activeThreadMediaGeneration(resourceId, item.id)),
-          activeRunId:
-            active.get(item.id) ??
-            activeThreadWorkflow(resourceId, item.id)?.runId ??
-            activeThreadMediaGeneration(resourceId, item.id)?.messageId ??
-            null,
-        },
-      })),
+      threads: await Promise.all(
+        payload.threads.map(async (item: { id: string; metadata?: Record<string, unknown> }) => {
+          const metadata = item.metadata ?? {};
+          const workspacePath =
+            typeof metadata.workspacePath === "string"
+              ? metadata.workspacePath
+              : await implicitThreadWorkspacePath(item.id, resourceId);
+          return {
+            ...item,
+            lastUserRequestAt: lastUserRequests.get(item.id) ?? null,
+            metadata: {
+              ...metadata,
+              workspacePath,
+              ...(metadata.workspacePath ? {} : { workspaceExplicit: false }),
+              isWorking:
+                active.has(item.id) || Boolean(activeThreadMediaGeneration(resourceId, item.id)),
+              activeRunId:
+                active.get(item.id) ??
+                activeThreadMediaGeneration(resourceId, item.id)?.messageId ??
+                null,
+            },
+          };
+        }),
+      ),
     });
   }
 }

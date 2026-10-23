@@ -158,24 +158,6 @@ const WORK_ERRORS = {
     status: 409,
     text: "后台任务执行器不可用，请重新提交任务",
   },
-  WORKFLOW_NOT_FOUND: {
-    domain: ErrorDomain.MASTRA,
-    category: ErrorCategory.USER,
-    status: 404,
-    text: "Workflow not found",
-  },
-  WORKFLOW_RUN_NOT_FOUND: {
-    domain: ErrorDomain.MASTRA,
-    category: ErrorCategory.USER,
-    status: 404,
-    text: "Workflow run not found",
-  },
-  WORKFLOW_RUN_INVALID_STATE: {
-    domain: ErrorDomain.MASTRA,
-    category: ErrorCategory.USER,
-    status: 409,
-    text: "Workflow run cannot perform this operation in its current state",
-  },
   SCHEDULE_NOT_FOUND: {
     domain: ErrorDomain.MASTRA,
     category: ErrorCategory.USER,

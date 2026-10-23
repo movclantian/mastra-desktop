@@ -202,7 +202,6 @@ export async function toggleThreadMessageReaction(
 export type DisplayStatePayload = Omit<WorkDisplayState, "suspendedRuns"> & {
   suspendedRuns?: unknown;
   backgroundTasks?: BackgroundTaskState[];
-  workflowRuns?: WorkDisplayState["workflowRuns"];
 };
 
 export async function fetchDisplayState(
@@ -222,28 +221,4 @@ export async function abortThread(threadId: string, resourceId: string): Promise
     { method: "POST" },
     i18n.t("chat:api.stopTaskFailed"),
   );
-}
-
-export async function runWorkflowAction(
-  threadId: string,
-  resourceId: string,
-  workflowId: string,
-  runId: string,
-  action: string,
-  resumeData?: unknown,
-): Promise<Response> {
-  const endpoint = `${[
-    MASTRA_SERVER_URL,
-    "work/sessions/workbench/threads",
-    encodeURIComponent(threadId),
-    "workflows",
-    encodeURIComponent(workflowId),
-    "runs",
-    encodeURIComponent(runId),
-    action,
-  ].join("/")}?${resourceQuery(resourceId)}`;
-  return apiFetch(endpoint, {
-    method: "POST",
-    ...(action === "resume" ? { body: { resumeData } } : {}),
-  });
 }

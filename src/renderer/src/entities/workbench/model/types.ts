@@ -1,5 +1,6 @@
 import { i18n } from "@/shared/i18n";
 import {
+  DEFAULT_AGENT_MEMBERS,
   DEFAULT_AGENT_PROFILE_ID,
   type SearchDepth,
   type SearchEngine,
@@ -109,7 +110,7 @@ import type { AgentProfile } from "../../../../../shared/agent-contract";
 
 export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   id: DEFAULT_AGENT_PROFILE_ID,
-  type: "agent",
+  type: "team",
   name: "MastraWork",
   displayName: "MastraWork",
   profession: i18n.t("chat:agents.generalAgentProfession"),
@@ -117,8 +118,7 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   instructions: "",
   skills: [],
   mcpServers: [],
-  members: [],
-  workflow: undefined,
+  members: structuredClone(DEFAULT_AGENT_MEMBERS),
   tags: [i18n.t("common:default")],
   quickPrompts: [],
   enabled: true,

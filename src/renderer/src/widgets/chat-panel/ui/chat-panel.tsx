@@ -27,7 +27,7 @@ import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
 import { getWorkbenchClientSession, requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
-import { readErrorPayload, toastError } from "@/shared/lib";
+import { toastError } from "@/shared/lib";
 import { PromptInputProvider } from "@/shared/ui/ai-elements/prompt-input";
 import { Queue } from "@/shared/ui/ai-elements/queue";
 import { AnimatedShinyText } from "@/shared/ui/animated-shiny-text";
@@ -53,11 +53,10 @@ import {
   abortThread,
   fetchThreadMessagesPage,
   referenceChatAttachments,
-  runWorkflowAction,
   toggleThreadMessageReaction,
   uploadChatAttachment,
 } from "../api/chat-api";
-import { buildDisplayMessages, type DisplayMessage, withHandoffMessages } from "../lib/display";
+import { buildDisplayMessages, type DisplayMessage } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import { useDisplayStateQuery, useFetchDisplayStateQuery } from "../model/display-state-query";
 import {
@@ -71,17 +70,13 @@ import {
   getBackgroundTasksFromMessages,
   getTasksFromMessages,
   getToolName,
-  getWorkflowStateFromDisplayState,
-  getWorkflowStateFromMessages,
   type MessageFileReference,
   type MessageQueueAction,
   type MessageReaction,
-  mergeWorkflowRuntimeStates,
   normalizeAgentTasks,
   parseSuspendedRuns,
   toggleMessageReactions,
   type WorkDisplayState,
-  type WorkflowRuntimeRun,
   type WorkUIMessage,
 } from "../model/types";
 import {
@@ -94,13 +89,11 @@ import {
   AgentMemberSwitcher,
   getAgentMemberRuntimes,
 } from "./agent-member-stream";
-import type { WorkflowRunAction } from "./agent-panels";
-import { AgentInteractionPanel, AgentQueuePanel, WorkflowRunPanel } from "./agent-panels";
+import { AgentInteractionPanel, AgentQueuePanel } from "./agent-panels";
 import { type GoalAction, GoalDraftPanel, GoalPanel } from "./goal-panel";
 import { MessageItem } from "./message-list";
 import { MessageSelectionScope } from "./message-selection";
 import { ChatPromptInput, UserRequestQueuePanel } from "./prompt-input";
-import { HandoffPanel, HandoffRecord } from "./team-collaboration";
 import { ChatWorkspaceSelector } from "./workspace-selector";
 
 const TERMINAL_BACKGROUND_TASK_STATUSES = new Set<BackgroundTaskState["status"]>([
@@ -318,10 +311,8 @@ export function ChatPanel() {
       modelSelection &&
       getModelKind(selectedProvider, modelSelection.modelId, catalog) !== "language",
   );
-  const goalAvailable = !isMediaModel && agentSelection.workflow?.strategy !== "workflow";
+  const goalAvailable = !isMediaModel;
   const [backgroundTasks, setBackgroundTasks] = React.useState<BackgroundTaskState[]>([]);
-  const [workflowRuns, setWorkflowRuns] = React.useState<WorkDisplayState["workflowRuns"]>([]);
-  const [handoff, setHandoff] = React.useState<WorkDisplayState["handoff"]>(null);
   const [teamInvocations, setTeamInvocations] = React.useState<
     NonNullable<WorkDisplayState["teamInvocations"]>
   >([]);
@@ -624,7 +615,6 @@ export function ChatPanel() {
       setTaskSnapshotLoaded(true);
       setPersistedInteractions([]);
       setBackgroundTasks([]);
-      setWorkflowRuns([]);
       setObjectiveSnapshot(null);
       return;
     }
@@ -637,8 +627,6 @@ export function ChatPanel() {
       setBackgroundTasks((current) =>
         mergeBackgroundTaskSnapshot(current, displayState?.backgroundTasks ?? []),
       );
-      setWorkflowRuns(displayState?.workflowRuns ?? []);
-      setHandoff(displayState?.handoff ?? null);
       setTeamInvocations(displayState?.teamInvocations ?? []);
       setObjectiveSnapshot({
         threadId: activeThreadId,
@@ -699,8 +687,6 @@ export function ChatPanel() {
 
     setPersistedInteractions([]);
     setBackgroundTasks([]);
-    setWorkflowRuns([]);
-    setHandoff(null);
     setTeamInvocations([]);
     setResolvedInteractionKeys(new Set());
     retainActive(activeThreadId);
@@ -781,12 +767,8 @@ export function ChatPanel() {
   }, [getThreadSession, user.id]);
 
   const hasLiveBackgroundWork = React.useMemo(
-    () =>
-      backgroundTasks.some((task) => task.status === "pending" || task.status === "running") ||
-      (workflowRuns ?? []).some((run) =>
-        ["pending", "running", "waiting"].includes(run.status ?? ""),
-      ),
-    [backgroundTasks, workflowRuns],
+    () => backgroundTasks.some((task) => task.status === "pending" || task.status === "running"),
+    [backgroundTasks],
   );
   const isBusy = status === "submitted" || status === "streaming" || hasLiveBackgroundWork;
   const monitorGoal = Boolean(activeThreadId && objective?.status === "active" && isBusy);
@@ -814,32 +796,17 @@ export function ChatPanel() {
     goalProgress.isFetching,
     goalProgress.isError,
   ]);
-  const hasLiveWorkflow = (workflowRuns ?? []).some((run) =>
-    ["pending", "running", "waiting"].includes(run.status ?? ""),
-  );
   React.useEffect(() => {
     if (!activeThreadId) return;
     setThreadBusy(activeThreadId, isBusy || hasLiveBackgroundWork);
   }, [activeThreadId, hasLiveBackgroundWork, isBusy, setThreadBusy]);
   React.useEffect(() => {
-    if (
-      !(hasLiveWorkflow || isBusy || hasLiveBackgroundWork) ||
-      !activeThreadId ||
-      connection !== "connected"
-    )
-      return;
+    if (!(isBusy || hasLiveBackgroundWork) || !activeThreadId || connection !== "connected") return;
     const timer = window.setInterval(() => {
       void reloadDisplayState();
     }, 1200);
     return () => window.clearInterval(timer);
-  }, [
-    activeThreadId,
-    hasLiveWorkflow,
-    isBusy,
-    hasLiveBackgroundWork,
-    reloadDisplayState,
-    connection,
-  ]);
+  }, [activeThreadId, isBusy, hasLiveBackgroundWork, reloadDisplayState, connection]);
 
   // Keep the queue current after the agent stream closes. The official
   // BackgroundTaskManager stream emits lifecycle events for tasks that finish
@@ -965,19 +932,10 @@ export function ChatPanel() {
     () => teamInvocations.filter((call) => call.profileId === agentSelection.id),
     [teamInvocations, agentSelection.id],
   );
-  const streamedWorkflow = React.useMemo(() => getWorkflowStateFromMessages(messages), [messages]);
-  const persistedWorkflow = React.useMemo(
-    () => getWorkflowStateFromDisplayState(workflowRuns),
-    [workflowRuns],
-  );
-  const workflow = React.useMemo(
-    () => mergeWorkflowRuntimeStates(streamedWorkflow, persistedWorkflow),
-    [persistedWorkflow, streamedWorkflow],
-  );
   const runtimeMembers = React.useMemo<AgentMemberDefinition[]>(
     () =>
       [...new Set(subagents.map((call) => call.memberId))].map((id) => ({
-        id: `runtime-${id}`,
+        id,
         name: id === "explorer" ? "Explorer" : id === "reviewer" ? "Reviewer" : id,
         profession: t("chat:agents.subagent"),
         description: "",
@@ -1020,7 +978,6 @@ export function ChatPanel() {
     multiAgentMembers.length > 0 &&
     (agentSelection.type === "team" ||
       subagents.length > 0 ||
-      workflow !== null ||
       visibleBackgroundTasks.length > 0 ||
       teamInvocations.length > 0);
   const memberActivitySignature = React.useMemo(
@@ -1029,9 +986,8 @@ export function ChatPanel() {
         multiAgentMembers.map((member) => member.id).join(","),
         subagents.map((subagent) => `${subagent.id}:${subagent.status}`).join(","),
         visibleBackgroundTasks.map((task) => `${task.id}:${task.status}`).join(","),
-        workflow?.runs.map((run) => `${run.runId}:${run.status}`).join(",") ?? "",
       ].join("|"),
-    [multiAgentMembers, subagents, visibleBackgroundTasks, workflow],
+    [multiAgentMembers, subagents, visibleBackgroundTasks],
   );
   const showMemberSwitcher =
     hasMultiAgentActivity && dismissedMemberActivitySignature !== memberActivitySignature;
@@ -1058,44 +1014,6 @@ export function ChatPanel() {
         : null,
     );
   }, [hasMultiAgentActivity, multiAgentMembers]);
-  const handleWorkflowAction = React.useCallback(
-    async (run: WorkflowRuntimeRun, action: WorkflowRunAction, resumeData?: unknown) => {
-      if (!activeThreadId) return;
-      try {
-        if (action === "resume" || action === "rerun") {
-          await getThreadSession(activeThreadId).workflowAction(
-            run.workflowId,
-            run.runId,
-            action,
-            resumeData,
-            asString(
-              asRecord(run.steps.find((step) => step.status === "suspended")?.suspendPayload)
-                ?.resumeLabel,
-            ),
-          );
-          return;
-        }
-        const response = await runWorkflowAction(
-          activeThreadId,
-          user.id,
-          run.workflowId,
-          run.runId,
-          action,
-          resumeData,
-        );
-        if (!response.ok) {
-          toastError(await readErrorPayload(response, t("chat:welcome.toastWorkflowFailed")));
-          return;
-        }
-        await response.text();
-        await reloadDisplayState();
-        await reloadMessages();
-      } catch (error) {
-        toastError(error, t("chat:welcome.toastWorkflowFailed"));
-      }
-    },
-    [activeThreadId, getThreadSession, reloadDisplayState, reloadMessages, t, user.id],
-  );
   const interactions = React.useMemo(
     () =>
       persistedInteractions.filter((interaction) => !resolvedInteractionKeys.has(interaction.key)),
@@ -1103,8 +1021,8 @@ export function ChatPanel() {
   );
   const visibleInteractions = interactions;
   const displayMessages = React.useMemo(
-    () => buildDisplayMessages(withHandoffMessages(messages, handoff?.history ?? []), isBusy),
-    [messages, isBusy, handoff],
+    () => buildDisplayMessages(messages, isBusy),
+    [messages, isBusy],
   );
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
@@ -1315,10 +1233,6 @@ export function ChatPanel() {
     const streaming =
       isBusy &&
       (entry.sourceIds.length === 0 || entry.sourceIds.includes(streamingMessageId ?? ""));
-    const member =
-      handoff?.profileId === agentSelection.id
-        ? agentSelection.members.find((member) => member.id === handoff.activeMemberId)
-        : undefined;
     const message =
       streaming && entry.message.role === "assistant" && !entry.message.metadata?.agentProfileId
         ? {
@@ -1326,14 +1240,11 @@ export function ChatPanel() {
             metadata: {
               ...entry.message.metadata,
               agentProfileId: agentSelection.id,
-              teamMemberId: member?.id,
-              agentDisplayName: member?.name ?? agentSelection.displayName,
+              agentDisplayName: agentSelection.displayName,
             },
           }
         : entry.message;
-    return message.metadata?.handoff ? (
-      <HandoffRecord key={entry.key} handoff={message.metadata.handoff} profile={agentSelection} />
-    ) : (
+    return (
       <MessageItem
         isGenerating={isBusy}
         isStreaming={streaming}
@@ -1383,8 +1294,8 @@ export function ChatPanel() {
       if (isBusy || queuedRequests.length > 0) {
         const threadId = activeThreadIdRef.current;
         if (!threadId) return;
-        if (isMediaModel || agentSelection.workflow?.strategy === "workflow") {
-          toast.error(t("chat:prompt.workflowQueueUnavailable"));
+        if (isMediaModel) {
+          toast.error(t("chat:prompt.mediaQueueUnavailable"));
           return;
         }
         try {
@@ -1576,10 +1487,7 @@ export function ChatPanel() {
                   key={`goal:${activeThreadId}`}
                   objective={objective}
                   running={isBusy || visibleInteractions.length > 0}
-                  canResume={
-                    agentSelection.workflow?.strategy !== "workflow" &&
-                    visibleInteractions.length === 0
-                  }
+                  canResume={visibleInteractions.length === 0}
                   onAction={handleGoalAction}
                 />
               ) : null}
@@ -1601,11 +1509,6 @@ export function ChatPanel() {
         </div>
       ) : null}
 
-      <WorkflowRunPanel
-        onAction={handleWorkflowAction}
-        workflow={workflow}
-        invocations={teamInvocations}
-      />
       <div className="mx-auto w-full max-w-3xl">
         <AgentInteractionPanel
           busyKeys={resumingKeys}
@@ -1683,21 +1586,6 @@ export function ChatPanel() {
             是空数组,仅凭 messages.length===0 判空会先闪一帧居中的新会话布局。
             用 draft 区分 —— 新建会话创建的是 draft 线程(服务端保证无历史消息,
             一有往来即失效),有历史的线程非 draft,加载期间稳定走聊天布局。 */}
-        <HandoffPanel
-          key={`${activeThreadId}:${agentSelection.id}`}
-          profile={agentSelection}
-          state={handoff ?? null}
-          busy={isBusy || visibleInteractions.length > 0}
-          onTransfer={async (input) => {
-            if (!activeThreadId) return;
-            await requestJson(
-              `/work/sessions/workbench/threads/${encodeURIComponent(activeThreadId)}/handoff`,
-              { method: "POST", body: input },
-            );
-            await reloadDisplayState();
-          }}
-        />
-
         {messages.length === 0 &&
         !isBusy &&
         (!activeThreadId || activeThread?.metadata.draft === true) ? (
@@ -1752,9 +1640,9 @@ export function ChatPanel() {
                     prompt: t("chat:welcome.starters.archPrompt"),
                   },
                   {
-                    title: t("chat:welcome.starters.workflowTitle"),
-                    desc: t("chat:welcome.starters.workflowDesc"),
-                    prompt: t("chat:welcome.starters.workflowPrompt"),
+                    title: t("chat:welcome.starters.delegationTitle"),
+                    desc: t("chat:welcome.starters.delegationDesc"),
+                    prompt: t("chat:welcome.starters.delegationPrompt"),
                   },
                   {
                     title: t("chat:welcome.starters.testTitle"),

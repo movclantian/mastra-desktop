@@ -168,7 +168,7 @@ export const ReasoningContent = memo(({ className, children, ...props }: Reasoni
   const { isStreaming } = useReasoning();
 
   return (
-    <TraceCollapsibleContent keepMounted className={cn("text-sm", className)} {...props}>
+    <TraceCollapsibleContent className={cn("text-sm", className)} {...props}>
       <Streamdown plugins={streamdownPlugins} isAnimating={isStreaming}>
         {children}
       </Streamdown>

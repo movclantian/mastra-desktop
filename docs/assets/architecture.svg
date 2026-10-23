@@ -62,19 +62,19 @@
   </g>
   <path d="M640 272 L652 284 L664 272" stroke="#2c2c2c" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- 工作流层 -->
+  <!-- Agent 运行层 -->
   <rect x="88" y="296" width="1140" height="120" rx="14" fill="#fffef5" stroke="#2c2c2c" stroke-width="2" filter="url(#rough)" transform="rotate(0.25 658 356)"/>
   <rect x="91" y="299" width="1140" height="120" rx="14" fill="none" stroke="#2c2c2c" stroke-width="1" opacity="0.22" filter="url(#roughS)" transform="rotate(-0.35 661 359)"/>
   <rect x="108" y="318" width="152" height="76" rx="10" fill="#4ecdc4" fill-opacity="0.16" stroke="#4ecdc4" stroke-width="2" filter="url(#roughS)"/>
-  <text x="184" y="356" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">工作流层</text>
-  <text x="184" y="378" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Workflow</text>
+  <text x="184" y="356" font-size="16" font-weight="700" fill="#2c2c2c" text-anchor="middle">Agent 运行层</text>
+  <text x="184" y="378" font-family="'JetBrains Mono','SFMono-Regular',Consolas,monospace" font-size="10.5" fill="#2c2c2c" opacity="0.55" text-anchor="middle">Agent Runtime</text>
   <g>
     <rect x="327" y="336" width="190" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
     <circle cx="343" cy="356" r="3" fill="#4ecdc4"/>
     <text x="355" y="361" font-size="13.5" fill="#2c2c2c">主 Agent 与专家团队</text>
     <rect x="529" y="336" width="170" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
     <circle cx="545" cy="356" r="3" fill="#4ecdc4"/>
-    <text x="557" y="361" font-size="13.5" fill="#2c2c2c">委派 · 交接 · 并行</text>
+    <text x="557" y="361" font-size="13.5" fill="#2c2c2c">委派 · 子代理 · 并行</text>
     <rect x="711" y="336" width="170" height="40" rx="10" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.6" filter="url(#roughS)"/>
     <circle cx="727" cy="356" r="3" fill="#4ecdc4"/>
     <text x="739" y="361" font-size="13.5" fill="#2c2c2c">计划 · 构建 · 复查</text>

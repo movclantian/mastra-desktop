@@ -2,22 +2,19 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Agent } from "@mastra/core/agent";
 import type { Mastra } from "@mastra/core/mastra";
 import { resolveAgentSkills } from "@mastra/core/skills";
-import type { AnyWorkflow } from "@mastra/core/workflows";
 import { z } from "zod";
 import {
   type AgentMemberDefinition,
   type AgentProfile,
   agentMemberSchema,
-  agentWorkflowSchema,
+  DEFAULT_AGENT_MEMBERS,
   DEFAULT_AGENT_PROFILE_ID,
-  TEAM_PROFILE_CONTEXT_KEY,
   validateAgentTeam,
 } from "../../shared/agent-contract";
 import { workError } from "../errors";
 import { listPluginSkills } from "../plugins/registry";
 import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
 import { DEFAULT_WORK_INSTRUCTIONS } from "./agent-instructions";
-import { compileTeamWorkflow } from "./team-workflow";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
 export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
@@ -25,7 +22,6 @@ export { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
 const CONFIG_KEY = "agent-profiles";
 
 export type { AgentMemberDefinition, AgentProfile } from "../../shared/agent-contract";
-export { agentWorkflowSchema } from "../../shared/agent-contract";
 
 type AgentProfileInput = Omit<Partial<AgentProfile>, "members"> & {
   members?: Partial<AgentMemberDefinition>[];
@@ -33,7 +29,7 @@ type AgentProfileInput = Omit<Partial<AgentProfile>, "members"> & {
 
 const DEFAULT_PROFILE: AgentProfile = {
   id: DEFAULT_AGENT_PROFILE_ID,
-  type: "agent",
+  type: "team",
   name: "MastraWork",
   displayName: "MastraWork",
   profession: "通用工作 Agent",
@@ -41,8 +37,7 @@ const DEFAULT_PROFILE: AgentProfile = {
   instructions: DEFAULT_WORK_INSTRUCTIONS,
   skills: [],
   mcpServers: [],
-  members: [],
-  workflow: undefined,
+  members: structuredClone(DEFAULT_AGENT_MEMBERS),
   tags: ["默认", "通用"],
   quickPrompts: [],
   enabled: true,
@@ -53,28 +48,35 @@ const DEFAULT_PROFILE: AgentProfile = {
 function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()): AgentProfile {
   const id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : randomUUID();
   const name = typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : id;
+  const isDefaultProfile = id === DEFAULT_AGENT_PROFILE_ID;
   return {
     ...DEFAULT_PROFILE,
-    type: raw.type === "team" ? "team" : "agent",
+    type: isDefaultProfile ? "team" : raw.type === "team" ? "team" : "agent",
     categoryId: raw.categoryId,
     id,
     name,
     displayName:
       typeof raw.displayName === "string" && raw.displayName.trim() ? raw.displayName.trim() : name,
-    profession: typeof raw.profession === "string" ? raw.profession.trim() : "自定义 Agent",
+    profession:
+      typeof raw.profession === "string" && raw.profession.trim()
+        ? raw.profession.trim()
+        : isDefaultProfile
+          ? DEFAULT_PROFILE.profession
+          : "自定义 Agent",
     description: typeof raw.description === "string" ? raw.description.trim() : "",
     instructions:
       typeof raw.instructions === "string" && raw.instructions.trim()
         ? raw.instructions.trim()
-        : id === DEFAULT_AGENT_PROFILE_ID
+        : isDefaultProfile
           ? DEFAULT_WORK_INSTRUCTIONS
           : "",
     skills: Array.isArray(raw.skills)
       ? raw.skills.filter((item): item is string => typeof item === "string")
       : [],
-    members: (raw.members ?? []).map((member) => agentMemberSchema.parse(member)),
+    members: isDefaultProfile
+      ? structuredClone(DEFAULT_AGENT_MEMBERS)
+      : (raw.members ?? []).map((member) => agentMemberSchema.parse(member)),
     mcpServers: z.array(z.string()).parse(raw.mcpServers ?? []),
-    workflow: raw.workflow === undefined ? undefined : agentWorkflowSchema.parse(raw.workflow),
     tags: Array.isArray(raw.tags)
       ? raw.tags.filter((item): item is string => typeof item === "string")
       : [],
@@ -153,19 +155,49 @@ async function withProfileWrite<T>(
   }
 }
 
-async function assertProfileIdle(id: string, resourceId?: string) {
-  const store = await appStorage.getStore("workflows");
-  const runs = await store?.listWorkflowRuns({ resourceId, perPage: false });
-  for (const run of runs?.runs ?? []) {
-    if (!run.workflowName.startsWith("team-")) continue;
-    const snapshot = typeof run.snapshot === "string" ? JSON.parse(run.snapshot) : run.snapshot;
-    if (
-      snapshot?.requestContext?.[TEAM_PROFILE_CONTEXT_KEY]?.id === id &&
-      ["pending", "running", "waiting", "suspended", "paused"].includes(snapshot.status)
-    )
-      throw workError("VALIDATION_FAILED", {
-        text: "请先完成或取消该团队的流程，再修改或删除团队",
-      });
+async function assertProfileIdle(mastra: Mastra, id: string, resourceId: string) {
+  const prefix = `${registrationToken(registrationScope(resourceId))}-${registrationToken(id)}-`;
+  const agents = Object.values(mastra.listAgents()).filter(
+    (agent) =>
+      agent.id === DEFAULT_AGENT_PROFILE_ID ||
+      agent.id.startsWith(`profile-${prefix}`) ||
+      agent.id.startsWith(`member-${prefix}`),
+  );
+  const memory = await appStorage.getStore("memory");
+  const tasks = await appStorage.getStore("backgroundTasks");
+  if (!memory) throw new Error("Memory storage is not configured");
+  const reject = () => {
+    throw workError("VALIDATION_FAILED", {
+      text: "请先完成或取消该 Agent 及其子代理的运行，再修改或删除配置",
+    });
+  };
+  for (const agent of agents) {
+    // Controller conversations use the shared Agent; managed members have tenant-qualified IDs.
+    const shared = agent.id === DEFAULT_AGENT_PROFILE_ID;
+    const scope = shared ? { resourceId } : {};
+    const runs: Array<{ threadId?: string }> = [
+      ...agent.listActiveThreadRuns().filter((run) => !shared || run.resourceId === resourceId),
+      ...(await agent.listSuspendedRuns(scope)).runs,
+    ];
+    for (let page = 0; ; page++) {
+      const pending =
+        (
+          await tasks?.listTasks({
+            ...scope,
+            agentId: agent.id,
+            status: ["pending", "running", "suspended"],
+            page,
+            perPage: 100,
+          })
+        )?.tasks ?? [];
+      runs.push(...pending);
+      if (pending.length < 100) break;
+    }
+    for (const run of runs) {
+      if (!shared || !run.threadId) return reject();
+      const thread = await memory.getThreadById({ threadId: run.threadId, resourceId });
+      if ((thread?.metadata?.agentProfileId ?? DEFAULT_AGENT_PROFILE_ID) === id) reject();
+    }
   }
 }
 
@@ -244,12 +276,16 @@ export async function createAgentProfile(
   });
 }
 
-export async function deleteAgentProfile(id: string, resourceId?: string): Promise<void> {
+export async function deleteAgentProfile(
+  id: string,
+  resourceId: string,
+  mastra: Mastra,
+): Promise<void> {
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可删除" });
   return withProfileWrite(resourceId, async () => {
-    await assertProfileIdle(id, resourceId);
-    // Deletion must also work for invalid definitions, without interpreting an obsolete graph.
+    await assertProfileIdle(mastra, id, resourceId);
+    // Deletion must also work for invalid definitions, without interpreting their instructions.
     const raw = await getAppConfig(CONFIG_KEY, resourceId);
     const profiles = z
       .array(z.object({ id: z.string() }).passthrough())
@@ -269,13 +305,14 @@ export async function setAgentProfileCapabilities(
   mcpServers: string[],
   memberId: string | undefined,
   resourceId: string,
+  mastra: Mastra,
 ): Promise<AgentProfile> {
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", {
       text: "The default Agent uses all enabled skills and MCP servers",
     });
   return withProfileWrite(resourceId, async () => {
-    await assertProfileIdle(id, resourceId);
+    await assertProfileIdle(mastra, id, resourceId);
     const profiles = await listAgentProfiles(resourceId);
     const profile = profiles.find((item) => item.id === id);
     if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
@@ -295,9 +332,15 @@ export async function setAgentProfileInstructions(
   instructions: string,
   memberId: string | undefined,
   resourceId: string,
+  mastra: Mastra,
 ): Promise<AgentProfile> {
+  if (id === DEFAULT_AGENT_PROFILE_ID && memberId) {
+    throw workError("VALIDATION_FAILED", {
+      text: "The default Agent's built-in subagents are managed by the system",
+    });
+  }
   return withProfileWrite(resourceId, async () => {
-    await assertProfileIdle(id, resourceId);
+    await assertProfileIdle(mastra, id, resourceId);
     const profiles = await listAgentProfiles(resourceId);
     const profile = profiles.find((item) => item.id === id);
     if (!profile) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
@@ -389,17 +432,13 @@ export function profileAgentRuntimeId(
   )}-${registrationToken(profile.updatedAt)}${memberId ? `-${registrationToken(memberId)}` : ""}`;
 }
 
-type AgentRegistry = Pick<
-  Mastra,
-  "addAgent" | "removeAgent" | "listAgents" | "addWorkflow" | "removeWorkflow"
->;
+type AgentRegistry = Pick<Mastra, "addAgent" | "removeAgent" | "listAgents">;
 
 export interface RegisteredProfileAgents {
   profile: Agent;
   members: Record<string, Agent>;
   profileKey: string;
   memberKeys: Record<string, string>;
-  workflow?: AnyWorkflow;
 }
 
 const registeredProfiles = new Map<
@@ -432,18 +471,13 @@ export function ensureProfileAgentsRegistered(
       profileMemberAgentRegistryKey(profile, id, resourceScope),
     ]),
   );
-  const workflow =
-    profile.type === "team" && profile.workflow?.steps.length
-      ? compileTeamWorkflow(profile, members, `team-${profileKey}`)
-      : undefined;
   memberCache.set(scopedProfileKey(profile.id, resourceScope), {
     updatedAt: profile.updatedAt,
     agents: members,
   });
   registry.addAgent(profileAgent, profileKey);
   for (const [id, agent] of Object.entries(members)) registry.addAgent(agent, memberKeys[id]);
-  if (workflow) registry.addWorkflow(workflow);
-  const registration = { profile: profileAgent, members, profileKey, memberKeys, workflow };
+  const registration = { profile: profileAgent, members, profileKey, memberKeys };
   registeredProfiles.set(profileKey, { updatedAt: profile.updatedAt, registration });
   return registration;
 }
@@ -456,7 +490,6 @@ export function unregisterProfileAgents(
   const key = `profile-${registrationToken(registrationScope(resourceScope))}-${registrationToken(profileId)}`;
   for (const [registeredKey, { registration }] of registeredProfiles) {
     if (!registeredKey.startsWith(`${key}-`)) continue;
-    if (registration.workflow) registry.removeWorkflow(registration.workflow.id);
     registry.removeAgent(registration.profileKey);
     for (const memberKey of Object.values(registration.memberKeys)) registry.removeAgent(memberKey);
     registeredProfiles.delete(registeredKey);

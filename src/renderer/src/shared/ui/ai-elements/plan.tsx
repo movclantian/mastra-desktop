@@ -54,11 +54,7 @@ export function PlanContent({
   children,
   ...props
 }: ComponentProps<typeof TraceCollapsibleContent>) {
-  return (
-    <TraceCollapsibleContent keepMounted {...props}>
-      {children}
-    </TraceCollapsibleContent>
-  );
+  return <TraceCollapsibleContent {...props}>{children}</TraceCollapsibleContent>;
 }
 export function PlanAction(props: ComponentProps<"div">) {
   return <div {...props} />;

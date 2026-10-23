@@ -48,7 +48,7 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 <tr>
 <td align="center" width="50%" style="padding:22px;border:2px solid #2c2c2c;border-radius:255px 15px 225px 15px/15px 225px 15px 255px;box-shadow:4px 4px 0 rgba(44,44,44,0.9);background:#fffef5">
 <h3 style="font-family:'Segoe Print','Comic Sans MS','Xingkai SC','KaiTi',cursive;color:#2c2c2c">👥 Agent 团队</h3>
-<p style="color:#2c2c2c">主 Agent 带专家成员，支持委派、交接、并行、分支、循环和审批工作流，复杂任务拆给合适的人。</p>
+<p style="color:#2c2c2c">主 Agent 通过 Mastra 原生 agent-* 工具委派给专家成员，支持并行和嵌套委派，执行以 subagent invocation 展示。</p>
 </td>
 <td align="center" width="50%" style="padding:22px;border:2px solid #2c2c2c;border-radius:255px 15px 225px 15px/15px 225px 15px 255px;box-shadow:4px 4px 0 rgba(44,44,44,0.9);background:#fffef5">
 <h3 style="font-family:'Segoe Print','Comic Sans MS','Xingkai SC','KaiTi',cursive;color:#2c2c2c">🧩 开放扩展</h3>
@@ -188,9 +188,9 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 </div>
 
-整个应用分四层。最外面是桌面集成层，Electron 主进程在这儿管窗口、原生浏览器视图、PTY 终端、系统通知和凭据保险库。往下是工作流层，Mastra 撑起的 Agent 运行时在这层，主 Agent 和专家团队的委派、交接、并行都发生在这里，三种执行模式也在这层落地。再往下是框架层，Mastra 的记忆、RAG、MCP 和可观测性模块，加上编辑器 AST 修改和沙箱执行，都归这层。最底下是扩展层，模型 Provider、MCP Server、技能、资料库和网页检索从这儿接进来。
+整个应用分四层。最外面是桌面集成层，Electron 主进程在这儿管窗口、原生浏览器视图、PTY 终端、系统通知和凭据保险库。往下是 Agent 运行层，Mastra 撑起的 Agent 运行时在这层，主 Agent 和专家成员的原生委派、并行与调用记录都发生在这里，三种执行模式也在这层落地。再往下是框架层，Mastra 的记忆、RAG、MCP 和可观测性模块，加上编辑器 AST 修改和沙箱执行，都归这层。最底下是扩展层，模型 Provider、MCP Server、技能、资料库和网页检索从这儿接进来。
 
-一个任务的走向是这样的。你在桌面层发起任务，工作流层组织 Agent 和模式，框架层提供记忆和工具，扩展层补上模型和外部服务。数据默认留在本机，Mastra 服务跑在本机 `4111` 端口。
+一个任务的走向是这样的。你在桌面层发起任务，Agent 运行层组织 Agent 和模式，框架层提供记忆和工具，扩展层补上模型和外部服务。数据默认留在本机，Mastra 服务跑在本机 `4111` 端口。
 
 主要选型列在下面。
 

@@ -274,7 +274,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const createThreadMutation = useCreateThreadMutation(userId);
   const renameThreadMutation = useRenameThreadMutation(userId);
   const activeView = viewFromPath(location.pathname);
-  useActiveThreadResolver(threadsQuery.data);
+  useActiveThreadResolver(userId, threadsQuery.data);
   const { mode, setMode, activePresetId, setPreset, presets, isDark } = useTheme();
 
   const activeThreadId = useRouterState({

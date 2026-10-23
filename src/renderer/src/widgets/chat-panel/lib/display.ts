@@ -1,30 +1,5 @@
 import { isToolUIPart } from "ai";
-import type { TeamHandoff } from "../../../../../shared/agent-contract";
 import { mergeToolPart, type WorkUIMessage } from "../model/types";
-
-/** Handoffs are presentation events; they never become synthetic model messages. */
-export function withHandoffMessages(
-  messages: WorkUIMessage[],
-  history: TeamHandoff[],
-): WorkUIMessage[] {
-  if (!history.length) return messages;
-  const result = [...messages];
-  for (const handoff of history) {
-    const message: WorkUIMessage = {
-      id: `handoff-${handoff.id}`,
-      role: "assistant",
-      parts: [],
-      metadata: { handoff, createdAt: handoff.createdAt },
-    };
-    const index = result.findIndex(
-      (entry) =>
-        entry.metadata?.createdAt &&
-        Date.parse(entry.metadata.createdAt) > Date.parse(handoff.createdAt),
-    );
-    result.splice(index < 0 ? result.length : index, 0, message);
-  }
-  return result;
-}
 
 // ---------------------------------------------------------------------------
 // 消息流展示层纯函数:把服务端按 response-boundary 拆分的助手行合并为用户视角
@@ -49,12 +24,6 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
 
   let turnId = "initial";
   for (const message of messages) {
-    if (message.metadata?.handoff) {
-      display.push({ message, sourceIds: [], key: message.id });
-      turnId = message.id;
-      toolPositions = new Map();
-      continue;
-    }
     if (message.role !== "assistant") turnId = message.id;
     const previous = display.at(-1);
     const previousMessage = previous?.message;
@@ -62,7 +31,6 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
     if (
       previous &&
       previousMessage?.role === "assistant" &&
-      !previousMessage.metadata?.handoff &&
       message.role === "assistant" &&
       (!previousMessage.metadata?.teamMemberId ||
         !message.metadata?.teamMemberId ||
@@ -88,7 +56,7 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
         sourceIds: [message.id],
         key:
           message.role === "assistant"
-            ? previousMessage?.role === "assistant" && !previousMessage.metadata?.handoff
+            ? previousMessage?.role === "assistant"
               ? `reply-${turnId}-${message.id}`
               : `reply-${turnId}`
             : message.id,
@@ -114,7 +82,7 @@ export function buildDisplayMessages(messages: WorkUIMessage[], pending = false)
 
   if (
     (pending || display.at(-1)?.message.role === "user") &&
-    (display.at(-1)?.message.role !== "assistant" || display.at(-1)?.message.metadata?.handoff)
+    display.at(-1)?.message.role !== "assistant"
   ) {
     // Preserve the reply row through pending, failure and idle snapshots.
     const id = `reply-${turnId}`;

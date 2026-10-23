@@ -1,6 +1,7 @@
 import type { DelegationConfig, MastraDBMessage } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
 import {
+  type AgentMemberDefinition,
   type AgentProfile,
   incompleteAgentResultMessage,
   isCompleteAgentResult,
@@ -10,7 +11,7 @@ import {
 import { errorText } from "../errors";
 import { appStorage, getLibsqlClient, userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
-import { HANDOFF_COMPLETE_CONTEXT_KEY, TEAM_HANDOFF_CONTEXT_KEY } from "./team-handoff";
+import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "./custom";
 
 export const TEAM_INVOCATION_CONTEXT_KEY = "mastra-work:team-invocation";
 let tableReady: Promise<void> | undefined;
@@ -164,37 +165,47 @@ export const teamProgressProcessor = {
   },
 } satisfies Processor;
 
+/** Stamp only this Agent's replies, never a substituted speaker. */
+export function agentIdentityProcessor(
+  fixedProfile?: AgentProfile,
+  member?: AgentMemberDefinition,
+) {
+  return {
+    id: "agent-identity",
+    async processOutputResult({ messages, messageList, requestContext }) {
+      const profile =
+        fixedProfile ??
+        (await getAgentProfile(
+          requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
+          userIdFromContext(requestContext),
+        ));
+      const responseIds = new Set(messageList.get.response.db().map((message) => message.id));
+      return messages.map((message) =>
+        message.role !== "assistant" || !responseIds.has(message.id)
+          ? message
+          : {
+              ...message,
+              content: {
+                ...message.content,
+                metadata: {
+                  ...message.content.metadata,
+                  agentProfileId: profile.id,
+                  agentDisplayName: member?.name ?? profile.displayName,
+                  ...(member ? { teamMemberId: member.id } : {}),
+                },
+              },
+            },
+      );
+    },
+  } satisfies Processor;
+}
+
 /** Bind the native isolated memory thread before tools run, including suspended invocations. */
 export const teamInvocationProcessor = {
   id: "team-invocation",
-  async processInputStep({ requestContext, state, runId, messages, messageList, agent }) {
+  async processInputStep({ requestContext, state, messageList, agent }) {
     if (!requestContext) return;
-    let id = requestContext.get(TEAM_INVOCATION_CONTEXT_KEY) as string | undefined;
-    const handoff = requestContext.get(TEAM_HANDOFF_CONTEXT_KEY) as
-      | import("../../shared/agent-contract").TeamHandoffState
-      | undefined;
-    if (handoff) {
-      if (!runId || !agent) throw new Error("Missing handoff run identity");
-      id = `${runId}:handoff`;
-      requestContext.set(TEAM_INVOCATION_CONTEXT_KEY, id);
-      if (state.invocationId === id) return;
-      const prompt =
-        messages
-          .findLast((message) => message.role === "user")
-          ?.content.parts.flatMap((part) => (part.type === "text" ? [part.text] : []))
-          .join("\n") ?? "";
-      await saveTeamInvocation(requestContext, {
-        id,
-        profileId: handoff.profileId,
-        memberId: handoff.activeMemberId,
-        agentId: agent.id,
-        runId,
-        toolCallId: id,
-        prompt,
-        status: "running",
-        startedAt: new Date().toISOString(),
-      });
-    }
+    const id = requestContext.get(TEAM_INVOCATION_CONTEXT_KEY) as string | undefined;
     if (!id || state.invocationId === id) return;
     // Delegation removes parent memory keys from RequestContext. The MessageList owns
     // the actual isolated binding, including when the child suspends before completion.
@@ -215,25 +226,10 @@ export const teamInvocationProcessor = {
   async processOutputResult({ requestContext, messages, messageList, result }) {
     const id = requestContext?.get(TEAM_INVOCATION_CONTEXT_KEY);
     if (typeof id !== "string") return messages;
-    const directHandoff = Boolean(requestContext?.get(TEAM_HANDOFF_CONTEXT_KEY));
-    const handedOff = requestContext?.get(HANDOFF_COMPLETE_CONTEXT_KEY) === true;
-    const completed = handedOff || isCompleteAgentResult(result);
-    const failed =
-      result.finishReason === "error" || (!completed && result.finishReason !== "tool-calls");
     await finishTeamInvocation(
       id,
       {
         text: result.text,
-        ...(directHandoff && failed
-          ? {
-              status: "error" as const,
-              error: incompleteAgentResultMessage(result.finishReason),
-              finishReason: result.finishReason,
-              endedAt: new Date().toISOString(),
-            }
-          : directHandoff && completed
-            ? { status: "completed" as const, endedAt: new Date().toISOString() }
-            : {}),
       },
       messageList.get.response.db(),
     );

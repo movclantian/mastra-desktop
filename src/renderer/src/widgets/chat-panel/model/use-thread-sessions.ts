@@ -6,15 +6,14 @@ import {
 } from "@mastra/client-js";
 import { mastraDBMessageToSignal } from "@mastra/core/signals";
 import { useQueryClient } from "@tanstack/react-query";
-import { DefaultChatTransport, type FileUIPart, isToolUIPart, readUIMessageStream } from "ai";
+import { type FileUIPart, isToolUIPart } from "ai";
 import * as React from "react";
 import { toast } from "sonner";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
 import { qk, type WorkThread } from "@/entities/workbench";
-import { getWorkbenchClientSession, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
+import { getWorkbenchClientSession, requestJson } from "@/shared/api";
 import { i18n } from "@/shared/i18n";
-import { apiError, readErrorPayload } from "@/shared/lib";
 import type { ToolPart } from "@/shared/ui/ai-elements/tool";
 import {
   type ConnectionState,
@@ -36,9 +35,8 @@ type NativeDisplayState = Extract<
   KnownAgentControllerEvent,
   { type: "display_state_changed" }
 >["displayState"];
-type ObservedRun = { workflowId: string; runId: string } | { messageId: string };
-const runMessageId = (run: ObservedRun) =>
-  "messageId" in run ? run.messageId : `workflow-${run.runId}`;
+type ObservedRun = { messageId: string };
+const runMessageId = (run: ObservedRun) => run.messageId;
 
 export class ToolInteractionUnavailableError extends Error {}
 interface SessionView {
@@ -291,7 +289,6 @@ function createThreadSession(
     const payload = await requestJson<{
       displayState: NativeDisplayState & {
         queuedRequests: QueuedRequest[];
-        activeWorkflow: { workflowId: string; runId: string } | null;
         activeMediaGeneration: { messageId: string } | null;
       };
       messages: WorkUIMessage[];
@@ -301,8 +298,7 @@ function createThreadSession(
     );
     signal?.throwIfAborted();
     if (disposed || signal !== observationSignal || requestRevision !== refreshRevision) return;
-    if (payload.displayState.activeWorkflow || payload.displayState.activeMediaGeneration)
-      failed = false;
+    if (payload.displayState.activeMediaGeneration) failed = false;
     for (const message of payload.messages) pendingMessages.delete(message.id);
     const submittedIndex = payload.messages.findIndex(
       (message) => message.id === submittedMessageId,
@@ -313,10 +309,7 @@ function createThreadSession(
       payload.messages.slice(submittedIndex + 1).some((message) => message.role === "assistant")
     )
       awaitingRun = false;
-    const target =
-      payload.displayState.activeMediaGeneration ??
-      payload.displayState.activeWorkflow ??
-      runTarget;
+    const target = payload.displayState.activeMediaGeneration ?? runTarget;
     if (target && signal && !runObserver) followConversationRun(target, signal);
     if (queueStartedAt === queueRevision) {
       setQueue(payload.displayState.queuedRequests);
@@ -587,65 +580,12 @@ function createThreadSession(
     awaitingRun = false;
     const signal = AbortSignal.any([parent, observer.signal]);
     void (async () => {
-      if ("messageId" in target) {
-        // Observe the saved message with ordinary GETs. Never resubmit a paid request here.
-        while (!signal.aborted) {
-          const display = await refresh();
-          signal.throwIfAborted();
-          if (display && display.activeMediaGeneration?.messageId !== target.messageId) break;
-          await waitForSessionDelay(2_000, signal);
-        }
-      } else {
-        const runPath = `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/workflows/${encodeURIComponent(target.workflowId)}/runs/${encodeURIComponent(target.runId)}`;
-        const api = `${MASTRA_SERVER_URL}${runPath}/stream?resourceId=${encodeURIComponent(userId)}`;
-        const transport = new DefaultChatTransport({
-          api,
-          credentials: "include",
-          prepareReconnectToStreamRequest: () => ({ api }),
-          fetch: async (url, init) => {
-            const response = await fetchSessionStream(url, init);
-            if (!response.ok)
-              throw Object.assign(
-                apiError(
-                  await readErrorPayload(response, "Workflow observation failed"),
-                  "Workflow observation failed",
-                ),
-                { status: response.status },
-              );
-            return response;
-          },
-        });
-        const stream = await transport.reconnectToStream({ chatId: threadId, abortSignal: signal });
-        if (!stream) throw new TypeError("Workflow stream unavailable");
-        setStatus("streaming");
-        let finished = false;
-        const checked = stream.pipeThrough(
-          new TransformStream({
-            transform(chunk, controller) {
-              if (chunk.type === "finish") finished = true;
-              controller.enqueue(chunk);
-            },
-          }),
-        );
-        for await (const message of readUIMessageStream<WorkUIMessage>({
-          stream: checked,
-          terminateOnError: true,
-        })) {
-          if (signal.aborted || disposed) return;
-          revision++;
-          setMessages((messages) => {
-            const index = messages.findIndex((item) => item.id === message.id);
-            return index < 0
-              ? [...messages, message]
-              : messages.map((item, i) =>
-                  i === index
-                    ? { ...message, metadata: { ...item.metadata, ...message.metadata } }
-                    : item,
-                );
-          });
-        }
+      // Observe the saved message with ordinary GETs. Never resubmit a paid request here.
+      while (!signal.aborted) {
+        const display = await refresh();
         signal.throwIfAborted();
-        if (!finished) throw new TypeError("Workflow stream ended before completion");
+        if (display && display.activeMediaGeneration?.messageId !== target.messageId) break;
+        await waitForSessionDelay(2_000, signal);
       }
       signal.throwIfAborted();
       runTarget = undefined;
@@ -677,23 +617,12 @@ function createThreadSession(
       typeof response.mediaGeneration.messageId === "string"
     ) {
       target = { messageId: response.mediaGeneration.messageId };
-    } else if (
-      "workflowId" in response &&
-      "runId" in response &&
-      typeof response.workflowId === "string" &&
-      typeof response.runId === "string"
-    ) {
-      target = { workflowId: response.workflowId, runId: response.runId };
     } else return;
     runTarget = target;
     awaitingRun = false;
     if (observationSignal && !observationSignal.aborted && !disposed)
       followConversationRun(target, observationSignal);
     reconcile();
-  };
-  const streamWorkflow = async (path: string, body: Record<string, unknown>) => {
-    // Submission happens exactly once. Recovery uses GET on this accepted run.
-    observeAcceptedRun(await requestJson(path, { method: "POST", body }));
   };
   const rewrite = async (messageId: string, action: "edit" | "regenerate", content?: string) => {
     // Ignore repeated clicks before React has rendered the disabled action.
@@ -757,20 +686,6 @@ function createThreadSession(
         await client.sendMessage(input.text ?? "", requestOptions(options));
         await refresh();
       });
-    },
-    workflowAction(
-      workflowId: string,
-      runId: string,
-      action: "resume" | "rerun",
-      resumeData: unknown,
-      label?: string,
-    ) {
-      return request(() =>
-        streamWorkflow(
-          `/work/sessions/workbench/threads/${encodeURIComponent(threadId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/${action}?resourceId=${encodeURIComponent(userId)}`,
-          { resumeData, label },
-        ),
-      );
     },
     async regenerate({ messageId }: { messageId: string }) {
       librarySources = [];
