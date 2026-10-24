@@ -71,6 +71,8 @@ export const LIBRARY_SEARCH_TOOL_NAMES = new Set([
 // RequestContext 键(chat 路由写入,库内工具 / Agent 处理器读取)
 export const LIBRARY_RESOURCE_CONTEXT_KEY = "libraryResourceId";
 export const LIBRARY_THREAD_CONTEXT_KEY = "libraryThreadId";
+/** A global library folder (and its descendants) used as the session knowledge space. */
+export const LIBRARY_FOLDER_CONTEXT_KEY = "libraryFolderId";
 export const LIBRARY_ORIGIN_CONTEXT_KEY = "libraryOrigin";
 export const LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY = "libraryAttachmentTokenBudget";
 export const LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY = "libraryAttachmentCapabilities";

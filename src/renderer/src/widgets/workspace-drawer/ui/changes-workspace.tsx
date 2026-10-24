@@ -44,13 +44,14 @@ export function ChangesWorkspace({ active }: { active: boolean }) {
     setExpandedFiles((current) => {
       const valid = new Set(changes.map((item) => item.path));
       const kept = new Set([...current].filter((path) => valid.has(path)));
-      if (kept.size === 0 && changes.length > 0) kept.add(changes[changes.length - 1].path);
+      if (kept.size === current.size && [...kept].every((path) => current.has(path)))
+        return current;
       return kept;
     });
     setExpandedChanges((current) => {
       const valid = new Set(changes.map((item) => item.id));
       const kept = new Set([...current].filter((id) => valid.has(id)));
-      if (kept.size === 0 && changes.length > 0) kept.add(changes[changes.length - 1].id);
+      if (kept.size === current.size && [...kept].every((id) => current.has(id))) return current;
       return kept;
     });
   }, [changes]);

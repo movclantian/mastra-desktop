@@ -22,6 +22,8 @@ type FetchChangeContent = (
   side: "before" | "after",
 ) => Promise<{ content: string; binary: boolean } | null>;
 
+const DIFF_PREVIEW_LIMIT = 100_000;
+
 function CodeChangeRow({
   change,
   open,
@@ -62,7 +64,10 @@ function CodeChangeRow({
           setContentError(true);
           return;
         }
-        setContent({ before: before?.content ?? "", after: after?.content ?? "" });
+        setContent({
+          before: (before?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
+          after: (after?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
+        });
       })
       .catch(() => {
         if (!cancelled) setContentError(true);
@@ -160,6 +165,15 @@ function CodeChangeRow({
   );
 }
 
+const MemoizedCodeChangeRow = React.memo(
+  CodeChangeRow,
+  (previous, next) =>
+    previous.open === next.open &&
+    previous.fetchContent === next.fetchContent &&
+    previous.change.id === next.change.id &&
+    previous.change.createdAt === next.change.createdAt,
+);
+
 export function CodeChangeGroup({
   group,
   open,
@@ -213,7 +227,7 @@ export function CodeChangeGroup({
       </CollapsibleTrigger>
       <CollapsibleContent className="space-y-2 border-t p-2">
         {group.changes.map((change) => (
-          <CodeChangeRow
+          <MemoizedCodeChangeRow
             change={change}
             key={change.id}
             onOpenChange={(nextOpen) => onChangeOpen(change.id, nextOpen)}

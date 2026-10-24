@@ -16,7 +16,6 @@ import type { Mastra } from "@mastra/core/mastra";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { closeAllBrowsers } from "../agents/browser";
 import { isDesktopControlRequest } from "../auth";
-import { closeChannelRuntime } from "../channels/runtime";
 import { closeComputerConnections } from "../connections/computer";
 import { closeMcpConnections } from "../connections/mcp";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
@@ -37,6 +36,16 @@ let shutdownPromise: Promise<boolean> | undefined;
 let stopStorageMaintenance: (() => Promise<void>) | undefined;
 const pendingRequests = new Set<Promise<void>>();
 const sessions = new Set<Session>();
+
+/** Check live controller work before a human rewrites shared working memory. */
+export function hasActiveMemorySession(resourceId: string, threadId?: string): boolean {
+  return [...sessions].some(
+    (session) =>
+      session.identity.getResourceId() === resourceId &&
+      (!threadId || session.thread.getId() === threadId) &&
+      (session.run.isRunning() || session.stream.isActive() || session.run.getRunId() !== null),
+  );
+}
 
 /** Track accepted HTTP work, excluding the control request that waits for its completion. */
 export async function shutdownRequestMiddleware(c: ContextWithMastra, next: () => Promise<void>) {
@@ -97,7 +106,6 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
     closeAllBrowsers(),
     closeComputerConnections(),
     closeMcpConnections(),
-    closeChannelRuntime(),
   ]);
   signal.throwIfAborted();
   await mastra.shutdown({ drainTimeout: 0 });

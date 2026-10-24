@@ -12,6 +12,7 @@ import { chunkDocument, createDocument } from "./document/indexing";
 import { searchLibrary } from "./retrieval/search";
 import { getLibrarySettings } from "./storage/db";
 import {
+  LIBRARY_FOLDER_CONTEXT_KEY,
   LIBRARY_GRAPH_SEARCH_TOOL_ID,
   LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
@@ -27,11 +28,13 @@ async function requestLibraryScope(requestContext?: RequestContext) {
     .object({
       resourceId: z.string().min(1),
       threadId: z.string().min(1).optional(),
+      folderId: z.string().min(1).optional(),
       origin: z.url({ protocol: /^https?$/ }),
     })
     .parse({
       resourceId: requestContext?.get(LIBRARY_RESOURCE_CONTEXT_KEY),
       threadId: requestContext?.get(LIBRARY_THREAD_CONTEXT_KEY),
+      folderId: requestContext?.get(LIBRARY_FOLDER_CONTEXT_KEY),
       origin: requestContext?.get(LIBRARY_ORIGIN_CONTEXT_KEY),
     });
   return {
@@ -67,7 +70,7 @@ function resolveChunkerSettings(
 export const libraryVectorSearchTool = createTool({
   id: LIBRARY_VECTOR_SEARCH_TOOL_ID,
   description:
-    "在当前会话与全局资料库附件中进行向量语义检索。适用于检索用户上传的文档、代码、说明书或历史材料。",
+    "在当前会话附件与已绑定知识空间中进行向量语义检索；未绑定空间时检索全局资料库。适用于用户上传的文档、代码、说明书或历史材料。",
   inputSchema: z.object({
     query: z.string().min(1).describe("检索查询词或自然语言问题"),
   }),
@@ -87,7 +90,7 @@ export const libraryVectorSearchTool = createTool({
 export const libraryGraphSearchTool = createTool({
   id: LIBRARY_GRAPH_SEARCH_TOOL_ID,
   description:
-    "在当前会话与全局资料库中使用 GraphRAG 图谱随机游走检索。适用于复杂跨文档关联分析和实体跳转。",
+    "在当前会话附件与已绑定知识空间中使用 GraphRAG 图谱随机游走检索；未绑定空间时检索全局资料库。适用于复杂跨文档关联分析和实体跳转。",
   inputSchema: z.object({
     query: z.string().min(1).describe("关系检索或实体分析问题"),
   }),

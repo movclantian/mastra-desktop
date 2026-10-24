@@ -280,6 +280,8 @@ function AgentCapabilitySelection({
     queryKey: ["agent-mcp", user?.id],
     queryFn: fetchMcpServers,
     enabled: !!user,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
   });
   const original = memberId
     ? (profile.members.find((member) => member.id === memberId)?.skills ?? [])

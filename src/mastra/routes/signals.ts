@@ -3,71 +3,65 @@
  * 官方文档:docs/en/docs/harness/signals.mdx「Use HTTP routes」、
  * docs/en/reference/signals/webhook-signal-provider.mdx。
  */
+
+import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
-import { workError } from "../errors";
+import { createRoute } from "@mastra/server/server-adapter";
+import { z } from "zod";
+import { workError, workValidationError } from "../errors";
 import { workWebhookSignals } from "../harness/signals";
 import { getOwnedThread, getWorkMemory } from "./threads/shared";
 
-const webhookSubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
+const webhookSubscriptionSchema = z
+  .object({
+    threadId: z.string().trim().min(1).max(256),
+    externalResourceId: z.string().trim().min(1).max(256),
+  })
+  .strict();
+
+const webhookSubscribeRoute = createRoute({
+  path: "/work/signals/webhook/subscriptions",
   method: "POST",
-  handler: async (c) => {
-    const body = (await c.req.json()) as {
-      resourceId?: string;
-      threadId?: string;
-      externalResourceId?: string;
-      metadata?: Record<string, unknown>;
-    };
-    if (!body.resourceId || !body.threadId || !body.externalResourceId) {
-      throw workError("VALIDATION_FAILED", {
-        text: "resourceId, threadId and externalResourceId are required",
-      });
-    }
-    if (
-      !(await getOwnedThread(
-        await getWorkMemory(c.get("requestContext")),
-        body.threadId,
-        body.resourceId,
-      ))
-    ) {
+  responseType: "datastream-response",
+  queryParamSchema: z.object({}).strict(),
+  bodySchema: webhookSubscriptionSchema.extend({
+    metadata: z.record(z.string(), z.unknown()).optional(),
+  }),
+  onValidationError: workValidationError,
+  handler: async ({ threadId, externalResourceId, metadata, requestContext }) => {
+    const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
+    if (typeof resourceId !== "string" || !resourceId.trim()) throw workError("AUTH_REQUIRED");
+    if (!(await getOwnedThread(await getWorkMemory(requestContext), threadId, resourceId))) {
       throw workError("THREAD_NOT_FOUND");
     }
     const subscription = await workWebhookSignals.subscribePersistent(
-      { resourceId: body.resourceId, threadId: body.threadId },
-      body.externalResourceId,
-      body.metadata,
+      { resourceId, threadId },
+      externalResourceId,
+      metadata,
     );
-    return c.json({ subscription }, 201 as 201);
+    return Response.json({ subscription }, { status: 201 });
   },
 });
 
-const webhookUnsubscribeRoute = registerApiRoute("/work/signals/webhook/subscriptions", {
+const webhookUnsubscribeRoute = createRoute({
+  path: "/work/signals/webhook/subscriptions",
   method: "DELETE",
-  handler: async (c) => {
-    const body = (await c.req.json()) as {
-      resourceId?: string;
-      threadId?: string;
-      externalResourceId?: string;
-    };
-    if (!body.resourceId || !body.threadId || !body.externalResourceId) {
-      throw workError("VALIDATION_FAILED", {
-        text: "resourceId, threadId and externalResourceId are required",
-      });
-    }
-    if (
-      !(await getOwnedThread(
-        await getWorkMemory(c.get("requestContext")),
-        body.threadId,
-        body.resourceId,
-      ))
-    ) {
+  responseType: "json",
+  queryParamSchema: z.object({}).strict(),
+  bodySchema: webhookSubscriptionSchema,
+  onValidationError: workValidationError,
+  handler: async ({ threadId, externalResourceId, requestContext }) => {
+    const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY);
+    if (typeof resourceId !== "string" || !resourceId.trim()) throw workError("AUTH_REQUIRED");
+    if (!(await getOwnedThread(await getWorkMemory(requestContext), threadId, resourceId))) {
       throw workError("THREAD_NOT_FOUND");
     }
-    return c.json({
+    return {
       removed: await workWebhookSignals.unsubscribePersistent(
-        { resourceId: body.resourceId, threadId: body.threadId },
-        body.externalResourceId,
+        { resourceId, threadId },
+        externalResourceId,
       ),
-    });
+    };
   },
 });
 

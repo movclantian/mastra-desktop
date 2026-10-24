@@ -448,9 +448,6 @@ export const ContextContentWindowControl = () => {
           })}
         </span>
       </div>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">
-        {t("chat:context.windowBudgetDescription")}
-      </p>
       <Slider
         aria-label={t("chat:context.windowBudget")}
         disabled={budgetDisabled}

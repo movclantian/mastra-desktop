@@ -1,8 +1,6 @@
-/** Durable signal providers, desktop notifications, and the notification inbox tool. */
+/** Durable signal providers and desktop notifications. */
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { createNotificationInboxTool } from "@mastra/core/notifications";
-
 import {
   type SignalProviderTarget,
   type SignalSubscription,
@@ -11,7 +9,7 @@ import {
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import type { DesktopNotification } from "../../shared/window-contract";
-import { appStorage, getLibsqlClient } from "../storage/database";
+import { getLibsqlClient } from "../storage/database";
 import {
   WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
@@ -333,16 +331,3 @@ const signalTools = {
     },
   }),
 };
-
-let notificationInboxToolPromise:
-  | Promise<ReturnType<typeof createNotificationInboxTool>>
-  | undefined;
-export function getNotificationInboxTool(): Promise<
-  ReturnType<typeof createNotificationInboxTool>
-> {
-  notificationInboxToolPromise ??= appStorage.getStore("notifications").then((storage) => {
-    if (!storage) throw new Error("Notifications storage is not configured");
-    return createNotificationInboxTool({ storage });
-  });
-  return notificationInboxToolPromise;
-}

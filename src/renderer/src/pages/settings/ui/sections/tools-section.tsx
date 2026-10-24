@@ -21,7 +21,7 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/shared/ui/input-group";
-import { McpDialog } from "@/widgets/mcp-dialog";
+import { McpDialog } from "@/widgets/mcp-dialog/ui/mcp-dialog";
 import { saveSettingsTools } from "../../api/settings-api";
 import { SettingCard } from "../controls";
 

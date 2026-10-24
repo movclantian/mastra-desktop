@@ -412,6 +412,7 @@ export async function fetchChangeContent(
   const params = new URLSearchParams({ resourceId, side });
   const response = await apiFetch(
     `/work/threads/${encodeURIComponent(threadId)}/changes/${encodeURIComponent(changeId)}/content?${params}`,
+    { signal: AbortSignal.timeout(15_000) },
   );
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(i18n.t("workspace:fetchDiffFailed"));

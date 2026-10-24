@@ -5,6 +5,26 @@ import type {
 } from "@mastra/core/agent-controller";
 import { z } from "zod";
 
+export interface MemoryProfile {
+  workingMemory: string | null;
+  scope: "thread" | "resource";
+  format: "template" | "schema";
+  enabled: boolean;
+  readOnly: boolean;
+  source: { threadId: string; threadTitle: string } | null;
+  snapshot: string;
+  threads: Array<{ id: string; title: string }>;
+  extractors: Array<{
+    slug: string;
+    name: string;
+    value: unknown;
+    threadId: string;
+    threadTitle: string;
+    updatedAt: string;
+  }>;
+  threadCount: number;
+}
+
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
 export function workbenchSessionId(resourceId: string, threadId: string): string {
   return JSON.stringify(["workbench", resourceId, threadId]);

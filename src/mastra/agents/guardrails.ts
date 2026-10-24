@@ -23,9 +23,10 @@
  */
 import { InMemoryServerCache } from "@mastra/core/cache";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import type { Processor } from "@mastra/core/processors";
+import type { Processor, TokenCostControlOptions } from "@mastra/core/processors";
 import {
   BatchPartsProcessor,
+  CyberRefusalHandler,
   type ErrorProcessorOrWorkflow,
   type InputProcessorOrWorkflow,
   isBadRequestError,
@@ -63,6 +64,7 @@ import {
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
 import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
+import { NativeUnsupportedFileHandler, PromptInjectionBoundaryProcessor } from "./processors";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
 
@@ -170,7 +172,8 @@ export const guardrailsConfigSchema = z
     tokenCost: z.boolean(),
     /** 美元上限(近似值:观测指标异步落盘,快跑的 run 可能短暂越界) */
     tokenCostMax: z.number().min(0).max(1_000_000),
-    tokenCostScope: z.enum(["run", "resource", "thread", "user", "organization", "session"]),
+    // The app has no organization identity; do not expose a scope that cannot match trace data.
+    tokenCostScope: z.enum(["run", "resource", "thread", "user", "session"]),
     tokenCostWindow: z.enum(["1h", "6h", "24h", "7d", "30d", "365d"]),
     tokenCostStrategy: z.enum(["block", "warn"]),
     /** 软阈值百分比(0 = 不启用软告警) */
@@ -447,11 +450,7 @@ export async function saveGuardrailsConfig(
 const guardrailsConfigByScope = new Map<string, GuardrailsUserConfig>();
 
 function normalizeGuardrailsConfig(input: Partial<GuardrailsUserConfig>): GuardrailsUserConfig {
-  const next = guardrailsConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
-  // 旧版把 0 当作「未显式设置」的哨兵值写进了存量配置；不升级的话，
-  // 处理器重试上限对已装用户永远停留在 0，瞬时流错误仍会一次失败即终。
-  if (input.maxProcessorRetries === 0) next.maxProcessorRetries = 3;
-  return next;
+  return guardrailsConfigSchema.parse({ ...DEFAULT_CONFIG, ...input });
 }
 
 function scopeKey(resourceId?: string): string {
@@ -615,6 +614,51 @@ function buildPII(model: MastraModelConfig, cfg: GuardrailsUserConfig): PIIDetec
   });
 }
 
+function buildInjection(model: MastraModelConfig, cfg: GuardrailsUserConfig) {
+  const providerOptions = parseDetectorProviderOptions(cfg.detectorProviderOptions);
+  return new PromptInjectionDetector({
+    model,
+    detectionTypes: cfg.injectionTypes,
+    threshold: cfg.injectionThreshold,
+    strategy: cfg.injectionStrategy,
+    lastMessageOnly: cfg.injectionLastMessageOnly,
+    includeScores: cfg.injectionIncludeScores,
+    ...(cfg.injectionInstructions.trim() ? { instructions: cfg.injectionInstructions.trim() } : {}),
+    ...(cfg.jsonPromptInjection ? { structuredOutputOptions: { jsonPromptInjection: true } } : {}),
+    ...(providerOptions ? { providerOptions } : {}),
+  });
+}
+
+/** A selected cost scope must not silently become an unchecked run. */
+type SupportedCostScope = Exclude<NonNullable<TokenCostControlOptions["scope"]>, "organization">;
+type ScopedCostOptions = Omit<TokenCostControlOptions, "scope"> & { scope?: SupportedCostScope };
+
+class ScopedTokenCostControl extends TokenCostControl {
+  constructor(private readonly config: ScopedCostOptions) {
+    super(config);
+  }
+
+  override async processInputStep(args: Parameters<TokenCostControl["processInputStep"]>[0]) {
+    const context = args.requestContext;
+    const memory = context?.get("MastraMemory") as
+      | { resourceId?: string; thread?: { id?: string } }
+      | undefined;
+    const ids = {
+      run: args.tracing?.currentSpan?.traceId,
+      resource: context?.get("mastra__resourceId") ?? memory?.resourceId,
+      thread: context?.get("mastra__threadId") ?? memory?.thread?.id,
+      user: userIdFromContext(context),
+      session: context?.get("sessionId"),
+    };
+    const scope = this.config.scope ?? "resource";
+    const id = ids[scope];
+    if (typeof id !== "string" || !id.trim()) {
+      args.abort(`Cost control requires a valid ${scope} identity`, { retry: false });
+    }
+    await super.processInputStep(args);
+  }
+}
+
 /**
  * 输入处理器数组。顺序即执行顺序(processors.mdx「Execution order」):
  * 规范化 → 正则 → 注入检测 → 语言 → 审核 → PII → 成本 →
@@ -628,7 +672,6 @@ async function buildInput(
 ): Promise<InputProcessorOrWorkflow[]> {
   const processors: InputProcessorOrWorkflow[] = [];
   const model = await resolveGuardrailModel(requestContext, resourceId);
-  const structuredOptions = structuredOutputOptions(cfg);
   const providerOptions = parseDetectorProviderOptions(cfg.detectorProviderOptions);
 
   if (cfg.unicode) {
@@ -647,21 +690,8 @@ async function buildInput(
 
   if (model) {
     if (cfg.injection) {
-      processors.push(
-        new PromptInjectionDetector({
-          model,
-          detectionTypes: cfg.injectionTypes,
-          threshold: cfg.injectionThreshold,
-          strategy: cfg.injectionStrategy,
-          lastMessageOnly: cfg.injectionLastMessageOnly,
-          includeScores: cfg.injectionIncludeScores,
-          ...(cfg.injectionInstructions.trim()
-            ? { instructions: cfg.injectionInstructions.trim() }
-            : {}),
-          ...(structuredOptions ? { structuredOutputOptions: structuredOptions } : {}),
-          ...(providerOptions ? { providerOptions } : {}),
-        }),
-      );
+      const detector = buildInjection(model, cfg);
+      processors.push(detector, new PromptInjectionBoundaryProcessor(detector));
     }
     if (cfg.language && cfg.languageTargets.length > 0) {
       processors.push(
@@ -686,24 +716,18 @@ async function buildInput(
   }
 
   if (cfg.tokenCost && cfg.tokenCostMax > 0) {
-    // 依赖 observability 存储的 getMetricAggregate;不可用时构造即抛,
-    // 捕获后跳过 —— 一个可选护栏不该让整个 Agent 起不来。
-    try {
-      processors.push(
-        new TokenCostControl({
-          maxCost: cfg.tokenCostMax,
-          scope: cfg.tokenCostScope,
-          window: cfg.tokenCostWindow,
-          strategy: cfg.tokenCostStrategy,
-          includeBreakdown: cfg.tokenCostIncludeBreakdown,
-          ...(cfg.tokenCostWarnAtPercent > 0 && cfg.tokenCostWarnAtPercent < 100
-            ? { warnAtPercent: cfg.tokenCostWarnAtPercent }
-            : {}),
-        }),
-      );
-    } catch {
-      // 观测存储不支持成本聚合:静默跳过(设置面板的状态接口会提示不可用)
-    }
+    processors.push(
+      new ScopedTokenCostControl({
+        maxCost: cfg.tokenCostMax,
+        scope: cfg.tokenCostScope,
+        window: cfg.tokenCostWindow,
+        strategy: cfg.tokenCostStrategy,
+        includeBreakdown: cfg.tokenCostIncludeBreakdown,
+        ...(cfg.tokenCostWarnAtPercent > 0 && cfg.tokenCostWarnAtPercent < 100
+          ? { warnAtPercent: cfg.tokenCostWarnAtPercent }
+          : {}),
+      }),
+    );
   }
 
   if (cfg.toolCallFilter) {
@@ -770,8 +794,11 @@ async function buildOutput(
   resourceId?: string,
   requestContext?: RequestContext,
 ): Promise<OutputProcessorOrWorkflow[]> {
-  const processors: OutputProcessorOrWorkflow[] = [];
+  const processors: OutputProcessorOrWorkflow[] = [new CyberRefusalHandler()];
   const model = await resolveGuardrailModel(requestContext, resourceId);
+  if (model && cfg.injection) {
+    processors.push(new PromptInjectionBoundaryProcessor(buildInjection(model, cfg)));
+  }
 
   if (cfg.batchParts) {
     processors.push(
@@ -827,14 +854,15 @@ async function buildOutput(
 /**
  * Settings own the complete error stack (errorProcessorDefaults: false).
  * Repair the request before a broad retry matcher can resend it unchanged.
- * Both error/output arrays are explicit; CyberRefusalHandler is not enabled.
+ * Provider repairs and refusal recovery run before broad stream retries.
  */
 function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
   // Keep provider Retry-After limits independent from our exponential backoff cap.
   const streamRetryBackoffMaxMs = 30_000;
-  const processors: ErrorProcessorOrWorkflow[] = [];
+  const processors: ErrorProcessorOrWorkflow[] = [new CyberRefusalHandler()];
   if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
   if (cfg.prefillErrorHandler) processors.push(new PrefillErrorHandler());
+  processors.push(new NativeUnsupportedFileHandler());
   if (cfg.streamErrorRetry) {
     processors.push(
       new StreamErrorRetryProcessor({

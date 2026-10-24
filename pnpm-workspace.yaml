@@ -6,6 +6,7 @@ allowBuilds:
   "@google/genai": true
   agent-browser: true
   bufferutil: true
+  core-js-pure: true
   edgedriver: true
   electron-winstaller: true
   esbuild: true

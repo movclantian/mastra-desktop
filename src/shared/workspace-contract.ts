@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { DirectoryPathSchema } from "./filesystem-contract";
 
+export const MAX_TEXT_DOCUMENT_BYTES = 1024 * 1024;
+export const TextDocumentFilenameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(240)
+  .regex(/^[^/\\]+\.(?:md|markdown|txt|csv)$/i)
+  .refine((name) => [...name].every((character) => character.charCodeAt(0) >= 32));
+
 export const INLINE_COMPLETION_LIMITS = {
   prefix: 1_000,
   beforeContext: 12_000,

@@ -19,6 +19,7 @@ export function viewFromPath(pathname: string): MainView {
 
 export interface ThreadMetadata {
   agentProfileId?: string;
+  libraryFolderId?: string | null;
   workspacePath?: string;
   workspaceExplicit?: boolean;
   currentModeId?: string;

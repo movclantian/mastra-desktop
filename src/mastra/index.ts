@@ -1,6 +1,5 @@
 import { BACKGROUND_TASK_TIMEOUT_MS } from "../shared/agent-contract";
 import { DEFAULT_RENDERER_PORT } from "../shared/proxy-contract";
-import { syncChannelRuntime } from "./channels/runtime";
 import { mcpManagementMiddleware } from "./connections/mcp";
 import { cleanupOrphanedLibraryAssets } from "./rag/storage/assets";
 /**
@@ -264,6 +263,7 @@ export const mastra = new Mastra({
     configs: {
       default: {
         serviceName: "mastra-work",
+        requestContextKeys: ["userId", "sessionId"],
         // Internal workflow snapshots duplicate the entire agent state at every processor.
         includeInternalSpans: false,
         excludeSpanTypes: [SpanType.MODEL_CHUNK],
@@ -299,9 +299,6 @@ export const mastra = new Mastra({
 
 registerWorkspaceLifecycle(mastra);
 registerWorkbenchSessionLifecycle(mastra);
-void syncChannelRuntime(mastra).catch((error) =>
-  logger.warn("Channel runtime initialization failed", { error }),
-);
 
 const backgroundTaskManager = mastra.backgroundTaskManager;
 if (backgroundTaskManager) {

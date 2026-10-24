@@ -20,7 +20,6 @@ import { PanelHeader, WindowTitleBar } from "@/shared/ui/panel";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Separator } from "@/shared/ui/separator";
 import { SidebarTrigger } from "@/shared/ui/sidebar";
-
 import { ThreadSummaryButton } from "./thread-summary";
 
 export function AppWindowBar() {

@@ -132,6 +132,8 @@ export function isTrustedLocalRequest(c: ContextWithMastra): boolean {
 export type ThreadMetadata = {
   /** 当前线程使用的 Agent 或 Agent 团队 profile。缺省为 mastra-work-agent。 */
   agentProfileId?: string;
+  /** Existing global library folder used as this thread's knowledge space. */
+  libraryFolderId?: string | null;
   pinned?: boolean;
   archivedAt?: string | null;
   draft?: boolean;

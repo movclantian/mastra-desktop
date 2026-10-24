@@ -225,7 +225,27 @@ function createArchivedWebFetchTool() {
 /** Archive full pages before native tool results reach memory, streams, or the next model call. */
 export const webSearchArchiveProcessor = {
   id: "web-search-content-archive",
-  async processToolResult({ toolName, toolCallId, args, result, messageList, requestContext }) {
+  async processToolResult({
+    toolName,
+    toolCallId,
+    args,
+    result: rawResult,
+    messageList,
+    requestContext,
+  }) {
+    // Earlier safety processors may have replaced this result in the message list.
+    const invocation = messageList.get.all
+      .db()
+      .toReversed()
+      .flatMap((message) =>
+        message.content.parts.flatMap((part) =>
+          part.type === "tool-invocation" && part.toolInvocation.toolCallId === toolCallId
+            ? [part.toolInvocation]
+            : [],
+        ),
+      )
+      .find((part) => "result" in part);
+    const result = invocation ? invocation.result : rawResult;
     if (toolName === "anysearch_extract" || toolName === "anysearch_batch_search") {
       const content =
         getMcpCallToolContent(result) ??

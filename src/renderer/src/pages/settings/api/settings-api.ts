@@ -114,9 +114,11 @@ export function saveGuardrailsConfig<T extends Record<string, unknown>>(config: 
 
 export { fetchMemoryConfig, saveMemoryConfig } from "@/entities/workbench/api/workbench-api";
 
-export function fetchMemoryProfile<T>(): Promise<T> {
+export function fetchMemoryProfile<T>(threadId?: string): Promise<T> {
   return requestJson<T>(
-    "/work/memory/profile",
+    threadId
+      ? `/work/memory/profile?threadId=${encodeURIComponent(threadId)}`
+      : "/work/memory/profile",
     {},
     i18n.t("settings:api.fetchMemoryProfileFailed"),
   );
@@ -137,5 +139,3 @@ export async function saveProxySettings(config: ProxyConfig): Promise<ProxySetRe
 export async function testProxyConnectivity(url?: string): Promise<ProxyTestResult> {
   return window.api.proxy.test(url);
 }
-
-export { fetchChannels, saveChannelsConfig } from "./channels-api";

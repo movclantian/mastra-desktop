@@ -29,9 +29,11 @@ import {
   resolveRequestModel,
   usesOpenAIResponses,
 } from "../models/providers";
+import { resolveLibraryFolderScope } from "../rag/storage/folders";
 import {
   LIBRARY_ATTACHMENT_BUDGET_CONTEXT_KEY,
   LIBRARY_ATTACHMENT_CAPABILITIES_CONTEXT_KEY,
+  LIBRARY_FOLDER_CONTEXT_KEY,
   LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
@@ -203,6 +205,7 @@ export async function getWorkbenchSession(
   await controller.init();
   requestContext.set(WORKSPACE_THREAD_ID_CONTEXT_KEY, threadId);
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
+  requestContext.set("sessionId", workbenchSessionId(resourceId, threadId));
   const workspacePath =
     requestContext.get(WORKSPACE_PATH_CONTEXT_KEY) ?? thread.metadata?.workspacePath;
   if (typeof workspacePath === "string" && workspacePath) {
@@ -244,6 +247,21 @@ export async function sessionFor(
     throw workError("THREAD_NOT_FOUND");
   }
   const metadata = (thread.metadata ?? {}) as ThreadMetadata;
+  const folderScope = z.string().min(1).nullish().safeParse(metadata.libraryFolderId);
+  if (!folderScope.success) {
+    throw workError("VALIDATION_FAILED", { text: "会话知识空间目录绑定无效" });
+  }
+  const libraryFolderId = folderScope.data ?? undefined;
+  if (libraryFolderId !== undefined) {
+    try {
+      await resolveLibraryFolderScope(resourceId, libraryFolderId);
+    } catch (cause) {
+      throw workError("VALIDATION_FAILED", {
+        text: "会话知识空间目录不存在、已删除或不属于当前账户的资料库",
+        cause,
+      });
+    }
+  }
   const profile = await getAgentProfile(metadata.agentProfileId, resourceId);
   await ensureProfileAgentsRegistered(c.get("mastra"), profile, resourceId);
   const requestContext = c.get("requestContext");
@@ -251,6 +269,7 @@ export async function sessionFor(
   requestContext.set(WORKSPACE_RESOURCE_ID_CONTEXT_KEY, resourceId);
   requestContext.set(LIBRARY_RESOURCE_CONTEXT_KEY, resourceId);
   requestContext.set(LIBRARY_THREAD_CONTEXT_KEY, threadId);
+  requestContext.set(LIBRARY_FOLDER_CONTEXT_KEY, libraryFolderId);
   requestContext.set(LIBRARY_ORIGIN_CONTEXT_KEY, new URL(c.req.url).origin);
   requestContext.set(AGENT_PROFILE_CONTEXT_KEY, profile.id);
   if (metadata.workspacePath) {

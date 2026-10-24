@@ -33,7 +33,7 @@ import { NativeSelect, NativeSelectOption } from "@/shared/ui/native-select";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { Switch } from "@/shared/ui/switch";
-import { McpDialog } from "@/widgets/mcp-dialog";
+import { McpDialog } from "@/widgets/mcp-dialog/ui/mcp-dialog";
 import { pluginCredentialPurpose } from "../../../../../shared/credential-contract";
 import type {
   InstalledPlugin,

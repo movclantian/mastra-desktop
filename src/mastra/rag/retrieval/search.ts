@@ -15,6 +15,7 @@ import {
   observedEmbeddingDimension,
 } from "../document/indexing";
 import { ensureLibrarySchema, getLibrarySettings, withClient } from "../storage/db";
+import { resolveLibraryFolderScope } from "../storage/folders";
 import type { LibrarySearchResult } from "../types";
 
 export async function searchLibrary(options: {
@@ -22,11 +23,23 @@ export async function searchLibrary(options: {
   origin: string;
   query: string;
   threadId?: string;
+  /** Restrict global knowledge to this folder tree, while keeping current-thread attachments. */
+  folderId?: string;
   rerankModel?: GatewayLanguageModel;
   graphRag?: boolean;
 }): Promise<LibrarySearchResult[]> {
-  const { resourceId, origin, query, threadId, rerankModel, graphRag: graphRagOverride } = options;
+  const {
+    resourceId,
+    origin,
+    query,
+    threadId,
+    folderId,
+    rerankModel,
+    graphRag: graphRagOverride,
+  } = options;
   await ensureLibrarySchema();
+  const folderIds =
+    folderId === undefined ? undefined : await resolveLibraryFolderScope(resourceId, folderId);
   const settings = await getLibrarySettings(resourceId);
   const vector = await getVector();
   const { embedding } = await embed({ model: libraryEmbedder(), value: query });
@@ -42,8 +55,13 @@ export async function searchLibrary(options: {
         JOIN library_assets a ON a.id = r.asset_id AND a.resource_id = r.resource_id
         WHERE r.resource_id = ?
           AND a.status = 'ready' AND r.draft_id = ''
-          AND (r.thread_id = '' OR r.thread_id = ?)`,
-      args: [resourceId, threadId ?? ""],
+          AND ${
+            folderIds
+              ? `((r.thread_id = '' AND r.folder_id IN (${folderIds.map(() => "?").join(", ")}))
+                  OR (r.thread_id = ? AND r.thread_id <> ''))`
+              : "(r.thread_id = '' OR r.thread_id = ?)"
+          }`,
+      args: [resourceId, ...(folderIds ?? []), threadId ?? ""],
     }),
   );
   const allowedAssetIds: string[] = [];

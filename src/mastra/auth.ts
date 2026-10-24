@@ -123,6 +123,25 @@ async function findUserBySessionToken(token: string): Promise<AuthUser | null> {
   return rowUser((result.rows[0] ?? {}) as Record<string, unknown>);
 }
 
+export async function authUserFromRequest(request: Request): Promise<AuthUser | null> {
+  const authorization = request.headers.get("authorization")?.trim();
+  let token = authorization?.replace(/^Bearer\s+/i, "") ?? "";
+  if (!token) {
+    const cookie = request.headers.get("cookie") ?? "";
+    const entry = cookie
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith("mastra-token="));
+    const encoded = entry?.slice("mastra-token=".length) ?? "";
+    try {
+      token = decodeURIComponent(encoded);
+    } catch {
+      token = encoded;
+    }
+  }
+  return findUserBySessionToken(token);
+}
+
 async function findUserById(id: string): Promise<AuthUser | null> {
   await ensureAuthSchema();
   const result = await (await getLibsqlClient()).execute({

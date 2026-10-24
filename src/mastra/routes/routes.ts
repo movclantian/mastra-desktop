@@ -23,15 +23,6 @@ import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from 
 import { backgroundTaskRoutes } from "./background-tasks";
 import { browserRoutes } from "./browser";
 import {
-  channelPlatformsRoute,
-  channelsConfigRoute,
-  channelWebhookRoutes,
-  deleteChannelSecretRoute,
-  probeChannelRoute,
-  refreshChannelsRoute,
-  saveChannelsConfigRoute,
-} from "./channels";
-import {
   guardrailsConfigRoute,
   guardrailsStatusRoute,
   saveGuardrailsConfigRoute,
@@ -44,6 +35,7 @@ import {
   deleteLibraryFolderRoute,
   libraryAssetContentRoute,
   libraryAssetsRoute,
+  libraryDocumentTextRoute,
   libraryFoldersRoute,
   librarySettingsRoute,
   libraryUploadChunkRoute,
@@ -55,6 +47,7 @@ import {
   reindexFailedLibraryAssetsRoute,
   reindexLibraryAssetRoute,
   renameLibraryAssetRoute,
+  saveLibraryDocumentVersionRoute,
   saveLibrarySettingsRoute,
   updateLibraryFolderRoute,
   uploadLibraryAssetsRoute,
@@ -67,7 +60,12 @@ import {
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
-import { memoryConfigRoute, memoryProfileRoute, saveMemoryConfigRoute } from "./memory";
+import {
+  memoryConfigRoute,
+  memoryProfileRoute,
+  saveMemoryConfigRoute,
+  updateMemoryProfileRoute,
+} from "./memory";
 import { messageQueueRoutes } from "./message-queue";
 import { pluginRoutes } from "./plugins";
 import {
@@ -116,13 +114,6 @@ export const workRoutes = [
   deleteAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
-  channelPlatformsRoute,
-  channelsConfigRoute,
-  saveChannelsConfigRoute,
-  probeChannelRoute,
-  refreshChannelsRoute,
-  deleteChannelSecretRoute,
-  ...channelWebhookRoutes,
   ...computerRoutes,
   ...proxyRoutes,
   ...threadRoutes,
@@ -140,6 +131,8 @@ export const workRoutes = [
   cancelLibraryUploadRoute,
   uploadLibraryAssetsRoute,
   libraryAssetContentRoute,
+  libraryDocumentTextRoute,
+  saveLibraryDocumentVersionRoute,
   deleteLibraryAssetRoute,
   promoteLibraryAssetRoute,
   referenceLibraryAssetRoute,
@@ -162,6 +155,7 @@ export const workRoutes = [
   memoryConfigRoute,
   saveMemoryConfigRoute,
   memoryProfileRoute,
+  updateMemoryProfileRoute,
   mcpConfigRoute,
   getMcpServerRoute,
   saveMcpConfigRoute,

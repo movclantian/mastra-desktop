@@ -19,7 +19,6 @@ import {
   FolderPlusIcon,
   FolderTreeIcon,
   GlobeIcon,
-  InboxIcon,
   KeyboardIcon,
   LibraryBigIcon,
   ListChecksIcon,
@@ -310,7 +309,10 @@ function WorkspaceMutationDiff({
     );
   if (content.isPending && change)
     return (
-      <p className="py-2 text-xs text-muted-foreground">{t("workspace:readingFullSnapshot")}</p>
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">{t("workspace:readingFullSnapshot")}</p>
+        <PairDetail oldText={oldText} newText={newText} filename={path} language={language} />
+      </div>
     );
   return <PairDetail oldText={oldText} newText={newText} filename={path} language={language} />;
 }
@@ -1272,12 +1274,6 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
     labelKey: "signal_list",
     summarize: (input) => ({ chips: queryChips(input, "provider") }),
     detail: recordsDetailFor("subscriptions"),
-  },
-  notification_inbox: {
-    icon: InboxIcon,
-    labelKey: "notification_inbox",
-    summarize: (input) => ({ chips: queryChips(input, "action") }),
-    detail: recordsDetailFor("notifications"),
   },
   task_write: {
     icon: ListTodoIcon,

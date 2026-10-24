@@ -1,6 +1,5 @@
 export { AboutSection } from "./about-section";
 export { BrowserSection } from "./browser-section";
-export { ChannelsSection } from "./channels-section";
 export { ComputerSection } from "./computer-section";
 export { GeneralSection } from "./general-section";
 export { GuardrailsSection } from "./guardrails-section";

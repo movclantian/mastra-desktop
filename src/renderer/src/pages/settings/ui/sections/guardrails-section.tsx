@@ -119,7 +119,7 @@ export interface GuardrailsDraft {
 
   tokenCost: boolean;
   tokenCostMax: number;
-  tokenCostScope: "run" | "resource" | "thread" | "user" | "organization" | "session";
+  tokenCostScope: "run" | "resource" | "thread" | "user" | "session";
   tokenCostWindow: "1h" | "6h" | "24h" | "7d" | "30d" | "365d";
   tokenCostStrategy: "block" | "warn";
   tokenCostWarnAtPercent: number;
@@ -1398,10 +1398,6 @@ export function GuardrailsSection() {
                 { value: "run" as const, label: t("settings:guardrails.options.scopeRun") },
                 { value: "user" as const, label: t("settings:guardrails.options.scopeUser") },
                 { value: "session" as const, label: t("settings:guardrails.options.scopeSession") },
-                {
-                  value: "organization" as const,
-                  label: t("settings:guardrails.options.scopeOrganization"),
-                },
               ]}
               title={t("settings:guardrails.scopeTitle")}
               value={draft.tokenCostScope}

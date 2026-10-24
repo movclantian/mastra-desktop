@@ -13,6 +13,7 @@ import { type AnySpan, resolveCurrentSpan, SpanType } from "@mastra/core/observa
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import type { ContextWithMastra } from "@mastra/core/server";
 import type { StorageMCPServerConfig, StorageResolvedMCPClientType } from "@mastra/core/storage";
+import { createTool } from "@mastra/core/tools";
 import {
   getCallbackUrlCandidates,
   type MastraMCPServerDefinition,
@@ -1195,7 +1196,10 @@ export async function getConfiguredMcpTools(
       const client = await getConfiguredMcpClient(server, resourceId);
       const runtime = getRuntime(resourceId).clients.get(server.id);
       // Share concurrent discovery and give failed connections 30 seconds before another attempt.
-      if (runtime?.retryAfter && runtime.retryAfter > Date.now()) return {};
+      if (runtime?.retryAfter && runtime.retryAfter > Date.now())
+        throw workError("MCP_CONNECTION_FAILED", {
+          text: `${server.name}: unavailable; retry is still cooling down`,
+        });
       const discovery =
         discoveries?.get(client) ?? runtime?.discovery ?? client.listToolsWithErrors();
       if (runtime) runtime.discovery = discovery;
@@ -1277,14 +1281,24 @@ export async function getConfiguredMcpTools(
     }),
   );
   const tools: ToolsInput = {};
+  const unavailable: Array<{ server: string; reason: string }> = [];
   for (const [index, outcome] of outcomes.entries()) {
     if (outcome.status === "fulfilled") Object.assign(tools, outcome.value);
     else {
-      console.warn(
-        `MCP connection ${selected[index].name} is unavailable`,
-        errorText(outcome.reason),
-      );
+      unavailable.push({ server: selected[index].name, reason: errorText(outcome.reason) });
     }
+  }
+  if (unavailable.length) {
+    const details = unavailable.map(({ server, reason }) => `${server}: ${reason}`).join("; ");
+    tools.mcp_connection_status = createTool({
+      id: "mcp_connection_status",
+      description:
+        "Selected MCP connections are unavailable for this run: " +
+        details +
+        ". Read this before answering MCP-dependent requests; do not claim those capabilities are connected.",
+      inputSchema: z.object({}),
+      execute: async () => ({ available: false, unavailable }),
+    });
   }
   return tools;
 }

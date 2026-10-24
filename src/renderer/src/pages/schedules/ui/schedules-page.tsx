@@ -39,6 +39,8 @@ import { Separator } from "@/shared/ui/separator";
 import { Textarea } from "@/shared/ui/textarea";
 import { DEFAULT_AGENT_PROFILE_ID } from "../../../../../shared/agent-contract";
 import type { AgentSchedule } from "../api/schedules-api";
+import { ScheduleCalendar } from "./schedule-calendar";
+import { ThreadTodos } from "./thread-todos";
 
 type Frequency = "daily" | "weekdays" | "weekly" | "custom";
 type SignalType = NonNullable<AgentSchedule["signalType"]>;
@@ -117,7 +119,10 @@ function formatFireAt(value: number | undefined, neverRun = "-"): string {
 function frequencyForCron(cron: string): Frequency {
   const parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) return "custom";
-  if (parts[4] === "1-5") return "weekdays";
+  const minute = /^(?:[0-9]|[1-5][0-9])$/.test(parts[0]);
+  const hour = /^(?:[0-9]|1[0-9]|2[0-3])$/.test(parts[1]);
+  if (!minute || !hour) return "custom";
+  if (parts[2] === "*" && parts[3] === "*" && parts[4] === "1-5") return "weekdays";
   if (parts[2] === "*" && parts[3] === "*" && parts[4] === "*") return "daily";
   if (parts[2] === "*" && parts[3] === "*" && /^[0-6]$/.test(parts[4])) return "weekly";
   return "custom";
@@ -180,6 +185,8 @@ export function SchedulesPage() {
   const schedules = schedulesQuery.data ?? [];
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState("");
+  const [view, setView] = React.useState<"list" | "calendar" | "todos">("list");
+  const [statusFilter, setStatusFilter] = React.useState("all");
   const [draft, setDraft] = React.useState<ScheduleDraft>(() =>
     defaultDraft(activeThreadId ?? "", agents[0]?.id ?? DEFAULT_AGENT_PROFILE_ID),
   );
@@ -215,10 +222,13 @@ export function SchedulesPage() {
     const defaultName = t("schedules:defaultScheduleName");
     return schedules.filter(
       (item) =>
-        !needle ||
-        `${scheduleLabel(item, defaultName)} ${item.prompt}`.toLocaleLowerCase().includes(needle),
+        (statusFilter === "all" || item.status === statusFilter) &&
+        (!needle ||
+          `${scheduleLabel(item, defaultName)} ${item.prompt}`
+            .toLocaleLowerCase()
+            .includes(needle)),
     );
-  }, [query, schedules, t]);
+  }, [query, schedules, statusFilter, t]);
 
   const updateDraft = (patch: Partial<ScheduleDraft>) =>
     setDraft((current) => ({ ...current, ...patch }));
@@ -342,7 +352,21 @@ export function SchedulesPage() {
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("schedules:subtitle")}</p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={view === "list" ? "secondary" : "ghost"}
+            onClick={() => setView("list")}
+          >
+            {t("planning:list")}
+          </Button>
+          <Button
+            size="sm"
+            variant={view === "calendar" ? "secondary" : "ghost"}
+            onClick={() => setView("calendar")}
+          >
+            {t("planning:calendar")}
+          </Button>
           <Button
             size="icon"
             variant="ghost"
@@ -352,6 +376,13 @@ export function SchedulesPage() {
           >
             <RefreshCwIcon className={cn(loading && "animate-spin")} />
           </Button>
+          <Button
+            size="sm"
+            variant={view === "todos" ? "secondary" : "ghost"}
+            onClick={() => setView("todos")}
+          >
+            {t("planning:todos")}
+          </Button>
           <Button onClick={openNew} size="sm">
             <PlusIcon />
             {t("schedules:newSchedule")}
@@ -359,9 +390,35 @@ export function SchedulesPage() {
         </div>
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+      {view === "todos" ? (
+        <ThreadTodos threads={threads} resourceId={userId} activeThreadId={activeThreadId} />
+      ) : null}
+      {view === "calendar" ? (
+        <div className="min-h-0 flex-1">
+          <ScheduleCalendar
+            schedules={filtered}
+            onSelect={(schedule) => {
+              openExisting(schedule);
+              setView("list");
+            }}
+          />
+        </div>
+      ) : null}
+      <div
+        className={cn("min-h-0 flex-1 flex-col md:flex-row", view !== "list" ? "hidden" : "flex")}
+      >
         <aside className="flex h-52 min-h-0 min-w-0 w-full shrink-0 flex-col border-b border-border md:h-auto md:w-[min(34%,25rem)] md:border-r md:border-b-0">
           <div className="shrink-0 p-3">
+            <Select value={statusFilter} onValueChange={(value) => value && setStatusFilter(value)}>
+              <SelectTrigger className="mb-2 w-full" aria-label={t("planning:all")}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("planning:all")}</SelectItem>
+                <SelectItem value="active">{t("planning:active")}</SelectItem>
+                <SelectItem value="paused">{t("planning:paused")}</SelectItem>
+              </SelectContent>
+            </Select>
             <div className="relative">
               <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -658,7 +715,9 @@ function ScheduleForm({
             <Select
               value={draft.threadId || "__new__"}
               onValueChange={(threadId) =>
-                onChange({ threadId: threadId === "__new__" ? "" : (threadId ?? "") })
+                onChange({
+                  threadId: threadId === "__new__" ? "" : (threadId ?? ""),
+                })
               }
               disabled={!targetEditable}
             >

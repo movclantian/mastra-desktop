@@ -1233,7 +1233,25 @@ export function KnowledgeLibraryPage({
                   </div>
                 }
               >
-                <LibraryFilePreview asset={previewAsset} />
+                <LibraryFilePreview
+                  key={previewAsset.id}
+                  asset={previewAsset}
+                  editing={{
+                    resourceId: user.id,
+                    folders: documentFolders,
+                    onSaved: async (asset) => {
+                      setAssets((current) => [
+                        asset,
+                        ...current.filter((item) => item.id !== asset.id),
+                      ]);
+                      setView("documents");
+                      setQuery("");
+                      setFolderId(asset.folderIds[0] ?? null);
+                      setSelectedId(asset.id);
+                      await refresh(true);
+                    },
+                  }}
+                />
               </React.Suspense>
             ) : (
               <div className="flex size-full flex-col items-center justify-center gap-2 text-muted-foreground">

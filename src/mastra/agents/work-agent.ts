@@ -339,8 +339,8 @@ function createWorkAgent(
     outputProcessors: async ({ requestContext }) => [
       agentIdentityProcessor(fixedProfile, member),
       teamInvocationProcessor,
-      webSearchArchiveProcessor,
       ...(await buildGuardrailOutputProcessors(requestContext)),
+      webSearchArchiveProcessor,
     ],
     // The settings own this stack; do not restore processors the user disabled.
     errorProcessorDefaults: false,

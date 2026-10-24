@@ -128,9 +128,6 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   task_update: "edit",
   task_complete: "edit",
   task_check: "read",
-  // 通知收件箱的 dismiss/archive 会改写持久状态,不能作为 Plan/Review 只读工具。
-  notification_inbox: "edit",
-  "notification-inbox": "edit",
 };
 
 /**

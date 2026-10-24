@@ -1,13 +1,17 @@
+import { useNavigate } from "@tanstack/react-router";
 import { addDays, format, startOfDay, subDays } from "date-fns";
-import { CalendarIcon, RefreshCwIcon } from "lucide-react";
+import { CalendarIcon, ExternalLinkIcon, PencilIcon, RefreshCwIcon } from "lucide-react";
 import * as React from "react";
 import { type Activity, ActivityCalendar } from "react-activity-calendar";
 import type { DateRange } from "react-day-picker";
 import { Area, AreaChart, CartesianGrid, Line, XAxis } from "recharts";
+import { toast } from "sonner";
 import { useAuth } from "@/features/auth";
+import { requestJson } from "@/shared/api";
 import { i18n, useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
 import { useTheme } from "@/shared/theme";
+import { confirmAction } from "@/shared/ui/alert-dialog";
 import { AnimatedTabs, AnimatedTabsPanel } from "@/shared/ui/animated-tabs";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
@@ -19,6 +23,13 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/shared/ui/chart";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/shared/ui/dialog";
 import { NumberTicker } from "@/shared/ui/number-ticker";
 import {
   Pagination,
@@ -31,6 +42,7 @@ import {
 } from "@/shared/ui/pagination";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { ScrollArea, ScrollBar } from "@/shared/ui/scroll-area";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/shared/ui/select";
 import { SlidingNumber } from "@/shared/ui/sliding-number";
 import {
   Table,
@@ -41,7 +53,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/shared/ui/table";
+import { Textarea } from "@/shared/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/shared/ui/tooltip";
+import type { MemoryProfile } from "../../../../../../shared/agent-contract";
 import { fetchMemoryProfile, fetchUsage } from "../../api/settings-api";
 
 type UsageDetailTab = "requests" | "providers" | "models";
@@ -99,19 +113,6 @@ interface UsageSummary {
     cost: number | null;
     costUnit: string | null;
   }>;
-}
-
-interface MemoryProfile {
-  workingMemory: string | null;
-  extractors: Array<{
-    slug: string;
-    name: string;
-    value: unknown;
-    threadId: string;
-    threadTitle: string;
-    updatedAt: string;
-  }>;
-  threadCount: number;
 }
 
 const chartConfig = {
@@ -290,6 +291,7 @@ const PAGE_SIZE = 10;
 
 export function UsageSection() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const { isDark } = useTheme();
   const [range, setRange] = React.useState<DateRange>({
@@ -298,6 +300,8 @@ export function UsageSection() {
   });
   const [summary, setSummary] = React.useState<UsageSummary | null>(null);
   const [profile, setProfile] = React.useState<MemoryProfile | null>(null);
+  const [memoryThreadId, setMemoryThreadId] = React.useState("");
+  const [profileFailed, setProfileFailed] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [detailTab, setDetailTab] = React.useState<UsageDetailTab>("requests");
   const [requestsPage, setRequestsPage] = React.useState(1);
@@ -320,19 +324,20 @@ export function UsageSection() {
   const load = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [usage, memoryProfile] = await Promise.all([
+      const [usage, memoryProfile] = await Promise.allSettled([
         fetchUsage<UsageSummary>(query),
-        fetchMemoryProfile<MemoryProfile>(),
+        fetchMemoryProfile<MemoryProfile>(memoryThreadId || undefined),
       ]);
-      setSummary(usage);
-      setProfile(memoryProfile);
+      setSummary(usage.status === "fulfilled" ? usage.value : null);
+      setProfile(memoryProfile.status === "fulfilled" ? memoryProfile.value : null);
+      setProfileFailed(memoryProfile.status === "rejected");
     } catch {
       setSummary(null);
       setProfile(null);
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, memoryThreadId]);
 
   React.useEffect(() => {
     void load();
@@ -467,18 +472,40 @@ export function UsageSection() {
                 })}
               </p>
             </div>
-            {profile?.workingMemory ? (
-              <div className="border-t border-border pt-2">
-                <p className="mb-1 text-xs font-medium">{t("settings:usage.workingMemory")}</p>
-                <ScrollArea className="max-h-28 rounded border border-border/60 p-2">
-                  <pre className="whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
-                    {profile.workingMemory}
-                  </pre>
-                </ScrollArea>
-              </div>
+            {profileFailed ? (
+              <p role="alert" className="text-xs text-destructive">
+                {t("memoryReview:loadFailed")}
+              </p>
+            ) : null}
+            {profile ? (
+              <WorkingMemoryReview
+                key={[profile.scope, profile.source?.threadId ?? "none"].join(":")}
+                profile={profile}
+                onSaved={load}
+              />
             ) : null}
           </div>
           <div className="min-w-0 space-y-2">
+            <Select
+              value={memoryThreadId || "recent"}
+              disabled={loading}
+              onValueChange={(value) => {
+                if (value) setMemoryThreadId(value === "recent" ? "" : value);
+              }}
+            >
+              <SelectTrigger aria-label={t("memoryReview:selectThread")} className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="recent">{t("memoryReview:recent")}</SelectItem>
+                {profile?.threads.map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    {thread.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">{t("memoryReview:extractionHint")}</p>
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold">{t("settings:usage.userPreferences")}</p>
               <span className="shrink-0 text-xs text-muted-foreground">
@@ -518,6 +545,17 @@ export function UsageSection() {
                         {t("settings:usage.source")}
                         {item.threadTitle}
                       </p>
+                      <Button
+                        size="xs"
+                        variant="link"
+                        className="h-auto max-w-full whitespace-normal break-words"
+                        onClick={() =>
+                          void navigate({ to: "/chat", search: { thread: item.threadId } })
+                        }
+                      >
+                        <ExternalLinkIcon />
+                        {t("memoryReview:source")}
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -1015,5 +1053,151 @@ function StatsTable({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/** Human edits target only native working memory, never rewrite the observation log. */
+function WorkingMemoryReview({
+  profile,
+  onSaved,
+}: {
+  profile: MemoryProfile;
+  onSaved: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+  const busy = React.useRef(false);
+  const snapshot = React.useRef(profile);
+  const close = async (next: boolean) => {
+    if (busy.current) return;
+    if (
+      !next &&
+      draft !== (snapshot.current.workingMemory ?? "") &&
+      !(await confirmAction(t("memoryReview:discard")))
+    )
+      return;
+    setOpen(next);
+  };
+  const save = async (clear: boolean) => {
+    const original = snapshot.current;
+    if (busy.current || !original.source) return;
+    if (clear && !(await confirmAction(t("memoryReview:clearWarning")))) return;
+    if (!clear && !draft.trim()) {
+      toast.error(t("memoryReview:empty"));
+      return;
+    }
+    busy.current = true;
+    setSaving(true);
+    try {
+      await requestJson(
+        "/work/memory/profile/working",
+        {
+          method: "POST",
+          body: {
+            threadId: original.source.threadId,
+            scope: original.scope,
+            snapshot: original.snapshot,
+            workingMemory: clear ? "" : draft,
+            confirmed: true,
+            clear,
+          },
+        },
+        t("memoryReview:saveFailed"),
+      );
+      setOpen(false);
+      toast.success(t("memoryReview:saved"));
+      await onSaved();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("memoryReview:saveFailed"));
+    } finally {
+      busy.current = false;
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="min-w-0 space-y-2 border-t pt-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium">{t("settings:usage.workingMemory")}</p>
+        <Badge variant="outline">
+          {t(profile.scope === "resource" ? "memoryReview:resource" : "memoryReview:thread")}
+        </Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">{t("memoryReview:hint")}</p>
+      <ScrollArea className="max-h-32 rounded border p-2">
+        <pre className="whitespace-pre-wrap break-words text-[11px] text-muted-foreground">
+          {profile.workingMemory || t("memoryReview:none")}
+        </pre>
+      </ScrollArea>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!profile.enabled || profile.readOnly || !profile.source}
+          onClick={() => {
+            snapshot.current = profile;
+            setDraft(profile.workingMemory ?? "");
+            setOpen(true);
+          }}
+        >
+          <PencilIcon />
+          {t("memoryReview:edit")}
+        </Button>
+        {profile.source ? (
+          <Button
+            size="xs"
+            variant="link"
+            className="h-auto max-w-full whitespace-normal break-words"
+            onClick={() =>
+              void navigate({ to: "/chat", search: { thread: profile.source?.threadId } })
+            }
+          >
+            <ExternalLinkIcon />
+            {profile.source.threadTitle}
+          </Button>
+        ) : null}
+      </div>
+      {profile.readOnly || !profile.enabled ? (
+        <p className="text-xs text-muted-foreground">{t("memoryReview:disabled")}</p>
+      ) : null}
+      <Dialog open={open} onOpenChange={(next) => void close(next)}>
+        <DialogContent className="flex max-h-[85vh] min-h-0 min-w-0 flex-col sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("memoryReview:edit")}</DialogTitle>
+            <DialogDescription>{t("memoryReview:warning")}</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="min-h-0 flex-1">
+            <Textarea
+              className="min-h-64 resize-y font-mono text-xs"
+              aria-label={t("settings:usage.workingMemory")}
+              maxLength={100000}
+              value={draft}
+              disabled={saving}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </ScrollArea>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              snapshot.current.format === "schema" ? "memoryReview:json" : "memoryReview:markdown",
+            )}
+          </p>
+          <div className="flex flex-wrap justify-between gap-2">
+            <Button variant="destructive" disabled={saving} onClick={() => void save(true)}>
+              {t("memoryReview:clear")}
+            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" disabled={saving} onClick={() => void close(false)}>
+                {t("common:cancel")}
+              </Button>
+              <Button disabled={saving || !draft.trim()} onClick={() => void save(false)}>
+                {t("memoryReview:save")}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

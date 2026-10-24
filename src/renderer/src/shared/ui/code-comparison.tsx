@@ -1,9 +1,11 @@
 import { langs } from "@uiw/codemirror-extensions-langs";
 import type { HTMLAttributes } from "react";
+import * as React from "react";
 import { useMemo } from "react";
 import CodeMirrorMerge from "react-codemirror-merge";
 import { i18n } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
+import { useTheme } from "@/shared/theme";
 
 export interface CodeComparisonProps extends HTMLAttributes<HTMLDivElement> {
   beforeCode: string;
@@ -28,7 +30,7 @@ function languageExtension(filename: string, language: string) {
   return [];
 }
 
-export function CodeComparison({
+export const CodeComparison = React.memo(function CodeComparison({
   beforeCode,
   afterCode,
   language = "text",
@@ -36,6 +38,7 @@ export function CodeComparison({
   className,
   ...props
 }: CodeComparisonProps) {
+  const { isDark } = useTheme();
   const extensions = useMemo(
     () => [languageExtension(filename ?? "", language)],
     [filename, language],
@@ -57,7 +60,7 @@ export function CodeComparison({
         gutter
         highlightChanges
         orientation="a-b"
-        theme="none"
+        theme={isDark ? "dark" : "light"}
       >
         <CodeMirrorMerge.Original
           basicSetup
@@ -76,4 +79,4 @@ export function CodeComparison({
       </CodeMirrorMerge>
     </div>
   );
-}
+});

@@ -3,6 +3,7 @@ import type { ToolsInput } from "@mastra/core/agent";
 import { Agent } from "@mastra/core/agent";
 import { resolveCurrentSpan, SpanType } from "@mastra/core/observability";
 import {
+  FileUploadProcessor,
   type InputProcessorOrWorkflow,
   type Processor,
   TokenLimiterProcessor,
@@ -26,7 +27,6 @@ import {
 import { COMPUTER_TOOL_PREFIX } from "../../shared/computer-contract";
 import { getComputerTools } from "../connections/computer";
 import { getConfiguredMcpTools } from "../connections/mcp";
-import { getNotificationInboxTool } from "../harness/signals";
 import {
   getContextWindowPercent,
   getMemory,
@@ -50,6 +50,7 @@ import {
   webSearchArchiveProcessor,
 } from "../tools/web-search";
 import {
+  getManagedSkillPaths,
   getThreadWorkspace,
   SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
@@ -69,14 +70,14 @@ import {
   resolveAgentActiveTools,
   resolveRequestMode,
 } from "./permissions";
-import { agentsMdProcessor, libraryAttachmentProcessor } from "./processors";
+import { agentsMdProcessor, fileUploadWorkspace, libraryAttachmentProcessor } from "./processors";
 import { teamInvocationProcessor, teamProgressProcessor } from "./team-activity";
 
-function resolveSubagentWorkspace(requestContext: RequestContextLike) {
+function resolveSubagentWorkspace(requestContext?: RequestContextLike) {
   const resourceId = userIdFromContext(requestContext);
-  const path = requestContext.get(WORKSPACE_PATH_CONTEXT_KEY);
+  const path = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
   const workspacePath = typeof path === "string" && path.trim() ? path.trim() : process.cwd();
-  const threadId = requestContext.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
+  const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
   return getThreadWorkspace(
     workspacePath,
     typeof threadId === "string" ? threadId : undefined,
@@ -113,8 +114,8 @@ const explorerAgent = new Agent({
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
   outputProcessors: async ({ requestContext }) => [
     teamInvocationProcessor,
-    webSearchArchiveProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
+    webSearchArchiveProcessor,
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
@@ -129,6 +130,7 @@ const explorerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
+  skills: ({ requestContext }) => getManagedSkillPaths(userIdFromContext(requestContext)),
 });
 
 /**
@@ -149,8 +151,8 @@ const reviewerAgent = new Agent({
   inputProcessors: async ({ requestContext }) => buildInputPipeline(requestContext),
   outputProcessors: async ({ requestContext }) => [
     teamInvocationProcessor,
-    webSearchArchiveProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
+    webSearchArchiveProcessor,
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
@@ -165,6 +167,7 @@ const reviewerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
+  skills: ({ requestContext }) => getManagedSkillPaths(userIdFromContext(requestContext)),
 });
 
 export const workSubagents = {
@@ -194,8 +197,7 @@ export async function resolveSharedTools(
       span?.end({ metadata: { succeeded } });
     }
   };
-  const [notificationInbox, webTools, mcpTools, computerTools, mediaTools] = await Promise.all([
-    getNotificationInboxTool(),
+  const [webTools, mcpTools, computerTools, mediaTools] = await Promise.all([
     prepare("web search", () =>
       resolveWebSearchTools(
         parseWebSearchSelection(requestContext?.get(WEB_SEARCH_CONTEXT_KEY)),
@@ -212,7 +214,6 @@ export async function resolveSharedTools(
     library_vector_search: libraryVectorSearchTool,
     library_graph_search: libraryGraphSearchTool,
     library_document_chunker: libraryDocumentChunkerTool,
-    notification_inbox: notificationInbox,
     ...webTools,
     ...mcpTools,
     ...computerTools,
@@ -322,11 +323,23 @@ export async function buildInputPipeline(
     memoryConfig.contextWindowPercent,
   );
   const modelInputTokens = memoryTokenBudget(modelLimits, contextWindowPercent).inputTokens;
+  const workspace = await resolveSubagentWorkspace(requestContext);
+  const fileUploadProcessor = workspace.hasSandboxConfig()
+    ? new FileUploadProcessor({
+        workspace: fileUploadWorkspace(workspace),
+        // Keep provider-native media readable; upload other files for workspace tools.
+        filter: ({ mimeType }) =>
+          !mimeType.startsWith("image/") &&
+          !mimeType.startsWith("audio/") &&
+          !mimeType.startsWith("video/"),
+      })
+    : undefined;
   return [
     teamInvocationProcessor,
     ...(profile && delegationMemberIds(profile, member).length ? [teamProgressProcessor] : []),
     scopedToolPolicy(profile, member),
     libraryAttachmentProcessor,
+    ...(fileUploadProcessor ? [fileUploadProcessor] : []),
     agentsMdProcessor,
     ...(await buildGuardrailInputProcessors(requestContext as RequestContext | undefined)),
     codeModeProcessor(requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true),

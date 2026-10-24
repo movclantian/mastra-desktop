@@ -15,6 +15,7 @@ import type {
 } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
+import { workbenchSessionId } from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   DEFAULT_AGENT_PROFILE_ID,
@@ -35,7 +36,9 @@ import {
   resolveModelSelection,
   splitRouterId,
 } from "../models/providers";
+import { resolveLibraryFolderScope } from "../rag/storage/folders";
 import {
+  LIBRARY_FOLDER_CONTEXT_KEY,
   LIBRARY_ORIGIN_CONTEXT_KEY,
   LIBRARY_RESOURCE_CONTEXT_KEY,
   LIBRARY_THREAD_CONTEXT_KEY,
@@ -133,6 +136,8 @@ export async function prepareScheduledRun({
   if (stored.threadId && (!thread || thread.resourceId !== resourceId))
     throw workError("SCHEDULE_THREAD_NOT_FOUND");
   const metadata = (thread?.metadata ?? { currentModeId: "build" }) as ThreadMetadata;
+  const folderScope = z.string().min(1).nullish().parse(metadata.libraryFolderId);
+  if (folderScope) await resolveLibraryFolderScope(resourceId, folderScope);
   const mode = resolveMode(metadata.currentModeId);
   const modelId = metadata.currentModelId ?? (await resolveDefaultModelId(resourceId, "language"));
   if (!modelId || (await resolveModelSelection(modelId, resourceId))?.model.kind !== "language")
@@ -199,8 +204,10 @@ export async function prepareScheduledRun({
           [WORKSPACE_PATH_CONTEXT_KEY]: workspacePath,
           [WORKSPACE_THREAD_ID_CONTEXT_KEY]: threadId,
           [WORKSPACE_RESOURCE_ID_CONTEXT_KEY]: resourceId,
+          sessionId: workbenchSessionId(resourceId, threadId),
           [LIBRARY_RESOURCE_CONTEXT_KEY]: resourceId,
           [LIBRARY_THREAD_CONTEXT_KEY]: threadId,
+          [LIBRARY_FOLDER_CONTEXT_KEY]: folderScope ?? undefined,
           [LIBRARY_ORIGIN_CONTEXT_KEY]: `http://localhost:${mastra.getServer()?.port ?? DEFAULT_MASTRA_PORT}`,
           [SCHEDULE_RUN_CONTEXT_KEY]: true,
           [SESSION_EXECUTION_CONTEXT_KEY]: execution,

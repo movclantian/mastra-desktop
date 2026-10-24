@@ -32,6 +32,30 @@ export async function listFolders(resourceId: string, threadId?: string): Promis
   }));
 }
 
+/** Resolve a knowledge space using existing global folders; never widen an invalid binding. */
+export async function resolveLibraryFolderScope(
+  resourceId: string,
+  folderId: string,
+): Promise<string[]> {
+  const folders = await listFolders(resourceId, "");
+  if (!folders.some((folder) => folder.id === folderId)) {
+    throw new Error("知识空间目录不存在、已删除或不属于当前账户的资料库");
+  }
+  const ids = new Set([folderId]);
+  // Folders are created after their parents, but iterate to remain independent of row order.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const folder of folders) {
+      if (folder.parentId && ids.has(folder.parentId) && !ids.has(folder.id)) {
+        ids.add(folder.id);
+        changed = true;
+      }
+    }
+  }
+  return [...ids];
+}
+
 export async function createFolder(input: {
   resourceId: string;
   name: string;

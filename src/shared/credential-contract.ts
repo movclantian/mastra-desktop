@@ -12,7 +12,7 @@ export const CredentialPurposeSchema = z
   .min(1)
   .max(256)
   .regex(
-    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl)|browser:firecrawl|plugin:plugin_[a-f0-9]{32}:config|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32}|channel:[a-z][a-z0-9_-]{1,31}:[A-Z][A-Z0-9_]{1,63})$/,
+    /^(?:provider:[a-zA-Z0-9_-]{1,64}|search:(?:tavily|firecrawl)|browser:firecrawl|plugin:plugin_[a-f0-9]{32}:config|mcp:[a-zA-Z0-9_-]{1,64}:(?:headers|env|client-secret)|mcp-oauth:[a-zA-Z0-9_-]{1,64}:[a-f0-9]{32})$/,
   );
 export const CredentialValueSchema = z.string().min(1).max(65_536);
 
@@ -127,10 +127,6 @@ export const browserCredentialPurpose = (provider: "firecrawl") =>
   CredentialPurposeSchema.parse(`browser:${provider}`);
 export const pluginCredentialPurpose = (pluginId: string) =>
   CredentialPurposeSchema.parse(`plugin:${pluginId}:config`);
-/** Channel adapters store each platform secret separately so a single field can be rotated alone. */
-export const channelCredentialPurpose = (platform: string, field: string) =>
-  CredentialPurposeSchema.parse(`channel:${platform}:${field}`);
-
 /** Diagnostics carry readable errors, never URL credentials or recognized secret values. */
 export function redactDiagnosticText(text: string): string {
   return text
