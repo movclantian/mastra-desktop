@@ -18,6 +18,16 @@ function BrowserGuest({
   const hostRef = React.useRef<HTMLDivElement>(null);
   const { id } = tab;
   const { partition, bounds } = surface;
+  const [lastSize, setLastSize] = React.useState(() => ({
+    width: Math.max(bounds.width, window.innerWidth, 1),
+    height: Math.max(bounds.height, window.innerHeight, 1),
+  }));
+
+  // Keep the hidden guest's viewport stable so agent element geometry remains usable.
+  React.useEffect(() => {
+    if (bounds.width > 0 && bounds.height > 0)
+      setLastSize({ width: bounds.width, height: bounds.height });
+  }, [bounds.height, bounds.width]);
 
   React.useEffect(() => {
     const host = hostRef.current;
@@ -51,8 +61,8 @@ function BrowserGuest({
       style={{
         left: bounds.x,
         top: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
+        width: bounds.width || lastSize.width,
+        height: bounds.height || lastSize.height,
         visibility: visible ? "visible" : "hidden",
         pointerEvents: visible ? "auto" : "none",
       }}

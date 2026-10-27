@@ -24,6 +24,29 @@ const BrowserUrlSchema = z
     }
   });
 
+const NativeBrowserUrlSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(8_192)
+  .transform((value, context) => {
+    try {
+      const url = new URL(value);
+      if (
+        url.protocol !== "file:" ||
+        url.hostname !== "" ||
+        url.username !== "" ||
+        url.password !== ""
+      ) {
+        throw new TypeError();
+      }
+      return url.toString();
+    } catch {
+      context.addIssue({ code: "custom", message: "invalid local file URL" });
+      return z.NEVER;
+    }
+  });
+
 const BrowserHomeUrlSchema = z.union([z.literal(""), BrowserUrlSchema]);
 
 export const BrowserSearchEngineSchema = z.enum(["bing", "baidu", "google"]);
@@ -186,7 +209,7 @@ export const NativeBrowserBindGuestSchema = z.strictObject({
   guestId: z.number().int().positive(),
 });
 
-/** Agent operations are routed to the Electron-owned, currently visible page. */
+/** Agent operations are routed to the Electron-owned page in the active thread. */
 export const NativeBrowserAgentOperationSchema = z.enum([
   "state",
   "goto",
@@ -261,20 +284,28 @@ export type NativeBrowserSurface = z.infer<typeof NativeBrowserSurfacesSchema>[n
 
 export const NativeBrowserNavigateSchema = z.strictObject({
   ...NativeBrowserSessionSchema.shape,
-  url: BrowserUrlSchema,
+  url: NativeBrowserUrlSchema.or(BrowserUrlSchema),
 });
+
+const NativeBrowserActionRequestSchema = z.discriminatedUnion("action", [
+  z.strictObject({ action: z.enum(["back", "forward", "reload", "reset-tabs"]) }),
+  z.strictObject({
+    action: z.literal("new-tab"),
+    url: NativeBrowserUrlSchema.or(BrowserUrlSchema).optional(),
+  }),
+  z.strictObject({
+    action: z.enum(["switch-tab", "close-tab"]),
+    index: z.number().int().min(0).max(99),
+  }),
+]);
 
 export const NativeBrowserActionSchema = z.strictObject({
   ...NativeBrowserSessionSchema.shape,
-  request: BrowserActionRequestSchema,
+  request: NativeBrowserActionRequestSchema,
   tabId: z.string().uuid().optional(),
 });
 
 export const NativeBrowserEventSchema = z.discriminatedUnion("type", [
-  z.strictObject({
-    type: z.literal("activate"),
-    ...NativeBrowserSessionSchema.shape,
-  }),
   z.strictObject({
     type: z.literal("state"),
     ...NativeBrowserSessionSchema.shape,

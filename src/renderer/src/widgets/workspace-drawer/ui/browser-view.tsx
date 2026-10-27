@@ -224,7 +224,7 @@ export function BrowserView({
       defaultUrl={state.currentUrl ?? ""}
       key={threadKey ?? ""}
       onUrlChange={navigate}
-      resolveUrl={(input) => resolveBrowserOmniboxInput(input, searchEngine)?.url ?? null}
+      resolveUrl={(input) => resolveBrowserOmniboxInput(input, searchEngine, native)?.url ?? null}
     >
       <WebPreviewNavigation className="h-10 shrink-0 gap-0.5 p-1">
         <WebPreviewNavigationButton

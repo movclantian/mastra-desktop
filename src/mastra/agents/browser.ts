@@ -188,8 +188,8 @@ class NativeElectronAgentBrowser extends AgentBrowser {
 
   override getTools() {
     const tools = super.getTools();
-    // The Electron window owns its lifetime; the Agent can only change tabs within
-    // the already-bound, visible thread session.
+    // The Electron window owns its lifetime; the Agent can only change tabs in
+    // the already-bound thread session.
     delete tools.browser_close;
     delete tools.browser_dialog;
     return tools;
@@ -225,13 +225,13 @@ class NativeElectronAgentBrowser extends AgentBrowser {
   override async getBrowserState(threadId?: string): Promise<MastraBrowserState | null> {
     const id = this.threadId(threadId);
     if (!id) return null;
-    const result = await this.command<{ state: unknown; visible: boolean }>(id, "state");
+    const result = await this.command<{ state: unknown; available: boolean }>(id, "state");
     if (!result.state) {
       this.knownThreads.delete(id);
       this.states.delete(id);
       return null;
     }
-    if (!result.visible) {
+    if (!result.available) {
       this.knownThreads.delete(id);
       this.states.delete(id);
       return null;
@@ -586,7 +586,7 @@ async function executeNativeBrowserCommand<T = unknown>(
             result.error === "session_not_found"
               ? "The browser session has not been opened or was closed. Use browser_goto with the target URL or take a new browser_snapshot to initialize it."
               : result.error === "session_not_visible"
-                ? "Bring the desktop app to the foreground and open the Browser panel in this task's thread, then retry. Native browser automation requires that thread's page to be visible."
+                ? "Make sure the desktop app is visible and not minimized, then retry. Native browser automation requires this thread's browser session to be available."
                 : result.error === "document_changed"
                   ? "The page navigated during the operation. Take a fresh snapshot and retry."
                   : result.error === "stale_ref"

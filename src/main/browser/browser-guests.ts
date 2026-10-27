@@ -8,7 +8,6 @@ import {
   webContents,
 } from "electron";
 import {
-  BrowserNavigateRequestSchema,
   type BrowserState,
   MAX_NATIVE_BROWSER_TABS,
   NATIVE_BROWSER_VIEW_CHANNELS,
@@ -373,6 +372,15 @@ function isWebUrl(url: string): boolean {
   }
 }
 
+function isLocalFileUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "file:" && url.hostname === "" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 /** Manages isolated Electron guests; the renderer owns their DOM composition. */
 export class NativeBrowserGuestManager {
   private readonly sessions = new Map<string, NativeSession>();
@@ -539,15 +547,7 @@ export class NativeBrowserGuestManager {
       this.sessions.get(this.sessionKey(session)) ??
       (bounds.width > 0 && bounds.height > 0 ? this.getOrCreate(session) : undefined);
     if (!current) return;
-    const wasVisible = current.bounds.width > 0 && current.bounds.height > 0;
-    const willBeHidden = bounds.width <= 0 || bounds.height <= 0;
-    if (wasVisible && willBeHidden) {
-      // Hidden pages invalidate in-flight automation before the next command.
-      this.invalidateAgentCommands(current, true);
-      current.bounds = bounds;
-      await this.enqueueAgentCommand(current, async () => this.emitSurfaces());
-      return;
-    }
+    // Panel visibility does not cancel browser work; the hidden guest remains bound to its page.
     current.bounds = bounds;
     this.emitSurfaces();
   }
@@ -656,15 +656,17 @@ export class NativeBrowserGuestManager {
       this.sessions.get(this.sessionKey(session)) ??
       (initializesSession ? this.getOrCreate(session) : undefined);
     if (!current) {
-      if (operation === "state") return Promise.resolve({ state: null, visible: false });
+      if (operation === "state") return Promise.resolve({ state: null, available: false });
       throw new NativeBrowserAgentCommandError("session_not_found");
     }
     if (operation === "state") {
       return Promise.resolve({
         state: this.state(current),
-        visible: this.isActiveViewVisible(current),
+        available: this.isAgentSessionAvailable(current),
       });
     }
+    if (!this.isAgentWindowAvailable())
+      return Promise.reject(new NativeBrowserAgentCommandError("session_not_visible"));
     const input = rawInput ?? {};
     let timeout: number;
     try {
@@ -680,21 +682,18 @@ export class NativeBrowserGuestManager {
     const deadline = Date.now() + timeout;
     return this.enqueueAgentCommand(current, async () => {
       if (initializesSession && current.tabs.length === 0) {
-        if (operation === "goto") BrowserNavigateRequestSchema.parse({ url: input.url });
-        // Seed the visible surface before activation: renderer ensure() shares this queue.
+        if (operation === "goto") NativeBrowserNavigateSchema.parse({ ...session, url: input.url });
         await this.createTab(current, operation === "goto" ? ABOUT_BLANK : this.homeUrl(current));
       }
-      if (!this.isActiveViewVisible(current) || current.bounds.threadId !== session.threadId) {
-        this.emitEvent({ type: "activate", ...session });
-        const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
-        while (!this.isActiveViewVisible(current) || current.bounds.threadId !== session.threadId) {
-          if (this.sessions.get(current.key) !== current)
-            throw new NativeBrowserAgentCommandError("session_not_found");
-          try {
-            await once(this.surfaceChanges, "change", { signal });
-          } catch {
-            throw new NativeBrowserAgentCommandError("session_not_visible");
-          }
+      // A new native guest is created by the renderer even when the browser panel is hidden.
+      const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+      while (!this.isAgentSessionAvailable(current)) {
+        if (this.sessions.get(current.key) !== current)
+          throw new NativeBrowserAgentCommandError("session_not_found");
+        try {
+          await once(this.surfaceChanges, "change", { signal });
+        } catch {
+          throw new NativeBrowserAgentCommandError("session_not_visible");
         }
       }
       const remaining = deadline - Date.now();
@@ -727,26 +726,26 @@ export class NativeBrowserGuestManager {
     return queued;
   }
 
-  private isActiveViewVisible(current: NativeSession): boolean {
-    if (
-      this.window.isDestroyed() ||
-      !this.window.isVisible() ||
-      this.window.isMinimized() ||
-      current.bounds.width <= 0 ||
-      current.bounds.height <= 0
-    ) {
+  private isAgentWindowAvailable(): boolean {
+    return !this.window.isDestroyed() && this.window.isVisible() && !this.window.isMinimized();
+  }
+
+  private isAgentSessionAvailable(current: NativeSession): boolean {
+    if (!this.isAgentWindowAvailable() || this.sessions.get(current.key) !== current) {
       return false;
     }
     const tab = current.tabs[current.activeTabIndex];
     return Boolean(tab?.contents && !tab.contents.isDestroyed());
   }
 
-  private requireVisibleAgentTab(current: NativeSession): NativeTab {
-    if (!this.isActiveViewVisible(current)) {
+  private requireAgentTab(current: NativeSession): NativeTab {
+    if (!this.isAgentWindowAvailable()) {
       throw new NativeBrowserAgentCommandError("session_not_visible");
     }
     const tab = current.tabs[current.activeTabIndex];
     if (!tab) throw new NativeBrowserAgentCommandError("session_not_found");
+    if (!tab.contents || tab.contents.isDestroyed())
+      throw new NativeBrowserAgentCommandError("session_not_visible");
     return tab;
   }
 
@@ -755,7 +754,8 @@ export class NativeBrowserGuestManager {
       this.sessions.get(current.key) !== current ||
       current.agentGeneration !== generation ||
       this.contents(tab).isDestroyed() ||
-      !this.isTabStillActive(current, tab)
+      !this.isTabStillActive(current, tab) ||
+      !this.isAgentWindowAvailable()
     ) {
       throw new NativeBrowserAgentCommandError("session_not_visible");
     }
@@ -785,7 +785,7 @@ export class NativeBrowserGuestManager {
     input: Record<string, unknown>,
   ): Promise<unknown> {
     try {
-      const tab = this.requireVisibleAgentTab(current);
+      const tab = this.requireAgentTab(current);
       const contents = this.contents(tab);
       const generation = current.agentGeneration;
       let documentGeneration = tab.documentGeneration;
@@ -810,7 +810,8 @@ export class NativeBrowserGuestManager {
 
       switch (operation) {
         case "goto": {
-          const url = BrowserNavigateRequestSchema.parse({
+          const url = NativeBrowserNavigateSchema.parse({
+            ...current.session,
             url: this.stringInput(input.url, 8_192),
           }).url;
           assertCurrent();
@@ -1381,7 +1382,7 @@ export class NativeBrowserGuestManager {
           return await this.executeAgentTabs(current, input);
         }
         case "state":
-          return { state: this.state(current), visible: this.isActiveViewVisible(current) };
+          return { state: this.state(current), available: this.isAgentSessionAvailable(current) };
       }
     } catch (error) {
       if (error instanceof NativeBrowserAgentCommandError) throw error;
@@ -1410,7 +1411,7 @@ export class NativeBrowserGuestManager {
         const index = current.tabs.length;
         const url =
           typeof input.url === "string"
-            ? BrowserNavigateRequestSchema.parse({ url: input.url }).url
+            ? NativeBrowserNavigateSchema.parse({ ...current.session, url: input.url }).url
             : ABOUT_BLANK;
         await this.createTab(current, url);
         return {
@@ -1459,7 +1460,11 @@ export class NativeBrowserGuestManager {
   }
 
   private isTabStillActive(current: NativeSession, tab: NativeTab): boolean {
-    return current.tabs[current.activeTabIndex] === tab && this.isActiveViewVisible(current);
+    return (
+      current.tabs[current.activeTabIndex] === tab &&
+      Boolean(tab.contents && !tab.contents.isDestroyed()) &&
+      this.isAgentWindowAvailable()
+    );
   }
 
   private invalidateAgentRefs(current: NativeSession): void {
@@ -1629,7 +1634,10 @@ export class NativeBrowserGuestManager {
   private async createTab(current: NativeSession, url: string): Promise<void> {
     if (current.tabs.length >= MAX_NATIVE_BROWSER_TABS)
       throw new NativeBrowserAgentCommandError("tab_limit_reached");
-    const normalized = url === ABOUT_BLANK ? url : BrowserNavigateRequestSchema.parse({ url }).url;
+    const normalized =
+      url === ABOUT_BLANK
+        ? url
+        : NativeBrowserNavigateSchema.parse({ ...current.session, url }).url;
     await electronSession.fromPartition(current.partition).setProxy(this.proxy);
     if (this.sessions.get(current.key) !== current)
       throw new NativeBrowserAgentCommandError("session_not_found");
@@ -1677,13 +1685,18 @@ export class NativeBrowserGuestManager {
       });
     });
     contents.on("will-navigate", (event, url) => {
-      if (url !== ABOUT_BLANK && !isWebUrl(url)) event.preventDefault();
+      if (url !== ABOUT_BLANK && !isWebUrl(url) && !isLocalFileUrl(url)) event.preventDefault();
     });
     contents.on("will-redirect", (event, url) => {
       if (!isWebUrl(url)) event.preventDefault();
     });
     contents.on("will-frame-navigate", (event) => {
-      if (event.url !== ABOUT_BLANK && !isWebUrl(event.url)) event.preventDefault();
+      if (
+        event.url !== ABOUT_BLANK &&
+        !isWebUrl(event.url) &&
+        !(event.isMainFrame && isLocalFileUrl(event.url))
+      )
+        event.preventDefault();
     });
 
     const emit = () => {

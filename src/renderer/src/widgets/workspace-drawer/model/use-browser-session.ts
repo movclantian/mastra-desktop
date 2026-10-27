@@ -182,11 +182,6 @@ export function useBrowserSession(active: boolean) {
   React.useEffect(() => {
     if (!nativeBrowser) return;
     return nativeBrowser.onEvent((event) => {
-      if (event.type === "activate") {
-        if (event.resourceId === userId && event.threadId === activeThreadId)
-          useWorkbenchStore.getState().openWorkspacePanel("browser");
-        return;
-      }
       if (
         event.resourceId !== userId ||
         (config?.scope !== "shared" && event.threadId !== activeThreadId)

@@ -6,9 +6,20 @@ import {
 export function resolveBrowserOmniboxInput(
   rawInput: string,
   searchEngine: BrowserSearchEngine = "bing",
+  allowLocalFile = false,
 ): { kind: "navigate" | "search"; url: string } | null {
   const input = rawInput.trim();
   if (!input || input.length > 8_192) return null;
+
+  if (/^file:/i.test(input)) {
+    if (!allowLocalFile) return null;
+    try {
+      const url = new URL(input);
+      return url.protocol === "file:" && !url.hostname ? { kind: "navigate", url: url.href } : null;
+    } catch {
+      return null;
+    }
+  }
 
   const parseWebUrl = (value: string): URL | null => {
     try {
