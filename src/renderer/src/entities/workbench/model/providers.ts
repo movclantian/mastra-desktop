@@ -582,6 +582,7 @@ export async function testProviderModel(
       body: JSON.stringify({
         providerId: provider.id,
         modelId,
+        provider,
       }),
     });
     if (!response.ok) {

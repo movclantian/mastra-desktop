@@ -2,7 +2,11 @@ import { Agent } from "@mastra/core/agent";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
-import { agentMemberSchema } from "../../shared/agent-contract";
+import {
+  agentMemberSchema,
+  agentProfileDraftSchema,
+  agentProfilePatchSchema,
+} from "../../shared/agent-contract";
 import {
   AGENT_PROFILE_CONTEXT_KEY,
   createAgentProfile,
@@ -14,6 +18,7 @@ import {
   setAgentProfileCapabilities,
   setAgentProfileInstructions,
   unregisterProfileAgents,
+  updateAgentProfile,
 } from "../agents/custom";
 import { errorText, workError, workValidationError } from "../errors";
 import { resolveDefaultLanguageModel } from "../models/providers";
@@ -64,6 +69,24 @@ export const agentProfilesRoute = createRoute({
   },
 });
 
+export const updateAgentProfileRoute = createRoute({
+  path: "/work/agents/:agentId",
+  method: "PATCH",
+  responseType: "json",
+  onValidationError: workValidationError,
+  pathParamSchema: z.object({ agentId: z.string().min(1) }),
+  bodySchema: z
+    .object({ expectedUpdatedAt: z.string().min(1), patch: agentProfilePatchSchema })
+    .strict(),
+  handler: async ({ agentId, expectedUpdatedAt, patch, requestContext, mastra }) => {
+    const resourceId = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    const agent = await updateAgentProfile(agentId, expectedUpdatedAt, patch, resourceId, mastra);
+    if (agent.enabled) ensureProfileAgentsRegistered(mastra, agent, resourceId);
+    else unregisterProfileAgents(mastra, agentId, resourceId);
+    return { agent, effective: "next_run" };
+  },
+});
+
 export const agentProfileCapabilitiesRoute = createRoute({
   path: "/work/agents/:agentId/capabilities",
   method: "PUT",
@@ -72,7 +95,7 @@ export const agentProfileCapabilitiesRoute = createRoute({
   pathParamSchema: z.object({ agentId: z.string().trim().min(1) }),
   bodySchema: z
     .object({
-      skills: z.array(z.string().regex(/^pc_[a-f0-9]{32}$/)).max(2000),
+      skills: z.array(z.string().regex(/^(?:pc|local)_[a-f0-9]{32}$/)),
       mcpServers: z.array(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)).max(2000),
       memberId: z.string().min(1).optional(),
     })
@@ -160,19 +183,6 @@ export const deleteAgentProfileRoute = createRoute({
   },
 });
 
-const agentDraftSchema = z.object({
-  type: z.enum(["agent", "team"]),
-  displayName: z.string().trim().min(1),
-  profession: z.string(),
-  description: z.string(),
-  instructions: z.string().trim().min(1),
-  skills: z.array(z.string()).max(2000),
-  mcpServers: z.array(z.string()).max(2000),
-  members: z.array(agentMemberSchema),
-  tags: z.array(z.string()),
-  quickPrompts: z.array(z.string()),
-});
-
 export const assistAgentProfileRoute = createRoute({
   queryParamSchema: z.object({}).strict(),
   path: "/work/agents/assist",
@@ -210,7 +220,7 @@ export const assistAgentProfileRoute = createRoute({
         ...capabilityFields,
       }),
     );
-    const schema = agentDraftSchema.extend({
+    const schema = agentProfileDraftSchema.extend({
       type: z.literal(body.type),
       ...capabilityFields,
       members: body.type === "team" ? members.min(1) : members.max(0),

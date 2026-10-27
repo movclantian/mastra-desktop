@@ -843,12 +843,19 @@ export function resetWorkbenchStore(): void {
 export function useOpenBrowserUrl() {
   const navigate = useNavigate();
   const requestBrowserPanel = useWorkbenchStore((state) => state.requestBrowserPanel);
+  const lastKnownThreadId = useWorkbenchStore((state) => state.lastKnownThreadId);
   return useCallback(
     (url: string) => {
+      // Settings can be opened before a thread exists. The in-app browser is
+      // thread-scoped, so do not route that click to an empty /chat shell.
+      if (!lastKnownThreadId) {
+        void window.api.workspace.openExternal(url);
+        return;
+      }
       void navigate({ to: "/chat" });
       requestBrowserPanel(url);
     },
-    [navigate, requestBrowserPanel],
+    [lastKnownThreadId, navigate, requestBrowserPanel],
   );
 }
 

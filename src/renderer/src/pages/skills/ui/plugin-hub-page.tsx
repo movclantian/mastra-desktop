@@ -42,6 +42,7 @@ import type {
   MarketplaceSource,
   PluginChange,
   PluginConfigValue,
+  PluginSkill,
   PluginSource,
   PluginVersion,
 } from "../../../../../shared/plugin-contract";
@@ -379,6 +380,11 @@ export function PluginHubPage({
   const installed = useQuery({
     queryKey: ["plugins", user?.id],
     queryFn: () => pluginRequest<{ plugins: InstalledPlugin[] }>(""),
+    refetchInterval: tab === "installed" ? 10000 : false,
+  });
+  const managedSkills = useQuery({
+    queryKey: ["plugin-skills", user?.id],
+    queryFn: () => pluginRequest<{ skills: PluginSkill[] }>("/skills"),
   });
   const sources = useQuery({
     queryKey: ["plugin-sources", user?.id],
@@ -411,7 +417,7 @@ export function PluginHubPage({
   const invalidate = () =>
     queryClient.invalidateQueries({
       predicate: ({ queryKey }) =>
-        queryKey.some((key) => typeof key === "string" && /plugin|skill|mcp/i.test(key)),
+        queryKey.some((key) => typeof key === "string" && /plugin|skill|mcp|agent/i.test(key)),
     });
   const action = useMutation({
     mutationKey: ["plugin-action", user?.id],
@@ -499,7 +505,7 @@ export function PluginHubPage({
         action: diagnosis.action(`Plugin/MCP operation failed: ${error.message}`),
       }),
   });
-  const active = installed.data?.plugins.find(
+  const active = installed.data?.plugins?.find(
     (plugin) =>
       plugin.id === selection?.id ||
       (selection?.listing && plugin.listing?.id === selection.listing.id),
@@ -534,11 +540,11 @@ export function PluginHubPage({
   });
   const listingInstalled = new Map(
     installed.data?.plugins
-      .filter((plugin) => plugin.listing)
+      ?.filter((plugin) => plugin.listing)
       .map((plugin) => [plugin.listing?.id, plugin]),
   );
   const visiblePlugins =
-    installed.data?.plugins.filter(
+    installed.data?.plugins?.filter(
       (plugin) =>
         (filter === "plugins" ||
           plugin.current.components.some((component) => component.kind === filter)) &&
@@ -547,7 +553,7 @@ export function PluginHubPage({
           .includes(query),
     ) ?? [];
   const listings =
-    catalog.data?.listings.filter(
+    catalog.data?.listings?.filter(
       (listing) =>
         (componentFilter === "all" ||
           (
@@ -1023,10 +1029,25 @@ export function PluginHubPage({
                   <Switch
                     aria-label={`${t("plugins:enable")} ${server.name}`}
                     checked={server.enabled}
-                    disabled={nativeMcp.isPending || !!server.plugin}
-                    onCheckedChange={(enabled) =>
-                      nativeMcp.mutate(() => setMcpServerEnabled(server.id, enabled))
+                    disabled={
+                      nativeMcp.isPending ||
+                      (!!server.plugin &&
+                        (pluginBusy(server.plugin.id) ||
+                          !installed.data?.plugins?.find(
+                            (plugin) => plugin.id === server.plugin?.id,
+                          )?.enabled))
                     }
+                    onCheckedChange={(enabled) => {
+                      if (server.plugin) {
+                        action.mutate({
+                          path: `/${server.plugin.id}/enabled`,
+                          method: "PUT",
+                          body: { enabled, componentId: server.plugin.componentId },
+                        });
+                      } else {
+                        nativeMcp.mutate(() => setMcpServerEnabled(server.id, enabled));
+                      }
+                    }}
                   />
                   {server.oauth?.enabled ? (
                     <Button
@@ -1106,14 +1127,35 @@ export function PluginHubPage({
                     {plugin.current.components
                       .filter((component) => filter === "plugins" || component.kind === filter)
                       .map((component) => (
-                        <Badge
-                          className="max-w-full whitespace-normal break-all"
+                        <div
                           key={component.id}
-                          variant="outline"
+                          className="flex min-w-0 max-w-full items-center gap-2"
                         >
-                          {component.kind} · {component.name}
-                          {!component.supported ? ` · ${t("plugins:unsupported")}` : ""}
-                        </Badge>
+                          <Badge className="min-w-0 whitespace-normal break-all" variant="outline">
+                            {component.kind} · {component.name}
+                            {` · ${t(`plugins:runtimeStatus.${plugin.componentStatus?.[component.id]?.status ?? (component.supported ? "installed" : "unsupported")}`)}`}
+                          </Badge>
+                          {component.kind === "skill" ? (
+                            <Switch
+                              aria-label={`${t("plugins:enable")} ${component.name}`}
+                              checked={
+                                plugin.enabled && plugin.componentEnabled[component.id] !== false
+                              }
+                              disabled={
+                                !plugin.enabled ||
+                                !component.supported ||
+                                pluginBusy(plugin.id, plugin.listing)
+                              }
+                              onCheckedChange={(enabled) =>
+                                action.mutate({
+                                  path: `/${plugin.id}/enabled`,
+                                  method: "PUT",
+                                  body: { enabled, componentId: component.id },
+                                })
+                              }
+                            />
+                          ) : null}
+                        </div>
                       ))}
                   </div>
                   <Button
@@ -1130,6 +1172,45 @@ export function PluginHubPage({
             {!installed.isPending && !visiblePlugins.length ? (
               <p className="text-sm text-muted-foreground">{t("plugins:empty")}</p>
             ) : null}
+            {
+              <section className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
+                <h3 className="font-medium">{t("plugins:localSkills")}</h3>
+                <p className="text-xs text-muted-foreground">{t("plugins:localSkillsHint")}</p>
+                {managedSkills.isError ? (
+                  <p className="text-xs text-destructive">{t("common:error")}</p>
+                ) : null}
+                {managedSkills.data?.skills
+                  ?.filter((skill) => skill.pluginId === "local")
+                  .map((skill) => (
+                    <div
+                      key={skill.id}
+                      className="flex min-w-0 items-start gap-2 border-t pt-2 text-sm"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="break-words">{skill.displayName}</p>
+                        <p className="break-all text-xs text-muted-foreground">{skill.path}</p>
+                        <p className="break-words text-xs text-muted-foreground">
+                          {skill.description}
+                        </p>
+                      </div>
+                      <Switch
+                        aria-label={`${t("plugins:enable")} ${skill.displayName}`}
+                        checked={skill.enabled}
+                        disabled={pendingActions.some(
+                          (operation) => operation.path === `/skills/${skill.id}/enabled`,
+                        )}
+                        onCheckedChange={(enabled) =>
+                          action.mutate({
+                            path: `/skills/${skill.id}/enabled`,
+                            method: "PUT",
+                            body: { enabled },
+                          })
+                        }
+                      />
+                    </div>
+                  ))}
+              </section>
+            }
           </div>
         )}
       </ScrollArea>
@@ -1318,13 +1399,22 @@ export function PluginHubPage({
                       className="flex min-w-0 flex-col gap-2 rounded-md border p-3"
                     >
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        {active ? (
+                          <Badge variant="outline">
+                            {t(
+                              `plugins:runtimeStatus.${active.componentStatus?.[component.id]?.status ?? "installed"}`,
+                            )}
+                          </Badge>
+                        ) : null}
                         <span className="min-w-0 flex-1 break-words font-medium">
                           {component.name}
                         </span>
                         <Badge variant="outline">{component.kind}</Badge>
                         {active && component.supported ? (
                           <Switch
-                            checked={active.componentEnabled[component.id] !== false}
+                            checked={
+                              active.enabled && active.componentEnabled[component.id] !== false
+                            }
                             disabled={busy || !active.enabled}
                             aria-label={`${t("plugins:enable")} ${component.name}`}
                             onCheckedChange={(enabled) =>
@@ -1337,6 +1427,46 @@ export function PluginHubPage({
                           />
                         ) : null}
                       </div>
+                      {active?.componentStatus?.[component.id]?.detail ? (
+                        <p className="text-xs break-words text-muted-foreground">
+                          {active.componentStatus[component.id].detail}
+                        </p>
+                      ) : null}
+                      {active &&
+                      component.supported &&
+                      (component.lsp ||
+                        component.hooks?.length ||
+                        component.agent?.hooks?.length ||
+                        component.command?.hooks?.length ||
+                        /!`[^`]+`/.test(component.command?.instructions ?? "")) ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          className="self-start"
+                          onClick={async () => {
+                            const authorized =
+                              active.executionGrants?.[component.id] !== active.current.digest;
+                            if (authorized && !(await confirmAction(t("plugins:executionConsent"))))
+                              return;
+                            action.mutate({
+                              path: `/${active.id}/authorization`,
+                              method: "PUT",
+                              body: {
+                                componentId: component.id,
+                                digest: active.current.digest,
+                                authorized,
+                              },
+                            });
+                          }}
+                        >
+                          {t(
+                            active.executionGrants?.[component.id] === active.current.digest
+                              ? "plugins:revokeExecution"
+                              : "plugins:authorizeExecution",
+                          )}
+                        </Button>
+                      ) : null}
                       <p className="text-sm break-words text-muted-foreground">
                         {component.description}
                       </p>

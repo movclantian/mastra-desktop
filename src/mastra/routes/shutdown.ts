@@ -20,6 +20,7 @@ import { closeComputerConnections } from "../connections/computer";
 import { closeMcpConnections } from "../connections/mcp";
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { closeMemoryVector, settleAllMemory } from "../memory/memory-runtime";
+import { closePluginSessions } from "../plugins/hooks";
 import { closeLibraryVector, libraryIndexSignals } from "../rag/document/indexing";
 import { startStorageMaintenance } from "../storage/database";
 import { stopWorkspaceCleanup } from "../workspace/workspace-manager";
@@ -88,7 +89,6 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
   libraryIndexSignals.stop();
   await Promise.all([
     stopStorageMaintenance?.(),
-    stopWorkspaceCleanup(),
     mastra.stopWorkers({ drainTimeout: SHUTDOWN_FLUSH_TIMEOUT_MS }),
     mastra.backgroundTaskManager?.shutdown({ deadline: Date.now() + SHUTDOWN_FLUSH_TIMEOUT_MS }),
     ...Object.values(mastra.listAgentControllers()).map((controller) => controller.stopIntervals()),
@@ -98,6 +98,8 @@ async function drainAndClose(mastra: Mastra, signal: AbortSignal): Promise<void>
   await libraryIndexSignals.settled();
   // Worker/request preparation and pending notifications may have started a final run.
   await drainRuns(mastra, signal);
+  await closePluginSessions(signal);
+  await stopWorkspaceCleanup();
   await settleAllMemory();
   signal.throwIfAborted();
   await Promise.all([

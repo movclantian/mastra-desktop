@@ -7,13 +7,19 @@ import {
   type AgentMemberDefinition,
   type AgentProfile,
   agentMemberSchema,
+  agentProfileDraftSchema,
+  agentProfilePatchSchema,
   DEFAULT_AGENT_MEMBERS,
   DEFAULT_AGENT_PROFILE_ID,
   validateAgentTeam,
 } from "../../shared/agent-contract";
 import { workError } from "../errors";
-import { listPluginSkills } from "../plugins/registry";
-import { appStorage, getAppConfig, setAppConfig } from "../storage/database";
+import { pluginAgentProfiles, withPluginDelegates } from "../plugins/agents";
+import { onPluginInvalidation } from "../plugins/registry";
+import { listManagedSkills } from "../skills/local";
+import { appStorage, getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
+import { applicationOperationsSkill, applicationTool } from "../tools/application";
+import { getManagedSkillPaths } from "../workspace/workspace-manager";
 import { DEFAULT_WORK_INSTRUCTIONS } from "./agent-instructions";
 
 export const AGENT_PROFILE_CONTEXT_KEY = "mastra-work:agent-profile";
@@ -90,8 +96,9 @@ function normalizeProfile(raw: AgentProfileInput, now = new Date().toISOString()
 }
 
 export async function listAgentProfiles(resourceId?: string): Promise<AgentProfile[]> {
+  const plugins = await pluginAgentProfiles(resourceId);
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
-  if (!raw) return [structuredClone(DEFAULT_PROFILE)];
+  if (!raw) return [withPluginDelegates(structuredClone(DEFAULT_PROFILE), plugins), ...plugins];
   const profiles = z
     .array(z.unknown())
     .parse(JSON.parse(raw))
@@ -108,9 +115,13 @@ export async function listAgentProfiles(resourceId?: string): Promise<AgentProfi
       }
     });
   return [
-    profiles.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ??
-      structuredClone(DEFAULT_PROFILE),
+    withPluginDelegates(
+      profiles.find((profile) => profile.id === DEFAULT_AGENT_PROFILE_ID) ??
+        structuredClone(DEFAULT_PROFILE),
+      plugins,
+    ),
     ...profiles.filter((profile) => profile.id !== DEFAULT_AGENT_PROFILE_ID),
+    ...plugins,
   ];
 }
 
@@ -119,6 +130,12 @@ export async function getAgentProfile(
   resourceId?: string,
 ): Promise<AgentProfile> {
   const selectedId = id?.trim() || DEFAULT_AGENT_PROFILE_ID;
+  if (selectedId.startsWith("plugin-agent-")) {
+    const profile = (await pluginAgentProfiles(resourceId)).find((item) => item.id === selectedId);
+    if (!profile)
+      throw workError("VALIDATION_FAILED", { text: "Plugin Agent is disabled or unavailable" });
+    return profile;
+  }
   if (selectedId === DEFAULT_AGENT_PROFILE_ID) return (await listAgentProfiles(resourceId))[0];
   const raw = await getAppConfig(CONFIG_KEY, resourceId);
   const selected = raw
@@ -134,7 +151,15 @@ export async function getAgentProfile(
 }
 
 async function saveProfiles(profiles: AgentProfile[], resourceId?: string): Promise<void> {
-  await setAppConfig(CONFIG_KEY, JSON.stringify(profiles), resourceId);
+  await setAppConfig(
+    CONFIG_KEY,
+    JSON.stringify(
+      profiles
+        .filter((profile) => !profile.plugin)
+        .map(({ pluginAgentIds: _delegates, ...profile }) => profile),
+    ),
+    resourceId,
+  );
 }
 
 // Profiles share one per-user config record, so all read/modify/write operations share its lock.
@@ -155,7 +180,11 @@ async function withProfileWrite<T>(
   }
 }
 
-async function assertProfileIdle(mastra: Mastra, id: string, resourceId: string) {
+async function assertProfileIdle(
+  mastra: Pick<Mastra, "listAgents">,
+  id: string,
+  resourceId: string,
+) {
   const prefix = `${registrationToken(registrationScope(resourceId))}-${registrationToken(id)}-`;
   const agents = Object.values(mastra.listAgents()).filter(
     (agent) =>
@@ -206,7 +235,7 @@ export async function getAgentCapabilityCatalog(resourceId: string) {
   if (!resourceId?.trim()) throw workError("AUTH_REQUIRED");
   const { getMcpConfig, summarizeMcpServer } = await import("../connections/mcp");
   const [skills, config] = await Promise.all([
-    listPluginSkills(resourceId),
+    listManagedSkills(resourceId),
     getMcpConfig(resourceId),
   ]);
   const servers = await Promise.all(
@@ -279,8 +308,9 @@ export async function createAgentProfile(
 export async function deleteAgentProfile(
   id: string,
   resourceId: string,
-  mastra: Mastra,
+  mastra: Pick<Mastra, "listAgents">,
 ): Promise<void> {
+  assertEditableProfile(id);
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", { text: "默认 Agent 不可删除" });
   return withProfileWrite(resourceId, async () => {
@@ -299,6 +329,60 @@ export async function deleteAgentProfile(
   });
 }
 
+/** Persist a new profile version; running agents keep their immutable execution snapshot. */
+export async function updateAgentProfile(
+  id: string,
+  expectedUpdatedAt: string,
+  input: z.infer<typeof agentProfilePatchSchema>,
+  resourceId: string,
+  mastra: Pick<Mastra, "listAgents">,
+): Promise<AgentProfile> {
+  assertEditableProfile(id);
+  const patch = agentProfilePatchSchema.parse(input);
+  return withProfileWrite(resourceId, async () => {
+    const profiles = await listAgentProfiles(resourceId);
+    const current = profiles.find((profile) => profile.id === id);
+    if (!current) throw workError("VALIDATION_FAILED", { text: "Agent not found" });
+    if (current.updatedAt !== expectedUpdatedAt)
+      throw workError("VALIDATION_FAILED", {
+        text: "Agent changed; read the latest profile before updating",
+      });
+    if (
+      id === DEFAULT_AGENT_PROFILE_ID &&
+      (patch.type !== undefined ||
+        patch.members !== undefined ||
+        patch.skills !== undefined ||
+        patch.mcpServers !== undefined ||
+        patch.enabled === false)
+    )
+      throw workError("VALIDATION_FAILED", {
+        text: "The default Agent's roster and global capabilities are managed by the application",
+      });
+    if (patch.enabled === false) await assertProfileIdle(mastra, id, resourceId);
+    const next = normalizeProfile({
+      ...current,
+      ...patch,
+      name: patch.displayName ?? current.name,
+      updatedAt: new Date(Math.max(Date.now(), Date.parse(current.updatedAt) + 1)).toISOString(),
+    });
+    validateAgentTeam(next);
+    const catalog = await getAgentCapabilityCatalog(resourceId);
+    validateProfileCapabilities(next, catalog, current);
+    for (const member of next.members)
+      validateProfileCapabilities(
+        member,
+        catalog,
+        current.members.find((previous) => previous.id === member.id),
+      );
+    await saveProfiles(
+      profiles.map((profile) => (profile.id === id ? next : profile)),
+      resourceId,
+    );
+    // shortcut: retain old registered versions for in-flight delegations; reclaim on idle if frequent live edits grow the registry.
+    return next;
+  });
+}
+
 export async function setAgentProfileCapabilities(
   id: string,
   skills: string[],
@@ -307,6 +391,7 @@ export async function setAgentProfileCapabilities(
   resourceId: string,
   mastra: Mastra,
 ): Promise<AgentProfile> {
+  assertEditableProfile(id);
   if (id === DEFAULT_AGENT_PROFILE_ID)
     throw workError("VALIDATION_FAILED", {
       text: "The default Agent uses all enabled skills and MCP servers",
@@ -334,6 +419,7 @@ export async function setAgentProfileInstructions(
   resourceId: string,
   mastra: Mastra,
 ): Promise<AgentProfile> {
+  assertEditableProfile(id);
   if (id === DEFAULT_AGENT_PROFILE_ID && memberId) {
     throw workError("VALIDATION_FAILED", {
       text: "The default Agent's built-in subagents are managed by the system",
@@ -354,6 +440,38 @@ export async function setAgentProfileInstructions(
 }
 
 type ProfileAgentFactory = (profile: AgentProfile, resourceScope?: string) => Agent;
+
+function assertEditableProfile(id: string) {
+  if (id.startsWith("plugin-agent-"))
+    throw workError("VALIDATION_FAILED", { text: "Manage this Agent in its owning plugin" });
+}
+
+export async function resolvePluginDelegates(
+  profile: AgentProfile,
+  resourceId?: string,
+  registry?: AgentRegistry,
+): Promise<Record<string, Agent>> {
+  if (!profile.pluginAgentIds?.length || !resourceId) return {};
+  if (!registry) throw new Error("Plugin delegation requires the native Mastra registry");
+  const result: Record<string, Agent> = {};
+  for (const target of await pluginAgentProfiles(resourceId)) {
+    if (!profile.pluginAgentIds.includes(target.id)) continue;
+    result[target.id] = ensureProfileAgentsRegistered(registry, target, resourceId).profile;
+  }
+  return result;
+}
+
+onPluginInvalidation((owner) => {
+  for (const [key, cached] of registeredProfiles) {
+    if (cached.owner !== owner || !cached.pluginId) continue;
+    for (const run of cached.registration.profile.listActiveThreadRuns())
+      cached.registration.profile.abortThreadStream({ ...run, clearPendingSignals: true });
+    cached.registry.removeAgent(cached.registration.profileKey);
+    for (const memberKey of Object.values(cached.registration.memberKeys))
+      cached.registry.removeAgent(memberKey);
+    registeredProfiles.delete(key);
+  }
+});
 type MemberAgentFactory = (
   profile: AgentProfile,
   member: AgentMemberDefinition,
@@ -443,7 +561,13 @@ export interface RegisteredProfileAgents {
 
 const registeredProfiles = new Map<
   string,
-  { updatedAt: string; registration: RegisteredProfileAgents }
+  {
+    updatedAt: string;
+    registration: RegisteredProfileAgents;
+    registry: AgentRegistry;
+    owner?: string;
+    pluginId?: string;
+  }
 >();
 
 /** Registration has no await boundary: factories and native registry writes are synchronous. */
@@ -478,7 +602,13 @@ export function ensureProfileAgentsRegistered(
   registry.addAgent(profileAgent, profileKey);
   for (const [id, agent] of Object.entries(members)) registry.addAgent(agent, memberKeys[id]);
   const registration = { profile: profileAgent, members, profileKey, memberKeys };
-  registeredProfiles.set(profileKey, { updatedAt: profile.updatedAt, registration });
+  registeredProfiles.set(profileKey, {
+    updatedAt: profile.updatedAt,
+    registration,
+    registry,
+    owner: resourceScope,
+    pluginId: profile.plugin?.pluginId,
+  });
   return registration;
 }
 
@@ -503,19 +633,134 @@ export async function resolveManagedSkillPaths(
 ): Promise<string[]> {
   const requested = names ? new Set(names) : undefined;
   if (requested?.size === 0) return [];
-  return (await listPluginSkills(resourceId))
+  return (await listManagedSkills(resourceId))
     .filter((skill) => skill.enabled && (!requested || requested.has(skill.id)))
     .map((skill) => skill.path);
 }
 
-/** Read an explicitly activated managed skill through the native skill resolver. */
-export async function loadManagedSkill(name: string, resourceId?: string) {
-  const skill = (await listPluginSkills(resourceId)).find(
-    (item) => item.id === name && item.enabled,
-  );
-  if (!skill) throw workError("VALIDATION_FAILED", { text: "所选技能不存在或已停用，请重新选择" });
-  const resolved = await resolveAgentSkills([skill.path]).get(skill.name);
-  if (!resolved)
-    throw workError("VALIDATION_FAILED", { text: `无法读取所选技能：${skill.displayName}` });
-  return { ...resolved, displayName: skill.displayName };
+export async function resolveWorkSkillInputs(
+  requestContext?: { get(key: string): unknown },
+  profile?: AgentProfile,
+  member?: AgentMemberDefinition,
+) {
+  const owner = userIdFromContext(requestContext);
+  const configured =
+    !profile || profile.id === DEFAULT_AGENT_PROFILE_ID
+      ? await getManagedSkillPaths(owner)
+      : await resolveManagedSkillPaths(member?.skills ?? profile.skills, owner);
+  const selected = requestContext?.get("mastra-work:selected-skills");
+  const selectedPaths =
+    !member && !profile?.plugin && Array.isArray(selected)
+      ? await resolveManagedSkillPaths(
+          selected.filter((name): name is string => typeof name === "string"),
+          owner,
+        )
+      : [];
+  return [applicationOperationsSkill, ...new Set([...configured, ...selectedPaths])];
 }
+
+/** Discover once for all selections; native resolvers still own instruction loading. */
+export async function loadManagedSkills(names: string[], resourceId?: string) {
+  if (!names.length) return [];
+  const available = new Map(
+    (await listManagedSkills(resourceId)).map((skill) => [skill.id, skill]),
+  );
+  return Promise.all(
+    [...new Set(names)].map(async (name) => {
+      const skill = available.get(name);
+      if (!skill?.enabled)
+        throw workError("VALIDATION_FAILED", { text: "所选技能不存在或已停用，请重新选择" });
+      const resolved = await resolveAgentSkills([skill.path]).get(skill.name);
+      if (!resolved)
+        throw workError("VALIDATION_FAILED", { text: `无法读取所选技能：${skill.displayName}` });
+      return { ...resolved, displayName: skill.displayName };
+    }),
+  );
+}
+
+const applicationAgentId = z.string().trim().min(1).max(256);
+const applicationAgentTools = [
+  applicationTool({
+    id: "app_read_agents",
+    domain: "agents",
+    description:
+      "List persistent Agents/Teams and real Skill/MCP capability IDs, or read one complete profile before editing it. Names are not IDs. Plugin-owned Agents are edited through their plugin.",
+    inputSchema: z.object({ agentId: applicationAgentId.optional() }).strict(),
+    execute: async ({ agentId }, { resourceId }) => {
+      const profiles = await listAgentProfiles(resourceId);
+      if (agentId) {
+        const profile = profiles.find((item) => item.id === agentId);
+        if (!profile) throw new Error("Agent not found");
+        return { profile, capabilities: await getAgentCapabilityCatalog(resourceId) };
+      }
+      return {
+        agents: profiles.map((profile) => ({
+          id: profile.id,
+          name: profile.displayName,
+          type: profile.type,
+          description: profile.description,
+          enabled: profile.enabled,
+          updatedAt: profile.updatedAt,
+          memberCount: profile.members.length,
+          pluginId: profile.plugin?.pluginId,
+        })),
+        capabilities: await getAgentCapabilityCatalog(resourceId),
+      };
+    },
+  }),
+  applicationTool({
+    id: "app_manage_agent_create",
+    domain: "agents",
+    description:
+      "Create a persistent Agent or Team with real Skill/MCP bindings. Team member IDs must be unique and delegation must be acyclic. Query the capability catalog first. This is not temporary subagent execution.",
+    inputSchema: agentProfileDraftSchema,
+    execute: async (input, { resourceId, mastra }) => {
+      if (!mastra) throw new Error("Mastra execution context is unavailable");
+      const profile = await createAgentProfile({ ...input, name: input.displayName }, resourceId);
+      ensureProfileAgentsRegistered(mastra, profile, resourceId);
+      return { profile, effective: "next_run" };
+    },
+  }),
+  applicationTool({
+    id: "app_manage_agent_update",
+    domain: "agents",
+    description:
+      "Update an Agent/Team's instructions, skill/MCP bindings, members, delegation graph or enabled state. Read the full profile first and supply expectedUpdatedAt. Arrays replace the old array, so preserve members you did not intend to remove. New configuration applies to subsequent runs; disabling a busy Agent is rejected.",
+    inputSchema: z
+      .object({
+        agentId: applicationAgentId,
+        expectedUpdatedAt: z.string().min(1),
+        patch: agentProfilePatchSchema,
+      })
+      .strict(),
+    execute: async ({ agentId, expectedUpdatedAt, patch }, { resourceId, mastra }) => {
+      if (!mastra) throw new Error("Mastra execution context is unavailable");
+      const profile = await updateAgentProfile(
+        agentId,
+        expectedUpdatedAt,
+        patch,
+        resourceId,
+        mastra,
+      );
+      if (profile.enabled) ensureProfileAgentsRegistered(mastra, profile, resourceId);
+      else unregisterProfileAgents(mastra, profile.id, resourceId);
+      return { profile, effective: "next_run" };
+    },
+  }),
+  applicationTool({
+    id: "app_delete_agent",
+    domain: "agents",
+    description:
+      "Delete an owned persistent Agent/Team when requested. Refuses the built-in default, plugin-owned agents and agents with active/suspended work. This does not delete conversation history.",
+    inputSchema: z.object({ agentId: applicationAgentId }).strict(),
+    execute: async ({ agentId }, { resourceId, mastra }) => {
+      if (!mastra) throw new Error("Mastra execution context is unavailable");
+      await deleteAgentProfile(agentId, resourceId, mastra);
+      unregisterProfileAgents(mastra, agentId, resourceId);
+      return { deleted: true, agentId };
+    },
+  }),
+];
+export const agentApplicationTools = Object.fromEntries(
+  applicationAgentTools.map((tool) => [tool.id, tool]),
+);

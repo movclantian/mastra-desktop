@@ -60,7 +60,8 @@ export function AgentProfileDetails({
   const selected = member ?? profile;
   // The default Agent's Explorer/Reviewer are prebuilt agents; their role prompts
   // are system-managed even though they appear in the team roster.
-  const canEditInstructions = !(profile.id === DEFAULT_AGENT_PROFILE_ID && member);
+  const canEditInstructions =
+    !profile.plugin && !(profile.id === DEFAULT_AGENT_PROFILE_ID && member);
   const name = member?.name ?? profile.displayName;
   const roster = [
     { id: null, name: profile.displayName, profession: profile.profession },
@@ -125,7 +126,7 @@ export function AgentProfileDetails({
           </p>
           {!canEditInstructions ? (
             <p className="text-xs text-muted-foreground">
-              {t("agentHub:builtinMemberInstructions")}
+              {t(profile.plugin ? "plugins:managedAgent" : "agentHub:builtinMemberInstructions")}
             </p>
           ) : null}
           <AgentInstructionsEditor
@@ -157,7 +158,7 @@ export function AgentProfileDetails({
             key={member?.id ?? profile.id}
             profile={profile}
             memberId={member?.id}
-            onSaved={onSaved}
+            onSaved={profile.plugin ? undefined : onSaved}
           />
           {member ? (
             <>

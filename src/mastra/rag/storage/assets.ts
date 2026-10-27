@@ -10,6 +10,12 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { TABLE_THREADS } from "@mastra/core/storage";
 import { nanoid } from "nanoid";
+import { z } from "zod";
+import {
+  MAX_TEXT_DOCUMENT_BYTES,
+  TextDocumentFilenameSchema,
+} from "../../../shared/workspace-contract";
+import { workError } from "../../errors";
 import { getStorageDirectory } from "../../storage/database";
 import {
   deleteAssetVectors,
@@ -52,6 +58,83 @@ type AssetUploadMetadata = {
   draftId?: string;
   local?: boolean;
 };
+
+export const libraryDocumentInputSchema = z
+  .object({
+    filename: TextDocumentFilenameSchema,
+    content: z
+      .string()
+      .min(1)
+      .max(MAX_TEXT_DOCUMENT_BYTES)
+      .refine(
+        (text) =>
+          !text.includes("\0") && Buffer.byteLength(text, "utf8") <= MAX_TEXT_DOCUMENT_BYTES,
+        "Document must be UTF-8 text up to 1 MiB without NUL characters",
+      ),
+    folderId: z.string().min(1).max(256).nullable(),
+  })
+  .strict();
+export const libraryDocumentVersionSchema = libraryDocumentInputSchema.extend({
+  sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
+});
+
+export async function readEditableDocument(resourceId: string, assetId: string) {
+  const source = await getAssetFile(resourceId, assetId);
+  if (!source) throw workError("LIBRARY_ASSET_NOT_FOUND");
+  if (
+    !/\.(?:md|markdown|txt|csv)$/i.test(source.asset.filename) ||
+    source.asset.byteSize > MAX_TEXT_DOCUMENT_BYTES
+  )
+    throw workError("VALIDATION_FAILED", {
+      text: "Only UTF-8 Markdown, text and CSV files up to 1 MiB can be edited",
+    });
+  const bytes = await readBoundedFile(source.path, MAX_TEXT_DOCUMENT_BYTES);
+  let content: string;
+  try {
+    content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw workError("VALIDATION_FAILED", { text: "Document is not valid UTF-8 text" });
+  }
+  if (content.includes("\0"))
+    throw workError("VALIDATION_FAILED", { text: "Binary content cannot be edited as text" });
+  return {
+    content,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    filename: source.asset.filename,
+  };
+}
+
+export async function createLibraryDocument(
+  resourceId: string,
+  input: z.infer<typeof libraryDocumentInputSchema>,
+) {
+  const document = libraryDocumentInputSchema.parse(input);
+  return uploadAssetFromBytes({
+    resourceId,
+    filename: document.filename,
+    bytes: Buffer.from(document.content, "utf8"),
+    folderId: document.folderId ?? undefined,
+  });
+}
+
+/** New versions never overwrite the bytes or references of historical attachments. */
+export async function saveLibraryDocumentVersion(
+  resourceId: string,
+  assetId: string,
+  input: z.infer<typeof libraryDocumentVersionSchema>,
+) {
+  const document = libraryDocumentVersionSchema.parse(input);
+  const source = await readEditableDocument(resourceId, assetId);
+  if (source.sha256 !== document.sourceSha256)
+    throw workError("VALIDATION_FAILED", {
+      text: "Source document changed. Reload it before saving a new version.",
+    });
+  return createLibraryDocument(resourceId, {
+    filename: document.filename,
+    content: document.content,
+    folderId: document.folderId,
+  });
+}
 
 export async function uploadAssetFromFile(
   input: AssetUploadMetadata & { filePath: string; byteSize: number; sha256?: string },

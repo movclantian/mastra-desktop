@@ -31,7 +31,9 @@ import {
 import { z } from "zod";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../shared/agent-contract";
 import { MODE_ID_CONTEXT_KEY, PLAN_FILE_PATH_PATTERN } from "../agents/permissions";
-import { listPluginSkills } from "../plugins/registry";
+import { onPluginInvalidation, recordPluginStatus } from "../plugins/registry";
+import { pluginLspServers, requirePluginBinding } from "../plugins/runtime";
+import { enabledLocalSkillPaths, expandSkillPath, listManagedSkills } from "../skills/local";
 import {
   appStorage,
   clampInt,
@@ -509,7 +511,8 @@ export function ensureDirectory(path: string): void {
 
 /** Return enabled managed skill directories for a request-scoped Workspace. */
 export async function getManagedSkillPaths(resourceId?: string): Promise<string[]> {
-  return (await listPluginSkills(resourceId))
+  if (!resourceId) return [];
+  return (await listManagedSkills(resourceId))
     .filter((skill) => skill.enabled)
     .map((skill) => skill.path);
 }
@@ -558,6 +561,7 @@ export async function getThreadWorkspace(
       }
     }
 
+    const pluginLsp = await pluginLspServers(resourceId, workspacePath, config.sandboxEnabled);
     const filesystem = createWorkspaceFilesystem(workspacePath, config, resourceId, threadId);
     const changeHooks = createWorkspaceChangeHooks(filesystem);
     const outputArchive = createWorkspaceOutputArchiveHooks();
@@ -576,6 +580,13 @@ export async function getThreadWorkspace(
     };
     workspaceTools.hooks = {
       beforeToolCall: async (params) => {
+        for (const binding of pluginLsp.bindings) {
+          const { plugin } = await requirePluginBinding(binding, resourceId);
+          if (plugin.executionGrants?.[binding.componentId] !== binding.digest)
+            throw new Error(
+              "Plugin LSP authorization was revoked; wait for the current run to finish",
+            );
+        }
         const context = params.context as ToolExecutionContext | undefined;
         const controller = context?.requestContext?.get("controller") as
           | AgentControllerRequestContext
@@ -606,6 +617,36 @@ export async function getThreadWorkspace(
         await outputArchive.hooks.beforeToolCall?.(params);
       },
       afterToolCall: async (params) => {
+        if (params.workspaceToolName === WORKSPACE_TOOLS.LSP.LSP_INSPECT && resourceId) {
+          const failed =
+            !!params.error || !!(params.output as { error?: unknown } | undefined)?.error;
+          const file = (params.input as { path?: unknown })?.path;
+          const output = params.output as Record<string, unknown> | undefined;
+          const observed =
+            failed ||
+            (!!output &&
+              ["hover", "definition", "implementation", "diagnostics"].some(
+                (key) => output[key] != null,
+              ));
+          for (const binding of pluginLsp.bindings.filter(
+            (binding) =>
+              observed &&
+              typeof file === "string" &&
+              Object.values(pluginLsp.servers).some(
+                (server) =>
+                  server.id.startsWith(`${binding.componentId}-`) &&
+                  server.extensions.some((extension) => file.endsWith(extension)),
+              ),
+          ))
+            recordPluginStatus(
+              resourceId,
+              binding,
+              failed ? "failed" : "ready",
+              failed
+                ? "Workspace LSP inspection failed; check the language server executable"
+                : undefined,
+            );
+        }
         await changeHooks.afterToolCall?.(params);
         await outputArchive.hooks.afterToolCall?.(params);
       },
@@ -618,17 +659,19 @@ export async function getThreadWorkspace(
         })
       : undefined;
     const bm25 = config.bm25 ? { k1: config.bm25K1, b: config.bm25B } : undefined;
-    const lsp = config.lsp
-      ? {
-          root: workspacePath,
-          diagnosticTimeout: config.lspDiagnosticTimeoutMs,
-          initTimeout: config.lspInitTimeoutMs,
-          maxOpenClients: config.lspMaxOpenClients,
-          disableServers: config.lspDisableServers,
-          binaryOverrides: config.lspBinaryOverrides,
-          searchPaths: config.lspSearchPaths,
-        }
-      : undefined;
+    const lsp =
+      config.lsp || pluginLsp.bindings.length
+        ? {
+            servers: pluginLsp.servers,
+            root: workspacePath,
+            diagnosticTimeout: config.lspDiagnosticTimeoutMs,
+            initTimeout: config.lspInitTimeoutMs,
+            maxOpenClients: config.lspMaxOpenClients,
+            disableServers: config.lspDisableServers,
+            binaryOverrides: config.lspBinaryOverrides,
+            searchPaths: config.lspSearchPaths,
+          }
+        : undefined;
     const workspaceConfig: ConstructorParameters<typeof Workspace>[0] = {
       id: `mastra-work:${cacheKey}`,
       name: "MastraWork Workspace",
@@ -638,7 +681,11 @@ export async function getThreadWorkspace(
       ...(lsp ? { lsp } : {}),
       tools: workspaceTools,
       skillSource: new LocalSkillSource({ basePath: workspacePath }),
-      skills: config.skillsPaths,
+      skills: () =>
+        enabledLocalSkillPaths(
+          config.skillsPaths.map((path) => expandSkillPath(path, workspacePath)),
+          resourceId,
+        ),
       ...(config.autoIndexPaths.length ? { autoIndexPaths: config.autoIndexPaths } : {}),
     };
     const workspace = new Workspace(workspaceConfig) as Workspace;
@@ -652,6 +699,13 @@ export async function getThreadWorkspace(
     return workspace;
   });
 }
+
+onPluginInvalidation(async (owner) => {
+  const runtime = getRuntime(owner);
+  // Shut down old executables immediately; busy workspaces cannot restart them through guarded tools.
+  await Promise.all([...runtime.cache.values()].map((entry) => entry.workspace.lsp?.shutdownAll()));
+  await invalidateWorkspaceInstances(owner);
+});
 
 /**
  * 线程删除时清理物理工作区与内存实例:

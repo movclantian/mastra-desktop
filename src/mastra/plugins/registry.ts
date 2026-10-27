@@ -21,7 +21,9 @@ import { pluginCredentialPurpose } from "../../shared/credential-contract";
 import {
   type InstalledPlugin,
   type MarketplaceListing,
+  type PluginBinding,
   type PluginComponent,
+  type PluginComponentStatus,
   type PluginConfigValue,
   type PluginSkill,
   type PluginSource,
@@ -33,10 +35,9 @@ import {
 import { deleteCredential, resolveCredential, storeCredential } from "../credential-broker";
 import { workError } from "../errors";
 import { getLibsqlClient, getStorageDirectory } from "../storage/database";
+import { claudePackageManifest, describePackage } from "./components";
 import {
   archiveFiles,
-  claudePackageManifest,
-  describePackage,
   directoryFiles,
   MAX_PACKAGE_BYTES,
   type PackageFiles,
@@ -47,6 +48,125 @@ import {
   selectPackageRoot,
   withinRoot,
 } from "./packages";
+
+const observations = new Map<string, { binding: PluginBinding; value: PluginComponentStatus }>();
+const running = new Map<string, Set<AbortController>>();
+const invalidators = new Set<(owner: string, pluginId: string) => void | Promise<void>>();
+export function onPluginInvalidation(
+  callback: (owner: string, pluginId: string) => void | Promise<void>,
+) {
+  invalidators.add(callback);
+}
+export function pluginBinding(plugin: InstalledPlugin, component: PluginComponent): PluginBinding {
+  return {
+    pluginId: plugin.id,
+    componentId: component.id,
+    digest: plugin.current.digest,
+    revision: plugin.configuration?.revision,
+  };
+}
+const keyOf = (owner: string, binding: PluginBinding) =>
+  `${owner}\0${binding.pluginId}\0${binding.componentId}`;
+export function recordPluginStatus(
+  owner: string,
+  binding: PluginBinding,
+  status: PluginComponentStatus["status"],
+  detail?: string,
+) {
+  observations.set(keyOf(owner, binding), {
+    binding,
+    value: { status, detail, checkedAt: new Date().toISOString() },
+  });
+}
+export function needsPluginExecutionConsent(component: PluginComponent): boolean {
+  return Boolean(
+    component.lsp ||
+      component.hooks?.length ||
+      component.agent?.hooks?.length ||
+      component.command?.hooks?.length ||
+      /!`[^`]+`/.test(component.command?.instructions ?? ""),
+  );
+}
+export function pluginStatuses(
+  plugin: InstalledPlugin,
+  owner: string,
+): Record<string, PluginComponentStatus> {
+  return Object.fromEntries(
+    plugin.current.components.map((component) => {
+      const binding = pluginBinding(plugin, component);
+      const observed = observations.get(keyOf(owner, binding));
+      const required = [
+        ...(component.agent?.skills ?? []).map((name) => ({ kind: "skill", name })),
+        ...(component.agent?.mcpServers ?? []).map((name) => ({ kind: "mcp", name })),
+        ...(
+          component.agent?.delegates ?? (component.command?.agent ? [component.command.agent] : [])
+        ).map((name) => ({ kind: "agents", name })),
+      ];
+      const missing = required.filter(
+        ({ kind, name }) =>
+          !plugin.current.components.some(
+            (item) =>
+              item.kind === kind &&
+              item.name === name &&
+              item.supported &&
+              plugin.componentEnabled[item.id] !== false,
+          ),
+      );
+      const value: PluginComponentStatus = !component.supported
+        ? { status: "unsupported", detail: component.issues.join("; ") }
+        : !plugin.enabled || plugin.componentEnabled[component.id] === false
+          ? { status: "disabled" }
+          : plugin.configurationErrors?.length || plugin.dependencyErrors?.length || missing.length
+            ? {
+                status: "needs-configuration",
+                detail: [
+                  ...(plugin.configurationErrors ?? []),
+                  ...(plugin.dependencyErrors ?? []),
+                  ...missing.map(({ name }) => `Required component is unavailable: ${name}`),
+                ].join("; "),
+              }
+            : needsPluginExecutionConsent(component) &&
+                plugin.executionGrants?.[component.id] !== plugin.current.digest
+              ? { status: "needs-authorization" }
+              : observed && JSON.stringify(observed.binding) === JSON.stringify(binding)
+                ? observed.value
+                : { status: "installed" };
+      return [component.id, value];
+    }),
+  );
+}
+export async function invalidatePluginRuntime(owner: string, pluginId: string) {
+  const prefix = `${owner}\0`;
+  for (const [key, controllers] of running)
+    if (key.startsWith(prefix))
+      for (const controller of controllers)
+        controller.abort(new Error("Plugin changed or was disabled"));
+  for (const key of observations.keys()) if (key.startsWith(prefix)) observations.delete(key);
+  await Promise.all([...invalidators].map((callback) => callback(owner, pluginId)));
+}
+export function trackPluginOperation(
+  owner: string,
+  binding: PluginBinding,
+  timeout: number,
+  signal?: AbortSignal,
+) {
+  const key = keyOf(owner, binding);
+  const controller = new AbortController();
+  const controllers = running.get(key) ?? new Set<AbortController>();
+  controllers.add(controller);
+  running.set(key, controllers);
+  return {
+    signal: AbortSignal.any([
+      controller.signal,
+      AbortSignal.timeout(timeout * 1000),
+      ...(signal ? [signal] : []),
+    ]),
+    dispose() {
+      controllers.delete(controller);
+      if (!controllers.size) running.delete(key);
+    },
+  };
+}
 
 let tableReady: Promise<void> | undefined;
 async function database() {
@@ -87,7 +207,9 @@ export async function listInstalledPlugins(owner?: string): Promise<InstalledPlu
     sql: "SELECT record FROM installed_plugins WHERE owner = ? ORDER BY id",
     args: [ownerKey(owner)],
   });
-  return evaluatePlugins(rows.rows.map((row) => JSON.parse(String(row.record)) as InstalledPlugin));
+  return evaluatePlugins(
+    rows.rows.map((row) => JSON.parse(String(row.record)) as InstalledPlugin),
+  ).map((plugin) => ({ ...plugin, componentStatus: pluginStatuses(plugin, ownerKey(owner)) }));
 }
 
 export async function getInstalledPlugin(
@@ -355,7 +477,17 @@ async function preparePluginStorage(owner: string): Promise<void> {
             await rm(withinRoot(versions, entry.name), { recursive: true, force: true });
       }
       const { recoverPluginMcp } = await import("../connections/mcp");
-      for (const plugin of plugins.values()) await writeSkillEntries(plugin, owner);
+      for (const plugin of plugins.values()) {
+        const files = await directoryFiles(join(pluginVersionDirectory(plugin, owner), "source"));
+        plugin.current = {
+          ...describePackage(files, plugin.id, plugin.listing),
+          digest: plugin.current.digest,
+          revision: plugin.current.revision,
+          installedAt: plugin.current.installedAt,
+        };
+        await saveRecord(plugin, owner);
+        await writeSkillEntries(plugin, owner, files);
+      }
       await recoverPluginMcp(evaluatePlugins([...plugins.values()]), owner);
     })().catch((error) => {
       preparedOwners.delete(owner);
@@ -376,6 +508,7 @@ async function saveRecord(plugin: InstalledPlugin, owner: string): Promise<void>
   const {
     dependencyErrors: _dependencies,
     configurationErrors: _configuration,
+    componentStatus: _status,
     ...record
   } = plugin;
   await (await database()).execute({
@@ -661,6 +794,7 @@ async function activateRecord(
     } else await removePluginMcp(next.id, owner, true);
     throw error;
   }
+  await invalidatePluginRuntime(owner, next.id);
   const kept = new Set([
     next.configuration?.secretCredential?.credentialRef,
     next.pendingConfiguration?.configuration.secretCredential?.credentialRef,
@@ -739,7 +873,9 @@ export async function setPluginEnabled(
     if (!current) throw new Error("Plugin not found");
     if (
       componentId &&
-      !current.current.components.some((component) => component.id === componentId)
+      !current.current.components.some(
+        (component) => component.id === componentId && (!enabled || component.supported),
+      )
     )
       throw new Error("Plugin component not found");
     const next = {
@@ -747,6 +883,33 @@ export async function setPluginEnabled(
       ...(componentId
         ? { componentEnabled: { ...current.componentEnabled, [componentId]: enabled } }
         : { enabled }),
+      updatedAt: new Date().toISOString(),
+    };
+    await activateRecord(next, current, owner);
+    return next;
+  });
+}
+
+export async function authorizePluginComponent(
+  id: string,
+  componentId: string,
+  digest: string,
+  authorized: boolean,
+  owner: string,
+) {
+  return withPluginOperation(owner, id, async () => {
+    const current = await getInstalledPlugin(id, owner);
+    const component = current?.current.components.find((item) => item.id === componentId);
+    if (
+      !current ||
+      current.current.digest !== digest ||
+      !component?.supported ||
+      !needsPluginExecutionConsent(component)
+    )
+      throw new Error("Plugin component changed or does not require execution consent");
+    const next = {
+      ...current,
+      executionGrants: { ...current.executionGrants, [componentId]: authorized ? digest : "" },
       updatedAt: new Date().toISOString(),
     };
     await activateRecord(next, current, owner);
@@ -769,6 +932,7 @@ export async function listPluginSkills(owner?: string): Promise<PluginSkill[]> {
               description: component.description,
               path: join(skillDirectory(plugin, owner), component.runtimeName),
               enabled: pluginComponentEnabled(plugin, component),
+              userInvocable: component.userInvocable,
             },
           ]
         : [],
@@ -837,11 +1001,14 @@ export async function updatePlugin(
   expectedDigest: string,
   ownerInput?: string,
   uploadedFiles?: PackageFiles,
+  expectedCurrentDigest?: string,
 ): Promise<InstalledPlugin> {
   const owner = ownerKey(ownerInput);
   return withPluginOperation(owner, id, async () => {
     const plugin = await getInstalledPlugin(id, owner);
     if (!plugin) throw new Error("Plugin not found");
+    if (expectedCurrentDigest && plugin.current.digest !== expectedCurrentDigest)
+      throw new Error("Installed plugin changed; read its current digest before replacing it");
     if (uploadedFiles && plugin.source.kind !== "upload")
       throw new Error("ZIP replacement is only available for ZIP imports");
     const candidate = uploadedFiles

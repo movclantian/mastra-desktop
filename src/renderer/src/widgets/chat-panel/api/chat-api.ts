@@ -30,7 +30,9 @@ export function fetchChatSkills<T>(): Promise<T[]> {
     i18n.t("chat:api.loadSkillsFailed"),
   ).then((payload) =>
     (payload.skills ?? []).filter(
-      (skill) => (skill as T & { enabled?: boolean }).enabled !== false,
+      (skill) =>
+        (skill as T & { enabled?: boolean }).enabled !== false &&
+        (skill as T & { userInvocable?: boolean }).userInvocable !== false,
     ),
   );
 }

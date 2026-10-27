@@ -4,6 +4,7 @@ import type {
   ToolCategory,
 } from "@mastra/core/agent-controller";
 import { z } from "zod";
+import type { PluginBinding } from "./plugin-contract";
 
 export interface MemoryProfile {
   workingMemory: string | null;
@@ -26,6 +27,21 @@ export interface MemoryProfile {
 }
 
 export const DEFAULT_AGENT_PROFILE_ID = "mastra-work-agent";
+/** Shared by persisted Agent configuration and the settings reset action. */
+export const DEFAULT_DISCOVERY_CONFIG = {
+  skillSearch: true,
+  skillSearchTopK: 5,
+  skillSearchMinScore: 0,
+  skillSearchTtl: 3_600_000,
+  skillSearchBlockingRefresh: true,
+  toolSearch: true,
+  toolSearchTopK: 3,
+  toolSearchMinScore: 0,
+  toolSearchInjectCatalog: false,
+  toolSearchAutoLoad: true,
+  toolSearchStorage: "context" as const,
+  toolSearchTtl: 3_600_000,
+};
 export function workbenchSessionId(resourceId: string, threadId: string): string {
   return JSON.stringify(["workbench", resourceId, threadId]);
 }
@@ -156,7 +172,12 @@ export function delegationMemberIds(
   member?: AgentMemberDefinition,
 ): string[] {
   if (member) return member.delegates;
-  return profile.type === "team" ? profile.members.map((candidate) => candidate.id) : [];
+  return [
+    ...new Set([
+      ...(profile.type === "team" ? profile.members.map((candidate) => candidate.id) : []),
+      ...(profile.pluginAgentIds ?? []),
+    ]),
+  ];
 }
 
 /** Workbench projection of pending native Agent signals, never a second execution queue. */
@@ -198,6 +219,24 @@ export const agentMemberSchema = z
   .strict();
 
 export type AgentMemberDefinition = z.infer<typeof agentMemberSchema>;
+
+export const agentProfileDraftSchema = z.object({
+  type: z.enum(["agent", "team"]),
+  displayName: z.string().trim().min(1),
+  profession: z.string(),
+  description: z.string(),
+  instructions: z.string().trim().min(1),
+  skills: z.array(z.string()),
+  mcpServers: z.array(z.string()).max(2000),
+  members: z.array(agentMemberSchema),
+  tags: z.array(z.string()),
+  quickPrompts: z.array(z.string()),
+});
+
+export const agentProfilePatchSchema = agentProfileDraftSchema
+  .partial()
+  .extend({ enabled: z.boolean().optional() })
+  .strict();
 
 /**
  * Built-in supervisor roster. The same definitions drive the default profile,
@@ -256,6 +295,8 @@ export interface AgentProfile {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  plugin?: PluginBinding;
+  pluginAgentIds?: string[];
 }
 
 /** Display names never identify an invocation: all links use these persisted IDs. */

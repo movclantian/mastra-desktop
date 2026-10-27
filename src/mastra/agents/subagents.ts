@@ -2,13 +2,16 @@ import type { ToolsInput } from "@mastra/core/agent";
 /** 子 Agent 与主 Agent 共用当前请求模型。 */
 import { Agent } from "@mastra/core/agent";
 import { resolveCurrentSpan, SpanType } from "@mastra/core/observability";
+import type { SkillSearchProcessorOptions } from "@mastra/core/processors";
 import {
   FileUploadProcessor,
   type InputProcessorOrWorkflow,
   type Processor,
+  type SkillSearchProcessor,
   TokenLimiterProcessor,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
+import type { SkillInput } from "@mastra/core/skills";
 import {
   askUserTool,
   createTool,
@@ -16,6 +19,7 @@ import {
   submitPlanTool,
   type Tool,
 } from "@mastra/core/tools";
+import type { Workspace } from "@mastra/core/workspace";
 import type { ToolSet } from "ai";
 import {
   type AgentMemberDefinition,
@@ -34,15 +38,17 @@ import {
   memoryTokenBudget,
 } from "../memory/memory-runtime";
 import { getModelTokenLimits, resolveAgentModel } from "../models/providers";
-import { listPluginSkills } from "../plugins/registry";
+import { pluginAgentHooks, pluginExecutionProcessor } from "../plugins/execution";
 import {
   libraryDocumentChunkerTool,
   libraryGraphSearchTool,
   libraryVectorSearchTool,
 } from "../rag/tools";
+import { listManagedSkills, skillSearchForRequest } from "../skills/local";
 import { userIdFromContext } from "../storage/database";
+import { applicationOperationsSkill } from "../tools/application";
 import { resolveMediaTools } from "../tools/media-generation";
-import { codeModeProcessor } from "../tools/tool-registry";
+import { applicationToolSearchProcessor, codeModeProcessor } from "../tools/tool-registry";
 import {
   parseWebSearchSelection,
   resolveWebSearchTools,
@@ -52,11 +58,13 @@ import {
 import {
   getManagedSkillPaths,
   getThreadWorkspace,
+  onWorkspaceDestroy,
   SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
 import { PLATFORM_TOOL_INSTRUCTIONS } from "./agent-instructions";
+import { resolveWorkSkillInputs } from "./custom";
 import {
   buildGuardrailErrorProcessors,
   buildGuardrailInputProcessors,
@@ -103,6 +111,7 @@ function specialistInstructions(role: string, requestContext: RequestContextLike
 const explorerMember = defaultAgentMember("explorer");
 
 const explorerAgent = new Agent({
+  hooks: pluginAgentHooks(),
   id: "explorer",
   name: explorerMember.name,
   description: explorerMember.description,
@@ -116,6 +125,7 @@ const explorerAgent = new Agent({
     teamInvocationProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
     webSearchArchiveProcessor,
+    pluginExecutionProcessor(undefined, requestContext),
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
@@ -130,7 +140,10 @@ const explorerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
-  skills: ({ requestContext }) => getManagedSkillPaths(userIdFromContext(requestContext)),
+  skills: async ({ requestContext }) => [
+    applicationOperationsSkill,
+    ...(await getManagedSkillPaths(userIdFromContext(requestContext))),
+  ],
 });
 
 /**
@@ -140,6 +153,7 @@ const explorerAgent = new Agent({
 const reviewerMember = defaultAgentMember("reviewer");
 
 const reviewerAgent = new Agent({
+  hooks: pluginAgentHooks(),
   id: "reviewer",
   name: reviewerMember.name,
   description: reviewerMember.description,
@@ -153,6 +167,7 @@ const reviewerAgent = new Agent({
     teamInvocationProcessor,
     ...(await buildGuardrailOutputProcessors(requestContext)),
     webSearchArchiveProcessor,
+    pluginExecutionProcessor(undefined, requestContext),
   ],
   errorProcessorDefaults: false,
   errorProcessors: async ({ requestContext }) =>
@@ -167,7 +182,10 @@ const reviewerAgent = new Agent({
     };
   },
   workspace: ({ requestContext }) => resolveSubagentWorkspace(requestContext),
-  skills: ({ requestContext }) => getManagedSkillPaths(userIdFromContext(requestContext)),
+  skills: async ({ requestContext }) => [
+    applicationOperationsSkill,
+    ...(await getManagedSkillPaths(userIdFromContext(requestContext))),
+  ],
 });
 
 export const workSubagents = {
@@ -240,8 +258,7 @@ export async function resolveSharedTools(
               args,
               requestContext: context?.requestContext,
             });
-            if (required || !(name.startsWith("mcp_") || name.startsWith("anysearch_")))
-              return required;
+            if (required) return true;
             return typeof original.requireApproval === "function"
               ? original.requireApproval(args, context)
               : original.requireApproval === true;
@@ -255,6 +272,7 @@ export async function resolveSharedTools(
 /** An unattended run exposes only tools authorized by its persisted mode and permission rules. */
 function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition) {
   const guarded = new WeakSet<object>();
+  let pinnedSkills: Map<string, string> | undefined;
   return {
     id: "scoped-tool-policy",
     async processInputStep({ requestContext, tools, activeTools }) {
@@ -264,26 +282,33 @@ function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition
       const mode = resolveRequestMode(requestContext);
       const scopedTools = { ...tools } as ToolSet;
       const skillBindings = new Map(
-        (scopedTools.skill || scopedTools.skill_read
-          ? await listPluginSkills(userIdFromContext(requestContext))
+        (scopedTools.skill || scopedTools.skill_read || scopedTools.load_skill
+          ? await listManagedSkills(userIdFromContext(requestContext))
           : []
-        ).map((skill) => [skill.name, skill.path]),
+        )
+          .filter((skill) => skill.enabled)
+          .map((skill) => [skill.id, skill.path]),
       );
-      for (const name of ["skill", "skill_read"]) {
+      if (pinnedSkills && [...pinnedSkills].some(([id, path]) => skillBindings.get(id) !== path))
+        throw new Error(
+          "An active skill was changed or disabled; start a new turn to refresh skill instructions",
+        );
+      pinnedSkills ??= skillBindings;
+      for (const name of ["skill", "skill_read", "load_skill"]) {
         const tool = scopedTools[name];
         const execute = tool?.execute;
         if (!execute || guarded.has(execute)) continue;
         const guardedExecute: typeof execute = async (input, context) => {
-          const runtimeName = name === "skill" ? input.name : input.skillName;
-          if (typeof runtimeName === "string" && /^skill-[a-f0-9]{20}$/.test(runtimeName)) {
-            const skill = (await listPluginSkills(userIdFromContext(requestContext))).find(
-              (item) => item.name === runtimeName,
+          const latest = new Map(
+            (await listManagedSkills(userIdFromContext(requestContext)))
+              .filter((skill) => skill.enabled)
+              .map((skill) => [skill.id, skill.path]),
+          );
+          // Check bindings, not input names: native tools also accept paths and aliases.
+          if ([...skillBindings].some(([id, path]) => latest.get(id) !== path))
+            throw new Error(
+              "An active skill is unavailable or changed; start a new turn to refresh skills",
             );
-            if (!skill?.enabled || skill.path !== skillBindings.get(runtimeName))
-              throw new Error(
-                "This plugin skill is unavailable or changed; refresh the conversation tools",
-              );
-          }
           return execute(input, context);
         };
         guarded.add(guardedExecute);
@@ -303,6 +328,43 @@ function scopedToolPolicy(profile?: AgentProfile, member?: AgentMemberDefinition
       };
     },
   } satisfies Processor;
+}
+
+const skillSearchByWorkspace = new WeakMap<Workspace, Map<string, Promise<SkillSearchProcessor>>>();
+
+/** Cache only identical skill bindings in the same owned workspace, never another Agent's catalog. */
+async function cachedSkillSearch(
+  workspace: Workspace,
+  inputs: SkillInput[],
+  options: Omit<SkillSearchProcessorOptions, "workspace">,
+  requestContext?: RequestContext,
+) {
+  let cache = skillSearchByWorkspace.get(workspace);
+  if (!cache) {
+    cache = new Map();
+    skillSearchByWorkspace.set(workspace, cache);
+    const entries = cache;
+    onWorkspaceDestroy(workspace, () => {
+      for (const pending of entries.values())
+        void pending.then(
+          (processor) => processor.dispose(),
+          () => {},
+        );
+      entries.clear();
+      skillSearchByWorkspace.delete(workspace);
+    });
+  }
+  const key = JSON.stringify([inputs, options]);
+  const existing = cache.get(key);
+  if (existing) return existing;
+  const pending = skillSearchForRequest(workspace, inputs, options, requestContext);
+  cache.set(key, pending);
+  try {
+    return await pending;
+  } catch (error) {
+    cache.delete(key);
+    throw error;
+  }
 }
 
 /** Resolve attachments before processing model input. */
@@ -337,7 +399,39 @@ export async function buildInputPipeline(
   return [
     teamInvocationProcessor,
     ...(profile && delegationMemberIds(profile, member).length ? [teamProgressProcessor] : []),
+    ...(guardrails.toolSearch
+      ? [
+          applicationToolSearchProcessor(resourceId, {
+            search: {
+              topK: guardrails.toolSearchTopK,
+              minScore: guardrails.toolSearchMinScore,
+              autoLoad: guardrails.toolSearchAutoLoad,
+            },
+            injectCatalog: guardrails.toolSearchInjectCatalog,
+            storage: guardrails.toolSearchStorage,
+            ttl: guardrails.toolSearchTtl,
+          }),
+        ]
+      : []),
+    ...(guardrails.skillSearch
+      ? [
+          await cachedSkillSearch(
+            workspace,
+            await resolveWorkSkillInputs(requestContext, profile, member),
+            {
+              search: {
+                topK: guardrails.skillSearchTopK,
+                minScore: guardrails.skillSearchMinScore,
+              },
+              ttl: guardrails.skillSearchTtl,
+              blockingRefresh: guardrails.skillSearchBlockingRefresh,
+            },
+            requestContext as RequestContext | undefined,
+          ),
+        ]
+      : []),
     scopedToolPolicy(profile, member),
+    pluginExecutionProcessor(profile, requestContext as RequestContext | undefined),
     libraryAttachmentProcessor,
     ...(fileUploadProcessor ? [fileUploadProcessor] : []),
     agentsMdProcessor,

@@ -2,6 +2,7 @@ import * as React from "react";
 import { toast } from "sonner";
 import { useTranslation } from "@/shared/i18n";
 import { Badge } from "@/shared/ui/badge";
+import { DEFAULT_DISCOVERY_CONFIG } from "../../../../../../shared/agent-contract";
 import {
   fetchGuardrailsConfig,
   fetchGuardrailsStatus,
@@ -294,19 +295,7 @@ const DEFAULT_GUARDRAILS_DRAFT: GuardrailsDraft = {
 
   providerCompat: true,
 
-  skillSearch: false,
-  skillSearchTopK: 5,
-  skillSearchMinScore: 0,
-  skillSearchTtl: 3_600_000,
-  skillSearchBlockingRefresh: false,
-
-  toolSearch: false,
-  toolSearchTopK: 5,
-  toolSearchMinScore: 0,
-  toolSearchInjectCatalog: false,
-  toolSearchAutoLoad: false,
-  toolSearchStorage: "context",
-  toolSearchTtl: 3_600_000,
+  ...DEFAULT_DISCOVERY_CONFIG,
 
   prefillErrorHandler: true,
   streamErrorRetry: true,
@@ -476,11 +465,12 @@ export function GuardrailsSection() {
     fetchGuardrailsConfig<Partial<GuardrailsDraft>>()
       .then((config) => {
         const merged = { ...DEFAULT_GUARDRAILS_DRAFT, ...config } as GuardrailsDraft;
+        prevSavedRef.current = merged;
         setDraft(merged);
         setListText(listTextFromDraft(merged));
+        setLoaded(true);
       })
-      .catch(() => undefined)
-      .finally(() => setLoaded(true));
+      .catch((error) => toast.error(error instanceof Error ? error.message : String(error)));
     refreshStatus();
   }, [loaded, refreshStatus]);
 
@@ -490,7 +480,7 @@ export function GuardrailsSection() {
   // 自动保存:800ms 防抖写入;非文本字段变化成功后弹 toast 供撤回,
   // 文本/逐行列表编辑静默。保存后重探前置条件(护栏模型可能刚被改掉)。
   React.useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || JSON.stringify(draft) === JSON.stringify(prevSavedRef.current)) return;
     const timer = window.setTimeout(() => {
       void saveGuardrailsConfig({
         ...draft,
@@ -509,8 +499,6 @@ export function GuardrailsSection() {
               action: {
                 label: t("settings:guardrails.undo"),
                 onClick: () => {
-                  // 预置快照:随后的自动保存视为无变化,不再弹 toast
-                  prevSavedRef.current = before;
                   setDraft(before);
                   setListText(listTextFromDraft(before));
                 },
@@ -1571,7 +1559,7 @@ export function GuardrailsSection() {
       >
         <SwitchRow
           checked={draft.skillSearch}
-          disabled={!status.workspaceReady}
+          disabled={!loaded || !status.workspaceReady}
           onChange={(v) => patch({ skillSearch: v })}
           title={t("settings:guardrails.enableSkillSearchTitle")}
         />
@@ -1632,6 +1620,7 @@ export function GuardrailsSection() {
       >
         <SwitchRow
           checked={draft.toolSearch}
+          disabled={!loaded}
           description={t("settings:guardrails.enableToolSearchDesc")}
           onChange={(v) => patch({ toolSearch: v })}
           title={t("settings:guardrails.enableToolSearchTitle")}

@@ -10,7 +10,10 @@ import {
   pluginIdSchema,
   pluginSourceSchema,
 } from "../../shared/plugin-contract";
+import { getMcpConfig, summarizeMcpServer } from "../connections/mcp";
 import { workError, workValidationError } from "../errors";
+import { describePackage } from "../plugins/components";
+import { listPluginCommands } from "../plugins/execution";
 import {
   getMarketplaceListing,
   getMarketplaceStatuses,
@@ -21,21 +24,19 @@ import {
 } from "../plugins/marketplaces";
 import {
   archiveFiles,
-  describePackage,
   MAX_PACKAGE_BYTES,
   packagePath,
   selectPackageRoot,
   withinRoot,
 } from "../plugins/packages";
-
 import {
+  authorizePluginComponent,
   checkPluginUpdate,
   createLocalPluginCopy,
   fetchPluginFiles,
   getInstalledPlugin,
   installPlugin,
   listInstalledPlugins,
-  listPluginSkills,
   pluginVersionDirectory,
   previewPluginUpload,
   rollbackPlugin,
@@ -44,8 +45,10 @@ import {
   uninstallPlugin,
   updatePlugin,
 } from "../plugins/registry";
+import { listManagedSkills, setLocalSkillEnabled } from "../skills/local";
 import { getSkillsShAudit } from "../skills/marketplaces";
 import { type RequestContextLike, userIdFromContext } from "../storage/database";
+import { invalidateWorkspaceInstances } from "../workspace/workspace-manager";
 
 function owner(context: RequestContextLike): string {
   const id = userIdFromContext(context);
@@ -83,7 +86,70 @@ async function readPluginUpload(request: Request) {
 }
 const common = { responseType: "json", onValidationError: workValidationError } as const;
 
+async function installedPluginStatuses(resourceId: string) {
+  const plugins = await listInstalledPlugins(resourceId);
+  const servers = (await getMcpConfig(resourceId)).servers.filter((server) => server.plugin);
+  for (const server of servers) {
+    const plugin = plugins.find((item) => item.id === server.plugin?.id);
+    const state = plugin?.componentStatus?.[server.id];
+    if (!state || !server.enabled || state.status === "disabled" || state.status === "unsupported")
+      continue;
+    const summary = await summarizeMcpServer(server, resourceId);
+    if (summary.configurationError) {
+      state.status = "needs-configuration";
+      state.detail = summary.configurationError;
+    } else if (summary.connectionError && state.status !== "needs-authorization") {
+      state.status = "failed";
+      state.detail = summary.connectionError;
+    }
+  }
+  return plugins;
+}
+
 export const pluginRoutes = [
+  createRoute({
+    ...common,
+    path: "/work/plugins/skills/:id/enabled",
+    method: "PUT",
+    pathParamSchema: z.object({ id: z.string().regex(/^local_[a-f0-9]{32}$/) }),
+    bodySchema: z.object({ enabled: z.boolean() }).strict(),
+    handler: async ({ id, enabled, requestContext }) => {
+      const resourceId = owner(requestContext);
+      const skill = await setLocalSkillEnabled(id, enabled, resourceId);
+      await invalidateWorkspaceInstances(resourceId);
+      return { skill };
+    },
+  }),
+  createRoute({
+    ...common,
+    path: "/work/plugins/commands",
+    method: "GET",
+    handler: async ({ requestContext }) => ({
+      commands: await listPluginCommands(owner(requestContext)),
+    }),
+  }),
+  createRoute({
+    ...common,
+    path: "/work/plugins/:id/authorization",
+    method: "PUT",
+    pathParamSchema: idPath,
+    bodySchema: z
+      .object({
+        componentId: pluginIdSchema,
+        digest: z.string().regex(/^[a-f0-9]{64}$/),
+        authorized: z.boolean(),
+      })
+      .strict(),
+    handler: async ({ id, componentId, digest, authorized, requestContext }) => ({
+      plugin: await authorizePluginComponent(
+        id,
+        componentId,
+        digest,
+        authorized,
+        owner(requestContext),
+      ),
+    }),
+  }),
   createRoute({
     ...common,
     path: "/work/plugins/skills-sh/audit",
@@ -100,7 +166,7 @@ export const pluginRoutes = [
     method: "GET",
     queryParamSchema: z.object({}).strict(),
     handler: async ({ requestContext }) => ({
-      plugins: await listInstalledPlugins(owner(requestContext)),
+      plugins: await installedPluginStatuses(owner(requestContext)),
     }),
   }),
   createRoute({
@@ -109,7 +175,7 @@ export const pluginRoutes = [
     method: "GET",
     queryParamSchema: z.object({}).strict(),
     handler: async ({ requestContext }) => ({
-      skills: await listPluginSkills(owner(requestContext)),
+      skills: await listManagedSkills(owner(requestContext)),
     }),
   }),
   createRoute({

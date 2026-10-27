@@ -12,6 +12,7 @@ import {
 } from "@/entities/workbench";
 import { useDesktopSettingsQuery } from "@/entities/workbench/model/queries/config";
 import { useSelectThread, useSyncThreadToStore } from "@/entities/workbench/model/queries/threads";
+import { applicationQueryKeys } from "@/entities/workbench/model/query-keys";
 import { viewFromPath } from "@/entities/workbench/model/types";
 import { useAuth } from "@/features/auth";
 import { GlobalCommandPalette } from "@/features/command-palette";
@@ -26,7 +27,11 @@ import { AppSidebar } from "@/widgets/app-sidebar";
 import { AppTopBar, AppWindowBar } from "@/widgets/app-top-bar";
 import { WorkspaceDrawer } from "@/widgets/workspace-drawer";
 import { BrowserGuestLayer } from "@/widgets/workspace-drawer/ui/browser-guest-layer";
-import { DesktopNotificationSchema } from "../../../shared/window-contract";
+import {
+  ApplicationChangeSchema,
+  type ApplicationDomain,
+  DesktopNotificationSchema,
+} from "../../../shared/window-contract";
 
 function WorkspaceDrawerContainer({ open }: { open: boolean }) {
   return (
@@ -93,6 +98,10 @@ function useDesktopNotifications() {
     if (!user || !token) return;
     const controller = new AbortController();
     const seen = new Set<string>();
+    const refreshApplication = (domain?: ApplicationDomain) => {
+      for (const queryKey of applicationQueryKeys(user.id, domain))
+        void queryClient.invalidateQueries({ queryKey });
+    };
     void fetchEventSource(`${MASTRA_SERVER_URL}/work/desktop-notifications`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
@@ -102,9 +111,15 @@ function useDesktopNotifications() {
         if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream"))
           throw new Error(`Notification subscription failed: ${response.status}`);
         // Refresh missed completions after reconnect, even when the chat page is unmounted.
-        void queryClient.invalidateQueries({ queryKey: qk.libraryContents(user.id) });
+        refreshApplication();
       },
       onmessage(event) {
+        if (event.event === "application-change") {
+          const parsed = ApplicationChangeSchema.safeParse(JSON.parse(event.data));
+          if (parsed.success && parsed.data.resourceId === user.id)
+            refreshApplication(parsed.data.domain);
+          return;
+        }
         if (event.event !== "notification") return;
         const parsed = DesktopNotificationSchema.safeParse(JSON.parse(event.data));
         if (!parsed.success || parsed.data.resourceId !== user.id) return;

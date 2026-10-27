@@ -320,10 +320,6 @@ function SkillAwareTextarea({
   };
 
   const selectSkill = (skill: SkillOption) => {
-    if (!selectedSkills.includes(skill.id) && selectedSkills.length >= 4) {
-      toast.error(t("chat:composer.skillLimit"));
-      return;
-    }
     const prefix = removeCommandToken("/").trimEnd();
     const nextSkills = selectedSkills.includes(skill.id)
       ? selectedSkills

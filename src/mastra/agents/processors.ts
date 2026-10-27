@@ -88,7 +88,7 @@ export const WORK_MESSAGE_OPTIONS_CONTEXT_KEY = "mastra-work:message-options";
 export const workMessageMetadataSchema = z.object({
   clientMessageId: z.string().uuid().optional(),
   goal: z.boolean().optional(),
-  skillNames: z.array(z.string()).max(4).optional(),
+  skillNames: z.array(z.string()).optional(),
   fileReferences: z
     .array(
       z
@@ -138,6 +138,7 @@ export function createWorkMessageSignal(
       })),
     ],
     metadata: {
+      pluginUserText: text,
       clientMessageId: options.clientMessageId,
       skillNames: options.skillNames ?? [],
       fileReferences: options.fileReferences ?? [],

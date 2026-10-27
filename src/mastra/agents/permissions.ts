@@ -85,6 +85,8 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
 
 /** 非工作区工具的显式类别。未列出者归 other，按线程的该类别规则处理。 */
 const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
+  search_tools: "read",
+  load_tool: "read",
   generate_image: "execute",
   generate_video: "execute",
   // Code Mode 的 QuickJS 无宿主访问能力；每个 external 调用独立遵循当前工具范围与权限。
@@ -93,6 +95,8 @@ const CATEGORY_BY_TOOL: Record<string, ToolCategory> = {
   skill: "read",
   skill_search: "read",
   skill_read: "read",
+  search_skills: "read",
+  load_skill: "read",
   // 联网检索(src/mastra/tools/web-search.ts 注入的全部名字)
   web_fetch: "read",
   tavily_search: "read",
@@ -175,13 +179,24 @@ export function resolveAgentActiveTools({
   );
   const enabled = new Set(activeTools ?? tools);
   for (const name of coordinationTools) enabled.add(name);
+  // ToolSearchProcessor injects loaded tools but does not extend an upstream activeTools list.
+  for (const name of tools)
+    if (
+      name.startsWith("app_") ||
+      ["search_tools", "load_tool", "search_skills", "load_skill"].includes(name)
+    )
+      enabled.add(name);
   return tools.filter((name) => {
     const policy = rules.tools[name] ?? rules.categories[toolCategoryOf(name)];
     const collaboration = name.startsWith("agent-");
     return (
       enabled.has(name) &&
+      (!scheduled || !(name.startsWith("app_manage_") || name.startsWith("app_delete_"))) &&
       (!collaboration || coordinationTools.has(name)) &&
-      (!mode.availableTools || mode.availableTools.includes(name) || coordinationTools.has(name)) &&
+      (!mode.availableTools ||
+        mode.availableTools.includes(name) ||
+        name.startsWith("app_read_") ||
+        coordinationTools.has(name)) &&
       (!scheduled || (name !== "ask_user" && name !== "submit_plan")) &&
       (scheduled ? policy === "allow" : policy !== "deny")
     );
@@ -189,6 +204,9 @@ export function resolveAgentActiveTools({
 }
 
 export function toolCategoryOf(toolName: string): ToolCategory {
+  if (toolName.startsWith("app_read_")) return "read";
+  if (toolName.startsWith("app_edit_")) return "edit";
+  if (toolName.startsWith("app_manage_") || toolName.startsWith("app_delete_")) return "execute";
   if (toolName.startsWith(COMPUTER_TOOL_PREFIX))
     return COMPUTER_READ_TOOLS.includes(toolName) ? "read" : "execute";
   const explicit = CATEGORY_BY_TOOL[toolName];

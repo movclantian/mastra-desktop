@@ -1,5 +1,6 @@
 import type { DelegationConfig, MastraDBMessage } from "@mastra/core/agent";
 import type { Processor } from "@mastra/core/processors";
+import type { RequestContext } from "@mastra/core/request-context";
 import {
   type AgentMemberDefinition,
   type AgentProfile,
@@ -9,6 +10,10 @@ import {
   type TeamInvocation,
 } from "../../shared/agent-contract";
 import { errorText } from "../errors";
+import { pluginAgentDefinition } from "../plugins/agents";
+import { type CommandInvocation, PLUGIN_COMMAND_CONTEXT_KEY } from "../plugins/execution";
+import { runPluginHooks } from "../plugins/hooks";
+import { requirePluginBinding } from "../plugins/runtime";
 import { appStorage, getLibsqlClient, userIdFromContext } from "../storage/database";
 import { WORKSPACE_THREAD_ID_CONTEXT_KEY } from "../workspace/workspace-manager";
 import { AGENT_PROFILE_CONTEXT_KEY, getAgentProfile } from "./custom";
@@ -251,18 +256,61 @@ export function teamDelegation(
   profile: AgentProfile,
   agents: Record<string, { id: string }>,
   parentMemberId?: string,
+  requestContext?: RequestContext,
 ): DelegationConfig {
   return {
     ...base,
     onDelegationStart: async (context) => {
       if (context.primitiveType !== "agent") return { proceed: true };
-      const policy =
+      let policy =
         profile.type === "team" ? { proceed: true } : await base.onDelegationStart?.(context);
       if (policy?.proceed === false) return policy;
       const memberId = Object.keys(agents).find(
         (id) => id === context.primitiveId || agents[id].id === context.primitiveId,
       );
       if (!memberId) throw new Error("Unknown delegated team member");
+      const target = memberId.startsWith("plugin-agent-")
+        ? await getAgentProfile(memberId, userIdFromContext(context.requestContext))
+        : undefined;
+      if (target?.plugin) {
+        if (context.params.instructions)
+          return {
+            proceed: false,
+            rejectionReason: "Plugin Agent instructions cannot be replaced by a delegation",
+          };
+        const { definition } = await pluginAgentDefinition(target.plugin, context.requestContext);
+        if (definition.maxTurns)
+          policy = {
+            ...policy,
+            modifiedMaxSteps: Math.min(
+              definition.maxTurns,
+              context.params.maxSteps ?? definition.maxTurns,
+            ),
+          };
+      }
+      const command = context.requestContext.get(PLUGIN_COMMAND_CONTEXT_KEY) as
+        | CommandInvocation
+        | undefined;
+      if (command) {
+        await requirePluginBinding(command.binding, userIdFromContext(context.requestContext));
+        if (command.agentId === memberId)
+          policy = { ...policy, proceed: true, modifiedPrompt: command.prompt };
+      }
+      const hook = await runPluginHooks(
+        "SubagentStart",
+        context.requestContext,
+        {
+          agent_type: target?.name.split(":").at(-1) ?? memberId,
+          agent_id: agents[memberId].id,
+          prompt: context.prompt,
+        },
+        {
+          bindings: [profile.plugin, target?.plugin, command?.binding].filter(
+            (binding): binding is NonNullable<typeof binding> => !!binding,
+          ),
+        },
+      );
+      if (hook.blocked) return { proceed: false, rejectionReason: hook.blocked };
       const id = `${context.runId}:${context.toolCallId}`;
       const parentInvocationId = context.requestContext.get(TEAM_INVOCATION_CONTEXT_KEY);
       await saveTeamInvocation(context.requestContext, {
@@ -306,6 +354,40 @@ export function teamDelegation(
         context.messages,
         context.result.subAgentToolResults,
       );
+      if (requestContext) {
+        try {
+          const memberId = Object.keys(agents).find(
+            (id) => id === context.primitiveId || agents[id].id === context.primitiveId,
+          );
+          const target = memberId?.startsWith("plugin-agent-")
+            ? await getAgentProfile(memberId, userIdFromContext(requestContext))
+            : undefined;
+          const command = requestContext.get(PLUGIN_COMMAND_CONTEXT_KEY) as
+            | CommandInvocation
+            | undefined;
+          const hook = await runPluginHooks(
+            "SubagentStop",
+            requestContext,
+            {
+              agent_type: target?.name.split(":").at(-1) ?? memberId ?? context.primitiveId,
+              last_assistant_message: context.result.text,
+              success: context.success,
+            },
+            {
+              bindings: [profile.plugin, target?.plugin, command?.binding].filter(
+                (binding): binding is NonNullable<typeof binding> => !!binding,
+              ),
+            },
+          );
+          if (hook.blocked) throw new Error(hook.blocked);
+        } catch (error) {
+          await finishTeamInvocation(`${context.runId}:${context.toolCallId}`, {
+            status: "error",
+            error: errorText(error),
+          });
+          throw error;
+        }
+      }
       // A timed-out child can return a partial text result; the background manager
       // must record that dispatch as failed after its transcript has been saved.
       if (aborted) throw new Error(incompleteAgentResultMessage("aborted"));

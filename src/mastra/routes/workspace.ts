@@ -4,12 +4,14 @@
  * Workspace 主体(文件系统/沙箱/搜索/LSP/Skills)见 src/mastra/workspace/workspace-manager.ts。
  */
 import { realpath } from "node:fs/promises";
-import { basename, dirname, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { createRoute } from "@mastra/server/server-adapter";
 import { z } from "zod";
 import { workError, workValidationError } from "../errors";
+import { localSkillPaths } from "../skills/local";
 import {
   listWorkspaceChanges,
   readWorkspaceChangeContent,
@@ -34,8 +36,21 @@ export const workspaceConfigRoute = createRoute({
   responseType: "json",
   queryParamSchema: z.object({}).strict(),
   onValidationError: workValidationError,
-  handler: ({ requestContext }) =>
-    getWorkspaceConfig(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+  handler: async ({ requestContext }) => {
+    const [config, paths] = await Promise.all([
+      getWorkspaceConfig(requestContext.get(MASTRA_RESOURCE_ID_KEY) as string),
+      localSkillPaths(),
+    ]);
+    return {
+      ...config,
+      localSkillsPaths: paths.map((path) => {
+        const homeRelative = relative(homedir(), path);
+        return homeRelative && !homeRelative.startsWith("..") && !isAbsolute(homeRelative)
+          ? `~/${homeRelative.replaceAll("\\", "/")}`
+          : path;
+      }),
+    };
+  },
 });
 
 // POST /work/workspace — 写入工作区配置

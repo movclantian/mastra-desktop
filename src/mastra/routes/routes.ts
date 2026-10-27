@@ -18,6 +18,7 @@ import {
   agentProfilesRoute,
   assistAgentProfileRoute,
   deleteAgentProfileRoute,
+  updateAgentProfileRoute,
 } from "./agents";
 import { authLoginRoute, authLogoutRoute, authMeRoute, authRegisterRoute } from "./auth";
 import { backgroundTaskRoutes } from "./background-tasks";
@@ -57,6 +58,7 @@ import {
   deleteMcpConfigRoute,
   getMcpServerRoute,
   mcpConfigRoute,
+  mcpContentRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,
 } from "./mcp";
@@ -112,6 +114,7 @@ export const workRoutes = [
   agentProfileInstructionsRoute,
   agentProfileInstructionsPreviewRoute,
   deleteAgentProfileRoute,
+  updateAgentProfileRoute,
   assistAgentProfileRoute,
   ...browserRoutes,
   ...computerRoutes,
@@ -157,6 +160,7 @@ export const workRoutes = [
   memoryProfileRoute,
   updateMemoryProfileRoute,
   mcpConfigRoute,
+  mcpContentRoute,
   getMcpServerRoute,
   saveMcpConfigRoute,
   testMcpConfigRoute,

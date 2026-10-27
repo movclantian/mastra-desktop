@@ -478,13 +478,15 @@ function structuralChangeKey(before: WorkspaceDraft, after: WorkspaceDraft): str
 export function WorkspaceSection() {
   const { t } = useTranslation();
   const [draft, setDraft] = React.useState<WorkspaceDraft>(DEFAULT_WORKSPACE_DRAFT);
+  const [localSkillsPaths, setLocalSkillsPaths] = React.useState<string[]>([]);
   const [loaded, setLoaded] = React.useState(false);
 
   React.useEffect(() => {
     if (loaded) return;
-    fetchWorkspaceSettings<Partial<WorkspaceDraft>>()
-      .then((config) => {
+    fetchWorkspaceSettings<Partial<WorkspaceDraft> & { localSkillsPaths: string[] }>()
+      .then(({ localSkillsPaths, ...config }) => {
         setDraft((prev) => ({ ...prev, ...config }));
+        setLocalSkillsPaths(localSkillsPaths);
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
@@ -838,6 +840,21 @@ export function WorkspaceSection() {
         onReset={() => restore("skillsPaths")}
         resetLabel={resetLabel}
       >
+        <div className="flex min-w-0 flex-col gap-2 py-3">
+          <p className="text-sm font-medium">{t("settings:workspace.localSkillsPathsTitle")}</p>
+          <p className="text-xs text-muted-foreground">
+            {t("settings:workspace.localSkillsPathsDesc")}
+          </p>
+          {localSkillsPaths.map((path) => (
+            <Input
+              key={path}
+              aria-label={t("settings:workspace.localSkillsPathsTitle")}
+              className="min-w-0 font-mono text-xs"
+              readOnly
+              value={path}
+            />
+          ))}
+        </div>
         <RelativePathList
           description={t("settings:workspace.skillsPathsDesc")}
           onChange={(skillsPaths) => patch({ skillsPaths })}

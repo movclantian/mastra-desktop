@@ -31,6 +31,7 @@ import {
   scheduledDesktopNotifications,
 } from "../harness/signals";
 import { resolveModelSelection } from "../models/providers";
+import { endPluginSession } from "../plugins/hooks";
 import { appStorage, getLibsqlClient } from "../storage/database";
 import { cancelThreadBackgroundTasks, ensureTaskExecutorAvailable } from "./background-tasks";
 import {
@@ -95,8 +96,15 @@ const desktopNotificationsRoute = registerApiRoute("/work/desktop-notifications"
           .catch(() => stream.abort());
       };
       desktopEvents.on(resourceId, send);
+      const changed = (change: { resourceId: string; domain: string }) => {
+        void stream
+          .writeSSE({ event: "application-change", data: JSON.stringify(change) })
+          .catch(() => stream.abort());
+      };
+      desktopEvents.on(`application:${resourceId}`, changed);
       stream.onAbort(() => {
         desktopEvents.off(resourceId, send);
+        desktopEvents.off(`application:${resourceId}`, changed);
       });
       try {
         while (!stream.aborted) {
@@ -105,6 +113,7 @@ const desktopNotificationsRoute = registerApiRoute("/work/desktop-notifications"
         }
       } finally {
         desktopEvents.off(resourceId, send);
+        desktopEvents.off(`application:${resourceId}`, changed);
       }
     });
   },
@@ -143,6 +152,10 @@ async function promoteUserThread(session: ControllerSession) {
 
 /** Persist only the last-step context measure; cumulative usage belongs to Session. */
 export function registerWorkbenchSessionLifecycle(mastra: Mastra): void {
+  mastra.getAgentController("workbench")?.onSessionDeleted(async (session) => {
+    const threadId = session.thread.getId();
+    if (threadId) await endPluginSession(session.identity.getResourceId(), threadId);
+  });
   mastra.getAgentController("workbench")?.onSessionCreated((session) => {
     let lastStepUsage: TokenUsage | undefined;
     let promotingThread: Promise<void> | undefined;

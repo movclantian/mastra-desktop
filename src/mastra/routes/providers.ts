@@ -12,6 +12,7 @@ import { createGateway } from "ai";
 import { z } from "zod";
 import { inferModelKind } from "../../shared/agent-contract";
 import { providerCredentialPurpose, SecretRefSchema } from "../../shared/credential-contract";
+import { normalizeProviderUrl } from "../../shared/provider-url";
 import { resolveCredential } from "../credential-broker";
 import { errorText, workError, workValidationError } from "../errors";
 import {
@@ -135,7 +136,12 @@ export const listProviderModelsRoute = createRoute({
   method: "POST",
   bodySchema: providerModelsRequestSchema.transform((payload) => ({ payload })),
   handler: async (params) => {
-    const payload = params.payload;
+    const payload = {
+      ...params.payload,
+      url: params.payload.url
+        ? normalizeProviderUrl(params.payload.url, params.payload.protocol)
+        : undefined,
+    };
     const { protocol } = payload;
     const apiKey = await resolveCredential(
       payload.credentialRef,
@@ -300,12 +306,24 @@ export const testProviderModelRoute = createRoute({
   onValidationError: workValidationError,
   method: "POST",
   bodySchema: z
-    .object({ providerId: z.string().trim().min(1), modelId: z.string().trim().min(1) })
+    .object({
+      providerId: z.string().trim().min(1),
+      modelId: z.string().trim().min(1),
+      // Onboarding tests a connection before it is committed to app_config.
+      // The provider still contains only a credential reference, never plaintext.
+      provider: z.unknown().optional(),
+    })
     .strict(),
   handler: async (params) => {
     const resourceId = params.requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
     const config = await getProvidersConfig(resourceId);
-    const provider = config.providers.find((candidate) => candidate.id === params.providerId);
+    const pendingProvider = params.provider
+      ? providersPatchSchema.parse({ providers: [params.provider] }).providers?.[0]
+      : undefined;
+    const provider =
+      pendingProvider?.id === params.providerId
+        ? pendingProvider
+        : config.providers.find((candidate) => candidate.id === params.providerId);
     if (!provider) throw workError("MODEL_NOT_CONFIGURED");
     if ((await resolveProviderModelKind(provider, params.modelId, resourceId)) !== "language")
       throw workError("VALIDATION_FAILED", {

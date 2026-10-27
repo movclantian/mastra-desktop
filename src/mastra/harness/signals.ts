@@ -6,17 +6,16 @@ import {
   type SignalSubscription,
   WebhookSignalProvider,
 } from "@mastra/core/signals";
-import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import type { DesktopNotification } from "../../shared/window-contract";
+import type { ApplicationDomain, DesktopNotification } from "../../shared/window-contract";
 import { getLibsqlClient } from "../storage/database";
-import {
-  WORKSPACE_RESOURCE_ID_CONTEXT_KEY,
-  WORKSPACE_THREAD_ID_CONTEXT_KEY,
-} from "../workspace/workspace-manager";
 
 export const desktopEvents = new EventEmitter();
 export const scheduledDesktopNotifications = new Map<string, DesktopNotification[]>();
+
+export function publishApplicationChange(resourceId: string, domain: ApplicationDomain) {
+  desktopEvents.emit(`application:${resourceId}`, { resourceId, domain });
+}
 
 export function publishDesktopNotification(notification: DesktopNotification, afterRun?: string) {
   if (afterRun)
@@ -44,21 +43,6 @@ async function subscriptionStore() {
     .then(() => undefined);
   await subscriptionsReady;
   return client;
-}
-
-function publicSubscription(subscription: SignalSubscription): SignalSubscription {
-  const metadata = subscription.metadata as { url?: unknown; headers?: unknown };
-  return {
-    ...subscription,
-    metadata: {
-      ...(typeof metadata.url === "string" ? { url: metadata.url } : {}),
-      ...(metadata.headers &&
-      typeof metadata.headers === "object" &&
-      !Array.isArray(metadata.headers)
-        ? { headerKeys: Object.keys(metadata.headers as Record<string, unknown>) }
-        : {}),
-    },
-  };
 }
 
 class PersistentWebhookSignalProvider extends WebhookSignalProvider {
@@ -146,7 +130,7 @@ class PersistentWebhookSignalProvider extends WebhookSignalProvider {
   }
 
   getTools() {
-    return signalTools;
+    return {};
   }
 }
 
@@ -170,7 +154,6 @@ class PersistentPollingSignalProvider extends PersistentWebhookSignalProvider {
     const parsed = z
       .object({
         url: z.url({ protocol: /^https?$/ }),
-        headers: z.record(z.string(), z.string()).optional(),
       })
       .parse(metadata);
     return super.subscribePersistent(target, externalResourceId, parsed);
@@ -258,76 +241,3 @@ export const workWebhookSignals = new PersistentWebhookSignalProvider({
   // Uses the default extractor: webhook payloads must provide resource or externalResourceId.
 });
 export const workPollingSignals = new PersistentPollingSignalProvider();
-
-function signalTarget(context: {
-  requestContext?: { get(key: string): unknown };
-}): SignalProviderTarget {
-  const resourceId = context.requestContext?.get(WORKSPACE_RESOURCE_ID_CONTEXT_KEY);
-  const threadId = context.requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-  if (typeof resourceId !== "string" || typeof threadId !== "string")
-    throw new Error("Signal subscriptions require an active thread and resource");
-  return { resourceId, threadId };
-}
-
-const signalTools = {
-  signal_subscribe: createTool({
-    id: "signal_subscribe",
-    description: "Subscribe the current Agent thread to a webhook or polling signal source.",
-    inputSchema: z.object({
-      provider: z.enum(["webhook", "polling"]).default("webhook"),
-      externalResourceId: z.string().min(1),
-      pollUrl: z.string().url().optional(),
-      headers: z.record(z.string(), z.string()).optional(),
-    }),
-    execute: async ({ provider, externalResourceId, pollUrl, headers }, context) => {
-      const target = signalTarget(context);
-      if (provider === "polling") {
-        if (!pollUrl) throw new Error("pollUrl is required for polling subscriptions");
-        return {
-          subscription: publicSubscription(
-            await workPollingSignals.subscribePersistent(target, externalResourceId, {
-              url: pollUrl,
-              headers,
-            }),
-          ),
-        };
-      }
-      return {
-        subscription: publicSubscription(
-          await workWebhookSignals.subscribePersistent(target, externalResourceId),
-        ),
-      };
-    },
-  }),
-  signal_unsubscribe: createTool({
-    id: "signal_unsubscribe",
-    description: "Remove a webhook or polling signal subscription from the current thread.",
-    inputSchema: z.object({
-      provider: z.enum(["webhook", "polling"]).default("webhook"),
-      externalResourceId: z.string().min(1),
-    }),
-    execute: async ({ provider, externalResourceId }, context) => {
-      const target = signalTarget(context);
-      return {
-        removed:
-          provider === "polling"
-            ? await workPollingSignals.unsubscribePersistent(target, externalResourceId)
-            : await workWebhookSignals.unsubscribePersistent(target, externalResourceId),
-      };
-    },
-  }),
-  signal_list_subscriptions: createTool({
-    id: "signal_list_subscriptions",
-    description: "List signal subscriptions for the current Agent resource.",
-    inputSchema: z.object({ provider: z.enum(["webhook", "polling"]).default("webhook") }),
-    execute: async ({ provider }, context) => {
-      const { resourceId } = signalTarget(context);
-      return {
-        subscriptions:
-          provider === "polling"
-            ? (await workPollingSignals.listPersistent(resourceId)).map(publicSubscription)
-            : (await workWebhookSignals.listPersistent(resourceId)).map(publicSubscription),
-      };
-    },
-  }),
-};

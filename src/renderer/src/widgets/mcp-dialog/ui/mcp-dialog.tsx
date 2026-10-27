@@ -12,7 +12,7 @@ import type { McpFormServer, McpSummary } from "@/entities/skill";
 import { useAssistantDiagnosis } from "@/entities/workbench/model/queries/threads";
 import { qk } from "@/entities/workbench/model/query-keys";
 import { getAuthToken, useAuth } from "@/features/auth";
-import { apiFetch, MASTRA_SERVER_URL } from "@/shared/api";
+import { apiFetch, MASTRA_SERVER_URL, requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import { toastError } from "@/shared/lib";
 import { Button } from "@/shared/ui/button";
@@ -80,7 +80,7 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
   const queryClient = useQueryClient();
   const [form, setForm] = React.useState<McpFormServer>(initial);
   const diagnosticContext = (error: unknown) =>
-    `MCP: ${form.name} (${form.id})\nTransport: ${form.transport}\nPlugin: ${form.plugin?.id ?? "standalone"}\nError: ${error instanceof Error ? error.message : String(error)}`;
+    `MCP: ${form.name} (${form.id})\nPersisted ID: ${server?.id ?? "none (unsaved draft)"}\nTransport: ${form.transport}\nPlugin: ${form.plugin?.id ?? "standalone"}\nError: ${error instanceof Error ? error.message : String(error)}`;
   const [headersText, setHeadersText] = React.useState("");
   const [anysearchKey, setAnysearchKey] = React.useState("");
   const [envText, setEnvText] = React.useState("");
@@ -634,6 +634,13 @@ export function McpDialog({ open, onOpenChange, onSaved, server }: Props) {
                 onCheckedChange={(checked) => update({ requireToolApproval: checked })}
               />
             </section>
+            {server?.id ? (
+              <McpContentBrowser
+                key={server.id}
+                serverId={server.id}
+                disabled={saving || dirty || !form.enabled}
+              />
+            ) : null}
             {form.plugin ? (
               <p role="status" className="break-words text-xs text-muted-foreground">
                 {t(
@@ -808,5 +815,198 @@ function CheckField({
         ) : null}
       </FieldContent>
     </Field>
+  );
+}
+
+interface McpContentCatalog {
+  resources: Array<{ uri: string; name: string; description?: string }>;
+  templates: Array<{ uriTemplate: string; name: string }>;
+  prompts: Array<{
+    name: string;
+    description?: string;
+    arguments?: Array<{ name: string; required?: boolean; description?: string }>;
+  }>;
+  errors: Record<string, string | undefined>;
+}
+
+function McpContentBrowser({ serverId, disabled }: { serverId: string; disabled: boolean }) {
+  const { t } = useTranslation();
+  const [catalog, setCatalog] = React.useState<McpContentCatalog>();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState("");
+  const [uri, setUri] = React.useState("");
+  const [prompt, setPrompt] = React.useState<McpContentCatalog["prompts"][number]>();
+  const [args, setArgs] = React.useState<Record<string, string>>({});
+  const [output, setOutput] = React.useState("");
+  const controller = React.useRef<AbortController | null>(null);
+  React.useEffect(() => () => controller.current?.abort(), []);
+  const request = async (body: Record<string, unknown>) => {
+    const pending = new AbortController();
+    controller.current?.abort();
+    controller.current = pending;
+    setBusy(true);
+    setError("");
+    setOutput("");
+    try {
+      const value = await requestJson<unknown>(
+        `/work/mcp/${encodeURIComponent(serverId)}/content`,
+        { method: "POST", body, signal: pending.signal },
+      );
+      if (pending.signal.aborted) return;
+      if (body.action === "list") setCatalog(value as McpContentCatalog);
+      else setOutput(JSON.stringify(value, null, 2));
+    } catch (error) {
+      if (!pending.signal.aborted)
+        setError(error instanceof Error ? error.message : t("common:error"));
+    } finally {
+      if (controller.current === pending) setBusy(false);
+    }
+  };
+  return (
+    <section className="grid min-w-0 gap-2 rounded-lg border p-3">
+      <h3 className="text-sm font-medium">{t("plugins:mcpContent")}</h3>
+      <p className="text-xs text-muted-foreground">{t("plugins:mcpContentHint")}</p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={disabled || busy}
+        onClick={() => void request({ action: "list" })}
+      >
+        {t(busy ? "common:loading" : "plugins:discoverContent")}
+      </Button>
+      {catalog ? (
+        <ScrollArea className="max-h-56 min-w-0">
+          <div className="grid min-w-0 gap-2 pr-2">
+            {catalog.resources.map((resource) => (
+              <Button
+                key={resource.uri}
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-auto justify-start whitespace-normal text-left"
+                disabled={disabled || busy}
+                onClick={() => {
+                  setUri(resource.uri);
+                  void request({ action: "read-resource", uri: resource.uri });
+                }}
+              >
+                <span className="min-w-0 break-all">
+                  {resource.name}
+                  <span className="block text-xs text-muted-foreground">{resource.uri}</span>
+                </span>
+              </Button>
+            ))}
+            {catalog.templates.map((template) => (
+              <Button
+                key={template.uriTemplate}
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-auto justify-start whitespace-normal text-left"
+                onClick={() => setUri(template.uriTemplate)}
+              >
+                <span className="min-w-0 break-all">
+                  {template.name}
+                  <span className="block text-xs text-muted-foreground">
+                    {template.uriTemplate}
+                  </span>
+                </span>
+              </Button>
+            ))}
+            {catalog.prompts.map((item) => (
+              <Button
+                key={item.name}
+                type="button"
+                size="sm"
+                variant={prompt?.name === item.name ? "secondary" : "ghost"}
+                className="h-auto justify-start whitespace-normal text-left"
+                onClick={() => {
+                  setPrompt(item);
+                  setArgs({});
+                }}
+              >
+                <span className="break-words">
+                  {item.name}
+                  <span className="block text-xs text-muted-foreground">{item.description}</span>
+                </span>
+              </Button>
+            ))}
+            {!catalog.resources.length && !catalog.templates.length && !catalog.prompts.length ? (
+              <p className="text-xs">{t("common:empty")}</p>
+            ) : null}
+            {Object.entries(catalog.errors)
+              .filter(([, message]) => message)
+              .map(([kind, message]) => (
+                <p key={kind} className="break-words text-xs text-muted-foreground">
+                  {kind}: {message}
+                </p>
+              ))}
+          </div>
+        </ScrollArea>
+      ) : null}
+      {catalog ? (
+        <div className="grid min-w-0 gap-2">
+          <Input
+            aria-label={t("plugins:resourceUri")}
+            placeholder={t("plugins:resourceUri")}
+            value={uri}
+            onChange={(event) => setUri(event.target.value)}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={disabled || busy || !uri.trim()}
+            onClick={() => void request({ action: "read-resource", uri: uri.trim() })}
+          >
+            {t("plugins:readResource")}
+          </Button>
+        </div>
+      ) : null}
+      {prompt ? (
+        <div className="grid min-w-0 gap-2">
+          <p className="break-all text-sm">{prompt.name}</p>
+          {prompt.arguments?.map((argument) => (
+            <TextField
+              key={argument.name}
+              id={`mcp-prompt-${serverId}-${argument.name}`}
+              label={argument.name}
+              required={argument.required}
+              value={args[argument.name] ?? ""}
+              onChange={(value) => setArgs((current) => ({ ...current, [argument.name]: value }))}
+              placeholder={argument.description}
+            />
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={
+              disabled ||
+              busy ||
+              prompt.arguments?.some(
+                (argument) => argument.required && !args[argument.name]?.trim(),
+              )
+            }
+            onClick={() =>
+              void request({ action: "get-prompt", name: prompt.name, arguments: args })
+            }
+          >
+            {t("plugins:getPrompt")}
+          </Button>
+        </div>
+      ) : null}
+      {error ? (
+        <p role="alert" className="break-words text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+      {output ? (
+        <ScrollArea className="max-h-72 min-w-0 rounded border p-2">
+          <pre className="whitespace-pre-wrap break-all text-xs">{output}</pre>
+        </ScrollArea>
+      ) : null}
+    </section>
   );
 }

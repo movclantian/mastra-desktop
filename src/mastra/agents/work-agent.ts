@@ -14,9 +14,11 @@ import type {
 } from "@mastra/core/agent";
 import { createCodingAgent } from "@mastra/core/coding-agent";
 import { createScorer } from "@mastra/core/evals";
+import type { Mastra } from "@mastra/core/mastra";
 import type { RequestContext } from "@mastra/core/request-context";
 import { TASK_STATE_TYPE, type TaskItem } from "@mastra/core/tools";
 import { createWorkspaceTools } from "@mastra/core/workspace";
+import { z } from "zod";
 import {
   BACKGROUND_TASK_TIMEOUT_MS,
   DEFAULT_AGENT_MEMBERS,
@@ -28,6 +30,12 @@ import {
 import { workPollingSignals, workWebhookSignals } from "../harness/signals";
 import { getMemory } from "../memory/memory-runtime";
 import { REQUEST_MODEL_ID_CONTEXT_KEY, resolveAgentModel } from "../models/providers";
+import {
+  pluginAgentDefinition,
+  pluginAgentInstructions,
+  resolvePluginAgentModel,
+} from "../plugins/agents";
+import { pluginAgentHooks, pluginExecutionProcessor } from "../plugins/execution";
 import { libraryIndexSignals } from "../rag/document/indexing";
 import { appStorage, userIdFromContext } from "../storage/database";
 import {
@@ -37,7 +45,6 @@ import {
   webSearchInstructions,
 } from "../tools/web-search";
 import {
-  getManagedSkillPaths,
   getThreadWorkspace,
   SCHEDULE_RUN_CONTEXT_KEY,
   WORKSPACE_PATH_CONTEXT_KEY,
@@ -51,10 +58,11 @@ import {
   type AgentProfile,
   DEFAULT_AGENT_PROFILE_ID,
   getAgentProfile,
-  loadManagedSkill,
+  loadManagedSkills,
   profileAgentRuntimeId,
-  resolveManagedSkillPaths,
+  resolvePluginDelegates,
   resolveProfileMembers,
+  resolveWorkSkillInputs,
   setProfileAgentFactories,
 } from "./custom";
 import {
@@ -81,6 +89,7 @@ function agentEnvironment(requestContext?: RequestContext): string {
   return `Current environment (reference data):\n${JSON.stringify({
     workspace: projectPath,
     platform: process.platform,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     date: new Date().toISOString().slice(0, 10),
     mode,
     model: controller?.session?.modelId ?? modelId,
@@ -209,16 +218,31 @@ function createWorkAgent(
   // The default roster is served by the prebuilt Explorer/Reviewer agents; the
   // default profile's members are metadata for the prompt and UI. Custom teams
   // resolve their own member agents.
-  const resolveMembers = (
+  const resolveMembers = async (
     profile: AgentProfile,
     requestContext?: RequestContext,
-  ): Record<string, Agent> => {
-    if (profile.id === DEFAULT_AGENT_PROFILE_ID) return workSubagents;
-    if (profile.type !== "team") return {};
-    return resolveProfileMembers(profile, resourceScope ?? userIdFromContext(requestContext));
+    mastra?: Mastra,
+  ): Promise<Record<string, Agent>> => {
+    const plugins = member
+      ? {}
+      : await resolvePluginDelegates(
+          profile,
+          resourceScope ?? userIdFromContext(requestContext),
+          mastra,
+        );
+    if (profile.id === DEFAULT_AGENT_PROFILE_ID) return { ...workSubagents, ...plugins };
+    return {
+      ...(profile.type === "team"
+        ? resolveProfileMembers(profile, resourceScope ?? userIdFromContext(requestContext))
+        : {}),
+      ...plugins,
+    };
   };
 
   return createCodingAgent({
+    ...(resourceScope
+      ? { requestContextSchema: z.object({ userId: z.literal(resourceScope) }).passthrough() }
+      : {}),
     id: member
       ? profileAgentRuntimeId(fixedProfile as AgentProfile, member.id, resourceScope)
       : fixedProfile
@@ -238,7 +262,13 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           userIdFromContext(requestContext),
         ));
-      const instructions = composeAgentInstructions({ profile, member });
+      const instructions = composeAgentInstructions({
+        profile:
+          profile.plugin && requestContext
+            ? { ...profile, instructions: await pluginAgentInstructions(profile, requestContext) }
+            : profile,
+        member,
+      });
       instructions.push(agentEnvironment(requestContext));
       if (member || requestContext?.get(SCHEDULE_RUN_CONTEXT_KEY) === true)
         instructions.push(resolveRequestMode(requestContext).instructions);
@@ -251,26 +281,26 @@ function createWorkAgent(
         instructions.push(webSearchInstructions(selection));
       }
       const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
-      if (!member && Array.isArray(selectedSkills)) {
-        const activated = await Promise.all(
-          selectedSkills
-            .filter(
-              (value): value is string => typeof value === "string" && value.trim().length > 0,
-            )
-            .slice(0, 4)
-            .map((name) => loadManagedSkill(name, userIdFromContext(requestContext))),
+      if (!member && !profile.plugin && Array.isArray(selectedSkills)) {
+        const activated = await loadManagedSkills(
+          selectedSkills.filter(
+            (value): value is string => typeof value === "string" && value.trim().length > 0,
+          ),
+          userIdFromContext(requestContext),
         );
         for (const skill of activated) {
-          if (skill) {
-            instructions.push(
-              `The user explicitly selected the skill "${skill.displayName}" (${skill.name}) for this message. This is the skill they are referring to when asking about the selected skill. Follow its instructions for this request:\n${skill.instructions}`,
-            );
-          }
+          instructions.push(
+            `The user explicitly selected the skill "${skill.displayName}" (${skill.name}) for this message. This is the skill they are referring to when asking about the selected skill. Follow its instructions for this request:\n${skill.instructions}`,
+          );
         }
       }
       return instructions;
     },
-    model: resolveAgentModel,
+    model: async ({ requestContext }) =>
+      fixedProfile?.plugin
+        ? resolvePluginAgentModel(fixedProfile.plugin, requestContext)
+        : resolveAgentModel({ requestContext }),
+    hooks: pluginAgentHooks(fixedProfile?.plugin),
     ...(!member
       ? {
           goal: {
@@ -311,21 +341,7 @@ function createWorkAgent(
           requestContext?.get(AGENT_PROFILE_CONTEXT_KEY) as string | undefined,
           resourceId,
         ));
-      const configuredPaths =
-        profile.id === DEFAULT_AGENT_PROFILE_ID
-          ? await getManagedSkillPaths(resourceId)
-          : await resolveManagedSkillPaths(member?.skills ?? profile.skills, resourceId);
-      const selectedSkills = requestContext?.get(SKILL_NAMES_CONTEXT_KEY);
-      const selectedPaths =
-        !member && Array.isArray(selectedSkills)
-          ? await resolveManagedSkillPaths(
-              selectedSkills.filter(
-                (value): value is string => typeof value === "string" && value.trim().length > 0,
-              ),
-              resourceId,
-            )
-          : [];
-      return [...new Set([...configuredPaths, ...selectedPaths])];
+      return resolveWorkSkillInputs(requestContext, profile, member);
     },
     inputProcessors: async ({ requestContext }) => {
       const profile =
@@ -341,13 +357,14 @@ function createWorkAgent(
       teamInvocationProcessor,
       ...(await buildGuardrailOutputProcessors(requestContext)),
       webSearchArchiveProcessor,
+      pluginExecutionProcessor(fixedProfile, requestContext),
     ],
     // The settings own this stack; do not restore processors the user disabled.
     errorProcessorDefaults: false,
     errorProcessors: async ({ requestContext }) =>
       buildGuardrailErrorProcessors(userIdFromContext(requestContext)),
     signals: [workWebhookSignals, workPollingSignals, libraryIndexSignals],
-    agents: async ({ requestContext }) => {
+    agents: async ({ requestContext, mastra }) => {
       const profile =
         fixedProfile ??
         (await getAgentProfile(
@@ -356,7 +373,7 @@ function createWorkAgent(
         ));
       const delegates = delegationMemberIds(profile, member);
       if (!delegates.length) return {};
-      const members = resolveMembers(profile, requestContext);
+      const members = await resolveMembers(profile, requestContext, mastra);
       return Object.fromEntries(Object.entries(members).filter(([id]) => delegates.includes(id)));
     },
     // Delegations acknowledge immediately; the model can request foreground
@@ -392,7 +409,7 @@ function createWorkAgent(
         getBrowserForRequest(requestContext),
       );
     },
-    defaultOptions: async ({ requestContext }) => {
+    defaultOptions: async ({ requestContext, mastra }) => {
       const profile =
         fixedProfile ??
         (await getAgentProfile(
@@ -423,10 +440,17 @@ function createWorkAgent(
         delegation: teamDelegation(
           WORK_DELEGATION,
           profile,
-          resolveMembers(profile, requestContext),
+          await resolveMembers(profile, requestContext, mastra),
           member?.id,
+          requestContext,
         ),
         requireToolApproval: requestToolApproval,
+        ...(fixedProfile?.plugin
+          ? {
+              maxSteps: (await pluginAgentDefinition(fixedProfile.plugin, requestContext))
+                .definition.maxTurns,
+            }
+          : {}),
       };
     },
   });

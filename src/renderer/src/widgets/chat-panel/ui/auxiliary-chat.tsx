@@ -155,7 +155,7 @@ function AuxiliaryThreadChat({
         >
           <MessageScroller className="flex-1">
             <MessageScrollerViewport>
-              <MessageScrollerContent className="px-3 py-3">
+              <MessageScrollerContent className="gap-4 px-3 py-3">
                 {display.length ? (
                   display.map((entry, index) => (
                     <MessageItem

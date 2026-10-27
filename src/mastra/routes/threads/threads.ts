@@ -23,13 +23,14 @@ import {
   resolveModelSelection,
   resolveRequestModel,
 } from "../../models/providers";
-import { listPluginSkills } from "../../plugins/registry";
+import { endPluginSession } from "../../plugins/hooks";
 import {
   attachAssetReference,
   getLibraryAsset,
   getLibraryAssetId,
   releaseThreadAssets,
 } from "../../rag/storage/assets";
+import { listManagedSkills } from "../../skills/local";
 import { appStorage, getLibsqlClient } from "../../storage/database";
 import { listWorkspaceChanges } from "../../workspace/changes";
 import {
@@ -546,7 +547,7 @@ const threadContextRoute = registerApiRoute("/work/threads/:threadId/context", {
       });
     };
     let latestRequest = "";
-    const pluginSkills = await listPluginSkills(resourceId);
+    const pluginSkills = await listManagedSkills(resourceId);
     for (const message of workbenchMessages(messages)) {
       const metadata = record(message.metadata);
       for (const file of generatedFilesInMessage(message)) {
@@ -918,6 +919,7 @@ async function handleMemoryThreadRequest(c: ContextWithMastra, next: () => Promi
         threadId,
       }),
     ]);
+    await endPluginSession(resourceId, threadId);
     await controller?.deleteSession({ sessionId });
     await deleteRelatedThreadData(c, memory, resourceId, threadId);
     await memory.settled();

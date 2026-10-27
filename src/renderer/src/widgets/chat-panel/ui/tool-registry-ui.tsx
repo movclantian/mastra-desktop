@@ -30,7 +30,6 @@ import {
   MoveIcon,
   NetworkIcon,
   PlugIcon,
-  RadioIcon,
   ScissorsIcon,
   SearchIcon,
   StethoscopeIcon,
@@ -58,6 +57,7 @@ import {
 } from "@/shared/ui/dialog";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { asRecord, asString } from "../model/types";
+import { applicationToolUIs } from "./application-tools-ui";
 import { MessageLink } from "./message-selection";
 
 // ---------------------------------------------------------------------------
@@ -757,15 +757,6 @@ const recordDetail = (output: unknown) => {
   return hasRows ? <RecordDetail output={output} /> : null;
 };
 
-const recordsDetailFor =
-  (field: string) =>
-  ({ output }: { output: unknown }) => {
-    const list = asRecord(output)?.[field];
-    return Array.isArray(list) && list.length > 0 ? (
-      <RecordsDetail field={field} output={output} />
-    ) : null;
-  };
-
 // --- 工作区文件工具 ---------------------------------------------------------
 
 const workspaceUIs: Record<string, ToolUIDescriptor> = {
@@ -1247,34 +1238,6 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
     icon: CodeXmlIcon,
     labelKey: "execute_typescript",
   },
-  signal_subscribe: {
-    icon: RadioIcon,
-    labelKey: "signal_subscribe",
-    summarize: (input) => ({
-      chips: [
-        pickStr(input, "provider"),
-        pickStr(input, "externalResourceId"),
-        cap(pickStr(input, "pollUrl") ?? "", 60) || undefined,
-      ].filter((v): v is string => Boolean(v)),
-    }),
-    detail: ({ output }) => recordDetail(output),
-  },
-  signal_unsubscribe: {
-    icon: RadioIcon,
-    labelKey: "signal_unsubscribe",
-    summarize: (input) => ({
-      chips: [pickStr(input, "provider"), pickStr(input, "externalResourceId")].filter(
-        (v): v is string => Boolean(v),
-      ),
-    }),
-    detail: ({ output }) => recordDetail(output),
-  },
-  signal_list_subscriptions: {
-    icon: RadioIcon,
-    labelKey: "signal_list",
-    summarize: (input) => ({ chips: queryChips(input, "provider") }),
-    detail: recordsDetailFor("subscriptions"),
-  },
   task_write: {
     icon: ListTodoIcon,
     labelKey: "task_write",
@@ -1326,6 +1289,18 @@ const miscUIs: Record<string, ToolUIDescriptor> = {
       const text = outputText(output);
       return text ? <TextNote text={text} /> : null;
     },
+  },
+  search_skills: {
+    icon: SearchIcon,
+    labelKey: "skill_search",
+    summarize: (input) => ({ chips: queryChips(input, "query") }),
+    detail: ({ output }) => <RecordDetail output={output} />,
+  },
+  load_skill: {
+    icon: BookMarkedIcon,
+    labelKey: "skill",
+    summarize: (input) => ({ chips: queryChips(input, "skillName") }),
+    detail: ({ output }) => <RecordDetail output={output} />,
   },
   skill_search: {
     icon: SearchIcon,
@@ -1400,6 +1375,7 @@ const EXACT_UIS: Record<string, ToolUIDescriptor> = {
   ...browserUIs,
   ...webUIs,
   ...miscUIs,
+  ...applicationToolUIs,
 };
 
 export function getToolUI(name: string): ToolUIDescriptor | undefined {

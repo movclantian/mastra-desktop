@@ -436,7 +436,7 @@ export const ContextContentWindowControl = () => {
     typeof value === "number" ? value : (value[0] ?? budgetPercent);
 
   return (
-    <div className="space-y-2 border-t border-border/60 px-3 py-3">
+    <div className="space-y-2 border-t border-border/60 px-1 py-2">
       <div className="flex min-w-0 items-baseline justify-between gap-3">
         <span className="text-xs font-medium text-foreground">
           {t("chat:context.windowBudget")}

@@ -194,6 +194,75 @@ export interface PluginMcpDefinition {
   headers?: Record<string, string>;
 }
 
+export interface PluginBinding {
+  pluginId: string;
+  componentId: string;
+  digest: string;
+  revision?: string;
+}
+
+export const pluginHookEvents = [
+  "SessionStart",
+  "SessionEnd",
+  "UserPromptSubmit",
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Stop",
+  "SubagentStart",
+  "SubagentStop",
+] as const;
+export type PluginHookEvent = (typeof pluginHookEvents)[number];
+export interface PluginHook {
+  event: PluginHookEvent;
+  matcher?: string;
+  type: "command" | "http" | "prompt";
+  command?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  prompt?: string;
+  model?: string;
+  timeout: number;
+}
+export interface PluginAgentDefinition {
+  instructions: string;
+  model?: string;
+  tools?: string[];
+  disallowedTools?: string[];
+  skills?: string[];
+  mcpServers?: string[];
+  delegates: string[];
+  maxTurns?: number;
+  hooks?: PluginHook[];
+}
+export interface PluginCommandDefinition {
+  instructions: string;
+  argumentHint?: string;
+  model?: string;
+  tools?: string[];
+  agent?: string;
+  hooks?: PluginHook[];
+}
+export interface PluginLspDefinition {
+  command: string;
+  args: string[];
+  extensionToLanguage: Record<string, string>;
+  initializationOptions?: Record<string, unknown>;
+}
+export type PluginRuntimeStatus =
+  | "installed"
+  | "disabled"
+  | "needs-configuration"
+  | "needs-authorization"
+  | "ready"
+  | "failed"
+  | "unsupported";
+export interface PluginComponentStatus {
+  status: PluginRuntimeStatus;
+  detail?: string;
+  checkedAt?: string;
+}
+
 export interface PluginComponent {
   id: string;
   key: string;
@@ -206,6 +275,11 @@ export interface PluginComponent {
   issues: string[];
   mcp?: PluginMcpDefinition;
   configurationKeys?: string[];
+  agent?: PluginAgentDefinition;
+  command?: PluginCommandDefinition;
+  hooks?: PluginHook[];
+  lsp?: PluginLspDefinition;
+  userInvocable?: boolean;
 }
 
 export interface PluginVersion {
@@ -235,11 +309,15 @@ export interface InstalledPlugin {
   listing?: MarketplaceListing;
   enabled: boolean;
   componentEnabled: Record<string, boolean>;
+  /** Explicit executable-component consent is pinned to the reviewed package digest. */
+  executionGrants?: Record<string, string>;
   configuration?: PluginConfiguration;
   pendingConfiguration?: { digest: string; configuration: PluginConfiguration };
   /** Derived from the current installed graph and configuration; never persisted. */
   dependencyErrors?: string[];
   configurationErrors?: string[];
+  /** Runtime observations, never persisted in the install record. */
+  componentStatus?: Record<string, PluginComponentStatus>;
   current: PluginVersion;
   previous?: PluginVersion;
   update?: {
@@ -270,6 +348,7 @@ export interface PluginSkill {
   description: string;
   path: string;
   enabled: boolean;
+  userInvocable?: boolean;
 }
 
 /** Marketplace service roots; public skills pages intentionally use www. */

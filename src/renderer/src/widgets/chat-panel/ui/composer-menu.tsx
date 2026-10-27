@@ -31,6 +31,7 @@ import { fetchTree, workspaceRawFileUrl } from "@/entities/workbench/api/workben
 import { useSessionSettings } from "@/entities/workbench/model/use-session-settings";
 import { useWorkbenchStore } from "@/entities/workbench/model/workbench-store";
 import { useAuth } from "@/features/auth";
+import { requestJson } from "@/shared/api";
 import { useTranslation } from "@/shared/i18n";
 import {
   PromptInputActionAddAttachments,
@@ -41,6 +42,7 @@ import {
   PromptInputButton,
   PromptInputTools,
   usePromptInputAttachments,
+  usePromptInputController,
 } from "@/shared/ui/ai-elements/prompt-input";
 import {
   DropdownMenu,
@@ -105,6 +107,7 @@ export function ComposerMenu({
       toast.error(error instanceof Error ? error.message : t("common:error")),
     );
   const attachments = usePromptInputAttachments();
+  const prompt = usePromptInputController();
   const queueFiles = useWorkbenchStore((state) => state.queueLibraryFiles);
   const [open, setOpen] = React.useState(false);
   const [directory, setDirectory] = React.useState("");
@@ -125,6 +128,14 @@ export function ComposerMenu({
     queryKey: ["composer-mcp", userId],
     queryFn: fetchMcpServers,
     enabled: open,
+  });
+  const commands = useQuery({
+    queryKey: ["plugin-commands", userId],
+    enabled: open,
+    queryFn: () =>
+      requestJson<{
+        commands: Array<{ id: string; name: string; description: string; argumentHint: string }>;
+      }>("/work/plugins/commands"),
   });
   const tree = useQuery({
     queryKey: ["composer-files", userId, threadId, directory],
@@ -242,16 +253,20 @@ export function ComposerMenu({
               <DropdownMenuSubTrigger>
                 <SparklesIcon />
                 {t("sidebar:skills")}
-                <span className="ml-auto text-xs text-muted-foreground">{skills.length}/4</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {t("plugins:selectedSkills", { count: skills.length })}
+                </span>
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="w-72 overflow-hidden">
+                <p className="px-2 py-2 text-xs whitespace-normal text-muted-foreground">
+                  {t("plugins:skillSelectionHint")}
+                </p>
                 <ScrollArea className="max-h-[min(20rem,calc(var(--available-height)-3rem))]">
                   {availableSkills.data?.length
                     ? availableSkills.data.map((skill) => (
                         <DropdownMenuCheckboxItem
                           key={skill.id}
                           checked={skills.includes(skill.id)}
-                          disabled={!skills.includes(skill.id) && skills.length >= 4}
                           closeOnClick={false}
                           onCheckedChange={(checked) =>
                             onSkillsChange(
@@ -275,6 +290,34 @@ export function ComposerMenu({
                 <DropdownMenuItem onClick={() => void navigate({ to: "/skills" })}>
                   {t("chat:composer.manageSkills")}
                 </DropdownMenuItem>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <SparklesIcon />
+                {t("plugins:commands")}
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-72 overflow-hidden">
+                <ScrollArea className="max-h-[min(20rem,calc(var(--available-height)-3rem))]">
+                  {commands.data?.commands.length
+                    ? commands.data.commands.map((command) => (
+                        <DropdownMenuItem
+                          key={command.id}
+                          onClick={() => {
+                            prompt.textInput.setInput(`/${command.name} `);
+                            setOpen(false);
+                          }}
+                        >
+                          <span className="min-w-0 whitespace-normal">
+                            <span className="block break-all">/{command.name}</span>
+                            <span className="text-xs text-muted-foreground">
+                              {command.description} {command.argumentHint}
+                            </span>
+                          </span>
+                        </DropdownMenuItem>
+                      ))
+                    : empty(commands.isPending, commands.isError)}
+                </ScrollArea>
               </DropdownMenuSubContent>
             </DropdownMenuSub>
             <DropdownMenuSub>

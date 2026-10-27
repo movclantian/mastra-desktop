@@ -533,7 +533,7 @@ function AgentContextMenuWrapper({
 }) {
   const { t } = useTranslation();
   const Icon = profile.type === "team" ? UsersRoundIcon : BotIcon;
-  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id || !!profile.plugin;
   const isMac = React.useMemo(() => isMacPlatform(), []);
 
   const handleCopyInfo = () => {
@@ -601,7 +601,7 @@ function AgentGridCard({
 }) {
   const { t } = useTranslation();
 
-  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id || !!profile.plugin;
   const isTeam = profile.type === "team";
 
   return (
@@ -730,7 +730,7 @@ function AgentListItem({
 }) {
   const { t } = useTranslation();
 
-  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id;
+  const isDefault = profile.id === DEFAULT_AGENT_PROFILE.id || !!profile.plugin;
   const isTeam = profile.type === "team";
 
   return (

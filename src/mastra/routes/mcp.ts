@@ -6,7 +6,9 @@ import {
   authenticateMcpServer,
   deleteMcpServer,
   getMcpConfig,
+  mcpContentInputSchema,
   mcpServerConfigSchema,
+  readMcpContent,
   saveMcpServer,
   summarizeMcpServer,
   testMcpServer,
@@ -16,6 +18,22 @@ import { listInstalledPlugins } from "../plugins/registry";
 
 const serverIdSchema = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/) });
 const serverBodySchema = z.object({ server: mcpServerConfigSchema }).strict();
+
+export const mcpContentRoute = createRoute({
+  path: "/work/mcp/:id/content",
+  method: "POST",
+  responseType: "json",
+  onValidationError: workValidationError,
+  pathParamSchema: serverIdSchema,
+  bodySchema: mcpContentInputSchema.transform((input) => ({ input })),
+  handler: async ({ id, input, requestContext, abortSignal }) => {
+    const owner = requestContext.get(MASTRA_RESOURCE_ID_KEY) as string;
+    if (!owner) throw workError("AUTH_REQUIRED");
+    const server = (await getMcpConfig(owner)).servers.find((item) => item.id === id);
+    if (!server?.enabled) throw workError("MCP_SERVER_NOT_FOUND");
+    return readMcpContent(server, owner, input, abortSignal);
+  },
+});
 
 export const mcpConfigRoute = createRoute({
   queryParamSchema: z.object({}).strict(),

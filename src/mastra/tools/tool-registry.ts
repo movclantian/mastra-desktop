@@ -2,7 +2,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type { ToolsInput } from "@mastra/core/agent";
-import type { InputProcessor } from "@mastra/core/processors";
+import {
+  type InputProcessor,
+  ToolSearchProcessor,
+  type ToolSearchProcessorOptions,
+} from "@mastra/core/processors";
 import { type PublicSchema, toStandardSchema } from "@mastra/core/schema";
 import {
   type CoreTool,
@@ -16,6 +20,7 @@ import {
 import { QuickJsCodeModeTransport } from "@mastra/quickjs";
 import { z } from "zod";
 import { PERMISSION_RULES_CONTEXT_KEY } from "../../shared/agent-contract.ts";
+import { agentApplicationTools } from "../agents/custom";
 import {
   type PermissionPolicy,
   parsePermissionRules,
@@ -23,8 +28,39 @@ import {
   SESSION_TOOL_POLICY_CONTEXT_KEY,
   toolCategoryOf,
 } from "../agents/permissions.ts";
+import { mcpApplicationTools } from "../connections/mcp-tools";
+import { scheduleApplicationTools, signalApplicationTools } from "../harness/schedule-operations";
+import { pluginApplicationTools } from "../plugins/management-tools";
+import { libraryApplicationTools } from "../rag/library-tools";
+import { applicationToolAllowed } from "./application";
 
 const CODE_MODE_ID = "execute_typescript";
+const applicationSearch = new Map<string, ToolSearchProcessor>();
+
+/** Use Mastra's native discovery/resume lifecycle, not a second generic tool dispatcher. */
+export function applicationToolSearchProcessor(
+  resourceId: string | undefined,
+  options: Pick<ToolSearchProcessorOptions, "search" | "injectCatalog" | "storage" | "ttl">,
+) {
+  const key = JSON.stringify([resourceId, options]);
+  const existing = applicationSearch.get(key);
+  if (existing) return existing;
+  const processor = new ToolSearchProcessor({
+    ...options,
+    tools: {
+      ...agentApplicationTools,
+      ...mcpApplicationTools,
+      ...pluginApplicationTools,
+      ...libraryApplicationTools,
+      ...scheduleApplicationTools,
+      ...signalApplicationTools,
+    },
+    filter: ({ toolName, requestContext }) => applicationToolAllowed(toolName, requestContext),
+  });
+  // shortcut: retain configuration snapshots for in-flight approvals until restart; evict when native stores expose disposal.
+  applicationSearch.set(key, processor);
+  return processor;
+}
 const CODE_MODE_TIMEOUT = 30_000;
 // Interactions and long generation jobs need the native loop's lifecycle, outside Code Mode's budget.
 const DIRECT_TOOL_NAMES = new Set([
@@ -33,6 +69,8 @@ const DIRECT_TOOL_NAMES = new Set([
   "submit_plan",
   "generate_image",
   "generate_video",
+  "search_tools",
+  "load_tool",
 ]);
 const codeModeTransport = new QuickJsCodeModeTransport({ memoryLimitMb: 128 });
 // createCodeMode forwards only base context; preserve each run's agent context for delegation.
@@ -70,7 +108,13 @@ export function codeModeProcessor(scheduled = false): InputProcessor {
       const externalTools: ToolsInput = {};
       for (const name of active) {
         const original = resolved[name];
-        if (DIRECT_TOOL_NAMES.has(name) || !original?.execute || policy(name) !== "allow") continue;
+        if (
+          DIRECT_TOOL_NAMES.has(name) ||
+          name.startsWith("app_manage_") ||
+          !original?.execute ||
+          policy(name) !== "allow"
+        )
+          continue;
         const execute = original.execute;
         const approval = original.needsApprovalFn ?? original.requireApproval;
         if (approval === true) continue;

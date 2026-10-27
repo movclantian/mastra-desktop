@@ -67,6 +67,15 @@ export const DesktopNotificationSchema = z
   .strict();
 export type DesktopNotification = z.infer<typeof DesktopNotificationSchema>;
 
+export const ApplicationChangeSchema = z
+  .object({
+    resourceId: z.string().min(1),
+    domain: z.enum(["agents", "plugins", "mcp", "library", "schedules"]),
+  })
+  .strict();
+export type ApplicationChange = z.infer<typeof ApplicationChangeSchema>;
+export type ApplicationDomain = ApplicationChange["domain"];
+
 /** Local development URLs belong in the workbench; external web links keep the OS default. */
 export function isLocalWebUrl(value: string): boolean {
   try {

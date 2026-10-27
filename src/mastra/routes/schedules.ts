@@ -6,13 +6,7 @@ import { DEFAULT_MASTRA_PORT } from "../../shared/proxy-contract";
 
 import type { Mastra } from "@mastra/core/mastra";
 import { MASTRA_RESOURCE_ID_KEY, RequestContext } from "@mastra/core/request-context";
-import type {
-  AgentSchedule,
-  CreateAgentScheduleInput,
-  SchedulePrepareContext,
-  SchedulePrepareResult,
-  UpdateAgentScheduleInput,
-} from "@mastra/core/schedules";
+import type { SchedulePrepareContext, SchedulePrepareResult } from "@mastra/core/schedules";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { z } from "zod";
 import { workbenchSessionId } from "../../shared/agent-contract";
@@ -28,7 +22,15 @@ import {
   resolveMode,
 } from "../agents/permissions";
 import { SESSION_EXECUTION_CONTEXT_KEY } from "../agents/work-agent";
-import { errorText, WorkApiError, workError } from "../errors";
+import { workError } from "../errors";
+import {
+  createOwnedSchedule,
+  isOwnedSchedule,
+  readOwnedSchedule,
+  scheduleInputSchema,
+  updateOwnedSchedule,
+  updateScheduleSchema,
+} from "../harness/schedule-operations";
 import {
   getProvidersConfig,
   REQUEST_MODEL_ID_CONTEXT_KEY,
@@ -53,54 +55,6 @@ import {
   WORKSPACE_THREAD_ID_CONTEXT_KEY,
 } from "../workspace/workspace-manager";
 import type { ThreadMetadata } from "./threads/shared";
-import { getOwnedThread, getWorkMemory } from "./threads/shared";
-
-const signalTypes = [
-  "user",
-  "state",
-  "reactive",
-  "notification",
-  "user-message",
-  "system-reminder",
-] as const;
-
-const attributesSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.number(), z.boolean(), z.null()]),
-);
-
-const scheduleInputSchema = z.object({
-  id: z.string().trim().min(1).max(120).optional(),
-  agentId: z.string().trim().min(1).max(160),
-  prompt: z.string().trim().min(1).max(20_000),
-  name: z.string().trim().max(120).optional(),
-  cron: z.string().trim().min(1).max(120),
-  timezone: z.string().trim().max(120).optional(),
-  threadId: z.string().trim().min(1).optional(),
-  signalType: z.enum(signalTypes).optional(),
-  tagName: z.string().trim().max(80).optional(),
-  attributes: attributesSchema.optional(),
-  providerOptions: z.record(z.string(), z.unknown()).optional(),
-  ifActive: z
-    .object({
-      behavior: z.enum(["deliver", "discard", "persist"]).optional(),
-      attributes: attributesSchema.optional(),
-    })
-    .optional(),
-  ifIdle: z
-    .object({
-      behavior: z.enum(["discard", "persist", "wake"]).optional(),
-      attributes: attributesSchema.optional(),
-    })
-    .optional(),
-  status: z.enum(["active", "paused"]).optional(),
-});
-
-const updateScheduleSchema = scheduleInputSchema
-  .omit({ id: true, agentId: true, threadId: true })
-  .partial();
-
-type ScheduleView = AgentSchedule;
 
 /** Resolve the current thread settings at fire time; persisted schedules contain no runtime handles. */
 export async function prepareScheduledRun({
@@ -223,16 +177,8 @@ function resourceIdFor(c: ContextWithMastra): string {
   return value.trim();
 }
 
-function isOwnedSchedule(schedule: unknown, resourceId: string): schedule is ScheduleView {
-  if (!schedule || typeof schedule !== "object" || !("agentId" in schedule)) return false;
-  const candidate = schedule as ScheduleView;
-  return candidate.resourceId === resourceId || candidate.metadata?.ownerResourceId === resourceId;
-}
-
-async function ownedSchedule(c: ContextWithMastra, scheduleId: string): Promise<ScheduleView> {
-  const schedule = await c.get("mastra").schedules.get(scheduleId);
-  if (!isOwnedSchedule(schedule, resourceIdFor(c))) throw workError("SCHEDULE_NOT_FOUND");
-  return schedule;
+async function ownedSchedule(c: ContextWithMastra, scheduleId: string) {
+  return readOwnedSchedule(c.get("mastra"), resourceIdFor(c), scheduleId);
 }
 
 const schedulesListRoute = registerApiRoute("/work/schedules", {
@@ -253,30 +199,13 @@ const schedulesCreateRoute = registerApiRoute("/work/schedules", {
     const parsed = scheduleInputSchema.safeParse(await c.req.json());
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
     const input = parsed.data;
-    const profile = (await listAgentProfiles(resourceId)).find((item) => item.id === input.agentId);
-    if (!profile?.enabled) throw workError("SCHEDULE_INVALID", { text: "Agent not found" });
-    const { signalType, ifActive, ifIdle, ...scheduleInput } = input;
-    if (input.threadId) {
-      const memory = await getWorkMemory(c.get("requestContext"));
-      if (!(await getOwnedThread(memory, input.threadId, resourceId)))
-        throw workError("THREAD_NOT_FOUND");
-    }
-    try {
-      const schedule = await c.get("mastra").schedules.create({
-        ...scheduleInput,
-        agentId: DEFAULT_AGENT_PROFILE_ID,
-        ...(input.threadId ? { resourceId } : {}),
-        ...(input.threadId ? { signalType, ifActive, ifIdle } : {}),
-        metadata: { profileId: profile.id, ownerResourceId: resourceId },
-      } satisfies CreateAgentScheduleInput);
-      return c.json({ schedule }, 201);
-    } catch (error) {
-      if (error instanceof WorkApiError) throw error;
-      throw workError("SCHEDULE_INVALID", {
-        text: errorText(error, "创建定时任务失败"),
-        cause: error,
-      });
-    }
+    const schedule = await createOwnedSchedule(
+      c.get("mastra"),
+      resourceId,
+      input,
+      c.get("requestContext"),
+    );
+    return c.json({ schedule }, 201);
   },
 });
 
@@ -291,18 +220,14 @@ const schedulesUpdateRoute = registerApiRoute("/work/schedules/:scheduleId", {
     const current = await ownedSchedule(c, c.req.param("scheduleId"));
     const parsed = updateScheduleSchema.safeParse(await c.req.json());
     if (!parsed.success) throw workError("SCHEDULE_INVALID");
-    const patch = parsed.data;
-    try {
-      const schedule = await c
-        .get("mastra")
-        .schedules.update(current.id, patch satisfies UpdateAgentScheduleInput);
-      return c.json({ schedule });
-    } catch (error) {
-      throw workError("SCHEDULE_INVALID", {
-        text: errorText(error, "更新定时任务失败"),
-        cause: error,
-      });
-    }
+    return c.json({
+      schedule: await updateOwnedSchedule(
+        c.get("mastra"),
+        resourceIdFor(c),
+        current.id,
+        parsed.data,
+      ),
+    });
   },
 });
 

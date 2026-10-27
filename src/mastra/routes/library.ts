@@ -14,20 +14,18 @@ import { MASTRA_RESOURCE_ID_KEY } from "@mastra/core/request-context";
 import { type ContextWithMastra, registerApiRoute } from "@mastra/core/server";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import {
-  MAX_TEXT_DOCUMENT_BYTES,
-  TextDocumentFilenameSchema,
-} from "../../shared/workspace-contract";
 import { errorText, WorkApiError, workError } from "../errors";
-import { readBoundedFile, reindexAsset } from "../rag/document/indexing";
+import { reindexAsset } from "../rag/document/indexing";
 import {
   attachAssetReference,
   deleteAsset,
   getAssetFile,
   getLibraryAsset,
+  libraryDocumentVersionSchema,
   listAssets,
+  readEditableDocument,
   renameAsset,
-  uploadAssetFromBytes,
+  saveLibraryDocumentVersion,
   uploadAssetFromFile,
 } from "../rag/storage/assets";
 import { getLibrarySettings, saveLibrarySettings, withClient } from "../rag/storage/db";
@@ -541,35 +539,6 @@ export const libraryAssetContentRoute = registerApiRoute("/work/library/assets/:
   },
 });
 
-const MAX_EDITABLE_DOCUMENT_BYTES = MAX_TEXT_DOCUMENT_BYTES;
-const editableDocumentName = /\.(?:md|markdown|txt|csv)$/i;
-
-async function readEditableDocument(resourceId: string, assetId: string) {
-  const source = await getAssetFile(resourceId, assetId);
-  if (!source) throw workError("LIBRARY_ASSET_NOT_FOUND");
-  if (
-    !editableDocumentName.test(source.asset.filename) ||
-    source.asset.byteSize > MAX_EDITABLE_DOCUMENT_BYTES
-  )
-    throw workError("VALIDATION_FAILED", {
-      text: "Only UTF-8 Markdown, text and CSV files up to 1 MiB can be edited",
-    });
-  const bytes = await readBoundedFile(source.path, MAX_EDITABLE_DOCUMENT_BYTES);
-  let content: string;
-  try {
-    content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    throw workError("VALIDATION_FAILED", { text: "Document is not valid UTF-8 text" });
-  }
-  if (content.includes("\0"))
-    throw workError("VALIDATION_FAILED", { text: "Binary content cannot be edited as text" });
-  return {
-    content,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
-    filename: source.asset.filename,
-  };
-}
-
 export const libraryDocumentTextRoute = registerApiRoute("/work/library/assets/:assetId/text", {
   method: "GET",
   handler: async (c) => {
@@ -584,35 +553,9 @@ export const saveLibraryDocumentVersionRoute = registerApiRoute(
   {
     method: "POST",
     handler: async (c) => {
-      const body = z
-        .object({
-          filename: TextDocumentFilenameSchema,
-          content: z.string().min(1).max(MAX_EDITABLE_DOCUMENT_BYTES),
-          sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
-          folderId: z.string().min(1).max(256).nullable(),
-        })
-        .strict()
-        .parse(await c.req.json());
+      const body = libraryDocumentVersionSchema.parse(await c.req.json());
       const resourceId = authenticatedResourceId(c);
-      const source = await readEditableDocument(resourceId, c.req.param("assetId"));
-      if (source.sha256 !== body.sourceSha256)
-        throw workError("VALIDATION_FAILED", {
-          text: "Source document changed. Reload it before saving a new version.",
-        });
-      const bytes = Buffer.from(body.content, "utf8");
-      if (bytes.byteLength > MAX_EDITABLE_DOCUMENT_BYTES || body.content.includes("\0"))
-        throw workError("VALIDATION_FAILED", { text: "Document must be UTF-8 text up to 1 MiB" });
-      if (body.folderId) {
-        const folders = await listFolders(resourceId, "");
-        if (!folders.some((folder) => folder.id === body.folderId))
-          throw workError("VALIDATION_FAILED", { text: "Destination folder is unavailable" });
-      }
-      const asset = await uploadAssetFromBytes({
-        resourceId,
-        filename: body.filename,
-        bytes,
-        folderId: body.folderId ?? undefined,
-      });
+      const asset = await saveLibraryDocumentVersion(resourceId, c.req.param("assetId"), body);
       return c.json({ asset }, 201);
     },
   },

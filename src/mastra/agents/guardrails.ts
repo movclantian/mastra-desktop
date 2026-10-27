@@ -41,29 +41,19 @@ import {
   RegexFilterProcessor,
   type RegexRule,
   ResponseCache,
-  SkillSearchProcessor,
   StreamErrorRetryProcessor,
   SystemPromptScrubber,
   TokenCostControl,
   TokenLimiterProcessor,
   ToolCallFilter,
-  ToolSearchProcessor,
   UnicodeNormalizer,
 } from "@mastra/core/processors";
 import type { RequestContext } from "@mastra/core/request-context";
-import type { Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
-import { DEFAULT_AGENT_PROFILE_ID } from "../../shared/agent-contract";
+import { DEFAULT_AGENT_PROFILE_ID, DEFAULT_DISCOVERY_CONFIG } from "../../shared/agent-contract";
 import { resolveContextModel, resolveDefaultLanguageModel } from "../models/providers";
 import { getAppConfig, setAppConfig, userIdFromContext } from "../storage/database";
-import {
-  getThreadWorkspace,
-  invalidateWorkspaceInstances,
-  onWorkspaceDestroy,
-  WORKSPACE_PATH_CONTEXT_KEY,
-  WORKSPACE_THREAD_ID_CONTEXT_KEY,
-} from "../workspace/workspace-manager";
-import { SESSION_TOOL_POLICY_CONTEXT_KEY } from "./permissions";
+import { invalidateWorkspaceInstances } from "../workspace/workspace-manager";
 import { NativeUnsupportedFileHandler, PromptInjectionBoundaryProcessor } from "./processors";
 
 const GUARDRAILS_CONFIG_KEY = "guardrails";
@@ -379,19 +369,7 @@ const DEFAULT_CONFIG: GuardrailsUserConfig = {
 
   providerCompat: true,
 
-  skillSearch: false,
-  skillSearchTopK: 5,
-  skillSearchMinScore: 0,
-  skillSearchTtl: 3_600_000,
-  skillSearchBlockingRefresh: false,
-
-  toolSearch: false,
-  toolSearchTopK: 5,
-  toolSearchMinScore: 0,
-  toolSearchInjectCatalog: false,
-  toolSearchAutoLoad: false,
-  toolSearchStorage: "context",
-  toolSearchTtl: 3_600_000,
+  ...DEFAULT_DISCOVERY_CONFIG,
 
   prefillErrorHandler: true,
   streamErrorRetry: true,
@@ -461,12 +439,11 @@ function scopeKey(resourceId?: string): string {
 // 处理器实例缓存
 //
 // 输入/输出处理器按请求模型即时构建;错误处理器可安全按配置缓存。
-// SkillSearch 依赖每线程 Workspace 实例,单独按工作区路径缓存。
+// 搜索处理器由统一的 Agent 输入管线持有，不在护栏中重复注册。
 // ---------------------------------------------------------------------------
 
 interface GuardrailRuntime {
   cachedError: ErrorProcessorOrWorkflow[] | null;
-  skillSearchCache: WeakMap<Workspace, SkillSearchProcessor>;
   responseCacheBackend: InMemoryServerCache | null;
 }
 
@@ -478,7 +455,6 @@ function getRuntime(resourceId?: string): GuardrailRuntime {
   if (!runtime) {
     runtime = {
       cachedError: null,
-      skillSearchCache: new WeakMap(),
       responseCacheBackend: null,
     };
     runtimeByScope.set(key, runtime);
@@ -742,30 +718,6 @@ async function buildInput(
     );
   }
 
-  if (cfg.toolSearch) {
-    processors.push(
-      new ToolSearchProcessor({
-        tools: {},
-        includeResolvedTools: true,
-        injectCatalog: cfg.toolSearchInjectCatalog,
-        filter: ({ toolName, requestContext }) => {
-          const policy = requestContext?.get(SESSION_TOOL_POLICY_CONTEXT_KEY) as
-            | ((toolName: string) => string)
-            | undefined;
-          if (typeof policy !== "function") return true;
-          return policy(toolName) !== "deny";
-        },
-        search: {
-          topK: cfg.toolSearchTopK,
-          minScore: cfg.toolSearchMinScore,
-          autoLoad: cfg.toolSearchAutoLoad,
-        },
-        storage: cfg.toolSearchStorage,
-        ttl: cfg.toolSearchTtl,
-      }),
-    );
-  }
-
   if (cfg.providerCompat) processors.push(new ProviderHistoryCompat());
 
   if (cfg.responseCache) {
@@ -895,41 +847,12 @@ function buildError(cfg: GuardrailsUserConfig): ErrorProcessorOrWorkflow[] {
   return processors;
 }
 
-/**
- * 本请求生效的输入处理器。
- * SkillSearchProcessor 依赖本线程的 Workspace 实例,只能在这里按
- * RequestContext 里的工作区路径追加(其余处理器走配置级缓存)。
- */
+/** Search processors are assembled once in buildInputPipeline, using this same configuration. */
 export async function buildGuardrailInputProcessors(
   requestContext?: RequestContext,
 ): Promise<InputProcessorOrWorkflow[]> {
   const resourceId = userIdFromContext(requestContext);
-  const cfg = await getGuardrailsConfig(resourceId);
-  const runtime = getRuntime(resourceId);
-  const input = await buildInput(cfg, resourceId, requestContext);
-  if (!cfg.skillSearch) return input;
-  const contextPath = requestContext?.get(WORKSPACE_PATH_CONTEXT_KEY);
-  const workspacePath =
-    typeof contextPath === "string" && contextPath.trim() ? contextPath.trim() : process.cwd();
-  const threadId = requestContext?.get(WORKSPACE_THREAD_ID_CONTEXT_KEY);
-  const workspace = await getThreadWorkspace(
-    workspacePath,
-    typeof threadId === "string" ? threadId : undefined,
-    resourceId,
-  );
-  let skillSearch = runtime.skillSearchCache.get(workspace);
-  if (!skillSearch) {
-    skillSearch = new SkillSearchProcessor({
-      workspace,
-      search: { topK: cfg.skillSearchTopK, minScore: cfg.skillSearchMinScore },
-      ttl: cfg.skillSearchTtl,
-      blockingRefresh: cfg.skillSearchBlockingRefresh,
-    });
-    runtime.skillSearchCache.set(workspace, skillSearch);
-    const processor = skillSearch;
-    onWorkspaceDestroy(workspace, () => processor.dispose());
-  }
-  return [...input, skillSearch];
+  return buildInput(await getGuardrailsConfig(resourceId), resourceId, requestContext);
 }
 
 export async function buildGuardrailOutputProcessors(

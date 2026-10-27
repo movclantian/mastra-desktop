@@ -59,6 +59,7 @@ import { Separator } from "@/shared/ui/separator";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/shared/ui/sidebar";
 import { Switch } from "@/shared/ui/switch";
 import { providerCredentialPurpose } from "../../../../../../shared/credential-contract";
+import { normalizeProviderUrl } from "../../../../../../shared/provider-url";
 import { CapabilityBadges } from "../controls";
 
 // ---------------------------------------------------------------------------
@@ -693,7 +694,7 @@ function ProviderConnectionDialog({
               ...credential,
               name: name.trim(),
               protocol,
-              baseUrl: baseUrl.trim() || undefined,
+              baseUrl: baseUrl.trim() ? normalizeProviderUrl(baseUrl, protocol) : undefined,
               useResponses: protocol === "openai" ? useResponses : false,
             }
           : { ...mode.provider, ...credential };
@@ -717,7 +718,7 @@ function ProviderConnectionDialog({
         id,
         name: name.trim(),
         protocol,
-        baseUrl: baseUrl.trim() || undefined,
+        baseUrl: baseUrl.trim() ? normalizeProviderUrl(baseUrl, protocol) : undefined,
         useResponses: protocol === "openai" ? useResponses : false,
         ...credential,
         enabledModels: [],

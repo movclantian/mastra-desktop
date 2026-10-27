@@ -15,6 +15,8 @@ const DURATION_METRIC = "mastra_model_duration_ms";
 interface UsageCost {
   cost: number | null;
   costUnit: string | null;
+  costSource?: string;
+  unpricedRequests?: number;
 }
 
 interface UsageCounts {
@@ -43,6 +45,7 @@ export interface UsageSummary {
     longestChatMs: number;
     totalCost: number | null;
     costUnit: string | null;
+    unpricedRequests: number;
   };
   activity: Array<{ date: string; count: number; tokens: number | null }>;
   trend: Array<UsageCounts & { date: string }>;
@@ -85,11 +88,20 @@ function metricValue(metrics: MetricRecord[], name: string): number | null {
 }
 
 function summarizeCost(costs: UsageCost[]): UsageCost {
-  const unit = costs[0]?.costUnit;
-  if (!unit || costs.some((item) => item.cost === null || item.costUnit !== unit)) {
-    return { cost: null, costUnit: null };
+  const known = costs.filter((item) => item.cost !== null && item.costUnit);
+  const unit = known[0]?.costUnit;
+  const unpricedRequests = costs.length - known.length;
+  if (!unit || known.some((item) => item.costUnit !== unit)) {
+    return { cost: null, costUnit: null, unpricedRequests: costs.length };
   }
-  return { cost: sumKnown(costs.map((item) => item.cost)), costUnit: unit };
+  return {
+    cost: sumKnown(known.map((item) => item.cost)),
+    costUnit: unit,
+    unpricedRequests,
+    costSource: known.some((item) => item.costSource)
+      ? "Includes reference estimates; not an invoice"
+      : undefined,
+  };
 }
 
 /** Use only Mastra's directional totals; detail metrics overlap these costs. */
@@ -229,11 +241,37 @@ function modelDevPrice(
     if (preferred.matched) {
       if (preferred.input === undefined || preferred.output === undefined) return null;
       const cost = (inputTokens * preferred.input + outputTokens * preferred.output) / 1_000_000;
-      return Number.isFinite(cost) ? { cost, costUnit: "USD" } : null;
+      return Number.isFinite(cost)
+        ? { cost, costUnit: "USD", costSource: `models.dev/${preferredId} reference price` }
+        : null;
     }
   }
 
-  // A custom gateway has no reliable registry identity; use a global match only if unique.
+  // A custom gateway's invoice is unknowable; label the model publisher's price explicitly.
+  const bare = modelId.slice(modelId.lastIndexOf("/") + 1).toLowerCase();
+  const publisher = /^(qwen|qwq)/.test(bare)
+    ? "alibaba"
+    : /^claude/.test(bare)
+      ? "anthropic"
+      : /^(gpt-|chatgpt-|o[1-9](?:-|$))/.test(bare)
+        ? "openai"
+        : /^gemini/.test(bare)
+          ? "google"
+          : /^deepseek/.test(bare)
+            ? "deepseek"
+            : undefined;
+  if (publisher && Object.hasOwn(catalog, publisher)) {
+    const reference = findPrice(catalog[publisher]);
+    if (reference.matched && reference.input !== undefined && reference.output !== undefined) {
+      const cost = (inputTokens * reference.input + outputTokens * reference.output) / 1_000_000;
+      if (Number.isFinite(cost))
+        return {
+          cost,
+          costUnit: "USD",
+          costSource: `models.dev/${publisher} publisher reference; gateway billing may differ`,
+        };
+    }
+  }
   const matches = Object.values(catalog)
     .map(findPrice)
     .filter((price) => price.matched);
@@ -254,6 +292,7 @@ function modelDevPrice(
   return {
     cost,
     costUnit: "USD",
+    costSource: "models.dev reference price; not an invoice",
   };
 }
 
@@ -457,7 +496,8 @@ export async function getUsageSummary(
         ...totals,
         tokens,
         ...cost,
-        averageCost: cost.cost === null ? null : cost.cost / group.length,
+        averageCost:
+          cost.cost === null ? null : cost.cost / group.filter((row) => row.cost !== null).length,
       };
     },
   );
@@ -469,6 +509,7 @@ export async function getUsageSummary(
       longestChatMs: rows.reduce((longest, row) => Math.max(longest, row.latencyMs), 0),
       totalCost: cost.cost,
       costUnit: cost.costUnit,
+      unpricedRequests: cost.unpricedRequests ?? 0,
     },
     activity: trend.map((row) => ({
       date: row.date,

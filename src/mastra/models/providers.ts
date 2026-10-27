@@ -36,6 +36,7 @@ import {
   providerCredentialPurpose,
   SecretRefSchema,
 } from "../../shared/credential-contract";
+import { normalizeProviderUrl } from "../../shared/provider-url";
 import { MODELS_DEV_API_URL } from "../../shared/proxy-contract";
 import { deleteCredential, resolveCredential } from "../credential-broker";
 import { errorText, workError } from "../errors";
@@ -291,7 +292,7 @@ const providerSchema = z
     name: z.string().min(1).max(128),
     registryId: z.string().min(1).max(128).optional(),
     protocol: z.enum(["openai", "anthropic", "gemini"]).optional(),
-    baseUrl: z.url({ protocol: /^https?$/ }).optional(),
+    baseUrl: z.string().trim().min(1).max(2048).optional(),
     useResponses: z.boolean().optional(),
     credentialRef: SecretRefSchema,
     credentialHint: CredentialHintSchema,
@@ -299,7 +300,26 @@ const providerSchema = z
     disabled: z.boolean().optional(),
     enabledModels: z.array(enabledModelSelectionSchema),
   })
-  .strict();
+  .strict()
+  .transform((provider, context) => {
+    if (!provider.baseUrl) return provider;
+    try {
+      return {
+        ...provider,
+        baseUrl: normalizeProviderUrl(
+          provider.baseUrl,
+          provider.protocol ?? inferGatewayProtocol(provider.registryId ?? "") ?? "openai",
+        ),
+      };
+    } catch (error) {
+      context.addIssue({
+        code: "custom",
+        path: ["baseUrl"],
+        message: error instanceof Error ? error.message : "Invalid Base URL",
+      });
+      return z.NEVER;
+    }
+  });
 const modelSelectionSchema = z
   .object({
     providerId: z.string().min(1),

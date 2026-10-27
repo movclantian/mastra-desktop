@@ -1,3 +1,5 @@
+import type { ApplicationDomain } from "../../../../../shared/window-contract";
+
 /**
  * TanStack Query key 约定(数组工厂)。
  * 带 userId 的 key 在登出 clear() 后随下次登录重新拉取;
@@ -26,3 +28,22 @@ export const qk = {
   libraryContents: (userId: string) => ["library-contents", userId] as const,
   librarySettings: () => ["library-settings"] as const,
 };
+
+/** The same keys refresh live application changes and missed changes after SSE reconnect. */
+export function applicationQueryKeys(resourceId: string, domain?: ApplicationDomain) {
+  const groups = {
+    library: [qk.libraryContents(resourceId)],
+    agents: [qk.agents()],
+    plugins: [
+      ["plugins"],
+      ["plugin-sources"],
+      ["plugin-catalog"],
+      ["plugin-skills"],
+      ["plugin-mcp"],
+      qk.agents(),
+    ],
+    mcp: [["plugin-mcp"], qk.agents()],
+    schedules: [qk.schedules()],
+  } satisfies Record<ApplicationDomain, readonly (readonly unknown[])[]>;
+  return domain ? groups[domain] : Object.values(groups).flat();
+}

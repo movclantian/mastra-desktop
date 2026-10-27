@@ -70,6 +70,7 @@ interface UsageSummary {
     longestChatMs: number;
     totalCost: number | null;
     costUnit: string | null;
+    unpricedRequests: number;
   };
   activity: Array<{ date: string; count: number; tokens: number | null }>;
   trend: Array<{
@@ -87,6 +88,7 @@ interface UsageSummary {
     tokens: number | null;
     cost: number | null;
     costUnit: string | null;
+    costSource?: string;
   }>;
   models: Array<{
     model: string;
@@ -112,6 +114,7 @@ interface UsageSummary {
     source: string;
     cost: number | null;
     costUnit: string | null;
+    costSource?: string;
   }>;
 }
 
@@ -136,7 +139,7 @@ function formatNumber(value: number | null): string {
 
 function formatCost(value: number | null, unit: string | null): string {
   return value === null || !unit
-    ? "—"
+    ? i18n.t("settings:usage.unpriced")
     : `${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 6 }).format(value)} ${unit}`;
 }
 
@@ -352,6 +355,7 @@ export function UsageSection() {
     longestChatMs: 0,
     totalCost: null,
     costUnit: null,
+    unpricedRequests: 0,
   };
   const activity = activityForRange(range, summary?.activity ?? []);
   const trend = summary?.trend ?? [];
@@ -409,6 +413,9 @@ export function UsageSection() {
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <p className="text-xs text-muted-foreground">
+        {t("settings:usage.pricingHint", { count: totals.unpricedRequests })}
+      </p>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-base font-semibold">{t("settings:usage.title")}</h2>
@@ -785,7 +792,11 @@ export function UsageSection() {
                             <TableCell className="text-right tabular-nums">
                               {formatNumber(request.totalTokens)}
                             </TableCell>
-                            <TableCell className="text-right tabular-nums font-mono text-xs">
+                            <TableCell
+                              className="text-right tabular-nums font-mono text-xs"
+                              title={request.costSource}
+                            >
+                              {request.costSource ? "~ " : ""}
                               {formatCost(requestCost, request.costUnit)}
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
