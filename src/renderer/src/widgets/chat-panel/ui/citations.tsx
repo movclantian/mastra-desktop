@@ -1,5 +1,6 @@
 import { ExternalLinkIcon, LinkIcon } from "lucide-react";
 import * as React from "react";
+import { defaultComponents } from "streamdown";
 import { libraryAssetFromUrl } from "@/entities/library";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
@@ -49,6 +50,33 @@ export function CitationProvider({
 
 type MarkdownProps<Tag extends keyof React.JSX.IntrinsicElements> =
   React.JSX.IntrinsicElements[Tag] & { node?: unknown };
+
+function definitionId(id: unknown): string | undefined {
+  if (typeof id !== "string") return undefined;
+  return /^(?:user-content-)?fn-(.+)$/.exec(id)?.[1]?.toLowerCase();
+}
+
+export function FootnoteDefinition({ node: _node, ...props }: MarkdownProps<"li">) {
+  const entries = React.useContext(CitationEntriesContext);
+  const id = definitionId(props.id);
+  return id && entries.has(id) ? null : <defaultComponents.li {...props} />;
+}
+
+export function FootnoteSection({ node, ...props }: MarkdownProps<"section">) {
+  const entries = React.useContext(CitationEntriesContext);
+  const section = node as
+    | { children?: Array<{ tagName?: string; children?: Array<{ properties?: { id?: string } }> }> }
+    | undefined;
+  const ids = section?.children
+    ?.filter((child) => child.tagName === "ol")
+    .flatMap((list) => list.children ?? [])
+    .map((child) => definitionId(child.properties?.id))
+    .filter((id): id is string => Boolean(id));
+  // Resolved citations already have inline cards and the deduplicated source list.
+  return ids?.length && ids.every((id) => entries.has(id)) ? null : (
+    <defaultComponents.section {...props} />
+  );
+}
 
 function collectSources(ids: string[], entries: CitationEntries): CitationSource[] {
   const sources: CitationSource[] = [];
@@ -129,6 +157,7 @@ export function FootnoteCitation({ node, children, className, ...props }: Markdo
                     </MessageLink>
                     <MessageLink
                       href={source.url}
+                      title={source.title}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="block h-auto break-all text-xs text-muted-foreground underline underline-offset-2"
@@ -177,6 +206,7 @@ export function MessageSources({ sources }: { sources: CitationSource[] }) {
                   <MessageLink
                     key={source.url}
                     href={source.url}
+                    title={source.title}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block h-auto min-w-0 text-left"

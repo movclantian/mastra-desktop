@@ -20,6 +20,7 @@ import { requestToolApproval } from "../agents/permissions";
 import { userIdFromContext } from "../storage/database";
 import { WORKSPACE_PATH_CONTEXT_KEY } from "../workspace/workspace-manager";
 import { pluginAgentDefinition, pluginProfileId, resolvePluginModel } from "./agents";
+import { pluginShellCommands } from "./components";
 import { runPluginHooks, startPluginSession } from "./hooks";
 import { pluginBinding, recordPluginStatus } from "./registry";
 import {
@@ -147,21 +148,24 @@ async function prepareCommand(
     { binding, global: false, signal },
   );
   if (promptHook.blocked) throw new Error(promptHook.blocked);
-  let template = definition.instructions;
-  for (const match of [...template.matchAll(/!`([^`]+)`/g)]) {
-    if (/\$ARGUMENTS|\$\d/.test(match[1]))
+  let template = "";
+  let offset = 0;
+  for (const { command, start, end } of pluginShellCommands(definition.instructions)) {
+    if (/\$ARGUMENTS|\$\d/.test(command))
       throw new Error("Pass user arguments through hook stdin, not shell interpolation");
     const result = await executePluginCommand(
       binding,
-      match[1],
+      command,
       context,
       { arguments: parsed[2] ?? "", argv: commandArguments(parsed[2] ?? "") },
       60,
       signal,
     );
     if (result.exitCode !== 0) throw new Error("Plugin command preprocessing failed");
-    template = template.replace(match[0], result.stdout);
+    template += definition.instructions.slice(offset, start) + result.stdout;
+    offset = end;
   }
+  template += definition.instructions.slice(offset);
   template = await expandPluginText(
     template,
     plugin,

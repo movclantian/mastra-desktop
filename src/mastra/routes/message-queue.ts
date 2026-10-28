@@ -18,6 +18,7 @@ type Options = z.infer<typeof workbenchMessageOptionsSchema>;
 interface QueueEntry {
   view: QueuedMessage;
   options: Options;
+  cancelling?: boolean;
   unsubscribe?: () => void;
 }
 
@@ -119,7 +120,15 @@ function enqueue(result: Awaited<ReturnType<typeof prepareQueueMessage>>, text: 
     { resourceId, threadId, queueOwnerId },
     (event) => {
       if (event.type !== "queue-count-changed" || event.count !== 0) return;
-      if (queue.get(entry.view.id) === entry) queue.delete(entry.view.id);
+      if (queue.get(entry.view.id) === entry) {
+        queue.delete(entry.view.id);
+        // Project the real signal at handoff, before model/tool preparation emits it again.
+        if (!entry.cancelling)
+          session.emit({
+            type: "message_start",
+            message: queued.signal.toDBMessage({ resourceId, threadId }),
+          });
+      }
       entry.unsubscribe?.();
     },
   );
@@ -174,11 +183,13 @@ const queueMessageActionRoute = registerApiRoute(
           body.action === "remove" ? undefined : await prepareQueueMessage(c, text, entry.options);
         if (queue.get(id) !== entry) throw stale();
         if (entry.view.status !== "failed") {
+          entry.cancelling = true;
           const { cancelledSignalIds } = result.agent.cancelQueuedMessages({
             resourceId,
             threadId: result.threadId,
             signalIds: [id],
           });
+          entry.cancelling = false;
           if (!cancelledSignalIds.includes(id)) throw stale();
         }
         queue.delete(id);
@@ -218,6 +229,7 @@ const queueMessageActionRoute = registerApiRoute(
         }
         throw error;
       } finally {
+        entry.cancelling = false;
         entry.view.busy = false;
       }
     },

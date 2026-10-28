@@ -65,6 +65,7 @@ export function ChangesWorkspace({ active }: { active: boolean }) {
         queryKey: qk.changeContent(activeThreadId, changeId, side),
         queryFn: () => fetchChangeContent(activeThreadId, changeId, user.id, side),
         staleTime: Infinity,
+        retry: false,
       });
     },
     [activeThreadId, queryClient, user.id],

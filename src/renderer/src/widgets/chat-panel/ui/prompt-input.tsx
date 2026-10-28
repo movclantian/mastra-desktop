@@ -247,12 +247,14 @@ function removeTrailingCommandToken(value: string, token: "/" | "@") {
 }
 
 function SkillAwareTextarea({
+  skills,
   selectedSkills,
   onChangeSkills,
   selectedFileReferences,
   onChangeFileReferences,
   placeholder,
 }: {
+  skills: SkillOption[];
   selectedSkills: string[];
   onChangeSkills: (skills: string[]) => void;
   selectedFileReferences: MessageFileReference[];
@@ -265,11 +267,6 @@ function SkillAwareTextarea({
   const { user } = useAuth();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const userId = user?.id ?? "anonymous";
-  const skills =
-    useQuery({
-      queryKey: ["composer-skills", userId],
-      queryFn: () => fetchChatSkills<SkillOption>(),
-    }).data ?? [];
   const files =
     useQuery({
       queryKey: ["composer-library", userId],
@@ -352,46 +349,6 @@ function SkillAwareTextarea({
 
   return (
     <>
-      {selectedSkills.length > 0 ? (
-        <div className="flex w-full min-w-0 flex-wrap gap-1.5 px-2 pt-2 pb-1">
-          {selectedSkills.map((name) => {
-            const skill = skills.find((item) => item.id === name);
-            return (
-              <PromptInputHoverCard key={name}>
-                <PromptInputHoverCardTrigger
-                  render={
-                    <Badge
-                      className={`max-w-full gap-1 ${referenceBadgeClass("skill", name)}`}
-                      variant="outline"
-                    />
-                  }
-                >
-                  <SparklesIcon className="size-3 shrink-0" />
-                  <span className="max-w-52 truncate">
-                    {skill?.displayName ?? t("plugins:unavailable")}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="xs"
-                    aria-label={t("chat:prompt.removeSkill", { name })}
-                    className="size-4 rounded-sm p-0 hover:bg-primary/15"
-                    onClick={() => onChangeSkills(selectedSkills.filter((item) => item !== name))}
-                    type="button"
-                  >
-                    <XIcon className="size-3" />
-                  </Button>
-                </PromptInputHoverCardTrigger>
-                <PromptInputHoverCardContent className="space-y-1">
-                  <p className="font-medium">/{name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {skill?.description || t("chat:prompt.noSkillDescription")}
-                  </p>
-                </PromptInputHoverCardContent>
-              </PromptInputHoverCard>
-            );
-          })}
-        </div>
-      ) : null}
       <PromptInputTextarea
         aria-label={t("chat:inputAriaLabel")}
         className="w-full min-w-0 leading-6"
@@ -839,6 +796,11 @@ export function ChatPromptInput({
 }) {
   const { t } = useTranslation();
   const controller = usePromptInputController();
+  const skills =
+    useQuery({
+      queryKey: ["composer-skills", userId],
+      queryFn: () => fetchChatSkills<SkillOption>(),
+    }).data ?? [];
   const pendingLibraryFiles = useWorkbenchStore((state) => state.pendingLibraryFiles);
   const clearPendingLibraryFiles = useWorkbenchStore((state) => state.clearPendingLibraryFiles);
   const pendingPrompt = useWorkbenchStore((state) => state.pendingPrompt);
@@ -1008,8 +970,52 @@ export function ChatPromptInput({
           );
         }}
       >
-        {quotes.length > 0 || controller.attachments.files.length > 0 ? (
+        {quotes.length > 0 ||
+        controller.attachments.files.length > 0 ||
+        selectedSkills.length > 0 ? (
           <PromptInputHeader className="min-w-0 flex-col items-stretch gap-1 border-b border-border/40 px-2 py-2">
+            {selectedSkills.length > 0 ? (
+              <div className="flex min-w-0 flex-wrap gap-1.5">
+                {selectedSkills.map((name) => {
+                  const skill = skills.find((item) => item.id === name);
+                  return (
+                    <PromptInputHoverCard key={name}>
+                      <PromptInputHoverCardTrigger
+                        render={
+                          <Badge
+                            className={`max-w-full gap-1 ${referenceBadgeClass("skill", name)}`}
+                            variant="outline"
+                          />
+                        }
+                      >
+                        <SparklesIcon className="size-3 shrink-0" />
+                        <span className="max-w-52 truncate">
+                          {skill?.displayName ?? t("plugins:unavailable")}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          aria-label={t("chat:prompt.removeSkill", { name })}
+                          className="size-4 rounded-sm p-0 hover:bg-primary/15"
+                          onClick={() =>
+                            setSelectedSkills((current) => current.filter((item) => item !== name))
+                          }
+                          type="button"
+                        >
+                          <XIcon className="size-3" />
+                        </Button>
+                      </PromptInputHoverCardTrigger>
+                      <PromptInputHoverCardContent className="space-y-1">
+                        <p className="font-medium">/{name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {skill?.description || t("chat:prompt.noSkillDescription")}
+                        </p>
+                      </PromptInputHoverCardContent>
+                    </PromptInputHoverCard>
+                  );
+                })}
+              </div>
+            ) : null}
             <MessageQuoteCards
               quotes={quotes}
               onRemove={(id) => {
@@ -1026,6 +1032,7 @@ export function ChatPromptInput({
         ) : null}
         <PromptInputBody>
           <SkillAwareTextarea
+            skills={skills}
             onChangeFileReferences={setSelectedFileReferences}
             onChangeSkills={setSelectedSkills}
             placeholder={activeThread ? t("chat:continuePrompt") : t("chat:welcomePrompt")}

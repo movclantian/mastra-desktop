@@ -5,12 +5,12 @@
 </div>
 
 <p align="center">
-<a href="https://github.com/movclantian/mastra-desktop/releases/tag/v0.0.7"><img src="https://img.shields.io/badge/Release-v0.0.7-4C47C3?style=flat-square" alt="Release v0.0.7"></a>
+<a href="https://github.com/movclantian/mastra-desktop/releases/tag/v0.0.8"><img src="https://img.shields.io/badge/Release-v0.0.8-4C47C3?style=flat-square" alt="Release v0.0.8"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-2ea44f?style=flat-square" alt="License Apache-2.0"></a>
 <a href="https://github.com/movclantian/mastra-desktop/stargazers"><img src="https://img.shields.io/github/stars/movclantian/mastra-desktop?style=flat-square" alt="Stars"></a>
 <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0ea5e9?style=flat-square" alt="Platform Windows macOS Linux">
 <img src="https://img.shields.io/badge/Node-22.x-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node 22.x">
-<img src="https://img.shields.io/badge/pnpm-12.11.2-F69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm 12.11.2">
+<img src="https://img.shields.io/badge/pnpm-12.15.0-F69220?style=flat-square&logo=pnpm&logoColor=white" alt="pnpm 12.15.0">
 <a href="https://github.com/movclantian/mastra-desktop/issues"><img src="https://img.shields.io/badge/Issues-%E6%AC%A2%E8%BF%8E%E5%8F%8D%E9%A6%88-e11d48?style=flat-square" alt="Issues 欢迎反馈"></a>
 </p>
 
@@ -20,7 +20,7 @@
 
 ---
 
-> 项目处于持续开源迭代状态。本文档描述当前公开的 `v0.0.7` 发行基线，功能、依赖、平台支持和界面会随后续版本变化。
+> 项目处于持续开源迭代状态。本文档描述当前公开的 `v0.0.8` 发行基线，功能、依赖、平台支持和界面会随后续版本变化。
 
 ## 它是什么
 
@@ -32,7 +32,7 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 ## 功能特性
 
-下面这些能力在 `v0.0.7` 里都能直接用到。
+下面这些能力在 `v0.0.8` 里都能直接用到。
 
 <table style="border-collapse:separate;border-spacing:14px">
 <tr>
@@ -196,9 +196,9 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 | 部分       | 选型                                                      |
 | ---------- | --------------------------------------------------------- |
-| 桌面外壳   | Electron 44、electron-vite、electron-builder              |
+| 桌面外壳   | Electron 45、electron-vite、electron-builder              |
 | 界面       | React 19、TypeScript、Tailwind CSS 4、CodeMirror 6、xterm |
-| Agent 框架 | Mastra 1.77（core、memory、rag、mcp、observability）      |
+| Agent 框架 | Mastra 1.79（core、memory、rag、mcp、observability）      |
 | 数据与检索 | libsql、DuckDB、fastembed 本地向量                        |
 | 代码与文档 | Shiki 高亮、Mermaid、KaTeX、PDF 与 Office 解析            |
 | 工具链     | Biome、Knip、pnpm workspace                               |
@@ -215,19 +215,19 @@ MastraWork 是一个开源的桌面 AI 工作台，底层是 [Mastra](https://ma
 
 | 平台    | 安装包                                                                       |
 | ------- | ---------------------------------------------------------------------------- |
-| Windows | `MastraWork-0.0.7-setup.exe`                                                 |
-| macOS   | `MastraWork-0.0.7.dmg`                                                       |
-| Linux   | `MastraWork-0.0.7.AppImage`、`MastraWork-0.0.7.deb`、`MastraWork-0.0.7.snap` |
+| Windows | `MastraWork-0.0.8-setup.exe`                                                 |
+| macOS   | `MastraWork-0.0.8.dmg`                                                       |
+| Linux   | `MastraWork-0.0.8.AppImage`、`MastraWork-0.0.8.deb`、`MastraWork-0.0.8.snap` |
 
 
 
 ### 从源码运行
 
-需要 Windows、macOS 或 Linux，Node.js `>=22.19.0`，pnpm `12.11.2`。推荐用 Corepack 把 pnpm 版本钉死，免得升级后对不上。
+需要 Windows、macOS 或 Linux，Node.js `>=22.19.0`，pnpm `12.15.0`。推荐用 Corepack 把 pnpm 版本钉死，免得升级后对不上。
 
 ```sh
 corepack enable
-corepack prepare pnpm@12.11.2 --activate
+corepack prepare pnpm@12.15.0 --activate
 pnpm install --frozen-lockfile
 pnpm dev
 ```

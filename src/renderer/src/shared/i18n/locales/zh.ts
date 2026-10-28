@@ -79,7 +79,7 @@ export const zh = {
     executionConsent:
       "允许此组件版本运行脚本、模型评估或网络请求？这些操作可能访问工作区和本机环境。请先审阅组件源码；更新版本需要重新授权。",
     runtimeStatus: {
-      installed: "已安装 · 尚未验证",
+      installed: "已安装",
       disabled: "已停用",
       "needs-configuration": "待配置",
       "needs-authorization": "待授权",
@@ -867,7 +867,7 @@ export const zh = {
     usage: {
       unpriced: "未定价",
       pricingHint:
-        "费用优先采用原始计费记录；缺失时按 models.dev 基础参考价估算，不代表网关账单。总额不含 {{count}} 条未定价请求。",
+        "词元总数汇总已记录的用量。费用优先采用原始计费记录；缺失时优先匹配所选供应商，再按 models.dev 其他供应商的模型参考价估算，不代表网关账单。总额不含 {{count}} 条未定价请求。",
 
       title: "个人与用量",
       desc: "当前账号、助手提取偏好和模型使用情况。",
@@ -2902,7 +2902,8 @@ export const zh = {
       outlineAriaLabel: "打开会话大纲",
       originalSession: "原会话",
       continueOrExplore: "继续对话「{{title}}」或选择快捷卡片探索",
-      forkedFrom: "派生自 ",
+      forkedFrom: "从",
+      branchCreated: "建立分支",
       viewOriginal: "查看原会话",
       deepThinkingRotations: [
         "正在深入推理中...",

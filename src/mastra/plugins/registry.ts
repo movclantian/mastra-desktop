@@ -35,7 +35,7 @@ import {
 import { deleteCredential, resolveCredential, storeCredential } from "../credential-broker";
 import { workError } from "../errors";
 import { getLibsqlClient, getStorageDirectory } from "../storage/database";
-import { claudePackageManifest, describePackage } from "./components";
+import { claudePackageManifest, describePackage, pluginShellCommands } from "./components";
 import {
   archiveFiles,
   directoryFiles,
@@ -84,7 +84,7 @@ export function needsPluginExecutionConsent(component: PluginComponent): boolean
       component.hooks?.length ||
       component.agent?.hooks?.length ||
       component.command?.hooks?.length ||
-      /!`[^`]+`/.test(component.command?.instructions ?? ""),
+      pluginShellCommands(component.command?.instructions ?? "").length,
   );
 }
 export function pluginStatuses(

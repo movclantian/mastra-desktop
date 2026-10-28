@@ -79,39 +79,33 @@ interface DocumentEditingProps {
 export default React.memo(function LibraryFilePreview({
   asset,
   editing,
+  linkTarget,
 }: {
   asset: PreviewLibraryAsset;
   editing?: DocumentEditingProps;
+  linkTarget: "browser" | "external";
 }) {
   const { t, i18n } = useTranslation();
   const { mode } = useTheme();
   const [loadedState, setLoadedState] = React.useState<{
     url: string;
-    objectUrl: string | null;
+    blob: Blob | null;
   } | null>(null);
 
   React.useEffect(() => {
     let disposed = false;
-    let objectUrl: string | undefined;
-
     void fetchLibraryAssetBlob(asset.url)
       .then((blob) => {
-        objectUrl = URL.createObjectURL(blob);
-        if (disposed) {
-          URL.revokeObjectURL(objectUrl);
-        } else {
-          setLoadedState({ url: asset.url, objectUrl });
-        }
+        if (!disposed) setLoadedState({ url: asset.url, blob });
       })
       .catch(() => {
         if (!disposed) {
-          setLoadedState({ url: asset.url, objectUrl: null });
+          setLoadedState({ url: asset.url, blob: null });
         }
       });
 
     return () => {
       disposed = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [asset.url]);
 
@@ -125,8 +119,8 @@ export default React.memo(function LibraryFilePreview({
     );
   }
 
-  const fileUrl = loadedState.objectUrl;
-  if (!fileUrl) {
+  const file = loadedState.blob;
+  if (!file) {
     return (
       <Empty className="size-full justify-center">
         <EmptyHeader>
@@ -143,7 +137,7 @@ export default React.memo(function LibraryFilePreview({
   }
 
   return (
-    <div className="flex size-full min-h-0 min-w-0 flex-col">
+    <div className="flex size-full min-h-0 min-w-0 flex-col" data-link-target={linkTarget}>
       {editing &&
       /\.(?:md|markdown|txt|csv)$/i.test(asset.filename) &&
       (asset.byteSize ?? Infinity) <= MAX_TEXT_DOCUMENT_BYTES ? (
@@ -153,9 +147,9 @@ export default React.memo(function LibraryFilePreview({
         <FileViewer
           key={asset.id}
           className="size-full"
-          file={fileUrl}
+          file={file}
           fileName={asset.filename}
-          mimeType={asset.mediaType}
+          mimeType={asset.mediaType || file.type}
           width="100%"
           height="100%"
           fit="contain"

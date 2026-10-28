@@ -87,12 +87,12 @@ function parseFootnoteEntries(
         // Resolve a named document only from sources actually returned for this answer.
         const body = match[2].toLowerCase();
         const seen = new Set<string>();
-        for (const candidates of known.values())
+        const namedIds = new Set(body.match(/library-[\w-]+/g));
+        for (const [id, candidates] of known)
           for (const source of candidates) {
             if (
               !seen.has(source.url) &&
-              source.title &&
-              body.includes(source.title.toLowerCase())
+              (namedIds.has(id) || (source.title && body.includes(source.title.toLowerCase())))
             ) {
               seen.add(source.url);
               sources.push(source);
@@ -269,6 +269,15 @@ function rehypeMergeFootnoteRefs() {
   return (tree: unknown) => {
     const walk = (node: HastElement) => {
       if (!node.children?.length) return;
+      if (node.tagName === "section" && node.properties?.dataFootnotes !== undefined) {
+        // Hiding resolved sources must not renumber any remaining explanatory notes.
+        node.children
+          .find((child) => child.tagName === "ol")
+          ?.children?.filter((child) => child.tagName === "li")
+          .forEach((child, index) => {
+            child.properties = { ...child.properties, value: index + 1 };
+          });
+      }
       node.children = mergeFootnoteRefRuns(node.children);
       for (const child of node.children) walk(child);
     };

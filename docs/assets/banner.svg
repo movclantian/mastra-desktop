@@ -68,11 +68,11 @@
     <rect x="140" y="274" width="112" height="32" rx="16" fill="#fffef5" stroke="#ff6b6b" stroke-width="1.8" filter="url(#roughS)"/>
     <text x="196" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Apache-2.0</text>
     <rect x="266" y="274" width="86" height="32" rx="16" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.8" filter="url(#roughS)"/>
-    <text x="309" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">v0.0.7</text>
+    <text x="309" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">v0.0.8</text>
     <rect x="366" y="274" width="120" height="32" rx="16" fill="#fffef5" stroke="#4ecdc4" stroke-width="1.8" filter="url(#roughS)"/>
-    <text x="426" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Electron 44</text>
+    <text x="426" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Electron 45</text>
     <rect x="500" y="274" width="122" height="32" rx="16" fill="#fffef5" stroke="#2c2c2c" stroke-width="1.8" filter="url(#roughS)"/>
-    <text x="561" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Mastra 1.77</text>
+    <text x="561" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Mastra 1.79</text>
     <rect x="636" y="274" width="182" height="32" rx="16" fill="#fffef5" stroke="#a98d16" stroke-width="1.8" filter="url(#roughS)"/>
     <text x="727" y="295" font-size="12.5" fill="#2c2c2c" text-anchor="middle">Win / macOS / Linux</text>
   </g>

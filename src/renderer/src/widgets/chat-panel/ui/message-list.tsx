@@ -36,7 +36,7 @@ import { GeneratedAvatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { BlurFade, FADE_ONLY } from "@/shared/ui/blur-fade";
 import { Bubble, BubbleContent, BubbleReactions } from "@/shared/ui/bubble";
-import { Button, buttonVariants } from "@/shared/ui/button";
+import { Button } from "@/shared/ui/button";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -80,7 +80,13 @@ import {
 import { AgentInteractionHistory } from "./agent-panels";
 import { AssistantTrace } from "./assistant-trace";
 import { AssistantAvatar, UserAvatar } from "./avatars";
-import { CitationProvider, FootnoteCitation, MessageSources } from "./citations";
+import {
+  CitationProvider,
+  FootnoteCitation,
+  FootnoteDefinition,
+  FootnoteSection,
+  MessageSources,
+} from "./citations";
 import { MessageLink } from "./message-selection";
 
 const MediaGeneration = React.lazy(() => import("./media-generation"));
@@ -116,6 +122,8 @@ function AssistantPendingIndicator({
 
 const CITATION_MARKDOWN_COMPONENTS = {
   sup: FootnoteCitation,
+  li: FootnoteDefinition,
+  section: FootnoteSection,
   a: MessageLink,
 };
 const CITATION_REHYPE_PLUGINS = createCitationRehypePlugins();
@@ -407,8 +415,7 @@ function ReactionPickerButton({
     >
       <PopoverTrigger
         aria-label={t("chat:messages.addReaction")}
-        className={buttonVariants({ variant: "ghost", size: "icon-xs" })}
-        data-slot="button"
+        render={<Button variant="ghost" size="icon-xs" />}
         title={t("chat:messages.reaction")}
         type="button"
       >

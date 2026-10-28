@@ -69,7 +69,8 @@ export function inferModelKind(
   if (
     /^(?:gpt-image-|chatgpt-image-|dall-e-|imagen-|flux[.-]|gemini-.*-image(?:-|$)|gemini-nano-banana)/.test(
       name,
-    )
+    ) ||
+    /(?:^|[-._])image(?:[-._]|$)/.test(name)
   )
     return "image";
   return "language";

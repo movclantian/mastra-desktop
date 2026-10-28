@@ -14,6 +14,19 @@ export interface DisplayMessage {
   sourceMessages: WorkUIMessage[];
 }
 
+export function forkMarkerIndex(messages: DisplayMessage[], clonedAt: string): number {
+  const timestamp = Date.parse(clonedAt);
+  if (!Number.isFinite(timestamp)) return -1;
+  // Mastra copies IDs but preserves message timestamps; new branch messages follow clonedAt.
+  return (
+    messages.findLastIndex((entry) =>
+      entry.sourceMessages.some(
+        (message) => Date.parse(message.metadata?.createdAt ?? "") < timestamp,
+      ),
+    ) + 1
+  );
+}
+
 /**
  * Mastra seals each response-boundary (reasoning/tool loop) as a separate
  * assistant memory row. That boundary is important to the model, but it is

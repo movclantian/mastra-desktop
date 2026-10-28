@@ -1,7 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
 import { type FileUIPart, isToolUIPart, type LanguageModelUsage } from "ai";
-import { GitBranchIcon } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { usePluginSkills } from "@/entities/skill";
@@ -58,7 +57,7 @@ import {
   toggleThreadMessageReaction,
   uploadChatAttachment,
 } from "../api/chat-api";
-import { buildDisplayMessages, type DisplayMessage } from "../lib/display";
+import { buildDisplayMessages, type DisplayMessage, forkMarkerIndex } from "../lib/display";
 import { subscribeBackgroundTaskStream } from "../model/background-task-stream";
 import { useDisplayStateQuery, useFetchDisplayStateQuery } from "../model/display-state-query";
 import {
@@ -1077,6 +1076,27 @@ export function ChatPanel() {
     displayMessagesRef.current = next;
     return next;
   }, [activeThreadId, isBusy, messages]);
+  const forkIndex = forkMarkerIndex(displayMessages, activeThread?.metadata.clone?.clonedAt ?? "");
+  const forkMarker =
+    forkIndex >= 0 && !(forkIndex === 0 && hasEarlierHistoryRef.current) ? (
+      <Marker
+        className="my-6 h-auto p-0 hover:bg-transparent"
+        variant="separator"
+        render={
+          cloneSource ? (
+            <Button variant="ghost" onClick={() => selectThread(cloneSource.id)} />
+          ) : undefined
+        }
+      >
+        <MarkerContent className="max-w-[80%] whitespace-normal">
+          {t("chat:welcome.forkedFrom")}
+          <span className="mx-2 font-semibold text-foreground">
+            {cloneSource?.title ?? t("chat:welcome.originalSession")}
+          </span>
+          {t("chat:welcome.branchCreated")}
+        </MarkerContent>
+      </Marker>
+    ) : null;
 
   // 官方 message-scroller-visibility:大纲条目 = 有文本的用户消息(锚定轮次)
   const outlineEntries = React.useMemo(
@@ -1777,29 +1797,6 @@ export function ChatPanel() {
           </div>
         ) : (
           <>
-            {/* 分支溯源横幅(官方 isClone / getSourceThread):点击跳回原会话 */}
-            {activeThread?.metadata.clone ? (
-              <div className="flex min-h-0 shrink-0 items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs">
-                <GitBranchIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate text-muted-foreground">
-                  {t("chat:welcome.forkedFrom")}
-                  <span className="font-medium text-foreground">
-                    {cloneSource?.title ?? t("chat:welcome.originalSession")}
-                  </span>
-                </span>
-                {cloneSource ? (
-                  <Button
-                    className="h-6 shrink-0 px-2 text-xs"
-                    onClick={() => selectThread(cloneSource.id)}
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    {t("chat:welcome.viewOriginal")}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
             <MessageSelectionScope
               thread={threads.find((thread) => thread.id === activeThreadId)}
               userId={user.id}
@@ -1838,17 +1835,20 @@ export function ChatPanel() {
                         const day = messageDay(entry.message);
                         const previousDay =
                           index > 0 ? messageDay(displayMessages[index - 1].message) : undefined;
-                        if (!day || day === previousDay) return item;
                         return (
                           <React.Fragment key={entry.key}>
-                            <Marker className="my-3" variant="separator">
-                              <MarkerContent>{formatMessageDay(day, t)}</MarkerContent>
-                            </Marker>
+                            {day && day !== previousDay ? (
+                              <Marker className="my-3" variant="separator">
+                                <MarkerContent>{formatMessageDay(day, t)}</MarkerContent>
+                              </Marker>
+                            ) : null}
+                            {index === forkIndex ? forkMarker : null}
                             {item}
                           </React.Fragment>
                         );
                       })
                     )}
+                    {!activeMember && forkIndex === displayMessages.length ? forkMarker : null}
                   </MessageScrollerContent>
                 </MessageScrollerViewport>
                 <MessageScrollerButton />

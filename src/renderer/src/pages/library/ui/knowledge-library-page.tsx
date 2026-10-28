@@ -1234,6 +1234,7 @@ export function KnowledgeLibraryPage({
                 }
               >
                 <LibraryFilePreview
+                  linkTarget="external"
                   key={previewAsset.id}
                   asset={previewAsset}
                   editing={{

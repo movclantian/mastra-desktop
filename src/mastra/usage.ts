@@ -1,5 +1,5 @@
 import type { MetricRecord, MetricsFilter, ObservabilityStorage } from "@mastra/core/storage";
-import { catalogModelKeys, modelLookupKeys } from "../shared/agent-contract";
+import { modelLookupKeys } from "../shared/agent-contract";
 import {
   fetchModelsDevCatalog,
   getProvidersConfig,
@@ -77,7 +77,7 @@ function spanKey(metric: { traceId?: string | null; spanId?: string | null }): s
 }
 
 function sumKnown(values: Array<number | null>): number | null {
-  return values.some((value) => value === null)
+  return values.length > 0 && values.every((value) => value === null)
     ? null
     : values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
 }
@@ -201,52 +201,43 @@ function modelDevPrice(
   )
     return null;
   const modelKeyPriority = new Map(modelLookupKeys(modelId).map((key, index) => [key, index]));
-  const findPrice = (provider: unknown) => {
-    if (!provider || typeof provider !== "object" || Array.isArray(provider))
-      return { matched: false as const };
+  const findPrice = (providerId: string) => {
+    const provider = catalog[providerId];
+    if (!provider || typeof provider !== "object" || Array.isArray(provider)) return undefined;
     const models = (provider as { models?: unknown }).models;
-    if (!models || typeof models !== "object" || Array.isArray(models))
-      return { matched: false as const };
+    if (!models || typeof models !== "object" || Array.isArray(models)) return undefined;
     const matches = Object.entries(models as Record<string, unknown>).flatMap(([id, model]) => {
-      const priorities = catalogModelKeys(id).flatMap((key) => {
+      const priorities = modelLookupKeys(id).flatMap((key) => {
         const priority = modelKeyPriority.get(key);
         return priority === undefined ? [] : [priority];
       });
-      return priorities.length ? [{ model, priority: Math.min(...priorities) }] : [];
+      const cost = (model as { cost?: { input?: unknown; output?: unknown } } | null)?.cost;
+      if (
+        !priorities.length ||
+        typeof cost?.input !== "number" ||
+        !Number.isFinite(cost.input) ||
+        cost.input < 0 ||
+        typeof cost.output !== "number" ||
+        !Number.isFinite(cost.output) ||
+        cost.output < 0
+      )
+        return [];
+      return [
+        {
+          providerId,
+          id,
+          priority: Math.min(...priorities),
+          input: cost.input,
+          output: cost.output,
+        },
+      ];
     });
-    if (!matches.length) return { matched: false as const };
-    const priority = Math.min(...matches.map((match) => match.priority));
-    const bestMatches = matches.filter((match) => match.priority === priority);
-    if (bestMatches.length !== 1) return { matched: true as const, priority };
-    const cost = (bestMatches[0].model as { cost?: unknown } | null)?.cost;
-    if (!cost || typeof cost !== "object") return { matched: true as const, priority };
-    const { input, output } = cost as { input?: unknown; output?: unknown };
-    if (
-      typeof input !== "number" ||
-      !Number.isFinite(input) ||
-      input < 0 ||
-      typeof output !== "number" ||
-      !Number.isFinite(output) ||
-      output < 0
-    )
-      return { matched: true as const, priority };
-    return { matched: true as const, priority, input, output };
+    return matches.sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))[0];
   };
 
   const rawNamespace = (rawProvider.trim() || "unknown").replace(PROVIDER_KIND_SUFFIX, "");
   const configured = configuredProvider(rawProvider, configuredProviders);
   const preferredId = configured?.registryId ?? rawNamespace;
-  if (Object.hasOwn(catalog, preferredId)) {
-    const preferred = findPrice(catalog[preferredId]);
-    if (preferred.matched) {
-      if (preferred.input === undefined || preferred.output === undefined) return null;
-      const cost = (inputTokens * preferred.input + outputTokens * preferred.output) / 1_000_000;
-      return Number.isFinite(cost)
-        ? { cost, costUnit: "USD", costSource: `models.dev/${preferredId} reference price` }
-        : null;
-    }
-  }
-
   // A custom gateway's invoice is unknowable; label the model publisher's price explicitly.
   const bare = modelId.slice(modelId.lastIndexOf("/") + 1).toLowerCase();
   const publisher = /^(qwen|qwq)/.test(bare)
@@ -260,39 +251,23 @@ function modelDevPrice(
           : /^deepseek/.test(bare)
             ? "deepseek"
             : undefined;
-  if (publisher && Object.hasOwn(catalog, publisher)) {
-    const reference = findPrice(catalog[publisher]);
-    if (reference.matched && reference.input !== undefined && reference.output !== undefined) {
-      const cost = (inputTokens * reference.input + outputTokens * reference.output) / 1_000_000;
-      if (Number.isFinite(cost))
-        return {
-          cost,
-          costUnit: "USD",
-          costSource: `models.dev/${publisher} publisher reference; gateway billing may differ`,
-        };
-    }
-  }
-  const matches = Object.values(catalog)
-    .map(findPrice)
-    .filter((price) => price.matched);
-  if (!matches.length) return null;
-  const bestPriority = Math.min(
-    ...matches.map((match) => match.priority ?? Number.POSITIVE_INFINITY),
-  );
-  const bestMatches = matches.filter((match) => match.priority === bestPriority);
-  if (
-    bestMatches.length !== 1 ||
-    bestMatches[0].input === undefined ||
-    bestMatches[0].output === undefined
-  )
-    return null;
-  const cost =
-    (inputTokens * bestMatches[0].input + outputTokens * bestMatches[0].output) / 1_000_000;
+  // Prefer the configured provider, then the publisher; break other ties deterministically.
+  const reference =
+    findPrice(preferredId) ??
+    (publisher ? findPrice(publisher) : undefined) ??
+    Object.keys(catalog)
+      .flatMap((id) => {
+        const price = findPrice(id);
+        return price ? [price] : [];
+      })
+      .sort((a, b) => a.priority - b.priority || a.providerId.localeCompare(b.providerId))[0];
+  if (!reference) return null;
+  const cost = (inputTokens * reference.input + outputTokens * reference.output) / 1_000_000;
   if (!Number.isFinite(cost)) return null;
   return {
     cost,
     costUnit: "USD",
-    costSource: "models.dev reference price; not an invoice",
+    costSource: `models.dev/${reference.providerId}/${reference.id} reference price; not an invoice`,
   };
 }
 
@@ -343,7 +318,7 @@ function counts(rows: UsageRequest[]): UsageCounts {
     requests: rows.length,
     inputTokens: sumKnown(rows.map((row) => row.inputTokens)),
     outputTokens: sumKnown(rows.map((row) => row.outputTokens)),
-    totalTokens: sumKnown(rows.map((row) => row.totalTokens)),
+    totalTokens: sumKnown(rows.flatMap((row) => [row.inputTokens, row.outputTokens])),
   };
 }
 
@@ -398,21 +373,6 @@ export async function getUsageSummary(
     }
   }
 
-  const needsModelsDevCatalog = durations.some((duration) => {
-    const key = spanKey(duration);
-    const metrics = key ? (tokensBySpan.get(key) ?? []) : [];
-    const model = metrics.find((metric) => metric.model)?.model ?? duration.model;
-    return (
-      Boolean(model?.trim() && model.trim().toLowerCase() !== "unknown") &&
-      canUseModelsDevCost(metrics) &&
-      metricValue(metrics, INPUT_TOKENS_METRIC) !== null &&
-      metricValue(metrics, OUTPUT_TOKENS_METRIC) !== null
-    );
-  });
-  const catalog = needsModelsDevCatalog
-    ? await fetchModelsDevCatalog().catch(() => undefined)
-    : undefined;
-
   const rows = durations.map((duration, index): UsageRequest => {
     const key = spanKey(duration);
     const metrics = key ? (tokensBySpan.get(key) ?? []) : [];
@@ -428,14 +388,15 @@ export async function getUsageSummary(
       model,
       inputTokens,
       outputTokens,
-      totalTokens: sumKnown([inputTokens, outputTokens]),
+      totalTokens:
+        inputTokens === null || outputTokens === null ? null : inputTokens + outputTokens,
       latencyMs: duration.value,
       status:
         duration.labels.status === "ok" || duration.labels.status === "error"
           ? duration.labels.status
           : null,
       source: "observability",
-      ...estimatedCost(metrics, rawProvider, model, configuredProviders, catalog),
+      ...modelCost(metrics),
     };
   });
 
@@ -471,7 +432,29 @@ export async function getUsageSummary(
       }),
     );
   }
-  for (const row of rows) row.provider = providerLabel(row.provider, configuredProviders);
+  const catalog = rows.some(
+    (row) =>
+      row.model !== "unknown" &&
+      row.inputTokens !== null &&
+      row.outputTokens !== null &&
+      row.cost === null &&
+      canUseModelsDevCost(tokensBySpan.get(row.id) ?? []),
+  )
+    ? await fetchModelsDevCatalog().catch(() => undefined)
+    : undefined;
+  for (const row of rows) {
+    Object.assign(
+      row,
+      estimatedCost(
+        tokensBySpan.get(row.id) ?? [],
+        row.provider,
+        row.model,
+        configuredProviders,
+        catalog,
+      ),
+    );
+    row.provider = providerLabel(row.provider, configuredProviders);
+  }
   rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
   const trend = [

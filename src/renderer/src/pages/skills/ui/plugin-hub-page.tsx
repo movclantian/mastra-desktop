@@ -9,6 +9,7 @@ import {
   type McpSummary,
   type SkillAuditItem,
   setMcpServerEnabled,
+  usePluginSkills,
 } from "@/entities/skill";
 import { useAssistantDiagnosis } from "@/entities/workbench";
 import { getAuthToken, useAuth } from "@/features/auth";
@@ -42,7 +43,6 @@ import type {
   MarketplaceSource,
   PluginChange,
   PluginConfigValue,
-  PluginSkill,
   PluginSource,
   PluginVersion,
 } from "../../../../../shared/plugin-contract";
@@ -382,10 +382,7 @@ export function PluginHubPage({
     queryFn: () => pluginRequest<{ plugins: InstalledPlugin[] }>(""),
     refetchInterval: tab === "installed" ? 10000 : false,
   });
-  const managedSkills = useQuery({
-    queryKey: ["plugin-skills", user?.id],
-    queryFn: () => pluginRequest<{ skills: PluginSkill[] }>("/skills"),
-  });
+  const managedSkills = usePluginSkills(user?.id);
   const sources = useQuery({
     queryKey: ["plugin-sources", user?.id],
     queryFn: () =>
@@ -546,8 +543,8 @@ export function PluginHubPage({
   const visiblePlugins =
     installed.data?.plugins?.filter(
       (plugin) =>
-        (filter === "plugins" ||
-          plugin.current.components.some((component) => component.kind === filter)) &&
+        filter === "plugins" &&
+        plugin.current.format !== "skills" &&
         `${plugin.current.name} ${plugin.current.description} ${plugin.current.components.map((component) => component.name).join(" ")}`
           .toLocaleLowerCase()
           .includes(query),
@@ -1169,18 +1166,92 @@ export function PluginHubPage({
                 </div>
               </section>
             ))}
-            {!installed.isPending && !visiblePlugins.length ? (
+            {filter === "plugins" && !installed.isPending && !visiblePlugins.length ? (
               <p className="text-sm text-muted-foreground">{t("plugins:empty")}</p>
             ) : null}
-            {
+            {filter === "skill"
+              ? installed.data?.plugins.flatMap((plugin) =>
+                  plugin.current.components
+                    .filter(
+                      (component) =>
+                        component.kind === "skill" &&
+                        `${component.name} ${component.description} ${plugin.current.name}`
+                          .toLocaleLowerCase()
+                          .includes(query),
+                    )
+                    .map((component) => (
+                      <section
+                        key={component.id}
+                        className="flex min-w-0 flex-wrap items-start gap-2 rounded-lg border p-3"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words font-medium">{component.name}</p>
+                          <p className="text-xs break-words text-muted-foreground">
+                            {plugin.current.name}
+                          </p>
+                          <p className="text-sm break-words text-muted-foreground">
+                            {component.description}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {t(
+                              `plugins:runtimeStatus.${plugin.componentStatus?.[component.id]?.status ?? (component.supported ? "installed" : "unsupported")}`,
+                            )}
+                          </p>
+                          {component.issues.map((issue) => (
+                            <DiagnosticIssue
+                              key={issue}
+                              text={issue}
+                              context={pluginDiagnosticContext(plugin)}
+                              onDiagnose={diagnosis.start}
+                            />
+                          ))}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => select({ id: plugin.id })}
+                        >
+                          {t("plugins:detail")}
+                        </Button>
+                        <Switch
+                          aria-label={`${t("plugins:enable")} ${component.name}`}
+                          checked={
+                            plugin.enabled &&
+                            component.supported &&
+                            plugin.componentEnabled[component.id] !== false
+                          }
+                          disabled={
+                            !plugin.enabled ||
+                            !component.supported ||
+                            pluginBusy(plugin.id, plugin.listing)
+                          }
+                          onCheckedChange={(enabled) =>
+                            action.mutate({
+                              path: `/${plugin.id}/enabled`,
+                              method: "PUT",
+                              body: { enabled, componentId: component.id },
+                            })
+                          }
+                        />
+                      </section>
+                    )),
+                )
+              : null}
+            {filter === "skill" ? (
               <section className="flex min-w-0 flex-col gap-2 rounded-md border p-3">
                 <h3 className="font-medium">{t("plugins:localSkills")}</h3>
                 <p className="text-xs text-muted-foreground">{t("plugins:localSkillsHint")}</p>
                 {managedSkills.isError ? (
                   <p className="text-xs text-destructive">{t("common:error")}</p>
                 ) : null}
-                {managedSkills.data?.skills
-                  ?.filter((skill) => skill.pluginId === "local")
+                {managedSkills.data
+                  ?.filter(
+                    (skill) =>
+                      skill.pluginId === "local" &&
+                      `${skill.displayName} ${skill.description}`
+                        .toLocaleLowerCase()
+                        .includes(query),
+                  )
                   .map((skill) => (
                     <div
                       key={skill.id}
@@ -1210,7 +1281,7 @@ export function PluginHubPage({
                     </div>
                   ))}
               </section>
-            }
+            ) : null}
           </div>
         )}
       </ScrollArea>

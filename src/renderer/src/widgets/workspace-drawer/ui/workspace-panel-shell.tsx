@@ -956,7 +956,7 @@ export function WorkspacePanelShell({ active }: { active: boolean }) {
                               </p>
                             }
                           >
-                            <LibraryFilePreview asset={filePreview.asset} />
+                            <LibraryFilePreview asset={filePreview.asset} linkTarget="browser" />
                           </React.Suspense>
                         </div>
                       </div>

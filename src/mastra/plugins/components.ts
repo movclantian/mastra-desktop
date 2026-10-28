@@ -16,6 +16,18 @@ import {
 } from "../../shared/plugin-contract";
 import { type PackageFiles, packageDirectories, packagePath, pluginHash } from "./packages";
 
+/** Consume Markdown code spans first so a closing ` in `#VALUE!` is not a shell opener. */
+export function pluginShellCommands(text: string) {
+  return [...text.matchAll(/(`+)([\s\S]*?)\1(?!`)/g)].flatMap((match) =>
+    match[1].length === 1 &&
+    match[2].trim() &&
+    text[match.index - 1] === "!" &&
+    text[match.index - 2] !== "\\"
+      ? [{ command: match[2], start: match.index - 1, end: match.index + match[0].length }]
+      : [],
+  );
+}
+
 const strings = z
   .union([z.string(), z.array(z.string())])
   .transform((value) =>
@@ -219,7 +231,7 @@ export function describeExecutableComponents(
         if (!parsed.content.trim()) throw new Error("Component instructions are empty");
         if (kind === "agents") {
           const data = agentSchema.parse(parsed.data);
-          if (/!`[^`]+`/.test(parsed.content))
+          if (pluginShellCommands(parsed.content).length)
             throw new Error("Agent instructions cannot execute shell preprocessing");
           const delegatedTools =
             data.tools
@@ -248,8 +260,8 @@ export function describeExecutableComponents(
         }
         const data = commandSchema.parse(parsed.data);
         if (
-          [...parsed.content.matchAll(/!`([^`]+)`/g)].some((match) =>
-            /\$ARGUMENTS|\$\d/.test(match[1]),
+          pluginShellCommands(parsed.content).some(({ command }) =>
+            /\$ARGUMENTS|\$\d/.test(command),
           )
         )
           throw new Error(
@@ -757,7 +769,7 @@ export function describePackage(
         if (!userConfig?.[match[1]]) skillIssues.push(`Undeclared userConfig option: ${match[1]}`);
       if (/\$\{CLAUDE_PROJECT_DIR\}/.test(content))
         skillIssues.push("Project-specific skill variables are not supported");
-      if (/!`[^`]+`/.test(parsed.content))
+      if (pluginShellCommands(parsed.content).length)
         skillIssues.push("Skill shell preprocessing is not supported");
     }
     const identity = pluginHash(`${pluginId}\0skill\0${path}`).slice(0, 20);

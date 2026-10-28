@@ -89,7 +89,7 @@ export const en = {
     executionConsent:
       "Allow this component version to run scripts, model evaluations or network requests? These may access workspace files and the host environment. Review its source first. Updates require new authorization.",
     runtimeStatus: {
-      installed: "Installed · unverified",
+      installed: "Installed",
       disabled: "Disabled",
       "needs-configuration": "Needs configuration",
       "needs-authorization": "Needs authorization",
@@ -922,7 +922,7 @@ export const en = {
     usage: {
       unpriced: "Unpriced",
       pricingHint:
-        "Recorded costs take priority; otherwise models.dev base reference rates are estimates, not gateway invoices. Totals exclude {{count}} unpriced requests.",
+        "Token totals sum recorded usage. Recorded costs take priority, then models.dev rates for the selected provider, then model reference rates from other providers. Estimates are not gateway invoices. Totals exclude {{count}} unpriced requests.",
 
       title: "Personal & Usage",
       desc: "Current account, assistant preferences, and model usage statistics.",
@@ -3011,6 +3011,7 @@ export const en = {
       originalSession: "Original Session",
       continueOrExplore: 'Continue conversation "{{title}}" or choose a starter card below',
       forkedFrom: "Forked from ",
+      branchCreated: "",
       viewOriginal: "View original",
       deepThinkingRotations: [
         "Deep reasoning in progress...",

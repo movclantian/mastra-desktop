@@ -852,7 +852,7 @@ export function useOpenBrowserUrl() {
         void window.api.workspace.openExternal(url);
         return;
       }
-      void navigate({ to: "/chat" });
+      void navigate({ to: "/chat", search: { thread: lastKnownThreadId } });
       requestBrowserPanel(url);
     },
     [lastKnownThreadId, navigate, requestBrowserPanel],

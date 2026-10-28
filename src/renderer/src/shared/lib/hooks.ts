@@ -97,7 +97,12 @@ export function useHorizontalWheelScroll() {
 function httpLinkFromTarget(target: EventTarget | null): HTMLAnchorElement | null {
   if (!(target instanceof Element)) return null;
   const anchor = target.closest("a[href]") as HTMLAnchorElement | null;
-  if (!anchor || anchor.hasAttribute("download")) return null;
+  if (
+    !anchor ||
+    anchor.hasAttribute("download") ||
+    anchor.getAttribute("href")?.trim().startsWith("#")
+  )
+    return null;
   try {
     return /^https?:$/i.test(new URL(anchor.href).protocol) ? anchor : null;
   } catch {
@@ -119,7 +124,14 @@ export function useLinkRouting(openInAppBrowser: (url: string) => void) {
       const anchor = httpLinkFromTarget(event.target);
       if (!anchor) return;
       event.preventDefault();
-      if (middleClick || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+      if (
+        anchor.closest('[data-link-target="external"]') ||
+        middleClick ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
         openInSystemBrowser(anchor.href);
       } else {
         openInAppBrowser(anchor.href);

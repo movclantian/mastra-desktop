@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircleIcon,
   BinaryIcon,
@@ -11,6 +12,7 @@ import * as React from "react";
 import type { WorkspaceFileChange } from "@/entities/workbench";
 import { useTranslation } from "@/shared/i18n";
 import { cn } from "@/shared/lib";
+import { Button } from "@/shared/ui/button";
 import { CodeComparison } from "@/shared/ui/code-comparison";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import { DotmCircular4 } from "@/shared/ui/dotm-circular-4";
@@ -38,52 +40,29 @@ function CodeChangeRow({
   const { t } = useTranslation();
   const ChangeIcon =
     change.kind === "created" ? CheckCircle2Icon : change.kind === "deleted" ? XIcon : FileDiffIcon;
-  const [content, setContent] = React.useState<{ before: string; after: string } | null>(null);
-  const [contentLoading, setContentLoading] = React.useState(false);
-  const [contentError, setContentError] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!open || content || contentLoading || contentError) return;
-    let cancelled = false;
-    setContentLoading(true);
-    setContentError(false);
-    void Promise.all([
-      change.before && change.before.encoding !== "binary"
-        ? fetchContent(change.id, "before")
-        : Promise.resolve(null),
-      change.after && change.after.encoding !== "binary"
-        ? fetchContent(change.id, "after")
-        : Promise.resolve(null),
-    ])
-      .then(([before, after]) => {
-        if (cancelled) return;
-        if (
-          (change.before && change.before.encoding !== "binary" && !before) ||
-          (change.after && change.after.encoding !== "binary" && !after)
-        ) {
-          setContentError(true);
-          return;
-        }
-        setContent({
-          before: (before?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
-          after: (after?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
-        });
-      })
-      .catch(() => {
-        if (!cancelled) setContentError(true);
-      })
-      .finally(() => {
-        if (!cancelled) setContentLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [change, content, contentError, contentLoading, fetchContent, open]);
-
-  const before = content?.before ?? "";
-  const after = content?.after ?? "";
   const hasBinarySnapshot =
     change.before?.encoding === "binary" || change.after?.encoding === "binary";
+  const content = useQuery({
+    queryKey: ["workspace-change-diff", change.id, change.createdAt],
+    enabled: open && !hasBinarySnapshot,
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const [before, after] = await Promise.all([
+        change.before ? fetchContent(change.id, "before") : Promise.resolve(null),
+        change.after ? fetchContent(change.id, "after") : Promise.resolve(null),
+      ]);
+      if ((change.before && !before) || (change.after && !after))
+        throw new Error("Snapshot content is unavailable");
+      return {
+        before: (before?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
+        after: (after?.content ?? "").slice(0, DIFF_PREVIEW_LIMIT),
+      };
+    },
+  });
+
+  const before = content.data?.before ?? "";
+  const after = content.data?.after ?? "";
   const timestamp = new Date(change.createdAt);
 
   return (
@@ -129,12 +108,12 @@ function CodeChangeRow({
               </EmptyDescription>
             </EmptyHeader>
           </Empty>
-        ) : contentLoading ? (
+        ) : content.isPending || content.isFetching ? (
           <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
             <DotmCircular4 size={15} dotSize={1.8} colorPreset="solid-theme" />
             <span>{t("workspace:readingFullSnapshot")}</span>
           </div>
-        ) : contentError ? (
+        ) : content.isError ? (
           <Empty className="py-6">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -147,6 +126,9 @@ function CodeChangeRow({
                 {t("workspace:snapshotReadFailedDesc")}
               </EmptyDescription>
             </EmptyHeader>
+            <Button size="sm" variant="outline" onClick={() => void content.refetch()}>
+              {t("common:retry")}
+            </Button>
           </Empty>
         ) : (
           <CodeComparison
